@@ -146,7 +146,7 @@ const basicAuthorization = (password: string | Redacted.Redacted) => {
 export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   return OpenCode2Client.of({
-    connect: ({ baseUrl, password }) => {
+    connect: Effect.fn("OpenCode2Client.connect")(function ({ baseUrl, password }) {
       const authenticated = HttpClient.mapRequest(
         httpClient,
         HttpClientRequest.setHeader("Authorization", basicAuthorization(password)),
@@ -163,7 +163,7 @@ export const make = Effect.gen(function* () {
           ),
         })),
       );
-    },
+    }),
   });
 });
 

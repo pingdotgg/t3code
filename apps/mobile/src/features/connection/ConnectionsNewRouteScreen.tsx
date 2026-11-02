@@ -12,8 +12,8 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { AsyncResult } from "effect/reactivity";
-import { useEffect, useRef, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { useState } from "react";
 import { Linking, Pressable, StyleSheet, View } from "react-native";
 import Svg, { Defs, RadialGradient, Rect, Stop } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -24,13 +24,11 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { AppText as Text, AppTextInput, type AppTextInputProps } from "../../components/ui/AppText";
 import { FrostedCutout } from "../../components/ui/FrostedCutout";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
-import {
-  setPendingConnectionError,
-  useRemoteConnections,
-} from "../../state/use-remote-environment-registry";
+import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
+import { autoConnectReport, devAutoConnectAttemptAtom } from "./devAutoConnect";
 import { splitEnvironmentSections } from "./environmentSections";
 import { leaveSettingsPage } from "../settings/settings-navigation";
 import { workspaceHasColumns } from "../workspace/workspace-selection-store";
@@ -45,69 +43,69 @@ type ConnectionsNewRouteParams = {
 export function ConnectionsNewRouteScreen({
   route,
 }: StaticScreenProps<ConnectionsNewRouteParams | undefined>) {
-  const {
-    connectionPairingUrl,
-    onChangeConnectionPairingUrl,
-    onConnectPress,
-    pairingConnectionError,
-  } = useRemoteConnections();
-  const navigation = useNavigation();
-  const routeName = useRoute().name;
   const params = route.params ?? {};
   // Dev-only prefill prevents production links from supplying an attacker-chosen host and token.
   const routePairingUrl = __DEV__ ? (params.pairingUrl?.trim() ?? "") : "";
-  const shouldAutoConnect =
-    __DEV__ &&
-    routePairingUrl.length > 0 &&
-    (params.autoConnect === "1" || params.autoConnect === "true");
+  // A new prefill link replaces whatever the form held.
+  return (
+    <PairingForm
+      key={routePairingUrl}
+      routePairingUrl={routePairingUrl}
+      routeFor={params.routeFor}
+    />
+  );
+}
+
+function PairingForm({
+  routePairingUrl,
+  routeFor,
+}: {
+  readonly routePairingUrl: string;
+  readonly routeFor: EnvironmentId | undefined;
+}) {
+  const { connectionPairingUrl, onChangeConnectionPairingUrl, onConnectPress } =
+    useRemoteConnections();
+  const navigation = useNavigation();
+  const routeName = useRoute().name;
   const insets = useSafeAreaInsets();
-  const [hostInput, setHostInput] = useState("");
-  const [codeInput, setCodeInput] = useState("");
+  const [initialPairing] = useState(() => parsePairingUrl(routePairingUrl || connectionPairingUrl));
+  const [hostInput, setHostInput] = useState(initialPairing.host);
+  const [codeInput, setCodeInput] = useState(initialPairing.code);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  // The user's own edit or submit dismisses the dev auto-connect report.
+  const [ownAttempt, setOwnAttempt] = useState(false);
+  const autoConnect = autoConnectReport(
+    useAtomValue(devAutoConnectAttemptAtom),
+    routePairingUrl,
+    ownAttempt,
+  );
+  const connecting = isSubmitting || autoConnect.connecting;
+  const pairingConnectionError = submitError ?? autoConnect.error;
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const screenFocused = useIsFocused();
   const [scannerLocked, setScannerLocked] = useState(false);
   // A good scan parks the camera so it can't re-read the code over later edits.
   const [scanComplete, setScanComplete] = useState(false);
-  const attemptedAutoConnectRef = useRef<string | null>(null);
 
   const headerIconColor = useUniwindTheme()["--color-icon"];
 
-  const connectDisabled = isSubmitting || hostInput.trim().length === 0;
+  const connectDisabled = connecting || hostInput.trim().length === 0;
 
-  useEffect(() => {
-    const { host, code } = parsePairingUrl(connectionPairingUrl);
-    setHostInput(host);
-    setCodeInput(code);
-  }, [connectionPairingUrl]);
-
-  useEffect(() => {
-    if (routePairingUrl.length === 0) {
-      return;
-    }
-
-    const { host, code } = parsePairingUrl(routePairingUrl);
-    setHostInput(host);
-    setCodeInput(code);
-  }, [routePairingUrl]);
-
-  useEffect(() => {
-    if (pairingConnectionError) {
-      setIsSubmitting(false);
-    }
-  }, [pairingConnectionError]);
+  const clearError = () => {
+    setSubmitError(null);
+    setOwnAttempt(true);
+  };
 
   const handleHostChange = (value: string) => {
     setHostInput(value);
-    setPendingConnectionError(null);
+    clearError();
   };
 
   const handleCodeChange = (value: string) => {
     setCodeInput(value);
-    setPendingConnectionError(null);
+    clearError();
   };
-
-  useEffect(() => () => setPendingConnectionError(null), []);
 
   const handleScanPress = async () => {
     const permission = await requestCameraPermission();
@@ -153,17 +151,21 @@ export function ConnectionsNewRouteScreen({
     }
   };
 
-  const connectAndClose = async (pairingUrl: string) => {
+  const handleSubmit = async () => {
+    const pairingUrl = buildPairingUrl(hostInput, codeInput);
+    setOwnAttempt(true);
+    setSubmitError(null);
     setIsSubmitting(true);
     onChangeConnectionPairingUrl(pairingUrl);
-    const result = await onConnectPress(pairingUrl, params.routeFor);
+    const outcome = await onConnectPress(pairingUrl, routeFor);
     setIsSubmitting(false);
+    setSubmitError(outcome.error);
     void Haptics.notificationAsync(
-      AsyncResult.isSuccess(result)
+      outcome.ok
         ? Haptics.NotificationFeedbackType.Success
         : Haptics.NotificationFeedbackType.Error,
     );
-    if (AsyncResult.isSuccess(result)) {
+    if (outcome.ok) {
       // Replacing with Home would nest it inside any sheet below; return to the opener.
       if (!navigation.canGoBack()) {
         navigation.dispatch(StackActions.replace("Home"));
@@ -174,27 +176,14 @@ export function ConnectionsNewRouteScreen({
     }
   };
 
-  const handleSubmit = async () => {
-    await connectAndClose(buildPairingUrl(hostInput, codeInput));
-  };
-
-  useEffect(() => {
-    if (!shouldAutoConnect || attemptedAutoConnectRef.current === routePairingUrl) {
-      return;
-    }
-
-    attemptedAutoConnectRef.current = routePairingUrl;
-    void connectAndClose(routePairingUrl);
-  }, [connectAndClose, routePairingUrl, shouldAutoConnect]);
-
   return (
     <SettingsScreen
       formSheet={routeName === "ConnectionsNew"}
       title="Add environment"
       actions={[
         {
-          accessibilityLabel: isSubmitting ? "Connecting" : "Add environment",
-          loading: isSubmitting,
+          accessibilityLabel: connecting ? "Connecting" : "Add environment",
+          loading: connecting,
           icon: "checkmark",
           tintColor: headerIconColor,
           disabled: connectDisabled,

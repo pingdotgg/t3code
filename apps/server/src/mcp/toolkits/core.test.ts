@@ -12,6 +12,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  ScheduledTaskError,
+  ScheduledTask,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -45,6 +47,7 @@ import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
+import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as McpHttpServer from "../McpHttpServer.ts";
@@ -54,6 +57,9 @@ import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { dispatchFailure } from "../threadAccess.ts";
 import * as EnvironmentHandlers from "./environment/handlers.ts";
 import * as AttachmentHandlers from "./attachment/handlers.ts";
+import * as PeerForwarding from "../../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../../peer/PeerLinks.ts";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -72,6 +78,9 @@ const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadR
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+  Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+  Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+  Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
 );
 
 const threadId = ThreadId.make("mcp-core-thread");
@@ -136,8 +145,8 @@ it.effect("an answered question reports already answered instead of not found", 
     const respond = (id: string) =>
       server
         .callTool({
-          name: "t3_pending_request_respond",
-          arguments: { requestId: id, answers: { size: "large" } },
+          name: "t3_pending_request",
+          arguments: { action: "respond", requestId: id, answers: { size: "large" } },
         })
         .pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
@@ -343,6 +352,48 @@ it.effect("records only failed calls of tools that hand off no work", () => {
   );
 });
 
+it.effect("rejects an unknown organize target instead of archiving the calling thread", () => {
+  const dispatched: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const outcome = yield* server
+      .callTool({
+        name: "t3_thread_organize",
+        arguments: { action: "archive", threadIds: ["other-thread"] },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+        Effect.result,
+      );
+    expect(dispatched).toEqual([]);
+    expect(outcome).toMatchObject({
+      _tag: "Failure",
+      failure: { message: expect.stringContaining("Expected no excess property") },
+    });
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: ({ threadId: id }) =>
+              Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
+              ),
+            dispatch: (command) => {
+              dispatched.push(command);
+              return Effect.succeed({ sequence: 1 } as never);
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
 it.effect("keeps unexpected handler defects private through the production registration", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -470,8 +521,8 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
     });
 
     const forked = yield* call(
-      "t3_thread_fork",
-      { sourcePoint: { type: "latest_stable" } },
+      "t3_thread_transfer",
+      { action: "fork", sourcePoint: { type: "latest_stable" } },
       clientScope("auto"),
     );
     expect(declaredFailure(forked)).toMatchObject({ code: "target_required" });
@@ -516,7 +567,7 @@ it.effect("a read-only client reads threads and is refused every write before it
           Effect.provideService(McpSchema.McpServerClient, client),
         );
 
-    const configuration = yield* call("t3_thread_configuration", {
+    const configuration = yield* call("t3_thread_configure", {
       threadId: "other-project-thread",
     });
     expect(configuration.isError).toBe(false);
@@ -598,8 +649,12 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
         Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
         Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
       ),
     ),
   ),
@@ -615,18 +670,20 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
           Effect.provideService(McpInvocationContext.McpInvocationContext, clientScope("auto")),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
-    const update = yield* call("update_scheduled_task", {
+    const update = yield* call("schedule_task", {
       scheduledTaskId: "task-full-access",
       prompt: "Run something else",
     });
     expect(declaredFailure(update)).toMatchObject({ code: "runtime_mode_escalation_denied" });
     const remove = yield* call("delete_scheduled_task", { scheduledTaskId: "task-full-access" });
     expect(declaredFailure(remove)).toMatchObject({ code: "runtime_mode_escalation_denied" });
-    const allowed = yield* call("update_scheduled_task", {
+    const allowed = yield* call("schedule_task", {
       scheduledTaskId: "task-auto",
       enabled: false,
     });
     expect(allowed.isError).toBe(false);
+    const incomplete = yield* call("schedule_task", { prompt: "Run nightly" });
+    expect(declaredFailure(incomplete)).toMatchObject({ code: "invalid_request" });
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(
@@ -653,6 +710,70 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
         ),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+      ),
+    ),
+  ),
+);
+
+it.effect.each([
+  {
+    scenario: "explains why a webhook task cannot run manually",
+    tasks: [
+      {
+        ...Schema.decodeSync(ScheduledTask)(scheduledTask("task-webhook", "full-access")),
+        schedule: { type: "webhook" as const, signature: null },
+      },
+    ],
+    error: new ScheduledTaskError({
+      message: "Webhook tasks run when their URL receives a request.",
+      cause: new Error("private-webhook-cause"),
+    }),
+    code: "orchestration_error",
+    message: "Webhook tasks run when their URL receives a request.",
+  },
+  {
+    scenario: "reports a missing task before trying to run it",
+    tasks: [],
+    error: new ScheduledTaskError({ message: "must not run a missing task" }),
+    code: "invalid_request",
+    message: "The scheduled task was not found.",
+  },
+])("run_scheduled_task_now $scenario", ({ tasks, error, code, message }) =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({ name: "run_scheduled_task_now", arguments: { taskId: "task-webhook" } })
+      .pipe(
+        Effect.provideService(
+          McpInvocationContext.McpInvocationContext,
+          clientScope("full-access"),
+        ),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toBeUndefined();
+    expect(declaredFailure(result)).toEqual({ _tag: "OrchestratorMcpFailure", code, message });
+    expect(JSON.stringify(result)).not.toContain("private-");
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+        Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+            list: () => Effect.succeed({ tasks }),
+            runNow: () => Effect.fail(error),
+          }),
+        ),
       ),
     ),
   ),
@@ -737,6 +858,10 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
           Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+          Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+          Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+          Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
         ),
       ),
     ),
@@ -827,8 +952,12 @@ it.effect("discovers workflow stop targets and requires orchestration capability
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
         Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
         Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
       ),
     ),
   );
@@ -887,4 +1016,57 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
       ),
     ),
   ),
+);
+
+it.effect(
+  "t3_thread_list settled:false with an empty statuses list lists the unsettled threads",
+  () => {
+    const unsettled = McpToolAccessTestkit.liveThreadShell(ThreadId.make("unsettled-thread"));
+    const settled = {
+      ...McpToolAccessTestkit.liveThreadShell(ThreadId.make("settled-thread")),
+      settledOverride: "settled",
+    } as const;
+    return Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({
+          name: "t3_thread_list",
+          arguments: { projectId: unsettled.projectId, settled: false, statuses: [] },
+        })
+        .pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            clientScope("full-access"),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent).toMatchObject({
+        threads: [{ threadId: unsettled.id, settled: false }],
+        total: 1,
+      });
+    }).pipe(
+      Effect.provide(
+        layerOrchestratorToolkit.pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              listProjectThreads: () => Effect.succeed([unsettled, settled]),
+            }),
+          ),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+          Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+          Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+          Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+          Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+          Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+        ),
+      ),
+    );
+  },
 );

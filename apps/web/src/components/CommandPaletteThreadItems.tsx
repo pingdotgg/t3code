@@ -164,6 +164,7 @@ export function useCommandPaletteThreadItems(input: {
       const isOpen =
         activeThread?.environmentId === thread.environmentId && activeThread.id === thread.id;
       if (threadSearchQuery.trim().length > 0 && !threadSearchQuery.startsWith(">") && !isOpen) {
+        // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
         claimThreadOpen(thread.environmentId, thread.id, Date.now());
       }
       if (

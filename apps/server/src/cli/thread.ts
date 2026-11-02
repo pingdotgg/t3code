@@ -221,6 +221,7 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
         // The CLI runs as the machine's owner. New threads still start at
         // the project's default mode, never at this ceiling by default.
         access: "full-access",
+        peerLink: false,
         client: { deviceType: "bot" },
       }),
       (session) =>
@@ -330,6 +331,63 @@ const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
     afterPosition = page.nextPosition ?? undefined;
   } while (page.hasMore && afterPosition !== undefined);
   return { thread: page.thread, items };
+});
+
+/**
+ * The latest `count` user and assistant messages, oldest first. Positions
+ * count every timeline item, so the read starts near the end and widens
+ * backward only while tool and plan items leave too few messages.
+ */
+export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(function* (
+  tools: ThreadTools,
+  threadId: ThreadId,
+  count: number,
+) {
+  let { thread } = yield* tools.call(
+    "t3_thread_read",
+    { threadId, limit: 1, runLimit: 1 },
+    OrchestratorMcpThreadReadResult,
+  );
+  let messages: Array<OrchestratorMcpThreadTimelineItem> = [];
+  // The newest window has no upper bound, so items added since the first
+  // read are still shown.
+  let before: number | undefined;
+  let start = thread.itemCount;
+  let span = Math.max(count, READ_PAGE_LIMIT);
+  do {
+    const end = before;
+    start = Math.max(0, start - span);
+    const window: Array<OrchestratorMcpThreadTimelineItem> = [];
+    let afterPosition = start - 1;
+    let page: OrchestratorMcpThreadReadResult;
+    do {
+      page = yield* tools.call(
+        "t3_thread_read",
+        {
+          threadId,
+          view: "messages",
+          limit: READ_PAGE_LIMIT,
+          runLimit: 1,
+          ...(afterPosition < 0 ? {} : { afterPosition }),
+        },
+        OrchestratorMcpThreadReadResult,
+      );
+      window.push(
+        ...page.items.filter(
+          (item) =>
+            (item.type === "user_message" || item.type === "assistant_message") &&
+            (end === undefined || item.position < end),
+        ),
+      );
+      afterPosition = page.nextPosition ?? Number.POSITIVE_INFINITY;
+    } while (page.hasMore && afterPosition < (end ?? Number.POSITIVE_INFINITY) - 1);
+    thread = page.thread;
+    // A window can hold the whole --messages count, too many to spread as arguments.
+    messages = window.concat(messages);
+    before = start;
+    span *= 2;
+  } while (messages.length < count && start > 0);
+  return { thread, messages: messages.slice(Math.max(0, messages.length - count)) };
 });
 
 /** Item text past the read's per-item cap. */
@@ -661,11 +719,11 @@ const threadShowCommand = Command.make("show", {
       yield* withThreadTools(
         flags,
         Effect.fn("cli.thread.show")(function* (tools) {
-          const { thread, items } = yield* readTimeline(tools, threadId, "messages");
-          const conversation = items.filter(
-            (item) => item.type === "user_message" || item.type === "assistant_message",
+          const { thread, messages: latest } = yield* readLatestMessages(
+            tools,
+            threadId,
+            flags.messages,
           );
-          const latest = conversation.slice(Math.max(0, conversation.length - flags.messages));
           const messages = yield* Effect.forEach(latest, (item) =>
             readFullText(tools, threadId, item).pipe(
               Effect.map((text) => ({

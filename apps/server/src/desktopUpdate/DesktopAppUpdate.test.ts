@@ -132,6 +132,24 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
     }),
   );
 
+  it.effect("succeeds without an install when a track switch finds the host current", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness({
+        reports: (requestId) => [
+          report(requestId, makeState({ status: "up-to-date", currentVersion: "1.2.3" }), {
+            outcome: "up-to-date",
+          }),
+        ],
+      });
+      const trackSwitch = { channel: "latest" as const, targetVersion: "1.2.3" };
+
+      expect(yield* service.run(() => Effect.void, trackSwitch)).toEqual({
+        targetVersion: "1.2.3",
+        method: "desktop-app",
+      });
+    }),
+  );
+
   it.effect("replays a retained commit failure for the preparation token", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness({
