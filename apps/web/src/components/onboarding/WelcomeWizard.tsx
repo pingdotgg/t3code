@@ -917,13 +917,14 @@ function OnboardingCodexSetup({
     config: createdAccount ? { enabled: true, setupMode: "managed" } : {},
   };
   const mode = readCodexSetupMode(instance.config);
-  const existingChosen =
-    mode === "existing" &&
-    instance.config !== null &&
-    typeof instance.config === "object" &&
-    "setupMode" in instance.config &&
-    instance.config.setupMode === "existing";
-  const changeMode = (setupMode: "managed" | "existing") => {
+  const config: Record<string, unknown> =
+    instance.config !== null && typeof instance.config === "object" ? { ...instance.config } : {};
+  const existingChosen = config.setupMode === "existing";
+  // The server only signs in to its own runtime, so ChatGPT sign-in saves "managed" first.
+  // An attempt that ends without signing in puts back what was saved before it.
+  const modeBeforeSignIn = useRef<{ readonly setupMode: unknown } | null>(null);
+  const saveMode = (setupMode: unknown) => {
+    const { setupMode: _saved, ...rest } = config;
     void update({
       environmentId,
       input: {
@@ -933,17 +934,21 @@ function OnboardingCodexSetup({
           instance: {
             ...instance,
             enabled: true,
-            config: {
-              ...(instance.config !== null && typeof instance.config === "object"
-                ? instance.config
-                : {}),
-              enabled: true,
-              setupMode,
-            },
+            config: { ...rest, enabled: true, ...(setupMode === undefined ? {} : { setupMode }) },
           },
         }),
       },
     });
+  };
+  const changeMode = (setupMode: "managed" | "existing") => {
+    modeBeforeSignIn.current =
+      setupMode === "managed" && mode !== "managed" ? { setupMode: config.setupMode } : null;
+    saveMode(setupMode);
+  };
+  const restoreMode = () => {
+    if (modeBeforeSignIn.current === null) return;
+    saveMode(modeBeforeSignIn.current.setupMode);
+    modeBeforeSignIn.current = null;
   };
   return existingChosen ? (
     <AgentCard
@@ -965,6 +970,7 @@ function OnboardingCodexSetup({
       mode={mode}
       enabled={provider?.enabled ?? true}
       onModeChange={changeMode}
+      onSignInUnfinished={restoreMode}
     />
   );
 }

@@ -551,4 +551,7 @@ it("restores the Codex setup mode when ChatGPT sign-in from onboarding fails", a
   await vi.waitFor(() =>
     expect(codexSetupMode(), "a failed sign-in must not leave Codex managed").toBeUndefined(),
   );
+  await vi.waitFor(() =>
+    expect(pageText()).toContain("ChatGPT sign-in was declined. Sign in again when you are ready."),
+  );
 });

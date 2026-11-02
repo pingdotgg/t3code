@@ -5,6 +5,7 @@ import {
   settleAuthorizationPage,
   settleHandoffAuthorizationPage,
   settleProviderInstall,
+  settleSignIn,
 } from "./CodexSetupSection.logic";
 
 const install = (overrides: Partial<ProviderInstallState>) =>
@@ -117,5 +118,14 @@ describe("settleAuthorizationPage", () => {
       }),
     ).toBe("https://a");
     expect(settleHandoffAuthorizationPage({ phase: "finished", profile: {} as never })).toBeNull();
+  });
+});
+
+describe("settleSignIn", () => {
+  it("ends only with its own flow", () => {
+    expect(settleSignIn(auth({ phase: "waiting" }), "flow-1")).toBeUndefined();
+    expect(settleSignIn(auth({ flowId: "flow-0", phase: "failed" }), "flow-1")).toBeUndefined();
+    const failed = auth({ phase: "failed" });
+    expect(settleSignIn(failed, "flow-1")).toBe(failed);
   });
 });
