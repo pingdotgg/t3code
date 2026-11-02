@@ -2707,14 +2707,14 @@ describe("AcpAdapterV2", () => {
                         "cognition.ai/subagent_context": { parentAgentId: "child-a" },
                       },
                     },
-                    {
-                      sessionUpdate: "agent_message_chunk",
-                      content: { type: "text", text: "ONE" },
+                    ...["O", "N", "E"].map((text) => ({
+                      sessionUpdate: "agent_message_chunk" as const,
+                      content: { type: "text" as const, text },
                       _meta: {
                         "cognition.ai/streamingMessageId": "child-result",
                         "cognition.ai/subagent_context": { parentAgentId: "child-a" },
                       },
-                    },
+                    })),
                     {
                       sessionUpdate: "tool_call",
                       toolCallId: "child-later",
@@ -2867,6 +2867,15 @@ describe("AcpAdapterV2", () => {
         (item) => item.threadId === task?.childThreadId && item.type === "assistant_message",
       );
       assert.equal(new Set(childAnswers.map((item) => item.ordinal)).size, 2);
+      // Later chunks coalesce; the subagent's completion flushes the final text.
+      assert.deepEqual(
+        childAnswers.flatMap((item) =>
+          item.type === "assistant_message" && item.text !== "Checking the code."
+            ? [item.text]
+            : [],
+        ),
+        ["O", "ONE"],
+      );
       const parentTools = items.filter(
         (item) => item.threadId === threadId && item.type === "dynamic_tool",
       );

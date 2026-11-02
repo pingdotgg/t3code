@@ -143,6 +143,9 @@ const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
  * This avoids quadratic output; scheduled flushes can run late under host load.
  */
 const ACP_TEXT_FLUSH_INTERVAL: Duration.Input = "50 millis";
+// Subagent messages are stored as finished, so they skip the server's paragraph
+// throttle and every snapshot is persisted. Match that throttle's 400 ms cadence.
+const ACP_SUBAGENT_TEXT_FLUSH_INTERVAL: Duration.Input = "400 millis";
 
 export interface AcpAdapterV2RuntimeInput {
   readonly cwd: string;
@@ -1403,6 +1406,8 @@ interface ActiveAcpSubagent {
   childSessionId: string | null;
   assistantText: string;
   readonly assistantMessages: Map<string, string>;
+  // Messages whose latest text waits for a delayed flush.
+  readonly pendingAssistantMessages: Set<string>;
   readonly childItemOrdinals: Map<string, number>;
   nextChildOrdinal: number;
   terminalStatusProjected: boolean;
@@ -2712,10 +2717,38 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           if (text.length === 0 && mode === "append") return;
           const nativeItemId = `${subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id}:message:${messageId ?? "result"}`;
-          const previous = subagent.assistantMessages.get(nativeItemId) ?? "";
-          const messageText = mode === "replace" ? text : `${previous}${text}`;
+          const previous = subagent.assistantMessages.get(nativeItemId);
+          const messageText = mode === "replace" ? text : `${previous ?? ""}${text}`;
           subagent.assistantMessages.set(nativeItemId, messageText);
           subagent.assistantText = messageText;
+          if (mode === "append" && previous !== undefined) {
+            if (subagent.pendingAssistantMessages.has(nativeItemId)) return;
+            subagent.pendingAssistantMessages.add(nativeItemId);
+            yield* writeSubagentAssistant(subagent, nativeItemId, true).pipe(
+              Effect.delay(ACP_SUBAGENT_TEXT_FLUSH_INTERVAL),
+              Effect.forkIn(sessionScope),
+            );
+            return;
+          }
+          subagent.pendingAssistantMessages.delete(nativeItemId);
+          yield* writeSubagentAssistant(subagent, nativeItemId, false);
+        });
+
+        const flushSubagentAssistant = (subagent: ActiveAcpSubagent) =>
+          Effect.forEach(
+            [...subagent.pendingAssistantMessages],
+            (nativeItemId) => writeSubagentAssistant(subagent, nativeItemId, true),
+            { discard: true },
+          );
+
+        const writeSubagentAssistant = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          nativeItemId: string,
+          onlyIfPending: boolean,
+        ) {
+          if (onlyIfPending && !subagent.pendingAssistantMessages.delete(nativeItemId)) return;
+          const text = subagent.assistantMessages.get(nativeItemId);
+          if (text === undefined) return;
           const now = yield* DateTime.now;
           const ordinal = resolveSubagentChildOrdinal(subagent, nativeItemId);
           const artifacts = makeSubagentConversationArtifacts({
@@ -2727,7 +2760,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             providerTurnId: null,
             nativeItemRef: { driver, nativeId: nativeItemId, strength: "weak" },
             role: "assistant",
-            text: subagent.assistantText,
+            text,
             ordinal,
             now,
           });
@@ -2737,7 +2770,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             driver,
             turnItem: artifacts.turnItem,
           });
-        });
+        }, textEmissionPermit.withPermit);
 
         const projectSubagentNotification = Effect.fnUntraced(function* (
           subagent: ActiveAcpSubagent,
@@ -2945,6 +2978,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             childSessionId: null,
             assistantText: "",
             assistantMessages: new Map(),
+            pendingAssistantMessages: new Set(),
             childItemOrdinals: new Map(),
             nextChildOrdinal: 101,
             terminalStatusProjected: false,
@@ -3046,6 +3080,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             );
           }
 
+          yield* flushSubagentAssistant(subagent);
           if (
             taskStatus !== "running" &&
             subagent.assistantText.length === 0 &&
@@ -3166,6 +3201,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             child.subagent.task = { ...child.subagent.task, result: null };
             child.subagent.assistantText = "";
             child.subagent.assistantMessages.clear();
+            child.subagent.pendingAssistantMessages.clear();
           }
           child.status = status;
           child.result = result;
