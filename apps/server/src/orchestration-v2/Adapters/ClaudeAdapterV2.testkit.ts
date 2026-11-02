@@ -528,6 +528,7 @@ function makeReplayQueryRunner(
   ): AsyncGenerator<SDKMessage, void> {
     while (true) {
       throwIfFailed();
+      if (signal.aborted) return;
 
       const entry = transcript.entries[cursor];
       if (entry === undefined) {
@@ -806,6 +807,7 @@ function makeReplayQueryRunner(
 
   return {
     open: (input) => {
+      abortReplayIterators();
       assertNextOutboundFrame(makeClaudeQueryOpenFrame(input));
       return {
         messages: Stream.fromAsyncIterable(replayMessagesWithGateCleanup(input.options), (cause) =>
