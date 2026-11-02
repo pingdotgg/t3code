@@ -1,10 +1,14 @@
+// @effect-diagnostics nodeBuiltinImport:off - Chromium needs a real profile directory.
 import * as NodeEvents from "node:events";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
 import { chromium, type Browser, type BrowserContext, type BrowserType } from "playwright-core";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { ServerBrowserContexts } from "./ServerBrowserContexts.ts";
+import { ServerBrowserContexts, setPageHidden } from "./ServerBrowserContexts.ts";
 
 const launches = vi.hoisted(() => ({
   launch: vi.fn<BrowserType["launch"]>(),
@@ -12,6 +16,8 @@ const launches = vi.hoisted(() => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined),
 }));
+const launchChromium = chromium.launch.bind(chromium);
+const launchPersistentChromium = chromium.launchPersistentContext.bind(chromium);
 vi.spyOn(chromium, "launch").mockImplementation(launches.launch);
 vi.spyOn(chromium, "launchPersistentContext").mockImplementation(launches.persistent);
 vi.mock("node:fs/promises", () => ({ mkdir: launches.mkdir, rm: launches.rm }));
@@ -293,4 +299,83 @@ describe("ServerBrowserContexts", () => {
     expect(browser.close).toHaveBeenCalledTimes(1);
     expect(browser.contexts[0]?.close).toHaveBeenCalled();
   });
+
+  // A real Chromium with the production launch options, except Playwright's own headless shell.
+  it.each([
+    { profile: INCOGNITO_BROWSER_PROFILE_ID, kind: "shared" },
+    { profile: "default", kind: "persistent" },
+  ])(
+    "a hidden $kind page stops painting and shows its current state again",
+    async ({ profile }) => {
+      launches.launch.mockImplementation((launch) => {
+        const { executablePath: _ignored, ...options } = launch ?? {};
+        return launchChromium(options);
+      });
+      launches.persistent.mockImplementation((directory, launch) => {
+        const { executablePath: _ignored, ...options } = launch ?? {};
+        return launchPersistentChromium(directory, options);
+      });
+      const profilesDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-server-browser-"));
+      const pool = new ServerBrowserContexts({
+        ...options(),
+        profilesDir,
+        env: { ...process.env, T3CODE_SERVER_BROWSER_SANDBOX: "0" },
+      });
+      try {
+        const context = await pool.contextFor(profile);
+        const page = await context.newPage();
+        await page.setContent(`<canvas width="40" height="40"></canvas><script>
+        window.painted = 0;
+        const gl = document.querySelector("canvas").getContext("webgl");
+        let green = 0;
+        (function paint() {
+          window.painted++;
+          gl.clearColor(1 - green, green, 0, 1);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          requestAnimationFrame(paint);
+        })();
+        // Changes made while hidden must reach the first capture after showing.
+        document.addEventListener("visibilitychange", () => {
+          if (document.hidden) setTimeout(() => { green = 1; document.body.style.background = "rgb(0, 0, 255)"; });
+        });
+      </script>`);
+        const cdp = await context.newCDPSession(page);
+        const paintedDuring = () =>
+          page.evaluate(`(async () => {
+            const before = window.painted;
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            return window.painted - before;
+          })()`);
+        expect(await paintedDuring()).toBeGreaterThan(0);
+
+        const sibling = await context.newPage();
+        const siblingCdp = await context.newCDPSession(sibling);
+        const ownWindow = await cdp.send("Browser.getWindowForTarget");
+        const siblingWindow = await siblingCdp.send("Browser.getWindowForTarget");
+        expect(ownWindow.windowId).not.toBe(siblingWindow.windowId);
+        await setPageHidden(cdp, true);
+        expect(await sibling.evaluate("document.visibilityState")).toBe("visible");
+        expect(await page.evaluate("document.visibilityState")).toBe("hidden");
+        expect(await paintedDuring()).toBe(0);
+
+        await setPageHidden(cdp, false);
+        const { data } = await cdp.send("Page.captureScreenshot", { format: "png" });
+        const pixels = await page.evaluate(`(async () => {
+          const image = new Image();
+          image.src = "data:image/png;base64,${data}";
+          await image.decode();
+          const canvas = new OffscreenCanvas(image.width, image.height);
+          const drawing = canvas.getContext("2d");
+          drawing.drawImage(image, 0, 0);
+          const at = (x, y) => Array.from(drawing.getImageData(x, y, 1, 1).data.slice(0, 3));
+          return { canvas: at(40, 40), page: at(image.width - 1, image.height - 1) };
+        })()`);
+        expect(pixels).toEqual({ canvas: [0, 255, 0], page: [0, 0, 255] });
+        expect(await page.evaluate("document.hasFocus()")).toBe(true);
+      } finally {
+        await pool.close();
+        NodeFS.rmSync(profilesDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

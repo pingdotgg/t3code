@@ -74,6 +74,18 @@ export const presentAsChrome = async (
   if (identity) await cdp.send("Emulation.setUserAgentOverride", identity);
 };
 
+/**
+ * Minimizing a page's headless window hides it like a background tab: Chromium
+ * stops painting it and pauses `requestAnimationFrame`, while timers keep running.
+ */
+export const setPageHidden = async (cdp: CDPSession, hidden: boolean) => {
+  const { windowId } = await cdp.send("Browser.getWindowForTarget");
+  await cdp.send("Browser.setWindowBounds", {
+    windowId,
+    bounds: { windowState: hidden ? "minimized" : "normal" },
+  });
+};
+
 export class ServerBrowserContexts {
   private readonly options: Options;
   private readonly contexts = new Map<string, Promise<BrowserContext>>();
@@ -100,6 +112,10 @@ export class ServerBrowserContexts {
       headless: true,
       // Only an explicit operator opt-out disables sandboxing. Launch errors never do.
       chromiumSandbox: !sandboxDisabled(env),
+      // Added by patches/playwright-core@1.60.0.patch. Playwright's focus emulation
+      // keeps every page visible, so setPageHidden could never hide one. Headless
+      // windows are focused on their own, so focus behaves the same without it.
+      focusEmulation: false,
     };
   }
 

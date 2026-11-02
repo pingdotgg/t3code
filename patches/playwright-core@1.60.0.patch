@@ -1,0 +1,29 @@
+diff --git a/lib/coreBundle.js b/lib/coreBundle.js
+index bc601fcf741792e3fc76884a28a3c43f80c6472f..66fce96ed992b81e2572bfdcc3421f8cb7fafcdb 100644
+--- a/lib/coreBundle.js
++++ b/lib/coreBundle.js
+@@ -21791,6 +21791,7 @@ var init_validator = __esm({
+       tracesDir: tOptional(tString),
+       artifactsDir: tOptional(tString),
+       chromiumSandbox: tOptional(tBoolean),
++      focusEmulation: tOptional(tBoolean),
+       firefoxUserPrefs: tOptional(tAny),
+       cdpPort: tOptional(tInt),
+       slowMo: tOptional(tFloat)
+@@ -21820,6 +21821,7 @@ var init_validator = __esm({
+       tracesDir: tOptional(tString),
+       artifactsDir: tOptional(tString),
+       chromiumSandbox: tOptional(tBoolean),
++      focusEmulation: tOptional(tBoolean),
+       firefoxUserPrefs: tOptional(tAny),
+       cdpPort: tOptional(tInt),
+       noDefaultViewport: tOptional(tBoolean),
+@@ -36216,7 +36218,7 @@ var init_crPage = __esm({
+           const skipDefaultOverrides = this._crPage._browserContext._browser.options.noDefaults && this._crPage._browserContext === this._crPage._browserContext._browser._defaultContext;
+           if (this._crPage._browserContext.needsPlaywrightBinding())
+             promises.push(this.exposePlaywrightBinding());
+-          if (this._isMainFrame() && !skipDefaultOverrides)
++          if (this._isMainFrame() && !skipDefaultOverrides && this._crPage._browserContext._browser.options.originalLaunchOptions.focusEmulation !== false)
+             promises.push(this._client.send("Emulation.setFocusEmulationEnabled", { enabled: true }));
+           const options2 = this._crPage._browserContext._options;
+           if (options2.bypassCSP)
