@@ -36,6 +36,24 @@ let pendingFocus: { readonly threadKey: string; readonly terminalId: string } | 
 // layout phase, before ChatView's thread-enter effect runs.
 let enteredThreadKey: string | null = null;
 let navigationRequestThreadKey: string | null = null;
+const lastThreadFocus = new Map<string, "composer" | { readonly terminalId: string }>();
+
+function rememberThreadFocus(threadKey: string, element: EventTarget | null): void {
+  if (!(element instanceof HTMLElement)) return;
+  if (element.closest<HTMLElement>("[data-thread-focus-key]")?.dataset.threadFocusKey !== threadKey)
+    return;
+  const terminalId = element.closest<HTMLElement>("[data-thread-terminal-id]")?.dataset
+    .threadTerminalId;
+  const target = terminalId
+    ? { terminalId }
+    : element.closest('[data-testid="composer-editor"]')
+      ? "composer"
+      : null;
+  if (target === null) return;
+  lastThreadFocus.delete(threadKey);
+  lastThreadFocus.set(threadKey, target);
+  if (lastThreadFocus.size > 64) lastThreadFocus.delete(lastThreadFocus.keys().next().value!);
+}
 
 function isPending(threadKey: string, terminalId: string): boolean {
   return pendingFocus?.threadKey === threadKey && pendingFocus.terminalId === terminalId;
@@ -113,24 +131,51 @@ export function focusTerminalOnNavigation(threadRef: ScopedThreadRef, terminalId
   focusTerminal(threadRef, terminalId);
 }
 
-/**
- * Entering a thread with its drawer open focuses the drawer terminal, unless a
- * navigating handler already asked for a terminal there. Returns the leave
- * cleanup for ChatView's effect.
- */
-export function focusTerminalOnThreadEnter(threadRef: ScopedThreadRef): () => void {
+/** Restores the last input used in a thread; explicit terminal navigation takes precedence. */
+export function focusTerminalOnThreadEnter(
+  threadRef: ScopedThreadRef,
+  focusComposer?: () => void,
+  canRestoreFocus: () => boolean = () => true,
+): () => void {
   const threadKey = scopedThreadKey(threadRef);
   const requestedByHandler = navigationRequestThreadKey === threadKey;
   navigationRequestThreadKey = null;
   enteredThreadKey = threadKey;
-  if (!requestedByHandler) {
+  if (pendingFocus?.threadKey !== threadKey) pendingFocus = null;
+  const onFocus = (event: FocusEvent) => {
+    if (enteredThreadKey !== threadKey) return;
+    // A newer input choice must not leave a request that fires when a terminal gains access.
+    cancelTerminalFocus(threadRef);
+    rememberThreadFocus(threadKey, event.target);
+  };
+  if (typeof document !== "undefined") {
+    document.addEventListener("focusin", onFocus);
+    if (requestedByHandler) rememberThreadFocus(threadKey, document.activeElement);
+  }
+  if (!requestedByHandler && canRestoreFocus()) {
+    const remembered = lastThreadFocus.get(threadKey);
     const { terminalOpen, activeTerminalId } = selectThreadTerminalUiState(
       useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
       threadRef,
     );
-    if (terminalOpen && activeTerminalId) focusTerminal(threadRef, activeTerminalId);
+    if (remembered === "composer") {
+      cancelTerminalFocus(threadRef);
+      focusComposer?.();
+    } else if (remembered !== undefined) {
+      // Restoration never parks a request for a hidden, removed or read-only terminal.
+      if (!focusMountedTarget(threadKey, remembered.terminalId)) {
+        cancelTerminalFocus(threadRef);
+        focusComposer?.();
+      }
+    } else if (terminalOpen && activeTerminalId) {
+      focusTerminal(threadRef, activeTerminalId);
+    } else {
+      focusComposer?.();
+    }
   }
   return () => {
+    if (typeof document !== "undefined") document.removeEventListener("focusin", onFocus);
+    cancelTerminalFocus(threadRef);
     // A handler navigating elsewhere marks its target before this cleanup runs.
     if (enteredThreadKey === threadKey) enteredThreadKey = null;
   };

@@ -1165,6 +1165,7 @@ function TerminalSessionViewport({
   return (
     <div
       ref={attachContainer}
+      data-thread-terminal-id={terminalId}
       tabIndex={-1}
       className="relative h-full w-full overflow-hidden bg-(--terminal-background)"
     />
