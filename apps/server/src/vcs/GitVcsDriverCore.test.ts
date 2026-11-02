@@ -1392,8 +1392,8 @@ it.effect("cancels a slow submodule checkout without reporting best-effort succe
     const spawner = ChildProcessSpawner.make((command) => {
       if (
         ChildProcess.isStandardCommand(command) &&
-        command.args[0] === "submodule" &&
-        command.args[1] === "update"
+        command.args.includes("submodule") &&
+        command.args.includes("update")
       ) {
         return Effect.acquireRelease(
           Effect.succeed(
