@@ -82,19 +82,21 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
             yield* Deferred.succeed(closed, undefined);
           }),
         );
-        const initialize = () =>
+        // Cached like the real AcpSessionRuntime, so start() reuses an earlier initialize.
+        const initialize = yield* Effect.cached(
           Effect.gen(function* () {
             events.push("initialize");
             yield* options.beforeInitialize ?? Effect.void;
             return options.supportsLogout === false
               ? { ...initialized, agentCapabilities: {} }
               : initialized;
-          });
+          }),
+        );
         return {
-          initialize,
+          initialize: () => initialize,
           start: () =>
             Effect.gen(function* () {
-              yield* initialize();
+              yield* initialize;
               events.push("authenticate");
               yield* Deferred.succeed(authenticateCalled, undefined);
               if (options.interactive !== false && input.onAuthorizationUrl) {
