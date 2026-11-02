@@ -33,6 +33,9 @@ describe("fx permission prompts", () => {
 });
 
 describe("fx cancellation failures", () => {
+  const diff = { type: "diff", path: "notes.txt", oldText: "old", newText: "new" };
+  const terminal = { type: "terminal", terminalId: "fx-terminal" };
+
   it.each([
     { content: ["Cancelled"], cancelled: true },
     { content: ["Cancelled."], cancelled: true },
@@ -40,6 +43,8 @@ describe("fx cancellation failures", () => {
     { content: ['{"error":{"details":{"error":"Permission denied"}}}'], cancelled: false },
     { content: ["Command failed"], cancelled: false },
     { content: [""], cancelled: false },
+    { content: ["Cancelled"], followingItems: [diff], cancelled: true },
+    { content: ["Cancelled"], precedingItems: [diff], cancelled: false },
     {
       content: ['{"error":{"details":{"error":"Permission denied"}}}', "Cancelled"],
       cancelled: false,
@@ -52,14 +57,23 @@ describe("fx cancellation failures", () => {
       content: ["Cancelled", '{"error":{"details":{"error":"Permission denied"}}}'],
       cancelled: true,
     },
-  ])("recognizes $content as cancellation: $cancelled", ({ content, cancelled }) => {
-    assert.equal(
-      fxToolCallWasCancelled({
-        update: { content: content.map((text) => ({ content: { text } })) },
-      }),
-      cancelled,
-    );
-  });
+  ])(
+    "recognizes $content as cancellation: $cancelled",
+    ({ content, cancelled, precedingItems = [], followingItems = [] }) => {
+      assert.equal(
+        fxToolCallWasCancelled({
+          update: {
+            content: [
+              ...precedingItems,
+              ...content.map((text) => ({ content: { text } })),
+              ...followingItems,
+            ],
+          },
+        }),
+        cancelled,
+      );
+    },
+  );
 
   it.each([
     {
@@ -81,6 +95,34 @@ describe("fx cancellation failures", () => {
       cancelled: false,
     },
     {
+      exit_code: null,
+      signal: null,
+      timed_out: false,
+      termination_indeterminate: true,
+      content: '{"error":{"message":"Permission denied","details":{"error":"Permission denied"}}}',
+      followingItems: [terminal],
+      cancelled: false,
+    },
+    {
+      exit_code: null,
+      signal: null,
+      timed_out: false,
+      termination_indeterminate: true,
+      content: '{"error":{"type":"tool_execution_failed","message":"clipped",',
+      followingItems: [diff],
+      cancelled: false,
+    },
+    {
+      exit_code: null,
+      signal: null,
+      timed_out: false,
+      termination_indeterminate: true,
+      content: "Still processing",
+      followingContent: ['{"error":{"message":"Permission denied"}}'],
+      followingItems: [diff],
+      cancelled: false,
+    },
+    {
       exit_code: 1,
       signal: null,
       timed_out: false,
@@ -98,12 +140,15 @@ describe("fx cancellation failures", () => {
     },
   ])(
     "recognizes a command result with exit $exit_code, timeout $timed_out",
-    ({ cancelled, content, followingContent = [], ...commandResult }) => {
+    ({ cancelled, content, followingContent = [], followingItems = [], ...commandResult }) => {
       assert.equal(
         fxToolCallWasCancelled({
           update: {
             command_result: commandResult,
-            content: [content, ...followingContent].map((text) => ({ content: { text } })),
+            content: [
+              ...[content, ...followingContent].map((text) => ({ content: { text } })),
+              ...followingItems,
+            ],
           },
         }),
         cancelled,

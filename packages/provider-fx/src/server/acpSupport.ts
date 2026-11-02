@@ -71,12 +71,13 @@ const isCancelledFxCommand = Schema.is(
     }),
   }),
 );
-const decodeFxToolText = Schema.decodeUnknownOption(
+const decodeFxToolUpdate = Schema.decodeUnknownOption(
   Schema.Struct({
-    update: Schema.Struct({
-      content: Schema.Array(Schema.Struct({ content: Schema.Struct({ text: Schema.String }) })),
-    }),
+    update: Schema.Struct({ content: Schema.Array(Schema.Unknown) }),
   }),
+);
+const decodeFxContentText = Schema.decodeUnknownOption(
+  Schema.Struct({ content: Schema.Struct({ text: Schema.String }) }),
 );
 const decodeFxCancelledError = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -87,9 +88,11 @@ const decodeFxCancelledError = Schema.decodeUnknownOption(
 );
 
 export function fxToolCallWasCancelled(payload: unknown): boolean {
-  const update = decodeFxToolText(payload);
+  const update = decodeFxToolUpdate(payload);
   const texts = Option.isSome(update)
-    ? update.value.update.content.map(({ content }) => content.text)
+    ? update.value.update.content.map(
+        (item) => Option.getOrUndefined(decodeFxContentText(item))?.content.text,
+      )
     : [];
   const firstText = texts[0];
   if (
@@ -99,7 +102,10 @@ export function fxToolCallWasCancelled(payload: unknown): boolean {
     return true;
   }
   // fx also uses indeterminate status for real failures, whose error JSON can be clipped.
-  return isCancelledFxCommand(payload) && texts.every((text) => !/^\s*\{\s*"error"\s*:/.test(text));
+  return (
+    isCancelledFxCommand(payload) &&
+    texts.every((text) => text === undefined || !/^\s*\{\s*"error"\s*:/.test(text))
+  );
 }
 
 /**
