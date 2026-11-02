@@ -48,6 +48,12 @@ The main sidebar, right panel, and terminal drawer open and close immediately by
 in your operating system. Moving between threads always snaps to the selected thread's panel state
 without replaying its transitions.
 
+## Accessibility
+
+Turn on **Inset scrollbars** under **Settings → Appearance → Accessibility** to move vertical
+scrollbars a few pixels away from the right edge of each pane, so they are easier to grab without
+hitting the window's resize edge. This preference applies to the web and desktop clients.
+
 ## Custom themes
 
 On web and desktop, choose **Create theme** to adjust a palette, or import a T3 Code or VS Code

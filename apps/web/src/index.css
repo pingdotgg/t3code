@@ -89,7 +89,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 :root {
-  --app-scrollbar-width: 6px;
+  --app-scrollbar-edge-inset: 0px;
+  --app-scrollbar-width: calc(6px + var(--app-scrollbar-edge-inset));
   --appearance-contrast-base: 100%;
   --appearance-contrast-boost: 0%;
   --appearance-contrast-border-boost: 0%;
@@ -1863,6 +1864,19 @@ code {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--app-scrollbar-thumb-hover);
+}
+
+/* Accessibility: keep vertical thumbs off the window edge, where resize
+   handles steal the pointer. The transparent border keeps the gap clickable. */
+:root[data-inset-scrollbars] {
+  --app-scrollbar-edge-inset: 4px;
+}
+
+::-webkit-scrollbar-thumb:vertical {
+  border-right: var(--app-scrollbar-edge-inset) solid transparent;
+  border-radius: 3px calc(3px + var(--app-scrollbar-edge-inset))
+    calc(3px + var(--app-scrollbar-edge-inset)) 3px / 3px;
+  background-clip: padding-box;
 }
 
 /* Chat markdown rendering */

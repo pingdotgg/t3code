@@ -481,6 +481,30 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
 
       <TypographySection />
+
+      <SettingsSection id="appearance-accessibility" title="Accessibility">
+        <SettingsRow
+          {...searchableSetting("inset-scrollbars")}
+          description="Move vertical scrollbars away from the right edge so they are easier to grab."
+          resetAction={
+            settings.insetScrollbars !== DEFAULT_UNIFIED_SETTINGS.insetScrollbars ? (
+              <SettingResetButton
+                label="inset scrollbars"
+                onClick={() =>
+                  updateSettings({ insetScrollbars: DEFAULT_UNIFIED_SETTINGS.insetScrollbars })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.insetScrollbars}
+              onCheckedChange={(checked) => updateSettings({ insetScrollbars: Boolean(checked) })}
+              aria-label="Inset scrollbars"
+            />
+          }
+        />
+      </SettingsSection>
     </SettingsPageContainer>
   );
 }

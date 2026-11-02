@@ -416,6 +416,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "inset-scrollbars",
+    title: "Inset scrollbars",
+    to: "/settings/appearance",
+    searchTerms: ["accessibility scrollbar padding edge grab click easier"],
+  },
+  {
     id: "project-grouping",
     title: "Project grouping",
     to: "/settings/general",

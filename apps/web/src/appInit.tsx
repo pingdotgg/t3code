@@ -78,6 +78,9 @@ function startClientAppearance(): void {
     if (previous?.chatWidth !== settings.chatWidth) {
       root.dataset.chatWidth = settings.chatWidth;
     }
+    if (previous?.insetScrollbars !== settings.insetScrollbars) {
+      root.toggleAttribute("data-inset-scrollbars", settings.insetScrollbars);
+    }
     if (previous?.appearanceContrast !== settings.appearanceContrast) {
       applyAppearanceContrast(root, settings.appearanceContrast);
     }
