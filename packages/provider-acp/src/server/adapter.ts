@@ -27,9 +27,11 @@ import {
   type ProviderRequestKind,
   type ProviderThreadId,
   type ProviderUserInputAnswers,
+  type RuntimeMode,
   type RuntimeRequestId,
   type ThreadTokenUsageSnapshot,
   type ThreadId,
+  isRuntimeModeAbove,
   type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
@@ -329,6 +331,11 @@ export interface AcpAdapterV2Flavor {
   readonly sessionModeForPolicy?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   ) => string | undefined;
+  /**
+   * The runtime mode a native session mode grants, for flavors whose modes are permission levels.
+   * Under a policy ceiling, a mode the user picks that this does not place under it is not applied.
+   */
+  readonly runtimeModeForSessionMode?: (modeId: string) => RuntimeMode | undefined;
   readonly clientFileSystem?: {
     readonly readTextFile: (
       request: EffectAcpSchema.ReadTextFileRequest,
@@ -6876,10 +6883,33 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               };
             });
           }
-          const optionSelections = (modelSelection.options ?? []).map((selection) =>
-            selection.value === ACP_EMPTY_OPTION_VALUE ? { ...selection, value: "" } : selection,
-          );
           const configOptions = yield* runtime.getConfigOptions;
+          // Under a policy ceiling, a mode the user picks applies only when the flavor can place
+          // it under the ceiling; an unknown mode could be the agent's own skip-approval mode.
+          const ceiling = runtimePolicy.maxRuntimeMode;
+          const isModeChoice = (id: string) =>
+            id === ACP_SESSION_MODE_OPTION_ID ||
+            configOptions.some(
+              (option) =>
+                option.id === id &&
+                (option.category === "mode" || option.category === "collaboration_mode"),
+            );
+          const withinCeiling = (selection: { readonly id: string; readonly value: unknown }) => {
+            if (ceiling === undefined || ceiling === "full-access" || !isModeChoice(selection.id)) {
+              return true;
+            }
+            const granted =
+              typeof selection.value === "string"
+                ? flavor.runtimeModeForSessionMode?.(selection.value)
+                : undefined;
+            return granted !== undefined && !isRuntimeModeAbove(granted, ceiling);
+          };
+          const optionSelections = (modelSelection.options ?? []).flatMap((selection) => {
+            if (!withinCeiling(selection)) return [];
+            return [
+              selection.value === ACP_EMPTY_OPTION_VALUE ? { ...selection, value: "" } : selection,
+            ];
+          });
           const availableConfigIds = new Set(configOptions.map((option) => option.id));
           const hasNativeConfigWithSyntheticModeId = availableConfigIds.has(
             ACP_SESSION_MODE_OPTION_ID,
