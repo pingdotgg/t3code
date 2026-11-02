@@ -215,112 +215,114 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
     }));
   });
 
-  const refresh = refreshLock.withPermits(1)(
-    Effect.gen(function* () {
-      yield* Ref.set(hasRefreshed, true);
-      if ((yield* connectivity.status) === "offline") {
-        yield* SubscriptionRef.update(state, (current) => ({
-          ...current,
-          refreshing: false,
-          offline: true,
-        }));
-        return;
-      }
-
-      let generation = yield* Ref.get(accountGeneration);
-      yield* Ref.set(refreshGeneration, generation);
-      yield* SubscriptionRef.set(state, {
-        environments: new Map(),
-        listed: false,
-        refreshing: true,
-        offline: false,
-        error: Option.none(),
-      });
-
-      // Sign-out triggers credentials-changed refreshes and must settle to an empty list.
-      // Only session-level missing credentials are benign; relay-side auth failures must surface.
-      const tokenResult = yield* Effect.result(session.clerkToken);
-      if (tokenResult._tag === "Failure") {
-        const failure = tokenResult.failure;
-        if (failure._tag === "ConnectionBlockedError" && failure.reason === "authentication") {
-          if ((yield* Ref.get(accountGeneration)) !== generation) {
-            return;
-          }
-          yield* SubscriptionRef.update(state, (current) => ({
-            ...current,
-            refreshing: false,
-          }));
-          return;
-        }
-        return yield* failure;
-      }
-      const clerkToken = tokenResult.success;
-      if ((yield* Ref.get(accountGeneration)) !== generation) {
-        return;
-      }
-      const accountId = relayAccountId(clerkToken);
-      const previousAccountId = yield* Ref.get(activeAccountId);
-      if (
-        Option.isSome(previousAccountId) &&
-        (!Option.isSome(accountId) || previousAccountId.value !== accountId.value)
-      ) {
-        generation = yield* Ref.updateAndGet(accountGeneration, (current) => current + 1);
-        yield* Ref.set(refreshGeneration, generation);
-      }
-      yield* Ref.set(activeAccountId, accountId);
-
-      const environments = yield* relay
-        .listEnvironments({ clerkToken })
-        .pipe(Effect.mapError(mapManagedRelayError));
-      if ((yield* Ref.get(accountGeneration)) !== generation) {
-        return;
-      }
-      const next = new Map<string, RelayDiscoveredEnvironment>();
-      for (const environment of environments) {
-        next.set(environment.environmentId, {
-          environment,
-          availability: "checking",
-          status: Option.none(),
-          error: Option.none(),
-        });
-      }
-      yield* SubscriptionRef.update(state, (current) => ({
-        ...current,
-        environments: next,
-        listed: true,
-      }));
-
-      yield* Effect.forEach(
-        environments,
-        (environment) => refreshStatus(generation, clerkToken, environment),
-        {
-          concurrency: "unbounded",
-          discard: true,
-        },
-      );
-      if ((yield* Ref.get(accountGeneration)) !== generation) {
-        return;
-      }
+  const listAccount = Effect.gen(function* () {
+    yield* Ref.set(hasRefreshed, true);
+    if ((yield* connectivity.status) === "offline") {
       yield* SubscriptionRef.update(state, (current) => ({
         ...current,
         refreshing: false,
+        offline: true,
       }));
-    }).pipe(
-      Effect.catch((error) =>
-        Effect.gen(function* () {
-          const generation = yield* Ref.get(refreshGeneration);
-          if ((yield* Ref.get(accountGeneration)) !== generation) {
-            return;
-          }
-          yield* SubscriptionRef.update(state, (current) => ({
-            ...current,
-            refreshing: false,
-            error: Option.some(error),
-          }));
-        }),
-      ),
+      return;
+    }
+
+    let generation = yield* Ref.get(accountGeneration);
+    yield* Ref.set(refreshGeneration, generation);
+    // Rows stay listed while the account is re-listed; every path that cannot list clears them.
+    yield* SubscriptionRef.update(state, (current) => ({
+      ...current,
+      refreshing: true,
+      offline: false,
+      error: Option.none(),
+    }));
+
+    // Sign-out triggers credentials-changed refreshes and must settle to an empty list.
+    // Only session-level missing credentials are benign; relay-side auth failures must surface.
+    const tokenResult = yield* Effect.result(session.clerkToken);
+    if (tokenResult._tag === "Failure") {
+      const failure = tokenResult.failure;
+      if (failure._tag === "ConnectionBlockedError" && failure.reason === "authentication") {
+        if ((yield* Ref.get(accountGeneration)) !== generation) {
+          return;
+        }
+        yield* SubscriptionRef.set(state, EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
+        return;
+      }
+      return yield* failure;
+    }
+    const clerkToken = tokenResult.success;
+    if ((yield* Ref.get(accountGeneration)) !== generation) {
+      return;
+    }
+    const accountId = relayAccountId(clerkToken);
+    const previousAccountId = yield* Ref.get(activeAccountId);
+    if (
+      Option.isSome(previousAccountId) &&
+      (!Option.isSome(accountId) || previousAccountId.value !== accountId.value)
+    ) {
+      generation = yield* Ref.updateAndGet(accountGeneration, (current) => current + 1);
+      yield* Ref.set(refreshGeneration, generation);
+      yield* SubscriptionRef.set(state, {
+        ...EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
+        refreshing: true,
+      });
+    }
+    yield* Ref.set(activeAccountId, accountId);
+
+    const environments = yield* relay
+      .listEnvironments({ clerkToken })
+      .pipe(Effect.mapError(mapManagedRelayError));
+    if ((yield* Ref.get(accountGeneration)) !== generation) {
+      return;
+    }
+    const next = new Map<string, RelayDiscoveredEnvironment>();
+    for (const environment of environments) {
+      next.set(environment.environmentId, {
+        environment,
+        availability: "checking",
+        status: Option.none(),
+        error: Option.none(),
+      });
+    }
+    yield* SubscriptionRef.update(state, (current) => ({
+      ...current,
+      environments: next,
+      listed: true,
+    }));
+
+    yield* Effect.forEach(
+      environments,
+      (environment) => refreshStatus(generation, clerkToken, environment),
+      {
+        concurrency: "unbounded",
+        discard: true,
+      },
+    );
+    if ((yield* Ref.get(accountGeneration)) !== generation) {
+      return;
+    }
+    yield* SubscriptionRef.update(state, (current) => ({
+      ...current,
+      refreshing: false,
+    }));
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.gen(function* () {
+        const generation = yield* Ref.get(refreshGeneration);
+        if ((yield* Ref.get(accountGeneration)) !== generation) {
+          return;
+        }
+        yield* SubscriptionRef.update(state, (current) => ({
+          ...current,
+          environments: new Map(),
+          listed: false,
+          refreshing: false,
+          error: Option.some(error),
+        }));
+      }),
     ),
   );
+  const refresh = refreshLock.withPermits(1)(listAccount);
 
   yield* connectivity.changes.pipe(
     Stream.changes,
@@ -347,7 +349,13 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
             yield* SubscriptionRef.set(state, EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
             yield* refresh.pipe(Effect.forkScoped);
           })
-        : Effect.void,
+        : ConnectionWakeups.shouldRelistAccountAfterWakeup(reason)
+          ? Effect.gen(function* () {
+              if (!(yield* Ref.get(hasRefreshed))) return;
+              // A refresh already in flight answers this wakeup too.
+              yield* refreshLock.withPermitsIfAvailable(1)(listAccount).pipe(Effect.forkScoped);
+            })
+          : Effect.void,
     ),
     Effect.forkScoped,
   );

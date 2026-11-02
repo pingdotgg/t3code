@@ -25,6 +25,11 @@ export function shouldResubscribeAfterWakeup(reason: ConnectionWakeup): boolean 
   return isApplicationActiveWakeup(reason);
 }
 
+// A brief app switch (the mobile probe) does not justify listing the whole account again.
+export function shouldRelistAccountAfterWakeup(reason: ConnectionWakeup): boolean {
+  return reason === "application-active" || reason === "application-active-long";
+}
+
 export class ConnectionWakeups extends Context.Service<
   ConnectionWakeups,
   {
