@@ -654,7 +654,7 @@ type SidebarThreadRowProps = {
   dropVerb: SidebarDropVerb | null;
   dragOverPinned: boolean;
   sweepAction: SidebarSweepAction | null;
-  // Absolute wake time ("Until 9:00", "Until Mon 9:00") for rows in the
+  // Absolute wake time ("9:00", "Mon 9:00") for rows in the
   // snoozed shelf.
   snoozeWakeLabelText: string | null;
   wokeAt: string | null;
@@ -1357,7 +1357,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   Regenerating title
                 </span>
               ) : null}
-              {multiline ? null : prBadge}
+              {multiline || variant === "slim" ? null : prBadge}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (
@@ -1378,6 +1378,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
                       <Badge variant="quiet" size="status">
                         <Clock3Icon aria-hidden />
+                        <span className="sr-only">Snoozed until </span>
                         {props.snoozeWakeLabelText}
                       </Badge>
                     ) : (inFolder ? isWokeStatus : isWoke) ? (
