@@ -1278,7 +1278,10 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
       ThreadId.make("thread:active"),
       ThreadId.make("thread:archived"),
     ]),
-    { "thread:active": "thread:active", "thread:archived": "thread:archived" },
+    {
+      [ThreadId.make("thread:active")]: "thread:active",
+      [ThreadId.make("thread:archived")]: "thread:archived",
+    },
   );
   assert.deepEqual(yield* store.getThreadTitles([]), {});
 });
