@@ -21,8 +21,11 @@ import { runtimeModeConfig } from "./runtimeModeConfig";
 import { useComposerMenuState } from "./useComposerMenuState";
 import { ComposerMenuSegment, ComposerMenuSegments } from "./ComposerMenuSegments";
 
-export type RuntimeModeOption = { mode: RuntimeMode } & (typeof runtimeModeConfig)[RuntimeMode];
-const supervisedRuntimeModeOption = {
+export type RuntimeModeOption = {
+  mode: RuntimeMode;
+  disabledReason?: string;
+} & (typeof runtimeModeConfig)[RuntimeMode];
+const supervisedRuntimeModeOption: RuntimeModeOption = {
   mode: "approval-required" as const,
   ...runtimeModeConfig["approval-required"],
 };
@@ -155,9 +158,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
 
 export function ComposerPermissionsSection(props: {
   runtimeMode: RuntimeMode;
-  runtimeModeOptions: ReadonlyArray<
-    { mode: RuntimeMode } & (typeof runtimeModeConfig)[RuntimeMode]
-  >;
+  runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const selected =
@@ -182,8 +183,9 @@ export function ComposerPermissionsSection(props: {
             <ComposerMenuSegment
               key={option.mode}
               value={option.mode}
+              disabled={option.disabledReason !== undefined}
               label={option.label}
-              description={option.description}
+              description={option.disabledReason ?? option.description}
               closeOnClick
             >
               <OptionIcon aria-hidden="true" className="size-3.5" />
