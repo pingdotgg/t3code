@@ -187,6 +187,7 @@ export interface FakeThread {
   readonly sideChatOf?: ThreadId;
   readonly id: ThreadId;
   readonly title: string;
+  readonly worktreePath?: string;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
 }
@@ -225,7 +226,7 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: "main",
-    worktreePath: null,
+    worktreePath: thread.worktreePath ?? null,
     activeProviderThreadId: null,
     lineage: {
       rootThreadId: thread.sideChatOf ?? thread.id,
