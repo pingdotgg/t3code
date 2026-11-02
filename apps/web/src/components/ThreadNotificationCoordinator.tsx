@@ -45,6 +45,8 @@ interface NotificationState extends ThreadNotificationObservation {
   readonly status: SidebarThreadStatus;
 }
 
+type ToastId = ReturnType<typeof toastManager.add>;
+
 interface WatchedEnvironment {
   unsubscribe: () => void;
   previous: Map<ThreadId, NotificationState>;
@@ -76,7 +78,12 @@ export function startThreadNotifications(
     setNotificationBadge(pending.size);
   };
   // Toast ids by thread key, so hiding a thread can close its open toasts.
-  const openToasts = new Map<string, Array<ReturnType<typeof toastManager.add>>>();
+  const openToasts = new Map<string, Array<ToastId>>();
+  const forgetToast = (key: string, toastId: ToastId) => {
+    const remaining = (openToasts.get(key) ?? []).filter((id) => id !== toastId);
+    if (remaining.length === 0) openToasts.delete(key);
+    else openToasts.set(key, remaining);
+  };
   // A notification shown before the tag filter turned on must not stay on screen.
   const closeHiddenPending = (hidden: ReadonlySet<string>) => {
     for (const [key, toastIds] of openToasts) {
@@ -139,7 +146,9 @@ export function startThreadNotifications(
       document.hasFocus() &&
       (active.environmentId !== environmentId || active.threadId !== thread.id)
     ) {
-      const toastId = toastManager.add({
+      const toastKey = threadKey({ environmentId, threadId: thread.id });
+      const toastId: ToastId = toastManager.add({
+        onRemove: (): void => forgetToast(toastKey, toastId),
         type: kind === "completion" ? "success" : status === "failed" ? "error" : "warning",
         title,
         description: thread.title,
@@ -169,7 +178,6 @@ export function startThreadNotifications(
           },
         },
       });
-      const toastKey = threadKey({ environmentId, threadId: thread.id });
       openToasts.set(toastKey, [...(openToasts.get(toastKey) ?? []), toastId]);
       return;
     }

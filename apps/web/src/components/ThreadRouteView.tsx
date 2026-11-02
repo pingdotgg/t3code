@@ -114,7 +114,7 @@ export function ThreadRouteView({
     (unlistedParentKey === null
       ? hasHiddenTag(unlistedThread.tags, unlistedHiddenTags)
       : unlistedParentShell === null
-        ? unlistedParentHiddenTags !== null
+        ? unlistedParentHiddenTags !== null || hasHiddenTag(unlistedThread.tags, unlistedHiddenTags)
         : hiddenKeys.has(unlistedParentKey));
   const hiddenByTagFilter =
     serverThreadRef !== null && (hiddenKeys.has(threadKey(serverThreadRef)) || unlistedHidden);
