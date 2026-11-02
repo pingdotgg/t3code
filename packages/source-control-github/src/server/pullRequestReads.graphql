@@ -273,6 +273,7 @@ query PullRequestActivity(
           createdAt
           lastEditedAt
           url
+          viewerCanUpdate
           author {
             login
             avatarUrl
