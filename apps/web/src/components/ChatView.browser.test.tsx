@@ -4,7 +4,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { page } from "vite-plus/test/browser";
 
 import { AppRoot } from "~/AppRoot";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
@@ -74,14 +74,13 @@ const TOUCH_TABLET_QUERIES: Readonly<Record<string, boolean>> = {
   "(hover: hover)": false,
 };
 
-async function openThreadAtTabletSize(path: string) {
+async function openAtTabletSize(router: ReturnType<typeof getRouter>) {
   // iPad Pro 11 in landscape: the desktop layout, above max-sm.
   await page.viewport(1194, 834);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
-  const router = getRouter(createMemoryHistory({ initialEntries: [path] }));
   await router.load();
   return render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
@@ -92,7 +91,10 @@ async function openThreadAtTabletSize(path: string) {
 it("opening a thread with a fine pointer focuses the composer", async () => {
   const thread = threadWithHistory("thread-29469-fine", 1);
   using _environment = installFakeEnvironment([thread]);
-  await using _app = await openThreadAtTabletSize(`/${ENVIRONMENT_ID}/${thread.id}`);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await using _app = await openAtTabletSize(router);
 
   await expect.element(page.getByTestId("composer-editor")).toHaveFocus();
 });
@@ -109,7 +111,10 @@ it("opening a thread on a touch tablet does not focus the composer", async () =>
   const first = threadWithHistory("thread-29469-a", 1);
   const second = threadWithHistory("thread-29469-b", 1);
   using _environment = installFakeEnvironment([first, second]);
-  await using _app = await openThreadAtTabletSize(`/${ENVIRONMENT_ID}/${first.id}`);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${first.id}`] }),
+  );
+  await using _app = await openAtTabletSize(router);
   const composer = page.getByTestId("composer-editor");
 
   // Focusing the editor raises the on-screen keyboard, which shrinks the page on iPadOS.
@@ -117,7 +122,8 @@ it("opening a thread on a touch tablet does not focus the composer", async () =>
   await expect.element(composer).toBeVisible();
   await expect.element(composer).not.toHaveFocus();
 
-  await userEvent.click(page.getByRole("treeitem").filter({ hasText: second.title }));
+  // The shell subscription outlives each render, so the sidebar lists only the first test's threads.
+  router.history.push(`/${ENVIRONMENT_ID}/${second.id}`);
   await expect.element(page.getByText(`Answer 0 for ${second.id}.`)).toBeVisible();
   await expect.element(composer).not.toHaveFocus();
 });
