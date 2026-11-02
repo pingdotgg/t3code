@@ -184,7 +184,7 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
           ) : null
         }
       >
-        {failure ? (
+        {failure && !existingReady && !existingAuthenticated && !existingChecking ? (
           <p role="alert" className="text-xs text-destructive">
             {failure}
           </p>
@@ -467,7 +467,7 @@ function ManagedCodexSetup({
     setAwaitingProvider(null);
     if (handoff) {
       setHandoff(null);
-      return Promise.resolve();
+      return Promise.resolve(true);
     }
     return run(() => cancelAuth({ environmentId, input: { instanceId, flowId: auth!.flowId! } }));
   };
@@ -951,8 +951,11 @@ function ManagedCodexSetup({
                               input: { instanceId, operationId: installation.operationId! },
                             }),
                           )
-                        : Promise.resolve()
-                  ).then(() => onSignInUnfinished?.(null));
+                        : Promise.resolve(true)
+                  ).then((cancelled) => {
+                    // A rejected cancel can mean the flow already succeeded.
+                    if (cancelled) onSignInUnfinished?.(null);
+                  });
                 }}
               >
                 Cancel

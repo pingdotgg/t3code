@@ -1,4 +1,5 @@
 import { RegistryContext } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -568,6 +569,18 @@ it("restores the Codex setup mode when ChatGPT sign-in from onboarding fails", a
   await vi.waitFor(() =>
     expect(pageText()).toContain("ChatGPT sign-in was declined. Sign in again when you are ready."),
   );
+
+  // A later CLI login makes the earlier ChatGPT failure stale.
+  const [codex] = appAtomRegistry.get(
+    state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>,
+  );
+  await act(async () =>
+    appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, [
+      { ...codex!, status: "ready", auth: { status: "authenticated" } },
+    ]),
+  );
+  await vi.waitFor(() => expect(pageText()).toContain("Ready"));
+  expect(pageText()).not.toContain("ChatGPT sign-in was declined");
 });
 
 it("keeps the Codex setup mode managed when ChatGPT sign-in from onboarding succeeds", async () => {
@@ -583,6 +596,20 @@ it("keeps the Codex setup mode managed when ChatGPT sign-in from onboarding succ
       expect.objectContaining({ input: { instanceId: codexId } }),
     ),
   );
+  expect(state.updateSettings).toHaveBeenCalledOnce();
+  expect(codexSetupMode()).toBe("managed");
+});
+
+it("keeps the Codex setup mode managed when sign-in succeeds before Cancel reaches the server", async () => {
+  using _now = setup();
+  await using _screen = await mountCodexSignIn();
+  state.cancelProviderAuth.mockImplementationOnce(async () => {
+    appAtomRegistry.set(authStateAtom(), AsyncResult.success(authState("succeeded")));
+    return AsyncResult.failure(Cause.fail(new Error("This sign-in is no longer active.")));
+  });
+
+  await click("Cancel");
+  await vi.waitFor(() => expect(pageText()).toContain("This sign-in is no longer active."));
   expect(state.updateSettings).toHaveBeenCalledOnce();
   expect(codexSetupMode()).toBe("managed");
 });
