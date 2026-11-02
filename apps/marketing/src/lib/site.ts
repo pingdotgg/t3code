@@ -1,3 +1,5 @@
+import { fetchGitHubStars } from "./githubStars";
+
 export const GITHUB_REPOSITORY_URL = "https://github.com/pingdotgg/t3code";
 
 export const IOS_APP_STORE_URL =
@@ -7,6 +9,6 @@ export const ANDROID_PLAY_STORE_URL =
   "https://play.google.com/store/apps/details?id=com.t3tools.t3code";
 
 export const MARKETING_STATS = {
-  githubStars: "31k+",
+  githubStars: await fetchGitHubStars(),
   users: "500,000",
 } as const;
