@@ -127,6 +127,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   // Bumped by choosing Auto, so a pick whose change failed or was superseded is tried again.
   const [autoGeneration, setAutoGeneration] = useState(0);
   const environmentChangeRef = useRef<EnvironmentChangeRequest | null>(null);
+  const attemptedAutoKeyRef = useRef<string | null>(null);
   const onAutoEnvironment = () => {
     if (envLocked || !draftId) return;
     if (composerHasAttachments) {
@@ -174,6 +175,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     () => () => {
       if (environmentChangeRef.current?.scope === environmentChangeScope) {
         environmentChangeRef.current = null;
+        attemptedAutoKeyRef.current = null;
       }
     },
     [environmentChangeScope],
@@ -213,7 +215,8 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         !currentDraft ||
         currentDraft.promotedTo ||
         currentDraft.environmentId !== originalDraft.environmentId ||
-        currentDraft.projectId !== originalDraft.projectId
+        currentDraft.projectId !== originalDraft.projectId ||
+        (environmentSelection === "auto" && currentDraft.environmentSelection === "manual")
       )
         return;
       const projectRef = scopeProjectRef(target.environmentId, project.id);
@@ -257,10 +260,20 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     needsLoadBalancing && !loadBalancing.pending ? loadBalancing.environmentId : null;
   // One attempt per pick, so a failed or superseded change waits for a new pick or Auto again.
   const autoAttemptKey = `${environmentChangeScope}:${autoGeneration}:${autoEnvironmentId}`;
-  const attemptedAutoKeyRef = useRef<string | null>(null);
   // A manual pick still opening its machine's scratch project wins over Auto.
   const manualChangeInFlight =
     isEnvironmentChanging && busyEnvironmentChange?.environmentSelection === "manual";
+  // Losing the pick (a pin, an attachment, Auto turned off, a newer pick) abandons its change.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons an in-flight Auto change once its load-balancing pick no longer applies
+  useLayoutEffect(() => {
+    const pending = environmentChangeRef.current;
+    if (pending?.environmentSelection !== "auto" || pending.environmentId === autoEnvironmentId) {
+      return;
+    }
+    environmentChangeRef.current = null;
+    attemptedAutoKeyRef.current = null;
+    setBusyEnvironmentChange((busy) => (busy === pending ? null : busy));
+  }, [autoEnvironmentId]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the draft to the machine the async load-balancing pick settles on
   useEffect(() => {
     if (

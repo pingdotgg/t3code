@@ -209,6 +209,23 @@ describe("useDraftEnvironmentRouting", () => {
     await expect.element(screen.getByText("Preparing machine")).toBeInTheDocument();
   });
 
+  it("keeps a machine pin set elsewhere while an Auto open is still in flight", async () => {
+    const { draftId, draft } = setup("draft-auto-pinned", machineB);
+    await using screen = await render(<Harness draftId={draftId} />);
+    await expect.element(screen.getByText("Preparing machine")).toBeInTheDocument();
+
+    // Triage and desktop links reuse an empty draft and pin it through the store.
+    await act(() =>
+      useComposerDraftStore
+        .getState()
+        .setDraftThreadContext(draftId, { environmentSelection: "manual" }),
+    );
+    await expect.element(screen.getByText("Ready")).toBeInTheDocument();
+    await act(() => scratchOpens.opens[0]!.resolve(scratchProject(machineB)));
+
+    expect(draft()).toMatchObject({ environmentId: local, environmentSelection: "manual" });
+  });
+
   it("lets a manual machine pick made during an Auto open win", async () => {
     const { draftId, draft, opened } = setup("draft-auto-manual", machineB);
     await using screen = await render(<Harness draftId={draftId} />);
