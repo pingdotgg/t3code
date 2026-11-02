@@ -1892,11 +1892,51 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
-  it.effect(
-    "retrying an accepted driver-only delegation replays even after the project disables every candidate",
-    () =>
+  it.effect.each([false, true])(
+    "replays an accepted driver-only delegation after settings change (cross-project: %s)",
+    (crossProject) =>
       Effect.gen(function* () {
         const altInstanceId = ProviderInstanceId.make("codex-alt");
+        const destinationId = crossProject ? ProjectId.make("project:destination") : projectId;
+        const selection = {
+          instanceId: crossProject ? altInstanceId : codexInstanceId,
+          model: crossProject ? "gpt-5.5" : "gpt-5.4",
+          options: [{ id: "effort", value: "high" }],
+        };
+        const requestedTarget = {
+          driverKind: ProviderDriverKind.make("codex"),
+          ...(crossProject ? { projectId: destinationId } : {}),
+          model: selection.model,
+          options: selection.options,
+        };
+        const snapshots = [
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+          providerSnapshot({
+            instanceId: altInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.5",
+          }),
+        ].map((provider) => ({
+          ...provider,
+          models: provider.models.map((model) => ({
+            ...model,
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  label: "Reasoning",
+                  type: "select" as const,
+                  options: [{ id: "high", label: "High" }],
+                },
+              ],
+            },
+          })),
+        }));
+        const catalog = yield* Ref.make<ReadonlyArray<ServerProvider>>(snapshots);
         const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
         const accepted = yield* Ref.make(false);
         const everyCandidateDisabled = yield* Ref.make(false);
@@ -1908,13 +1948,13 @@ describe("OrchestratorMcpService provider resolution", () => {
           origin: "app_owned",
           createdBy: "agent",
           driver: ProviderDriverKind.make("codex"),
-          providerInstanceId: codexInstanceId,
+          providerInstanceId: selection.instanceId,
           providerThreadId: null,
           childThreadId,
           nativeTaskRef: null,
           prompt: "Summarize the diff.",
           title: null,
-          model: "gpt-5.4",
+          model: selection.model,
           status: "running",
           result: null,
           startedAt: null,
@@ -1931,9 +1971,22 @@ describe("OrchestratorMcpService provider resolution", () => {
                     : childProjection,
                 ),
               ),
+            getThreadShell: (id) =>
+              Effect.succeed({
+                ...liveThreadShell(id),
+                projectId: destinationId,
+                providerInstanceId: selection.instanceId,
+                modelSelection: selection,
+              }),
             hasReceipt: () => Ref.get(accepted),
-            isProviderInstanceEnabledForProject: () =>
-              Ref.get(everyCandidateDisabled).pipe(Effect.map((disabled) => !disabled)),
+            isProviderInstanceEnabledForProject: ({ projectId: checkedProject, instanceId }) => {
+              assert.equal(checkedProject, destinationId);
+              return Ref.get(everyCandidateDisabled).pipe(
+                Effect.map(
+                  (disabled) => !disabled && (!crossProject || instanceId === altInstanceId),
+                ),
+              );
+            },
             assertProviderInstanceEnabled: ({ projectId, instanceId }) =>
               Effect.all([Ref.get(accepted), Ref.get(everyCandidateDisabled)]).pipe(
                 Effect.flatMap(([isAccepted, disabled]) =>
@@ -1962,20 +2015,15 @@ describe("OrchestratorMcpService provider resolution", () => {
                 } as never),
               ),
           }),
-          providerRegistryLayer([
-            providerSnapshot({
-              instanceId: codexInstanceId,
-              driver: ProviderDriverKind.make("codex"),
-              model: "gpt-5.4",
-            }),
-            providerSnapshot({
-              instanceId: altInstanceId,
-              driver: ProviderDriverKind.make("codex"),
-              model: "gpt-5.4",
-            }),
-          ]),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Ref.get(catalog),
+            refreshInstance: () => Ref.get(catalog),
+          }),
           adapterRegistryLayer([codexInstanceId, altInstanceId]),
-          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () =>
+              Effect.succeedSome({ id: destinationId, workspaceRoot: "/destination" } as never),
+          }),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
@@ -1986,17 +2034,30 @@ describe("OrchestratorMcpService provider resolution", () => {
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
           const first = yield* service.delegateTask(scope, {
             task: "Summarize the diff.",
-            target: { driverKind: ProviderDriverKind.make("codex") },
+            target: requestedTarget,
             mode: "async",
             clientRequestId: "delegate-driver-retry-after-disable-1",
           });
           assert.equal(first.status, "running");
 
+          const firstCommands = yield* Ref.get(dispatched);
+          assert.deepEqual(
+            (firstCommands[0] as { modelSelection: unknown }).modelSelection,
+            selection,
+          );
           yield* Ref.set(everyCandidateDisabled, true);
+          yield* Ref.set(
+            catalog,
+            snapshots.map((provider) =>
+              crossProject && provider.instanceId === altInstanceId
+                ? { ...provider, models: [] }
+                : provider,
+            ),
+          );
 
           const retry = yield* service.delegateTask(scope, {
             task: "Summarize the diff.",
-            target: { driverKind: ProviderDriverKind.make("codex") },
+            target: requestedTarget,
             mode: "async",
             clientRequestId: "delegate-driver-retry-after-disable-1",
           });
@@ -2007,7 +2068,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           const retryCommand = commands[1] as {
             modelSelection: { instanceId: string; model: string };
           };
-          assert.equal(retryCommand.modelSelection.instanceId, codexInstanceId);
+          assert.deepEqual(retryCommand.modelSelection, selection);
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
       }),
   );

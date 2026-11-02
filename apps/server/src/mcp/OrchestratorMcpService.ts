@@ -83,6 +83,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
@@ -2348,13 +2349,26 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
-      const target = yield* resolveTargetRechecking({
-        parent,
-        projectId,
-        target: input.target,
-        providers,
-        skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
-      });
+      const committedChild = isRetryOfAcceptedDelegation
+        ? yield* threadManagement
+            .getThreadShell(IdAllocator.derive.delegatedTaskThread({ commandId }))
+            .pipe(Effect.mapError(threadManagementFailure))
+        : null;
+      if (isRetryOfAcceptedDelegation && committedChild === null) {
+        return yield* failure(
+          "orchestration_error",
+          "The accepted delegated task's child thread was not found.",
+        );
+      }
+      const target =
+        committedChild === null
+          ? yield* resolveTargetRechecking({ parent, projectId, target: input.target, providers })
+          : {
+              modelSelection: committedChild.modelSelection,
+              supportedRuntimeModes: providers.find(
+                (provider) => provider.instanceId === committedChild.modelSelection.instanceId,
+              )?.supportedRuntimeModes,
+            };
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
         input.runtimeMode,
