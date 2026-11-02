@@ -469,7 +469,32 @@ describe("makeCodexVoice", () => {
         .pipe(Stream.runCollect, Effect.forkChild);
       yield* Deferred.await(fake.startRequested);
 
-      yield* voice.expectSpokenTurn("run the tests");
+      yield* voice.expectSpokenTurn("voice-message");
+      yield* voice.registerTurn("typed-message", "typed");
+      yield* fake.emit("item/started", {
+        threadId: PROVIDER_THREAD,
+        turnId: "typed",
+        item: {
+          type: "userMessage",
+          id: "user-typed",
+          content: [{ type: "text", text: "run the tests please" }],
+        },
+      });
+      yield* fake.emit("item/completed", {
+        threadId: PROVIDER_THREAD,
+        turnId: "typed",
+        item: {
+          type: "agentMessage",
+          id: "typed-answer",
+          text: "Typed answer.",
+          phase: "final_answer",
+        },
+      });
+      yield* fake.emit("turn/completed", {
+        threadId: PROVIDER_THREAD,
+        turn: { id: "typed", status: "completed" },
+      });
+      yield* voice.registerTurn("voice-message", "resubmitted");
       yield* fake.emit("item/started", {
         threadId: PROVIDER_THREAD,
         turnId: "resubmitted",
@@ -490,10 +515,15 @@ describe("makeCodexVoice", () => {
       });
 
       yield* Deferred.await(fake.speechRequested);
-      NodeAssert.deepEqual(fake.requests.at(-1), {
-        method: "thread/realtime/appendSpeech",
-        params: { threadId: PROVIDER_THREAD, text: "All green." },
-      });
+      NodeAssert.deepEqual(
+        fake.requests.filter(({ method }) => method === "thread/realtime/appendSpeech"),
+        [
+          {
+            method: "thread/realtime/appendSpeech",
+            params: { threadId: PROVIDER_THREAD, text: "All green." },
+          },
+        ],
+      );
       yield* Fiber.interrupt(fiber);
     }),
   );

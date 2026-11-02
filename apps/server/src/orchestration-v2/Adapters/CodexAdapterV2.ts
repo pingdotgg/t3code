@@ -32,6 +32,7 @@ import {
 } from "../../provider/codexUsageLimits.ts";
 import {
   CodexSettings,
+  MessageId,
   defaultInstanceIdForDriver,
   isOrchestrationV2WorkActive,
   type OrchestrationV2GoalCommand,
@@ -2462,6 +2463,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           if (existing !== undefined) {
             return existing;
           }
+          yield* voice.registerTurn(input.turnInput.message.messageId, input.nativeTurnId);
           const providerTurnId = idAllocator.derive.providerTurn({
             driver: CODEX_PROVIDER,
             nativeTurnId: input.nativeTurnId,
@@ -7352,8 +7354,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 voiceResubmit.session !== undefined &&
                 voiceResubmit.session === (yield* Ref.get(voiceSession))
               ) {
-                yield* voice.expectSpokenTurn(voiceResubmit.text);
+                const messageId = MessageId.make(`voice:${payload.threadId}:${payload.turn.id}`);
+                yield* voice.expectSpokenTurn(messageId);
                 yield* continuationRequests.offer({
+                  messageId,
                   threadId: voiceResubmit.providerThread.appThreadId ?? input.threadId,
                   providerThreadId: voiceResubmit.providerThread.id,
                   driver: CODEX_PROVIDER,
