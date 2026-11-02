@@ -90,8 +90,12 @@ export function PullRequestLinkPreview({
       : link;
   const preview = previewQuery.data;
   // A restored or failed preview can predate the shared summary; it only adds author and age.
+  // Merged is terminal, so neither copy's age can undo it.
   const card =
-    preview !== null && summary !== null && (previewQuery.isPending || previewQuery.error !== null)
+    preview !== null &&
+    summary !== null &&
+    preview.state !== "merged" &&
+    (previewQuery.isPending || previewQuery.error !== null)
       ? {
           ...preview,
           title: summary.title,

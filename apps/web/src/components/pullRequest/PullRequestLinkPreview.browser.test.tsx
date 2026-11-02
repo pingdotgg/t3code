@@ -73,6 +73,26 @@ it("shows the known summary over a restored preview while the preview loads", as
   expect(page.getByText("Restored title").query()).toBeNull();
 });
 
+it("keeps a merged preview merged while an open summary is known", async () => {
+  state.restoredPreview = {
+    projectId: "project",
+    repository: "owner/repo",
+    number: 1,
+    title: "Merged title",
+    url: known.url,
+    author: { login: "octocat" },
+    state: "merged",
+    isDraft: false,
+    createdAt: "2026-08-01T00:00:00Z",
+  };
+  await using screen = await renderPreview();
+
+  await userEvent.hover(screen.getByRole("link"));
+
+  await expect.element(page.getByText("Merged", { exact: true })).toBeVisible();
+  expect(page.getByText("Open", { exact: true }).query()).toBeNull();
+});
+
 it("shows the known summary while the preview loads", async () => {
   state.restoredPreview = null;
   await using screen = await render(
