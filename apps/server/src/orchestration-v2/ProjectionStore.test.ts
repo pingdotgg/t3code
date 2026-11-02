@@ -3246,6 +3246,21 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           [liveForkId],
         );
       }
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:deleted-fork-transfer:delete-source"),
+        type: "thread.deleted",
+        threadId: sourceThreadId,
+        occurredAt: now,
+        payload: { ...makeThread(sourceThreadId), deletedAt: now },
+      });
+      const { projection: fork } = yield* projectionStore.getThreadSnapshotWindow(liveForkId, {
+        rowLimit: 10,
+      });
+      assert.deepEqual(
+        fork.contextTransfers.map((transfer) => transfer.sourceThreadId),
+        [sourceThreadId],
+      );
     }),
   );
 

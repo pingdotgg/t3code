@@ -3169,7 +3169,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const cohortPlanIds = cohortJson("planId");
         const cohortCheckpointIds = cohortJson("checkpointId");
         const cohortHandoffIds = cohortJson("contextHandoffId");
-        // Hide transfers out to deleted threads at read time so undoing the delete restores them.
+        // Records stay for replay; a transfer out to a deleted thread is no longer a relationship.
         const threadContextTransfers = sql`
           (transfer.target_thread_id = ${threadId}
             OR (transfer.source_thread_id = ${threadId} AND EXISTS (
