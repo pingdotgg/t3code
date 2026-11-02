@@ -38,6 +38,12 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   const homePath = config.homePath.trim();
   if (homePath.length === 0) return resolvedBaseEnv;
   const resolvedHomePath = yield* resolveClaudeHomePath(config);
+  // Claude Code picks its Keychain item and `.claude.json` by whether CLAUDE_CONFIG_DIR is set, not by value.
+  if (resolvedHomePath === (yield* resolveClaudeHomePath({ homePath: "" }))) {
+    const defaultHomeEnv = { ...resolvedBaseEnv };
+    delete defaultHomeEnv.CLAUDE_CONFIG_DIR;
+    return defaultHomeEnv;
+  }
   return {
     ...resolvedBaseEnv,
     // Changing HOME hides macOS Keychain credentials; use CLAUDE_CONFIG_DIR to keep login access.
