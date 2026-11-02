@@ -480,7 +480,9 @@ it.effect("shell groups read distinct threads once and keep each event's own seq
           getThreadShell: (threadId: string) =>
             Effect.sync(() => {
               shellReads.push([`scalar:${threadId}`]);
-              return shell(threadId);
+              return threadId === "thread:missing"
+                ? null
+                : shell(threadId, threadId === "thread:archived" ? now : null);
             }),
         } as unknown as ThreadManagement.ThreadManagementService["Service"]),
         Effect.provideService(ProjectStore.ProjectStoreV2, {
@@ -502,37 +504,39 @@ it.effect("shell groups read distinct threads once and keep each event's own seq
         ),
       );
 
-    const grouped = yield* collect(after);
+    const collectSummary = (afterSequence: number) =>
+      collect(afterSequence).pipe(
+        Effect.map((items) =>
+          items.flatMap((item): ReadonlyArray<ReadonlyArray<string | number>> =>
+            item.kind === "thread.updated"
+              ? [[item.kind, item.sequence, item.thread.id]]
+              : item.kind === "thread.removed"
+                ? [[item.kind, item.sequence, item.threadId]]
+                : item.kind === "project.updated"
+                  ? [[item.kind, item.sequence, item.project.id]]
+                  : [],
+          ),
+        ),
+      );
+    const expectedGroup = [
+      ["thread.removed", archived, "thread:archived"],
+      ["project.updated", projectUpdated, project.id],
+      ["thread.updated", active, "thread:active"],
+      ["thread.removed", missing, "thread:missing"],
+    ];
+
+    assert.deepEqual(yield* collectSummary(after), expectedGroup);
     assert.deepEqual(shellReads, [["thread:archived", "thread:active", "thread:missing"]]);
-    assert.deepEqual(
-      grouped.flatMap((item): ReadonlyArray<ReadonlyArray<string | number>> =>
-        item.kind === "thread.updated"
-          ? [[item.kind, item.sequence, item.thread.id]]
-          : item.kind === "thread.removed"
-            ? [[item.kind, item.sequence, item.threadId]]
-            : item.kind === "project.updated"
-              ? [[item.kind, item.sequence, item.project.id]]
-              : [],
-      ),
-      [
-        ["thread.removed", archived, "thread:archived"],
-        ["project.updated", projectUpdated, project.id],
-        ["thread.updated", active, "thread:active"],
-        ["thread.removed", missing, "thread:missing"],
-      ],
-    );
 
     shellReads.length = 0;
-    const singleton = yield* collect(active);
+    assert.deepEqual(yield* collectSummary(active), [
+      ["thread.removed", missing, "thread:missing"],
+    ]);
     assert.deepEqual(shellReads, [["scalar:thread:missing"]]);
-    assert.deepEqual(
-      singleton.flatMap((item) => (item.kind === "thread.updated" ? [item.sequence] : [])),
-      [missing],
-    );
 
     shellReads.length = 0;
     batchFails = true;
-    yield* collect(after);
+    assert.deepEqual(yield* collectSummary(after), expectedGroup);
     assert.deepEqual(shellReads, [
       ["thread:archived", "thread:active", "thread:missing"],
       ["scalar:thread:archived"],
