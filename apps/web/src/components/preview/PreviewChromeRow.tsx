@@ -150,7 +150,7 @@ export function PreviewChromeRow({
 
         {leadingActions}
 
-        <InputGroup variant="ghost" className="h-7 flex-1">
+        <InputGroup variant="ghost" className="group/address h-7 flex-1">
           <Tooltip>
             <TooltipTrigger
               render={
@@ -187,22 +187,25 @@ export function PreviewChromeRow({
           </Tooltip>
           {onOpenInBrowser ? (
             <InputGroupAddon align="inline-end">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={onOpenInBrowser}
-                      aria-label="Open in system browser"
-                      type="button"
-                    />
-                  }
-                >
-                  <ExternalLink />
-                </TooltipTrigger>
-                <TooltipPopup>Open in system browser</TooltipPopup>
-              </Tooltip>
+              {}
+              <span className="pointer-events-none flex opacity-0 transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/address:pointer-events-auto group-hover/address:opacity-100">
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={onOpenInBrowser}
+                        aria-label="Open in system browser"
+                        type="button"
+                      />
+                    }
+                  >
+                    <ExternalLink />
+                  </TooltipTrigger>
+                  <TooltipPopup>Open in system browser</TooltipPopup>
+                </Tooltip>
+              </span>
             </InputGroupAddon>
           ) : null}
         </InputGroup>
