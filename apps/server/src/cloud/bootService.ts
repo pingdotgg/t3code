@@ -410,9 +410,14 @@ const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit
     });
     if (result.code !== 0) return undefined;
     const { data } = yield* decodeSystemdUnitPaths(result.stdout);
-    return data.find(
-      (directory) => path.isAbsolute(directory) && directory.endsWith("/systemd/user"),
+    // The persistent control directory identifies the manager's config root despite UnitPath overrides.
+    const controlDirectory = data.find(
+      (directory) =>
+        path.isAbsolute(directory) &&
+        directory.endsWith("/systemd/user.control") &&
+        data.includes(directory.slice(0, -".control".length)),
     );
+    return controlDirectory?.slice(0, -".control".length);
   },
   Effect.orElseSucceed(() => undefined),
 );

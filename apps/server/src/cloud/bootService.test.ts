@@ -153,11 +153,11 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
             ? JSON.stringify({
                 type: "as",
                 data: [
+                  "/usr/lib/systemd/user",
                   `${managerUnitDir}.control`,
                   "/run/user/501/systemd/transient",
                   managerUnitDir,
                   "/etc/systemd/user",
-                  "/usr/lib/systemd/user",
                 ],
               })
             : input.args[0] === "--version"
