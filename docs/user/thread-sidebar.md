@@ -274,8 +274,9 @@ finishes; the call's own result shows its status.
 
 On web and desktop, the thread details card lists the local servers that the
 thread's terminals or its Claude agent started, with their ports. Not every one
-serves a web page. A server the agent started stays listed after the agent's
-turn ends.
+serves a web page. A new server shows once it has listened for a few seconds,
+so ports that tests and build tools open for a moment stay out of the list. A
+server the agent started stays listed after the agent's turn ends.
 Select a server to open it in the browser panel. **Stop** ends the server's job
 and keeps the agent, the terminal, and T3 Code running. Stop needs terminal
 access to the environment and is not available on Windows.

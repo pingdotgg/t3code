@@ -363,6 +363,8 @@ effectIt.effect("discovers owned listeners without sending HTTP or TLS probes", 
     expect(requests).toEqual([]);
 
     stdout = owned;
+    expect(yield* scanner.scan()).toHaveLength(0);
+    yield* TestClock.adjust(Duration.seconds(3));
     expect(yield* scanner.scan()).toHaveLength(1);
     expect(requests).toEqual([]);
 
@@ -372,6 +374,45 @@ effectIt.effect("discovers owned listeners without sending HTTP or TLS probes", 
     });
     expect(yield* scanner.scan()).toHaveLength(0);
     expect(requests).toEqual([]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("lists a new owned listener once it outlives a poll", () => {
+  const listener = (pid: number, port: number) => `p${pid}\ncnode\nn127.0.0.1:${port}\n`;
+  const devServer = listener(1234, LSOF_TEST_PORT);
+  const testRunner = listener(1235, LSOF_TEST_PORT + 1);
+  let stdout = devServer;
+  const layer = layerLsofScanner({
+    pid: () => 1234,
+    fetch: globalThis.fetch,
+    stdout: () => stdout,
+  });
+  const ports = (servers: ReadonlyArray<DiscoveredLocalServer>) =>
+    servers.map((server) => server.port);
+
+  return Effect.gen(function* () {
+    const scanner = yield* ownedScanner([1234, 1235, 1236]);
+    expect(ports(yield* scanner.scan())).toEqual([LSOF_TEST_PORT]);
+
+    // A port held for moments, such as a test runner's, never shows.
+    stdout = `${devServer}${testRunner}`;
+    expect(ports(yield* scanner.scan())).toEqual([LSOF_TEST_PORT]);
+    yield* TestClock.adjust(Duration.seconds(3));
+    stdout = devServer;
+    expect(ports(yield* scanner.scan())).toEqual([LSOF_TEST_PORT]);
+
+    // One still listening a poll later does, and a restart under a new pid keeps it listed.
+    stdout = `${devServer}${testRunner}`;
+    expect(ports(yield* scanner.scan())).toEqual([LSOF_TEST_PORT]);
+    yield* TestClock.adjust(Duration.seconds(3));
+    expect(ports(yield* scanner.scan())).toEqual([LSOF_TEST_PORT, LSOF_TEST_PORT + 1]);
+    stdout = `${devServer}${listener(1236, LSOF_TEST_PORT + 1)}`;
+    expect(yield* scanner.scan()).toMatchObject([{ pid: 1234 }, { pid: 1236 }]);
+
+    // Listeners that started while no client looked show as soon as one does.
+    stdout = `${devServer}${testRunner}${listener(1236, LSOF_TEST_PORT + 2)}`;
+    const reopened = yield* Effect.scoped(Effect.andThen(scanner.retain, scanner.scan()));
+    expect(ports(reopened)).toEqual([LSOF_TEST_PORT, LSOF_TEST_PORT + 1, LSOF_TEST_PORT + 2]);
   }).pipe(Effect.provide(layer));
 });
 
@@ -765,6 +806,8 @@ effectIt.effect.each(["linux", "darwin"] as const)(
         expect(yield* scanner.scan()).toEqual([]);
         environmentFails = false;
       }
+      expect(yield* scanner.scan()).toEqual([]);
+      yield* TestClock.adjust(Duration.seconds(3));
       expect(yield* scanner.scan()).toMatchObject([
         { port: agentPort, pid: 4242, terminal: null, agent: { threadId: "thread-agent" } },
       ]);
