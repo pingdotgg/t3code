@@ -48,6 +48,7 @@ describe("parseCodexLine", () => {
         info: { last_token_usage: last, total_token_usage: total, ...extra },
       },
     });
+  const at = (second: number, line: string) => line.replace("49.919Z", `${second}.919Z`);
 
   it("attributes usage to the model from the preceding turn context", () => {
     const state = initialCodexScanState();
@@ -372,6 +373,72 @@ describe("parseCodexLine", () => {
       parseCodexLine(counted(counters(10, 2), counters(40, 7)), state)?.totals.outputTokens,
     ).toBe(2);
     expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+  });
+
+  it("bills a request whose cumulative counters rewind to an earlier snapshot", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const processed = [
+      at(50, counted(counters(1000, 200), counters(1000, 200))),
+      at(51, counted(counters(100, 20), counters(1100, 220))),
+      at(52, counted(counters(300, 50), counters(1400, 270))),
+      at(53, counted(counters(200, 40), counters(1300, 260))),
+      at(54, counted(counters(10, 2), counters(1310, 262))),
+    ].map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({
+      processed,
+      skipped: codexUsageFormat.readMalformedRecords?.(state),
+    }).toEqual({ processed: [1200, 120, 350, 240, 12], skipped: 0 });
+  });
+
+  it.each([false, true])(
+    "does not bill a replay of an earlier request as a counter rewind (resumed from a state cached without request timestamps: %s)",
+    (resumed) => {
+      const state = initialCodexScanState();
+      parseCodexLine(turnContext, state);
+      const replayed = at(51, counted(counters(100, 20), counters(1100, 220)));
+      const scanned = [
+        at(50, counted(counters(1000, 200), counters(1000, 200))),
+        replayed,
+        at(52, counted(counters(300, 50), counters(1400, 270))),
+      ].map((line) => parseCodexLine(line, state));
+      if (resumed) delete state.lastRequestTimestampMs;
+      const processed = [
+        ...scanned,
+        ...[replayed, at(53, counted(counters(10, 2), counters(1110, 222)))].map((line) =>
+          parseCodexLine(line, state),
+        ),
+      ].map((record) => (record === null ? 0 : totalTokens(record.totals)));
+
+      expect({
+        processed,
+        skipped: codexUsageFormat.readMalformedRecords?.(state),
+      }).toEqual({ processed: [1200, 120, 350, 0, 12], skipped: 1 });
+    },
+  );
+
+  it("does not let an older accepted request reopen the rewind window for a replay", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const replayed = at(52, counted(counters(100, 20), counters(1100, 220)));
+    const processed = [
+      at(50, counted(counters(1000, 200), counters(1000, 200))),
+      replayed,
+      at(49, counted(counters(10, 2))),
+      replayed,
+    ].map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({
+      processed,
+      skipped: codexUsageFormat.readMalformedRecords?.(state),
+    }).toEqual({ processed: [1200, 120, 12, 0], skipped: 1 });
   });
 
   it("ignores a replay of the current sequence's first request without rewinding the baseline", () => {
