@@ -2,7 +2,6 @@ import { GUEST_RENDER_ROUTE, GUEST_SHARE_PARAM } from "@t3tools/contracts";
 import {
   type HtmlRenderReference,
   HTML_RENDER_COLUMN_WIDTH,
-  HTML_RENDER_MAX_FIT_HEIGHT,
   htmlRenderFrameHeight,
   htmlRenderResult,
   htmlRenderThemeFragment,
@@ -90,12 +89,6 @@ export function GuestHtmlRender({
         src={src}
         title={reference.title}
         sandbox="allow-scripts allow-forms allow-popups allow-downloads"
-        // A fitted page must not scroll in its frame, or Chromium latches trackpad swipes to it.
-        scrolling={
-          contentHeight === undefined || contentHeight <= HTML_RENDER_MAX_FIT_HEIGHT
-            ? "no"
-            : undefined
-        }
         className="block size-full rounded-lg border border-border"
       />
     </div>
