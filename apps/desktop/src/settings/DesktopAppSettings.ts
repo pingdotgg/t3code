@@ -470,21 +470,33 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
-  const settingsRef = yield* SynchronizedRef.make(environment.defaultDesktopSettings);
+  // Writes start from the persisted document so session-only overrides never reach disk.
+  const settingsRef = yield* SynchronizedRef.make({
+    persisted: environment.defaultDesktopSettings,
+    session: environment.defaultDesktopSettings,
+  });
 
   const updateInMemory = (update: (settings: DesktopSettings) => DesktopSettings) =>
-    SynchronizedRef.modify(settingsRef, (settings) => {
-      const nextSettings = update(settings);
-      return [settingsChange(nextSettings, nextSettings !== settings), nextSettings] as const;
+    SynchronizedRef.modify(settingsRef, (current) => {
+      const session = update(current.session);
+      return [
+        settingsChange(session, session !== current.session),
+        { ...current, session },
+      ] as const;
     });
 
   const persist = (
     update: (settings: DesktopSettings) => DesktopSettings,
   ): Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError> =>
-    SynchronizedRef.modifyEffect(settingsRef, (settings) => {
-      const nextSettings = update(settings);
-      if (nextSettings === settings) {
-        return Effect.succeed([settingsChange(settings, false), settings] as const);
+    SynchronizedRef.modifyEffect(settingsRef, (current) => {
+      const persisted = update(current.persisted);
+      const session = update(current.session);
+      const next = [
+        settingsChange(session, session !== current.session),
+        { persisted, session },
+      ] as const;
+      if (persisted === current.persisted) {
+        return Effect.succeed(next);
       }
 
       return crypto.randomUUIDv4().pipe(
@@ -502,24 +514,25 @@ export const make = Effect.gen(function* () {
             fileSystem,
             path,
             settingsPath: environment.desktopSettingsPath,
-            settings: nextSettings,
+            settings: persisted,
             defaultSettings: environment.defaultDesktopSettings,
             suffix,
           }),
         ),
-        Effect.as([settingsChange(nextSettings, true), nextSettings] as const),
+        Effect.as(next),
       );
     });
 
   return DesktopAppSettings.of({
-    get: SynchronizedRef.get(settingsRef),
+    get: SynchronizedRef.get(settingsRef).pipe(Effect.map((current) => current.session)),
     load: Effect.gen(function* () {
       const settings = yield* readSettings(
         fileSystem,
         environment.desktopSettingsPath,
         environment.appVersion,
       );
-      return yield* SynchronizedRef.setAndGet(settingsRef, settings);
+      yield* SynchronizedRef.set(settingsRef, { persisted: settings, session: settings });
+      return settings;
     }).pipe(Effect.withSpan("desktop.settings.load")),
     setMainWindowBounds: Effect.fn("desktop.settings.setMainWindowBounds")(
       function* (bounds, isMaximized) {
