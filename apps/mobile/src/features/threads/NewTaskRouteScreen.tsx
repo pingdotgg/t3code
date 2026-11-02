@@ -52,6 +52,8 @@ type NewTaskRouteParams = {
   readonly model?: string | string[];
   /** The machine the user tapped in the environment picker; prefer its copy. */
   readonly preferredEnvironmentId?: string | string[];
+  /** The user came from the environment picker and must choose explicitly. */
+  readonly explicitProjectChoice?: boolean;
 };
 
 function deriveProjectEmptyState(catalogState: WorkspaceState): {
@@ -177,6 +179,9 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     routePreferredEnvironmentId === undefined
       ? selectedEnvironmentId
       : EnvironmentId.make(routePreferredEnvironmentId);
+  // Explicit choice (from the environment picker) never auto-resumes a share
+  // reservation: the user is here to pick a different project.
+  const explicitProjectChoice = route.params?.explicitProjectChoice === true;
   const incomingShare = routeShareId ? getShare(routeShareId) : null;
   const incomingShareSubtitle = incomingShare
     ? incomingShare.attachments.length === 0
@@ -224,7 +229,13 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const scratchStartInFlightRef = useRef(false);
 
   async function selectProject(project: EnvironmentProject): Promise<void> {
-    if (incomingShare?.destination && !reservedDestinationProject) {
+    const replacesReservation =
+      incomingShare?.destination !== undefined &&
+      (reservedDestinationProject === null ||
+        (explicitProjectChoice &&
+          (reservedDestinationProject.environmentId !== project.environmentId ||
+            reservedDestinationProject.id !== project.id)));
+    if (replacesReservation) {
       try {
         await releaseShareReservation(incomingShare.id, incomingShare.destination);
       } catch (error) {
@@ -285,7 +296,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- navigates to the incoming share's reserved destination draft once its project loads and the screen is focused
   useEffect(() => {
     const destination = incomingShare?.destination;
-    if (!destination) {
+    if (!destination || explicitProjectChoice) {
       resumedDestinationKeyRef.current = null;
       return;
     }
@@ -498,7 +509,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                       }
                       subtitleNumberOfLines={1}
                       subtitleEllipsizeMode="middle"
-                      disabled={reservedDestinationProject !== null}
+                      disabled={reservedDestinationProject !== null && !explicitProjectChoice}
                       onPress={() => void selectProject(selectionTarget)}
                       leading={
                         <ProjectFavicon
@@ -521,7 +532,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={scope.title}
-                      disabled={reservedDestinationProject !== null}
+                      disabled={reservedDestinationProject !== null && !explicitProjectChoice}
                       onPress={() => void selectProject(selectionTarget)}
                       className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5"
                     >

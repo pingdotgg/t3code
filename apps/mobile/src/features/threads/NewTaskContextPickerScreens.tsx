@@ -231,6 +231,7 @@ export function NewTaskEnvironmentPickerRouteScreen({
                   if (!flow.canSwitchEnvironmentDirectly(environment.environmentId)) {
                     const params = {
                       preferredEnvironmentId: String(environment.environmentId),
+                      explicitProjectChoice: true,
                       ...(shareId === undefined ? {} : { incomingShareId: shareId }),
                     };
                     navigation.dispatch(StackActions.replace("NewTaskProject", params));
