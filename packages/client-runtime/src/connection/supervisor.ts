@@ -477,16 +477,23 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     lastFailure: ConnectionAttemptError | null,
     synchronizedRoutes: Ref.Ref<number>,
     transportOpened: Deferred.Deferred<void>,
+    routeOpen: Ref.Ref<boolean>,
   ) {
     return yield* driver.connect(yield* attemptEntry, (progress) => {
       if ("transportOpened" in progress) {
-        return Deferred.succeed(transportOpened, undefined).pipe(Effect.asVoid);
+        return Ref.set(routeOpen, true).pipe(
+          Effect.andThen(Deferred.succeed(transportOpened, undefined)),
+          Effect.asVoid,
+        );
       }
-      return (
-        progress.stage === "synchronizing"
-          ? Ref.update(synchronizedRoutes, (count) => count + 1)
-          : Effect.void
-      ).pipe(Effect.andThen(reportProgress(attempt, generation, lastFailure, progress)));
+      return Ref.set(routeOpen, false).pipe(
+        Effect.andThen(
+          progress.stage === "synchronizing"
+            ? Ref.update(synchronizedRoutes, (count) => count + 1)
+            : Effect.void,
+        ),
+        Effect.andThen(reportProgress(attempt, generation, lastFailure, progress)),
+      );
     });
   });
 
@@ -569,10 +576,18 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     pendingRetry: Option.Option<PendingRetryTrace>,
     synchronizedRoutes: Ref.Ref<number>,
     transportOpened: Deferred.Deferred<void>,
+    routeOpen: Ref.Ref<boolean>,
   ) {
     if (usesRelay) {
       return yield* traceRelayEstablishment(
-        establishConnection(attempt, generation, lastFailure, synchronizedRoutes, transportOpened),
+        establishConnection(
+          attempt,
+          generation,
+          lastFailure,
+          synchronizedRoutes,
+          transportOpened,
+          routeOpen,
+        ),
         attempt,
         generation,
         pendingRetry,
@@ -584,6 +599,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       lastFailure,
       synchronizedRoutes,
       transportOpened,
+      routeOpen,
     ).pipe(
       Effect.map((lease) => ({
         attemptSpan: Option.none<Tracer.Span>(),
@@ -596,32 +612,34 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* () {
+  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* (routeOpen: Ref.Ref<boolean>) {
     // A primary attempt keeps running through an offline report, so the
     // network returning restarts it in case it stalled meanwhile.
-    let deviceOffline = (yield* connectivity.status) === "offline";
+    let deviceOffline =
+      target._tag === "PrimaryConnectionTarget" && (yield* connectivity.status) === "offline";
     for (;;) {
       const next = yield* Queue.take(signals);
       switch (next._tag) {
         case "DisconnectRequested":
         case "RetryRequested":
           return false;
-        case "NetworkChanged":
-          if (target._tag !== "PrimaryConnectionTarget") {
-            if (next.network === "offline") {
+        case "NetworkChanged": {
+          if (next.network === "offline") {
+            if (target._tag !== "PrimaryConnectionTarget") {
               return false;
             }
-          } else if (next.network === "offline") {
             deviceOffline = true;
-          } else if (deviceOffline) {
-            return true;
+            break;
           }
           // An attempt started before the network came back can hang until
-          // its setup timeout, so a recovery restarts it at once.
-          if (next.network === "online") {
+          // its setup timeout, so a recovery restarts it unless its socket is open.
+          const recovered = next.network === "online" || deviceOffline;
+          deviceOffline = false;
+          if (recovered && !(yield* Ref.get(routeOpen))) {
             return true;
           }
           break;
+        }
         case "ConnectRequested":
         case "BetterRouteAvailable":
           break;
@@ -937,6 +955,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     yield* SubscriptionRef.set(prepared, Option.none());
     const synchronizedRoutes = yield* Ref.make(0);
     const transportOpened = yield* Deferred.make<void>();
+    const routeOpen = yield* Ref.make(false);
     const wakeRecovery = yield* Ref.getAndSet(wakeRecoveryPending, false);
     const establishment = yield* Effect.raceAllFirst([
       exitUnlessInterrupted(
@@ -947,6 +966,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           pendingRetry,
           synchronizedRoutes,
           transportOpened,
+          routeOpen,
         ),
       ).pipe(
         Effect.map((exit): EstablishmentEvent => ({
@@ -954,7 +974,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           exit,
         })),
       ),
-      waitForEstablishmentInterrupt().pipe(
+      waitForEstablishmentInterrupt(routeOpen).pipe(
         Effect.map((resetRetry): EstablishmentEvent => ({
           _tag: "Interrupted",
           resetRetry,
