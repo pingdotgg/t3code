@@ -13067,6 +13067,105 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("does not give a subagent under a fork skill the root effort", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const SKILL_TOOL_USE_ID = "toolu-effort-fork-skill";
+        const NESTED_TOOL_USE_ID = "toolu-effort-fork-nested";
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-subagent-fork-nested-effort"),
+            text: "Run the fork skill.",
+            attachments: [],
+            modelSelection: {
+              instanceId: CLAUDE_TEST_MODEL_SELECTION.instanceId,
+              model: "claude-opus-4-6",
+              options: [{ id: "effort", value: "high" }],
+            },
+          }),
+        );
+        const launch = (parentToolUseId: string | null, toolUse: object, uuid: string) =>
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: parentToolUseId,
+            message: {
+              model: "claude-opus-4-6",
+              id: `msg_${uuid}`,
+              type: "message",
+              role: "assistant",
+              content: [toolUse],
+            },
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const taskStarted = (id: string, uuid: string) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: `task-${id}`,
+            tool_use_id: id,
+            description: id,
+            task_type: "local_agent",
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        for (const frame of [
+          launch(
+            null,
+            {
+              type: "tool_use",
+              id: SKILL_TOOL_USE_ID,
+              name: "Skill",
+              input: { skill: "fork-probe" },
+            },
+            "00000000-0000-4000-8000-000000000231",
+          ),
+          taskStarted(SKILL_TOOL_USE_ID, "00000000-0000-4000-8000-000000000232"),
+          launch(
+            SKILL_TOOL_USE_ID,
+            {
+              type: "tool_use",
+              id: NESTED_TOOL_USE_ID,
+              name: "Agent",
+              input: { description: "nested", subagent_type: "general-purpose", prompt: "Check." },
+            },
+            "00000000-0000-4000-8000-000000000233",
+          ),
+          taskStarted(NESTED_TOOL_USE_ID, "00000000-0000-4000-8000-000000000234"),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000235", result: "Done." }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        const efforts = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "subagent.updated"
+              ? [
+                  [
+                    event.subagent.nativeTaskRef?.nativeId,
+                    getModelSelectionStringOptionValue(event.subagent.modelSelection, "effort"),
+                  ] as const,
+                ]
+              : [],
+          ),
+        );
+        assert.deepEqual(Object.fromEntries(efforts), {
+          [`task-${SKILL_TOOL_USE_ID}`]: undefined,
+          [`task-${NESTED_TOOL_USE_ID}`]: undefined,
+        });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   const FORK_SKILL_PARENT_SELECTION = {
     instanceId: CLAUDE_TEST_MODEL_SELECTION.instanceId,
     model: "claude-sonnet-4-6",

@@ -6443,8 +6443,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? input.effort === null
                 ? undefined
                 : (input.effort ??
-                  input.owner?.effort ??
-                  compileClaudeModelSelection(input.context.input.modelSelection).effort)
+                  (input.owner === undefined
+                    ? compileClaudeModelSelection(input.context.input.modelSelection).effort
+                    : input.owner.effort))
               : existingSubagent.effort;
           const model = input.model ?? priorTask?.model ?? null;
           const task = {
