@@ -165,12 +165,15 @@ function agentAwarenessPublishIdentity(state: RelayAgentActivityState | null): s
   return JSON.stringify(meaningfulState);
 }
 
-const NULL_PUBLISH_IDENTITY = agentAwarenessPublishIdentity(null);
+const CLEARED_PUBLISH_IDENTITY = agentAwarenessPublishIdentity(null);
 
-// A published tombstone is kept so unchanged clears dedupe, but it is not a relay row.
-function hasPublishedRelayRow(published: ReadonlyMap<ThreadId, string>, threadId: ThreadId) {
-  const identity = published.get(threadId);
-  return identity !== undefined && identity !== NULL_PUBLISH_IDENTITY;
+// A published tombstone stays recorded so repeats are skipped, but it is not live state.
+function hasLivePublishedState(
+  publishedStateByThread: ReadonlyMap<ThreadId, string>,
+  threadId: ThreadId,
+): boolean {
+  const identity = publishedStateByThread.get(threadId);
+  return identity !== undefined && identity !== CLEARED_PUBLISH_IDENTITY;
 }
 
 function resolveAgentActivityPublishingStartupState(input: {
@@ -525,7 +528,7 @@ export const make = Effect.gen(function* () {
     if (
       threadShell !== null &&
       !isListedThreadLineage(threadShell.lineage) &&
-      !hasPublishedRelayRow(yield* Ref.get(publishedStateByThreadRef), threadId)
+      !hasLivePublishedState(yield* Ref.get(publishedStateByThreadRef), threadId)
     ) {
       // Subagents and side chats have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
       return;
@@ -546,11 +549,15 @@ export const make = Effect.gen(function* () {
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
-      !hasPublishedRelayRow(publishedStateByThread, threadId)
+      !hasLivePublishedState(publishedStateByThread, threadId)
     ) {
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
     }
-    if (publishedStateByThread.get(threadId) === publishIdentity) {
+    if (
+      publishedStateByThread.get(threadId) === publishIdentity &&
+      // A held completion settled after an earlier clear still has to alert.
+      !(snapshot.state === null && heldCompletions.has(threadId))
+    ) {
       // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);
       heldCompletions.delete(threadId);
