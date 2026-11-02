@@ -20,7 +20,8 @@ describe("image preview groups", () => {
         name: `${id}.png`,
         mimeType: "image/png",
         sizeBytes: 3,
-        previewUri: `data:image/png;base64,${id}`,
+        previewUri: `file:///picker/${id}.png`,
+        dataUrl: `data:image/png;base64,${id}`,
         ...(fileBacked ? { fileUri: `file:///documents/${id}.png` } : {}),
       }));
       const delivered = (id: string) =>
@@ -64,6 +65,7 @@ describe("image preview groups", () => {
         expect(result.map(filePreviewKey)).toEqual([...new Set(gallery.map(filePreviewKey))]);
       }
       expect(composerImageGallery(attachments)).toEqual(local);
+      if (!fileBacked) expect(local[0]).toMatchObject({ uri: "file:///picker/a.png" });
     },
   );
 
