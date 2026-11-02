@@ -1,5 +1,11 @@
 import { expect, it, vi } from "vite-plus/test";
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
+import {
+  __setClientSettingsForTests,
+  getClientSettings,
+  persistClientSettingsPatch,
+} from "~/hooks/useSettings";
+import { getThemeSnapshot, setAppearanceMode } from "~/hooks/useTheme";
 import "~/index.css";
 
 // Vite serves the worker module through its transform with an inline source map (6.8 MB for
@@ -12,6 +18,7 @@ vi.mock(import("pdfjs-dist/build/pdf.worker.min.mjs?url"), async () => {
   };
 });
 
+import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
 import PdfViewer from "./PdfViewer";
 
 // Page 1 is a short banner whose title is drawn in two runs with a font change, so pdf.js
@@ -48,17 +55,27 @@ function twoPagePdf() {
   return new Blob([source], { type: "application/pdf" });
 }
 
-it("fits the width, then finds split and rotated text and jumps to its page", async () => {
+it("fits, finds and selects text, and changes PDF colors without losing the reading state", async () => {
   const url = URL.createObjectURL(twoPagePdf());
+  const previousSettings = getClientSettings();
+  const previousAppearance = getThemeSnapshot().appearanceMode;
+  __setClientSettingsForTests({ ...previousSettings, pdfAppearance: "match-app" });
+  setAppearanceMode("dark");
   try {
     const container = document.createElement("div");
     container.style.cssText = "display:flex;width:500px;height:600px";
-    await using screen = await render(<PdfViewer src={url} title="Planning PDF" />, {
+    await using screen = await render(<BrowserDocumentFrame src={url} title="Planning PDF" pdf />, {
       container,
     });
     // The milestone is pdf.js booting its worker and parsing the document, not a frame count.
     await expect.element(screen.getByText("1 / 2 pages"), { timeout: 10_000 }).toBeVisible();
     const region = screen.container.querySelector<HTMLElement>('[role="region"]')!;
+    const colors = screen.getByRole("button", { name: "Dark PDF colors" });
+    await expect.element(colors).toHaveAttribute("aria-pressed", "true");
+    await act(() => setAppearanceMode("light"));
+    await expect.element(colors).toHaveAttribute("aria-pressed", "false");
+    await act(() => setAppearanceMode("dark"));
+    await expect.element(colors).toHaveAttribute("aria-pressed", "true");
     // Fit width follows the measured viewport, which settles once the scrollbar appears.
     await vi.waitFor(() => {
       const canvas = region.querySelector('canvas[aria-label="Page 1"]')!;
@@ -78,6 +95,8 @@ it("fits the width, then finds split and rotated text and jumps to its page", as
     await find.fill("budget");
     await expect.element(screen.getByText("2 / 2 pages")).toBeVisible();
     await expect.element(screen.getByRole("status")).toHaveTextContent("1/1");
+    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await vi.waitFor(() => expect(region.scrollWidth).toBeGreaterThan(region.clientWidth));
     const rotated = await vi.waitFor(() => {
       const span = Array.from(region.querySelectorAll("[data-pdf-text-layer] span")).find(
         (node) => node.textContent === "Budget and risks",
@@ -101,12 +120,51 @@ it("fits the width, then finds split and rotated text and jumps to its page", as
     selection.removeAllRanges();
     selection.addRange(range);
     expect(selection.toString()).toBe("Budget and risks");
+
+    const canvas = region.querySelector('canvas[aria-label="Page 2"]')!;
+    const position = [region.scrollTop, region.scrollLeft];
+    const zoom = screen.container.textContent!.match(/\d+%/)![0];
+    await colors.click();
+    await expect.element(colors).toHaveAttribute("aria-pressed", "false");
+    expect(getComputedStyle(canvas).filter).toBe("none");
+    expect(selection.toString()).toBe("Budget and risks");
+    await colors.click();
+    await expect.element(colors).toHaveAttribute("aria-pressed", "true");
+    expect(getComputedStyle(canvas).filter).toBe("invert(1)");
+    expect(region.querySelector('canvas[aria-label="Page 2"]')).toBe(canvas);
+    expect([region.scrollTop, region.scrollLeft]).toEqual(position);
+    expect(screen.container.textContent).toContain(zoom);
+    await expect.element(find).toHaveValue("budget");
+    await expect.element(screen.getByRole("status")).toHaveTextContent("1/1");
     selection.removeAllRanges();
+
+    await act(() =>
+      persistClientSettingsPatch({ pdfAppearance: "original" }, async () => undefined),
+    );
+    // The open document keeps its override; a newly opened one follows the saved default.
+    await expect.element(colors).toHaveAttribute("aria-pressed", "true");
+    await screen.rerender(
+      <BrowserDocumentFrame
+        src={url}
+        title="Planning PDF"
+        pdf
+        documentId="another"
+        documentKey="another"
+      />,
+    );
+    await expect.element(colors).toHaveAttribute("aria-pressed", "false");
+    await act(() => persistClientSettingsPatch({ pdfAppearance: "dark" }, async () => undefined));
+    await expect.element(colors).toHaveAttribute("aria-pressed", "true");
+    await act(() => setAppearanceMode("light"));
+    await expect.element(colors).toHaveAttribute("aria-pressed", "true");
+    await expect.element(screen.getByText("1 / 2 pages")).toBeVisible();
 
     await find.fill(" ");
     await expect.element(screen.getByRole("status")).toHaveTextContent("0/0");
   } finally {
     URL.revokeObjectURL(url);
+    __setClientSettingsForTests(previousSettings);
+    setAppearanceMode(previousAppearance);
   }
 });
 

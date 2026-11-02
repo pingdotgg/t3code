@@ -6,6 +6,7 @@ import {
   type ChatWidth,
   type EffortDisplay,
   type EnvironmentIdentificationMode,
+  type PdfAppearance,
   MAX_APPEARANCE_CONTRAST,
   MAX_GLASS_OPACITY,
   MAX_PANEL_ANIMATION_DURATION_MS,
@@ -82,6 +83,12 @@ const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
 const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
   label: "Word",
   bars: "Bars",
+};
+
+const PDF_APPEARANCE_LABELS: Record<PdfAppearance, string> = {
+  "match-app": "Match app",
+  original: "Original colors",
+  dark: "Dark",
 };
 
 export function AppearanceSettingsPanel() {
@@ -163,6 +170,41 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="appearance-interface" title="Interface">
+        <SettingsRow
+          {...searchableSetting("pdf-appearance")}
+          description="Default colors for PDF previews. Each preview can temporarily use different colors."
+          resetAction={
+            settings.pdfAppearance !== DEFAULT_UNIFIED_SETTINGS.pdfAppearance ? (
+              <SettingResetButton
+                label="PDF appearance"
+                onClick={() =>
+                  updateSettings({ pdfAppearance: DEFAULT_UNIFIED_SETTINGS.pdfAppearance })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.pdfAppearance}
+                onValueChange={(value) => {
+                  if (value !== null) updateSettings({ pdfAppearance: value });
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="PDF appearance">
+                  <SelectValue>{PDF_APPEARANCE_LABELS[settings.pdfAppearance]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {Object.entries(PDF_APPEARANCE_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </div>
+          }
+        />
         <SettingsRow
           {...searchableSetting("setting-appearance-contrast")}
           description="Adjust the contrast of colors and borders across the interface."

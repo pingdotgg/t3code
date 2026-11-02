@@ -21,6 +21,7 @@ const clientSettings: ClientSettings = {
   notificationMode: "notifications-and-sound",
   inAppNotificationsEnabled: true,
   appearanceContrast: 100,
+  pdfAppearance: "dark",
   browserDefaultViewport: { _tag: "preset", width: 1024, height: 600, presetId: "nest-hub" },
   browserDefaultZoomFactor: 1.25,
   browserDefaultAppearance: "dark",

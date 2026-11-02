@@ -1,0 +1,3 @@
+[data-pdf-appearance="dark"] :is(canvas, [data-pdf-native-viewer]) {
+  filter: invert(1);
+}

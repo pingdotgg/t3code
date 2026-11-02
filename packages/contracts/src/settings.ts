@@ -332,6 +332,9 @@ export type ChatWidth = typeof ChatWidth.Type;
 export const EffortDisplay = Schema.Literals(["label", "bars"]);
 export type EffortDisplay = typeof EffortDisplay.Type;
 
+export const PdfAppearance = Schema.Literals(["match-app", "original", "dark"]);
+export type PdfAppearance = typeof PdfAppearance.Type;
+
 export const ModelFavorite = Schema.Struct({
   provider: ProviderInstanceId,
   model: TrimmedNonEmptyString,
@@ -359,6 +362,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
   effortDisplay: EffortDisplay.pipe(Schema.withDecodingDefault(Effect.succeed("label" as const))),
+  pdfAppearance: PdfAppearance.pipe(
+    Schema.withDecodingDefault(Effect.succeed("match-app" as const)),
+  ),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   appearanceContrast: AppearanceContrast.pipe(
@@ -1762,6 +1768,7 @@ export const ClientSettingsPatch = Schema.Struct({
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   chatWidth: Schema.optionalKey(ChatWidth),
   effortDisplay: Schema.optionalKey(EffortDisplay),
+  pdfAppearance: Schema.optionalKey(PdfAppearance),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),

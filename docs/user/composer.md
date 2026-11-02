@@ -371,5 +371,8 @@ automatically. HTML previews cannot access your T3 Code session.
 The file viewer recognizes images, HTML, and PDF files by their filename extension,
 including filenames or folders containing `#` or `?`.
 
-On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
-Android opens a compatible installed file viewer.
+On mobile, select a PDF attachment or link to read it inside T3 Code.
+
+PDF previews match the app's light or dark appearance by default. Choose **PDF appearance** in
+**Settings → Appearance** to always use **Original colors** or **Dark**. Each open preview also
+lets you switch colors temporarily; newly opened previews use your saved preference.

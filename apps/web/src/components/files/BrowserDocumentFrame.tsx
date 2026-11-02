@@ -30,10 +30,15 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { isElectron } from "~/env";
-import { FileSurfaceLoading } from "./fileSurfaceChrome";
+import { MoonIcon } from "lucide-react";
+import { FileSurfaceAction, FileSurfaceLoading } from "./fileSurfaceChrome";
 import type { PdfViewState } from "./PdfViewer";
+import { useClientSettings } from "~/hooks/useSettings";
+import { useRenderedAppearance } from "~/hooks/useTheme";
+import "./pdfAppearance.css";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
@@ -77,15 +82,35 @@ const PdfViewer = lazy(() => import("./PdfViewer"));
 // The document stays mounted while each revision gets a fresh PDF.js document.
 function PdfDocument(props: { src: string; title: string; documentKey: string }) {
   const [view, setView] = useState<PdfViewState>({ page: 0, offset: 0, zoom: null, left: 0 });
+  const appearance = useClientSettings((settings) => settings.pdfAppearance);
+  const themeAppearance = useRenderedAppearance();
+  const [override, setOverride] = useState<boolean | null>(null);
+  const dark =
+    override ??
+    (appearance === "dark" || (appearance === "match-app" && themeAppearance === "dark"));
   return (
-    <PdfDocumentRevision
-      key={props.documentKey}
-      src={props.src}
-      title={props.title}
-      positionKey={props.documentKey}
-      initialView={view}
-      onViewChange={setView}
-    />
+    <div
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      data-pdf-appearance={dark ? "dark" : "original"}
+    >
+      <PdfDocumentRevision
+        key={props.documentKey}
+        src={props.src}
+        title={props.title}
+        positionKey={props.documentKey}
+        initialView={view}
+        onViewChange={setView}
+        appearanceAction={
+          <FileSurfaceAction
+            label="Dark PDF colors"
+            pressed={dark}
+            onPress={() => setOverride(!dark)}
+          >
+            <MoonIcon className="size-3.5" />
+          </FileSurfaceAction>
+        }
+      />
+    </div>
   );
 }
 
@@ -96,6 +121,7 @@ function PdfDocumentRevision(props: {
   positionKey: string;
   initialView: PdfViewState;
   onViewChange: (view: PdfViewState) => void;
+  appearanceAction: ReactNode;
 }) {
   const [src] = useState(props.src);
   // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
@@ -106,12 +132,18 @@ function PdfDocumentRevision(props: {
     !/iPad|iPhone|iPod/.test(navigator.userAgent) &&
     !(navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   return native ? (
-    // oxlint-disable-next-line react/iframe-missing-sandbox -- Chromium's PDF plugin requires an unsandboxed frame; src is an exact-file asset grant.
-    <iframe
-      src={`${src.split("#", 1)[0]}#navpanes=0&view=FitH`}
-      title={props.title}
-      className="block h-full min-h-0 w-full flex-1 border-0 bg-white"
-    />
+    <>
+      <div className="flex shrink-0 items-center justify-end border-b border-border/60 px-2 py-1">
+        {props.appearanceAction}
+      </div>
+      {/* oxlint-disable-next-line react/iframe-missing-sandbox -- Chromium's PDF plugin requires an unsandboxed frame; src is an exact-file asset grant. */}
+      <iframe
+        data-pdf-native-viewer
+        src={`${src.split("#", 1)[0]}#navpanes=0&view=FitH`}
+        title={props.title}
+        className="block h-full min-h-0 w-full flex-1 border-0 bg-white"
+      />
+    </>
   ) : (
     <Suspense fallback={<FileSurfaceLoading />}>
       <PdfViewer
@@ -120,6 +152,7 @@ function PdfDocumentRevision(props: {
         positionKey={props.positionKey}
         initialView={props.initialView}
         onViewChange={props.onViewChange}
+        appearanceAction={props.appearanceAction}
       />
     </Suspense>
   );

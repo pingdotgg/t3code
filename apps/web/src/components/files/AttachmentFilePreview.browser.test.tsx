@@ -2371,6 +2371,12 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
     await using screen = await render(preview("first"));
     const opened = screen.container.querySelector("iframe");
     expect(opened?.src.startsWith(original)).toBe(true);
+    const colors = screen.getByRole("button", { name: "Dark PDF colors" });
+    const initiallyDark = colors.element().getAttribute("aria-pressed") === "true";
+    await colors.click();
+    await expect.element(colors).toHaveAttribute("aria-pressed", String(!initiallyDark));
+    expect(screen.container.querySelector("iframe")).toBe(opened);
+    expect(getComputedStyle(opened!).filter).toBe(initiallyDark ? "none" : "invert(1)");
 
     // An agent command renews the signed URL but leaves the file alone.
     assetUrlState.mockReturnValue({
@@ -2382,6 +2388,7 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
     await screen.rerender(preview("second"));
     expect(assetUrlState).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), "second");
     expect(screen.container.querySelector("iframe")).toBe(opened);
+    await expect.element(colors).toHaveAttribute("aria-pressed", String(!initiallyDark));
 
     assetUrlState.mockReturnValue({
       _tag: "Success",
@@ -2393,6 +2400,7 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
     const reloaded = screen.container.querySelector("iframe");
     expect(reloaded).not.toBe(opened);
     expect(reloaded?.src.startsWith(edited)).toBe(true);
+    await expect.element(colors).toHaveAttribute("aria-pressed", String(!initiallyDark));
 
     // Servers without revisions hold the preview back until a fresh grant arrives.
     assetUrlState.mockReturnValue({

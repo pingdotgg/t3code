@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import { TextLayer, type PDFDocumentProxy } from "pdfjs-dist";
 import { ChevronDownIcon, ChevronUpIcon, MinusIcon, PlusIcon, ScanIcon } from "lucide-react";
@@ -134,6 +135,7 @@ export default function PdfViewer(props: {
   positionKey?: string;
   initialView?: PdfViewState;
   onViewChange?: (view: PdfViewState) => void;
+  appearanceAction?: ReactNode;
 }) {
   const [savedPosition] = useState(() =>
     props.positionKey === undefined ? undefined : positions.get(props.positionKey),
@@ -353,6 +355,7 @@ export default function PdfViewer(props: {
         <span className="mr-auto px-1 tabular-nums" aria-live="polite">
           {pdf ? `${current + 1} / ${pdf.numPages} pages` : "PDF"}
         </span>
+        {props.appearanceAction}
         <FileSurfaceAction
           label="Previous page"
           disabled={!pdf || current === 0}
