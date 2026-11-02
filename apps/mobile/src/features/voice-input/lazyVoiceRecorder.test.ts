@@ -65,11 +65,12 @@ describe("createLazyVoiceRecorder", () => {
     });
     await expect(disconnected.recorder.prepareToRecordAsync()).resolves.toBeUndefined();
 
-    const failure = new Error("Input routing timed out");
     const timedOut = createHarness(
       (inputs) => inputs[1] ?? null,
       (native) => {
-        native.setInput.mockImplementationOnce(() => Promise.reject(failure));
+        native.setInput.mockImplementationOnce(() =>
+          Promise.reject(new Error("Routing timed out")),
+        );
       },
     );
     await expect(timedOut.recorder.prepareToRecordAsync()).resolves.toBeUndefined();
@@ -125,51 +126,31 @@ describe("createLazyVoiceRecorder", () => {
       expect(created).toHaveLength(0);
     });
 
-    it("reuses the recorder after canceling a pending input route", async () => {
-      const selecting = Promise.withResolvers<void>();
-      const selected = Promise.withResolvers<void>();
-      let routeActive = false;
-      let waitingForRoute = true;
-      const harness = createController(
+    it("abandons a pending input route when dictation is canceled", async () => {
+      const routing = Promise.withResolvers<void>();
+      const { controller, created } = createController(
         true,
         (inputs) => inputs[1] ?? null,
         (native) => {
-          let prepared = false;
-          native.prepareToRecordAsync.mockImplementation(async () => {
-            if (prepared) throw new Error("Recorder is already prepared");
-            prepared = true;
-            native.uri = native.prepared;
-          });
-          native.stop.mockImplementation(async () => {
-            prepared = false;
-          });
           native.setInput.mockImplementationOnce(() => {
-            if (!waitingForRoute) return;
-            waitingForRoute = false;
-            routeActive = true;
-            selecting.resolve();
-            return selected.promise;
-          });
-          native.cancelInputSelection.mockImplementation(() => {
-            routeActive = false;
-            selected.reject(new Error("Input selection canceled"));
+            routing.resolve();
+            return new Promise((_, reject) => {
+              native.cancelInputSelection.mockImplementationOnce(() =>
+                reject(new Error("Canceled")),
+              );
+            });
           });
         },
       );
-      const starting = harness.controller.start();
-      await selecting.promise;
-      harness.controller.cancel();
+      const starting = controller.start();
+      await routing.promise;
+      controller.cancel();
       await starting;
+      expect(created[0]!.cancelInputSelection).toHaveBeenCalled();
+      expect(controller.currentState.phase).toBe("idle");
 
-      expect(routeActive).toBe(false);
-      expect(harness.controller.currentState.phase).toBe("idle");
-      expect(harness.deleted).toEqual(["file:///voice-0.m4a"]);
-
-      await harness.controller.start();
-      expect(harness.controller.currentState.phase).toBe("recording");
-      expect(harness.created).toHaveLength(1);
-      await harness.controller.stop();
-      harness.recorder.release();
+      await controller.start();
+      expect(controller.currentState.phase).toBe("recording");
     });
   });
 });

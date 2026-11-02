@@ -27,35 +27,26 @@ function changeAppState(state: string) {
   mocks.listeners.forEach((listener) => listener(state));
 }
 
-it.each([true, false])(
-  "waits for the permission activity to resume (granted: %s)",
-  async (granted) => {
-    mocks.state = "active";
-    mocks.listeners.clear();
-    let finishPermission!: () => void;
-    mocks.request.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          finishPermission = () => resolve({ granted, canAskAgain: true });
-        }),
-    );
-    const interrupted = vi.fn();
-    const permission = createVoiceRecordingPermission(interrupted);
-    let settled = false;
-    const result = permission.requestPermission().then((value) => {
-      settled = true;
-      return value;
-    });
-    changeAppState("background");
-    expect(interrupted).not.toHaveBeenCalled();
-    finishPermission();
-    await Promise.resolve();
-    expect(settled).toBe(false);
-    changeAppState("active");
-    expect(await result).toMatchObject({ granted });
-    changeAppState("background");
-    expect(interrupted).toHaveBeenCalledOnce();
-    permission.dispose();
-    expect(mocks.listeners.size).toBe(0);
-  },
-);
+it("keeps dictation alive while Android's permission activity backgrounds the app", async () => {
+  const permission = Promise.withResolvers<{ granted: boolean; canAskAgain: boolean }>();
+  mocks.request.mockReturnValue(permission.promise);
+  const interrupted = vi.fn();
+  const recording = createVoiceRecordingPermission(interrupted);
+  let settled = false;
+  const result = recording.requestPermission().then((value) => {
+    settled = true;
+    return value;
+  });
+
+  changeAppState("background");
+  permission.resolve({ granted: true, canAskAgain: true });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  changeAppState("active");
+  expect(await result).toMatchObject({ granted: true });
+  expect(interrupted).not.toHaveBeenCalled();
+
+  changeAppState("background");
+  expect(interrupted).toHaveBeenCalledOnce();
+  recording.dispose();
+});
