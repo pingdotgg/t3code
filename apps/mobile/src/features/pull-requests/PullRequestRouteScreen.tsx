@@ -307,10 +307,10 @@ function PullRequestOverview(props: {
   const permissions = usePullRequestPermissions(props.params, pr);
   const update = useAtomCommand(composerPullRequests.update);
   const refreshDetail = useAtomRefresh(composerPullRequests.detail(requestTarget(props.params)));
-  // A checkbox ticks itself natively on tap, and stays tappable while saving. Saves run one at
-  // a time with the latest body, so quick taps can't land out of order; a refresh carrying a
-  // body from before the latest tap is ignored. A tap that can't be written back remounts the
-  // description to undo the tick.
+  // A checkbox ticks itself natively on tap and stays tappable while saving. Saves run one at a
+  // time with the latest body; a refresh carrying a body from before the latest tap is ignored,
+  // and any other body ends the edit. A tap that can't be written back remounts the description
+  // to undo the tick.
   const [taskEdit, setTaskEdit] = useState<{
     readonly stale: ReadonlyArray<string>;
     readonly to: string;
@@ -318,6 +318,9 @@ function PullRequestOverview(props: {
   } | null>(null);
   const nextTaskBody = useRef<string | null>(null);
   const [taskReset, setTaskReset] = useState(0);
+  if (taskEdit !== null && !taskEdit.saving && !taskEdit.stale.includes(pr.body)) {
+    setTaskEdit(null);
+  }
   const shownBody =
     taskEdit !== null && (taskEdit.saving || taskEdit.stale.includes(pr.body))
       ? taskEdit.to

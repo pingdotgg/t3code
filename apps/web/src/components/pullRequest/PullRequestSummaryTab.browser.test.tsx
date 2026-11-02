@@ -150,6 +150,9 @@ it("keeps tasks clickable while saving, saves quick ticks in order, and holds th
   expect(ticked()).toEqual([true, true]);
   await screen.rerender(tab({ ...detail, body: "- [ ] Edited on the host" }));
   expect(ticked()).toEqual([false]);
+  // That body ended the edit, so the host's copy shows again even if it matches an old one.
+  await screen.rerender(tab({ ...detail, body }));
+  expect(ticked()).toEqual([false, false]);
 });
 
 it("leaves task checkboxes read-only for a viewer who can't edit the description", async () => {

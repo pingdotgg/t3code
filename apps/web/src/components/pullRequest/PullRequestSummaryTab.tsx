@@ -510,18 +510,22 @@ export function PullRequestSummaryTab({
       return;
     }
     setBodyScope(null);
+    setTaskEdit(null);
     onRefresh();
   };
 
   // Ticks show at once and stay clickable while saving. Saves run one at a time with the latest
   // body, so quick ticks can't land out of order. A refresh can still carry a body from before
-  // the latest tick; those are `stale` and ignored, while any other body replaces the edit.
+  // the latest tick; those are `stale` and ignored, while any other body ends the edit.
   const [taskEdit, setTaskEdit] = useState<{
     readonly stale: ReadonlyArray<string>;
     readonly to: string;
     readonly saving: boolean;
   } | null>(null);
   const nextTaskBody = useRef<string | null>(null);
+  if (taskEdit !== null && !taskEdit.saving && !taskEdit.stale.includes(detail.body)) {
+    setTaskEdit(null);
+  }
   const shownBody =
     taskEdit !== null && (taskEdit.saving || taskEdit.stale.includes(detail.body))
       ? taskEdit.to
