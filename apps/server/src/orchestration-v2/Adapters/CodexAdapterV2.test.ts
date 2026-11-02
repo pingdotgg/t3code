@@ -42,6 +42,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -8665,6 +8666,11 @@ describe("CodexAdapterV2 environment home derivation", () => {
     readonly hostEnvironment: NodeJS.ProcessEnv;
     readonly instanceEnvironment?: ResolvedProviderInstanceEnvironment;
     readonly config?: CodexSettings;
+    /**
+     * The configured home that should land in `settings.homePath`; resolved with the platform
+     * Path, matching resolveCodexHomeLayout. Omit for a blank derived home.
+     */
+    readonly rawSettingsHome?: string;
   }) => {
     const transcript = makeCodexReplayTranscript({
       scenario: input.scenario,
@@ -8678,6 +8684,7 @@ describe("CodexAdapterV2 environment home derivation", () => {
       Parameters<CodexAdapterV2.CodexAppServerClientFactoryShape["open"]>[0]
     > = [];
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
       const adapter = yield* CodexAdapterV2.createCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         displayName: undefined,
@@ -8696,7 +8703,9 @@ describe("CodexAdapterV2 environment home derivation", () => {
       if (openInput === undefined) {
         return yield* Effect.die(new Error("The client factory never opened."));
       }
-      return openInput;
+      const resolvedSettingsHome =
+        input.rawSettingsHome === undefined ? "" : path.resolve(input.rawSettingsHome);
+      return { openInput, resolvedSettingsHome };
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -8739,7 +8748,7 @@ describe("CodexAdapterV2 environment home derivation", () => {
 
   it.effect("keeps a blank home when no CODEX_HOME is configured", () =>
     openSessionWithEnvironment({ scenario: "env-home-blank", hostEnvironment: {} }).pipe(
-      Effect.map((openInput) => {
+      Effect.map(({ openInput }) => {
         assert.strictEqual(openInput.settings.homePath, "");
         assert.strictEqual(openInput.environment.CODEX_HOME, undefined);
       }),
@@ -8750,9 +8759,10 @@ describe("CodexAdapterV2 environment home derivation", () => {
     openSessionWithEnvironment({
       scenario: "env-home-host",
       hostEnvironment: { CODEX_HOME: "/t3-codex-derive/host" },
+      rawSettingsHome: "/t3-codex-derive/host",
     }).pipe(
-      Effect.map((openInput) => {
-        assert.strictEqual(openInput.settings.homePath, "/t3-codex-derive/host");
+      Effect.map(({ openInput, resolvedSettingsHome }) => {
+        assert.strictEqual(openInput.settings.homePath, resolvedSettingsHome);
         assert.strictEqual(openInput.environment.CODEX_HOME, "/t3-codex-derive/host");
       }),
     ),
@@ -8765,9 +8775,10 @@ describe("CodexAdapterV2 environment home derivation", () => {
       instanceEnvironment: [
         { name: "CODEX_HOME", value: "/t3-codex-derive/instance", sensitive: false },
       ],
+      rawSettingsHome: "/t3-codex-derive/instance",
     }).pipe(
-      Effect.map((openInput) => {
-        assert.strictEqual(openInput.settings.homePath, "/t3-codex-derive/instance");
+      Effect.map(({ openInput, resolvedSettingsHome }) => {
+        assert.strictEqual(openInput.settings.homePath, resolvedSettingsHome);
         assert.strictEqual(openInput.environment.CODEX_HOME, "/t3-codex-derive/instance");
       }),
     ),
@@ -8778,9 +8789,10 @@ describe("CodexAdapterV2 environment home derivation", () => {
       scenario: "env-home-settings",
       hostEnvironment: { CODEX_HOME: "/t3-codex-derive/host" },
       config: { ...DEFAULT_CODEX_SETTINGS, homePath: "/t3-codex-derive/settings" },
+      rawSettingsHome: "/t3-codex-derive/settings",
     }).pipe(
-      Effect.map((openInput) => {
-        assert.strictEqual(openInput.settings.homePath, "/t3-codex-derive/settings");
+      Effect.map(({ openInput, resolvedSettingsHome }) => {
+        assert.strictEqual(openInput.settings.homePath, resolvedSettingsHome);
         assert.strictEqual(openInput.environment.CODEX_HOME, "/t3-codex-derive/host");
       }),
     ),
