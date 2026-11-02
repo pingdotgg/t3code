@@ -323,8 +323,9 @@ export const make = Effect.gen(function* () {
             if (consumed >= input.limit) break;
             consumed++;
             if (!row) continue;
-            const item = forgejoChangeRequest(row);
-            if (input.state === "all" || item.state === input.state) items.push(item);
+            const changeRequest = forgejoChangeRequest(row);
+            if (input.state !== "all" && changeRequest.state !== input.state) continue;
+            items.push(changeRequest);
           }
           more = result.more || rows.length - start > consumed - countBefore;
         }
