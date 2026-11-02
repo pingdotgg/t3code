@@ -288,14 +288,15 @@ it("uses native Windows completion notifications without a persistent browser ba
     onNotificationBadgeClear: () => () => undefined,
   });
   app.start();
-  using _timers = fakeTimers();
+  using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+  vi.useFakeTimers();
   state.shells.set(
     "one",
     shell({
       latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
     }),
   );
-  await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
+  await vi.runOnlyPendingTimersAsync();
   expect(show).toHaveBeenCalledWith(
     expect.objectContaining({
       environmentId: "one",
