@@ -161,11 +161,23 @@ it.each([
   { name: "the server keeps the thread", threadRemoved: false, cleared: false },
   { name: "the delete fails", threadRemoved: true, failDelete: true, cleared: false },
   { name: "the shell is not live", threadRemoved: true, shellStatus: "loading", cleared: false },
+  {
+    name: "it was deleted before closing",
+    sideChatShell: null,
+    threadRemoved: false,
+    cleared: true,
+  },
 ])(
   "clears a closed side chat's draft only after deletion: $name",
-  async ({ threadRemoved, failDelete = false, shellStatus = "live", cleared }) => {
+  async ({
+    sideChatShell = { latestRun: null },
+    threadRemoved,
+    failDelete = false,
+    shellStatus = "live",
+    cleared,
+  }) => {
     const { original } = setup();
-    fixture.sideChatShell = { latestRun: null };
+    fixture.sideChatShell = sideChatShell;
     fixture.threadRemoved = threadRemoved;
     fixture.failDelete = failDelete;
     fixture.shellStatus = shellStatus;

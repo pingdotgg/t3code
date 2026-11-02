@@ -75,21 +75,21 @@ export function useRightPanelSurfaceClose(input: {
     const sideChatRef = scopeThreadRef(ref.environmentId, surface.threadId);
     const shellIsLive = () =>
       appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live";
-    if (
-      readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope) &&
-      // A live shell without the side chat means it is already deleted.
-      !(shellIsLive() && readThreadShell(sideChatRef) === null)
-    ) {
-      // The server keeps a side chat with a run or message. Reopen skips one it deleted.
-      void deleteThread({
-        environmentId: ref.environmentId,
-        input: { threadId: surface.threadId, onlyIfUnused: true },
-      }).then(async (result) => {
-        // Success also covers a kept side chat, whose draft must survive.
-        if (result._tag !== "Success" || !(await waitForThreadRemoval(sideChatRef))) return;
-        if (shellIsLive()) useComposerDraftStore.getState().clearDraftThread(sideChatRef);
-      });
+    // A live shell without the side chat means it is already deleted.
+    if (shellIsLive() && readThreadShell(sideChatRef) === null) {
+      useComposerDraftStore.getState().clearDraftThread(sideChatRef);
+      return;
     }
+    if (!readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)) return;
+    // The server keeps a side chat with a run or message. Reopen skips one it deleted.
+    void deleteThread({
+      environmentId: ref.environmentId,
+      input: { threadId: surface.threadId, onlyIfUnused: true },
+    }).then(async (result) => {
+      // Success also covers a kept side chat, whose draft must survive.
+      if (result._tag !== "Success" || !(await waitForThreadRemoval(sideChatRef))) return;
+      if (shellIsLive()) useComposerDraftStore.getState().clearDraftThread(sideChatRef);
+    });
   };
   const closeAfterAgentBrowserConfirmation = (
     toClose: readonly RightPanelSurface[],
