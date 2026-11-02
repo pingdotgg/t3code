@@ -21,7 +21,7 @@ export function composerAttachmentUploadKey(
   return `${environmentId}:${attachmentId}`;
 }
 
-/** Environment and thread ids may both contain colons, so a thread draft key resolves against known environments, longest first. */
+/** Environment and thread ids may both contain colons, so a thread draft key resolves to the longest known environment it starts with. */
 export function composerDraftEnvironmentId(
   draftKey: string,
   environmentIds: Iterable<EnvironmentId>,
