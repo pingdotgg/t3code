@@ -133,7 +133,7 @@ export function composerCommandKeyHandler(input: {
   // otherwise turn B's own draft into a browsing position.
   const promptHistoryTargetKey = composerTargetKey(composerDraftTarget);
 
-  const replacePrompt = (nextPrompt: string) => {
+  const replacePromptFromHistory = (nextPrompt: string) => {
     promptRef.current = nextPrompt;
     setComposerDraftPrompt(composerDraftTarget, nextPrompt);
     setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
@@ -180,7 +180,7 @@ export function composerCommandKeyHandler(input: {
     promptHistoryPositionRef.current = step.position
       ? { targetKey: promptHistoryTargetKey, position: step.position }
       : null;
-    replacePrompt(step.prompt);
+    replacePromptFromHistory(step.prompt);
     return true;
   };
 
@@ -258,10 +258,11 @@ export function composerCommandKeyHandler(input: {
       !event.altKey &&
       !event.metaKey &&
       !event.ctrlKey &&
-      !event.isComposing
+      !event.isComposing &&
+      event.keyCode !== 229
     ) {
-      replacePrompt(promptSuggestion);
-      return true;
+      // The typing guard must see this draft, so an approval that lands next is not answered with it.
+      return applyPromptReplacement(0, 0, promptSuggestion);
     }
     if ((key === "ArrowUp" || key === "ArrowDown") && submissionIntent === null) {
       return navigatePromptHistory(key === "ArrowUp" ? "backward" : "forward", event);

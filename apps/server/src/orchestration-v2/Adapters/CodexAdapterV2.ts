@@ -38,6 +38,7 @@ import {
   ProviderDriverKind,
   ProviderSetupError,
   type ServerProviderCompatibilityAdvisory,
+  isDelegatedAppThread,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -1955,40 +1956,42 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
 
-        const promptSuggestionsEnabled = input.promptSuggestions === true;
+        const promptSuggestionsEnabled = input.promptSuggestions ?? Effect.succeed(false);
         // Best effort: older Codex lacks thread/sample, and a sample fails once the user sends again.
-        const samplePromptSuggestion = (
-          context: ActiveCodexTurnContext,
-          nativeThreadId: string,
-          nativeTurnId: string,
-        ) =>
-          client.raw
-            .request("thread/sample", {
+        // Delegated threads share this session but have no one typing, so they never sample.
+        const samplePromptSuggestion = Effect.fn("CodexAdapterV2.samplePromptSuggestion")(
+          function* (
+            context: ActiveCodexTurnContext,
+            nativeThreadId: string,
+            nativeTurnId: string,
+          ) {
+            if (
+              isDelegatedAppThread(context.input.appThread) ||
+              !(yield* promptSuggestionsEnabled)
+            ) {
+              return;
+            }
+            const response = yield* client.raw.request("thread/sample", {
               threadId: nativeThreadId,
               expectedTurnId: nativeTurnId,
               prompt: CODEX_PROMPT_SUGGESTION_PROMPT,
               effort: "low",
-            })
-            .pipe(
-              Effect.flatMap(decodeCodexThreadSampleResponse),
-              Effect.flatMap(({ text }) => {
-                const suggestion = text?.trim() ?? "";
-                return suggestion.length === 0
-                  ? Effect.void
-                  : emitProviderEvent({
-                      type: "prompt_suggestion.updated",
-                      driver: CODEX_PROVIDER,
-                      threadId: context.projectionThreadId,
-                      runId: context.input.runId,
-                      text: suggestion,
-                    });
-              }),
-              Effect.catchCause((cause) =>
-                Effect.logDebug("orchestration-v2.codex-prompt-suggestion-failed", { cause }),
-              ),
-              Effect.forkIn(scope),
-              Effect.asVoid,
-            );
+            });
+            const suggestion =
+              (yield* decodeCodexThreadSampleResponse(response)).text?.trim() ?? "";
+            if (suggestion.length === 0) return;
+            yield* emitProviderEvent({
+              type: "prompt_suggestion.updated",
+              driver: CODEX_PROVIDER,
+              threadId: context.projectionThreadId,
+              runId: context.input.runId,
+              text: suggestion,
+            });
+          },
+          Effect.catchCause((cause) =>
+            Effect.logDebug("orchestration-v2.codex-prompt-suggestion-failed", { cause }),
+          ),
+        );
 
         const emitImageWorkState =
           /* Provider events include streaming deltas; avoid a span for each update. */
@@ -6012,8 +6015,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           yield* emitRootTerminal(hold.context, { ...hold.event, status });
           yield* Deferred.succeed(hold.next, undefined);
           const nativeThreadId = hold.context.providerThread.nativeThreadRef?.nativeId;
-          if (promptSuggestionsEnabled && status === "completed" && nativeThreadId != null) {
-            yield* samplePromptSuggestion(hold.context, nativeThreadId, hold.context.nativeTurnId);
+          if (status === "completed" && nativeThreadId != null) {
+            yield* samplePromptSuggestion(
+              hold.context,
+              nativeThreadId,
+              hold.context.nativeTurnId,
+            ).pipe(Effect.forkIn(scope));
           }
         });
 
@@ -6348,14 +6355,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 (yield* turnHasRetainedBackgroundWork(input.nativeTurnId));
               // A held goal predicts when settleGoalHold completes it.
               if (
-                promptSuggestionsEnabled &&
                 input.status === "completed" &&
                 input.context.subagent === null &&
                 !input.continueRun &&
                 !holdsForGoal &&
                 nativeThreadId != null
               ) {
-                yield* samplePromptSuggestion(input.context, nativeThreadId, input.nativeTurnId);
+                yield* samplePromptSuggestion(
+                  input.context,
+                  nativeThreadId,
+                  input.nativeTurnId,
+                ).pipe(Effect.forkIn(scope));
               }
               if (retainSettledContext) {
                 yield* Ref.update(settledTurns, (current) => {

@@ -357,7 +357,8 @@ export const layerWithOptions = (
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const agentScope = yield* AgentScope;
-      // Labs flag, read once per provider session; unreadable settings keep it off.
+      // Labs flag, read live: Codex per turn (its shared session outlives a toggle), Claude per query.
+      // Unreadable settings keep it off.
       const promptSuggestionsEnabled = Option.isNone(serverSettings)
         ? Effect.succeed(false)
         : serverSettings.value.getSettings.pipe(
@@ -2195,7 +2196,6 @@ export const layerWithOptions = (
                     }),
                 ),
               );
-              const promptSuggestions = yield* promptSuggestionsEnabled;
               const prepared = yield* prepareMcpSession(
                 input.threadId,
                 input.modelSelection.instanceId,
@@ -2216,7 +2216,7 @@ export const layerWithOptions = (
                   providerSessionId: input.providerSessionId,
                   modelSelection: input.modelSelection,
                   runtimePolicy: input.runtimePolicy,
-                  promptSuggestions,
+                  promptSuggestions: promptSuggestionsEnabled,
                   ...(input.resumeFromSession === undefined
                     ? {}
                     : { resumeFromSession: input.resumeFromSession }),
