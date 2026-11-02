@@ -235,9 +235,9 @@ function PendingThreadDraft(props: {
           <p className="text-xs text-muted-foreground">{props.reason}</p>
         ) : null}
       </div>
-      <pre className="min-w-0 whitespace-pre-wrap wrap-anywhere font-sans text-sm text-foreground">
+      <p className="min-w-0 whitespace-pre-wrap wrap-anywhere text-sm text-foreground">
         {props.promptText}
-      </pre>
+      </p>
       {props.hiddenCharacters > 0 ? (
         <p role="alert" className="text-xs text-warning">
           This prompt had {props.hiddenCharacters} hidden character
