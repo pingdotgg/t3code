@@ -6,6 +6,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
@@ -165,6 +167,13 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       const apiKey = { ANTHROPIC_API_KEY: "key" };
 
       expect(yield* entrypoint(subscription)).toBe("t3-code");
+      // Windows names ignore case, and a copy of process.env loses that.
+      const windowsBase = yield* mergeClaudeBaseEnvironment(undefined, {
+        Anthropic_Api_Key: "key",
+        Claude_Code_Entrypoint: "claude-desktop",
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+      expect(windowsBase).toEqual({ ANTHROPIC_API_KEY: "key" });
+
       // Every settings layer can bring the key, including a file edited after the server started.
       yield* write(user, apiKey);
       expect(yield* entrypoint(subscription)).toBeUndefined();

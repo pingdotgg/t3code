@@ -88,6 +88,7 @@ function withFakeClaudeEnv<A, E, R>(
     const previousConfigDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
     const previousEntrypointMustBe = process.env.T3_FAKE_CLAUDE_ENTRYPOINT_MUST_BE;
     const previousEntrypoint = process.env.CLAUDE_CODE_ENTRYPOINT;
+    const previousApiKey = process.env.ANTHROPIC_API_KEY;
     const previousCwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
 
     yield* Effect.acquireRelease(
@@ -144,6 +145,7 @@ function withFakeClaudeEnv<A, E, R>(
         }
 
         delete process.env.CLAUDE_CODE_ENTRYPOINT;
+        delete process.env.ANTHROPIC_API_KEY;
         if (input.entrypointMustBe !== undefined) {
           process.env.T3_FAKE_CLAUDE_ENTRYPOINT_MUST_BE = input.entrypointMustBe;
         } else {
@@ -211,6 +213,10 @@ function withFakeClaudeEnv<A, E, R>(
 
           if (previousEntrypoint !== undefined) {
             process.env.CLAUDE_CODE_ENTRYPOINT = previousEntrypoint;
+          }
+
+          if (previousApiKey !== undefined) {
+            process.env.ANTHROPIC_API_KEY = previousApiKey;
           }
 
           if (previousEntrypointMustBe === undefined) {
