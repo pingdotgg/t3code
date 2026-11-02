@@ -3,9 +3,11 @@ import { useId, useRef, useState } from "react";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import {
+  isSecretReference,
   type DeviceEasAccount,
   type EasDeviceHostConfig,
   type EnvironmentId,
+  type SettingsSecretValue,
 } from "@t3tools/contracts";
 import { XIcon } from "lucide-react";
 
@@ -25,7 +27,7 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
 import { parseEasDeviceHostDraft } from "./easDeviceHostsSettings.logic";
-import { SecretInput } from "./SecretInput";
+import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 
 const FROM_THREAD_PROJECT = "thread-project";
 
@@ -57,9 +59,10 @@ export function EasDeviceHostEditor(props: {
   const check = useAtomCommand(deviceEnvironment.easAccount, { reportFailure: false });
   const [draft, setDraft] = useState(props.host);
   const tokenId = useId();
+  const secretSources = useSecretSources(props.environmentId);
   // A saved token arrives redacted; only a replacement or a clear changes it.
   const [token, setToken] = useState<
-    { kind: "saved" } | { kind: "new"; value: string } | { kind: "cleared" }
+    { kind: "saved" } | { kind: "new"; value: SettingsSecretValue } | { kind: "cleared" }
   >(props.host.accessToken ? { kind: "saved" } : { kind: "cleared" });
   // Checking on open names the saved project and shows a rejected credential
   // before anything is changed. A manual check or a token edit replaces it.
@@ -192,11 +195,23 @@ export function EasDeviceHostEditor(props: {
                 Expo access token
               </label>
               <div className="flex items-center gap-2">
-                <SecretInput
+                <SecretSourceInput
                   id={tokenId}
+                  aria-label="Expo access token"
                   className="min-w-0 flex-1"
-                  configured={token.kind === "saved"}
-                  value={token.kind === "new" ? token.value : ""}
+                  configured={token.kind === "saved" && typeof props.host.accessToken === "string"}
+                  value={
+                    token.kind === "new"
+                      ? token.value
+                      : token.kind === "saved" && isSecretReference(props.host.accessToken)
+                        ? props.host.accessToken
+                        : ""
+                  }
+                  sources={secretSources}
+                  onSecretChange={(secret) => {
+                    setToken(secret ? { kind: "new", value: secret } : { kind: "cleared" });
+                    resetAccount();
+                  }}
                   disabled={props.busy}
                   placeholder="Optional"
                   onChange={(event) => {
