@@ -2337,23 +2337,31 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("preserves a staged deletion when the removed path still exists", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        yield* initRepoWithCommit(cwd);
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* writeTextFile(cwd, "removed.txt", "remove me\n");
-        yield* git(cwd, ["add", "removed.txt"]);
-        yield* git(cwd, ["commit", "-m", "add removable file"]);
-        yield* git(cwd, ["rm", "--cached", "removed.txt"]);
+    it.effect.each([
+      { stagedCopy: false, expected: ["deleted file mode", "-remove me"] },
+      { stagedCopy: true, expected: ["rename from removed.txt", "rename to copy.txt"] },
+    ])(
+      "preserves a staged deletion when the removed path still exists (staged copy: $stagedCopy)",
+      ({ stagedCopy, expected }) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* writeTextFile(cwd, "removed.txt", "remove me\n");
+          yield* git(cwd, ["add", "removed.txt"]);
+          yield* git(cwd, ["commit", "-m", "add removable file"]);
+          yield* git(cwd, ["rm", "--cached", "removed.txt"]);
+          if (stagedCopy) {
+            yield* writeTextFile(cwd, "copy.txt", "remove me\n");
+            yield* git(cwd, ["add", "copy.txt"]);
+          }
 
-        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
-        const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
+          const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+          const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
 
-        assert.include(diff, "deleted file mode");
-        assert.include(diff, "-remove me");
-        assert.notInclude(diff, "new file mode");
-      }),
+          for (const text of expected) assert.include(diff, text);
+          assert.notInclude(diff, "new file mode");
+        }),
     );
 
     it.effect.each([false, true])(
