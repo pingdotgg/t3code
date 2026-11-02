@@ -706,7 +706,11 @@ describe("orchestrator MCP toolkit", () => {
           });
           const unwatchedParentlessRead = yield* invoke(
             "t3_thread_read",
-            { threadId: delegated.childThreadId, limit: 100 },
+            {
+              threadId: delegated.childThreadId,
+              limit: 100,
+              maxCharsPerItem: result === "😀" ? 1 : 20_000,
+            },
             { ...invocation, thread: undefined },
           );
           const read = yield* invoke("t3_thread_read", {
