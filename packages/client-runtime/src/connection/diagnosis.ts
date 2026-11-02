@@ -5,6 +5,8 @@ import {
 import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 
+import type { RelayEnvironmentRegistration } from "../relay/discovery.ts";
+
 import type {
   ConnectionAttemptError,
   ConnectionFailureCause,
@@ -40,13 +42,21 @@ export interface ConnectionDiagnosisInput {
     RelayEnvironmentStatusResponse,
     "status" | "endpointFailure" | "endpointStatus" | "offlineReason"
   > | null;
+  /** Whether the account's environment list still has this host. */
+  readonly relayRegistration?: RelayEnvironmentRegistration;
   readonly clientVersion?: string | undefined;
   readonly serverVersion?: string | null | undefined;
 }
 
 interface Located {
   readonly hop: ConnectionHop;
-  readonly cause: ConnectionFailureCause | "offline" | "outdated" | "released" | null;
+  readonly cause:
+    | ConnectionFailureCause
+    | "offline"
+    | "outdated"
+    | "released"
+    | "unregistered"
+    | null;
 }
 
 const NOT_ANSWERING: ReadonlySet<ConnectionFailureCause> = new Set([
@@ -63,7 +73,14 @@ function locate(input: ConnectionDiagnosisInput): Located | null {
     return { hop: "server", cause: "outdated" };
   }
   if (failure?.hop !== undefined) {
-    return { hop: failure.hop, cause: failure.failureCause ?? null };
+    const cause = failure.failureCause ?? null;
+    return {
+      hop: failure.hop,
+      cause:
+        cause === "not_linked" && input.relayRegistration === "unregistered"
+          ? "unregistered"
+          : cause,
+    };
   }
   if (failure !== null) {
     const unreachable =
@@ -90,6 +107,8 @@ function headline(host: string, located: Located, failure: ConnectionAttemptErro
       return "This device's clock is off";
     case "not_linked":
       return `${host} is not linked to your T3 Connect account`;
+    case "unregistered":
+      return `${host} is no longer on your T3 Connect account`;
     case "relay_error":
       return "T3 Connect returned an error";
     case "tunnel_pending":
@@ -149,6 +168,11 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
       return [
         "Check that this device is signed in to the same T3 Connect account as the host.",
         `On ${host}, open Settings > Sharing & access and turn T3 Connect on.`,
+      ];
+    case "unregistered":
+      return [
+        `If you still use ${host}, turn T3 Connect on there in Settings > Sharing & access, check that this device uses the same T3 Connect account, then retry.`,
+        `If T3 Code was reinstalled on ${host}, or you no longer use it, remove it from this device.`,
       ];
     case "tunnel_pending":
       return ["Wait a minute. T3 Code retries on its own.", checkHost];
@@ -221,6 +245,7 @@ function helpSection(
     case "clock_skew":
       return "the-clock-is-off";
     case "not_linked":
+    case "unregistered":
     case "tunnel_not_enabled":
       return "sign-in-account-or-link-problems";
     case "relay_error":
