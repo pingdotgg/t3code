@@ -2004,7 +2004,15 @@ export const layerWithOptions = (
                   // (project trust, login, or session-switch hooks). Persist
                   // their runless request artifacts directly so the normal T3
                   // request UI can answer them and unblock session setup.
-                  const threadId = sessionScopedRuntimeRequestThreadId(event);
+                  const threadId =
+                    event.type === "turn_item.updated" &&
+                    event.driver === "codex" &&
+                    event.usageLimitResetAtEnrichment === true &&
+                    event.turnItem.type === "error" &&
+                    event.turnItem.failure.class === "usage_limit" &&
+                    event.turnItem.failure.resetAt != null
+                      ? event.turnItem.threadId
+                      : sessionScopedRuntimeRequestThreadId(event);
                   if (threadId !== undefined) {
                     yield* Effect.gen(function* () {
                       const current = (yield* Ref.get(sessions)).get(

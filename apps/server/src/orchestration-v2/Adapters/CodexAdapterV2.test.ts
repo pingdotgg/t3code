@@ -5200,6 +5200,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               event.turnItem.failure.resetAt === resetAt,
           );
           assert.isDefined(item);
+          assert.equal(terminal.failure.resetAt, null);
+          assert.isBelow(harness.events.indexOf(terminal), harness.events.indexOf(item!));
+          assert.lengthOf(
+            harness.events.filter(
+              (event) =>
+                event.type === "turn_item.updated" && event.usageLimitResetAtEnrichment === true,
+            ),
+            1,
+          );
+          assert.isTrue(
+            item?.type === "turn_item.updated" && item.usageLimitResetAtEnrichment === true,
+          );
         }).pipe(
           Effect.provide(
             Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

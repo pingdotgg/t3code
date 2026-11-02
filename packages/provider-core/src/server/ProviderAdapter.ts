@@ -118,6 +118,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("turn_item.updated"),
     driver: ProviderDriverKind,
     turnItem: OrchestrationV2TurnItem,
+    /** Codex reset enrichment outlives the failed run's event subscription. */
+    usageLimitResetAtEnrichment: Schema.optional(Schema.Literal(true)),
   }),
   // Start before the root terminal; clear only after the final covered projection.
   // Consumer lifetime cannot depend on a producer probe that runs ahead of its queue.

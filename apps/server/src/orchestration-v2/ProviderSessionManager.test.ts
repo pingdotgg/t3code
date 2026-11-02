@@ -28,6 +28,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
@@ -52,7 +53,10 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
+import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+
+const decodeProviderEvent = Schema.decodeUnknownSync(ProviderAdapter.ProviderAdapterV2Event);
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
 const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
@@ -329,6 +333,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly mcpConfigs?: Ref.Ref<
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
     >;
+    readonly beforeEvent?: (event: ProviderAdapter.ProviderAdapterV2Event) => Effect.Effect<void>;
     readonly beforeOpen?: (input: {
       readonly providerSessionId: ProviderSessionId;
       readonly initialProviderItemIdentityVersion?: 2;
@@ -414,7 +419,10 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
                   cause: "process exited",
                 }),
               )
-            : Stream.fromQueue(events),
+            : Stream.fromQueue(events).pipe(
+                Stream.rechunk(1),
+                Stream.tap((event) => options.beforeEvent?.(event) ?? Effect.void),
+              ),
           ...(options.backgroundTasksEndWithProcess === false
             ? {}
             : { backgroundTasksEndWithProcess: true as const }),
@@ -469,6 +477,7 @@ function layerTest(input: {
   readonly mcpConfigs?: Ref.Ref<
     ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
   >;
+  readonly beforeEvent?: (event: ProviderAdapter.ProviderAdapterV2Event) => Effect.Effect<void>;
   readonly beforeOpen?: (input: {
     readonly providerSessionId: ProviderSessionId;
     readonly initialProviderItemIdentityVersion?: 2;
@@ -506,6 +515,7 @@ function layerTest(input: {
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
+      ...(input.beforeEvent === undefined ? {} : { beforeEvent: input.beforeEvent }),
       ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
       ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
       ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
@@ -552,6 +562,7 @@ function layerTest(input: {
     ),
   );
   return Layer.mergeAll(
+    layerProviderEventIngestorTest,
     layerTestStores,
     layerConfiguredEventSink,
     IdAllocator.layer,
@@ -3161,6 +3172,201 @@ it.effect.each(["manual_shutdown", "server_shutdown"] as const)(
       });
 
       yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+    }),
+);
+
+it.effect.each([false, true])(
+  "ProviderSessionManagerV2 persists reset enrichment with subscriber present: %s",
+  (subscribed) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const consumed = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const projectId = yield* idAllocator.allocate.project({ fixtureName: "reset-enrichment" });
+        const threadId = yield* idAllocator.allocate.thread({
+          fixtureName: "reset-enrichment",
+          projectId,
+        });
+        const otherThreadId = yield* idAllocator.allocate.thread({
+          fixtureName: "reset-enrichment-other",
+          projectId,
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        const nodeId = idAllocator.derive.rootNode({ runId });
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: CODEX_DRIVER,
+          nativeTurnId: "limited-turn",
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: otherThreadId, now }),
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.isDefined(runtime.subscribeEvents);
+        const subscription = yield* runtime.subscribeEvents!;
+        const receivedEvents = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* subscription.events.pipe(
+          Stream.runForEach((event) => Queue.offer(receivedEvents, event)),
+          Effect.forkScoped,
+        );
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+        const failure = {
+          class: "usage_limit",
+          message: "Usage limit reached",
+          code: null,
+          retryable: null,
+          resetAt: null,
+        } as const;
+        const terminal = {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
+          providerTurnId,
+          runOrdinal: 1,
+          status: "failed",
+          failure,
+          failureItemOrdinal: 1,
+          threadDisposition: "reusable",
+        } as const;
+        const initialItem = makeProviderFailureTurnItem({
+          driver: CODEX_DRIVER,
+          threadId,
+          runId,
+          nodeId,
+          providerThreadId: providerThread.id,
+          providerTurnId,
+          itemOrdinal: 1,
+          failure: { ...failure, resetAt: "2026-11-02T12:00:00.000Z" },
+          occurredAt: now,
+        });
+        const beforeInitial = yield* eventSink.latestSequence({ threadId });
+        for (const driver of [CODEX_DRIVER, ProviderDriverKind.make("muse")]) {
+          const initial = { type: "turn_item.updated", driver, turnItem: initialItem } as const;
+          yield* Queue.offer(queue, initial);
+          assert.deepEqual(yield* Queue.take(receivedEvents), initial);
+          assert.equal(yield* eventSink.latestSequence({ threadId }), beforeInitial);
+        }
+        yield* Queue.offer(queue, terminal);
+        assert.deepEqual(yield* Queue.take(receivedEvents), terminal);
+        yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+          runId,
+          nodeId,
+          event: terminal,
+        });
+        if (!subscribed) yield* subscription.close;
+        const resetAt = "2026-11-02T12:00:00.000Z";
+        const item = makeProviderFailureTurnItem({
+          driver: CODEX_DRIVER,
+          threadId,
+          runId,
+          nodeId,
+          providerThreadId: providerThread.id,
+          providerTurnId,
+          itemOrdinal: 1,
+          failure: { ...failure, resetAt },
+          occurredAt: now,
+        });
+        const newerRunId = idAllocator.derive.run({ threadId, ordinal: 2 });
+        const newerItem = makeProviderFailureTurnItem({
+          driver: CODEX_DRIVER,
+          threadId,
+          runId: newerRunId,
+          nodeId: idAllocator.derive.rootNode({ runId: newerRunId }),
+          providerThreadId: providerThread.id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "newer-turn",
+          }),
+          itemOrdinal: 2,
+          failure: { ...failure, resetAt: "2026-11-03T12:00:00.000Z" },
+          occurredAt: now,
+        });
+        yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+          event: { type: "turn_item.updated", driver: CODEX_DRIVER, turnItem: newerItem },
+        });
+        const afterSequence = yield* eventSink.latestSequence({ threadId });
+        yield* Queue.offerAll(queue, [
+          decodeProviderEvent({
+            type: "turn_item.updated",
+            driver: CODEX_DRIVER,
+            turnItem: item,
+            usageLimitResetAtEnrichment: true,
+          }),
+          {
+            type: "provider_session.updated",
+            driver: CODEX_DRIVER,
+            providerSession: runtime.providerSession,
+          },
+        ]);
+        yield* Deferred.await(consumed);
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        assert.deepEqual(
+          projection.turnItems.find((candidate) => candidate.id === item.id),
+          item,
+        );
+        assert.deepEqual(
+          projection.turnItems.find((candidate) => candidate.id === newerItem.id),
+          newerItem,
+        );
+        const updates = yield* eventSink
+          .stream({ threadId, afterSequence })
+          .pipe(Stream.take(1), Stream.runCollect);
+        assert.equal(updates.length, 1);
+        assert.deepInclude(updates[0]!.event, {
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          nodeId,
+          payload: item,
+        });
+        assert.equal(yield* eventSink.latestSequence({ threadId }), afterSequence + 1);
+        assert.deepEqual((yield* projectionStore.getThreadProjection(otherThreadId)).turnItems, []);
+        if (subscribed) {
+          const next = yield* Queue.take(receivedEvents);
+          assert.equal(next.type, "provider_session.updated");
+          yield* subscription.close;
+        }
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            beforeEvent: (event) =>
+              event.type === "provider_session.updated"
+                ? Deferred.succeed(consumed, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+          }),
+        ),
+      );
     }),
 );
 
