@@ -9029,10 +9029,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       const now = yield* DateTime.now;
+      const responseProvenance =
+        command.createdBy !== undefined && command.creationSource !== undefined
+          ? { createdBy: command.createdBy, creationSource: command.creationSource }
+          : undefined;
+      const messageProvenance = responseProvenance ?? {
+        createdBy: "system" as const,
+        creationSource: "server" as const,
+      };
       const resolvedRequest = {
         ...runtimeRequest,
         status: "resolved" as const,
         resolvedAt: now,
+        ...(responseProvenance === undefined ? {} : { responseProvenance }),
         ...(command.decision === undefined ? {} : { decision: command.decision }),
         ...(command.feedback === undefined ? {} : { feedback: command.feedback }),
         ...(answers === undefined ? {} : { answers }),
@@ -9057,8 +9066,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             text: command.feedback,
             attachments: [],
             streaming: false,
-            createdBy: "user",
-            creationSource: "server",
+            ...messageProvenance,
             createdAt: now,
             updatedAt: now,
           },
@@ -9096,8 +9104,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             inputIntent: "steer",
             text: command.feedback,
             attachments: [],
-            createdBy: "user",
-            creationSource: "server",
+            ...messageProvenance,
           },
         });
       }
@@ -9214,8 +9221,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           messageId: MessageId.make(`async-answer:${command.requestId}`),
           text: replies.join("\n\n"),
           attachments: [],
-          createdBy: "user" as const,
-          creationSource: "server" as const,
+          ...messageProvenance,
           dispatchMode,
         };
         yield* dispatchMessage(answer, events, effects);
