@@ -33,6 +33,7 @@ import * as ManagedRelay from "../relay/managedRelay.ts";
 import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
+import { resolveDeviceHubAccess } from "./deviceHubAccess.ts";
 import { fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
@@ -616,6 +617,59 @@ describe("authenticated environment HTTP requests", () => {
         expect(harness.calls[0]!.init.credentials).toBe(
           authorization === null ? "include" : undefined,
         );
+      }),
+  );
+
+  // Servers from before the `/:use` ticket route answer 404 there but still issue bare tickets.
+  it.effect.each([
+    {
+      name: "bearer",
+      authorization: { _tag: "Bearer", token: "bearer-token" },
+      origin: PREPARED.httpBaseUrl,
+    },
+    {
+      name: "relay",
+      authorization: { _tag: "Dpop", accessToken: "expired-token", expiresAtEpochMs: 0 },
+      origin: CURRENT_ORIGIN,
+    },
+  ] satisfies ReadonlyArray<{
+    name: string;
+    authorization: PreparedHttpAuthorization;
+    origin: string;
+  }>)(
+    "falls back to the bare ticket path for $name media streams on a server without the audience route",
+    ({ authorization, origin }) =>
+      Effect.gen(function* () {
+        const harness = makeHarness((requestNumber) =>
+          requestNumber === 1
+            ? Response.json({ message: "Not Found" }, { status: 404 })
+            : Response.json({ ticket: "bare-ticket", expiresAt: "2026-05-01T12:05:00.000Z" }),
+        );
+        const access = yield* resolveDeviceHubAccess({
+          prepared: { ...PREPARED, httpAuthorization: authorization },
+          hubBasePath: "/api/preview-stream",
+        }).pipe(
+          Effect.provide(harness.httpLayer),
+          Effect.provideService(
+            ManagedRelay.ManagedRelayDpopSigner,
+            Option.getOrThrow(harness.input.signer),
+          ),
+          Effect.provideService(
+            RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+            harness.remoteAuthorization,
+          ),
+        );
+
+        expect(access.query).toEqual({ wsTicket: "bare-ticket" });
+        expect(harness.calls.map((call) => call.url)).toEqual([
+          `${origin}/api/auth/websocket-ticket/media`,
+          `${origin}/api/auth/websocket-ticket`,
+        ]);
+        if (authorization._tag === "Dpop") {
+          expect(harness.proofs.map((proof) => proof.url)).toEqual(
+            harness.calls.map((call) => call.url),
+          );
+        }
       }),
   );
 
