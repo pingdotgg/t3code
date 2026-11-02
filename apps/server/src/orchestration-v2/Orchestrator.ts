@@ -12135,7 +12135,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             projection.runs.map((run) => run.id),
           )).subagents;
     const stopDelegatedTasks = !delegatedTasks.some(
-      (task) => task.origin === "app_owned" && task.childThreadId !== null,
+      (task) =>
+        task.origin === "app_owned" &&
+        (task.childThreadId !== null || task.remoteChild !== undefined),
     )
       ? Effect.void
       : Ref.update(effects, (existing) => [...existing, delegatedTasksStopEffect(command)]);

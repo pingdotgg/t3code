@@ -31,7 +31,7 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import type * as SqlClient from "effect/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
@@ -1011,87 +1011,115 @@ const seedNativeSubagents = (
     );
   });
 
-it.effect("a native subagent's task there is listed, read and cancelled by that subagent", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const thread = yield* makeBoxThread;
-      const b = yield* serveBox(thread);
-      const offers = yield* SubscriptionRef.make<
-        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-      >([]);
-      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      const a = yield* makeLaptop(database, offers);
-      yield* linkTo(a.links, b, "full-access");
-      yield* seedParent(a);
-      yield* a.mcpSessions.set({
-        environmentId: laptop.environmentId,
-        threadId: parentThreadId,
-        providerSessionId: parentScope.thread!.providerSessionId,
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1/mcp",
-        authorizationHeader: "Bearer token",
-        browserToolsAvailable: false,
-      });
-      const [caller, sibling] = yield* seedNativeSubagents(a, ["caller", "sibling"]);
+it.effect.each(["caller cancel", "root Stop"] as const)(
+  "a native subagent's task there is listed, read and stopped by %s",
+  (stop) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b, "full-access");
+        yield* seedParent(a);
+        yield* a.mcpSessions.set({
+          environmentId: laptop.environmentId,
+          threadId: parentThreadId,
+          providerSessionId: parentScope.thread!.providerSessionId,
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1/mcp",
+          authorizationHeader: "Bearer token",
+          browserToolsAvailable: false,
+        });
+        const [caller, sibling] = yield* seedNativeSubagents(a, ["caller", "sibling"]);
 
-      const delegated = yield* delegateToBox(a, caller!.scope);
-      // The caller's thread lists it; the parent's run executes it, as for a task here.
-      const { subagents } = yield* a.projections.getThreadRecords(caller!.threadId, ["subagents"], {
-        subagentIds: [delegated.taskId],
-      });
-      expect(subagents[0]).toMatchObject({
-        threadId: caller!.threadId,
-        runId: parentRunId,
-        executionThreadId: parentThreadId,
-        remoteChild: { threadId: delegated.remoteChild.threadId },
-      });
-      expect(
-        (yield* a.projections.getThreadRecords(parentThreadId, ["subagents"])).subagents.filter(
-          (task) => task.origin === "app_owned",
-        ),
-      ).toEqual([]);
+        const delegated = yield* delegateToBox(a, caller!.scope);
+        // The caller's thread lists it; the parent's run executes it, as for a task here.
+        const { subagents } = yield* a.projections.getThreadRecords(
+          caller!.threadId,
+          ["subagents"],
+          {
+            subagentIds: [delegated.taskId],
+          },
+        );
+        expect(subagents[0]).toMatchObject({
+          threadId: caller!.threadId,
+          runId: parentRunId,
+          executionThreadId: parentThreadId,
+          remoteChild: { threadId: delegated.remoteChild.threadId },
+        });
+        expect(
+          (yield* a.projections.getThreadRecords(parentThreadId, ["subagents"])).subagents.filter(
+            (task) => task.origin === "app_owned",
+          ),
+        ).toEqual([]);
 
-      // Only the caller reads and cancels it; the parent reads what its run executes.
-      expect(
-        (yield* a.call("task_status", { taskId: delegated.taskId }, caller!.scope))
-          .structuredContent,
-      ).toMatchObject({ status: "running" });
-      expect(
-        (yield* a.call("task_status", { taskId: delegated.taskId })).structuredContent,
-      ).toMatchObject({ status: "running" });
-      expect(
-        (yield* a.call("task_status", { taskId: delegated.taskId }, sibling!.scope)).isError,
-      ).toBe(true);
-      expect(
-        (yield* a.call("task_cancel", { taskId: delegated.taskId }, sibling!.scope)).isError,
-      ).toBe(true);
-      expect(yield* Ref.get(thread.stops)).toEqual([]);
+        // Only the caller reads and cancels it; the parent reads what its run executes.
+        expect(
+          (yield* a.call("task_status", { taskId: delegated.taskId }, caller!.scope))
+            .structuredContent,
+        ).toMatchObject({ status: "running" });
+        expect(
+          (yield* a.call("task_status", { taskId: delegated.taskId })).structuredContent,
+        ).toMatchObject({ status: "running" });
+        expect(
+          (yield* a.call("task_status", { taskId: delegated.taskId }, sibling!.scope)).isError,
+        ).toBe(true);
+        expect(
+          (yield* a.call("task_cancel", { taskId: delegated.taskId }, sibling!.scope)).isError,
+        ).toBe(true);
+        expect(yield* Ref.get(thread.stops)).toEqual([]);
 
-      // Its end there lands in the caller's thread and wakes the parent's run.
-      yield* Ref.set(thread.reply, "All 412 tests pass on the box.");
-      yield* Ref.set(thread.status, "completed");
-      yield* Deferred.succeed(thread.finished, undefined);
-      expect(yield* taskResult(a, delegated.taskId, caller!.threadId)).toMatchObject({
-        status: "completed",
-      });
-      const parentRun = (yield* a.orchestrator.getThreadProjection(parentThreadId)).runs.find(
-        (run) => run.id === parentRunId,
-      );
-      expect(parentRun?.delegatedCompletion?.delivery?.taskIds).toEqual([delegated.taskId]);
+        if (stop === "root Stop") {
+          const commandId = CommandId.make("command:stop:native-remote-parent");
+          yield* a.orchestrator.dispatch({
+            type: "thread.stop",
+            commandId,
+            threadId: parentThreadId,
+          });
+          const sql = Context.get(database, SqlClient.SqlClient);
+          const effects = yield* sql<{ readonly effect_type: string }>`
+          SELECT effect_type FROM orchestration_v2_effect_outbox WHERE command_id = ${commandId}
+        `;
+          expect(effects.map((effect) => effect.effect_type)).toContain("delegated-tasks.stop");
+          // This harness leaves committed effects for the test to execute.
+          yield* a.threads.stopDelegatedTasks({ threadId: parentThreadId, commandId });
+          expect(yield* taskResult(a, delegated.taskId, caller!.threadId)).toMatchObject({
+            status: "interrupted",
+          });
+          yield* Deferred.await(thread.interruptedOnce);
+          expect(yield* Ref.get(thread.stops)).toContain("thread.stop");
+          return;
+        }
 
-      // The caller's cancel still stops what followed there.
-      const cancelled = yield* a.call(
-        "task_cancel",
-        { taskId: delegated.taskId, clientRequestId: "cancel-after" },
-        caller!.scope,
-      );
-      expect(cancelled.structuredContent).toEqual({
-        taskId: delegated.taskId,
-        status: "completed",
-      });
-      expect(yield* Ref.get(thread.stops)).toEqual(["thread.stop", "delegated-tasks"]);
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        // Its end there lands in the caller's thread and wakes the parent's run.
+        yield* Ref.set(thread.reply, "All 412 tests pass on the box.");
+        yield* Ref.set(thread.status, "completed");
+        yield* Deferred.succeed(thread.finished, undefined);
+        expect(yield* taskResult(a, delegated.taskId, caller!.threadId)).toMatchObject({
+          status: "completed",
+        });
+        const parentRun = (yield* a.orchestrator.getThreadProjection(parentThreadId)).runs.find(
+          (run) => run.id === parentRunId,
+        );
+        expect(parentRun?.delegatedCompletion?.delivery?.taskIds).toEqual([delegated.taskId]);
+
+        // The caller's cancel still stops what followed there.
+        const cancelled = yield* a.call(
+          "task_cancel",
+          { taskId: delegated.taskId, clientRequestId: "cancel-after" },
+          caller!.scope,
+        );
+        expect(cancelled.structuredContent).toEqual({
+          taskId: delegated.taskId,
+          status: "completed",
+        });
+        expect(yield* Ref.get(thread.stops)).toEqual(["thread.stop", "delegated-tasks"]);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect.each(["no active parent run", "a newer run owned by another provider"] as const)(
