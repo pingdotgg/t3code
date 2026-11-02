@@ -104,6 +104,7 @@ interface CodexSetupSectionProps {
   readonly onSignInCancelled?: (() => void) | undefined;
   /** A setup or sign-in ended without signing in; `failure` is `null` when the user cancelled. */
   readonly onSignInUnfinished?: ((failure: string | null) => void) | undefined;
+  readonly onSignInFinished?: (() => void) | undefined;
 }
 
 export function CodexSetupSection(props: CodexSetupSectionProps) {
@@ -281,6 +282,7 @@ function ManagedCodexSetup({
   displayName,
   onSignInCancelled,
   onSignInUnfinished,
+  onSignInFinished,
 }: CodexSetupSectionProps & {
   readonly autoStart: boolean;
   readonly onAutoStartConsumed: () => void;
@@ -503,7 +505,8 @@ function ManagedCodexSetup({
   };
 
   const reportSignInEnd = (ended: ProviderAuthState | null | undefined) => {
-    if (ended?.phase === "failed")
+    if (ended?.phase === "succeeded") onSignInFinished?.();
+    else if (ended?.phase === "failed")
       onSignInUnfinished?.(ended.message ?? "ChatGPT sign-in could not finish. Try again.");
     else if (ended?.phase === "cancelled") onSignInUnfinished?.(null);
   };
@@ -559,6 +562,7 @@ function ManagedCodexSetup({
               onSignInUnfinished?.(
                 "ChatGPT sign-in on the primary environment was interrupted. Try again.",
               );
+            else if (ended === null) onSignInFinished?.();
             else reportSignInEnd(ended);
           });
         },

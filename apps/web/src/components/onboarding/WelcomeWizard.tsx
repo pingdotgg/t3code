@@ -924,12 +924,14 @@ function OnboardingCodexSetup({
   // The server only signs in to its own runtime, so ChatGPT sign-in saves "managed" first.
   // An attempt that ends without signing in puts back what was saved before it.
   const modeBeforeSignIn = useRef<{ readonly setupMode: unknown } | null>(null);
-  const saveMode = (setupMode: unknown) => {
-    // A restore runs once sign-in ends, so it reads the settings as they are then.
+  // A restore runs once sign-in ends, so writes read the settings as they are then.
+  const saveInstance = (
+    edit: (current: typeof instance, config: Record<string, unknown>) => typeof instance,
+  ) => {
     const latest =
       appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.settings ?? settings;
     const current = latest.providerInstances[instanceId] ?? instance;
-    const { setupMode: _saved, ...rest }: Record<string, unknown> =
+    const currentConfig: Record<string, unknown> =
       current.config !== null && typeof current.config === "object" ? { ...current.config } : {};
     void update({
       environmentId,
@@ -937,11 +939,7 @@ function OnboardingCodexSetup({
         patch: buildProviderInstanceUpdatePatch({
           settings: latest,
           instanceId,
-          instance: {
-            ...current,
-            enabled: true,
-            config: { ...rest, enabled: true, ...(setupMode === undefined ? {} : { setupMode }) },
-          },
+          instance: edit(current, currentConfig),
         }),
       },
     });
@@ -949,12 +947,20 @@ function OnboardingCodexSetup({
   const changeMode = (setupMode: "managed" | "existing") => {
     modeBeforeSignIn.current =
       setupMode === "managed" && mode !== "managed" ? { setupMode: config.setupMode } : null;
-    saveMode(setupMode);
+    saveInstance((current, currentConfig) => ({
+      ...current,
+      enabled: true,
+      config: { ...currentConfig, enabled: true, setupMode },
+    }));
   };
   const restoreMode = () => {
-    if (modeBeforeSignIn.current === null) return;
-    saveMode(modeBeforeSignIn.current.setupMode);
+    const before = modeBeforeSignIn.current;
+    if (before === null) return;
     modeBeforeSignIn.current = null;
+    saveInstance((current, { setupMode: _managed, ...rest }) => ({
+      ...current,
+      config: before.setupMode === undefined ? rest : { ...rest, setupMode: before.setupMode },
+    }));
   };
   return existingChosen ? (
     <AgentCard
@@ -977,6 +983,9 @@ function OnboardingCodexSetup({
       enabled={provider?.enabled ?? true}
       onModeChange={changeMode}
       onSignInUnfinished={restoreMode}
+      onSignInFinished={() => {
+        modeBeforeSignIn.current = null;
+      }}
     />
   );
 }
