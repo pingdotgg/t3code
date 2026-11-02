@@ -454,6 +454,7 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
       options: [{ id: "effort", value: "high" }],
     };
     const calls: ModelSelection[] = [];
+    const discovered = new Set<ProviderInstanceId>();
     const instances: ProviderInstance[] = [primary, fallback].map((instanceId) => {
       const driver = ProviderDriverKind.make(instanceId === primary ? "codex" : "claudeAgent");
       const snapshot: ServerProvider = {
@@ -483,7 +484,13 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
         continuationIdentity: { driverKind: driver, continuationKey: instanceId },
         displayName: undefined,
         enabled: true,
-        snapshot: { getSnapshot: Effect.succeed(snapshot) } as ProviderInstance["snapshot"],
+        snapshot: {
+          getSnapshot: Effect.succeed({ ...snapshot, installed: false, usageLimits: undefined }),
+          ensureReady: Effect.sync(() => {
+            discovered.add(instanceId);
+            return snapshot;
+          }),
+        } as ProviderInstance["snapshot"],
         orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
         textGeneration: TextGeneration.TextGeneration.of({
           generateCommitMessage: () => Effect.die("unused"),
@@ -534,5 +541,6 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
           }
         : selection,
     ]);
+    expect([...discovered]).toEqual(exhausted ? [primary, fallback] : [primary]);
   }),
 );

@@ -367,7 +367,7 @@ const make = Effect.gen(function* () {
       [
         pullRequests.activity(input),
         serverSettings.getSettings,
-        providerRegistry.getProviders,
+        providerRegistry.discoverProviders,
         pullRequests.stack(input).pipe(Effect.orElseSucceed(() => null)),
       ],
       { concurrency: "unbounded" },

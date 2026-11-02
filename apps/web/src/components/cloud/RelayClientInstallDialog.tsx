@@ -37,6 +37,8 @@ export function RelayClientInstallDialog() {
     readRelayClientInstallDialogState,
     readRelayClientInstallDialogState,
   );
+  if (state.status === "idle") return null;
+
   const view = state.status === "closing" ? state.view : state;
   const isConfirming = view.status === "confirming";
   const isInstalling = view.status === "installing";

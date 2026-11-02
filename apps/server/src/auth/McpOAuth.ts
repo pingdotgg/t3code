@@ -31,7 +31,7 @@ import { HttpServerRequest } from "effect/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as McpClientAuthenticator from "../mcp/McpClientAuthenticator.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -256,30 +256,38 @@ const make = Effect.gen(function* () {
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
-  const signingKey = yield* secretStore
-    .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
-    .pipe(Effect.orDie);
+  // Cache only success so a transient store failure does not disable OAuth until restart.
+  let cachedSigningKey: Uint8Array | undefined;
+  const signingKey = Effect.suspend(() =>
+    cachedSigningKey !== undefined
+      ? Effect.succeed(cachedSigningKey)
+      : secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(
+          Effect.map((bytes) => (cachedSigningKey = bytes)),
+          Effect.orDie,
+        ),
+  );
   const codes = yield* Ref.make<ReadonlyMap<string, PendingCode>>(new Map());
 
-  const sign = (domain: string, payload: string) => signPayload(`${domain}.${payload}`, signingKey);
+  const sign = (domain: string, payload: string) =>
+    Effect.map(signingKey, (key) => signPayload(`${domain}.${payload}`, key));
 
   const signClientId = (name: string, redirectUris: ReadonlyArray<string>, peerLink: boolean) => {
     const body = base64UrlEncode(
       JSON.stringify({ v: 1, n: name, r: redirectUris, ...(peerLink ? { p: 1 } : {}) }),
     );
-    return `${body}.${sign("mcp-client-id", body)}`;
+    return Effect.map(sign("mcp-client-id", body), (signature) => `${body}.${signature}`);
   };
 
-  const parseClientId = (clientId: string): McpOAuthClient | undefined => {
+  const parseClientId = Effect.fn("McpOAuth.parseClientId")(function* (
+    clientId: string,
+  ): Effect.fn.Return<McpOAuthClient | undefined> {
     const [body, signature, extra] = clientId.split(".");
     if (!body || !signature || extra !== undefined) return undefined;
-    if (!timingSafeEqualBase64Url(signature, sign("mcp-client-id", body))) return undefined;
-    let json: string;
-    try {
-      json = base64UrlDecodeUtf8(body);
-    } catch {
-      return undefined;
-    }
+    if (!timingSafeEqualBase64Url(signature, yield* sign("mcp-client-id", body))) return undefined;
+    const json = yield* Effect.try(() => base64UrlDecodeUtf8(body)).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (json === undefined) return undefined;
     return Option.getOrUndefined(
       decodeClientIdPayload(json).pipe(
         Option.map((payload) => ({
@@ -290,7 +298,7 @@ const make = Effect.gen(function* () {
         })),
       ),
     );
-  };
+  });
 
   const pkceVerifies = (verifier: string, challenge: string) =>
     CODE_VERIFIER_PATTERN.test(verifier)
@@ -342,7 +350,7 @@ const make = Effect.gen(function* () {
         });
       }
       return {
-        clientId: signClientId(name, redirectUris, peerLink),
+        clientId: yield* signClientId(name, redirectUris, peerLink),
         name,
         redirectUris,
         peerLink,
@@ -353,7 +361,7 @@ const make = Effect.gen(function* () {
   const validateAuthorization: McpOAuth["Service"]["validateAuthorization"] = Effect.fn(
     "McpOAuth.validateAuthorization",
   )(function* ({ urls, request }) {
-    const client = parseClientId(request.client_id ?? "");
+    const client = yield* parseClientId(request.client_id ?? "");
     if (client === undefined) {
       return yield* new McpOAuthPageError({
         description: "This sign-in link names an unknown app. Start the sign-in again from it.",
@@ -400,20 +408,24 @@ const make = Effect.gen(function* () {
     } satisfies AuthorizationRequest;
   });
 
-  const approvingBrowserSession: McpOAuth["Service"]["approvingBrowserSession"] = (
-    request,
-    authorization,
-  ) =>
-    environmentAuth.authenticateBrowserSession(request).pipe(
-      Effect.map((session) =>
-        // Approving manages access, and a session may only hand out scopes it holds.
-        session.scopes.includes(AuthAccessWriteScope) &&
-        session.scopes.includes(AuthOrchestrationReadScope)
-          ? { csrfToken: csrfToken(session.sessionId, authorization), scopes: session.scopes }
-          : undefined,
-      ),
-      Effect.orElseSucceed(() => undefined),
-    );
+  const approvingBrowserSession: McpOAuth["Service"]["approvingBrowserSession"] = Effect.fn(
+    "McpOAuth.approvingBrowserSession",
+  )(function* (request, authorization) {
+    const session = yield* environmentAuth
+      .authenticateBrowserSession(request)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    // Approving manages access, and a session may only hand out scopes it holds.
+    if (
+      session === undefined ||
+      !session.scopes.includes(AuthAccessWriteScope) ||
+      !session.scopes.includes(AuthOrchestrationReadScope)
+    )
+      return undefined;
+    return {
+      csrfToken: yield* csrfToken(session.sessionId, authorization),
+      scopes: session.scopes,
+    };
+  });
 
   const mintCode = Effect.fn("McpOAuth.mintCode")(function* (
     authorization: AuthorizationRequest,
@@ -504,7 +516,7 @@ const make = Effect.gen(function* () {
           "code, redirect_uri, client_id and code_verifier are required.",
         );
       }
-      if (parseClientId(clientId) === undefined) {
+      if ((yield* parseClientId(clientId)) === undefined) {
         return yield* fail("invalid_client", "The client is unknown.");
       }
       // A presented code is spent even when a later check fails (RFC 6749 §4.1.2).
@@ -571,12 +583,12 @@ const make = Effect.gen(function* () {
 export const layer = Layer.effect(McpOAuth, make);
 
 export const layerMcpClientAuthenticator = Layer.effect(
-  McpHttpServer.McpClientAuthenticator,
+  McpClientAuthenticator.McpClientAuthenticator,
   Effect.gen(function* () {
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const environment = yield* ServerEnvironment.ServerEnvironment;
     const environmentId = yield* environment.getEnvironmentId;
-    return McpHttpServer.McpClientAuthenticator.of({
+    return McpClientAuthenticator.McpClientAuthenticator.of({
       authenticate: Effect.fn("McpHttpServer.McpClientAuthenticator.authenticate")(
         function (request) {
           return environmentAuth.authenticateMcpClient(request).pipe(

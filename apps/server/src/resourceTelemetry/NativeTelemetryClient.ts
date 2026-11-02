@@ -26,6 +26,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as RcRef from "effect/RcRef";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -52,6 +53,30 @@ const INITIAL_RESTART_DELAY = Duration.millis(500);
 const MAX_RESTART_DELAY = Duration.seconds(10);
 const FAILURE_WINDOW_MS = 60_000;
 const MAX_FAILURES_PER_WINDOW = 5;
+const HISTORY_RETENTION_MS = 60 * 60_000;
+
+export type NativeTelemetryHistorySnapshot = ResourceMonitorSnapshotEvent & {
+  readonly sidecarPid?: number;
+};
+
+function retainHistory(
+  previous: ReadonlyArray<NativeTelemetryHistorySnapshot>,
+  incoming: ReadonlyArray<NativeTelemetryHistorySnapshot>,
+  now: number,
+): ReadonlyArray<NativeTelemetryHistorySnapshot> {
+  const retained: NativeTelemetryHistorySnapshot[] = [];
+  let entries = 0;
+  let bytes = 0;
+  for (const snapshot of [...previous, ...incoming].reverse()) {
+    if (snapshot.sampledAtUnixMs > now || snapshot.sampledAtUnixMs < now - HISTORY_RETENTION_MS)
+      continue;
+    entries += snapshot.processes.length + (snapshot.externalProcesses?.length ?? 0);
+    bytes += Buffer.byteLength(JSON.stringify(snapshot));
+    if (retained.length === 3_600 || entries > 20_000 || bytes > 64 * 1024 * 1024) break;
+    retained.push(snapshot);
+  }
+  return retained.reverse();
+}
 
 export class NativeTelemetrySpawnFailed extends Schema.TaggedError<NativeTelemetrySpawnFailed>()(
   "NativeTelemetrySpawnFailed",
@@ -184,10 +209,11 @@ export class NativeTelemetryClient extends Context.Service<
   NativeTelemetryClient,
   {
     readonly capabilities: Effect.Effect<ResourceMonitorCapabilities, NativeTelemetryClientError>;
+    readonly retain: Effect.Effect<void, never, Scope.Scope>;
     readonly snapshots: Stream.Stream<NativeTelemetrySnapshot, NativeTelemetryClientError>;
     readonly readHistory: (
       windowMs: number,
-    ) => Effect.Effect<ReadonlyArray<ResourceMonitorSnapshotEvent>, NativeTelemetryClientError>;
+    ) => Effect.Effect<ReadonlyArray<NativeTelemetryHistorySnapshot>, NativeTelemetryClientError>;
     readonly setExternalProcesses: (
       processes: ReadonlyArray<ResourceMonitorExternalProcess>,
     ) => Effect.Effect<void, NativeTelemetryClientError>;
@@ -386,6 +412,8 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     sampleIntervalMs: IDLE_SAMPLE_INTERVAL_MS,
   });
   const appliedCollectionControl = yield* Ref.make(yield* Ref.get(collectionControl));
+  const history = yield* Ref.make<ReadonlyArray<NativeTelemetryHistorySnapshot>>([]);
+  const readiness = yield* Ref.make(yield* Deferred.make<void>());
   const externalProcesses = yield* Ref.make<ReadonlyArray<ResourceMonitorExternalProcess>>([]);
   const pendingSamples = yield* Ref.make(
     new Map<string, Deferred.Deferred<NativeTelemetrySnapshot, NativeTelemetryClientError>>(),
@@ -679,6 +707,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
         type: "setExternalProcesses",
         processes: [...(yield* Ref.get(externalProcesses))],
       });
+      yield* Deferred.succeed(yield* Ref.get(readiness), undefined);
 
       const exitEffect = handle.exitCode.pipe(
         Effect.mapError(
@@ -706,7 +735,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     ),
   );
 
-  yield* Effect.gen(function* () {
+  const supervise = Effect.gen(function* () {
     let failures: ReadonlyArray<number> = [];
     let restartAttempt = 0;
 
@@ -772,8 +801,56 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
             ),
           ),
     ),
-    Effect.forkScoped,
   );
+
+  const monitor = yield* RcRef.make({
+    acquire: Effect.gen(function* () {
+      const ready = yield* Deferred.make<void>();
+      yield* Ref.set(readiness, ready);
+      const fiber = yield* supervise.pipe(Effect.forkScoped);
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* () {
+          if (config.otlpMetricsUrl === undefined) {
+            const retained = yield* readHistory(HISTORY_RETENTION_MS).pipe(
+              Effect.orElseSucceed(() => []),
+            );
+            const now = DateTime.toEpochMillis(yield* DateTime.now);
+            yield* Ref.update(history, (previous) => retainHistory(previous, retained, now));
+          }
+          yield* Fiber.interrupt(fiber);
+          yield* Ref.update(state, (current) => ({
+            ...current,
+            status: "starting" as const,
+            hello: Option.none(),
+            restartCount: current.restartCount + 1,
+          }));
+        }),
+      );
+      return ready;
+    }),
+  });
+
+  const withDemand = <A, E>(effect: Effect.Effect<A, E>) =>
+    config.otlpMetricsUrl !== undefined
+      ? effect
+      : Effect.scoped(
+          RcRef.get(monitor).pipe(
+            Effect.flatMap((ready) =>
+              Deferred.await(ready).pipe(
+                Effect.timeoutOption(HANDSHAKE_TIMEOUT),
+                Effect.flatMap(
+                  Option.match({
+                    onNone: (): Effect.Effect<A, E | NativeTelemetryUnavailable> =>
+                      Effect.fail(
+                        new NativeTelemetryUnavailable({ reason: "handshake is incomplete" }),
+                      ),
+                    onSome: () => effect,
+                  }),
+                ),
+              ),
+            ),
+          ),
+        );
 
   // Desktop power samples reach this even when the control state has not changed.
   const applyCollectionControl = Effect.fnUntraced(function* (
@@ -835,6 +912,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
   const liveSnapshots = Stream.unwrap(
     Effect.gen(function* () {
       const subscription = yield* PubSub.subscribe(snapshots);
+      yield* RcRef.get(monitor);
       yield* Effect.acquireRelease(changeLiveSubscriberCount(1), () =>
         changeLiveSubscriberCount(-1).pipe(Effect.ignore),
       );
@@ -882,7 +960,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       next.set(requestId, { deferred, snapshots: [] });
       return next;
     });
-    return yield* writeCommand(Option.getOrThrow(current.handle), {
+    const snapshots = yield* writeCommand(Option.getOrThrow(current.handle), {
       version: RESOURCE_MONITOR_PROTOCOL_VERSION,
       type: "readHistory",
       requestId,
@@ -913,6 +991,9 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
         }),
       ),
     );
+    if (config.otlpMetricsUrl !== undefined || Option.isNone(current.hello)) return snapshots;
+    const sidecarPid = current.hello.value.sidecarPid;
+    return snapshots.map((snapshot) => ({ ...snapshot, sidecarPid }));
   });
 
   const sampleNow: NativeTelemetryClient["Service"]["sampleNow"] = Effect.gen(function* () {
@@ -1028,26 +1109,43 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
 
   const health = currentHealth;
 
+  // Metrics export retains its existing eager collector and process lifetime.
+  if (config.otlpMetricsUrl !== undefined) yield* RcRef.get(monitor);
+
   return NativeTelemetryClient.of({
-    capabilities: Ref.get(state).pipe(
-      Effect.flatMap((current) =>
-        Option.match(current.hello, {
-          onNone: () =>
-            Effect.fail(
-              new NativeTelemetryUnavailable({
-                reason: Option.getOrElse(current.lastError, () => "handshake is incomplete"),
-              }),
-            ),
-          onSome: (hello) => Effect.succeed(hello.capabilities),
-        }),
+    retain: RcRef.get(monitor).pipe(Effect.asVoid),
+    capabilities: withDemand(
+      Ref.get(state).pipe(
+        Effect.flatMap((current) =>
+          Option.match(current.hello, {
+            onNone: () =>
+              Effect.fail(
+                new NativeTelemetryUnavailable({
+                  reason: Option.getOrElse(current.lastError, () => "handshake is incomplete"),
+                }),
+              ),
+            onSome: (hello) => Effect.succeed(hello.capabilities),
+          }),
+        ),
       ),
     ),
     snapshots: liveSnapshots,
-    readHistory,
+    readHistory: Effect.fn("NativeTelemetryClient.readRetainedHistory")((windowMs: number) =>
+      withDemand(
+        Effect.gen(function* () {
+          const current = yield* readHistory(windowMs);
+          if (config.otlpMetricsUrl !== undefined) return current;
+          const now = DateTime.toEpochMillis(yield* DateTime.now);
+          return retainHistory(yield* Ref.get(history), current, now).filter(
+            (snapshot) => snapshot.sampledAtUnixMs >= now - Math.max(0, Math.round(windowMs)),
+          );
+        }),
+      ),
+    ),
     setExternalProcesses,
     setHostPowerState,
-    sampleNow,
-    processTable,
+    sampleNow: withDemand(sampleNow),
+    processTable: withDemand(processTable),
     retry: Ref.get(state).pipe(
       Effect.flatMap((current) =>
         !canRequestNativeTelemetryRetry(current.status, Option.isSome(current.handle))
@@ -1078,6 +1176,7 @@ export const layerTest = (
   return Layer.succeed(
     NativeTelemetryClient,
     NativeTelemetryClient.of({
+      retain: Effect.void,
       capabilities: Effect.succeed({
         cumulativeCpuTime: true,
         currentCpuPercent: true,

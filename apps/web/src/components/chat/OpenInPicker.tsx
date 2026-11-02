@@ -237,7 +237,10 @@ export const OpenInPicker = memo(function OpenInPicker({
   const [menuOpen, setMenuOpen] = useComposerMenuState(isHostEditorDenied);
   const remoteCapableEditors = useRemoteCapableEditors();
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
-  const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
+  const environment = useEnvironment(environmentId);
+  const environmentLabel = environment?.label ?? "this machine";
+  const editorsPending =
+    remote.mode === "local-exec" && environment?.serverConfig?.availableEditorsPending === true;
   // Remote editors run on the viewing machine; only desktop can probe that PATH.
   const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
@@ -296,7 +299,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         <>
           {options.length === 0 && (
             <MenuItem density={presentation === "menu" ? "touch" : "default"} disabled>
-              No installed editors found
+              {editorsPending ? "Finding installed editors..." : "No installed editors found"}
             </MenuItem>
           )}
           {options.map(({ label, Icon, value, kind }) => (

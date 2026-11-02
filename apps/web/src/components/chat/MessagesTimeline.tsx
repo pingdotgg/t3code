@@ -899,7 +899,16 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const rememberPosition = (followingEnd: boolean) => {
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || state?.data !== rows) return;
-    const isAtEnd = resolveTimelineIsAtEnd(state);
+    const viewport = listRef.current?.getScrollableNode();
+    const isAtEnd = resolveTimelineIsAtEnd(
+      viewport?.querySelector("[data-imperative-live]")
+        ? {
+            contentLength: viewport.scrollHeight,
+            scroll: viewport.scrollTop,
+            scrollLength: viewport.clientHeight,
+          }
+        : state,
+    );
     const position = state.data.length ? resolveWorkGroupScrollAnchor(state) : undefined;
     if (position && isAtEnd !== undefined) {
       const index = state.indexByKey(position.rowId);
@@ -971,7 +980,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (laidOutData === rows) {
       setSettlingListIdentity((current) => (current === listIdentityKey ? null : current));
     }
-    handleScroll();
+    if (!listRef.current?.getScrollableNode()?.querySelector("[data-imperative-live]"))
+      handleScroll();
   });
   // The content lane only changes width with the viewport or the chat width
   // setting, never with streamed content; measuring per content frame would
@@ -1013,6 +1023,19 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onRespondToApproval,
     citationRequest: readyCitationRequest,
     listRef,
+    liveFollowEnabled,
+    imperativeLiveRowId:
+      !findActive &&
+      !citationPositioning &&
+      !anchoredEndSpace &&
+      lastMessageRow?.kind === "message" &&
+      lastMessageRow.message.role === "assistant" &&
+      lastMessageRow.message.streaming &&
+      rows
+        .slice(rows.indexOf(lastMessageRow) + 1)
+        .every((row) => row.kind === "working" || row.kind === "thinking")
+        ? lastMessageRow.id
+        : undefined,
     timestampFormat,
     routeThreadKey,
     threadRef: citationThreadRef,

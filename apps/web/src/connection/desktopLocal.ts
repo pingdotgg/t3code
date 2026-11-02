@@ -5,6 +5,8 @@ import {
   type DesktopEnvironmentBootstrap,
 } from "@t3tools/contracts";
 
+import { subscribeDocumentReturn } from "../lib/documentActivity";
+
 const DESKTOP_LOCAL_CONNECTION_ID_PREFIX = "local:";
 
 export function desktopLocalConnectionId(backendId: string): string {
@@ -99,4 +101,13 @@ export function readDesktopSecondaryBootstrapsResult(): DesktopSecondaryBootstra
 
 export function readDesktopSecondaryBootstraps(): ReadonlyArray<DesktopEnvironmentBootstrap> {
   return desktopSecondaryBootstrapsReader.readSnapshot();
+}
+
+export function subscribeDesktopTopologyChanges(listener: () => void): () => void {
+  const unsubscribe = window.desktopBridge?.onLocalEnvironmentBootstrapsChanged?.(listener);
+  const stopReturn = subscribeDocumentReturn(listener);
+  return () => {
+    unsubscribe?.();
+    stopReturn();
+  };
 }

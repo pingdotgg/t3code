@@ -185,7 +185,13 @@ const bootstrap = Effect.gen(function* () {
     yield* (yield* DesktopAppIdentity.DesktopAppIdentity).resolveUserDataPath,
   );
 
-  yield* snapShot.initialize;
+  if (
+    !(yield* Ref.get(state.quitting)) &&
+    !(settings.localEnvironmentEnabled && settings.wslOnly && settings.wslBackendEnabled)
+  ) {
+    yield* desktopWindow.createMain;
+  }
+  yield* Effect.forkScoped(snapShot.initialize);
 
   if (!settings.localEnvironmentEnabled) {
     yield* logBootstrapInfo("bootstrap skipping local environment (disabled in settings)");
@@ -278,7 +284,10 @@ const startup = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const previewPasskeys = yield* PreviewPasskeys.PreviewPasskeys;
 
-  yield* shellEnvironment.installIntoProcess;
+  // Linux needs shell desktop/session variables before selecting its password store.
+  if (environment.platform === "linux") {
+    yield* shellEnvironment.installIntoProcess;
+  }
   const hasCommandLinePasswordStore =
     preReadyElectronOptions.linuxPasswordStoreCommandLine !== null;
   const linuxElectronOptions =
@@ -333,12 +342,15 @@ const startup = Effect.gen(function* () {
   }
   yield* appIdentity.configure;
   yield* previewPasskeys.configure;
+  yield* DesktopStartupRecovery.listen;
+  yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
+  if (environment.platform !== "linux") {
+    yield* Effect.forkScoped(shellEnvironment.installIntoProcess);
+  }
   yield* applicationMenu.configure;
   yield* updates.configure;
   yield* DesktopRemoteUpdates.listen;
-  yield* DesktopStartupRecovery.listen;
   yield* linuxUrlHandler.register;
-  yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
 }).pipe(Effect.withSpan("desktop.startup"));
 
 const scopedProgram = Effect.scoped(

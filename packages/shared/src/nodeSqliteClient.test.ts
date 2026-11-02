@@ -12,6 +12,7 @@ import * as Statement from "effect/sql/Statement";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as Stream from "effect/Stream";
 import type * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import * as SqliteClient from "./nodeSqliteClient.ts";
@@ -264,6 +265,74 @@ it.effect("lets the writer commit while a read-only transaction is open", () =>
 
       assert.deepEqual(counts, { before: 1, after: 1 });
       assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 2);
+    }),
+  ),
+);
+
+it.effect("retires surplus idle readers without ending a held read transaction", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const opened = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const held = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* countEntries(sql);
+            yield* Deferred.succeed(opened, undefined);
+            yield* Deferred.await(release);
+            assert.equal(yield* countEntries(sql), 1);
+          }),
+        )
+        .pipe(SqliteClient.readOnly, Effect.forkChild);
+      yield* Deferred.await(opened);
+      const first = startedWorkers.at(-1)!;
+      assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 1);
+      const surplus = startedWorkers.at(-1)!;
+      assert.notStrictEqual(first, surplus);
+      using retired = vi.spyOn(surplus, "terminate");
+      yield* TestClock.adjust("5 seconds");
+      assert.equal(retired.mock.calls.length, 0);
+      assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 1);
+      assert.strictEqual(startedWorkers.at(-1), surplus);
+      yield* TestClock.adjust("5 seconds");
+      assert.equal(retired.mock.calls.length, 0);
+      yield* TestClock.adjust("10 seconds");
+      assert.equal(retired.mock.calls.length, 1);
+      yield* Effect.promise(() => retired.mock.results[0]!.value);
+      assert.equal(surplus.threadId, -1);
+      assert.notEqual(first.threadId, -1);
+      const reopened = yield* Deferred.make<void>();
+      const releaseSurplus = yield* Deferred.make<void>();
+      const surplusTransaction = yield* sql
+        .withTransaction(
+          countEntries(sql).pipe(
+            Effect.andThen(Deferred.succeed(reopened, undefined)),
+            Effect.andThen(Deferred.await(releaseSurplus)),
+            Effect.andThen(countEntries(sql)),
+          ),
+        )
+        .pipe(SqliteClient.readOnly, Effect.forkChild);
+      yield* Deferred.await(reopened);
+      const replacement = startedWorkers.at(-1)!;
+      assert.notStrictEqual(replacement, surplus);
+      const workerCount = startedWorkers.length;
+      const cancelled = yield* countEntries(sql).pipe(SqliteClient.readOnly, (effect) =>
+        Effect.forkChild(effect, { startImmediately: true }),
+      );
+      const queued = yield* countEntries(sql).pipe(SqliteClient.readOnly, (effect) =>
+        Effect.forkChild(effect, { startImmediately: true }),
+      );
+      assert.equal(startedWorkers.length, workerCount);
+      yield* Fiber.interrupt(cancelled);
+      yield* TestClock.adjust("1 minute");
+      assert.notEqual(replacement.threadId, -1);
+      yield* Deferred.succeed(releaseSurplus, undefined);
+      assert.equal(yield* Fiber.join(surplusTransaction), 1);
+      assert.equal(yield* Fiber.join(queued), 1);
+      assert.equal(startedWorkers.length, workerCount);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(held);
+      assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 1);
     }),
   ),
 );

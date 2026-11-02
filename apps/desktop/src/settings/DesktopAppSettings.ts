@@ -58,10 +58,11 @@ export const DesktopWindowBoundsSchema = Schema.Struct({
   height: Schema.Int.check(Schema.isGreaterThanOrEqualTo(MIN_MAIN_WINDOW_SIZE.height)),
 });
 export type DesktopWindowBounds = typeof DesktopWindowBoundsSchema.Type;
-export const DEFAULT_MAIN_WINDOW_SIZE = {
-  width: 1100,
-  height: 780,
-} as const;
+import { normalizeMainWindowBounds } from "../window/mainWindowOptions.ts";
+export {
+  DEFAULT_MAIN_WINDOW_SIZE,
+  normalizeMainWindowBounds,
+} from "../window/mainWindowOptions.ts";
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   localEnvironmentEnabled: true,
@@ -107,7 +108,6 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 const DesktopSettingsJson = fromLenientJson(DesktopSettingsDocument);
 const decodeDesktopSettingsJson = Schema.decodeEffect(DesktopSettingsJson);
 const encodeDesktopSettingsJson = Schema.encodeEffect(DesktopSettingsJson);
-const decodeDesktopWindowBounds = Schema.decodeUnknownOption(DesktopWindowBoundsSchema);
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(DesktopWindowBoundsSchema);
 
 const settingsChange = (settings: DesktopSettings, changed: boolean): DesktopSettingsChange => ({
@@ -192,10 +192,6 @@ function normalizeTailscaleServePort(value: unknown): number {
 
 function normalizeWslDistro(value: unknown): string | null {
   return typeof value === "string" && isValidDistroName(value) ? value : null;
-}
-
-export function normalizeMainWindowBounds(value: unknown): DesktopWindowBounds | null {
-  return Option.getOrNull(decodeDesktopWindowBounds(value));
 }
 
 function normalizeDesktopSettingsDocument(

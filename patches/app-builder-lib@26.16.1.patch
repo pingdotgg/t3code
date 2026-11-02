@@ -61,3 +61,38 @@ diff --git a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh b/template
            Quit
          ${else}
            Goto loop
+diff --git a/out/targets/appimage/AppImageTarget.js b/out/targets/appimage/AppImageTarget.js
+--- a/out/targets/appimage/AppImageTarget.js
++++ b/out/targets/appimage/AppImageTarget.js
+@@ -109,6 +109,7 @@ class AppImageTarget extends core_1.Target {
+                         icons,
+                         fileAssociations: packager.fileAssociations,
+                         desktopBaseName,
++                        maximumCompression: packager.compression === "maximum",
+                         compression: (() => {
+                             const c = options.compression;
+                             if (c === "gzip" || c === "zstd") {
+diff --git a/out/targets/appimage/appImageUtil.d.ts b/out/targets/appimage/appImageUtil.d.ts
+--- a/out/targets/appimage/appImageUtil.d.ts
++++ b/out/targets/appimage/appImageUtil.d.ts
+@@ -21,6 +21,7 @@ interface Options {
+      *
+      */
+     compression?: "gzip" | "zstd" | "xz";
++    maximumCompression?: boolean;
+     /** Pre-computed desktop basename (already validated). When absent, falls back to `executableName`. */
+     desktopBaseName?: string;
+ }
+diff --git a/out/targets/appimage/appImageUtil.js b/out/targets/appimage/appImageUtil.js
+--- a/out/targets/appimage/appImageUtil.js
++++ b/out/targets/appimage/appImageUtil.js
+@@ -28,6 +28,9 @@ async function buildStaticRuntimeAppImage(appimageToolVersion, opts) {
+         if (options.compression) {
+             args.push("-comp", options.compression);
+         }
++        if (options.maximumCompression && options.compression === "zstd") {
++            args.push("-Xcompression-level", "22", "-b", "1M");
++        }
+         await (0, builder_util_1.exec)(mksquashfs, args, {
+             cwd: stageDir,
+         });

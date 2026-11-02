@@ -122,7 +122,9 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
   const subscribe = (input: ProviderSetupInput) =>
     Stream.unwrap(
       requireInstance(input.instanceId, "observe-install").pipe(
-        Effect.map(({ installation }) => installation.changes),
+        Effect.flatMap(({ installation }) =>
+          installation.state.pipe(Effect.as(installation.changes)),
+        ),
       ),
     );
 

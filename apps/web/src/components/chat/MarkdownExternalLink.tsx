@@ -1,5 +1,6 @@
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { GlobeIcon } from "lucide-react";
+import { Globe, createElement } from "lucide";
 import { Children, memo, useState, type ReactNode } from "react";
 
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -52,6 +53,52 @@ function leadingExternalLinkTextLength(text: string): number {
   const protocol = /^(?:https?:\/\/)/i.exec(text)?.[0];
   if (protocol) return protocol.length;
   return Math.min(text.length, 1);
+}
+
+export function createLiveExternalLinkContent(host: string, text: string): DocumentFragment | null {
+  if (sourceControlClients.findByPublicDomain(host)) return null;
+  const result = document.createDocumentFragment();
+  const leading = document.createElement("span");
+  leading.className = "whitespace-nowrap";
+  const icon = document.createElement("span");
+  icon.className = "ms-[0.25em] me-[0.2em] inline-flex size-[14px] [vertical-align:-0.125em]";
+  icon.setAttribute("aria-hidden", "true");
+  const globe = () =>
+    createElement(Globe, {
+      class: `lucide lucide-globe ${MARKDOWN_LINK_FAVICON_CLASS_NAME}`,
+      "aria-hidden": "true",
+    });
+  const favicon = failedFaviconHosts.has(host) ? null : faviconUrlForOrigin(`https://${host}`);
+  if (favicon) {
+    const image = document.createElement("img");
+    image.src = favicon;
+    image.alt = "";
+    image.loading = "lazy";
+    image.draggable = false;
+    image.className = `${MARKDOWN_LINK_FAVICON_CLASS_NAME} rounded-sm`;
+    image.addEventListener(
+      "error",
+      () => {
+        failedFaviconHosts.add(host);
+        icon.replaceChildren(globe());
+      },
+      { once: true },
+    );
+    icon.append(image);
+  } else icon.append(globe());
+  const length = leadingExternalLinkTextLength(text);
+  leading.append(icon, text.slice(0, length));
+  result.append(leading);
+  for (const word of text.slice(length).match(/\s+|\S+/g) ?? []) {
+    if (word.length <= 16) result.append(word);
+    else {
+      const span = document.createElement("span");
+      span.className = "[overflow-wrap:anywhere]";
+      span.textContent = word;
+      result.append(span);
+    }
+  }
+  return result;
 }
 
 // Keep short labels such as PR numbers intact in narrow table columns.

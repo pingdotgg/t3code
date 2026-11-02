@@ -14,7 +14,11 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import { v2Now, v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
-import { createEnvironmentThreadDetailAtoms, sameThreadStructure } from "./threadDetail.ts";
+import {
+  createEnvironmentThreadDetailAtoms,
+  sameThreadStructure,
+  subscribeAssistantMessageText,
+} from "./threadDetail.ts";
 import { mergeOlderHistoryIntoProjection } from "./threadHistoryMerge.ts";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "./threadState.ts";
 
@@ -201,10 +205,11 @@ describe("timelineVisibleTurnItemsAtom", () => {
   const ref = { environmentId: EnvironmentId.make("environment-1"), threadId: v2ThreadId };
 
   it("holds through streamed assistant text while the message reads its own text", () => {
+    let projection: OrchestrationV2ThreadProjection = withItem(assistant);
     const stateAtom = Atom.make(
       AsyncResult.success({
         ...EMPTY_ENVIRONMENT_THREAD_STATE,
-        data: Option.some<OrchestrationV2ThreadProjection>(withItem(assistant)),
+        data: Option.some<OrchestrationV2ThreadProjection>(projection),
       }),
     );
     const details = createEnvironmentThreadDetailAtoms(() => stateAtom);
@@ -213,22 +218,53 @@ describe("timelineVisibleTurnItemsAtom", () => {
     const registry = AtomRegistry.make();
     registry.mount(timelineAtom);
     registry.mount(textAtom);
-    const push = (item: OrchestrationV2TurnItem) =>
+    const deliveries: Array<string | null> = [];
+    const unsubscribe = subscribeAssistantMessageText(
+      registry,
+      details.stateAtom(ref),
+      assistant.id,
+      (text) => deliveries.push(text),
+    );
+    let structuralReads = 0;
+    const structuralAtom = Atom.make((get) => {
+      structuralReads++;
+      get(details.pendingRequestsAtom(ref));
+      return get(details.structureThreadAtom(ref));
+    });
+    registry.mount(structuralAtom);
+    const firstStructure = registry.get(structuralAtom);
+    const push = (item: OrchestrationV2TurnItem) => {
+      projection = replaceItem(projection, item);
       registry.set(
         stateAtom,
         AsyncResult.success({
           ...EMPTY_ENVIRONMENT_THREAD_STATE,
-          data: Option.some(withItem(item, later)),
+          data: Option.some(projection),
         }),
       );
+    };
     const first = registry.get(timelineAtom);
 
-    push({ ...assistant, text: "Hello", updatedAt: later });
-    expect(registry.get(timelineAtom)).toBe(first);
-    expect(registry.get(textAtom)).toBe("Hello");
+    for (const text of ["H", "Hello", "Hello there"]) {
+      push({ ...assistant, text, updatedAt: later });
+      expect(registry.get(timelineAtom)).toBe(first);
+      expect(registry.get(textAtom)).toBe(text);
+      expect(registry.get(structuralAtom)).toBe(firstStructure);
+      expect(structuralReads).toBe(1);
+      expect(deliveries.at(-1)).toBe(text);
+    }
 
     push({ ...assistant, text: "Hello", streaming: false, status: "completed" });
     expect(registry.get(timelineAtom)[0]?.item).toMatchObject({ text: "Hello", streaming: false });
+    expect(registry.get(structuralAtom)?.projection.turnItems[0]).toMatchObject({
+      text: "Hello",
+      streaming: false,
+    });
+    expect(structuralReads).toBe(2);
+    expect(deliveries).toEqual([assistant.text, "H", "Hello", "Hello there", "Hello"]);
+    unsubscribe();
+    push({ ...assistant, text: "after unsubscribe" });
+    expect(deliveries.at(-1)).toBe("Hello");
     registry.dispose();
   });
 });

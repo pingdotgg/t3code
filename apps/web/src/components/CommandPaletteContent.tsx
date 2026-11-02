@@ -1,17 +1,13 @@
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
-import { type ComponentProps, type ReactNode } from "react";
+import { type ComponentProps, type ReactNode, useLayoutEffect, useRef } from "react";
 
 import { Command, CommandFooter, CommandInput, CommandPanel } from "./ui/command";
 import { Kbd, KbdGroup } from "./ui/kbd";
 
-/**
- * A view replacing another inside an open dialog mounts with focus on the body,
- * left there by the removed input. Claim it so typing cannot reach the composer
- * behind the modal. On first open the dialog's own initial focus handles it.
- */
 function claimFocusInOpenDialog(input: HTMLInputElement | null) {
   if (!input) return;
   const active = input.ownerDocument.activeElement;
+  if (active === input) return;
   if (
     active === null ||
     active === input.ownerDocument.body ||
@@ -45,11 +41,16 @@ export function CommandPaletteContent({
   testId,
   ...commandProps
 }: CommandPaletteContentProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Claim replacement input focus after child measurements, before the dialog restores focus.
+  useLayoutEffect(() => {
+    claimFocusInOpenDialog(inputRef.current);
+  }, []);
   return (
     <div className="contents" data-testid={testId}>
       <Command {...commandProps}>
         <div className="relative">
-          <CommandInput autoFocus={false} {...inputProps} ref={claimFocusInOpenDialog} />
+          <CommandInput autoFocus={false} {...inputProps} ref={inputRef} />
           {inputAccessory}
         </div>
         <CommandPanel

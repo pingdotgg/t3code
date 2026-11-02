@@ -10,7 +10,6 @@ import * as Schema from "effect/Schema";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
 import type { PasskeyBackend, PasskeyCeremonyContext } from "./PasskeyBackend.ts";
-import { macPasskeyBackend } from "./PasskeyBackendMac.ts";
 import type { PasskeyCeremonyResult } from "./PasskeyBridge.ts";
 
 const PasskeyPackageMetadata = Schema.Struct({
@@ -111,7 +110,14 @@ const isTrustworthyOrigin = (origin: string) => {
 
 // Chromium already delegates to Windows Hello.
 const backendFor = (platform: NodeJS.Platform): PasskeyBackend | undefined =>
-  platform === "darwin" ? macPasskeyBackend : undefined;
+  platform === "darwin"
+    ? {
+        create: async (publicKey, context) =>
+          (await import("./PasskeyBackendMac.ts")).macPasskeyBackend.create(publicKey, context),
+        get: async (publicKey, context) =>
+          (await import("./PasskeyBackendMac.ts")).macPasskeyBackend.get(publicKey, context),
+      }
+    : undefined;
 
 const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
