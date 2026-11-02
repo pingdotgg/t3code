@@ -105,9 +105,7 @@ describe("resolveFilePreviewPath", () => {
     const relativePath = resolveFilePreviewPath(path, "/repo/project");
     expect(relativePath).toBe(expected);
     if (expected === null) {
-      expect(
-        shouldShowFileExplorer({ relativePath, explorerOpen: false, attachmentOpen: false }),
-      ).toBe(true);
+      expect(shouldShowFileExplorer({ relativePath, attachmentOpen: false })).toBe(true);
     }
   });
 });

@@ -76,7 +76,6 @@ vi.mock(import("./ui/toast"), async (original) => {
 
 import { useClosedViewStore } from "../closedViewStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
-import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { ReopenClosedViewShortcut } from "./ReopenClosedViewShortcut";
 
 const ref = { environmentId: "remote", threadId: "thread-1" } as ScopedThreadRef;
@@ -101,10 +100,6 @@ function setup() {
   state.openPreview.mockReset();
   useClosedViewStore.setState({ entries: [] });
   useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
-  useTerminalUiStateStore.setState({
-    terminalUiStateByThreadKey: {},
-    suppressedTerminalIdsByThreadKey: {},
-  });
 }
 
 async function renderShortcut() {

@@ -36,7 +36,7 @@ function isWorkspaceElementVisible(element: HTMLElement): boolean {
   if (
     !element.isConnected ||
     element.closest(
-      '[hidden], [inert], [data-closed], [aria-hidden="true"], [data-chat-column-maximized-away="true"], [data-slot="sidebar"][data-state="collapsed"], [data-workspace-unavailable="true"]',
+      '[hidden], [inert], [data-closed], [aria-hidden="true"], [data-slot="sidebar"][data-state="collapsed"], [data-workspace-unavailable="true"]',
     )
   )
     return false;
@@ -229,7 +229,11 @@ export function createWorkspaceFocusController(doc: Document) {
     if (areas.length === 0) return false;
     const activeArea = doc.activeElement?.closest<HTMLElement>(AREA_SELECTOR);
     const currentId = fromArea ?? activeArea?.dataset.workspaceArea ?? lastArea;
-    const current = areas.findIndex((area) => area.dataset.workspaceArea === currentId);
+    // Dock groups repeat the panel area, so the focused element decides which one F6 leaves.
+    const current =
+      activeArea && areas.includes(activeArea)
+        ? areas.indexOf(activeArea)
+        : areas.findIndex((area) => area.dataset.workspaceArea === currentId);
     const index =
       current === -1
         ? direction === 1

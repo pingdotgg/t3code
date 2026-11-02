@@ -3,6 +3,7 @@ import { type EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { useClosedViewStore } from "./closedViewStore";
+import { useDockLayoutStore } from "./dock/dockLayoutStore";
 import { reopenClosedView } from "./reopenClosedView";
 import {
   hostRightPanel,
@@ -12,6 +13,7 @@ import {
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectThreadPanelVisibility,
+  selectRightPanelKindShown,
   selectThreadRightPanelState,
   useRightPanelStore,
 } from "./rightPanelStore";
@@ -20,6 +22,8 @@ const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"))
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
 
 beforeEach(() => {
+  useDockLayoutStore.getState().resetLayout();
+  useDockLayoutStore.setState({ pendingSurfaceGroupId: null });
   useClosedViewStore.setState({ entries: [] });
   useRightPanelStore.setState({
     byThreadKey: {},
@@ -843,16 +847,19 @@ describe("rightPanelStore", () => {
     );
   });
 
-  it("replaces the standalone explorer with peer file surfaces", () => {
+  it("opens a file as its own surface and leaves the files surface open", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
     useRightPanelStore.getState().openFile(refA, "README.md");
 
-    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
       isOpen: true,
       activeSurfaceId: "file:README.md",
       surfaces: [
+        { id: "files", kind: "files" },
         {
           id: "file:src/index.ts",
           kind: "file",
@@ -908,7 +915,9 @@ describe("rightPanelStore", () => {
     useRightPanelStore.getState().openFile(refA, "src/index.ts", 42);
     useRightPanelStore.getState().openFile(refA, "src/index.ts", 87);
 
-    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
       isOpen: true,
       activeSurfaceId: "file:src/index.ts",
       surfaces: [
@@ -924,7 +933,9 @@ describe("rightPanelStore", () => {
 
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
 
-    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
       isOpen: true,
       activeSurfaceId: "file:src/index.ts",
       surfaces: [
@@ -946,7 +957,9 @@ describe("rightPanelStore", () => {
 
     useRightPanelStore.getState().reconcileFileSurfaces(refA, false);
 
-    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
       isOpen: true,
       activeSurfaceId: "device",
       surfaces: [{ id: "device", kind: "device" }],
@@ -974,7 +987,9 @@ describe("rightPanelStore", () => {
 
     useRightPanelStore.getState().reconcileFileSurfaces(refA, false);
 
-    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
       isOpen: true,
       activeSurfaceId: "attachment:thread-A-attachment-pdf",
       surfaces: [
@@ -1166,7 +1181,9 @@ describe("rightPanelStore", () => {
 
     useRightPanelStore.getState().closeSurfacesToRight(refA, "browser:tab-a");
 
-    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
       isOpen: true,
       activeSurfaceId: "browser:tab-a",
       surfaces: [{ id: "browser:tab-a", kind: "preview", resourceId: "tab-a" }],
@@ -1237,5 +1254,145 @@ describe("rightPanelStore", () => {
     store.reconcileBrowserSurfaces(refA, ["tab-a", "tab-b"]);
     expect(surfaceIds()).toEqual(["browser:tab-a", "terminal:term-1", "diff", "browser:tab-b"]);
     expect(store.getUserActionRevision(refA)).toBe(revision);
+  });
+
+  describe("dock groups", () => {
+    const threadState = (ref = refA) =>
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+    const splitGroup = (id: string) =>
+      useDockLayoutStore
+        .getState()
+        .createGroup({ type: "split", nodeId: "panel", edge: "bottom", size: 200 }, id);
+
+    it("moves one file tab out of a group without its siblings following the kind", () => {
+      const store = useRightPanelStore.getState();
+      store.openFile(refA, "a.ts");
+      store.openFile(refA, "b.ts");
+      splitGroup("g1");
+      store.placeSurface(refA, "file:a.ts", "g1", null);
+
+      expect(threadState().surfaces).toMatchObject([
+        { id: "file:b.ts", groupId: "panel" },
+        { id: "file:a.ts", groupId: "g1" },
+      ]);
+    });
+
+    it("keeps singletons on their kind, so a moved diff moves for every thread", () => {
+      const store = useRightPanelStore.getState();
+      store.open(refA, "diff");
+      store.open(refB, "diff");
+      splitGroup("g1");
+      store.placeSurface(refA, "diff", "g1", null);
+
+      expect(threadState().surfaces[0]).toEqual({ id: "diff", kind: "diff" });
+      expect(threadState().activeGroupTabs).toMatchObject({ g1: "diff" });
+    });
+
+    it("inserts between a group's tabs by their order in that group", () => {
+      const store = useRightPanelStore.getState();
+      store.openFile(refA, "a.ts");
+      store.openTerminal(refA, "term-1");
+      store.openFile(refA, "b.ts");
+      store.placeSurface(refA, "file:b.ts", "panel", 1);
+
+      expect(threadState().surfaces.map((surface) => surface.id)).toEqual([
+        "file:a.ts",
+        "file:b.ts",
+        "terminal:term-1",
+      ]);
+    });
+
+    it("opens a surface in the group its add menu was used from, once", () => {
+      splitGroup("g1");
+      useDockLayoutStore.getState().setPendingSurfaceGroup("g1");
+      const store = useRightPanelStore.getState();
+      store.open(refA, "files");
+      store.openFile(refA, "a.ts");
+
+      expect(threadState().surfaces).toMatchObject([
+        { id: "files", groupId: "g1" },
+        { id: "file:a.ts" },
+      ]);
+      expect(threadState().surfaces[1]?.groupId).toBeUndefined();
+    });
+
+    it("hides a terminal's group with its tabs intact, and any activation brings it back", () => {
+      const store = useRightPanelStore.getState();
+      store.openFile(refA, "a.ts");
+      splitGroup("g1");
+      useDockLayoutStore.getState().setKindGroup("terminal", "g1");
+      store.openTerminal(refA, "term-1");
+      const shown = () =>
+        selectRightPanelKindShown(useRightPanelStore.getState().byThreadKey, refA, "terminal");
+      expect(shown()).toBe(true);
+
+      store.hideKind(refA, "terminal");
+
+      expect(shown()).toBe(false);
+      expect(threadState()).toMatchObject({
+        isOpen: true,
+        activeSurfaceId: "file:a.ts",
+        hiddenGroupIds: ["g1"],
+      });
+      expect(threadState().surfaces).toHaveLength(2);
+
+      store.activateSurface(refA, "terminal:term-1");
+
+      expect(shown()).toBe(true);
+      expect(threadState().hiddenGroupIds).toBeUndefined();
+    });
+
+    it("hiding the last shown group closes the panel, and showing clears every hidden group", () => {
+      const store = useRightPanelStore.getState();
+      store.openTerminal(refA, "term-1");
+      store.hideKind(refA, "terminal");
+      expect(threadState()).toMatchObject({ isOpen: false, activeSurfaceId: null });
+
+      store.toggleVisibility(refA);
+
+      expect(threadState()).toMatchObject({ isOpen: true, activeSurfaceId: "terminal:term-1" });
+      expect(threadState().hiddenGroupIds).toBeUndefined();
+    });
+
+    it("toggles a kind shown in a background group instead of re-activating it", () => {
+      const store = useRightPanelStore.getState();
+      store.open(refA, "diff");
+      splitGroup("g1");
+      useDockLayoutStore.getState().setKindGroup("terminal", "g1");
+      store.openTerminal(refA, "term-1");
+      expect(threadState().activeSurfaceId).toBe("terminal:term-1");
+
+      store.toggle(refA, "diff");
+
+      expect(
+        selectRightPanelKindShown(useRightPanelStore.getState().byThreadKey, refA, "diff"),
+      ).toBe(false);
+      expect(threadState().hiddenGroupIds).toEqual(["panel"]);
+    });
+
+    it("reveals a terminal in the surface that holds it instead of opening a duplicate", () => {
+      const store = useRightPanelStore.getState();
+      store.openTerminal(refA, "term-1");
+      store.splitTerminal(refA, "terminal:term-1", "term-2");
+
+      store.openTerminal(refA, "term-1");
+
+      expect(threadState().surfaces).toMatchObject([
+        { id: "terminal:term-1", terminalIds: ["term-1", "term-2"], activeTerminalId: "term-1" },
+      ]);
+    });
+
+    it("keeps a reopened file in the group it was left in", () => {
+      const store = useRightPanelStore.getState();
+      store.openFile(refA, "a.ts");
+      splitGroup("g1");
+      store.placeSurface(refA, "file:a.ts", "g1", null);
+
+      store.openFile(refA, "a.ts", 12);
+
+      expect(threadState().surfaces).toMatchObject([
+        { id: "file:a.ts", groupId: "g1", revealLine: 12 },
+      ]);
+    });
   });
 });

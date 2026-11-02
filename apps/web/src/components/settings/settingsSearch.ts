@@ -356,6 +356,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["latex tex katex equations formulas markdown"],
   },
   {
+    id: "thread-sidebar-side",
+    title: "Sidebar position",
+    to: "/settings/appearance",
+    searchTerms: ["threads left right move sidebar side"],
+  },
+  {
     id: "panel-animations",
     title: "Panel animations",
     to: "/settings/appearance",

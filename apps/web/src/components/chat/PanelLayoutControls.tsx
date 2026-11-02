@@ -3,8 +3,6 @@ import { Maximize2, Minimize2 } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { memo, type ReactNode } from "react";
 
-import { cn } from "~/lib/utils";
-
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
 import { Toggle } from "../ui/toggle";
@@ -90,7 +88,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={terminalOpen}
               onPressedChange={onToggleTerminal}
-              aria-label="Toggle terminal drawer"
+              aria-label="Toggle terminal"
               variant="ghost"
               size="sm"
               disabled={!terminalAvailable}
@@ -100,7 +98,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           </TooltipTrigger>
           <TooltipPopup side="bottom">
             {terminalAvailable
-              ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
+              ? `Toggle terminal${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
               : "Terminal drawer is unavailable"}
           </TooltipPopup>
         </Tooltip>
@@ -173,41 +171,13 @@ export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
   );
 }
 
-/** The window's top-right panel controls, with the maximize toggle while the panel is open. */
-export function WorkspaceTitlebarControls(props: {
-  readonly showMaximizeControl: boolean;
-  readonly rightPanelOpen: boolean;
-  readonly animationsActive: boolean;
-  readonly maximized: boolean;
-  readonly onToggleMaximized: () => void;
-  readonly children: ReactNode;
-}) {
+/** The window's top-right controls. */
+export function WorkspaceTitlebarControls(props: { readonly children: ReactNode }) {
   return (
     <div
       className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
-      {props.showMaximizeControl ? (
-        <span
-          aria-hidden={!props.rightPanelOpen}
-          // Fading out on close would show it beside the thread details toggle that replaces it.
-          className={cn(
-            "flex shrink-0",
-            props.rightPanelOpen &&
-              props.animationsActive &&
-              "motion-safe:transition-opacity motion-safe:duration-(--panel-animation-duration) motion-safe:ease-out",
-            props.rightPanelOpen
-              ? "pointer-events-auto opacity-100"
-              : "pointer-events-none absolute right-full mr-1 opacity-0",
-          )}
-          inert={!props.rightPanelOpen}
-        >
-          <RightPanelMaximizeControl
-            maximized={props.maximized}
-            onToggle={props.onToggleMaximized}
-          />
-        </span>
-      ) : null}
       <div className="pointer-events-auto flex h-full items-center">{props.children}</div>
     </div>
   );

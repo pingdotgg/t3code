@@ -52,14 +52,14 @@ describe("workspace area focus", () => {
     expect(document.activeElement).toBe(panel.button);
   });
 
-  it("skips hidden, inert, and maximized-away areas", () => {
+  it("skips hidden, inert, and unavailable areas", () => {
     using fixture = setup();
     const sidebar = fixture.area("sidebar", 0);
     const conversation = fixture.area("conversation", 1);
     const composer = fixture.area("composer", 2);
     const panel = fixture.area("panel", 3);
     const terminal = fixture.area("terminal", 4);
-    conversation.element.dataset.chatColumnMaximizedAway = "true";
+    conversation.element.inert = true;
     composer.element.hidden = true;
     panel.element.dataset.workspaceUnavailable = "true";
     terminal.element.inert = true;

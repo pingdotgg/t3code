@@ -1,18 +1,21 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
-import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import {
+  selectThreadRightPanelState,
+  selectTerminalSurface,
+  selectRightPanelKindShown,
+  useRightPanelStore,
+} from "../rightPanelStore";
 
-export type TerminalFocusOwner = "drawer" | "right-panel";
+export type TerminalFocusOwner = "right-panel";
 
 export function getTerminalFocusOwner(): TerminalFocusOwner | null {
   const activeElement = document.activeElement;
   if (!(activeElement instanceof HTMLElement)) return null;
   if (!activeElement.isConnected) return null;
   const owner = activeElement.closest<HTMLElement>("[data-terminal-owner]")?.dataset.terminalOwner;
-  if (owner === "drawer" || owner === "right-panel") return owner;
-  return null;
+  return owner === "right-panel" ? owner : null;
 }
 
 export function isTerminalFocused(): boolean {
@@ -64,19 +67,6 @@ export function focusTerminal(threadRef: ScopedThreadRef, terminalId: string): v
   pendingFocus = focusMountedTarget(threadKey, terminalId) ? null : { threadKey, terminalId };
 }
 
-/**
- * Focuses the drawer terminal the store now marks active, after an open, close
- * or switch. A thread whose drawer ended up closed drops its waiting request.
- */
-export function focusActiveDrawerTerminal(threadRef: ScopedThreadRef): void {
-  const { terminalOpen, activeTerminalId } = selectThreadTerminalUiState(
-    useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-    threadRef,
-  );
-  if (terminalOpen && activeTerminalId) focusTerminal(threadRef, activeTerminalId);
-  else cancelTerminalFocus(threadRef);
-}
-
 /** Focuses the active terminal of the right panel when it shows a terminal surface. */
 export function focusActivePanelTerminal(threadRef: ScopedThreadRef): void {
   const { isOpen, activeSurfaceId, surfaces } = selectThreadRightPanelState(
@@ -105,7 +95,7 @@ export function focusPanelTerminalAfterClose(
 /**
  * Focuses a terminal from a handler that may also navigate to its thread (a
  * sidebar terminal reveal). When it does, that thread's entry keeps this request
- * instead of focusing the drawer.
+ * instead of focusing its shown terminal.
  */
 export function focusTerminalOnNavigation(threadRef: ScopedThreadRef, terminalId: string): void {
   const threadKey = scopedThreadKey(threadRef);
@@ -114,9 +104,9 @@ export function focusTerminalOnNavigation(threadRef: ScopedThreadRef, terminalId
 }
 
 /**
- * Entering a thread with its drawer open focuses the drawer terminal, unless a
- * navigating handler already asked for a terminal there. Returns the leave
- * cleanup for ChatView's effect.
+ * Entering a thread with a terminal on show focuses it, unless a navigating
+ * handler already asked for a terminal there. Returns the leave cleanup for
+ * ChatView's effect.
  */
 export function focusTerminalOnThreadEnter(threadRef: ScopedThreadRef): () => void {
   const threadKey = scopedThreadKey(threadRef);
@@ -124,20 +114,16 @@ export function focusTerminalOnThreadEnter(threadRef: ScopedThreadRef): () => vo
   navigationRequestThreadKey = null;
   enteredThreadKey = threadKey;
   if (!requestedByHandler) {
-    const { terminalOpen, activeTerminalId } = selectThreadTerminalUiState(
-      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-      threadRef,
-    );
-    if (terminalOpen && activeTerminalId) focusTerminal(threadRef, activeTerminalId);
+    const { byThreadKey } = useRightPanelStore.getState();
+    const surface = selectTerminalSurface(selectThreadRightPanelState(byThreadKey, threadRef));
+    if (surface && selectRightPanelKindShown(byThreadKey, threadRef, "terminal")) {
+      focusTerminal(threadRef, surface.activeTerminalId);
+    }
   }
   return () => {
     // A handler navigating elsewhere marks its target before this cleanup runs.
     if (enteredThreadKey === threadKey) enteredThreadKey = null;
   };
-}
-
-function cancelTerminalFocus(threadRef: ScopedThreadRef): void {
-  if (pendingFocus?.threadKey === scopedThreadKey(threadRef)) pendingFocus = null;
 }
 
 /**

@@ -3,10 +3,8 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
-import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import {
   consumePendingTerminalFocus,
-  focusActiveDrawerTerminal,
   focusActivePanelTerminal,
   focusPanelTerminalAfterClose,
   focusTerminal,
@@ -153,23 +151,9 @@ describe("focusTerminal", () => {
     unregisterRemount();
   });
 
-  it("drops a parked request when the thread's drawer closes", () => {
-    const ref = threadRef("closed");
-    useTerminalUiStateStore.getState().ensureTerminal(ref, "a", { open: true, active: true });
-    focusActiveDrawerTerminal(ref);
-    useTerminalUiStateStore.getState().setTerminalOpen(ref, false);
-    focusActiveDrawerTerminal(ref);
-
-    const focus = vi.fn(() => true);
-    const unregister = registerTerminalFocusTarget({ threadRef: ref, terminalId: "a", focus });
-
-    expect(focus).not.toHaveBeenCalled();
-    unregister();
-  });
-
-  it("entering a thread with its drawer open focuses the active drawer terminal", () => {
+  it("entering a thread with a terminal on show focuses it", () => {
     const ref = threadRef("entered");
-    useTerminalUiStateStore.getState().ensureTerminal(ref, "a", { open: true, active: true });
+    useRightPanelStore.getState().openTerminal(ref, "a");
     const focus = vi.fn(() => true);
     const unregister = registerTerminalFocusTarget({ threadRef: ref, terminalId: "a", focus });
 
@@ -182,7 +166,7 @@ describe("focusTerminal", () => {
 
   it("entering a thread keeps the request its navigating handler made", () => {
     const ref = threadRef("revealed");
-    useTerminalUiStateStore.getState().ensureTerminal(ref, "drawer", { open: true, active: true });
+    useRightPanelStore.getState().openTerminal(ref, "drawer");
     focusTerminalOnNavigation(ref, "panel");
 
     // React commit order: the new thread's viewports attach and take the
@@ -208,9 +192,9 @@ describe("focusTerminal", () => {
     unregisterPanel();
   });
 
-  it("re-entering a thread after in-thread terminal actions focuses the drawer", () => {
+  it("re-entering a thread after in-thread terminal actions focuses its terminal", () => {
     const ref = threadRef("re-entered");
-    useTerminalUiStateStore.getState().ensureTerminal(ref, "drawer", { open: true, active: true });
+    useRightPanelStore.getState().openTerminal(ref, "drawer");
     const drawer = vi.fn(() => true);
     const unregisterDrawer = registerTerminalFocusTarget({
       threadRef: ref,
@@ -232,7 +216,7 @@ describe("focusTerminal", () => {
 
   it("a navigating handler's request only outranks the next thread entry", () => {
     const ref = threadRef("revisited");
-    useTerminalUiStateStore.getState().ensureTerminal(ref, "drawer", { open: true, active: true });
+    useRightPanelStore.getState().openTerminal(ref, "drawer");
     focusTerminalOnNavigation(ref, "panel");
     focusTerminalOnThreadEnter(threadRef("elsewhere"))();
 

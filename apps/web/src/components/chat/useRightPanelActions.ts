@@ -15,11 +15,12 @@ import {
 import { useDiffPanelStore } from "../../diffPanelStore";
 import { type ThreadPanelPresentation } from "../../rightPanelLayout";
 import {
-  selectActiveRightPanel,
+  selectRightPanelKindShown,
   selectThreadPanelOpen,
   type RightPanelSurface,
   useRightPanelStore,
 } from "../../rightPanelStore";
+import { openFileFromExplorer } from "../../dock/dockActions";
 import { requestWorkspaceContentFocus, requestWorkspaceFocus } from "../../lib/workspaceFocus";
 import { setActivePreviewTab } from "../../previewStateStore";
 import { BrowserSettingsReadError } from "../../browser/openFileInPreview";
@@ -163,7 +164,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const addDeviceSurfaceStable = useStableCallback(addDeviceSurface);
   const openFileSurface = (relativePath: string) => {
     if (!activeThreadRef || !activeProject) return;
-    useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
+    openFileFromExplorer(activeThreadRef, relativePath);
   };
   const openFileSurfaceStable = useStableCallback(openFileSurface);
   const closePreviewPanel = () => {
@@ -187,7 +188,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const togglePreviewPanel = () => {
     if (!activeThreadRef || !browserAvailable) return;
     if (previewPanelOpen) {
-      closePreviewPanel();
+      useRightPanelStore.getState().hideKind(activeThreadRef, "preview");
       return;
     }
     if (!canOperatePreview) return;
@@ -299,8 +300,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const addPullRequestSurfaceStable = useStableCallback(addPullRequestSurface);
   const onOpenTurnDiff = (runId: RunId, filePath?: string) => {
     if (!isServerThread || !activeThreadRef) return;
-    const diffOpen =
-      selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, activeThreadRef) === "diff";
+    const diffOpen = selectRightPanelKindShown(
+      useRightPanelStore.getState().byThreadKey,
+      activeThreadRef,
+      "diff",
+    );
     explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
     useDiffPanelStore.getState().selectTurn(activeThreadRef, runId, filePath);
     useRightPanelStore.getState().open(activeThreadRef, "diff");
@@ -308,8 +312,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   };
   const onOpenToolDiffStable = useStableCallback((target: ToolCallDiffTarget) => {
     if (!isServerThread || !activeThreadRef) return;
-    const diffOpen =
-      selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, activeThreadRef) === "diff";
+    const diffOpen = selectRightPanelKindShown(
+      useRightPanelStore.getState().byThreadKey,
+      activeThreadRef,
+      "diff",
+    );
     explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
     useDiffPanelStore.getState().selectToolCall(activeThreadRef, target);
     useRightPanelStore.getState().open(activeThreadRef, "diff");
@@ -358,6 +365,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     onToggleDiffStable,
     openChangesFromThreadPanelStable,
     openFileSurfaceStable,
+    togglePreviewPanelStable,
     toggleRightPanelMaximizedStable,
     toggleRightPanelStable,
     toggleThreadPanelStable,

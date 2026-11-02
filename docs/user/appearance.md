@@ -43,10 +43,10 @@ preference is saved separately on each device.
 
 ## Motion
 
-The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the
-**Panel animations** slider above 0 ms to add motion, up to 400 ms, unless reduced motion is enabled
-in your operating system. Moving between threads always snaps to the selected thread's panel state
-without replaying its transitions.
+The threads sidebar and panels open and close immediately by default. Move the **Panel animations**
+slider above 0 ms to animate the sidebar, and panels on narrow windows, where they open as sheets, up
+to 400 ms, unless reduced motion is enabled in your operating system. Moving between threads always snaps to the selected thread's panel state without
+replaying its transitions.
 
 ## Custom themes
 

@@ -51,6 +51,7 @@ import { Volume2, VolumeOff } from "lucide";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactElement,
   type ReactNode,
   useEffect,
@@ -96,6 +97,7 @@ import {
 import { useEnvironmentQuery } from "~/state/query";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
+import { RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
@@ -156,6 +158,28 @@ export interface RightPanelTabsProps {
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   children: ReactNode;
 }
+
+type RightPanelTabBarDrawProps = Omit<
+  RightPanelTabsProps,
+  "children" | "inlineSize" | "widthStorageKey" | "defaultWidth"
+>;
+
+/** How a tab bar sits in a dock group, whose tabs drag between groups rather than within one. */
+export interface RightPanelTabBarDock {
+  readonly shortcutsEnabled: boolean;
+  readonly ownsTitleBar: boolean;
+  readonly maximized: boolean;
+  readonly onToggleMaximized: () => void;
+  readonly onTabPointerDown: (
+    event: ReactPointerEvent,
+    surface: RightPanelSurface,
+    title: string,
+  ) => void;
+}
+
+export type RightPanelTabBarProps = RightPanelTabBarDrawProps & {
+  readonly dock?: RightPanelTabBarDock;
+};
 
 export interface PullRequestTabStatus {
   projectId: string;
@@ -312,7 +336,7 @@ function SurfaceMenuItem(props: {
   return <DisabledReasonTooltip reason={props.disabledReason} trigger={item} />;
 }
 
-function RightPanelEmptyState(props: {
+export function RightPanelEmptyState(props: {
   onAddBrowser: () => void;
   onAddBrowserInProfile: (profileId: string) => void;
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
@@ -857,6 +881,8 @@ interface RightPanelTabHandlers {
   onContextMenu: (event: ReactMouseEvent, surface: RightPanelSurface) => void;
   onStartRename: (surfaceId: string) => void;
   onFinishRename: (surfaceId: string, title: string) => void;
+  onDockPointerDown: ((event: ReactPointerEvent, surface: RightPanelSurface) => void) | undefined;
+  onDockDoubleClick: ((event: ReactMouseEvent) => void) | undefined;
 }
 
 // Chromium on Linux only suppresses primary-selection paste when mouseup is cancelled.
@@ -895,6 +921,8 @@ function RightPanelTab(
     onContextMenu,
     onStartRename,
     onFinishRename,
+    onDockPointerDown,
+    onDockDoubleClick,
   } = props;
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: surface.id,
@@ -1001,6 +1029,10 @@ function RightPanelTab(
   return (
     <div
       data-active-tab={props.active}
+      data-dock-tab={surface.id}
+      onPointerDown={onDockPointerDown ? (event) => onDockPointerDown(event, surface) : undefined}
+      // A device tab's double click renames it.
+      onDoubleClick={surface.kind === "device" ? undefined : onDockDoubleClick}
       onMouseDown={preventTabMiddleButtonDefault}
       onMouseUp={preventTabMiddleButtonDefault}
       onAuxClick={(event) => onAuxClick(event, surface)}
@@ -1022,9 +1054,9 @@ function RightPanelTab(
   );
 }
 
-export function RightPanelTabs(props: RightPanelTabsProps) {
-  const focusedSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
-  const ownsDesktopTitleBar = isElectron && props.mode === "inline";
+export function RightPanelTabBar(props: RightPanelTabBarProps) {
+  const dock = props.dock;
+  const ownsDesktopTitleBar = isElectron && (dock ? dock.ownsTitleBar : props.mode === "inline");
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
@@ -1057,10 +1089,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for the new surface shortcut while the panel is open
   useEffect(() => {
-    if (props.open === false) return;
+    if (props.open === false || dock?.shortcutsEnabled === false) return;
     document.addEventListener("keydown", onNewSurfaceKeyDown, true);
     return () => document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
-  }, [props.open]);
+  }, [dock?.shortcutsEnabled, props.open]);
 
   const updateTabScrollState = (viewport: HTMLDivElement) => {
     const hasOverflow = viewport.scrollWidth - viewport.clientWidth > TAB_SCROLL_EDGE_TOLERANCE;
@@ -1272,6 +1304,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     props.onRenameDevice?.(surfaceId, title);
     setRenamingDevice(null);
   });
+  const onDockTabDoubleClick = useStableCallback((event: ReactMouseEvent) => {
+    if (event.target instanceof Element && event.target.closest('[aria-label^="Close "]')) return;
+    dock?.onToggleMaximized();
+  });
+  const onDockTabPointerDown = useStableCallback(
+    (event: ReactPointerEvent, surface: RightPanelSurface) =>
+      dock?.onTabPointerDown(
+        event,
+        surface,
+        surfaceTitle(surface, props.previewSessions, props.terminalLabelsById),
+      ),
+  );
 
   // A newly active tab, or tabs that start overflowing, can sit outside the scrolled strip.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the active tab DOM node into view after it changes or the tab strip starts overflowing
@@ -1316,6 +1360,213 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   };
 
   return (
+    <div
+      className={cn(
+        "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1",
+        dock ? "min-w-0 flex-1" : "pl-2",
+        !dock && (props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3"),
+        !dock && ownsDesktopTitleBar && "drag-region",
+        !dock && ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
+        props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+      )}
+      data-right-panel-tabbar
+    >
+      <ScrollArea
+        radius="none"
+        ref={attachTabList}
+        hideScrollbars
+        scrollFade
+        className="min-w-0 flex-1"
+        data-right-panel-tab-list
+      >
+        <div className="flex h-full w-max min-w-full items-center gap-1">
+          <SortableTabList surfaces={props.surfaces} onMove={props.onMoveSurface}>
+            {props.surfaces.map((surface) => {
+              const previewTabId = previewTabIdOf(surface, props.previewSessions);
+              const favicon = previewFaviconOf(
+                surface,
+                props.previewSessions,
+                props.desktopByTabId,
+              );
+              return (
+                <RightPanelTab
+                  key={surface.id}
+                  surface={surface}
+                  dragDisabled={
+                    dock !== undefined || !props.onMoveSurface || renamingDevice === surface.id
+                  }
+                  active={surface.id === props.activeSurfaceId}
+                  pending={props.pendingSurfaceIds.has(surface.id)}
+                  title={surfaceTitle(surface, props.previewSessions, props.terminalLabelsById)}
+                  audio={tabAudioState(
+                    previewTabId ? (props.desktopByTabId[previewTabId] ?? null) : null,
+                  )}
+                  audioRuntimeTabId={
+                    previewTabId ? (props.previewRuntimeTabId?.(previewTabId) ?? null) : null
+                  }
+                  previewUrl={favicon.url}
+                  previewCapturedUrl={favicon.capturedUrl}
+                  theme={resolvedTheme}
+                  environmentId={props.environmentId}
+                  pullRequestStatusSeed={props.pullRequestStatusSeeds?.[surface.id]}
+                  renaming={renamingDevice === surface.id}
+                  canRename={props.onRenameDevice !== undefined}
+                  ownsDesktopTitleBar={ownsDesktopTitleBar}
+                  onActivate={onActivateTab}
+                  onClose={onCloseTab}
+                  onAuxClick={onTabAuxClick}
+                  onContextMenu={onTabContextMenu}
+                  onStartRename={onStartRenameTab}
+                  onFinishRename={onFinishRenameTab}
+                  onDockPointerDown={
+                    dock && renamingDevice !== surface.id ? onDockTabPointerDown : undefined
+                  }
+                  onDockDoubleClick={dock ? onDockTabDoubleClick : undefined}
+                />
+              );
+            })}
+          </SortableTabList>
+          {props.open !== false ? (
+            <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
+              <MenuTrigger
+                ref={addSurfaceTriggerRef}
+                render={
+                  <Button
+                    aria-label="Add panel surface"
+                    className="shrink-0"
+                    size="icon-xs"
+                    variant="ghost-muted"
+                  />
+                }
+              >
+                <Plus className="size-3.5" />
+              </MenuTrigger>
+              <MenuPopup
+                align="start"
+                side="bottom"
+                sideOffset={6}
+                onKeyDownCapture={handleAddSurfaceMenuKeyDown}
+              >
+                {addSurfaceActions.map((action) => {
+                  const Icon = action.icon;
+                  if (action.label === "Browser" && action.available) {
+                    return (
+                      <MenuSub key={action.label}>
+                        <MenuSubTrigger
+                          className="[&>svg:last-child]:ms-0"
+                          aria-keyshortcuts={action.shortcut}
+                          onClick={(event) => {
+                            const pointerType =
+                              "pointerType" in event.nativeEvent &&
+                              typeof event.nativeEvent.pointerType === "string"
+                                ? event.nativeEvent.pointerType
+                                : undefined;
+                            if (!shouldOpenDefaultBrowserProfileFromMenuClick(pointerType)) return;
+                            setAddSurfaceMenuOpen(false);
+                            action.onClick();
+                          }}
+                        >
+                          <Icon />
+                          {action.label}
+                          <MenuShortcut>{action.shortcut}</MenuShortcut>
+                        </MenuSubTrigger>
+                        <MenuSubPopup className="max-w-56">
+                          {browserProfiles.map((profile) => (
+                            <MenuItem
+                              key={profile.id}
+                              onClick={() => props.onAddBrowserInProfile(profile.id)}
+                            >
+                              <span className="min-w-0 truncate">{profile.name}</span>
+                            </MenuItem>
+                          ))}
+                        </MenuSubPopup>
+                      </MenuSub>
+                    );
+                  }
+                  return (
+                    <SurfaceMenuItem
+                      key={action.label}
+                      available={action.available}
+                      disabledReason={action.disabledReason}
+                      shortcut={action.shortcut}
+                      onClick={action.onClick}
+                    >
+                      <Icon />
+                      {action.label}
+                    </SurfaceMenuItem>
+                  );
+                })}
+              </MenuPopup>
+            </Menu>
+          ) : null}
+        </div>
+      </ScrollArea>
+      {tabScrollState.hasOverflow ? (
+        <div
+          className="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
+          role="group"
+          aria-label="Scroll panel tabs"
+        >
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="inline-flex">
+                  <Button
+                    aria-label="Scroll tabs left"
+                    disabled={!tabScrollState.canScrollLeft}
+                    onClick={() => scrollTabs(-1)}
+                    size="icon-xs"
+                    variant="ghost"
+                  >
+                    <ChevronLeft />
+                  </Button>
+                </span>
+              }
+            />
+            <TooltipPopup>Scroll tabs left</TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="inline-flex">
+                  <Button
+                    aria-label="Scroll tabs right"
+                    disabled={!tabScrollState.canScrollRight}
+                    onClick={() => scrollTabs(1)}
+                    size="icon-xs"
+                    variant="ghost"
+                  >
+                    <ChevronRight />
+                  </Button>
+                </span>
+              }
+            />
+            <TooltipPopup>Scroll tabs right</TooltipPopup>
+          </Tooltip>
+        </div>
+      ) : null}
+      {dock && props.activeSurfaceId !== null ? (
+        <RightPanelMaximizeControl maximized={dock.maximized} onToggle={dock.onToggleMaximized} />
+      ) : null}
+      {props.layoutControls}
+      {!dock && ownsDesktopTitleBar && !props.layoutControls ? (
+        <span aria-hidden className="hidden w-24 shrink-0 wco:block" />
+      ) : null}
+      {!dock && ownsDesktopTitleBar ? (
+        <span
+          aria-hidden
+          className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
+        />
+      ) : null}
+    </div>
+  );
+}
+
+export function RightPanelTabs(props: RightPanelTabsProps) {
+  const { children, inlineSize, widthStorageKey, defaultWidth, ...tabBar } = props;
+  const focusedSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
+  const browserProfiles = useBrowserDefaults().profiles;
+  return (
     <PreviewPanelShell
       workspaceArea
       workspaceFocusKey={`panel:${props.environmentId}:${props.activeSurfaceId ?? "empty"}`}
@@ -1327,200 +1578,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       mode={props.mode}
       {...(props.maximized !== undefined ? { maximized: props.maximized } : {})}
       {...(props.open !== undefined ? { open: props.open } : {})}
-      {...(props.widthStorageKey !== undefined ? { widthStorageKey: props.widthStorageKey } : {})}
-      {...(props.defaultWidth !== undefined ? { defaultWidth: props.defaultWidth } : {})}
-      {...(props.inlineSize ? { inlineSize: props.inlineSize } : {})}
+      {...(widthStorageKey !== undefined ? { widthStorageKey } : {})}
+      {...(defaultWidth !== undefined ? { defaultWidth } : {})}
+      {...(inlineSize ? { inlineSize } : {})}
     >
-      <div
-        className={cn(
-          "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-2",
-          props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
-          ownsDesktopTitleBar && "drag-region",
-          ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
-          props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-        )}
-        data-right-panel-tabbar
-      >
-        <ScrollArea
-          radius="none"
-          ref={attachTabList}
-          hideScrollbars
-          scrollFade
-          className="min-w-0 flex-1"
-          data-right-panel-tab-list
-        >
-          <div className="flex h-full w-max min-w-full items-center gap-1">
-            <SortableTabList surfaces={props.surfaces} onMove={props.onMoveSurface}>
-              {props.surfaces.map((surface) => {
-                const previewTabId = previewTabIdOf(surface, props.previewSessions);
-                const favicon = previewFaviconOf(
-                  surface,
-                  props.previewSessions,
-                  props.desktopByTabId,
-                );
-                return (
-                  <RightPanelTab
-                    key={surface.id}
-                    surface={surface}
-                    dragDisabled={!props.onMoveSurface || renamingDevice === surface.id}
-                    active={surface.id === props.activeSurfaceId}
-                    pending={props.pendingSurfaceIds.has(surface.id)}
-                    title={surfaceTitle(surface, props.previewSessions, props.terminalLabelsById)}
-                    audio={tabAudioState(
-                      previewTabId ? (props.desktopByTabId[previewTabId] ?? null) : null,
-                    )}
-                    audioRuntimeTabId={
-                      previewTabId ? (props.previewRuntimeTabId?.(previewTabId) ?? null) : null
-                    }
-                    previewUrl={favicon.url}
-                    previewCapturedUrl={favicon.capturedUrl}
-                    theme={resolvedTheme}
-                    environmentId={props.environmentId}
-                    pullRequestStatusSeed={props.pullRequestStatusSeeds?.[surface.id]}
-                    renaming={renamingDevice === surface.id}
-                    canRename={props.onRenameDevice !== undefined}
-                    ownsDesktopTitleBar={ownsDesktopTitleBar}
-                    onActivate={onActivateTab}
-                    onClose={onCloseTab}
-                    onAuxClick={onTabAuxClick}
-                    onContextMenu={onTabContextMenu}
-                    onStartRename={onStartRenameTab}
-                    onFinishRename={onFinishRenameTab}
-                  />
-                );
-              })}
-            </SortableTabList>
-            {props.open !== false ? (
-              <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
-                <MenuTrigger
-                  ref={addSurfaceTriggerRef}
-                  render={
-                    <Button
-                      aria-label="Add panel surface"
-                      className="shrink-0"
-                      size="icon-xs"
-                      variant="ghost-muted"
-                    />
-                  }
-                >
-                  <Plus className="size-3.5" />
-                </MenuTrigger>
-                <MenuPopup
-                  align="start"
-                  side="bottom"
-                  sideOffset={6}
-                  onKeyDownCapture={handleAddSurfaceMenuKeyDown}
-                >
-                  {addSurfaceActions.map((action) => {
-                    const Icon = action.icon;
-                    if (action.label === "Browser" && action.available) {
-                      return (
-                        <MenuSub key={action.label}>
-                          <MenuSubTrigger
-                            className="[&>svg:last-child]:ms-0"
-                            aria-keyshortcuts={action.shortcut}
-                            onClick={(event) => {
-                              const pointerType =
-                                "pointerType" in event.nativeEvent &&
-                                typeof event.nativeEvent.pointerType === "string"
-                                  ? event.nativeEvent.pointerType
-                                  : undefined;
-                              if (!shouldOpenDefaultBrowserProfileFromMenuClick(pointerType))
-                                return;
-                              setAddSurfaceMenuOpen(false);
-                              action.onClick();
-                            }}
-                          >
-                            <Icon />
-                            {action.label}
-                            <MenuShortcut>{action.shortcut}</MenuShortcut>
-                          </MenuSubTrigger>
-                          <MenuSubPopup className="max-w-56">
-                            {browserProfiles.map((profile) => (
-                              <MenuItem
-                                key={profile.id}
-                                onClick={() => props.onAddBrowserInProfile(profile.id)}
-                              >
-                                <span className="min-w-0 truncate">{profile.name}</span>
-                              </MenuItem>
-                            ))}
-                          </MenuSubPopup>
-                        </MenuSub>
-                      );
-                    }
-                    return (
-                      <SurfaceMenuItem
-                        key={action.label}
-                        available={action.available}
-                        disabledReason={action.disabledReason}
-                        shortcut={action.shortcut}
-                        onClick={action.onClick}
-                      >
-                        <Icon />
-                        {action.label}
-                      </SurfaceMenuItem>
-                    );
-                  })}
-                </MenuPopup>
-              </Menu>
-            ) : null}
-          </div>
-        </ScrollArea>
-        {tabScrollState.hasOverflow ? (
-          <div
-            className="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
-            role="group"
-            aria-label="Scroll panel tabs"
-          >
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="inline-flex">
-                    <Button
-                      aria-label="Scroll tabs left"
-                      disabled={!tabScrollState.canScrollLeft}
-                      onClick={() => scrollTabs(-1)}
-                      size="icon-xs"
-                      variant="ghost"
-                    >
-                      <ChevronLeft />
-                    </Button>
-                  </span>
-                }
-              />
-              <TooltipPopup>Scroll tabs left</TooltipPopup>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="inline-flex">
-                    <Button
-                      aria-label="Scroll tabs right"
-                      disabled={!tabScrollState.canScrollRight}
-                      onClick={() => scrollTabs(1)}
-                      size="icon-xs"
-                      variant="ghost"
-                    >
-                      <ChevronRight />
-                    </Button>
-                  </span>
-                }
-              />
-              <TooltipPopup>Scroll tabs right</TooltipPopup>
-            </Tooltip>
-          </div>
-        ) : null}
-        {props.layoutControls}
-        {ownsDesktopTitleBar && !props.layoutControls ? (
-          <span aria-hidden className="hidden w-24 shrink-0 wco:block" />
-        ) : null}
-        {ownsDesktopTitleBar ? (
-          <span
-            aria-hidden
-            className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
-          />
-        ) : null}
-      </div>
+      <RightPanelTabBar {...tabBar} />
       <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
@@ -1545,7 +1607,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             sideChatDisabledReason={props.sideChatDisabledReason ?? null}
           />
         ) : (
-          props.children
+          children
         )}
       </div>
     </PreviewPanelShell>

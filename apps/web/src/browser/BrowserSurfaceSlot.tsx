@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 
+import { DOCK_LAYOUT_EVENT } from "../dock/dockEvents";
 import { acquireBrowserSurface } from "./browserSurfaceStore";
 import { observeResize } from "../lib/observeResize";
 
@@ -67,10 +68,12 @@ export function BrowserSurfaceSlot(props: {
     observed.push(...document.querySelectorAll('[data-slot="sidebar-gap"]'));
     const stopObserving = observeResize(observed, update);
     window.addEventListener("resize", update);
+    window.addEventListener(DOCK_LAYOUT_EVENT, update);
     window.addEventListener("scroll", update, true);
     return () => {
       stopObserving();
       window.removeEventListener("resize", update);
+      window.removeEventListener(DOCK_LAYOUT_EVENT, update);
       window.removeEventListener("scroll", update, true);
       if (updateRef.current === update) updateRef.current = null;
       lease.release();

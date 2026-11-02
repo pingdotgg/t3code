@@ -26,7 +26,6 @@ import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { environmentShell } from "../state/shell";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
-import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useStableCallback } from "./useStableCallback";
 
 /**
@@ -46,7 +45,6 @@ export function useRightPanelSurfaceClose(input: {
   );
   const previewState = useThreadPreviewState(threadRef);
   const terminalActions = useThreadTerminalActions(threadRef);
-  const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
   const surfaces = useRightPanelStore(
     (state) => selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces,
   );
@@ -66,7 +64,6 @@ export function useRightPanelSurfaceClose(input: {
       readEnvironmentScope(ref.environmentId, AuthTerminalOperateScope)
     ) {
       for (const terminalId of surface.terminalIds) {
-        storeCloseTerminal(ref, terminalId);
         terminalActions.closeTerminalSession(terminalId, ref);
       }
     }
@@ -156,15 +153,21 @@ export function useRightPanelSurfaceClose(input: {
       },
     );
   });
-  const closeOtherSurfaces = useStableCallback((surface: RightPanelSurface) =>
-    closeSurfaces(surfaces.filter((entry) => entry.id !== surface.id)),
+  // A dock group passes its own tabs as `scope`, so its menu cannot close another group's.
+  const closeOtherSurfaces = useStableCallback(
+    (surface: RightPanelSurface, scope: readonly RightPanelSurface[] = surfaces) =>
+      closeSurfaces(scope.filter((entry) => entry.id !== surface.id)),
   );
-  const closeSurfacesToRight = useStableCallback((surface: RightPanelSurface) => {
-    const surfaceIndex = surfaces.findIndex((entry) => entry.id === surface.id);
-    if (surfaceIndex < 0) return;
-    closeSurfaces(surfaces.slice(surfaceIndex + 1));
-  });
-  const closeAllSurfaces = useStableCallback(() => closeSurfaces(surfaces));
+  const closeSurfacesToRight = useStableCallback(
+    (surface: RightPanelSurface, scope: readonly RightPanelSurface[] = surfaces) => {
+      const surfaceIndex = scope.findIndex((entry) => entry.id === surface.id);
+      if (surfaceIndex < 0) return;
+      closeSurfaces(scope.slice(surfaceIndex + 1));
+    },
+  );
+  const closeAllSurfaces = useStableCallback((scope: readonly RightPanelSurface[] = surfaces) =>
+    closeSurfaces(scope),
+  );
 
   return { closeSurface, closeOtherSurfaces, closeSurfacesToRight, closeAllSurfaces };
 }

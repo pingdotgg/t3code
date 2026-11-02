@@ -48,7 +48,7 @@ import { remainingComposerAttachmentSlots } from "./composerThreadImport";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { resizeSnapShotSource } from "../../lib/snapShotSource";
 import { registerCommands } from "../../shortcuts/dispatcher";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
+import { selectRightPanelKindShown, useRightPanelStore } from "../../rightPanelStore";
 import { toastManager } from "../ui/toast";
 import type { useComposerTriggerState } from "./useComposerTriggerState";
 import {
@@ -688,11 +688,10 @@ export function useComposerStash(input: {
   // dialog even when a focused widget (the model picker search) stops the key.
   const backgroundThread = use(BackgroundThreadContext);
   const readShortcutContext = useStableCallback(() => ({
-    terminalOpen: Boolean(
-      selectThreadTerminalUiState(
-        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-        routeThreadRef,
-      ).terminalOpen,
+    terminalOpen: selectRightPanelKindShown(
+      useRightPanelStore.getState().byThreadKey,
+      routeThreadRef,
+      "terminal",
     ),
   }));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the capture-phase stash shortcut with the command registry while the composer is mounted

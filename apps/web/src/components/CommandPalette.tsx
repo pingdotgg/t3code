@@ -64,6 +64,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   MessageSquareDashedIcon,
+  LayoutPanelLeftIcon,
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
@@ -149,6 +150,7 @@ import {
   useCommandPaletteMount,
   useCommandPaletteStore,
 } from "../commandPaletteStore";
+import { resetDockLayout } from "../dock/dockActions";
 import { PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
 import { getLatestThreadForProject, sortThreads } from "@t3tools/client-runtime/state/thread-sort";
 import {
@@ -1383,6 +1385,17 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:reset-panel-layout",
+    searchTerms: ["reset", "layout", "panels", "dock", "split", "default"],
+    title: "Reset panel layout",
+    icon: <LayoutPanelLeftIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      resetDockLayout();
+    },
+  });
 
   if (activeThread !== null && canShareActiveThreadWithGuest) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);

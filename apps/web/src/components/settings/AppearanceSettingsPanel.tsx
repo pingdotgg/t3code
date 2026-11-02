@@ -289,6 +289,43 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+        <SettingsRow
+          {...searchableSetting("thread-sidebar-side")}
+          description="Choose which side of the window the threads sidebar sits on."
+          resetAction={
+            settings.threadSidebarSide !== DEFAULT_UNIFIED_SETTINGS.threadSidebarSide ? (
+              <SettingResetButton
+                label="sidebar position"
+                onClick={() =>
+                  updateSettings({
+                    threadSidebarSide: DEFAULT_UNIFIED_SETTINGS.threadSidebarSide,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.threadSidebarSide}
+                onValueChange={(value) => {
+                  if (value === "left" || value === "right")
+                    updateSettings({ threadSidebarSide: value });
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Sidebar position">
+                  <SelectValue>
+                    {settings.threadSidebarSide === "left" ? "Left" : "Right"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="left">Left (default)</SelectItem>
+                  <SelectItem value="right">Right</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
+          }
+        />
         <ThreadDetailsItemsRow />
         <SettingsRow
           {...searchableSetting("effort-display")}

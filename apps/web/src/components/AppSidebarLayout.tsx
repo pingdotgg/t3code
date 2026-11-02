@@ -27,16 +27,20 @@ import { isEditableFocused } from "../lib/editableFocus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
-import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import {
+  selectActiveRightPanel,
+  selectRightPanelKindShown,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode } from "../hooks/useSettings";
+import { useClientSettings, useEnvironmentIdentificationMode } from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
   usePanelNavigationSuppression,
 } from "../panelAnimations";
+import { DockWorkspace } from "../dock/DockWorkspace";
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
@@ -137,10 +141,11 @@ function readRoutePanelsOpen(router: AnyRouter) {
   const routeThreadRef = resolveThreadRouteRef(router.state.matches.at(-1)?.params ?? {});
   if (!routeThreadRef) return { terminalOpen: false, previewOpen: false };
   return {
-    terminalOpen: selectThreadTerminalUiState(
-      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+    terminalOpen: selectRightPanelKindShown(
+      useRightPanelStore.getState().byThreadKey,
       routeThreadRef,
-    ).terminalOpen,
+      "terminal",
+    ),
     previewOpen:
       selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, routeThreadRef) ===
       "preview",
@@ -320,6 +325,9 @@ function SidebarControl() {
   const isSidebarVisible = useSidebarVisibility();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
+  const sidebarSide = useClientSettings((settings) => settings.threadSidebarSide);
+  // The banner sits under this corner's toggle only while the sidebar is on the left.
+  const onBanner = isSidebarVisible && Boolean(stageBackdropVariant) && sidebarSide === "left";
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle", {
     context: { usagePageOpen },
   });
@@ -384,11 +392,8 @@ function SidebarControl() {
         <TooltipTrigger
           render={
             <SidebarTrigger
-              variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
-              className={cn(
-                "pointer-events-auto",
-                isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
-              )}
+              variant={onBanner ? "media-navigation" : "ghost"}
+              className={cn("pointer-events-auto", onBanner && "relative top-auto translate-y-0")}
               aria-label="Toggle main sidebar"
             />
           }
@@ -403,6 +408,7 @@ function SidebarControl() {
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
+  const sidebarSide = useClientSettings((settings) => settings.threadSidebarSide);
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
     pendingKey: null,
@@ -452,7 +458,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       >
         <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
         <Sidebar
-          side="left"
+          side={sidebarSide}
           collapsible="offcanvas"
           data-app-sidebar=""
           {...sidebarArea}
@@ -472,7 +478,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           <ThreadSidebar routeReveal={sidebarRouteReveal} />
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
-        {children}
+        {/* Reordered rather than re-rendered: moving the sidebar must not remount the thread. */}
+        <DockWorkspace className={sidebarSide === "right" ? "order-first" : undefined}>
+          {children}
+        </DockWorkspace>
         <BackgroundThreadAnnouncer />
         <SidebarControl />
         {isElectron ? <HistorySwipeNavigation /> : null}
