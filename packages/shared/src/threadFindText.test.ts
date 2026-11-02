@@ -74,7 +74,10 @@ const assistantSegments = (text: string, cwd?: string) =>
 it("searches displayed prose and file-chip labels without hidden paths", () => {
   expect(
     assistantSegments("[important description](/tmp/actual.ts). `/tmp/inline-example.ts:42`"),
-  ).toEqual(["important description actual.ts. inline-example.ts · L42"]);
+  ).toEqual(["important description actual.ts. /tmp/inline-example.ts:42"]);
+  expect(assistantSegments("`avatars/{userId}.webp` gives `avatars/u1.webp`", "/repo")).toEqual([
+    "avatars/{userId}.webp gives avatars/u1.webp",
+  ]);
   expect(assistantSegments("[label](src/main.ts#L3C2)", "/workspace/repo")).toEqual([
     "label main.ts · L3:C2",
   ]);
@@ -85,7 +88,7 @@ it("keeps fence paths literal and indexes file-chip labels in user messages", ()
   expect(assistantSegments("```text\n/tmp/file.ts:42\n```")).toEqual(["/tmp/file.ts:42\n"]);
   expect(
     searchableMessageSegments({ role: "user", text: "`/tmp/file.ts:42`", streaming: false }),
-  ).toEqual(["file.ts · L42"]);
+  ).toEqual(["/tmp/file.ts:42"]);
 });
 
 it("indexes nested disclosure summaries and bodies in rendered order", () => {
