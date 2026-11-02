@@ -68,14 +68,24 @@ const letters = (text: string) => text.replace(/[^\p{L}\p{N}]/gu, "");
 /**
  * Offset of the task marker whose item a renderer reports by its text, or null when none or
  * several match. Native renderers restart their checkbox count after a code block or table and
- * cut the text at a line break, so the count is unreliable and the text is matched line by line.
+ * cut the text at a line break, so the text is matched line by line, against `renderedMarkdown`
+ * (what the renderer was given) when that differs, then mapped back to `markdown` by position.
  */
-export function markdownTaskMarkerOffset(markdown: string, renderedText: string): number | null {
+export function markdownTaskMarkerOffset(
+  markdown: string,
+  renderedText: string,
+  renderedMarkdown = markdown,
+): number | null {
   const rendered = letters(renderedText);
   if (rendered === "") return null;
-  const matches = markdownTaskListItems(markdown).filter((item) => {
+  const items = markdownTaskListItems(markdown);
+  const shown = renderedMarkdown === markdown ? items : markdownTaskListItems(renderedMarkdown);
+  if (shown.length !== items.length) return null;
+  const matches = shown.flatMap((item, index) => {
     const lines = item.text.split("\n");
-    return lines.some((_, end) => letters(lines.slice(0, end + 1).join("")) === rendered);
+    return lines.some((_, end) => letters(lines.slice(0, end + 1).join("")) === rendered)
+      ? [index]
+      : [];
   });
-  return matches.length === 1 ? (matches[0]?.markerOffset ?? null) : null;
+  return matches.length === 1 ? (items[matches[0]!]?.markerOffset ?? null) : null;
 }

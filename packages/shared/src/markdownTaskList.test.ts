@@ -77,4 +77,17 @@ describe("markdownTaskMarkerOffset", () => {
     expect(markdownTaskMarkerOffset(markdown, "🚀")).toBeNull();
     expect(markdownTaskMarkerOffset(markdown, "")).toBeNull();
   });
+
+  it("matches against the markdown the renderer was given, then maps back to the source", () => {
+    const source = "- [ ] Deploy<br>to staging\n- [ ] Revert 3f8515b3f7 on release";
+    const rendered =
+      "- [ ] Deploy  \nto staging\n- [ ] Revert [3f8515b](https://example.com/c/3f8515b3f7) on release";
+
+    // Android cuts at the hard break the renderer made of `<br>`.
+    expect(markdownTaskMarkerOffset(source, "Deploy", rendered)).toBe(2);
+    expect(markdownTaskMarkerOffset(source, "Revert 3f8515b on release", rendered)).toBe(
+      source.indexOf("[ ] Revert"),
+    );
+    expect(markdownTaskMarkerOffset(source, "Deploy", "- [ ] Deploy")).toBeNull();
+  });
 });

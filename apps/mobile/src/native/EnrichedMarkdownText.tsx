@@ -162,7 +162,7 @@ function enrichedStyle(
 }
 
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
-  const { renderImage, resolveImageSource, fileEmbedLabel } = props;
+  const { renderImage, resolveImageSource, fileEmbedLabel, onTaskListItemPress } = props;
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
   const { markdown, fileHrefs } = useMemo(() => {
     if (!fileEmbedLabel) {
@@ -337,8 +337,10 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
             admonitions: true,
             preserveWindowsPaths: true,
           }}
-          enableTaskListItemToggle={props.onTaskListItemPress !== undefined}
-          onTaskListItemPress={props.onTaskListItemPress}
+          enableTaskListItemToggle={onTaskListItemPress !== undefined}
+          onTaskListItemPress={
+            onTaskListItemPress ? (event) => onTaskListItemPress({ ...event, markdown }) : undefined
+          }
           enableCodeBlockWrapToggle
           spoilerOverlay="solid"
           onLinkPress={

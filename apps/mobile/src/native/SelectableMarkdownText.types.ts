@@ -76,11 +76,15 @@ export interface SelectableMarkdownTextProps {
   readonly fileEmbedLabel?: (href: string, standalone: boolean) => string | null;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
   readonly onImagePress?: (href: string) => void;
-  /** Makes task list checkboxes tappable. `index` restarts after a code block or table. */
+  /**
+   * Makes task list checkboxes tappable. `index` restarts after a code block or table; `text`
+   * is the item as rendered from `markdown`, the transformed markdown the native view was given.
+   */
   readonly onTaskListItemPress?: (event: {
     readonly index: number;
     readonly checked: boolean;
     readonly text: string;
+    readonly markdown: string;
   }) => void;
   readonly marginTop?: number;
   readonly marginBottom?: number;
