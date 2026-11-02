@@ -1609,7 +1609,7 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(threadManagementFailure));
     const childRun = delegatedTaskRun(childControls, task);
     const terminalRun = latestTerminalResultRun(childControls, childRun);
-    // Tasks the child's native subagents delegated keep it working, as its own tasks do.
+    // Tasks the child's native subagents delegated or run keep it working, as its own tasks do.
     const progress = delegatedTaskProgress({
       ...childControls,
       subagents: [
@@ -1619,6 +1619,7 @@ const make = Effect.gen(function* () {
               .getTasksExecutedElsewhere({
                 threadId: task.childThreadId,
                 runIds: childControls.runs.map((run) => run.id),
+                includeProviderNative: true,
               })
               .pipe(Effect.mapError(threadManagementFailure))
           : []),

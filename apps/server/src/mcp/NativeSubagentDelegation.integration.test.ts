@@ -840,7 +840,7 @@ it.effect(
     ),
 );
 
-it.effect("an app task waits for what its child's native subagent delegated, then its answer", () =>
+it.effect("an app task waits for its child's nested native work and tasks, then its answer", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const h = yield* makeHarness("mixed-delegation-chain");
@@ -849,20 +849,27 @@ it.effect("an app task waits for what its child's native subagent delegated, the
       yield* h.startRoot(rootThreadId, "provider-session:mixed-root");
       const outer = yield* h.delegate(rootScope, "outer");
       const sentinel = yield* h.delegate(rootScope, "sentinel");
+      const wakeSentinel = yield* h.delegate(rootScope, "wake-sentinel");
       const outerThreadId = outer.childThreadId!;
       const outerTurn = h.childTurn(outerThreadId);
       const child = yield* h.orchestrator.getThreadProjection(outerThreadId);
       const childRun = child.runs[0]!;
       yield* h.mcpSessions.set(sessionFor(outerThreadId, "provider-session:mixed-child"));
 
-      // The outer task's child runs a native subagent, which delegates in turn.
+      // The outer task's child runs a native subagent, which delegates and runs its own.
       const native = h.nativeTask({
         name: "mixed",
         listing: child.thread,
         parentNodeId: childRun.rootNodeId!,
         execution: { threadId: outerThreadId, runId: childRun.id },
       });
-      yield* h.project(outerTurn, [native]);
+      const nested = h.nativeTask({
+        name: "mixed-nested",
+        listing: native.thread,
+        parentNodeId: native.rootNodeId,
+        execution: { threadId: outerThreadId, runId: childRun.id },
+      });
+      yield* h.project(outerTurn, [native, nested]);
       yield* h.mcpSessions.bindNativeCaller({
         threadId: outerThreadId,
         callId: "claude-tool:mixed",
@@ -909,8 +916,28 @@ it.effect("an app task waits for what its child's native subagent delegated, the
       const wakeTurn = h.childTurn(outerThreadId);
       assert.notStrictEqual(wakeTurn, outerTurn);
       assert.isNull((yield* h.listed(rootThreadId, outer.taskId)).task?.result ?? null);
-      const settled = yield* h.taskSettles(outer.taskId);
+
+      // The wake ends while the nested native subagent still runs, so the answer waits for it.
+      const wakeSentinelSettles = yield* h.taskSettles(wakeSentinel.taskId);
       yield* h.finishTurn(wakeTurn);
+      yield* h.finishTurn(h.childTurn(wakeSentinel.childThreadId));
+      yield* Fiber.join(wakeSentinelSettles);
+      assert.equal((yield* h.listed(nested.task.threadId, nested.task.id)).task?.status, "running");
+      const nestedWaiting = yield* h.service.taskStatus(rootScope, outer.taskId);
+      assert.equal(nestedWaiting.workState, "waiting_for_children");
+      assert.isNull((yield* h.listed(rootThreadId, outer.taskId)).task?.result ?? null);
+
+      const settled = yield* h.taskSettles(outer.taskId);
+      yield* Queue.offer(outerTurn.events, {
+        type: "subagent.updated",
+        driver,
+        subagent: {
+          ...nested.task,
+          status: "completed",
+          result: "Nested work done.",
+          completedAt: nested.task.startedAt,
+        },
+      });
       yield* Fiber.join(settled);
       assert.equal((yield* h.listed(rootThreadId, outer.taskId)).task?.status, "completed");
     }),

@@ -451,11 +451,12 @@ export interface ProjectionStoreV2Shape {
   readonly getSubagentCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
   /**
    * App-owned tasks the thread's runs execute but another thread lists: those a native
-   * subagent of its session delegated.
+   * subagent of its session delegated. Progress also needs its nested native subagents.
    */
   readonly getTasksExecutedElsewhere: (input: {
     readonly threadId: ThreadId;
     readonly runIds: ReadonlyArray<RunId>;
+    readonly includeProviderNative?: boolean;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2Subagent>, ProjectionStoreV2Error>;
   readonly getNextTurnItemOrdinal: (
     threadId: ThreadId,
@@ -5350,11 +5351,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const getTasksExecutedElsewhere: ProjectionStoreV2Shape["getTasksExecutedElsewhere"] = ({
       threadId,
       runIds,
+      includeProviderNative = false,
     }) =>
       runIds.length === 0
         ? Effect.succeed([])
         : sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_subagents
-            WHERE origin = 'app_owned' AND run_id IN ${sql.in(runIds)} AND thread_id != ${threadId}
+            WHERE run_id IN ${sql.in(runIds)} AND thread_id != ${threadId}
+              ${includeProviderNative ? sql`` : sql`AND origin = 'app_owned'`}
             ORDER BY subagent_id ASC`.pipe(
             Effect.mapError(controlReadError(threadId)),
             Effect.flatMap(decodeRows(decodeSubagentPayload, threadId)),
