@@ -46,6 +46,7 @@ import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import {
   memo,
   use,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -839,12 +840,10 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
   item,
   itemKey,
   current,
-  historyOpen,
 }: {
   item: WorkingWindowItem;
   itemKey: string;
   current: boolean;
-  historyOpen: boolean;
 }) {
   const ctx = use(TimelineRowCtx);
   if (item.kind === "text") {
@@ -875,7 +874,6 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
     <SimpleWorkEntryRow
       workEntry={entry}
       workspaceRoot={ctx.workspaceRoot}
-      expandable={historyOpen}
       severeFailure={failedTestRun}
     />
   );
@@ -885,8 +883,55 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree, turnEnded, pendingRequest, liveAnswerPreview } =
     use(TimelineRowActivityCtx);
+  const open = window.historyOpen;
+  const [history, setHistory] = useState<{ head: number; tailStart: number } | null>(null);
+  if (open && history === null) {
+    setHistory({
+      head: WORKING_HISTORY_BATCH,
+      tailStart: Math.max(0, window.items.length - WORKING_WINDOW_TAIL),
+    });
+  }
+  const windowRef = useRef<HTMLDivElement>(null);
+  const spacerRef = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- older items stay mounted until the collapse transition finishes clipping them
+  useEffect(() => {
+    if (open || history === null) return;
+    let cancelled = false;
+    void transitionsSettled(windowRef.current).then(() => {
+      if (!cancelled) setHistory(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, history]);
+  const head = history?.head;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts older items as the timeline scroll brings them near the viewport
+  useEffect(() => {
+    const spacer = spacerRef.current;
+    if (!open || head === undefined || !spacer) return;
+    let observer: IntersectionObserver | undefined;
+    let cancelled = false;
+    void transitionsSettled(windowRef.current).then(() => {
+      if (cancelled) return;
+      observer = new IntersectionObserver(
+        (entries) => {
+          if (!entries.some((entry) => entry.isIntersecting)) return;
+          setHistory(
+            (current) => current && { ...current, head: current.head + WORKING_HISTORY_BATCH },
+          );
+        },
+        { scrollMargin: "100% 0px" },
+      );
+      observer.observe(spacer);
+    });
+    return () => {
+      cancelled = true;
+      observer?.disconnect();
+    };
+  }, [open, head]);
   const [full, setFull] = useState(false);
   const observeHeight = (element: HTMLDivElement | null) => {
+    windowRef.current = element;
     if (!element) return;
     const update = () => {
       const next = element.clientHeight >= WORKING_WINDOW_MAX_HEIGHT - 1;
@@ -901,8 +946,16 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
     state: workGroupViewState,
     onToggleEntry: () => onToggleWorkEntry("working-indicator-row"),
   }))();
-  const open = window.historyOpen;
-  const shown = open ? window.items : window.items.slice(-WORKING_WINDOW_TAIL);
+  const headEnd = history ? Math.min(history.head, history.tailStart) : 0;
+  const unmounted = history ? history.tailStart - headEnd : 0;
+  const shown = history
+    ? window.items.slice(history.tailStart)
+    : window.items.slice(-WORKING_WINDOW_TAIL);
+  const renderItem = (item: WorkingWindowItem) => (
+    <div key={item.id} className="min-w-0">
+      <WorkingWindowItemView item={item} itemKey={itemKey} current={item === window.items.at(-1)} />
+    </div>
+  );
   const showThinking =
     !turnEnded &&
     !pendingRequest &&
@@ -911,80 +964,43 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
     !isPreparingWorktree &&
     !workingWindowHasActiveCompaction(window);
   if (shown.length === 0 && !showThinking) return null;
-  const openable = !open && shown.length > 0;
-  const thinking = showThinking ? (
-    <LiveActivityRow
-      label={liveAnswerPreview ?? "Thinking"}
-      iconName="brain"
-      active
-      interruptible
-    />
-  ) : null;
   return (
     <WorkGroupViewCtx value={groupView}>
-      {/* The bar is the keyboard control; the window is a larger pointer target for it. */}
       <div
-        className={openable ? "cursor-pointer" : undefined}
-        data-working-window={openable ? "" : undefined}
-        onClick={openable ? () => ctx.onToggleWorkingHistory(window.key) : undefined}
-      >
-        {open ? (
-          <LegendList
-            data={window.items}
-            keyExtractor={workingWindowItemKey}
-            renderItem={({ item }) => (
-              <div className="min-w-0">
-                <WorkingWindowItemView
-                  item={item}
-                  itemKey={itemKey}
-                  current={item === window.items.at(-1)}
-                  historyOpen={open}
-                />
-              </div>
-            )}
-            estimatedItemSize={compactWorkEntryHeight}
-            drawDistance={240}
-            recycleItems
-            maintainVisibleContentPosition
-            ListFooterComponent={thinking}
-            tabIndex={0}
-            role="region"
-            aria-label="Work history"
-            className="max-h-[min(18rem,50dvh)] min-w-0 overflow-x-hidden pt-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-          />
-        ) : (
-          <div
-            ref={observeHeight}
-            className={cn(
-              // The gap under the bar sits inside the window, so its fade reaches the hairline.
-              "flex min-w-0 flex-col gap-1 pt-2",
-              !open && "max-h-[220px] justify-end overflow-hidden",
-              !open && full && "[mask-image:linear-gradient(to_bottom,transparent,black_36px)]",
-            )}
-          >
-            {shown.map((item) => (
-              <div
-                key={item.id}
-                inert={!open && !workingWindowItemIsLive(item)}
-                className="min-w-0"
-              >
-                <WorkingWindowItemView
-                  item={item}
-                  itemKey={itemKey}
-                  current={item === window.items.at(-1)}
-                  historyOpen={open}
-                />
-              </div>
-            ))}
-            {thinking}
-          </div>
+        ref={observeHeight}
+        role="region"
+        aria-label="Work history"
+        className={cn(
+          // The gap under the bar sits inside the window, so its fade reaches the hairline.
+          "flex min-w-0 flex-col justify-end gap-1 overflow-clip pt-2 transition-[height] duration-200 ease-out motion-reduce:transition-none",
+          open
+            ? "[height:calc-size(auto,size)]"
+            : "[height:calc-size(auto,min(size,220px))] not-supports-[height:calc-size(auto,size)]:max-h-[220px]",
+          !open && full && "[mask-image:linear-gradient(to_bottom,transparent,black_36px)]",
         )}
+      >
+        {history ? window.items.slice(0, headEnd).map(renderItem) : null}
+        {unmounted > 0 ? (
+          <div
+            ref={spacerRef}
+            aria-hidden
+            className="shrink-0"
+            style={{ height: unmounted * (compactWorkEntryHeight + 4) }}
+          />
+        ) : null}
+        {shown.map(renderItem)}
+        {showThinking ? (
+          <LiveActivityRow
+            label={liveAnswerPreview ?? "Thinking"}
+            iconName="brain"
+            active
+            interruptible
+          />
+        ) : null}
       </div>
     </WorkGroupViewCtx>
   );
 }
-
-const workingWindowItemKey = (item: WorkingWindowItem) => item.id;
 
 function workingWindowItemIsLive(item: WorkingWindowItem | undefined): boolean {
   if (item === undefined) return false;
@@ -999,6 +1015,11 @@ function workingWindowItemIsLive(item: WorkingWindowItem | undefined): boolean {
 const WORKING_WINDOW_MAX_HEIGHT = 220;
 
 const WORKING_WINDOW_TAIL = 12;
+
+const WORKING_HISTORY_BATCH = 50;
+
+const transitionsSettled = (element: HTMLElement | null) =>
+  Promise.allSettled(element?.getAnimations().map((animation) => animation.finished) ?? []);
 
 /** Running subagents outrank the diff; live statuses come from the thread's subagent roster. */
 function WorkingAgentsSlot({
