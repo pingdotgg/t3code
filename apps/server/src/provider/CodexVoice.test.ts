@@ -10,6 +10,7 @@ import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import type * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
@@ -36,6 +37,7 @@ const makeFakeClient = Effect.gen(function* () {
   let onStart: Effect.Effect<void, CodexErrors.CodexAppServerError> = Effect.void;
   let onStop: Effect.Effect<void, CodexErrors.CodexAppServerError> = Effect.void;
   let onSpeech: Effect.Effect<void, CodexErrors.CodexAppServerError> = Effect.void;
+  let onSpeechResponse: typeof onSpeech = Effect.void;
   const startRequested = yield* Deferred.make<void>();
   const secondStartRequested = yield* Deferred.make<void>();
   const thirdStartRequested = yield* Deferred.make<void>();
@@ -65,6 +67,7 @@ const makeFakeClient = Effect.gen(function* () {
           }
           if (method === "thread/realtime/appendSpeech") {
             yield* Deferred.succeed(speechRequested, undefined);
+            yield* onSpeechResponse;
           }
           if (method === "thread/realtime/stop") {
             yield* Deferred.succeed(stopRequested, undefined);
@@ -103,6 +106,9 @@ const makeFakeClient = Effect.gen(function* () {
     },
     setSpeech: (effect: typeof onSpeech) => {
       onSpeech = effect;
+    },
+    setSpeechResponse: (effect: typeof onSpeechResponse) => {
+      onSpeechResponse = effect;
     },
     stopRequested,
     closePreviousOnStop: () => {
@@ -455,15 +461,105 @@ describe("makeCodexVoice", () => {
     ),
   );
 
-  it.effect("stops the realtime session when the client unsubscribes", () =>
+  it.effect("stops on unsubscribe when only the closed notification confirms cleanup", () =>
     Effect.gen(function* () {
       const voice = yield* startVoice;
-      yield* Fiber.interrupt(voice.fiber);
-      yield* Deferred.await(voice.stopRequested);
-      NodeAssert.deepEqual(voice.requests.at(-1), {
-        method: "thread/realtime/stop",
-        params: { threadId: PROVIDER_THREAD },
-      });
+      const releaseStop = yield* Deferred.make<void>();
+      const stopInterrupted = yield* Deferred.make<void>();
+      voice.setStop(
+        Deferred.await(releaseStop).pipe(
+          Effect.onInterrupt(() => Deferred.succeed(stopInterrupted, undefined)),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const cleanup = yield* Fiber.interrupt(voice.fiber).pipe(Effect.forkChild);
+        yield* Deferred.await(voice.stopRequested);
+        yield* voice.emit("thread/realtime/closed", { threadId: PROVIDER_THREAD });
+        yield* TestClock.adjust("9 seconds");
+        NodeAssert.equal(yield* Deferred.isDone(stopInterrupted), true);
+        NodeAssert.ok(cleanup.pollUnsafe());
+        yield* Fiber.join(cleanup);
+        NodeAssert.deepEqual(voice.requests.at(-1), {
+          method: "thread/realtime/stop",
+          params: { threadId: PROVIDER_THREAD },
+        });
+      }).pipe(Effect.ensuring(Deferred.succeed(releaseStop, undefined)));
+    }),
+  );
+
+  it.effect("bounds unanswered speech and stop without replacing an unconfirmed session", () =>
+    Effect.gen(function* () {
+      const releaseSpeech = yield* Deferred.make<void>();
+      const releaseStop = yield* Deferred.make<void>();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeClient;
+          const voice = yield* makeCodexVoice(fake.client, yield* Effect.scope);
+          const speechInterrupted = yield* Deferred.make<void>();
+          fake.setSpeechResponse(
+            Deferred.await(releaseSpeech).pipe(
+              Effect.onInterrupt(() => Deferred.succeed(speechInterrupted, undefined)),
+            ),
+          );
+          fake.setStop(Deferred.await(releaseStop));
+          const first = yield* voice
+            .start({ providerThreadId: PROVIDER_THREAD, offerSdp: "offer" })
+            .pipe(Stream.runCollect, Effect.forkChild);
+          yield* Deferred.await(fake.startRequested);
+          yield* voice.expectSpokenTurn("voice-message");
+          yield* voice.registerTurn("voice-message", "delegated");
+          yield* fake.emit("item/completed", {
+            threadId: PROVIDER_THREAD,
+            turnId: "delegated",
+            item: { type: "agentMessage", text: "Old answer.", phase: "final_answer" },
+          });
+          yield* fake.emit("turn/completed", {
+            threadId: PROVIDER_THREAD,
+            turn: { id: "delegated", status: "completed" },
+          });
+          yield* Deferred.await(fake.speechRequested);
+          yield* TestClock.adjust("10 seconds");
+          NodeAssert.equal(yield* Deferred.isDone(speechInterrupted), true);
+          NodeAssert.deepEqual(
+            fake.requests.map(({ method }) => method),
+            ["thread/realtime/start", "thread/realtime/appendSpeech", "thread/realtime/stop"],
+          );
+          yield* TestClock.adjust("10 seconds");
+          NodeAssert.ok(first.pollUnsafe());
+          NodeAssert.ok(Exit.isFailure(yield* Fiber.await(first)));
+          fake.setStop(
+            Effect.fail(
+              new CodexErrors.CodexAppServerRequestError({
+                code: -32603,
+                errorMessage: "stop still unconfirmed",
+              }),
+            ),
+          );
+          const replacement = yield* voice
+            .start({ providerThreadId: PROVIDER_THREAD, offerSdp: "replacement" })
+            .pipe(Stream.runCollect, Effect.exit);
+          NodeAssert.ok(Exit.isFailure(replacement));
+          NodeAssert.equal(
+            fake.requests.filter(({ method }) => method.endsWith("/start")).length,
+            1,
+          );
+          yield* fake.emit("thread/realtime/closed", { threadId: PROVIDER_THREAD });
+          const recovered = yield* voice
+            .start({ providerThreadId: PROVIDER_THREAD, offerSdp: "recovered" })
+            .pipe(Stream.runCollect, Effect.forkChild);
+          yield* Deferred.await(fake.secondStartRequested);
+          yield* Deferred.succeed(releaseSpeech, undefined);
+          NodeAssert.equal(
+            fake.requests.filter(({ method }) => method.endsWith("/appendSpeech")).length,
+            1,
+          );
+          yield* fake.emit("thread/realtime/closed", { threadId: PROVIDER_THREAD });
+          yield* Fiber.join(recovered);
+        }).pipe(
+          Effect.ensuring(Deferred.succeed(releaseSpeech, undefined)),
+          Effect.ensuring(Deferred.succeed(releaseStop, undefined)),
+        ),
+      );
     }),
   );
 
