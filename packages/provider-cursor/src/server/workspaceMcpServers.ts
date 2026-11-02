@@ -94,7 +94,7 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
   const projectRoot = Option.isSome(root) && root.value.code === 0 ? root.value.stdout.trim() : cwd;
   const userHome = yield* HostProcess.HomeDirectory;
   const cursorDataDirectory = hostEnvironment.CURSOR_DATA_DIR || path.join(userHome, ".cursor");
-  const disabledText = yield* fileSystem
+  const loadDisabled = fileSystem
     .readFileString(
       path.join(
         cursorDataDirectory,
@@ -108,8 +108,10 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
         (error) => error.reason._tag === "NotFound",
         () => Effect.succeed("[]"),
       ),
+      Effect.flatMap(decodeDisabledServers),
+      Effect.map((names) => new Set(names)),
     );
-  const disabled = new Set(yield* decodeDisabledServers(disabledText));
+  let disabled: Set<string> | undefined;
   const variables = new Map([
     ["workspaceFolder", projectRoot],
     ["workspaceFolderBasename", path.basename(projectRoot)],
@@ -144,7 +146,6 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
     for (const [name, server] of Object.entries(config.value.mcpServers)) {
       if (seen.has(name)) continue;
       seen.add(name);
-      if (disabled.has(name)) continue;
       // Plugin definitions take precedence in the SDK, which can see enabled plugins.
       if (
         "command" in server &&
@@ -158,6 +159,8 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
             ),
         )
       ) {
+        disabled ??= yield* loadDisabled;
+        if (disabled.has(name)) continue;
         // The SDK starts file clients before deduplication, so a literal copy may also run.
         servers[name] = { ...server, cwd: server.cwd ?? projectRoot } as McpServerConfig;
       }

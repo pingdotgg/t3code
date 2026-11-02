@@ -1927,6 +1927,12 @@ describe("CursorAdapterV2", () => {
           );
           assert.isTrue(Exit.isFailure(yield* Effect.exit(loadServers())));
         }
+        yield* fileSystem.writeFileString(
+          path.join(workspace, ".cursor", "mcp.json"),
+          JSON.stringify({ mcpServers: { plain: { command: "node", args: ["server.mjs"] } } }),
+        );
+        yield* fileSystem.remove(path.join(home, ".cursor", "mcp.json"));
+        assert.deepEqual(yield* loadServers(), {});
       }).pipe(
         Effect.scoped,
         Effect.provide(
