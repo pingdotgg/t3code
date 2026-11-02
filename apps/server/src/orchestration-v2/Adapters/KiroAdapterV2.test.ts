@@ -23,6 +23,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -1047,8 +1048,13 @@ describe("KiroAdapterV2 early Stop", () => {
             );
             yield* Deferred.await(cancelHeld);
             yield* input.drive({ replayGate, cancelSent, cancelWritten, stopFiber: stop });
-            // Stop decides the run's outcome.
-            assert.equal(terminalStatus(yield* Fiber.join(turn)), "interrupted");
+            // Stop decides the run's outcome. A Stop Kiro never acknowledges leaves the
+            // turn open, since Kiro may still be working, for the user to Force stop.
+            if (Exit.isSuccess(yield* Fiber.join(stop))) {
+              assert.equal(terminalStatus(yield* Fiber.join(turn)), "interrupted");
+            } else {
+              assert.isUndefined(turn.pollUnsafe());
+            }
           }),
       });
     }).pipe(Effect.provide(testLayer), Effect.scoped);
@@ -1202,7 +1208,7 @@ describe("KiroAdapterV2 early Stop", () => {
     }),
   );
 
-  it.effect("fails a Stop Kiro never acknowledges after the 10 s wait", () =>
+  it.effect("fails a Stop Kiro never acknowledges after the 10 s wait and keeps the turn", () =>
     earlyStop({
       gates: [],
       // Kiro never starts the prompt and never answers it.
@@ -1215,7 +1221,8 @@ describe("KiroAdapterV2 early Stop", () => {
           yield* TestClock.adjust("9999 millis");
           assert.isUndefined(stopFiber.pollUnsafe(), "Stop must still wait for Kiro's answer");
           yield* TestClock.adjust("1 millis");
-          assert.isTrue(Exit.isFailure(yield* Fiber.join(stopFiber)));
+          const error = Exit.findErrorOption(yield* Fiber.join(stopFiber));
+          assert.equal(Option.getOrUndefined(error)?._tag, "ProviderAdapterInterruptTimeoutError");
         }),
     }),
   );
