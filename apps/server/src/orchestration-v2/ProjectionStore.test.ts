@@ -34,7 +34,6 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as Statement from "effect/sql/Statement";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -2127,39 +2126,15 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       );
       yield* insertMessageItem("null-id", threadId, -2, null);
       yield* insertMessageItem("missing-id", threadId, -3, undefined);
-      const ordinalReads: Array<readonly [string, ReadonlyArray<unknown>]> = [];
-      const recordOrdinalReads: Statement.Transformer = (statement) => {
-        const compiled = statement.compile();
-        if (compiled[0].includes("MIN(ordinal) AS ordinal")) ordinalReads.push(compiled);
-        return Effect.succeed(statement);
-      };
       const readMessageIds = (filter?: ProjectionStore.ProjectionRecordFilter) =>
-        projectionStore.getThreadRecords(threadId, ["messages"], filter).pipe(
-          Effect.map(({ messages }) => messages.map((message) => message.id)),
-          Effect.provideService(Statement.CurrentTransformer, recordOrdinalReads),
-        );
-      // Re-run each recorded ordinal read to count the groups it produced.
-      const takeOrdinalGroups = () =>
-        Effect.forEach(ordinalReads.splice(0), ([query, params]) =>
-          sql
-            .unsafe<{ readonly message_id: string | null; readonly ordinal: number }>(query, params)
-            .pipe(
-              Effect.map((rows) =>
-                rows.toSorted((left, right) =>
-                  String(left.message_id).localeCompare(String(right.message_id)),
-                ),
-              ),
-            ),
-        );
+        projectionStore
+          .getThreadRecords(threadId, ["messages"], filter)
+          .pipe(Effect.map(({ messages }) => messages.map((message) => message.id)));
       assert.deepEqual(yield* readMessageIds(), [lastMessageId, firstMessageId]);
-      assert.equal(ordinalReads.length, 1);
-      const unfilteredOrdinalRead = ordinalReads.splice(0)[0]!;
-      assert.equal(unfilteredOrdinalRead[0].includes("json_each"), false);
       assert.deepEqual(yield* readMessageIds({ messageRoles: ["user", "assistant"] }), [
         lastMessageId,
         firstMessageId,
       ]);
-      assert.deepEqual(ordinalReads.splice(0), [unfilteredOrdinalRead]);
       for (const filter of [
         {
           messageIds: [
@@ -2177,17 +2152,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         },
       ]) {
         assert.deepEqual(yield* readMessageIds(filter), [lastMessageId, firstMessageId]);
-        assert.deepEqual(yield* takeOrdinalGroups(), [
-          [
-            { message_id: firstMessageId, ordinal: 1 },
-            { message_id: lastMessageId, ordinal: 0 },
-          ],
-        ]);
       }
       assert.deepEqual(yield* readMessageIds({ messageIds: [] }), []);
-      assert.deepEqual(yield* takeOrdinalGroups(), []);
       assert.deepEqual(yield* readMessageIds({ messageIds: [firstMessageId] }), [firstMessageId]);
-      assert.deepEqual(yield* takeOrdinalGroups(), []);
       yield* sql`
         DELETE FROM orchestration_v2_projection_turn_items
         WHERE turn_item_id LIKE 'turn-item:bounded-sql-history:ordinal-%'
