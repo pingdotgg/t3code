@@ -186,7 +186,7 @@ export const readClaudeOrganizationId = (accountConfigPath: string) =>
     Effect.map((account) => account?.organizationUuid?.trim() || undefined),
   );
 
-/** Changes when a login switches account; empty when signed out, on an API key, or unreadable. */
+/** Changes when a login switches account; constant when signed out, on an API key, or unreadable. */
 export const readClaudeAccountKey = (accountConfigPath: string) =>
   readClaudeOauthAccount(accountConfigPath).pipe(
     Effect.map(
