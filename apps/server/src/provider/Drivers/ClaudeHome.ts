@@ -67,11 +67,6 @@ const CLAUDE_HOST_SESSION_VARIABLES = [
 ];
 
 const T3_CODE_ENTRYPOINT = "t3-code";
-const CLAUDE_MATCHED_VARIABLES: ReadonlySet<string> = new Set([
-  "ANTHROPIC_API_KEY",
-  "CLAUDE_CODE_ENTRYPOINT",
-  ...CLAUDE_HOST_SESSION_VARIABLES,
-]);
 
 // Claude Code reads its entrypoint only from the process env, so T3 Code applies settings itself.
 // An API key leaves it unset for the Claude default: subscriber API credits answer `t3-code` with
@@ -92,16 +87,13 @@ export const mergeClaudeBaseEnvironment = Effect.fn("mergeClaudeBaseEnvironment"
   instanceEnvironment: ProviderInstanceEnvironment | undefined,
   hostEnvironment: NodeJS.ProcessEnv,
 ) {
-  const baseEnvironment: NodeJS.ProcessEnv = { ...hostEnvironment };
-  if ((yield* HostProcess.Platform) === "win32") {
-    // Windows names ignore case, but a copy of process.env does not.
-    for (const name of Object.keys(baseEnvironment)) {
-      const canonical = name.toUpperCase();
-      if (canonical === name || !CLAUDE_MATCHED_VARIABLES.has(canonical)) continue;
-      baseEnvironment[canonical] = baseEnvironment[name];
-      delete baseEnvironment[name];
-    }
-  }
+  // Windows names ignore case, but a copy of process.env does not, and this code reads exact names.
+  const baseEnvironment: NodeJS.ProcessEnv =
+    (yield* HostProcess.Platform) === "win32"
+      ? Object.fromEntries(
+          Object.entries(hostEnvironment).map(([name, value]) => [name.toUpperCase(), value]),
+        )
+      : { ...hostEnvironment };
   delete baseEnvironment.CLAUDE_CODE_ENTRYPOINT;
   for (const name of CLAUDE_HOST_SESSION_VARIABLES) delete baseEnvironment[name];
   return yield* mergeProviderInstanceEnvironment(instanceEnvironment, baseEnvironment);
