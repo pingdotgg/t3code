@@ -240,11 +240,11 @@ const withService = <A, E>(
         namedProjectsRoot: "/projects",
         isScratchProject: () => Effect.succeed(false),
       }),
-      Layer.mock(ThreadManagementService.ThreadManagementService)({
-        ...(options.getThreadRecords === undefined
+      Layer.mock(ThreadManagementService.ThreadManagementService)(
+        options.getThreadRecords === undefined
           ? {}
-          : { getThreadRecords: options.getThreadRecords }),
-      }),
+          : { getThreadRecords: options.getThreadRecords },
+      ),
       Layer.mock(SecretRequests.SecretRequests)({
         consume: ({ ref }) => {
           const value = secretsByRef.get(ref);
