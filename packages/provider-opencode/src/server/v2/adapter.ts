@@ -209,7 +209,10 @@ interface ActiveTurn {
     output: number;
     reasoning: number;
   };
+  // Steps OpenCode started; a step that ends without tokens leaves the total partial.
+  startedSteps: number;
   steps: number;
+  readonly models: Set<string>;
   lastStep: Tokens | undefined;
   before: string | null | undefined;
   compaction: { readonly nativeId: string; readonly startedAt: DateTime.Utc } | undefined;
@@ -629,16 +632,22 @@ const skillsNamed = (text: string, known: ReadonlySet<string>) => [
   ),
 ];
 
-const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["status"]) =>
-  turn.steps === 0
+const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["status"]) => {
+  const models = turn.models.size === 0 ? {} : { models: [...turn.models] };
+  return turn.steps === 0
     ? {
         usageScope: "main_agent" as const,
         usageStatus: "unavailable" as const,
         hasSubagents: turn.usedSubagents,
+        ...models,
       }
     : {
+        ...models,
         usageScope: "main_agent" as const,
-        usageStatus: status === "completed" ? ("complete" as const) : ("partial" as const),
+        usageStatus:
+          status === "completed" && turn.steps >= turn.startedSteps
+            ? ("complete" as const)
+            : ("partial" as const),
         inputTokens: turn.usage.input,
         cachedInputTokens: turn.usage.cached,
         cacheCreationTokens: turn.usage.cacheWrite,
@@ -646,6 +655,7 @@ const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["s
         reasoningTokens: turn.usage.reasoning,
         hasSubagents: turn.usedSubagents,
       };
+};
 
 export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: ProviderInstanceId) {
   const server = yield* OpenCode2Server.OpenCode2Server;
@@ -1111,7 +1121,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ordinals: new Map(),
       nextOrdinal: providerTurn.ordinal * 100 + 1,
       usage: { input: 0, cached: 0, cacheWrite: 0, output: 0, reasoning: 0 },
+      startedSteps: 0,
       steps: 0,
+      models: new Set(),
       lastStep: undefined,
       before: undefined,
       compaction: undefined,
@@ -2101,6 +2113,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* emitCompaction(state, turn, "completed", event.data.text);
         case "session.compaction.failed":
           return yield* emitCompaction(state, turn, "failed");
+        case "session.step.started":
+          turn.startedSteps += 1;
+          turn.models.add(`${event.data.model.providerID}/${event.data.model.id}`);
+          return;
         case "session.step.ended":
         case "session.step.failed": {
           const tokens = event.data.tokens;

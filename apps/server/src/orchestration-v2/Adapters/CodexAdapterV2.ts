@@ -6127,6 +6127,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ),
                   input.nativeTurnId,
                   input.status === "completed",
+                  subagentSelections.get(
+                    input.context.providerThread.nativeThreadRef?.nativeId ?? "",
+                  )?.model,
                 ),
               };
               if (!holdsForGoal) {

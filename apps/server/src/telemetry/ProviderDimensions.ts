@@ -39,6 +39,29 @@ export function providerDimensions(
     : { provider: provider.driver };
 }
 
+const DATED_SNAPSHOT = /-\d{8}$/u;
+
+/**
+ * The vendor catalog slug that a native or routed model id names, such as
+ * `anthropic/claude-opus-5-5` or a dated snapshot. Models outside every vendor
+ * catalog, including user-added ones, return undefined.
+ */
+export function catalogModelLabel(
+  providers: ReadonlyArray<ServerProvider>,
+  model: string,
+): string | undefined {
+  const leaf = model.slice(model.lastIndexOf("/") + 1);
+  const candidates = new Set([model, leaf, leaf.replace(DATED_SNAPSHOT, "")]);
+  for (const provider of providers) {
+    if (!VENDOR_CATALOG_DRIVERS.has(provider.driver)) continue;
+    const match = provider.models.find(
+      (candidate) => !candidate.isCustom && candidates.has(candidate.slug),
+    );
+    if (match !== undefined) return match.slug;
+  }
+  return undefined;
+}
+
 /** The thread fields agent analytics reads. Ids are used for lookups, never reported. */
 export type AgentThread = Pick<
   OrchestrationV2ThreadShell,

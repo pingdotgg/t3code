@@ -106,6 +106,7 @@ import { openCode2SimpleInput } from "./opencode2_simple/input.ts";
 import { openCode2SkillInput } from "./opencode2_skill/input.ts";
 import { assertOpenCode2SkillOutput } from "./opencode2_skill/output.ts";
 import { assertOpenCode2SimpleOutput } from "./opencode2_simple/output.ts";
+import { assertOpenCode2MissingStepUsageOutput } from "./opencode2_missing_step_usage/output.ts";
 import { openCode2ToolCallInput } from "./opencode2_tool_call/input.ts";
 import { assertOpenCode2ToolCallOutput } from "./opencode2_tool_call/output.ts";
 import { assertOpenCodeSubagentOutput } from "./opencode_subagent/output.ts";
@@ -981,6 +982,21 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./opencode2_simple/opencode_transcript.ndjson", import.meta.url),
         modelSelection: OPENCODE2_MODEL_SELECTION,
         assertOutput: assertOpenCode2SimpleOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode2_missing_step_usage",
+    buildInput: openCode2SimpleInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode"),
+        transcriptFile: new URL(
+          "./opencode2_missing_step_usage/opencode_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE2_MODEL_SELECTION,
+        assertOutput: assertOpenCode2MissingStepUsageOutput,
       },
     ],
   },
