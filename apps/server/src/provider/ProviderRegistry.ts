@@ -50,23 +50,36 @@ import type { ProviderSnapshotSource } from "./builtInProviderCatalog.ts";
 
 export type ProviderMaintenanceActionKind = "update";
 
+export interface ProviderRefreshOptions {
+  readonly fresh?: boolean;
+}
+
 export class ProviderRegistry extends Context.Service<
   ProviderRegistry,
   {
     readonly getProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;
 
+    /**
+     * `fresh` drops the instances' probe caches first. Drivers hold a recent
+     * capabilities probe for a few minutes so background status checks stay
+     * cheap; a user-initiated refresh must re-ask the CLI or a rate-limit
+     * window that reset meanwhile keeps showing as exhausted.
+     */
     readonly refresh: (
       provider?: ProviderDriverKind,
+      options?: ProviderRefreshOptions,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /** Unknown instance ids return the cached list without error. */
     readonly refreshInstance: (
       instanceId: ProviderInstanceId,
+      options?: ProviderRefreshOptions,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /** Re-reads secret-backed environments first, so a fixed secret applies without a restart. */
     readonly reloadSecretsAndRefresh: (
       instanceId?: ProviderInstanceId,
+      options?: ProviderRefreshOptions,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /** Only refreshed instances can verify an update; the published list still includes every row. */
@@ -646,8 +659,27 @@ export const layer = Layer.effect(
       return yield* Deferred.await(claimed.completion);
     });
 
-    const refresh = Effect.fn("refresh")(function* (provider?: ProviderDriverKind) {
+    const invalidateInstanceCaches = Effect.fn("invalidateInstanceCaches")(function* (
+      instanceId?: ProviderInstanceId,
+    ) {
+      const instances = yield* instanceRegistry.listInstances;
+      yield* Effect.forEach(
+        instances.filter(
+          (instance) => instanceId === undefined || instance.instanceId === instanceId,
+        ),
+        (instance) => instance.invalidateCaches ?? Effect.void,
+        { concurrency: "unbounded", discard: true },
+      );
+    });
+
+    const refresh = Effect.fn("refresh")(function* (
+      provider?: ProviderDriverKind,
+      options?: ProviderRefreshOptions,
+    ) {
       if (provider === undefined) {
+        // A fresh caller that joins an in-flight pass still gets that pass's
+        // probe; the invalidation lands for the next one.
+        if (options?.fresh) yield* invalidateInstanceCaches();
         return yield* refreshAll();
       }
       const defaultInstanceId = defaultInstanceIdForDriver(provider);
@@ -658,13 +690,16 @@ export const layer = Layer.effect(
       if (!providerSource) {
         return yield* Ref.get(providersRef);
       }
+      if (options?.fresh) yield* invalidateInstanceCaches(defaultInstanceId);
       return yield* refreshOneSource(providerSource);
     });
 
     const refreshInstance = Effect.fn("refreshInstance")(function* (
       instanceId: ProviderInstanceId,
+      options?: ProviderRefreshOptions,
     ) {
       yield* syncLiveSourcesAndContinue;
+      if (options?.fresh) yield* invalidateInstanceCaches(instanceId);
       const sources = yield* getLiveSources;
       const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
       if (!providerSource) {
@@ -675,9 +710,12 @@ export const layer = Layer.effect(
 
     const reloadSecretsAndRefresh = Effect.fn("reloadSecretsAndRefresh")(function* (
       instanceId?: ProviderInstanceId,
+      options?: ProviderRefreshOptions,
     ) {
       yield* instanceRegistryMutator.reloadSecrets(instanceId);
-      return yield* instanceId === undefined ? refresh() : refreshInstance(instanceId);
+      return yield* instanceId === undefined
+        ? refresh(undefined, options)
+        : refreshInstance(instanceId, options);
     });
 
     const refreshAfterUpdate = Effect.fn("refreshAfterUpdate")(function* (
@@ -1028,12 +1066,15 @@ export const layer = Layer.effect(
 
     return {
       getProviders: Ref.get(providersRef),
-      refresh: (provider?: ProviderDriverKind) =>
-        refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
-      refreshInstance: (instanceId: ProviderInstanceId) =>
-        refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
-      reloadSecretsAndRefresh: (instanceId?: ProviderInstanceId) =>
-        reloadSecretsAndRefresh(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refresh: (provider?: ProviderDriverKind, options?: ProviderRefreshOptions) =>
+        refresh(provider, options).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refreshInstance: (instanceId: ProviderInstanceId, options?: ProviderRefreshOptions) =>
+        refreshInstance(instanceId, options).pipe(Effect.catchCause(recoverRefreshFailure)),
+      reloadSecretsAndRefresh: (
+        instanceId?: ProviderInstanceId,
+        options?: ProviderRefreshOptions,
+      ) =>
+        reloadSecretsAndRefresh(instanceId, options).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshAfterUpdate,

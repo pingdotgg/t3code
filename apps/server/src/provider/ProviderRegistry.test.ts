@@ -1787,6 +1787,102 @@ it.layer(
       }),
     );
 
+    it.effect("a fresh refresh drops the instance probe caches before probing", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("claudeAgent");
+        const instanceId = ProviderInstanceId.make("claude");
+        const provider = {
+          instanceId,
+          driver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-06-10T00:00:00.000Z",
+          version: "1.0.0",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const events = yield* Ref.make<ReadonlyArray<"invalidate" | "refresh">>([]);
+        const record = (event: "invalidate" | "refresh") =>
+          Ref.update(events, (previous) => [...previous, event]);
+        const instances = [
+          {
+            instanceId,
+            driverKind: driver,
+            continuationIdentity: { driverKind: driver, continuationKey: "claude:instance:claude" },
+            displayName: undefined,
+            enabled: true,
+            invalidateCaches: record("invalidate"),
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed(provider),
+              refresh: record("refresh").pipe(Effect.as(provider)),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          },
+        ] satisfies ReadonlyArray<ProviderInstance>;
+        const instanceRegistryLayer = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (requestedId) =>
+              Effect.succeed(instances.find((instance) => instance.instanceId === requestedId)),
+            listInstances: Effect.succeed(instances),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provide(
+              Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({
+                reloadSecrets: () => Effect.void,
+              }),
+            ),
+            Layer.provideMerge(instanceRegistryLayer),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-fresh-refresh-",
+              }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          yield* registry.refresh();
+          yield* registry.refreshInstance(instanceId);
+          assert.deepStrictEqual(yield* Ref.get(events), ["refresh", "refresh"]);
+
+          yield* Ref.set(events, []);
+          yield* registry.refresh(undefined, { fresh: true });
+          assert.deepStrictEqual(yield* Ref.get(events), ["invalidate", "refresh"]);
+
+          yield* Ref.set(events, []);
+          yield* registry.refreshInstance(instanceId, { fresh: true });
+          assert.deepStrictEqual(yield* Ref.get(events), ["invalidate", "refresh"]);
+
+          yield* Ref.set(events, []);
+          yield* registry.reloadSecretsAndRefresh(undefined, { fresh: true });
+          assert.deepStrictEqual(yield* Ref.get(events), ["invalidate", "refresh"]);
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
     it.effect("persists the merged snapshot when a live update has empty models", () =>
       Effect.gen(function* () {
         const cursorDriver = ProviderDriverKind.make("cursor");

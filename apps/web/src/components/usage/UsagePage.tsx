@@ -259,7 +259,8 @@ export function UsagePage() {
           if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
             return refreshUsageLimits(
               environmentId,
-              () => refreshProviders({ environmentId, input: {} }),
+              // A click re-probes the CLI; the automatic pass may reuse a recent probe.
+              () => refreshProviders({ environmentId, input: { fresh: !automatic } }),
               automatic,
               afterPending,
             );
