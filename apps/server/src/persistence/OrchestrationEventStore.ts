@@ -645,7 +645,8 @@ const makeEventStore = Effect.gen(function* () {
       FROM orchestration_events
       ${
         threadId === undefined
-          ? sql``
+          ? // The planner can otherwise pick the covering stream index and scan every agent event.
+            sql`INDEXED BY idx_orchestration_events_application_sequence`
           : sql`INDEXED BY idx_orchestration_events_agent_stream_sequence`
       }
       WHERE application_event_version = 2
