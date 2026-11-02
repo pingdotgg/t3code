@@ -12,7 +12,15 @@ module.exports = async ({ appOutDir, electronPlatformName, arch, packager }) => 
     return;
   }
   const targetArch = ["ia32", "x64", "armv7l", "arm64", "universal"][arch];
-  if (electronPlatformName !== process.platform || targetArch !== process.arch) {
+  const runsWithRosetta =
+    electronPlatformName === "darwin" &&
+    process.platform === "darwin" &&
+    process.arch === "arm64" &&
+    targetArch === "x64";
+  if (
+    electronPlatformName !== process.platform ||
+    (targetArch !== process.arch && !runsWithRosetta)
+  ) {
     console.log(
       `[server-compile-cache] Skipping unexecutable target ${electronPlatformName}/${targetArch}`,
     );
