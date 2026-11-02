@@ -104,6 +104,8 @@ const make = Effect.gen(function* () {
   const htmlRenders = yield* Ref.make(new Map<ThreadId, ReadonlyArray<KeptHtmlRender>>());
   // A replaced or cleared credential drops its thread's bindings, so none answer for the next.
   const nativeCallers = new Map<ThreadId, Map<string, ThreadId>>();
+  // Codex thread identities stay valid across calls, unlike Claude's per-call tool-use ids.
+  const nativeThreadCallers = new Map<ThreadId, Map<string, ThreadId>>();
   const nativeCallerWaiters = new Map<
     string,
     { readonly deferred: Deferred.Deferred<ThreadId>; pending: number }
@@ -115,6 +117,7 @@ const make = Effect.gen(function* () {
       const replaced = current.get(config.threadId)?.providerSessionId;
       if (replaced !== undefined && replaced !== config.providerSessionId) {
         nativeCallers.delete(config.threadId);
+        nativeThreadCallers.delete(config.threadId);
       }
       if (replaced !== config.providerSessionId) {
         yield* Ref.update(htmlRenders, (kept) => {
@@ -131,6 +134,7 @@ const make = Effect.gen(function* () {
     clear: Effect.fn("McpProviderSessions.clear")(function (threadId) {
       return Ref.update(sessions, (current) => {
         nativeCallers.delete(threadId);
+        nativeThreadCallers.delete(threadId);
         const next = new Map(current);
         next.delete(threadId);
         return next;
@@ -145,14 +149,19 @@ const make = Effect.gen(function* () {
       );
     }),
     bindNativeCaller: Effect.fn("McpProviderSessions.bindNativeCaller")(function* (input) {
-      const bound = nativeCallers.get(input.threadId) ?? new Map<string, ThreadId>();
+      const callers = input.callId.startsWith("codex-thread:")
+        ? nativeThreadCallers
+        : nativeCallers;
+      const bound = callers.get(input.threadId) ?? new Map<string, ThreadId>();
       bound.delete(input.callId);
       bound.set(input.callId, input.callerThreadId);
-      for (const oldest of bound.keys()) {
-        if (bound.size <= MAX_KEPT_NATIVE_CALLERS) break;
-        bound.delete(oldest);
+      if (callers === nativeCallers) {
+        for (const oldest of bound.keys()) {
+          if (bound.size <= MAX_KEPT_NATIVE_CALLERS) break;
+          bound.delete(oldest);
+        }
       }
-      nativeCallers.set(input.threadId, bound);
+      callers.set(input.threadId, bound);
       const waiter = nativeCallerWaiters.get(waiterKey(input.threadId, input.callId));
       if (waiter !== undefined) yield* Deferred.succeed(waiter.deferred, input.callerThreadId);
     }),
@@ -162,7 +171,9 @@ const make = Effect.gen(function* () {
         Effect.map((all) => all.get(input.threadId)?.providerSessionId === input.providerSessionId),
       );
       if (!(yield* credentialCurrent)) return undefined;
-      const bound = nativeCallers.get(input.threadId)?.get(input.callId);
+      const bound =
+        nativeThreadCallers.get(input.threadId)?.get(input.callId) ??
+        nativeCallers.get(input.threadId)?.get(input.callId);
       if (bound !== undefined) return bound;
       const key = waiterKey(input.threadId, input.callId);
       const waiter = nativeCallerWaiters.get(key) ?? {
