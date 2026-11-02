@@ -1403,3 +1403,92 @@ export function resolveDisplayedPullRequestDetail(input: {
     ? input.cached
     : null;
 }
+
+export interface PullRequestDetailPatch {
+  readonly state?: PullRequestState;
+  readonly isDraft?: boolean;
+  readonly autoMergeEnabled?: boolean;
+}
+
+export interface PullRequestDetailOverride extends PullRequestDetailPatch {
+  readonly scope: string;
+  readonly at: number;
+}
+
+export function pullRequestDetailPatchAfterAction(
+  action: PullRequestAction,
+): PullRequestDetailPatch | null {
+  switch (action) {
+    case "ready":
+      return { isDraft: false };
+    case "draft":
+      return { isDraft: true };
+    case "close":
+      return { state: "closed" };
+    case "reopen":
+      return { state: "open" };
+    case "enable-auto-merge":
+      return { autoMergeEnabled: true };
+    case "disable-auto-merge":
+      return { autoMergeEnabled: false };
+    default:
+      return null;
+  }
+}
+
+export function recordPullRequestDetailOverride(
+  previous: PullRequestDetailOverride | null,
+  scope: string,
+  patch: PullRequestDetailPatch,
+  now: number,
+): PullRequestDetailOverride {
+  return { ...(previous?.scope === scope ? previous : {}), ...patch, scope, at: now };
+}
+
+type OverridableDetail = Pick<PullRequestDetail, "state" | "isDraft" | "autoMergeEnabled">;
+
+export function applyPullRequestDetailOverride<Detail extends OverridableDetail>(
+  detail: Detail,
+  override: PullRequestDetailOverride | null,
+): Detail {
+  if (override === null) return detail;
+  const { state, isDraft, autoMergeEnabled } = override;
+  return {
+    ...detail,
+    ...(state === undefined ? {} : { state }),
+    ...(isDraft === undefined ? {} : { isDraft }),
+    ...(autoMergeEnabled === undefined ? {} : { autoMergeEnabled }),
+  };
+}
+
+/** Drop what the fetched detail now agrees with; the rest holds until it expires. */
+export function settlePullRequestDetailOverride(
+  override: PullRequestDetailOverride | null,
+  detail: OverridableDetail | null,
+  scope: string,
+): PullRequestDetailOverride | null {
+  if (override === null) return null;
+  if (override.scope !== scope) return null;
+  if (detail === null) return override;
+  const { state, isDraft, autoMergeEnabled } = override;
+  const open = {
+    state: state !== undefined && detail.state !== state,
+    isDraft: isDraft !== undefined && detail.isDraft !== isDraft,
+    autoMergeEnabled:
+      autoMergeEnabled !== undefined && detail.autoMergeEnabled !== autoMergeEnabled,
+  };
+  if (!Object.values(open).some(Boolean)) return null;
+  if (
+    open.state === (state !== undefined) &&
+    open.isDraft === (isDraft !== undefined) &&
+    open.autoMergeEnabled === (autoMergeEnabled !== undefined)
+  )
+    return override;
+  return {
+    scope: override.scope,
+    at: override.at,
+    ...(open.state ? { state } : {}),
+    ...(open.isDraft ? { isDraft } : {}),
+    ...(open.autoMergeEnabled ? { autoMergeEnabled } : {}),
+  };
+}
