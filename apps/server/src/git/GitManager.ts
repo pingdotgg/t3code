@@ -1118,7 +1118,21 @@ export const make = Effect.gen(function* () {
     const details = yield* gitCore
       .statusDetailsLocal(cwd, { includeDivergence: false, includeBranchChanges: true })
       .pipe(
-        Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
+        Effect.catchIf(isNotGitRepositoryError, () =>
+          fileSystem.exists(cwd).pipe(
+            Effect.map((cwdExists) => ({ ...nonRepositoryStatusDetails, cwdExists })),
+            Effect.mapError(
+              (cause) =>
+                new GitCommandError({
+                  operation: "GitManager.localStatus.cwdExists",
+                  command: "git",
+                  cwd,
+                  detail: "Failed to inspect the workspace folder for Git status.",
+                  cause,
+                }),
+            ),
+          ),
+        ),
       );
     const hostingProvider = details.isRepo
       ? yield* resolveHostingProvider(cwd, details.branch)
@@ -1126,6 +1140,7 @@ export const make = Effect.gen(function* () {
 
     return {
       isRepo: details.isRepo,
+      ...(details.cwdExists === undefined ? {} : { cwdExists: details.cwdExists }),
       ...(hostingProvider ? { sourceControlProvider: hostingProvider } : {}),
       hasPrimaryRemote: details.hasOriginRemote,
       isDefaultRef: details.isDefaultBranch,

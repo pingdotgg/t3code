@@ -1103,6 +1103,33 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("initializes existing directories and refuses missing directories", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-init-cwd-" });
+    const missing = path.join(cwd, "missing");
+    const process = yield* VcsProcess.VcsProcess;
+    let gitRuns = 0;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          gitRuns += 1;
+          return process.run(input);
+        },
+      }),
+    );
+    const error = yield* driver.initRepository({ cwd: missing }).pipe(Effect.flip);
+    assert.equal(error._tag, "VcsRepositoryDetectionError");
+    assert.include(error.message, "workspace folder does not exist");
+    assert.equal(gitRuns, 0);
+    assert.isFalse(yield* fileSystem.exists(missing));
+    yield* driver.initRepository({ cwd });
+    assert.equal(gitRuns, 1);
+    assert.isTrue(yield* fileSystem.exists(path.join(cwd, ".git")));
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 // The real VCS process, spawning `command` wherever the driver runs git.
 const vcsProcessSpawning = (command: string) =>
   Layer.effect(

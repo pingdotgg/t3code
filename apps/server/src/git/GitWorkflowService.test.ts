@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -13,6 +14,38 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
 it.layer(NodeServices.layer)("GitWorkflowService", (it) => {
+  it.effect("distinguishes existing and missing directories in status fallbacks", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-status-cwd-" });
+      const path = yield* Path.Path;
+      const cwd = path.join(parent, "workspace");
+      yield* fileSystem.makeDirectory(cwd);
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      for (const exists of [true, false]) {
+        if (!exists) yield* fileSystem.remove(cwd, { recursive: true });
+        for (const read of [workflow.localStatus, workflow.status]) {
+          const status = yield* read({ cwd });
+          assert.equal(status.isRepo, false);
+          assert.equal(status.cwdExists, exists);
+        }
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        GitWorkflowService.layer.pipe(
+          Layer.provide(
+            Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+              detect: () => Effect.succeed(null),
+            }),
+          ),
+          Layer.provide(Layer.mock(GitManager.GitManager)({})),
+          Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+        ),
+      ),
+    ),
+  );
+
   it.effect("finds a name among the refs of every namespace", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

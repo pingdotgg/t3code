@@ -13,6 +13,7 @@ import { ChildProcessSpawner } from "effect/process";
 import {
   GitCommandError,
   VcsProcessExitError,
+  VcsRepositoryDetectionError,
   VcsUnsupportedOperationError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
@@ -73,6 +74,7 @@ export interface ExecuteGitResult {
 
 export interface GitStatusDetails {
   isRepo: boolean;
+  cwdExists?: boolean;
   sourceControlProvider?: VcsStatusResult["sourceControlProvider"];
   hasOriginRemote: boolean;
   isDefaultBranch: boolean;
@@ -776,11 +778,32 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     return relativePaths.filter((relativePath) => !ignoredPaths.has(relativePath));
   });
 
-  const initRepository: VcsDriver.VcsDriver["Service"]["initRepository"] = (input) =>
-    gitCommand(vcsProcess, "GitVcsDriver.initRepository", input.cwd, ["init"], {
+  const initRepository: VcsDriver.VcsDriver["Service"]["initRepository"] = Effect.fn(
+    "GitVcsDriver.initRepository",
+  )(function* (input) {
+    const exists = yield* fileSystem.exists(input.cwd).pipe(
+      Effect.mapError(
+        (cause) =>
+          new VcsRepositoryDetectionError({
+            operation: "GitVcsDriver.initRepository",
+            cwd: input.cwd,
+            detail: "Failed to inspect the workspace folder before initializing Git.",
+            cause,
+          }),
+      ),
+    );
+    if (!exists) {
+      return yield* new VcsRepositoryDetectionError({
+        operation: "GitVcsDriver.initRepository",
+        cwd: input.cwd,
+        detail: "Cannot initialize Git because the workspace folder does not exist.",
+      });
+    }
+    yield* gitCommand(vcsProcess, "GitVcsDriver.initRepository", input.cwd, ["init"], {
       timeoutMs: 10_000,
       maxOutputBytes: 64 * 1024,
-    }).pipe(Effect.asVoid);
+    });
+  });
 
   const resolveHeadCommit = (cwd: string) =>
     execute({

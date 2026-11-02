@@ -134,9 +134,10 @@ export class GitWorkflowService extends Context.Service<
   }
 >()("t3/git/GitWorkflowService") {}
 
-function nonRepositoryLocalStatus(): VcsStatusLocalResult {
+function nonRepositoryLocalStatus(cwdExists: boolean): VcsStatusLocalResult {
   return {
     isRepo: false,
+    cwdExists,
     hasPrimaryRemote: false,
     isDefaultRef: false,
     refName: null,
@@ -149,9 +150,9 @@ function nonRepositoryLocalStatus(): VcsStatusLocalResult {
   };
 }
 
-function nonRepositoryStatus(): VcsStatusResult {
+function nonRepositoryStatus(cwdExists: boolean): VcsStatusResult {
   return {
-    ...nonRepositoryLocalStatus(),
+    ...nonRepositoryLocalStatus(cwdExists),
     hasUpstream: false,
     aheadCount: 0,
     behindCount: 0,
@@ -219,6 +220,20 @@ export const make = Effect.gen(function* () {
       ),
     );
     return handle;
+  });
+
+  const readCwdExists = Effect.fn("GitWorkflowService.readCwdExists")(function (cwd: string) {
+    return fileSystem.exists(cwd).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitManagerError({
+            operation: "GitWorkflowService.readCwdExists",
+            cwd,
+            detail: "Failed to inspect the workspace folder for Git status.",
+            cause,
+          }),
+      ),
+    );
   });
 
   const detectGitRepositoryForStatus = Effect.fn("GitWorkflowService.detectGitRepositoryForStatus")(
@@ -321,7 +336,9 @@ export const make = Effect.gen(function* () {
     status: Effect.fn("GitWorkflowService.status")(function (input) {
       return detectGitRepositoryForStatus("GitWorkflowService.status", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
-          isGitRepository ? gitManager.status(input) : Effect.succeed(nonRepositoryStatus()),
+          isGitRepository
+            ? gitManager.status(input)
+            : readCwdExists(input.cwd).pipe(Effect.map(nonRepositoryStatus)),
         ),
       );
     }),
@@ -330,7 +347,7 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((isGitRepository) =>
           isGitRepository
             ? gitManager.localStatus(input)
-            : Effect.succeed(nonRepositoryLocalStatus()),
+            : readCwdExists(input.cwd).pipe(Effect.map(nonRepositoryLocalStatus)),
         ),
       );
     }),

@@ -1928,6 +1928,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         ]);
 
         assert.equal(localStatus.isRepo, false);
+        assert.equal(localStatus.cwdExists, false);
+        const nonRepository = yield* driver.statusDetailsLocal(parent);
+        assert.equal(nonRepository.isRepo, false);
+        assert.equal(nonRepository.cwdExists, true);
+        yield* initRepoWithCommit(parent);
+        const repository = yield* driver.statusDetailsLocal(parent);
+        assert.equal(repository.isRepo, true);
+        assert.equal(repository.cwdExists, true);
         assert.equal(remoteStatus.isRepo, false);
         assert.equal(refs.isRepo, false);
         assert.deepStrictEqual(refs.refs, []);

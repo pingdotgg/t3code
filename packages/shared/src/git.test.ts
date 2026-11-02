@@ -1,5 +1,9 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import type { VcsStatusRemoteResult, VcsStatusResult } from "@t3tools/contracts";
+import type {
+  VcsStatusLocalResult,
+  VcsStatusRemoteResult,
+  VcsStatusResult,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -216,6 +220,7 @@ describe("applyGitStatusStreamEvent", () => {
   it("preserves local-only fields when applying a remote update", () => {
     const current: VcsStatusResult = {
       isRepo: true,
+      cwdExists: false,
       sourceControlProvider: {
         kind: SourceControlProviderKind.make("github"),
         name: "GitHub",
@@ -249,6 +254,24 @@ describe("applyGitStatusStreamEvent", () => {
       aheadCount: 2,
       behindCount: 1,
       pr: null,
+    });
+  });
+
+  it("replaces missing cwd state when applying a local update", () => {
+    const local: VcsStatusLocalResult = {
+      isRepo: false,
+      cwdExists: false,
+      hasPrimaryRemote: false,
+      isDefaultRef: false,
+      refName: null,
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+    };
+    const current = applyGitStatusStreamEvent(null, { _tag: "snapshot", local, remote: null });
+    const restored = { ...local, cwdExists: true, isRepo: true, refName: "main" };
+    expect(applyGitStatusStreamEvent(current, { _tag: "localUpdated", local: restored })).toEqual({
+      ...current,
+      ...restored,
     });
   });
 });

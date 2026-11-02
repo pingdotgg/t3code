@@ -2075,6 +2075,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
+  const nonRepositoryStatusDetails = Effect.fn("GitVcsDriver.nonRepositoryStatusDetails")(
+    function* (cwd: string) {
+      const cwdExists = yield* fileSystem.exists(cwd).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation: "GitVcsDriver.statusDetails.cwdExists",
+              command: "git",
+              cwd,
+              detail: "Failed to inspect the workspace folder for Git status.",
+              cause,
+            }),
+        ),
+      );
+      return { ...NON_REPOSITORY_STATUS_DETAILS, cwdExists };
+    },
+  );
+
   const readStatusDetailsLocal = Effect.fn("readStatusDetailsLocal")(function* (
     cwd: string,
     options?: GitVcsDriver.GitLocalStatusOptions,
@@ -2098,7 +2116,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
       }),
     );
-    if (indexResult === null) return NON_REPOSITORY_STATUS_DETAILS;
+    if (indexResult === null) return yield* nonRepositoryStatusDetails(cwd);
     if (indexResult.exitCode === 0) {
       const lockPath = `${path.resolve(cwd, indexResult.stdout.trim())}.lock`;
       const lockError = new GitCommandError({
@@ -2207,12 +2225,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: "unbounded" },
     );
     if (statusResult === null) {
-      return NON_REPOSITORY_STATUS_DETAILS;
+      return yield* nonRepositoryStatusDetails(cwd);
     }
 
     if (statusResult.exitCode !== 0) {
       if (isNonRepositoryGitStderr(statusResult.stderr)) {
-        return NON_REPOSITORY_STATUS_DETAILS;
+        return yield* nonRepositoryStatusDetails(cwd);
       }
       return yield* new GitCommandError({
         ...gitCommandContext({
@@ -2330,6 +2348,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     return {
       isRepo: true,
+      cwdExists: true,
       hasOriginRemote: hasPrimaryRemote,
       isDefaultBranch,
       branch: refName,
@@ -2386,6 +2405,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetails(input.cwd).pipe(
       Effect.map((details) => ({
         isRepo: details.isRepo,
+        ...(details.cwdExists === undefined ? {} : { cwdExists: details.cwdExists }),
         hasPrimaryRemote: details.hasOriginRemote,
         isDefaultRef: details.isDefaultBranch,
         refName: details.branch,

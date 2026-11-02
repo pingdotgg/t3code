@@ -951,6 +951,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       expect(status).toEqual({
         isRepo: false,
+        cwdExists: false,
         hasPrimaryRemote: false,
         isDefaultRef: false,
         refName: null,

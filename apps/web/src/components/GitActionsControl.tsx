@@ -31,6 +31,7 @@ import {
   CloudDownloadIcon,
   CloudUploadIcon,
   FileDiffIcon,
+  FolderXIcon,
   GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
@@ -105,6 +106,7 @@ import {
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_LABEL_CLASS,
+  THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./chat/threadDetailsPanelStyles";
@@ -1484,7 +1486,12 @@ export default function GitActionsControl({
 
   return (
     <>
-      {!showActions ? null : !isRepo ? (
+      {!showActions ? null : gitStatus?.cwdExists === false ? (
+        <div className={cn("flex items-center", THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS)}>
+          <FolderXIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+          <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>Workspace folder missing</span>
+        </div>
+      ) : !isRepo ? (
         <ThreadDetailsControl
           size="xs"
           variant="ghost"
