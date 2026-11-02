@@ -13,17 +13,20 @@ diff --git a/android/src/main/java/com/swmansion/enriched/markdown/segments/Tabl
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/common/serialization/MarkdownASTSerializer.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/common/serialization/MarkdownASTSerializer.kt
 --- a/android/src/main/java/com/swmansion/enriched/markdown/utils/common/serialization/MarkdownASTSerializer.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/common/serialization/MarkdownASTSerializer.kt
-@@ -20,6 +20,9 @@ object MarkdownASTSerializer {
+@@ -20,6 +20,12 @@ object MarkdownASTSerializer {
      return buffer.toString()
    }
  
++  private val tableCellLineBreak = Regex("""(\\*)\n""")
++
 +  /** Serializes a table cell's content; a newline inside it becomes `<br>` so the row stays on one line. */
-+  fun serializeTableCell(cell: MarkdownASTNode): String = serializeChildren(cell).replace("\n", "<br>")
++  fun serializeTableCell(cell: MarkdownASTNode): String =
++    serializeChildren(cell).replace(tableCellLineBreak, "$1$1<br>")
 +
    /**
     * Serializes a Blockquote or Admonition node back to markdown, including
     * the `> ` prefix on every line and `> [!TYPE]` header for admonitions.
-@@ -179,7 +182,7 @@ object MarkdownASTSerializer {
+@@ -179,7 +185,7 @@ object MarkdownASTSerializer {
      for (section in node.children) {
        for (row in section.children) {
          if (row.type != NodeType.TableRow) continue
@@ -69,13 +72,19 @@ diff --git a/ios/utils/MarkdownASTSerializer.m b/ios/utils/MarkdownASTSerializer
        }
        [buffer appendFormat:@"| %@ |\n", [cells componentsJoinedByString:@" | "]];
        if (!headerDone) {
-@@ -333,6 +333,11 @@ NSString *markdownFromASTNodeChildren(MarkdownASTNode *node)
+@@ -333,6 +333,17 @@ NSString *markdownFromASTNodeChildren(MarkdownASTNode *node)
    return [buffer copy];
  }
  
 +NSString *markdownFromTableCellNode(MarkdownASTNode *node)
 +{
-+  return [markdownFromASTNodeChildren(node) stringByReplacingOccurrencesOfString:@"\n" withString:@"<br>"];
++  NSString *markdown = markdownFromASTNodeChildren(node);
++  if (![markdown containsString:@"\n"])
++    return markdown;
++  return [markdown stringByReplacingOccurrencesOfString:@"(\\\\*)\n"
++                                            withString:@"$1$1<br>"
++                                               options:NSRegularExpressionSearch
++                                                 range:NSMakeRange(0, markdown.length)];
 +}
 +
  NSString *markdownFromBlockquoteNode(MarkdownASTNode *node)
