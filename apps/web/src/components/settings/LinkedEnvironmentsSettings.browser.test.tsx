@@ -23,10 +23,18 @@ const vmLink: PeerLinkSummary = {
 };
 
 // What the host's `peerLinks.list` answers. The CLI and agents link machines without this client.
-const server = vi.hoisted(() => ({ links: [] as Array<PeerLinkSummary> }));
+const server = vi.hoisted(() => ({
+  links: [] as Array<PeerLinkSummary>,
+  started: 0,
+  interrupted: 0,
+  answer: Promise.resolve(),
+}));
 
 function setup() {
   server.links = [];
+  server.started = 0;
+  server.interrupted = 0;
+  server.answer = Promise.resolve();
 }
 
 vi.mock(import("~/state/peerLinks"), async (original) => {
@@ -34,9 +42,19 @@ vi.mock(import("~/state/peerLinks"), async (original) => {
   const { Atom: AtomModule } = await import("effect/reactivity");
   const EffectModule = await import("effect/Effect");
   // The real list query's options: stale-while-revalidate, revalidating only when it is built.
-  const list = AtomModule.make(EffectModule.sync(() => ({ links: [...server.links] }))).pipe(
-    AtomModule.swr({ staleTime: 10_000, revalidateOnMount: true }),
-  );
+  const list = AtomModule.make(
+    EffectModule.gen(function* () {
+      server.started += 1;
+      yield* EffectModule.promise(() => server.answer);
+      return { links: [...server.links] };
+    }).pipe(
+      EffectModule.onInterrupt(() =>
+        EffectModule.sync(() => {
+          server.interrupted += 1;
+        }),
+      ),
+    ),
+  ).pipe(AtomModule.swr({ staleTime: 10_000, revalidateOnMount: true }));
   const denied = AtomModule.make(false);
   return {
     ...actual,
@@ -79,5 +97,32 @@ describe("LinkedEnvironmentsSettings", () => {
     );
 
     await expect.element(screen.getByRole("heading", { name: "boat-task" })).toBeVisible();
+  });
+
+  it("leaves a list that is still loading to answer", async () => {
+    setup();
+    // useLiveRefresh remembers each view's last read across mounts, so this view gets its own host.
+    const loadingHostId = EnvironmentId.make("mac-loading");
+    let answer = () => {};
+    server.answer = new Promise((resolve) => {
+      answer = resolve;
+    });
+    server.links = [vmLink];
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    await using screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <LinkedEnvironmentsSettings
+          environmentId={loadingHostId}
+          environmentLabel={null}
+          isSearchTarget={false}
+        />
+      </RegistryContext.Provider>,
+    );
+    await expect.element(screen.getByRole("status")).toBeVisible();
+
+    answer();
+    await expect.element(screen.getByRole("heading", { name: "boat-task" })).toBeVisible();
+    expect(server).toMatchObject({ started: 1, interrupted: 0 });
   });
 });
