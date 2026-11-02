@@ -179,6 +179,8 @@ export function backgroundWorkNowItem(input: {
           <span className="font-mono in-data-[slot=popover-popup]:whitespace-pre-wrap">
             {task.label}
           </span>
+        ) : task.label.includes("\n") ? (
+          <span className="in-data-[slot=popover-popup]:whitespace-pre-wrap">{task.label}</span>
         ) : (
           task.label
         ),
