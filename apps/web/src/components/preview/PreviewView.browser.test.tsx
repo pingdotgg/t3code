@@ -1,5 +1,6 @@
 import {
   BUILT_IN_BROWSER_PROFILES,
+  DEFAULT_CLIENT_SETTINGS,
   DEFAULT_BROWSER_PROFILE_ID,
   DEFAULT_PREVIEW_APPEARANCE,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
@@ -34,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   showEmptyState: false,
   loading: false,
   nativeServerTab: false,
+  sessionProfileId: undefined as string | undefined,
   serverEpoch: null as string | null,
   servers: [] as PreviewableServer[],
   recordingTabIds: new Set<string>(),
@@ -52,12 +54,23 @@ const mocks = vi.hoisted(() => ({
   >(async () => ({ imported: 12, skipped: 0, skippedDomains: [] })),
 }));
 
+const TEST_WORK_PROFILE = {
+  id: "profile-work",
+  name: "Work",
+  kind: "persistent" as const,
+};
+
+const TEST_CLIENT_SETTINGS = {
+  ...DEFAULT_CLIENT_SETTINGS,
+  browserProfiles: [TEST_WORK_PROFILE],
+};
+
 const STUB_BROWSER_DEFAULTS = {
   viewport: FILL_PREVIEW_VIEWPORT,
   zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
   appearance: DEFAULT_PREVIEW_APPEARANCE,
   autoShowFloatingPreview: true,
-  profiles: BUILT_IN_BROWSER_PROFILES,
+  profiles: [...BUILT_IN_BROWSER_PROFILES, TEST_WORK_PROFILE],
   profileId: DEFAULT_BROWSER_PROFILE_ID,
 };
 
@@ -131,6 +144,7 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
             threadId: "thread-1",
             tabId: "tab-1",
             runtime: mocks.nativeServerTab ? "server" : "desktop",
+            ...(mocks.sessionProfileId ? { profileId: mocks.sessionProfileId } : {}),
             navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
             canGoBack: false,
             canGoForward: false,
@@ -152,6 +166,9 @@ vi.mock(import("~/state/environments"), async (original) => ({
 vi.mock(import("~/hooks/useSettings"), async (original) => ({
   ...(await original()),
   useClientSettingsHydrated: () => true,
+  getClientSettings: () => TEST_CLIENT_SETTINGS,
+  useClientSettings: ((selector?: (settings: typeof TEST_CLIENT_SETTINGS) => unknown) =>
+    selector ? selector(TEST_CLIENT_SETTINGS) : TEST_CLIENT_SETTINGS) as never,
 }));
 vi.mock(import("~/browser/browserRecording"), async (original) => ({
   ...(await original()),
@@ -225,6 +242,7 @@ function setup() {
   mocks.showEmptyState = false;
   mocks.loading = false;
   mocks.nativeServerTab = false;
+  mocks.sessionProfileId = undefined;
   mocks.serverEpoch = null;
   mocks.servers = [];
   mocks.recordingTabIds = new Set();
@@ -367,6 +385,7 @@ describe("PreviewView", () => {
   });
   it("opens the cookie import wizard from the toolbar menu with the active profile preselected", async () => {
     setup();
+    mocks.sessionProfileId = TEST_WORK_PROFILE.id;
     mocks.listBrowserImportSources.mockResolvedValue([
       {
         id: "chrome",
@@ -391,8 +410,8 @@ describe("PreviewView", () => {
     await userEvent.click(page.getByRole("menuitem", { name: "Chrome" }));
     await expect.element(page.getByRole("heading", { name: "Import from Chrome" })).toBeVisible();
 
-    const defaultProfileTile = page.getByRole("button", { name: /Default\s+Existing profile/i });
-    await expect.element(defaultProfileTile).toHaveAttribute("aria-pressed", "true");
+    const workProfileTile = page.getByRole("button", { name: /Work\s+Existing profile/i });
+    await expect.element(workProfileTile).toHaveAttribute("aria-pressed", "true");
 
     await userEvent.click(page.getByRole("button", { name: "Import", exact: true }));
     await vi.waitFor(() =>
@@ -400,7 +419,7 @@ describe("PreviewView", () => {
         environmentId: TEST_THREAD_REF.environmentId,
         sourceId: "chrome",
         sourceProfileDirectory: "Default",
-        targetProfileId: DEFAULT_BROWSER_PROFILE_ID,
+        targetProfileId: TEST_WORK_PROFILE.id,
       }),
     );
     await expect.element(page.getByRole("heading", { name: "Imported 12 cookies" })).toBeVisible();
