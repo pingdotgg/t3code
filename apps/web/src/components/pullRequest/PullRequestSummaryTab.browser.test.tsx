@@ -3,10 +3,16 @@ import { EnvironmentId, ProjectId, type PullRequestDetailView } from "@t3tools/c
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+const { command } = vi.hoisted(() => ({ command: vi.fn() }));
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
-  useAtomCommand: (() => vi.fn()) as never,
+  useAtomCommand: (() => command) as never,
 }));
+
+function setup() {
+  command.mockReset();
+  command.mockResolvedValue({ _tag: "Success", value: undefined });
+}
 
 import { act, render as renderUi } from "../../../test/render";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
@@ -96,6 +102,7 @@ async function render(value = detail) {
 }
 
 it("keeps an unsaved description when collapsed and reopened", async () => {
+  setup();
   await using screen = await render();
   await act(async () =>
     screen.container.querySelector<HTMLButtonElement>('[aria-label="Edit description"]')!.click(),
@@ -107,4 +114,46 @@ it("keeps an unsaved description when collapsed and reopened", async () => {
   expect(screen.expanded("Description")).toBe("false");
   await screen.click("Description");
   expect(screen.container.querySelector("textarea")!.value).toBe("Unsaved description");
+});
+
+it("keeps tasks clickable while saving and saves quick ticks in order", async () => {
+  setup();
+  let finishFirstSave = (_result: unknown) => {};
+  command.mockReturnValueOnce(new Promise((resolve) => (finishFirstSave = resolve)));
+  // The image line splits the body, so the task list renders from a segment that starts mid-body.
+  const body = "Intro\n\nhttps://example.com/shot.png\n\n## Test plan\n- [ ] First\n- [ ] Second";
+  await using screen = await render({ ...detail, body });
+  const boxes = () => screen.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+  expect(boxes()).toHaveLength(2);
+
+  await userEvent.click(boxes()[1]!);
+  expect(boxes()[0]!.disabled).toBe(false);
+  await userEvent.click(boxes()[0]!);
+  expect(command).toHaveBeenCalledTimes(1);
+  await act(async () => finishFirstSave({ _tag: "Success", value: undefined }));
+
+  await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(2));
+  const [firstBody, latestBody] = command.mock.calls.map(([call]) => call.input.body);
+  expect([firstBody, latestBody]).toEqual([
+    body.replace("- [ ] Second", "- [x] Second"),
+    body.replace("- [ ] First", "- [x] First").replace("- [ ] Second", "- [x] Second"),
+  ]);
+
+  // A refresh that lands after the saves can still carry the body from before the last tick.
+  const ticked = () => [...boxes()].map((box) => box.checked);
+  await screen.rerender(tab({ ...detail, body: firstBody }));
+  expect(ticked()).toEqual([true, true]);
+  await screen.rerender(tab({ ...detail, body: "- [ ] Edited on the host" }));
+  expect(ticked()).toEqual([false]);
+});
+
+it("leaves task checkboxes read-only for a viewer who can't edit the description", async () => {
+  setup();
+  await using screen = await render({
+    ...detail,
+    body: "- [ ] First",
+    viewer: "someone-else",
+  });
+  const box = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+  expect(box.disabled).toBe(true);
 });

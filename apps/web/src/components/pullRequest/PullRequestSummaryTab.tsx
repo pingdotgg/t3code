@@ -74,6 +74,7 @@ import {
   canEditPullRequestChangeRequest,
   canEditPullRequestComment,
 } from "@t3tools/client-runtime/pull-request-editing";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
@@ -512,6 +513,46 @@ export function PullRequestSummaryTab({
     onRefresh();
   };
 
+  // Ticks show at once and stay clickable while saving. Saves run one at a time with the latest
+  // body, so quick ticks can't land out of order. A refresh can still carry a body from before
+  // the latest tick; those are `stale` and ignored, while any other body replaces the edit.
+  const [taskEdit, setTaskEdit] = useState<{
+    readonly stale: ReadonlyArray<string>;
+    readonly to: string;
+    readonly saving: boolean;
+  } | null>(null);
+  const nextTaskBody = useRef<string | null>(null);
+  const shownBody =
+    taskEdit !== null && (taskEdit.saving || taskEdit.stale.includes(detail.body))
+      ? taskEdit.to
+      : detail.body;
+  const saveTasks = async () => {
+    for (let body = nextTaskBody.current; body !== null; body = nextTaskBody.current) {
+      nextTaskBody.current = null;
+      const result = await update({ environmentId, input: { ...reference, body } });
+      if (result._tag === "Failure") {
+        nextTaskBody.current = null;
+        setTaskEdit(null);
+        toastManager.add({ type: "error", title: "Could not save the description" });
+        // An earlier save in the run may have landed.
+        onRefresh();
+        return;
+      }
+    }
+    setTaskEdit((edit) => edit && { ...edit, saving: false });
+    onRefresh();
+  };
+  const toggleTask = ({ markerOffset, checked }: { markerOffset: number; checked: boolean }) => {
+    const body = setMarkdownTaskChecked(shownBody, markerOffset, checked);
+    if (body === shownBody) return;
+    const saving = taskEdit?.saving === true;
+    const stale =
+      taskEdit !== null && shownBody !== detail.body ? [...taskEdit.stale, shownBody] : [];
+    setTaskEdit({ stale: [...stale, detail.body], to: body, saving: true });
+    nextTaskBody.current = body;
+    if (!saving) void saveTasks();
+  };
+
   const commentEditing: CommentEditing = {
     cwd: detail.workspaceRoot,
     environmentId,
@@ -761,7 +802,7 @@ export function PullRequestSummaryTab({
           {bodyScope === detail.url ? (
             <PullRequestMarkdownEditor
               allowEmpty
-              value={detail.body}
+              value={shownBody}
               cwd={detail.workspaceRoot}
               environmentId={environmentId}
               threadRef={threadRef}
@@ -775,10 +816,11 @@ export function PullRequestSummaryTab({
             <div className="flex items-start gap-1">
               <PullRequestMarkdown
                 className="min-w-0 flex-1"
-                text={detail.body.trim().length > 0 ? detail.body : "_No description provided._"}
+                text={shownBody.trim().length > 0 ? shownBody : "_No description provided._"}
                 cwd={detail.workspaceRoot}
                 environmentId={environmentId}
                 threadRef={threadRef}
+                onTaskListChange={canEditPullRequestChangeRequest(detail) ? toggleTask : undefined}
               />
               {canEditPullRequestChangeRequest(detail) ? (
                 <PullRequestEditButton
