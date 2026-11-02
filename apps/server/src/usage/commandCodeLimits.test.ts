@@ -3,6 +3,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -247,6 +248,7 @@ describe("Command Code rolling quota windows", () => {
       try {
         const source = yield* readCommandCodeLimitSource({ authPath }).pipe(
           Effect.provideService(HttpClient.HttpClient, client),
+          Effect.provide(NodeServices.layer),
         );
         assert.isNotNull(source);
         assert.strictEqual(source.kind, "cliproxy");
@@ -292,6 +294,7 @@ describe("Command Code rolling quota windows", () => {
       try {
         const source = yield* readCommandCodeLimitSource({ authPath }).pipe(
           Effect.provideService(HttpClient.HttpClient, client),
+          Effect.provide(NodeServices.layer),
         );
         assert.isNotNull(source);
         assert.deepStrictEqual(

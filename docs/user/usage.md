@@ -180,8 +180,7 @@ versions. Unavailable or unrecognized quotas are omitted rather than guessed. Th
 symbol shown in web and mobile Usage and for known ACP instances uses the official logomark from
 the [Command Code brand resources](https://commandcode.ai/brand).
 
-Cursor reports
-its monthly allowance, including separate Auto and API usage, for `CURSOR_AUTH_TOKEN` when it is set,
+Cursor reports its monthly allowance, including separate Auto and API usage, for `CURSOR_AUTH_TOKEN` when it is set,
 otherwise for the account you signed in with in T3 or set as `CURSOR_API_KEY`, otherwise for the CLI
 login. On macOS, this includes the default Keychain login after you enable Cursor usage. Sign-in, API key,
 and Keychain login report limits only with Cursor's default API endpoint. If you configure a custom

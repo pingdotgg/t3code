@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
@@ -133,6 +134,7 @@ it.effect("refreshes usage limits when a Command Code provider instance is added
         HttpClient.make(() => Effect.die("Unexpected network request")),
       ),
       NodeCrypto.layer,
+      NodeServices.layer,
     ]),
     Effect.scoped,
   ),
@@ -205,6 +207,7 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
         HttpClient.make(() => Effect.die("Unexpected network request")),
       ),
       NodeCrypto.layer,
+      NodeServices.layer,
     ]),
     Effect.scoped,
   ),

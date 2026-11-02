@@ -1,8 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- standalone CLI auth file is read once per refresh.
 // @effect-diagnostics globalDate:off -- upstream reset timestamps are epoch milliseconds or ISO.
-import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 
 import {
   ProviderDriverKind,
@@ -12,7 +8,10 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 // These endpoints are used by Command Code CLI 1.88.2, not part of a public
 // stable API. Fail closed when they change; never manufacture quota percentages.
@@ -134,12 +133,13 @@ function credential(content: string): string | null {
 
 export const readCommandCodeLimitSource = Effect.fn("readCommandCodeLimitSource")(
   function* (options?: { readonly authPath?: string }) {
-    const content = yield* Effect.tryPromise(() =>
-      NodeFSP.readFile(
-        options?.authPath ?? NodePath.join(NodeOS.homedir(), ".commandcode", "auth.json"),
-        "utf8",
-      ),
-    ).pipe(Effect.orElseSucceed(() => null));
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const authPath =
+      options?.authPath ?? path.join(yield* HostProcess.HomeDirectory, ".commandcode", "auth.json");
+    const content = yield* fileSystem
+      .readFileString(authPath)
+      .pipe(Effect.orElseSucceed(() => null));
     // When not signed in, Command Code is an unavailable local limits source.
     if (content === null) return null;
 

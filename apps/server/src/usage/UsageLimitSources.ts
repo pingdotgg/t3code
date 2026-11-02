@@ -14,7 +14,9 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
@@ -69,6 +71,8 @@ export function hasConfiguredCommandCodeProvider(
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
   const httpClient = yield* HttpClient.HttpClient;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const settingsService = yield* Settings.ServerSettingsService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const stateRef = yield* Ref.make<ReadonlyArray<UsageLimitSourceSnapshot>>([]);
@@ -123,6 +127,8 @@ export const make = Effect.gen(function* () {
     const commandCode = commandCodeConfigured
       ? yield* readCommandCodeLimitSource().pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
         )
       : null;
     yield* publish(commandCode === null ? snapshots : [...snapshots, commandCode]);
