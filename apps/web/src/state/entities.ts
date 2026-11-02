@@ -329,6 +329,15 @@ export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | 
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }
 
+/** The shell list leaves out idle subagents, so an open one's lineage comes from its detail. */
+export function readThreadLineage(ref: ScopedThreadRef) {
+  return (
+    readThreadShell(ref)?.lineage ??
+    appAtomRegistry.get(environmentThreadDetails.quietThreadAtom(ref))?.projection.thread.lineage ??
+    null
+  );
+}
+
 export function waitForThreadShell(ref: ScopedThreadRef, timeoutMs = 5_000): Promise<boolean> {
   return waitForAtomValue({
     registry: appAtomRegistry,
