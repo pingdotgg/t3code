@@ -3191,12 +3191,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return child;
         };
 
-        const setNativeChildState = (
+        const setNativeChildState = Effect.fnUntraced(function* (
           child: AcpNativeChildSession,
           status: AcpNativeChildSession["status"],
           result: string | null,
-        ) => {
+        ) {
           if (child.status !== "running" && status === "running" && child.subagent !== undefined) {
+            yield* flushSubagentAssistant(child.subagent);
             // A new execution replaces its result; live ownership transfers keep their progress.
             child.subagent.task = { ...child.subagent.task, result: null };
             child.subagent.assistantText = "";
@@ -3205,7 +3206,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           child.status = status;
           child.result = result;
-        };
+        });
 
         const nativeChildOwner = (sessionId: string): AcpNativeChildSession | undefined => {
           const visited = new Set<string>();
@@ -3280,7 +3281,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               child.delegationId !== subagent.task.nativeTaskRef?.nativeId &&
               !subagent.childItemOrdinals.has(`${sessionId}:prompt:${child.delegationId}`);
             if (newDelegation && child.status !== "running")
-              setNativeChildState(child, "running", null);
+              yield* setNativeChildState(child, "running", null);
             const hasNativeWork = child.status === "running" || hasWorkingDescendant(sessionId);
             if (
               (hasNativeWork && acpSubagentStatusIsTerminal(subagent.task.status)) ||
@@ -3417,7 +3418,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const child = nativeChild(event.childSessionId);
             child.parentSessionId = event.parentSessionId ?? child.parentSessionId;
             if (event.type === "state") {
-              setNativeChildState(child, event.status, event.result);
+              yield* setNativeChildState(child, event.status, event.result);
             } else {
               child.delegationId = event.delegationId;
               child.prompt = event.prompt;
@@ -3444,7 +3445,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const update = notification.update;
           if (update.sessionUpdate === "state_update") {
             const child = nativeChild(notification.sessionId);
-            setNativeChildState(
+            yield* setNativeChildState(
               child,
               update.state !== "idle"
                 ? "running"
