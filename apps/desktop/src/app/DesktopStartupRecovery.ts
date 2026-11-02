@@ -293,6 +293,19 @@ export const listen: Effect.Effect<
     if (Option.isSome(window) && !window.value.isDestroyed()) window.value.close();
   });
 
+  const closeWhenMainReady = Effect.gen(function* () {
+    if ((yield* SubscriptionRef.get(primaryBackendStartup))._tag !== "Ready") return;
+    const main = yield* electronWindow.main;
+    if (Option.isSome(main) && !main.value.isDestroyed()) yield* close;
+  });
+
+  yield* electronApp.on(
+    "browser-window-created",
+    (_event: Electron.Event, window: Electron.BrowserWindow) => {
+      window.once("ready-to-show", () => runFork(closeWhenMainReady));
+    },
+  );
+
   const rememberStartedVersion = Effect.gen(function* () {
     if (lastStartedVersion === environment.appVersion) return;
     yield* fileSystem.writeFileString(lastStartedVersionPath, environment.appVersion);
@@ -313,7 +326,7 @@ export const listen: Effect.Effect<
         if (startup._tag === "Ready") {
           backendHasStarted = true;
           yield* Ref.set(failureRef, Option.none());
-          yield* close;
+          yield* closeWhenMainReady;
           yield* rememberStartedVersion;
           return;
         }

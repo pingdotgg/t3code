@@ -4,6 +4,8 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -83,10 +85,11 @@ describe("resolveStartupRecoveryOffer", () => {
 });
 
 it.effect.each([
-  { visible: false, started: false },
-  { visible: true, started: false },
-  { visible: true, started: true },
-])("keeps recovery available with visible=$visible and started=$started", ({ visible, started }) =>
+  { visible: false, started: false, closeMain: false },
+  { visible: true, started: false, closeMain: false },
+  { visible: true, started: true, closeMain: false },
+  { visible: true, started: false, closeMain: true },
+])("closes recovery safely with closeMain=$closeMain", ({ visible, started, closeMain }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const checked = yield* Deferred.make<void>();
@@ -94,10 +97,21 @@ it.effect.each([
       const shouldRecover = !visible || !started;
       const closed = Promise.withResolvers<void>();
       const loaded: string[] = [];
-      const main = { isDestroyed: () => false, isVisible: () => visible };
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      const mainListeners = new Map<string, () => void>();
+      let closeCount = 0;
+      const main = {
+        isDestroyed: () => false,
+        isVisible: () => visible,
+        once: (event: string, listener: () => void) => mainListeners.set(event, listener),
+      } as unknown as Electron.BrowserWindow;
+      const mainRef = yield* Ref.make(Option.some(main));
       const recovery = {
         isDestroyed: () => false,
-        close: () => closed.resolve(),
+        close: () => {
+          closeCount++;
+          closed.resolve();
+        },
         loadURL: (url: string) => {
           loaded.push(url);
           return Promise.resolve();
@@ -121,7 +135,10 @@ it.effect.each([
               path: { join: (...parts: string[]) => parts.join("/") },
             } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]),
             Layer.succeed(ElectronApp.ElectronApp, {
-              on: () => Effect.void,
+              on: (event: string, listener: (...args: readonly unknown[]) => void) =>
+                Effect.sync(() => {
+                  appListeners.set(event, listener);
+                }),
             } as unknown as ElectronApp.ElectronApp["Service"]),
             Layer.succeed(
               ElectronShell.ElectronShell,
@@ -131,7 +148,7 @@ it.effect.each([
               shouldUseDarkColors: Effect.succeed(false),
             } as ElectronTheme.ElectronTheme["Service"]),
             Layer.succeed(ElectronWindow.ElectronWindow, {
-              main: Effect.succeedSome(main),
+              main: Ref.get(mainRef),
               create: () => Effect.succeed(recovery),
             } as unknown as ElectronWindow.ElectronWindow["Service"]),
             Layer.succeed(DesktopUpdates.DesktopUpdates, {
@@ -144,6 +161,7 @@ it.effect.each([
           ),
         ),
       );
+      appListeners.get("browser-window-created")?.({}, main);
       if (started) yield* Deferred.await(remembered);
       yield* SubscriptionRef.set(state.primaryBackendStartup, {
         _tag: "Failing",
@@ -154,8 +172,17 @@ it.effect.each([
       expect(loaded.length).toBe(shouldRecover ? 1 : 0);
       if (shouldRecover) {
         expect(decodeURIComponent(loaded[0]!)).toContain("Failure details");
+        if (closeMain) yield* Ref.set(mainRef, Option.none());
         yield* SubscriptionRef.set(state.primaryBackendStartup, { _tag: "Ready" });
+        yield* Deferred.await(remembered);
+        if (closeMain) {
+          expect(closeCount).toBe(0);
+          yield* Ref.set(mainRef, Option.some(main));
+          appListeners.get("browser-window-created")?.({}, main);
+          mainListeners.get("ready-to-show")?.();
+        }
         yield* Effect.promise(() => closed.promise);
+        expect(closeCount).toBe(1);
       }
     }),
   ).pipe(Effect.provide(DesktopState.layer)),
