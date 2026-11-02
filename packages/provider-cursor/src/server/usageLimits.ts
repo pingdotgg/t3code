@@ -88,7 +88,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
           message: "Cursor usage for an API key requires the default Cursor endpoint.",
         });
       }
-      token = yield* exchangeCursorApiKey(endpoint, apiKey);
+      token = yield* exchangeCursorApiKey(apiKey);
     } else if (!token && credentialStore === "memory") {
       return makeUnavailableUsageLimits({
         checkedAt,

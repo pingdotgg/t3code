@@ -123,7 +123,7 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
           Effect.map((credentials) => object(credentials).accessToken),
         )
       : credentialSource.kind === "apiKey"
-        ? exchangeCursorApiKey(DEFAULT_CURSOR_API_ENDPOINT, credentialSource.apiKey).pipe(
+        ? exchangeCursorApiKey(credentialSource.apiKey).pipe(
             Effect.provideService(HttpClient.HttpClient, httpClient),
             Effect.mapError(
               () => new CursorAccountUsageInvalidError({ reason: "Invalid API key" }),

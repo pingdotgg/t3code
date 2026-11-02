@@ -9,13 +9,10 @@ export const DEFAULT_CURSOR_API_ENDPOINT = "https://api2.cursor.sh";
 const ApiKeyExchange = Schema.Struct({ accessToken: Schema.NonEmptyString });
 
 /** Trades a user API key for the access token Cursor's RPCs accept, as `@cursor/sdk` does. */
-export const exchangeCursorApiKey = Effect.fn("exchangeCursorApiKey")(function* (
-  endpoint: string,
-  apiKey: string,
-) {
+export const exchangeCursorApiKey = Effect.fn("exchangeCursorApiKey")(function* (apiKey: string) {
   const client = yield* HttpClient.HttpClient;
   const response = yield* client.execute(
-    HttpClientRequest.post(`${endpoint}/auth/exchange_user_api_key`).pipe(
+    HttpClientRequest.post(`${DEFAULT_CURSOR_API_ENDPOINT}/auth/exchange_user_api_key`).pipe(
       HttpClientRequest.bearerToken(apiKey),
       HttpClientRequest.bodyJsonUnsafe({}),
     ),
