@@ -5648,9 +5648,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               canonicalPosition: position,
             }));
             const historyItems = workMode === "deferred" ? deferWorkHistoryRows(indexed) : indexed;
-            const selection = yield* Effect.try({
+            const { page, policy } = yield* Effect.try({
               try: () => {
-                const policy = olderHistoryPagePolicy({ items: indexed, cursor, throughEntryId });
+                const policy =
+                  workMode === "work"
+                    ? THREAD_HISTORY_PAGE_POLICY
+                    : olderHistoryPagePolicy({ items: indexed, cursor, throughEntryId });
                 const page =
                   workMode === "work"
                     ? selectDeferredWorkPage({
@@ -5671,12 +5674,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               },
               catch: (cause) => new ProjectionStoreReadError({ threadId, cause }),
             });
-            const { page } = selection;
-            const policy = workMode === "work" ? THREAD_HISTORY_PAGE_POLICY : selection.policy;
             const end = (page.items.at(-1)?.canonicalPosition ?? -1) + 1;
-            const hasUserTurns = index.visible
-              .slice(0, end)
-              .some((row) => isThreadHistoryUserTurn(row.item));
+            const conversationHasUserTurns =
+              conversationOnly &&
+              index.visible.slice(0, end).some((row) => isThreadHistoryUserTurn(row.item));
             const materialize = Effect.fn("ProjectionStore.materializeHistoryRows")(function* (
               rows: ReadonlyArray<(typeof indexed)[number]>,
             ) {
@@ -5721,7 +5722,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               );
             });
             const items = yield* materialize(
-              conversationOnly && hasUserTurns
+              conversationHasUserTurns
                 ? page.items.filter((row) => isConversationHistoryItem(row.item))
                 : page.items,
             );

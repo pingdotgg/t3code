@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
   EventId,
@@ -43,10 +44,21 @@ import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
   encodeThreadHistoryCursor,
+  isThreadHistoryUserTurn,
+  olderHistoryPagePolicy,
   selectHistoryPageFromCursor,
   THREAD_HISTORY_PAGE_POLICY,
   THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
 } from "./threadHistoryPaging.ts";
+
+vi.mock("./threadHistoryPaging.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./threadHistoryPaging.ts")>();
+  return {
+    ...actual,
+    isThreadHistoryUserTurn: vi.fn(actual.isThreadHistoryUserTurn),
+    olderHistoryPagePolicy: vi.fn(actual.olderHistoryPagePolicy),
+  };
+});
 
 const layerTest = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
@@ -2302,6 +2314,63 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         workCursor = page.nextCursor;
       }
       assert.strictEqual(workIds.size, 999);
+      const newestCursor = encodeThreadHistoryCursor({
+        snapshotSequence: 0,
+        sourceThreadId: threadId,
+        sourceItemId: "turn-item:bounded-sql-history:1000",
+        position: 1000,
+      });
+      for (const [badCursor, badAnchor] of [
+        ["not-a-cursor", anchor.sourceItemId],
+        [newestCursor, "turn-item:bounded-sql-history:missing"],
+        [newestCursor, undefined],
+        [
+          encodeThreadHistoryCursor({
+            snapshotSequence: 0,
+            sourceThreadId: threadId,
+            sourceItemId: "turn-item:bounded-sql-history:5",
+            position: 4,
+          }),
+          "turn-item:bounded-sql-history:900",
+        ],
+      ] as const) {
+        const failure = yield* Effect.flip(
+          projectionStore.getThreadHistoryPage(threadId, badCursor, badAnchor, false, "work"),
+        );
+        assert.strictEqual(failure._tag, "ProjectionStoreReadError");
+      }
+      const countHistoryDemand = <A, E, R>(page: Effect.Effect<A, E, R>) =>
+        Effect.gen(function* () {
+          vi.mocked(olderHistoryPagePolicy).mockClear();
+          vi.mocked(isThreadHistoryUserTurn).mockClear();
+          yield* page;
+          return {
+            policy: vi.mocked(olderHistoryPagePolicy).mock.calls.length,
+            userTurnChecks: vi.mocked(isThreadHistoryUserTurn).mock.calls.length,
+          };
+        });
+      assert.deepEqual(
+        yield* countHistoryDemand(
+          projectionStore.getThreadHistoryPage(
+            threadId,
+            anchor.item.deferredWork!.cursor,
+            anchor.sourceItemId,
+            false,
+            "work",
+          ),
+        ),
+        { policy: 0, userTurnChecks: 0 },
+      );
+      assert.deepEqual(
+        yield* countHistoryDemand(projectionStore.getThreadHistoryPage(threadId, newestCursor)),
+        { policy: 1, userTurnChecks: 0 },
+      );
+      assert.deepEqual(
+        yield* countHistoryDemand(
+          projectionStore.getThreadHistoryPage(threadId, newestCursor, undefined, true),
+        ),
+        { policy: 1, userTurnChecks: 1 },
+      );
       for (const toolName of ["t3-code.delegate_task", "mcp__t3_code__delegate_task"]) {
         yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool',
           payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', ${toolName})
