@@ -50,6 +50,8 @@ export const make = Effect.gen(function* () {
           )
         )
           return;
+        const activeProviderThreadIds =
+          thread.activeProviderThreadId === null ? [] : [thread.activeProviderThreadId];
         const records = yield* projections.getThreadRecords(
           threadId,
           [
@@ -61,7 +63,20 @@ export const make = Effect.gen(function* () {
             "turnItems",
             "contextTransfers",
           ],
-          { messageRunIds: [runId], turnItemStatuses: ["pending", "running", "waiting"] },
+          {
+            messageRunIds: [runId],
+            turnItemStatuses: ["pending", "running", "waiting"],
+            // The latest run, active runs that hold background work, and rolled-back runs whose
+            // items it ignores.
+            runStatuses: ["preparing", "starting", "running", "rolled_back"],
+            includeLatestRun: true,
+            // Without an active provider thread there is no session to compact.
+            providerThreadIds: activeProviderThreadIds,
+            providerTurnThreadIds: activeProviderThreadIds,
+            latestProviderTurnUsageOnly: true,
+            runtimeRequestStatuses: ["pending"],
+            contextTransferStatuses: ["pending"],
+          },
         );
         if (
           resolveIdleCompaction(current, records.thread.providerInstanceId) !==
