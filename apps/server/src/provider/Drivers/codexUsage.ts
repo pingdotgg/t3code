@@ -261,8 +261,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
     // A replay keeps its original timestamp, so only a later request may rewind the counters.
     const mayRewind =
       restarted ||
-      state.lastRequestTimestampMs === undefined ||
-      timestampMs > state.lastRequestTimestampMs;
+      (state.lastRequestTimestampMs !== undefined && timestampMs > state.lastRequestTimestampMs);
     const reconciled =
       base !== null &&
       (previous === null ||

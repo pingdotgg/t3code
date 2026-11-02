@@ -395,26 +395,31 @@ describe("parseCodexLine", () => {
     }).toEqual({ processed: [1200, 120, 350, 240, 12], skipped: 0 });
   });
 
-  it("does not bill a replay of an earlier request as a counter rewind", () => {
-    const state = initialCodexScanState();
-    parseCodexLine(turnContext, state);
-    const replayed = at(51, counted(counters(100, 20), counters(1100, 220)));
-    const processed = [
-      at(50, counted(counters(1000, 200), counters(1000, 200))),
-      replayed,
-      at(52, counted(counters(300, 50), counters(1400, 270))),
-      replayed,
-      at(53, counted(counters(10, 2), counters(1110, 222))),
-    ].map((line) => {
-      const record = parseCodexLine(line, state);
-      return record === null ? 0 : totalTokens(record.totals);
-    });
+  it.each([false, true])(
+    "does not bill a replay of an earlier request as a counter rewind (resumed from a state cached without request timestamps: %s)",
+    (resumed) => {
+      const state = initialCodexScanState();
+      parseCodexLine(turnContext, state);
+      const replayed = at(51, counted(counters(100, 20), counters(1100, 220)));
+      const scanned = [
+        at(50, counted(counters(1000, 200), counters(1000, 200))),
+        replayed,
+        at(52, counted(counters(300, 50), counters(1400, 270))),
+      ].map((line) => parseCodexLine(line, state));
+      if (resumed) delete state.lastRequestTimestampMs;
+      const processed = [
+        ...scanned,
+        ...[replayed, at(53, counted(counters(10, 2), counters(1110, 222)))].map((line) =>
+          parseCodexLine(line, state),
+        ),
+      ].map((record) => (record === null ? 0 : totalTokens(record.totals)));
 
-    expect({
-      processed,
-      skipped: codexUsageFormat.readMalformedRecords?.(state),
-    }).toEqual({ processed: [1200, 120, 350, 0, 12], skipped: 1 });
-  });
+      expect({
+        processed,
+        skipped: codexUsageFormat.readMalformedRecords?.(state),
+      }).toEqual({ processed: [1200, 120, 350, 0, 12], skipped: 1 });
+    },
+  );
 
   it("ignores a replay of the current sequence's first request without rewinding the baseline", () => {
     const state = initialCodexScanState();
