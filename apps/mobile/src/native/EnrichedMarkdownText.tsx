@@ -8,6 +8,7 @@ import {
   markdownForNativeRendering,
   markdownWithFileEmbeds,
   markdownForNativeParsing,
+  markdownWithDollarMath,
   markdownWithInlineFileLinks,
   markdownWithTableBreaks,
 } from "../lib/markdownDocument";
@@ -164,7 +165,7 @@ function enrichedStyle(
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { renderImage, resolveImageSource, fileEmbedLabel } = props;
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
-  const { markdown, fileHrefs } = useMemo(() => {
+  const { markdown: nativeMarkdown, fileHrefs } = useMemo(() => {
     if (!fileEmbedLabel) {
       return {
         markdown: markdownForNativeRendering(props.markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
@@ -178,6 +179,10 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     const files = markdownWithFileEmbeds(content, fileEmbedLabel);
     return { ...files, markdown: markdownWithTableBreaks(files.markdown) };
   }, [props.markdown, fileEmbedLabel]);
+  const markdown = useMemo(
+    () => (mathRenderingEnabled ? markdownWithDollarMath(nativeMarkdown) : nativeMarkdown),
+    [nativeMarkdown, mathRenderingEnabled],
+  );
   const [parsedLinkUrls, setParsedLinkUrls] = useState<ReadonlyArray<string>>([]);
   const onLinksChange = (links: MarkdownLinkOccurrence[]) => {
     const urls = [...new Set(links.map((link) => link.url))];

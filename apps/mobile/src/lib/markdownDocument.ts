@@ -2,6 +2,7 @@ import type { Root, RootContent } from "mdast";
 import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import { markdownMathRanges } from "@t3tools/shared/markdownMath";
 import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
@@ -428,6 +429,21 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
       });
     })
     .parse(markdown);
+  return applyMarkdownEdits(markdown, edits);
+}
+
+/** md4c only typesets `$` and `$$`, so swap the delimiters of formulas web reads as `\(` or `\[`. */
+export function markdownWithDollarMath(markdown: string): string {
+  if (!markdown.includes("\\(") && !markdown.includes("\\[")) return markdown;
+  const edits: MarkdownEdit[] = [];
+  for (const { start, end, source } of markdownMathRanges(markdown)) {
+    const dollars = source.startsWith("\\(") ? "$" : source.startsWith("\\[") ? "$$" : null;
+    if (!dollars) continue;
+    edits.push(
+      { start, end: start + 2, content: dollars },
+      { start: end - 2, end, content: dollars },
+    );
+  }
   return applyMarkdownEdits(markdown, edits);
 }
 

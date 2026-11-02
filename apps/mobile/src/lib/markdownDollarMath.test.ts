@@ -25,4 +25,21 @@ describe("backslash math delimiters", () => {
       ].join("\n"),
     );
   });
+  it("leaves code, escaped parentheses and bracket citations as authored", () => {
+    const reply = [
+      "Call `f\\(x\\)` or write \\\\(x\\\\); see \\[1\\] and \\[2\\].",
+      "",
+      "```tex",
+      String.raw`\(x\) and \[y\]`,
+      "```",
+    ].join("\n");
+
+    expect(markdownWithDollarMath(reply)).toBe(reply);
+  });
+
+  it("keeps container prefixes inside a multi-line formula", () => {
+    expect(markdownWithDollarMath(String.raw`> \[` + "\n> a+b\n> " + String.raw`\]`)).toBe(
+      "> $$\n> a+b\n> $$",
+    );
+  });
 });
