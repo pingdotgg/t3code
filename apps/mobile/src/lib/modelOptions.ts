@@ -310,6 +310,21 @@ export function resolveNewTaskModelSelection(input: {
   );
 }
 
+function matchesLockedProvider(
+  config: T3ServerConfig | null | undefined,
+  provider: T3ServerConfig["providers"][number],
+  providerInstanceId: ModelSelection["instanceId"] | undefined,
+): boolean {
+  if (providerInstanceId === undefined || provider.instanceId === providerInstanceId) return true;
+  const lockedProvider = config?.providers.find(
+    (candidate) => candidate.instanceId === providerInstanceId,
+  );
+  if (!lockedProvider || provider.driver !== lockedProvider.driver) return false;
+  const groupKey = lockedProvider.continuation?.groupKey;
+  if (groupKey) return provider.continuation?.groupKey === groupKey;
+  return provider.driver !== "antigravity";
+}
+
 export function buildModelOptions(
   config: T3ServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,
@@ -318,16 +333,6 @@ export function buildModelOptions(
   includeHidden = false,
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
-  const lockedProvider = config?.providers.find(
-    (provider) => provider.instanceId === providerInstanceId,
-  );
-  const matchesLockedProvider = (provider: T3ServerConfig["providers"][number]) => {
-    if (providerInstanceId === undefined || provider.instanceId === providerInstanceId) return true;
-    if (!lockedProvider || provider.driver !== lockedProvider.driver) return false;
-    const groupKey = lockedProvider.continuation?.groupKey;
-    if (groupKey) return provider.continuation?.groupKey === groupKey;
-    return provider.driver !== "antigravity";
-  };
   const registryAgentId = (instanceId: ModelSelection["instanceId"]) => {
     const configValue = config?.settings?.providerInstances[instanceId]?.config;
     if (configValue === null || typeof configValue !== "object") return undefined;
@@ -372,7 +377,7 @@ export function buildModelOptions(
 
   for (const provider of config?.providers ?? []) {
     if (
-      !matchesLockedProvider(provider) ||
+      !matchesLockedProvider(config, provider, providerInstanceId) ||
       isDriverDisallowed(config, provider.driver) ||
       !isProviderEnabledForProject(config, provider, projectId) ||
       !provider.installed ||
@@ -497,7 +502,12 @@ export function buildModelOptions(
   return [...options.values()];
 }
 
-export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {
+export function groupByProvider(
+  options: ReadonlyArray<ModelOption>,
+  config?: T3ServerConfig | null,
+  projectId: ProjectId | null = null,
+  providerInstanceId?: ModelSelection["instanceId"],
+): ReadonlyArray<ProviderGroup> {
   const groups = new Map<
     string,
     {
@@ -518,6 +528,26 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
         withheldModels: option.providerWithheldModels,
       });
     }
+  }
+
+  for (const provider of config?.providers ?? []) {
+    const withheldModels = providerWithheldModels(provider);
+    if (
+      !withheldModels ||
+      groups.has(provider.instanceId) ||
+      !matchesLockedProvider(config, provider, providerInstanceId) ||
+      isDriverDisallowed(config, provider.driver) ||
+      !isProviderEnabledForProject(config, provider, projectId) ||
+      !provider.installed ||
+      provider.auth.status === "unauthenticated" ||
+      (provider.driver === "antigravity" && provider.availability === "unavailable")
+    )
+      continue;
+    groups.set(provider.instanceId, {
+      providerLabel: providerDisplayLabel(provider),
+      models: [],
+      withheldModels,
+    });
   }
 
   return [...groups.entries()].map(([providerKey, group]) => ({

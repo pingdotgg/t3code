@@ -362,6 +362,9 @@ function ThreadSettingsSessionProvider(
             props.projectId,
             true,
           ),
+          config,
+          props.projectId,
+          props.lockedProviderInstanceId,
         )
       : props.providerGroups;
   const legacyFavorites = AsyncResult.isSuccess(preferences)
@@ -755,7 +758,8 @@ function buildThreadSettingsCatalogItems(
     ) {
       return [];
     }
-    const driver = group.models[0]?.providerDriver ?? group.providerKey;
+    const driver =
+      group.models[0]?.providerDriver ?? group.withheldModels?.driver ?? group.providerKey;
     const catalogModels =
       session.manageHidden ||
       session.showLegacy ||
@@ -1571,7 +1575,12 @@ export function ExistingThreadSettingsRouteScreen({
       projectId={selectedThread.projectId}
       providerInstanceId={modelSelection.instanceId}
       {...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {})}
-      providerGroups={groupByProvider(modelOptions)}
+      providerGroups={groupByProvider(
+        modelOptions,
+        serverConfig,
+        selectedThread.projectId,
+        lockedProviderInstanceId,
+      )}
       selectedModel={modelSelection}
       prompt={prompt}
       onPromptChange={(text) => setComposerDraftText(draftKey, text)}

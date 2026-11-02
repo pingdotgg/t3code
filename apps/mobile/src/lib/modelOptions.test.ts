@@ -389,6 +389,22 @@ describe("mobile model options", () => {
       ["claude-fable-5-1"],
     ]);
     expect(groups[0]?.withheldModels?.restrictedModels).toEqual(restrictedModels);
+    expect(
+      groupByProvider(buildModelOptions(config, null, instanceId, null), config),
+    ).toMatchObject([
+      { providerKey: instanceId, models: [], withheldModels: { restrictedModels } },
+    ]);
+    expect(
+      groupByProvider([], {
+        ...config,
+        settings: {
+          ...config.settings,
+          providerInstances: {
+            [instanceId]: { ...config.settings.providerInstances[instanceId]!, enabled: false },
+          },
+        },
+      }),
+    ).toEqual([]);
   });
 
   it("rejects stored selections whose provider is not usable", () => {

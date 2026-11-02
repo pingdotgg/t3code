@@ -233,27 +233,29 @@ function ModelPickerProviderNotices({
       ) : (
         <ComboboxEmpty className="empty:h-0">{emptyLabel}</ComboboxEmpty>
       )}
-      {modelNotices.map(({ key, notice, opensProviderSettings }) => (
-        <p
-          key={key}
-          className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
-        >
-          {notice}
-          {opensProviderSettings ? (
-            <>
-              {" "}
-              <InlineButton
-                onClick={() => {
-                  onRequestClose?.();
-                  void navigate({ to: "/settings/providers" });
-                }}
-              >
-                Provider settings
-              </InlineButton>
-            </>
-          ) : null}
-        </p>
-      ))}
+      <div className="max-h-32 shrink-0 overflow-y-auto">
+        {modelNotices.map(({ key, notice, opensProviderSettings }) => (
+          <p
+            key={key}
+            className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
+          >
+            {notice}
+            {opensProviderSettings ? (
+              <>
+                {" "}
+                <InlineButton
+                  onClick={() => {
+                    onRequestClose?.();
+                    void navigate({ to: "/settings/providers" });
+                  }}
+                >
+                  Provider settings
+                </InlineButton>
+              </>
+            ) : null}
+          </p>
+        ))}
+      </div>
     </>
   );
 }
@@ -738,7 +740,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     const shown = isSearching
       ? matchesLockedProvider(entry)
       : entry.instanceId === selectedEntry?.instanceId;
-    if (!shown) return [];
+    if (!entry.enabled || !shown) return [];
     const updateRequired = formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery);
     const restricted = formatProviderRestrictedModelsNotice(entry.snapshot, searchQuery);
     const notices = [
@@ -750,7 +752,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const modelNotices = noticesByEntry.flatMap(({ entry, notices }) =>
     notices.map(({ kind, text }) => ({
       key: `${kind}:${entry.instanceId}`,
-      notice: noticesByEntry.length > 1 ? `${entry.displayName}: ${text}` : text,
+      notice: isSearching ? `${entry.displayName}: ${text}` : text,
       opensProviderSettings: kind === "update",
     })),
   );
