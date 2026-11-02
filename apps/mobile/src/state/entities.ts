@@ -22,6 +22,7 @@ import {
   guessThreadLinkRef,
   hasThreadLinks,
   parseThreadLinkHref,
+  percentDecodedThreadLinkId,
   relabelThreadLinks,
   threadLinkCandidates,
   threadLinkRefs,
@@ -252,9 +253,14 @@ export function useLiveThreadLinkLabels(markdown: string, environmentId: Environ
     refKeys === null ? EMPTY_THREAD_LINK_TITLES_ATOM : threadLinkTitlesAtom(refKeys),
   );
   // An unsettled thread shows its written label or a neutral one; another machine's keeps its own.
+  // It yields to its decoded spelling when that one is already known.
   return relabelThreadLinks(markdown, environmentId, (ref) => {
     const title = titles.get(threadKey(ref));
-    return title === null ? (ref.environmentId === environmentId ? "" : undefined) : title;
+    if (title !== null) return title;
+    const decoded = percentDecodedThreadLinkId(ref.threadId);
+    const decodedKnown =
+      decoded !== null && typeof titles.get(threadKey({ ...ref, threadId: decoded })) === "string";
+    return ref.environmentId === environmentId && !decodedKnown ? "" : undefined;
   });
 }
 

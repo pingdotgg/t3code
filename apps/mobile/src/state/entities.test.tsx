@@ -174,6 +174,27 @@ it("keeps a link's title when the shell drops a subagent it already rendered", (
   expect(harness.rendered()).toBe(`Child: ${formatThreadLink(childLink, CHILD.title)}`);
 });
 
+it("labels a link to a thread its settled family lacks as gone", () => {
+  using harness = setup();
+  server.families.set(server.key(ENV, CHILD.id), { snapshotSequence: 3, threads: [PARENT] });
+  harness.render(parentReply);
+
+  expect(harness.rendered()).toBe("Child: Thread no longer available");
+});
+
+it.each(["pending", "failed"] as const)(
+  "titles an escaped link by its known decoded thread while the written id's read is %s",
+  (read) => {
+    using harness = setup();
+    act(() => appAtomRegistry.set(server.shellRows, [PARENT, CHILD]));
+    const escaped = ThreadId.make(encodeURIComponent(CHILD.id));
+    server.families.set(server.key(ENV, escaped), read);
+    harness.render(`Child: ${formatThreadLink({ environmentId: ENV, threadId: escaped })}`);
+
+    expect(harness.rendered()).toBe(`Child: ${formatThreadLink(childLink, CHILD.title)}`);
+  },
+);
+
 it.each(["pending", "failed"] as const)(
   "labels a link neutrally while its family read is %s, not as gone",
   (read) => {
