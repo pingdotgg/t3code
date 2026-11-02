@@ -1108,7 +1108,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
         return Effect.succeed(writer);
       }
       const claim = Effect.andThen(
-        restore(readerAdmission.take(1)),
+        (fiber.getRef(TransactionAcquire)?.restore ?? restore)(readerAdmission.take(1)),
         Effect.suspend(() => {
           // Holding a permit leaves a slot idle; the lowest wins, so idle slots never start a worker.
           const reader = readers.find((slot) => !slot.claimed)!;
