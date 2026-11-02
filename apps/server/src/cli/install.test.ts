@@ -191,7 +191,7 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
           options.env,
         );
 
-      // Scripts, CI, sudo, dumb terminals, background jobs, help, and the opt-out never ask.
+      // Scripts, CI, sudo, dumb terminals, background jobs, and help never ask.
       yield* offer(false, { interactive: false });
       yield* offer(false, { env: { CI: "true" } });
       yield* offer(false, { env: { SUDO_USER: "theo" } });

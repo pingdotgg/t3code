@@ -312,13 +312,14 @@ if [ -n "$path_rest" ]; then
   esac
 fi
 # A t3 earlier on PATH runs instead; the PATH command adds this folder last.
-first_t3="$(command -v t3 2>/dev/null || true)"
+# A PATH entry with a trailing slash gives `dir//t3`.
+first_t3="$(command -v t3 2>/dev/null | tr -s / || true)"
 case "$first_t3" in "" | "${bin_dir}/t3") first_t3= ;; esac
 if [ -n "$first_t3" ]; then
   printf '  Another t3 at %s runs first, so run %s%s/t3%s to use this one.\n\n' "$first_t3" "$bold" "$bin_dir" "$reset"
 else
   case ":${PATH}:" in
-    *":${bin_dir}:"*) printf '  Run %st3%s to use T3 Code here, or %st3 up%s to use it from your other devices.\n\n' "$bold" "$reset" "$bold" "$reset" ;;
+    *":${bin_dir}:"* | *":${bin_dir}/:"*) printf '  Run %st3%s to use T3 Code here, or %st3 up%s to use it from your other devices.\n\n' "$bold" "$reset" "$bold" "$reset" ;;
     *)
       if [ -n "$path_command" ]; then
         printf '  %s is not on your PATH yet. Add it with:\n\n    %s\n\n  Then open a new terminal and run %st3%s.\n\n' "$bin_dir" "$path_command" "$bold" "$reset"

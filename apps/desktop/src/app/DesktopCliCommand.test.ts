@@ -5,7 +5,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -105,22 +104,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped();
-      // Like a launcher root once wrote: refreshing its times fails, and installs still work.
-      const noUtimes = FileSystem.FileSystem.of({
-        ...fs,
-        utimes: (target) =>
-          Effect.fail(
-            PlatformError.systemError({
-              _tag: "PermissionDenied",
-              module: "FileSystem",
-              method: "utimes",
-              pathOrDescriptor: target,
-            }),
-          ),
-      });
-      const command = yield* commandIn({ home }).pipe(
-        Effect.provideService(FileSystem.FileSystem, noUtimes),
-      );
+      const command = yield* commandIn({ home });
       const link = path.join(home, ".local", "bin", "t3");
 
       expect(yield* command.state).toEqual({

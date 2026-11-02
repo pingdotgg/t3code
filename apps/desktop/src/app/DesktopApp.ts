@@ -187,7 +187,12 @@ const bootstrap = Effect.gen(function* () {
   );
 
   yield* snapShot.initialize;
-  yield* Effect.forkScoped((yield* DesktopCliCommand.DesktopCliCommand).installOnFirstLaunch);
+  // A fresh install has no cached shell PATH yet; without it, another t3 on PATH goes unseen.
+  yield* Effect.forkScoped(
+    (yield* DesktopShellEnvironment.DesktopShellEnvironment).awaitDiscovery.pipe(
+      Effect.andThen((yield* DesktopCliCommand.DesktopCliCommand).installOnFirstLaunch),
+    ),
+  );
 
   if (!settings.localEnvironmentEnabled) {
     yield* logBootstrapInfo("bootstrap skipping local environment (disabled in settings)");
