@@ -258,6 +258,8 @@ interface MessagesTimelineProps {
   awaitingRequestId?: string | null;
   pendingRequest?: TimelinePendingRequest | null;
   backgroundTaskLabel?: string | null;
+  backgroundTaskIsCommand?: boolean;
+  backgroundTaskMore?: number;
   usageLimit?: TimelineUsageLimit | null;
   /** The composer banner's error; a failed fold does not repeat it. */
   threadErrorMessage?: string | null;
@@ -381,6 +383,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   awaitingRequestId = null,
   pendingRequest: pendingRequestProp = null,
   backgroundTaskLabel = null,
+  backgroundTaskIsCommand = false,
+  backgroundTaskMore = 0,
   usageLimit = null,
   threadErrorMessage = null,
   onFocusComposer,
@@ -1152,6 +1156,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     latestRunId: latestRun?.runId ?? null,
     pendingRequest: isWorking ? pendingRequest : null,
     backgroundTaskLabel,
+    backgroundTaskIsCommand,
+    backgroundTaskMore,
     usageLimit,
     threadErrorMessage,
     liveAnswerPreview:
@@ -1739,8 +1745,14 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   const { loading, error, toggle } = useDeferredWorkLoading(row, () =>
     ctx.onToggleTurnFold(row.runId),
   );
-  const { backgroundTaskLabel, usageLimit, latestRunId, threadErrorMessage } =
-    use(TimelineRowActivityCtx);
+  const {
+    backgroundTaskLabel,
+    backgroundTaskIsCommand,
+    backgroundTaskMore,
+    usageLimit,
+    latestRunId,
+    threadErrorMessage,
+  } = use(TimelineRowActivityCtx);
   const isLatestRun = latestRunId === row.runId;
   // One line says why the run failed: its error, unless the composer banner
   // already does, then the provider notice that carries the limit's reset.
@@ -1749,7 +1761,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
       ? row.failureMessage
       : row.noticeMessage;
   const labelClassName = cn(
-    "flex min-w-0 items-center gap-2 self-stretch text-label tabular-nums",
+    "flex shrink-0 items-center gap-2 self-stretch text-label whitespace-nowrap tabular-nums",
     row.ending === "failed"
       ? "text-error-foreground"
       : row.ending === "limited"
@@ -1759,7 +1771,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   const labelContent = (
     <>
       {row.ending === "failed" ? <CircleAlertIcon aria-hidden className="size-3 shrink-0" /> : null}
-      <span className="truncate">
+      <span>
         {row.label}
         {error ? <span className="block text-error-foreground">{error}</span> : null}
       </span>
@@ -1792,14 +1804,24 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         <span className="min-w-0 flex-1" />
         {isLatestRun && backgroundTaskLabel ? (
           <Tooltip>
-            <TooltipTrigger render={<span className="flex min-w-0 shrink items-center gap-1.5" />}>
+            <TooltipTrigger
+              render={
+                <span className="flex min-w-0 shrink items-center gap-1.5 text-meta text-muted-foreground" />
+              }
+            >
               <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-success" />
               <span className="sr-only">Still running:</span>
-              <span className="min-w-0 truncate font-mono text-meta text-muted-foreground">
+              <span className={cn("min-w-0 truncate", backgroundTaskIsCommand && "font-mono")}>
                 {backgroundTaskLabel}
               </span>
+              {backgroundTaskMore > 0 ? (
+                <span className="shrink-0 tabular-nums">+{backgroundTaskMore}</span>
+              ) : null}
             </TooltipTrigger>
-            <TooltipPopup>Still running: {backgroundTaskLabel}</TooltipPopup>
+            <TooltipPopup>
+              Still running: {backgroundTaskLabel}
+              {backgroundTaskMore > 0 ? ` and ${backgroundTaskMore} more` : ""}
+            </TooltipPopup>
           </Tooltip>
         ) : null}
         {limit?.resetAt ? (
