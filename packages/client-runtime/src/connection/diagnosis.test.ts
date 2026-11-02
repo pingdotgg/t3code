@@ -135,14 +135,11 @@ describe("presentConnectionDiagnosis", () => {
       reason: "session-pending",
       detail: "Waiting for the T3 Connect sign-in to load.",
     });
-    for (const via of ["relay", "direct"] as const) {
-      const diagnosis = diagnose(backoff(failure), via);
-      expect(diagnosis?.headline).not.toContain("did not answer");
-      expect(diagnosis?.hops.find((hop) => hop.result === "failed")?.hop).toBe("device");
-      expect(diagnosis?.moreInfoUrl ?? "").not.toContain(
-        "the-tunnel-works-but-t3-code-does-not-answer",
-      );
-    }
+    const diagnosis = diagnose(backoff(failure));
+    expect(diagnosis?.headline).not.toContain("did not answer");
+    expect(diagnosis?.hops.find((hop) => hop.result === "failed")?.hop).toBe("device");
+    expect(diagnosis?.steps.join(" ")).not.toContain("Mac mini");
+    expect(diagnosis?.moreInfoUrl).toContain("sign-in-account-or-link-problems");
   });
 
   it("does not report hops as working when the failure names none", () => {
