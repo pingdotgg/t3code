@@ -27,6 +27,7 @@ import { Button, InlineButton } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
+import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { DeviceHostEditor } from "./DeviceHostEditor";
 import { updateDeviceHosts, groupDeviceHosts } from "./deviceHostsSettings.logic";
@@ -351,15 +352,44 @@ export function DeviceSourcesSettings(props: {
 
   const rows: SourceRow[] = [];
 
+  const localEnabled = (member: (typeof members)[number]) =>
+    member.settings?.localDevicesEnabled !== false;
+  const anyLocalEnabled = active.some(localEnabled);
+  const setLocalEnabled = async (enabled: boolean) => {
+    const saved = await write(
+      active.map((member) => ({
+        environmentId: member.environmentId,
+        patch: { localDevicesEnabled: enabled },
+      })),
+      enabled
+        ? "Local simulators not turned on everywhere"
+        : "Local simulators not turned off everywhere",
+    );
+    // Listing again stops or starts the local hub now instead of on the next panel open.
+    if (saved)
+      for (const member of active) void list({ environmentId: member.environmentId, input: {} });
+  };
+
   rows.push({
     key: "local",
     shared: false,
     title: "Local simulators",
-    description:
-      members.length > 1
+    description: !anyLocalEnabled
+      ? "Off. Simulators and emulators on this machine stay out of the Device panel and agent tools."
+      : members.length > 1
         ? "Simulators and emulators installed on each environment's own machine."
         : "Simulators and emulators installed on this environment's machine.",
+    actions: (
+      <Switch
+        checked={anyLocalEnabled}
+        disabled={disabled || active.length === 0}
+        onCheckedChange={(checked) => void setLocalEnabled(Boolean(checked))}
+        aria-label="Local simulators"
+      />
+    ),
     environments: active.map((member) => {
+      if (!localEnabled(member))
+        return { environmentId: member.environmentId, label: member.label, added: false };
       const local = member.state?.hosts.find((host) => host.kind === "local");
       const status = local ? hostStatus(member.state, local.id) : hostStatus(member.state, "");
       return {

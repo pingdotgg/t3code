@@ -278,6 +278,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       enabled: value.enableDeviceSupport,
       agentAccessEnabled: value.enableAgentDeviceAccess,
       onboardingCompleted: value.deviceOnboardingCompleted,
+      localEnabled: value.localDevicesEnabled,
     })),
     Effect.mapError(
       (cause) =>
@@ -410,12 +411,20 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const readiness: DeviceService["Service"]["readiness"] = Effect.fn("DeviceService.readiness")(
     function* (hostId) {
       const host = yield* resolveHost(hostId);
-      if (!(yield* readDeviceSettings).enabled) {
+      const deviceSettings = yield* readDeviceSettings;
+      if (!deviceSettings.enabled) {
         return yield* new DeviceHostUnavailableError({
           hostId: host.id,
           hostLabel: host.label,
           reason:
             "Device support is off. Enable it in the Device panel before installing or starting device tools.",
+        });
+      }
+      if (host.id === LOCAL_DEVICE_HOST_ID && !deviceSettings.localEnabled) {
+        return yield* new DeviceHostUnavailableError({
+          hostId: host.id,
+          hostLabel: host.label,
+          reason: "Local simulators are turned off. Turn them on in Settings → Devices.",
         });
       }
       const ready = yield* host
@@ -465,8 +474,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const readinessIfSupported: DeviceService["Service"]["readinessIfSupported"] = Effect.fn(
     "DeviceService.readinessIfSupported",
   )(function* (hostId) {
-    if (!(yield* readDeviceSettings).enabled) return null;
+    const deviceSettings = yield* readDeviceSettings;
+    if (!deviceSettings.enabled) return null;
     const host = yield* resolveHost(hostId);
+    if (host.id === LOCAL_DEVICE_HOST_ID && !deviceSettings.localEnabled) return null;
     const summary = yield* host.summary;
     if (summary.kind === "local" && !summary.platforms.some((platform) => platform.available))
       return null;
@@ -478,6 +489,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       const deviceSettings = yield* readDeviceSettings;
       if (!deviceSettings.enabled || !deviceSettings.agentAccessEnabled) return null;
       const host = yield* resolveHost(hostId);
+      if (host.id === LOCAL_DEVICE_HOST_ID && !deviceSettings.localEnabled) return null;
       const summary = yield* host.summary;
       if (summary.kind === "local" && !summary.platforms.some((platform) => platform.available))
         return null;
@@ -582,8 +594,37 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
   });
 
+  /** Stops the local hub and forgets what it listed, once, after local simulators are turned off. */
+  const retireLocalHost = lifecycleLock.withPermit(
+    Effect.gen(function* () {
+      const { state } = yield* SynchronizedRef.get(stateRef);
+      const isLocal = (entry: { readonly hostId: DeviceHostId }) =>
+        entry.hostId === LOCAL_DEVICE_HOST_ID;
+      if (
+        !state.devices.some(isLocal) &&
+        !state.sessions.some(isLocal) &&
+        state.hostStatuses[LOCAL_DEVICE_HOST_ID] === undefined
+      )
+        return;
+      const local = hosts.get(LOCAL_DEVICE_HOST_ID);
+      if (local) yield* local.stop;
+      const { [LOCAL_DEVICE_HOST_ID]: _retired, ...hostStatuses } = state.hostStatuses;
+      yield* publish((current) => ({
+        ...current,
+        hostStatus: "idle",
+        hostStatusDetail: undefined,
+        hostStatuses,
+        devices: current.devices.filter((device) => !isLocal(device)),
+        sessions: current.sessions.filter((session) => !isLocal(session)),
+        bootingDevices: current.bootingDevices?.filter((device) => !isLocal(device)),
+      }));
+    }),
+  );
+
   const list: DeviceService["Service"]["list"] = Effect.gen(function* () {
-    if (!(yield* readDeviceSettings).enabled) return (yield* SynchronizedRef.get(stateRef)).state;
+    const deviceSettings = yield* readDeviceSettings;
+    if (!deviceSettings.enabled) return (yield* SynchronizedRef.get(stateRef)).state;
+    if (!deviceSettings.localEnabled) yield* retireLocalHost;
     yield* Effect.forEach(
       hosts.values(),
       (host) =>

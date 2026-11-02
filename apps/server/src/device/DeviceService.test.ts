@@ -392,6 +392,29 @@ describe("device setup consent", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "turning local simulators off stops the hub, hides its devices, and refuses opens",
+    () =>
+      Effect.gen(function* () {
+        const { service, starts, settings } = yield* fixture();
+        expect((yield* service.configure({ enabled: true })).devices).toHaveLength(1);
+        yield* Ref.update(settings, (current) => ({ ...current, localDevicesEnabled: false }));
+        const off = yield* service.list;
+        expect(off.devices).toEqual([]);
+        expect(off.hostStatuses[LOCAL_DEVICE_HOST_ID]).toBeUndefined();
+        expect(starts).toEqual(["start", "stop"]);
+        yield* service.list;
+        expect(starts).toEqual(["start", "stop"]);
+        expect(yield* service.readinessIfSupported()).toBeNull();
+        const open = yield* service.readiness().pipe(Effect.flip);
+        expect(open).toMatchObject({ reason: expect.stringContaining("Settings → Devices") });
+
+        yield* Ref.update(settings, (current) => ({ ...current, localDevicesEnabled: true }));
+        expect((yield* service.list).devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
+        expect(starts).toEqual(["start", "stop", "start"]);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("boots a stopped Android AVD and uses its emulator serial without duplicating it", () =>
     Effect.gen(function* () {
       const { service, requests } = yield* fixture();
