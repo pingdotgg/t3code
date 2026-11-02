@@ -5,8 +5,10 @@ import {
   type ThemeColors,
 } from "./themePalettes.ts";
 import { EVENT_CODE_SHORTCUT_KEYS } from "./keybindings.ts";
+import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
 export const HTML_RENDER_TOOL_NAME = "html_render";
+export const HTML_RENDER_MAX_SOURCE_LENGTH = 512_000;
 export const HTML_RENDER_MIN_HEIGHT = 80;
 export const HTML_RENDER_MAX_HEIGHT = 2000;
 // A client fits the frame to the live page up to this height. It only stops a
@@ -97,7 +99,7 @@ function measuredHeight(heights: NonNullable<HtmlRenderReference["heights"]>, wi
  * fonts often wrap the page taller than the server or agent measured it.
  */
 export function htmlRenderFrameHeight(
-  reference: HtmlRenderReference,
+  reference: Pick<HtmlRenderReference, "height" | "heights">,
   width: number,
   contentHeight?: number,
 ) {
@@ -431,4 +433,9 @@ export function injectHtmlRenderBootstrap(html: string): string {
     return `${html.slice(0, at)}<head>${markup}</head>${html.slice(at)}`;
   }
   return `<!doctype html><head>${markup}</head>${html}`;
+}
+
+export function isHtmlRenderTool(toolName: string | null | undefined): boolean {
+  const toolId = resolveT3McpToolId(toolName);
+  return toolId === "html_preview" || toolId === "html_render";
 }

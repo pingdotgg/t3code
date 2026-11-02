@@ -1,4 +1,4 @@
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   HTML_RENDER_COLUMN_WIDTH,
   htmlRenderFileName,
@@ -6,7 +6,7 @@ import {
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
@@ -16,17 +16,24 @@ import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HtmlRenderDialog } from "./HtmlRenderDialog";
+import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { observeResize } from "~/lib/observeResize";
 
 const MIN_URL_LIFE_MS = 5 * 60_000;
 
 export function HtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
-  readonly htmlRender: HtmlRenderReference;
+  readonly htmlRender: Pick<HtmlRenderReference, "title" | "height" | "heights"> &
+    (
+      | { readonly attachmentId: string }
+      | { readonly resource: Extract<AssetResource, { readonly _tag: "tool-input-html" }> }
+    );
+  readonly errorFallback?: ReactNode;
   readonly threadRef: ScopedThreadRef | undefined;
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
+  readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
-  const { attachmentId, title } = props.htmlRender;
+  const { title } = props.htmlRender;
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
   const observeBox = (box: HTMLDivElement) => {
     setWidth(box.clientWidth);
@@ -38,13 +45,16 @@ export function HtmlRenderFrame(props: {
   const [contentHeight, setContentHeight] = useState<number>();
   const height = htmlRenderFrameHeight(props.htmlRender, width, contentHeight);
   const fileName = htmlRenderFileName(title);
-  const resource = {
-    _tag: "attachment" as const,
-    attachmentId,
-    fileName,
-    mimeType: "text/html",
-    disposition: "inline" as const,
-  };
+  const resource =
+    "resource" in props.htmlRender
+      ? props.htmlRender.resource
+      : {
+          _tag: "attachment" as const,
+          attachmentId: props.htmlRender.attachmentId,
+          fileName,
+          mimeType: "text/html",
+          disposition: "inline" as const,
+        };
   // The frame keeps the first URL it loads, so later mints do not reload the page.
   const [loaded, setLoaded] = useState<{ src: string; expiresAt: number } | null>(null);
   const assetUrl = useLongLivedAssetUrl(loaded === null ? props.environmentId : null, resource);
@@ -76,37 +86,40 @@ export function HtmlRenderFrame(props: {
             threadRef={props.threadRef}
             className="block size-full"
             onContentHeight={setContentHeight}
+            onImageExpand={props.onImageExpand}
             onFullscreenChange={onFullscreenChange}
           />
-          <div className="absolute end-2 top-2 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label="Open full screen"
-                    size="icon-xs"
-                    variant="glass"
-                    onClick={async () => {
-                      const url =
-                        loaded !== null && loaded.expiresAt - Date.now() > MIN_URL_LIFE_MS
-                          ? src
-                          : await refresh().catch(() => null);
-                      if (url !== null) setExpandedSrc(url);
-                      else
-                        toastManager.add({
-                          type: "error",
-                          title: "Page unavailable",
-                          description: "Reconnect to the environment and try again.",
-                        });
-                    }}
-                  />
-                }
-              >
-                <Maximize2Icon className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipPopup side="left">Open full screen</TooltipPopup>
-            </Tooltip>
-          </div>
+          {!("resource" in props.htmlRender) ? (
+            <div className="absolute end-2 top-2 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label="Open full screen"
+                      size="icon-xs"
+                      variant="glass"
+                      onClick={async () => {
+                        const url =
+                          (loaded?.expiresAt ?? 0) - Date.now() > MIN_URL_LIFE_MS
+                            ? src
+                            : await refresh().catch(() => null);
+                        if (url !== null) setExpandedSrc(url);
+                        else
+                          toastManager.add({
+                            type: "error",
+                            title: "Page unavailable",
+                            description: "Reconnect to the environment and try again.",
+                          });
+                      }}
+                    />
+                  }
+                >
+                  <Maximize2Icon className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipPopup side="left">Open full screen</TooltipPopup>
+              </Tooltip>
+            </div>
+          ) : null}
           {expandedSrc !== null ? (
             <HtmlRenderDialog
               src={expandedSrc}
@@ -117,9 +130,11 @@ export function HtmlRenderFrame(props: {
           ) : null}
         </>
       ) : failed ? (
-        <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
-          Unable to load {title}
-        </p>
+        (props.errorFallback ?? (
+          <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
+            Unable to load {title}
+          </p>
+        ))
       ) : null}
     </div>
   );

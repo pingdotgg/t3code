@@ -1,7 +1,8 @@
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useNavigation } from "@react-navigation/native";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
+  HTML_RENDER_COLUMN_WIDTH,
   htmlRenderFileName,
   htmlRenderFrameHeight,
   htmlRenderThemeFragment,
@@ -9,7 +10,7 @@ import {
   type HtmlRenderReference,
   type HtmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Platform, Pressable, View, type ColorValue } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
@@ -172,21 +173,30 @@ export function HtmlRenderWebView(props: {
 export function ThreadHtmlRender(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  readonly render: HtmlRenderReference;
-  readonly frameWidth: number;
-  readonly iconColor: ColorValue;
+  readonly render: Pick<HtmlRenderReference, "title" | "height" | "heights"> &
+    (
+      | { readonly attachmentId: string }
+      | { readonly resource: Extract<AssetResource, { readonly _tag: "tool-input-html" }> }
+    );
+  readonly renderErrorFallback?: () => ReactNode;
+  readonly frameWidth?: number;
+  readonly iconColor?: ColorValue;
 }) {
   const navigation = useNavigation();
-  const { attachmentId, title } = props.render;
-  const height = htmlRenderFrameHeight(props.render, props.frameWidth);
+  const { title } = props.render;
+  const attachmentId = "attachmentId" in props.render ? props.render.attachmentId : null;
+  const height = htmlRenderFrameHeight(props.render, props.frameWidth ?? HTML_RENDER_COLUMN_WIDTH);
   const fileName = htmlRenderFileName(title);
-  const resource = {
-    _tag: "attachment" as const,
-    attachmentId,
-    fileName,
-    mimeType: "text/html",
-    disposition: "inline" as const,
-  };
+  const resource =
+    "resource" in props.render
+      ? props.render.resource
+      : {
+          _tag: "attachment" as const,
+          attachmentId: props.render.attachmentId,
+          fileName,
+          mimeType: "text/html",
+          disposition: "inline" as const,
+        };
   const asset = useAssetUrlState(props.environmentId, resource);
   const refresh = useRefreshAssetUrl(props.environmentId, resource);
   // Signed URLs are re-minted periodically; following them would reload the page.
@@ -210,6 +220,7 @@ export function ThreadHtmlRender(props: {
 
   return (
     <View style={{ marginBottom: ROW_BOTTOM_MARGIN }}>
+      {failed || asset._tag === "Failure" ? props.renderErrorFallback?.() : null}
       <View style={{ height }}>
         {uri !== null && !failed ? (
           <HtmlRenderWebView
@@ -237,7 +248,7 @@ export function ThreadHtmlRender(props: {
             <AppActivityIndicator />
           </View>
         )}
-        {uri !== null && !failed ? (
+        {uri !== null && !failed && attachmentId !== null ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Open ${title}`}

@@ -1,5 +1,10 @@
+import type {
+  AssetResource,
+  EnvironmentId,
+  OrchestrationV2ProjectedTurnItem,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
-import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import {
   toolCallLines,
   turnItemDetailRevision,
@@ -26,6 +31,7 @@ import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPa
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ShellCommandBlock } from "./ShellCommandBlock";
+import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import type { TurnItemSource } from "./timelineRowContext";
 
 interface V2ItemInspectorProps {
@@ -197,15 +203,36 @@ function ToolCallBody(
     readonly command?: string;
     readonly args?: unknown;
     readonly toolName?: string | null;
+    readonly previewHtml?: boolean;
+    readonly status?: OrchestrationV2ProjectedTurnItem["item"]["status"];
+    readonly toolResult?: unknown;
+    readonly threadRef?: ScopedThreadRef;
+    readonly htmlResource?: Extract<AssetResource, { readonly _tag: "tool-input-html" }>;
     readonly exitCode?: number | undefined;
     /** Replaces fetched output. */
     readonly outputSlot?: ReactNode;
   },
 ) {
-  const call = toolCallLines({ command: props.command, args: props.args });
+  const call = toolCallLines({
+    command: props.command,
+    args: props.args,
+    toolName: props.previewHtml === false ? undefined : props.toolName,
+    status: props.status,
+    output: props.toolResult,
+  });
   return (
     <div className={cn("space-y-1.5", monoClassName)}>
       {call.command ? <ShellCommandBlock command={call.command} /> : null}
+      {call.html && props.htmlResource ? (
+        <HtmlRenderFrame
+          key={JSON.stringify(props.htmlResource)}
+          environmentId={props.environmentId}
+          htmlRender={{ resource: props.htmlResource, title: "HTML preview", height: 400 }}
+          threadRef={props.threadRef}
+          onImageExpand={props.onImageExpand}
+          errorFallback={<StructuredValue value={props.args} highlightJson />}
+        />
+      ) : null}
       {call.args ? (
         <div className="text-foreground/85">
           {call.args.map(([key, value]) => (
@@ -381,7 +408,20 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       {item.type === "dynamic_tool" ? (
         <ToolCallBody
           toolName={item.toolName}
+          previewHtml={props.source === undefined}
+          status={item.status}
+          toolResult={item.output}
           args={item.input}
+          htmlResource={{
+            _tag: "tool-input-html",
+            threadId: props.projectedItem.sourceThreadId,
+            itemId: props.projectedItem.sourceItemId,
+            revision: turnItemDetailRevision(item),
+          }}
+          threadRef={{
+            environmentId: props.environmentId,
+            threadId: props.projectedItem.sourceThreadId,
+          }}
           {...outputState}
           onImageExpand={props.onImageExpand}
         />
