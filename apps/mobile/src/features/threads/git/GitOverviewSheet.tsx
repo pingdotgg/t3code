@@ -291,11 +291,13 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           disabled={busy || !isRepo}
           onPress={() => {
             const params = { environmentId, threadId };
-            navigation.dispatch(
-              presentation === "sheet"
-                ? StackActions.replace("ThreadReview", params)
-                : CommonActions.navigate("ThreadReview", params),
-            );
+            if (presentation === "sheet") {
+              navigation.dispatch(StackActions.replace("ThreadReview", params));
+            } else {
+              presentRoute(() =>
+                navigation.dispatch(CommonActions.navigate("ThreadReview", params)),
+              );
+            }
           }}
         />
         <ListRow

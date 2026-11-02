@@ -463,9 +463,14 @@ function AdaptiveWorkspaceLayoutContent(
   };
   const sidebarCommands = primarySidebarPinned ? [] : (["toggleSidebar"] as const);
   useHardwareKeyboardCommand(sidebarCommands, handleToggleSidebarCommand);
+  // Resizing into a column closes the sheet without this, so the inspector moves into the column.
+  const dismissInspectorSheet = () => {
+    setFileInspectorPreferredVisible(false);
+    setInspectorSheetRoute(null);
+  };
   const showInspector = () => {
+    setFileInspectorPreferredVisible(true);
     if (fileInspector.supported) {
-      setFileInspectorPreferredVisible(true);
       setInspectorSheetRoute(null);
       return;
     }
@@ -490,7 +495,7 @@ function AdaptiveWorkspaceLayoutContent(
     if (fileInspector.supported) {
       setFileInspectorPreferredVisible((current) => !current);
       setInspectorSheetRoute(null);
-    } else if (inspectorSheetOpen) setInspectorSheetRoute(null);
+    } else if (inspectorSheetOpen) dismissInspectorSheet();
     else showInspector();
   };
   /**
@@ -823,7 +828,7 @@ function AdaptiveWorkspaceLayoutContent(
   };
 
   const inspectorSheet = (
-    <WorkspaceInspectorSheet open={inspectorSheetOpen} onClose={() => setInspectorSheetRoute(null)}>
+    <WorkspaceInspectorSheet open={inspectorSheetOpen} onClose={dismissInspectorSheet}>
       {workspaceInspector?.render()}
     </WorkspaceInspectorSheet>
   );

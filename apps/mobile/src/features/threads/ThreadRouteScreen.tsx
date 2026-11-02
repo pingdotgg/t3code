@@ -92,6 +92,7 @@ import { projectThreadContentPresentation } from "./threadContentPresentation";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { Inspector, useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { ThreadFileNavigatorPane } from "../files/thread-file-navigator-pane";
+import { InspectorSheetContext } from "../layout/workspace-inspector-sheet";
 import {
   ThreadInspectorContentStack,
   type ThreadInspectorMode,
@@ -592,14 +593,22 @@ function ThreadRouteContent(
     selectedThread !== null && selectedThreadCwd !== null ? (
       <InspectorHeaderInset>
         {(headerInset) => (
-          <ThreadFileNavigatorPane
-            cwd={selectedThreadCwd}
-            environmentId={selectedThread.environmentId}
-            headerInset={headerInset}
-            projectName={selectedThreadProject?.title ?? "Files"}
-            selectedPath={null}
-            onSelectFile={handleSelectInspectorFile}
-          />
+          <InspectorSheetContext.Consumer>
+            {(closeInspectorSheet) => (
+              <ThreadFileNavigatorPane
+                cwd={selectedThreadCwd}
+                environmentId={selectedThread.environmentId}
+                headerInset={headerInset}
+                projectName={selectedThreadProject?.title ?? "Files"}
+                selectedPath={null}
+                onSelectFile={(path) =>
+                  closeInspectorSheet
+                    ? closeInspectorSheet(() => handleSelectInspectorFile(path))
+                    : handleSelectInspectorFile(path)
+                }
+              />
+            )}
+          </InspectorSheetContext.Consumer>
         )}
       </InspectorHeaderInset>
     ) : null;
