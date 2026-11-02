@@ -32,6 +32,7 @@ import {
   resolveSpawnCommand,
   resolveWindowsEnvironment,
   SpawnExecutableResolution,
+  type SpawnExecutableResolver,
   WindowsShellEnvironment,
   withPathDirectoryListings,
   type WindowsShellEnvironmentReader,
@@ -730,6 +731,24 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       expect(shim.args).toEqual([]);
       expect(shim.command).toMatch(/audit-command\.cmd/i);
       expect(shim.command).not.toMatch(/audit-command\.exe/i);
+
+      const cache = new Map();
+      const resolver: SpawnExecutableResolver = (_command, _platform, env) =>
+        `${base}${env.PathExt?.toLowerCase()}`;
+      const resolveCached = (pathExt: string) =>
+        resolveSpawnCommand("audit-command", [], {
+          env: { PATH: cwd, PathExt: pathExt },
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(CommandResolutionCache, cache),
+          Effect.provideService(SpawnExecutableResolution, resolver),
+        );
+      expect((yield* resolveCached(".EXE")).command).toBe(`${base}.exe`);
+      const changed = yield* resolveCached(".CMD");
+      expect(changed.shell).toBe(true);
+      expect(changed.args).toEqual([]);
+      expect(changed.command).toMatch(/audit-command\.cmd/i);
+      expect(changed.command).not.toMatch(/audit-command\.exe/i);
     }),
   );
 
