@@ -116,7 +116,7 @@ it("keeps an unsaved description when collapsed and reopened", async () => {
   expect(screen.container.querySelector("textarea")!.value).toBe("Unsaved description");
 });
 
-it("keeps tasks clickable while saving and saves quick ticks in order", async () => {
+it("keeps tasks clickable while saving, saves quick ticks in order, and holds the editor", async () => {
   setup();
   let finishFirstSave = (_result: unknown) => {};
   command.mockReturnValueOnce(new Promise((resolve) => (finishFirstSave = resolve)));
@@ -125,14 +125,19 @@ it("keeps tasks clickable while saving and saves quick ticks in order", async ()
   await using screen = await render({ ...detail, body });
   const boxes = () => screen.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
   expect(boxes()).toHaveLength(2);
+  const edit = () =>
+    screen.container.querySelector<HTMLButtonElement>('[aria-label="Edit description"]')!;
 
   await userEvent.click(boxes()[1]!);
   expect(boxes()[0]!.disabled).toBe(false);
+  // A manual save racing a tick save could land first and be overwritten.
+  expect(edit().disabled).toBe(true);
   await userEvent.click(boxes()[0]!);
   expect(command).toHaveBeenCalledTimes(1);
   await act(async () => finishFirstSave({ _tag: "Success", value: undefined }));
 
   await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(edit().disabled).toBe(false));
   const [firstBody, latestBody] = command.mock.calls.map(([call]) => call.input.body);
   expect([firstBody, latestBody]).toEqual([
     body.replace("- [ ] Second", "- [x] Second"),

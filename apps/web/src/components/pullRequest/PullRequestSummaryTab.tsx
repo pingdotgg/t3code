@@ -825,6 +825,7 @@ export function PullRequestSummaryTab({
               {canEditPullRequestChangeRequest(detail) ? (
                 <PullRequestEditButton
                   aria-label="Edit description"
+                  disabled={taskEdit?.saving === true}
                   onClick={() => setBodyScope(detail.url)}
                 />
               ) : null}
