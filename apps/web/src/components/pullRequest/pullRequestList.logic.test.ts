@@ -35,6 +35,7 @@ import {
   applyPullRequestOverrides,
   reusePullRequestEntries,
   settlePullRequestOverrides,
+  pullRequestListNotices,
 } from "./pullRequestList.logic";
 import {
   readPullRequestListPreferences,
@@ -474,6 +475,64 @@ describe("merging the environments' own listings", () => {
         configured: true,
         detail: null,
       },
+    ]);
+  });
+});
+
+describe("what the list could not read", () => {
+  const project = (id: string, canonicalKey: string, provider: string) => ({
+    id,
+    environmentId: ENV_1,
+    repositoryIdentity: {
+      canonicalKey,
+      locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
+      provider: SourceControlProviderKind.make(provider),
+    },
+  });
+  const error = (projectId: string, projectTitle: string, message: string) => ({
+    environmentId: ENV_1,
+    projectId: projectId as ProjectId,
+    projectTitle,
+    message,
+  });
+
+  it("names an unreadable host once with its reason, and a failed repository by itself", () => {
+    const notices = pullRequestListNotices(
+      {
+        providers: [
+          {
+            host: "github.com",
+            kind: SourceControlProviderKind.make("github"),
+            searchesOnHost: false,
+            projectCount: 2,
+            configured: false,
+            detail: "No GitHub credential on the server.",
+          },
+          {
+            host: "gitlab.com",
+            kind: SourceControlProviderKind.make("gitlab"),
+            searchesOnHost: true,
+            projectCount: 1,
+            configured: true,
+            detail: null,
+          },
+        ],
+        errors: [
+          error("p1", "t3code", "pingdotgg/t3code could not be read."),
+          error("p2", "uploadthing", "pingdotgg/uploadthing could not be read."),
+          error("p3", "service", "team/service could not be read."),
+        ],
+      },
+      [
+        project("p1", "github.com/pingdotgg/t3code", "github"),
+        project("p2", "github.com/pingdotgg/uploadthing", "github"),
+        project("p3", "gitlab.com/team/service", "gitlab"),
+      ],
+    );
+
+    expect(notices).toEqual([
+      "github.com: No GitHub credential on the server.",
+      "service: team/service could not be read.",
     ]);
   });
 });

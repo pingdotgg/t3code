@@ -985,3 +985,39 @@ export function findProjectForRepository<
   const scoped = findScopedProject(candidates, input.scopedEnvironmentId, input.scopedProjectId);
   return scoped ?? candidates[0];
 }
+
+/** What the answer could not read: one line per unreadable host, else one per project. */
+export function pullRequestListNotices(
+  answer: Pick<MergedPullRequestList, "providers" | "errors">,
+  projects: ReadonlyArray<{
+    readonly id: string;
+    readonly environmentId: string;
+    readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+  }>,
+): ReadonlyArray<string> {
+  if (answer.errors.length === 0) return [];
+  const unreadable = new Map(
+    answer.providers.flatMap((provider) =>
+      provider.configured || provider.detail === null ? [] : [[provider.host, provider.detail]],
+    ),
+  );
+  const notices = new Map<string, string>();
+  for (const error of answer.errors) {
+    const identity = projects.find(
+      (project) => project.id === error.projectId && project.environmentId === error.environmentId,
+    )?.repositoryIdentity;
+    const host = identity
+      ? sourceControlClients.changeRequestHost(identity, identity.provider)
+      : undefined;
+    const detail = host === undefined ? undefined : unreadable.get(host);
+    if (host !== undefined && detail !== undefined) {
+      notices.set(`host ${host}`, `${host}: ${detail}`);
+    } else {
+      notices.set(
+        `project ${error.environmentId} ${error.projectId}`,
+        `${error.projectTitle}: ${error.message}`,
+      );
+    }
+  }
+  return [...notices.values()];
+}
