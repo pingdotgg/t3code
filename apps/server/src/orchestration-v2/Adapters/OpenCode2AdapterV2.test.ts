@@ -2150,6 +2150,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const { runtime, thread } = yield* resumed([
         out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
         promptAccepted,
+        event("session.step.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_before_gap",
+          finish: "tool-calls",
+          cost: 0,
+          tokens: { input: 100, output: 10, reasoning: 0, cache: { read: 0, write: 0 } },
+        }),
         ...reconnected({}, "succeeded"),
       ]);
       const events = yield* runtime.events.pipe(
@@ -2164,6 +2171,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         "command_execution:completed",
       ]);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      // Steps that ended during the gap sent no tokens, so the measured step is only part of it.
+      const settled = collected.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+      );
+      assert.deepInclude(
+        settled?.type === "provider_turn.updated" ? settled.providerTurn.turnTokenUsage : undefined,
+        { usageStatus: "partial", inputTokens: 100, outputTokens: 10 },
+      );
     }).pipe(Effect.scoped),
   );
 

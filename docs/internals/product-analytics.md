@@ -95,7 +95,8 @@ list, so user-configured names stay out.
 Status and counters answer different questions. `usageReported: false` means
 the adapter attached no usage; a harness where every row says so is unsupported,
 not idle. `partial` keeps valid counts that cannot establish a whole-turn total,
-such as an OpenCode step that ended without a report or an interrupted segment.
+such as an OpenCode step that ended without a report, an OpenCode stream
+reconnect, or an interrupted segment.
 Explicit zeros are sent and unknown counts stay absent. `localCommand` marks a
 provider-local command such as Claude's `/compact`, whose result counters are not
 model work. Reasoning tokens are a subset of output.

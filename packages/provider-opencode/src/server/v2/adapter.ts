@@ -211,6 +211,8 @@ interface ActiveTurn {
   };
   // Steps OpenCode started; a step that ends without tokens leaves the total partial.
   startedSteps: number;
+  // A reconnect dropped events, so steps may have ended unseen.
+  missedEvents: boolean;
   steps: number;
   readonly models: Set<string>;
   lastStep: Tokens | undefined;
@@ -645,7 +647,7 @@ const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["s
         ...models,
         usageScope: "main_agent" as const,
         usageStatus:
-          status === "completed" && turn.steps >= turn.startedSteps
+          status === "completed" && !turn.missedEvents && turn.steps >= turn.startedSteps
             ? ("complete" as const)
             : ("partial" as const),
         inputTokens: turn.usage.input,
@@ -1122,6 +1124,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       nextOrdinal: providerTurn.ordinal * 100 + 1,
       usage: { input: 0, cached: 0, cacheWrite: 0, output: 0, reasoning: 0 },
       startedSteps: 0,
+      missedEvents: false,
       steps: 0,
       models: new Set(),
       lastStep: undefined,
@@ -2584,6 +2587,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       for (const [sessionId, state] of running) {
         const turn = state.active;
         if (turn === undefined) continue;
+        turn.missedEvents = true;
         const ended = yield* backfill(sessionId, state);
         if (sessionId in active || state.active !== turn) continue;
         yield* finishTurn(
