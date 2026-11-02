@@ -204,9 +204,15 @@ export const applyFxModelSelection = Effect.fn("applyFxModelSelection")(function
         requested,
         backendOption ? collectSessionConfigOptionValues(backendOption) : [],
       );
+  const canSelectBackend =
+    target?.backend === undefined ||
+    (backendOption !== undefined &&
+      (target.backend === backendOption.currentValue ||
+        collectSessionConfigOptionValues(backendOption).includes(target.backend)));
   if (
     target?.backend !== undefined &&
     backendOption !== undefined &&
+    canSelectBackend &&
     target.backend !== backendOption.currentValue
   ) {
     yield* runtime.setConfigOption(FX_PROVIDER_CONFIG_ID, target.backend);
@@ -216,7 +222,8 @@ export const applyFxModelSelection = Effect.fn("applyFxModelSelection")(function
   if (target === undefined || target.model === current) return current;
   if (
     isDefault &&
-    (modelOption === undefined ||
+    (!canSelectBackend ||
+      modelOption === undefined ||
       !collectSessionConfigOptionValues(modelOption).includes(target.model))
   ) {
     return current;

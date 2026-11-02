@@ -153,6 +153,7 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
   readonly frames: ReadonlyArray<Frame>;
   readonly runtimeMode: RuntimeMode;
   readonly model?: string;
+  readonly defaultBackend?: string;
   /** Loads this fx session instead of creating one. */
   readonly loadSessionId?: string;
   /** Then starts a turn on this model. */
@@ -184,7 +185,9 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
     defaultChoice: (cwd) =>
       // "Default" resolves in the thread's own folder.
       Effect.succeed(
-        cwd === replayDir ? { backend: "gateway", model: FX_DEFAULT_MODEL } : undefined,
+        cwd === replayDir
+          ? { backend: input.defaultBackend ?? "gateway", model: FX_DEFAULT_MODEL }
+          : undefined,
       ),
     makeRuntime: makeAcpReplayRuntime({
       transcript,
@@ -296,26 +299,45 @@ describe("FxAdapterV2", () => {
     ).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
-  it.effect("puts a loaded session that ran a named model back on fx's default for Default", () =>
-    openFxSession({
-      scenario: "default-model",
-      runtimeMode: "approval-required",
-      model: "default",
-      loadSessionId: SESSION_ID,
-      frames: [
-        ...initialize,
-        outbound("session/load"),
-        answer("session/load", fxSession({ model: NAMED_MODEL, modes: FX_0_0_13_MODES })),
-        // Config id `model`, never fx's `provider`, and never T3's "default".
-        ...setConfig(
-          "model",
-          FX_DEFAULT_MODEL,
-          fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES }),
-        ),
-        // Written on load even though fx reports ask.
-        ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES })),
+  it.effect("restores Default only when its backend is selectable", () =>
+    Effect.forEach(
+      [
+        { backend: "gateway", hasBackendOption: true, restore: true },
+        { backend: "unavailable", hasBackendOption: true, restore: false },
+        { backend: "gateway", hasBackendOption: false, restore: false },
       ],
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+      ({ backend, hasBackendOption, restore }) =>
+        openFxSession({
+          scenario: `default-model-${backend}-${hasBackendOption}`,
+          runtimeMode: "approval-required",
+          model: "default",
+          defaultBackend: backend,
+          loadSessionId: SESSION_ID,
+          frames: [
+            ...initialize,
+            outbound("session/load"),
+            answer("session/load", {
+              ...fxSession({ model: NAMED_MODEL, modes: FX_0_0_13_MODES }),
+              configOptions: fxConfig({ model: NAMED_MODEL, modes: FX_0_0_13_MODES }).filter(
+                (option) => hasBackendOption || option.id !== "provider",
+              ),
+            }),
+            ...(restore
+              ? setConfig(
+                  "model",
+                  FX_DEFAULT_MODEL,
+                  fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES }),
+                )
+              : []),
+            ...setConfig(
+              "mode",
+              "ask",
+              fxConfig({ model: restore ? FX_DEFAULT_MODEL : NAMED_MODEL, modes: FX_0_0_13_MODES }),
+            ),
+          ],
+        }),
+      { discard: true },
+    ).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
   // `fx status` names a gateway model, but this loaded session runs on Codex,
