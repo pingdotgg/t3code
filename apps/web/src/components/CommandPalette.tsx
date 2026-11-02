@@ -9,6 +9,7 @@ import { ComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 import type { CommandPaletteReturnContext } from "./CommandPalette.logic";
 import { CommandDialog } from "./ui/command";
+import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { loadCommandPaletteDialog } from "../commandPaletteModule";
 
 const CommandPaletteDialog = lazy(loadCommandPaletteDialog);
@@ -54,16 +55,23 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           {children}
         </div>
         {mounted ? (
-          <Suspense fallback={null}>
-            <CommandPaletteDialog
-              mode={state.mode}
-              session={state.session}
-              openIntent={state.openIntent}
-              setOpen={setOpen}
-              openChildSearch={openChildSearch}
-              initialContext={state.restoredSearch}
-            />
-          </Suspense>
+          // A chunk the reload guard could not recover closes the palette instead of the app.
+          <RenderErrorBoundary
+            fallback={null}
+            resetKeys={[state.open]}
+            onError={() => setOpen(false)}
+          >
+            <Suspense fallback={null}>
+              <CommandPaletteDialog
+                mode={state.mode}
+                session={state.session}
+                openIntent={state.openIntent}
+                setOpen={setOpen}
+                openChildSearch={openChildSearch}
+                initialContext={state.restoredSearch}
+              />
+            </Suspense>
+          </RenderErrorBoundary>
         ) : null}
       </CommandDialog>
     </ComposerHandleContext>
