@@ -7532,6 +7532,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             context.input.message.attachments.length === 0 &&
             settledStatus === "completed"
           ) {
+            context.contextUsage = null;
+            yield* Ref.update(contextUsageBySessionId, (current) => {
+              const updated = new Map(current);
+              updated.delete(context.nativeThreadId);
+              return updated;
+            });
             const nativeItemId = `${context.nativeTurnId}:compaction`;
             yield* Ref.update(compactionMarkers, (current) => {
               const updated = new Map(current);
@@ -7899,6 +7905,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 );
                 yield* Ref.set(activeSelection, turnInput.modelSelection);
                 yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
+              }
+            }
+            if (
+              compactCommand !== undefined &&
+              turnInput.message.text.trim().toLowerCase() === compactPromptText &&
+              turnInput.message.attachments.length === 0
+            ) {
+              const advertised = (yield* Ref.get(advertisedCommandNames)).get(requestedSessionId);
+              if (advertised !== undefined && !advertised.has(compactCommand)) {
+                return yield* Effect.fail(
+                  `This agent does not advertise a /${compactCommand} command.`,
+                );
               }
             }
             yield* validateModelSelection(turnInput.modelSelection);
@@ -8562,22 +8580,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 compactThread: Effect.fn("AcpAdapterV2.compactThread")(function* (
                   turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
                 ) {
-                  if (compactCommand !== undefined) {
-                    const sessionId = yield* Ref.get(activeSessionId);
-                    const advertised =
-                      sessionId === null
-                        ? undefined
-                        : (yield* Ref.get(advertisedCommandNames)).get(sessionId);
-                    if (advertised !== undefined && !advertised.has(compactCommand)) {
-                      return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
-                        driver,
-                        threadId: turnInput.threadId,
-                        providerThreadId: turnInput.providerThread.id,
-                        runId: turnInput.runId,
-                        cause: `This agent does not advertise a /${compactCommand} command.`,
-                      });
-                    }
-                  }
                   return yield* startTurn({
                     ...turnInput,
                     message: { ...turnInput.message, text: compactPromptText },

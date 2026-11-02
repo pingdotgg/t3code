@@ -661,7 +661,7 @@ const makeAdvertisedCompactionHarness = Effect.fnUntraced(function* (
     });
   return {
     runtime,
-    compact: () =>
+    compact: (otherSession = false) =>
       Effect.gen(function* () {
         const compactThread = runtime.compactThread;
         assert.isDefined(compactThread, "compactThread must be wired for compactCommand");
@@ -669,7 +669,16 @@ const makeAdvertisedCompactionHarness = Effect.fnUntraced(function* (
           compactThread!(
             makeTurnInput({
               threadId,
-              providerThread,
+              providerThread: otherSession
+                ? {
+                    ...providerThread,
+                    nativeThreadRef: {
+                      driver: ACP_TEST_DRIVER,
+                      nativeId: "other-session",
+                      strength: "strong",
+                    },
+                  }
+                : { ...providerThread, contextUsage: { usedTokens: 1234 } },
               instanceId,
               runtimePolicy,
               now,
@@ -2160,6 +2169,25 @@ describe("AcpAdapterV2", () => {
       const compacted = yield* harness.compact();
       assert.isTrue(Exit.isSuccess(compacted));
       assert.deepEqual(yield* harness.nextPromptTexts(), [{ type: "text", text: "/compact" }]);
+      const events = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "provider_thread.updated" && event.providerThread.contextUsage === null,
+        ),
+      );
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "compaction" &&
+            event.turnItem.status === "completed" &&
+            event.turnItem.title === "Context compacted",
+        ),
+      );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -2176,6 +2204,32 @@ describe("AcpAdapterV2", () => {
         "does not advertise a /compact command",
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live.each([
+    { active: "plan", target: "compact", allowed: true },
+    { active: "compact", target: "plan", allowed: false },
+  ])(
+    "validates the target session's compact command ($active -> $target)",
+    ({ active, target, allowed }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeAdvertisedCompactionHarness({
+          T3_ACP_AVAILABLE_COMMANDS: active,
+          T3_ACP_LOADED_COMMANDS: target,
+        });
+        const result = yield* harness.compact(true);
+        assert.equal(Exit.isSuccess(result), allowed);
+        if (allowed) {
+          assert.deepEqual(yield* harness.nextPromptTexts(), [{ type: "text", text: "/compact" }]);
+          yield* harness.runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runDrain,
+          );
+        } else {
+          const error = Exit.isFailure(result) ? Cause.squash(result.cause) : undefined;
+          assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
+        }
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("reapplies a selection after a switch away from it failed partway", () =>
