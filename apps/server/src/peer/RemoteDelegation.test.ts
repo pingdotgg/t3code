@@ -29,7 +29,6 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as Tracer from "effect/Tracer";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Tracer from "effect/Tracer";
 import type * as SqlClient from "effect/sql/SqlClient";
@@ -831,7 +830,7 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents).toHaveLength(1);
 
       const historyReads: Array<string> = [];
-      const tracer = Tracer.make({
+      const historyTracer = Tracer.make({
         span(options) {
           const span = new Tracer.NativeSpan(options);
           const end = span.end.bind(span);
@@ -852,7 +851,7 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       });
       const running = yield* a
         .call("task_status", { taskId: delegated.taskId })
-        .pipe(Effect.withTracer(tracer));
+        .pipe(Effect.withTracer(historyTracer));
       expect(running.structuredContent).toMatchObject({
         taskId: delegated.taskId,
         childThreadId: null,
