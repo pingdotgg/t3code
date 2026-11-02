@@ -95,11 +95,15 @@ export function workspaceRelativeFilePath(
   workspaceRoot: string | null | undefined,
 ): string | null {
   if (!workspaceRoot) return null;
-  const normalizedPath = stripSlashPrefixedWindowsDrive(path.replaceAll("\\", "/"));
-  const normalizedRoot = stripSlashPrefixedWindowsDrive(
-    workspaceRoot.replaceAll("\\", "/"),
-  ).replace(/\/+$/, "");
   const caseInsensitive = isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot));
+  const normalizedPath = caseInsensitive
+    ? stripSlashPrefixedWindowsDrive(path.replaceAll("\\", "/"))
+    : path;
+  const normalizedRoot = (
+    caseInsensitive
+      ? stripSlashPrefixedWindowsDrive(workspaceRoot.replaceAll("\\", "/"))
+      : workspaceRoot
+  ).replace(/\/+$/, "");
   const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
   const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
   if (pathForCompare.replace(/\/+$/, "") === rootForCompare) return ".";
