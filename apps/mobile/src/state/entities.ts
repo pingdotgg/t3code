@@ -1,5 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { deriveReportedModelSelection } from "@t3tools/client-runtime/state/thread-execution";
+import { threadFamilyRead } from "@t3tools/client-runtime/state/threads";
+import { useEffect } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
 import type {
@@ -34,7 +36,7 @@ import { projectGlyphImageAtom, projectGlyphKey } from "../native/ProjectChipIco
 import { projectFaviconUrlAtom } from "./assets";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
-import { environmentThreadDetails, environmentThreadShells } from "./threads";
+import { environmentThreadDetails, environmentThreadShells, threadFamilies } from "./threads";
 
 const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
   Atom.withLabel("mobile-project:empty"),
@@ -48,7 +50,7 @@ const EMPTY_SERVER_CONFIG_ATOM = Atom.make<ServerConfig | null>(null).pipe(
 const EMPTY_THREAD_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
   Atom.withLabel("mobile-thread:empty"),
 );
-const EMPTY_THREAD_LINK_TITLES_ATOM = Atom.make<ReadonlyMap<string, string>>(new Map()).pipe(
+const EMPTY_THREAD_LINK_TITLES_ATOM = Atom.make<ReadonlyMap<string, string | null>>(new Map()).pipe(
   Atom.withLabel("mobile-thread-link-titles:empty"),
 );
 
@@ -65,13 +67,20 @@ const threadTitleAtom = Atom.family((key: string) => {
 
 const decodeThreadKeys = Schema.decodeUnknownSync(Schema.Array(Schema.String));
 
+// Null while the family read of a thread this client lacks is pending, so it is not called gone yet.
 const threadLinkTitlesAtom = Atom.family((key: string) => {
   const refKeys = decodeThreadKeys(JSON.parse(key));
   return Atom.make((get) => {
-    const titles = new Map<string, string>();
+    const titles = new Map<string, string | null>();
     for (const refKey of refKeys) {
       const title = get(threadTitleAtom(refKey));
       if (title !== null) titles.set(refKey, title);
+      else if (
+        threadFamilyRead(get(threadFamilies.familyAtom(...decodeThreadKey(JSON.parse(refKey))))) ===
+        "pending"
+      ) {
+        titles.set(refKey, null);
+      }
     }
     return titles;
   }).pipe(Atom.withLabel(`mobile-thread-link-titles:${key}`));
@@ -207,13 +216,46 @@ export function useSideChats(ref: ScopedThreadRef) {
   return useAtomValue(environmentThreadShells.sideChatsAtom(ref));
 }
 
+/**
+ * Shells can omit idle subagents, so a linked thread this client lacks loads its family. The
+ * family's rows are what make the thread known, so it stays mounted until the links change.
+ */
+function useMissingThreadFamilies(refKeys: string | null) {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds family reads in the registry for linked threads the shell lacks while the links render
+  useEffect(() => {
+    if (refKeys === null) return;
+    const releases = new Map<string, () => void>();
+    const unsubscribes = decodeThreadKeys(JSON.parse(refKeys)).map((refKey) => {
+      const titleAtom = threadTitleAtom(refKey);
+      const mountIfMissing = (title: string | null) => {
+        if (title !== null || releases.has(refKey)) return;
+        const [environmentId, threadId] = decodeThreadKey(JSON.parse(refKey));
+        releases.set(refKey, threadFamilies.mount(appAtomRegistry, environmentId, threadId));
+      };
+      const unsubscribe = appAtomRegistry.subscribe(titleAtom, mountIfMissing);
+      mountIfMissing(appAtomRegistry.get(titleAtom));
+      return unsubscribe;
+    });
+    return () => {
+      for (const unsubscribe of unsubscribes) unsubscribe();
+      for (const release of releases.values()) release();
+    };
+  }, [refKeys]);
+}
+
 export function useLiveThreadLinkLabels(markdown: string, environmentId: EnvironmentId): string {
+  const refKeys = hasThreadLinks(markdown)
+    ? JSON.stringify(threadLinkRefs(markdown, environmentId).map(threadKey))
+    : null;
+  useMissingThreadFamilies(refKeys);
   const titles = useAtomValue(
-    hasThreadLinks(markdown)
-      ? threadLinkTitlesAtom(JSON.stringify(threadLinkRefs(markdown, environmentId).map(threadKey)))
-      : EMPTY_THREAD_LINK_TITLES_ATOM,
+    refKeys === null ? EMPTY_THREAD_LINK_TITLES_ATOM : threadLinkTitlesAtom(refKeys),
   );
-  return relabelThreadLinks(markdown, environmentId, (ref) => titles.get(threadKey(ref)));
+  // An empty title keeps the written label; another machine's thread keeps its own label.
+  return relabelThreadLinks(markdown, environmentId, (ref) => {
+    const title = titles.get(threadKey(ref));
+    return title === null ? (ref.environmentId === environmentId ? "" : undefined) : title;
+  });
 }
 
 /** Keyed reads; every thread is read only to place a v1 link its message's environment lacks. */
