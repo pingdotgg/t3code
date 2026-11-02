@@ -3,12 +3,14 @@ import { FileIcon } from "lucide-react";
 import { Checkbox } from "../ui/checkbox";
 import { Toggle } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useIsDiffReviewCursorFile } from "./useDiffReviewKeyboard";
 
 const withShortcut = (label: string, shortcut: string | null) =>
   shortcut ? `${label} (${shortcut})` : label;
 
 /** Outlines the file header under the review cursor; render it in the header prefix. */
-export function DiffCursorOutline() {
+export function DiffCursorOutline({ filePath }: { filePath: string }) {
+  if (!useIsDiffReviewCursorFile(filePath)) return null;
   return (
     // The sticky header is the nearest positioned box, so this outlines the whole header.
     <span

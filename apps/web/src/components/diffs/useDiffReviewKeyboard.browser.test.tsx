@@ -3,7 +3,11 @@ import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
-import { useDiffReviewKeyboard } from "./useDiffReviewKeyboard";
+import {
+  DiffReviewCursorContext,
+  useDiffReviewCursorFilePath,
+  useDiffReviewKeyboard,
+} from "./useDiffReviewKeyboard";
 
 vi.mock("~/state/server", async () => {
   const { Atom } = await import("effect/reactivity");
@@ -18,8 +22,20 @@ const file = {
   rendered: true,
 };
 
-function Panel(props: { folds: string[]; clicks: string[]; reveals?: string[]; hidden?: boolean }) {
-  const { rootRef } = useDiffReviewKeyboard({
+function CursorFile() {
+  const filePath = useDiffReviewCursorFilePath();
+  return filePath === null ? null : <p>Cursor on {filePath}</p>;
+}
+
+function Panel(props: {
+  folds: string[];
+  clicks: string[];
+  reveals?: string[];
+  renders?: string[];
+  hidden?: boolean;
+}) {
+  props.renders?.push("panel");
+  const { rootRef, cursorStore } = useDiffReviewKeyboard({
     scopeKey: "scope",
     files: [file],
     diffStyle: "unified",
@@ -44,6 +60,9 @@ function Panel(props: { folds: string[]; clicks: string[]; reveals?: string[]; h
       <button type="button" onClick={() => props.clicks.push("Changes")}>
         Changes
       </button>
+      <DiffReviewCursorContext value={cursorStore}>
+        <CursorFile />
+      </DiffReviewCursorContext>
     </div>
   );
 }
@@ -104,4 +123,16 @@ it("takes the keys from anywhere in the panel showing the diff", async () => {
 
   expect(reveals).toEqual(["a"]);
   expect(hiddenReveals).toEqual([]);
+});
+
+it("moves the cursor without redrawing the panel", async () => {
+  const renders: string[] = [];
+  await using screen = await render(<Panel folds={[]} clicks={[]} renders={renders} />, options);
+  screen.getByTestId("panel").element().focus();
+  const rendersBefore = renders.length;
+
+  await userEvent.keyboard("j");
+
+  await expect.element(screen.getByText("Cursor on a.ts")).toBeInTheDocument();
+  expect(renders).toHaveLength(rendersBefore);
 });

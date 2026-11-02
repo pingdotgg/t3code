@@ -12,6 +12,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useImperativeHandle, useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { fnv1a32, resolveFileDiffPath, resolveFileDiffPreviousPath } from "~/lib/diffRendering";
 import {
   buildDiffReviewComment,
@@ -260,6 +261,14 @@ export function AnnotatableCodeView({
     return true;
   };
   useImperativeHandle(reviewRef, () => ({ beginComment }));
+  const onGutterUtilityClick = useStableCallback(
+    (
+      range: SelectedLineRange | null,
+      { item }: { item: CodeViewItem<DiffCommentAnnotationGroup> },
+    ) => {
+      if (range) beginComment(item.id, range);
+    },
+  );
 
   return (
     <StyledDiffCodeView<DiffCommentAnnotationGroup>
@@ -285,9 +294,7 @@ export function AnnotatableCodeView({
         ...options,
         enableGutterUtility: draft === null,
         enableLineSelection: draft === null,
-        onGutterUtilityClick: (range, { item }) => {
-          if (range) beginComment(item.id, range);
-        },
+        onGutterUtilityClick,
       }}
       renderHeaderFilenameSuffix={(item) =>
         item.type === "diff" ? renderHeaderFilenameSuffix(item.fileDiff) : null

@@ -9,7 +9,7 @@ import type {
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import type { KeybindingCommand } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { useEffect, useRef, useState } from "react";
+import { createContext, use, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -73,6 +73,65 @@ function isControlFocused(): boolean {
   return (document.activeElement?.closest(CONTROL_SELECTOR) ?? null) !== null;
 }
 
+/**
+ * The review cursor, kept outside React state: a key press redraws only what shows the cursor,
+ * not the panel around it. One store belongs to one diff scope.
+ */
+export interface DiffReviewCursorStore {
+  readonly get: () => DiffReviewCursor | null;
+  readonly getSelectedLines: () => CodeViewLineSelection | null;
+  readonly subscribe: (listener: () => void) => () => void;
+}
+
+interface WritableDiffReviewCursorStore extends DiffReviewCursorStore {
+  readonly set: (cursor: DiffReviewCursor | null) => void;
+}
+
+function createDiffReviewCursorStore(): WritableDiffReviewCursorStore {
+  let cursor: DiffReviewCursor | null = null;
+  let selectedLines: CodeViewLineSelection | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => cursor,
+    getSelectedLines: () => selectedLines,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    set: (next) => {
+      cursor = next;
+      const range = next ? cursorSelectedRange(next) : null;
+      selectedLines = next && range ? { id: next.fileKey, range } : null;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+const NO_CURSOR_STORE: DiffReviewCursorStore = {
+  get: () => null,
+  getSelectedLines: () => null,
+  subscribe: () => () => {},
+};
+
+export const DiffReviewCursorContext = createContext<DiffReviewCursorStore>(NO_CURSOR_STORE);
+
+/** Whether the review cursor is on the file; matched by path, which survives lazy loading. */
+export function useIsDiffReviewCursorFile(filePath: string): boolean {
+  const store = use(DiffReviewCursorContext);
+  return useSyncExternalStore(store.subscribe, () => store.get()?.filePath === filePath);
+}
+
+export function useDiffReviewCursorFilePath(): string | null {
+  const store = use(DiffReviewCursorContext);
+  return useSyncExternalStore(store.subscribe, () => store.get()?.filePath ?? null);
+}
+
+/** The cursor's lines as a viewer selection; changes only when the selection does. */
+export function useDiffReviewSelectedLines(): CodeViewLineSelection | null {
+  const store = use(DiffReviewCursorContext);
+  return useSyncExternalStore(store.subscribe, store.getSelectedLines);
+}
+
 export interface DiffReviewFile {
   readonly fileKey: string;
   readonly filePath: string;
@@ -105,10 +164,14 @@ interface DiffReviewKeyboardInput<Annotation> {
  */
 export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput<Annotation>) {
   const { scopeKey, files } = input;
-  const [cursorState, setCursorState] = useState<{
-    readonly scopeKey: string | null;
-    readonly cursor: DiffReviewCursor | null;
-  }>({ scopeKey, cursor: null });
+  const [scopedStore, setScopedStore] = useState(() => ({
+    scopeKey,
+    store: createDiffReviewCursorStore(),
+  }));
+  if (scopedStore.scopeKey !== scopeKey) {
+    setScopedStore({ scopeKey, store: createDiffReviewCursorStore() });
+  }
+  const cursorStore = scopedStore.store;
   const rootRef = useRef<HTMLDivElement | null>(null);
   // Shows only the cursor's file, forced open; one preference for every diff view.
   const [singleFile, setSingleFile] = useLocalStorage(
@@ -121,25 +184,32 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
   // Chrome marks a clicked control :focus-visible on the next key press, so record how focus came.
   const tabbedToRef = useRef<EventTarget | null>(null);
 
-  const storedCursor = cursorState.scopeKey === scopeKey ? cursorState.cursor : null;
-  const cursorFile = storedCursor
-    ? (files.find((file) => file.fileKey === storedCursor.fileKey) ??
-      files.find((file) => file.filePath === storedCursor.filePath) ??
-      null)
-    : null;
-  const singleFileKey = singleFile ? (cursorFile ?? files[0])?.fileKey : undefined;
+  // Only single-file mode redraws the panel as the cursor moves, since the shown file changes.
+  const singleFilePath = useSyncExternalStore(cursorStore.subscribe, () =>
+    singleFile ? (cursorStore.get()?.filePath ?? null) : null,
+  );
+  const singleFileKey = singleFile
+    ? (files.find((file) => file.filePath === singleFilePath) ?? files[0])?.fileKey
+    : undefined;
   const isCollapsed = (fileKey: string) => fileKey !== singleFileKey && input.isCollapsed(fileKey);
-  const cursor: DiffReviewCursor | null =
-    storedCursor === null || cursorFile === null
-      ? null
-      : storedCursor.mode !== "file" && (!cursorFile.rendered || isCollapsed(cursorFile.fileKey))
-        ? { mode: "file", fileKey: cursorFile.fileKey, filePath: cursorFile.filePath }
-        : { ...storedCursor, fileKey: cursorFile.fileKey };
-  const range = cursor ? cursorSelectedRange(cursor) : null;
-  const selectedLines: CodeViewLineSelection | null =
-    cursor && range ? { id: cursor.fileKey, range } : null;
+  // Read when a key runs, not in render: the panel does not redraw for a cursor move.
+  const readCursor = () => {
+    const stored = cursorStore.get();
+    const cursorFile = stored
+      ? (files.find((file) => file.fileKey === stored.fileKey) ??
+        files.find((file) => file.filePath === stored.filePath) ??
+        null)
+      : null;
+    const cursor: DiffReviewCursor | null =
+      stored === null || cursorFile === null
+        ? null
+        : stored.mode !== "file" && (!cursorFile.rendered || isCollapsed(cursorFile.fileKey))
+          ? { mode: "file", fileKey: cursorFile.fileKey, filePath: cursorFile.filePath }
+          : { ...stored, fileKey: cursorFile.fileKey };
+    return { cursor, cursorFile };
+  };
 
-  const setCursor = (next: DiffReviewCursor | null) => setCursorState({ scopeKey, cursor: next });
+  const setCursor = (next: DiffReviewCursor | null) => cursorStore.set(next);
   const fileCursor = (file: { fileKey: string; filePath: string }): DiffReviewCursor => ({
     mode: "file",
     fileKey: file.fileKey,
@@ -191,7 +261,7 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
   };
 
   // After the reader scrolls away from the cursor, the file keys start from what is on screen.
-  const fileKeyInView = () => {
+  const fileKeyInView = (cursorKey: string | null) => {
     const viewer = input.getViewer()?.getInstance();
     if (!viewer) return null;
     const top = viewer.getScrollTop();
@@ -200,12 +270,14 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
         const fileTop = viewer.getTopForItem(fileKey);
         return fileTop === undefined ? [] : [{ fileKey, top: fileTop }];
       }),
-      cursorFile?.fileKey ?? null,
+      cursorKey,
       { top, bottom: top + viewer.getHeight(), contentEnd: viewer.getScrollHeight() },
     );
   };
 
   const runCommand = (command: DiffReviewCommand): boolean => {
+    const { cursor, cursorFile } = readCursor();
+    const range = cursor ? cursorSelectedRange(cursor) : null;
     const fileKeys = files.map((file) => file.fileKey);
     const currentKey = cursorFile?.fileKey ?? null;
     const isKeyViewed = (fileKey: string) => {
@@ -217,14 +289,14 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
       case "diff.previousFile": {
         if (files.length === 0) return false;
         const delta = command === "diff.nextFile" ? 1 : -1;
-        moveToFile(fileKeyInView() ?? adjacentFileKey(fileKeys, currentKey, delta));
+        moveToFile(fileKeyInView(currentKey) ?? adjacentFileKey(fileKeys, currentKey, delta));
         return true;
       }
       case "diff.nextUnviewedFile":
       case "diff.previousUnviewedFile": {
         if (files.length === 0) return false;
         const delta = command === "diff.nextUnviewedFile" ? 1 : -1;
-        const inView = fileKeyInView();
+        const inView = fileKeyInView(currentKey);
         moveToFile(
           inView !== null && !isKeyViewed(inView)
             ? inView
@@ -343,7 +415,10 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
     }
     return handled;
   });
-  const isLineMode = useStableCallback(() => cursor !== null && cursor.mode !== "file");
+  const isLineMode = useStableCallback(() => {
+    const { cursor } = readCursor();
+    return cursor !== null && cursor.mode !== "file";
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the review keys with the app-wide shortcut dispatcher while the panel is mounted
   useEffect(() => {
@@ -390,10 +465,9 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
     shortcutLabelForCommand(keybindings, command, { context: { diffFocus: true, diffLineMode } });
 
   return {
-    cursor,
+    cursorStore,
     singleFile,
     singleFileKey,
-    selectedLines,
     rootRef,
     flushScroll,
     shortcutLabels: {
@@ -409,6 +483,7 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
     },
     onSelectedLinesChange: (selection: CodeViewLineSelection | null) => {
       if (selection === null) {
+        const { cursor } = readCursor();
         if (cursor && cursor.mode !== "file") setCursor(fileCursor(cursor));
         return;
       }
@@ -417,6 +492,7 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
     },
     // The draft's textarea held focus; without this it falls to the page and the keys stop.
     onDraftClose: () => {
+      const { cursor } = readCursor();
       if (cursor?.mode === "select") {
         setCursor({
           mode: "line",

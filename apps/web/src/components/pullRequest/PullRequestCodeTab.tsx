@@ -2,7 +2,12 @@ import {
   capitalizeTerm,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
-import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
+import type {
+  CodeViewItem,
+  DiffLineAnnotation,
+  FileDiffContentsLoader,
+  SelectedLineRange,
+} from "@pierre/diffs";
 import type { CodeViewAnnotationArgs, CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
@@ -39,11 +44,13 @@ import {
   useEffectEvent,
   useRef,
   useState,
+  type ComponentProps,
   type ReactNode,
 } from "react";
 
 import { observeIntersection } from "~/lib/observeIntersection";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
@@ -88,7 +95,11 @@ import {
   DiffSingleFileToggle,
   DiffViewedToggle,
 } from "../diffs/DiffReviewControls";
-import { useDiffReviewKeyboard } from "../diffs/useDiffReviewKeyboard";
+import {
+  DiffReviewCursorContext,
+  useDiffReviewKeyboard,
+  useDiffReviewSelectedLines,
+} from "../diffs/useDiffReviewKeyboard";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
 import { diffFileTreeEntries, orderDiffFilesLikeTree } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
@@ -187,6 +198,12 @@ interface FileViewedToggleState {
   readonly isStale: (path: string) => boolean;
   readonly setFileViewed: (fileKey: string, viewed: boolean, extendRange: boolean) => void;
   readonly shortcutLabel: string | null;
+}
+
+/** The viewer with the review cursor's lines selected; a cursor move redraws only this. */
+function ReviewCodeView(props: ComponentProps<typeof StyledDiffCodeView<ReviewAnnotationGroup>>) {
+  const selectedLines = useDiffReviewSelectedLines();
+  return <StyledDiffCodeView<ReviewAnnotationGroup> {...props} selectedLines={selectedLines} />;
 }
 
 // Context updates viewed toggles without invalidating memoized header portals.
@@ -454,12 +471,15 @@ function PullRequestCodeTab({
   const codeViewReveal = useCodeViewFileReveal();
   const answeredRevealNonce = useRef<number | null>(null);
 
-  const loadDiffFiles = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
+  const currentLoadDiffFiles = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
     environmentId,
     reference,
     commit,
     cacheKey: `pull-request:${referenceKey}:${detail.updatedAt}:${commit ?? "all"}`,
   });
+  const loadDiffFiles: FileDiffContentsLoader = useStableCallback((fileDiff) =>
+    currentLoadDiffFiles(fileDiff),
+  );
   const hostReview = detail.capabilities.review;
   const review = {
     inlineComment: hostReview.inlineComment && detail.viewerPermissions.comment,
@@ -771,34 +791,33 @@ function PullRequestCodeTab({
       (left, right) => Date.parse(right.committedDate) - Date.parse(left.committedDate),
     );
 
-  const beginComment = (
-    range: SelectedLineRange | null,
-    context: { item: CodeViewItem<ReviewAnnotationGroup> },
-  ) => {
-    if (!range || !canSelectLines) return;
-    const item = context.item;
-    if (item.type !== "diff") return;
-    const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);
-    if (!file) return;
-    // On a host without ranged comments a range collapses to its last line: one that silently
-    // lost its first line there would be worse than one line.
-    const path = resolveFileDiffPath(file);
-    const previousPath = resolveFileDiffPreviousPath(file);
-    const sourceFile = parsedSlices
-      .flatMap((slice) => (slice?.kind === "files" ? slice.sourceFiles : []))
-      .find((candidate) => resolveFileDiffPath(candidate) === path);
-    const anchor =
-      (sourceFile && resolveDiffReviewAnchor(sourceFile, range, rangeComments)) ??
-      resolveDiffReviewAnchor(file, range, rangeComments);
-    if (anchor === null) return;
-    setDraft({
-      fileKey: item.id,
-      path,
-      oldPath: previousPath === path ? null : previousPath,
-      ...anchor,
-      range,
-    });
-  };
+  const beginComment = useStableCallback(
+    (range: SelectedLineRange | null, context: { item: CodeViewItem<ReviewAnnotationGroup> }) => {
+      if (!range || !canSelectLines) return;
+      const item = context.item;
+      if (item.type !== "diff") return;
+      const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);
+      if (!file) return;
+      // On a host without ranged comments a range collapses to its last line: one that silently
+      // lost its first line there would be worse than one line.
+      const path = resolveFileDiffPath(file);
+      const previousPath = resolveFileDiffPreviousPath(file);
+      const sourceFile = parsedSlices
+        .flatMap((slice) => (slice?.kind === "files" ? slice.sourceFiles : []))
+        .find((candidate) => resolveFileDiffPath(candidate) === path);
+      const anchor =
+        (sourceFile && resolveDiffReviewAnchor(sourceFile, range, rangeComments)) ??
+        resolveDiffReviewAnchor(file, range, rangeComments);
+      if (anchor === null) return;
+      setDraft({
+        fileKey: item.id,
+        path,
+        oldPath: previousPath === path ? null : previousPath,
+        ...anchor,
+        range,
+      });
+    },
+  );
 
   const closeDraft = () => {
     setDraft(null);
@@ -851,7 +870,9 @@ function PullRequestCodeTab({
     const collapsed = item.collapsed === true;
     return (
       <>
-        {diffReview.cursor?.fileKey === item.id ? <DiffCursorOutline /> : null}
+        {item.type === "diff" ? (
+          <DiffCursorOutline filePath={resolveFileDiffPath(item.fileDiff)} />
+        ) : null}
         <Button
           size="icon-micro"
           variant="ghost-muted"
@@ -892,6 +913,10 @@ function PullRequestCodeTab({
     );
   };
 
+  const onPostRender = useStableCallback(() => {
+    codeViewReveal.flush();
+    diffReview.flushScroll();
+  });
   const diffViewOptions = {
     diffStyle: diffLayout === "split" ? ("split" as const) : ("unified" as const),
     lineDiffType: "none" as const,
@@ -905,10 +930,7 @@ function PullRequestCodeTab({
     enableLineSelection: canSelectLines && draft === null,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
-    onPostRender: () => {
-      codeViewReveal.flush();
-      diffReview.flushScroll();
-    },
+    onPostRender,
   };
 
   const runThreadCommand = async (
@@ -1522,31 +1544,32 @@ function PullRequestCodeTab({
         >
           {/* The viewer must own its scroll element to position virtual rows within it. */}
           <FileViewedToggleContext value={fileViewedToggle}>
-            <StyledDiffCodeView<ReviewAnnotationGroup>
-              className="@container h-full overflow-auto [scrollbar-gutter:stable]"
-              containerRef={scrollerRef}
-              viewerRef={attachViewer}
-              items={items}
-              selectedLines={diffReview.selectedLines}
-              onSelectedLinesChange={diffReview.onSelectedLinesChange}
-              gutterUtilityLabel={
-                diffReview.shortcutLabels.comment
-                  ? `Add comment (${diffReview.shortcutLabels.comment})`
-                  : "Add comment"
-              }
-              options={diffViewOptions}
-              renderCodeViewFooter={renderCodeViewFooter}
-              renderHeaderPrefix={renderHeaderPrefix}
-              renderHeaderMetadata={renderHeaderMetadata}
-              renderAnnotation={renderAnnotation}
-              // Find may repeat requests before render; only unfold, never toggle.
-              onRevealSearchMatch={(item) =>
-                setToggledFiles((current) =>
-                  toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
-                )
-              }
-              unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
-            />
+            <DiffReviewCursorContext value={diffReview.cursorStore}>
+              <ReviewCodeView
+                className="@container h-full overflow-auto [scrollbar-gutter:stable]"
+                containerRef={scrollerRef}
+                viewerRef={attachViewer}
+                items={items}
+                onSelectedLinesChange={diffReview.onSelectedLinesChange}
+                gutterUtilityLabel={
+                  diffReview.shortcutLabels.comment
+                    ? `Add comment (${diffReview.shortcutLabels.comment})`
+                    : "Add comment"
+                }
+                options={diffViewOptions}
+                renderCodeViewFooter={renderCodeViewFooter}
+                renderHeaderPrefix={renderHeaderPrefix}
+                renderHeaderMetadata={renderHeaderMetadata}
+                renderAnnotation={renderAnnotation}
+                // Find may repeat requests before render; only unfold, never toggle.
+                onRevealSearchMatch={(item) =>
+                  setToggledFiles((current) =>
+                    toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
+                  )
+                }
+                unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
+              />
+            </DiffReviewCursorContext>
           </FileViewedToggleContext>
         </div>
         {fileTreeOpen ? (

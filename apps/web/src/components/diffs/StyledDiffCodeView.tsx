@@ -12,6 +12,7 @@ import { type Ref, useState } from "react";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import { Tooltip, TooltipPopup } from "../ui/tooltip";
+import { keepShallowEqual, keepUnchangedItems, useKeepUnchanged } from "./keepUnchanged";
 
 export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 /* A 1fr track's automatic minimum grows with the currently mounted lines. In split
@@ -229,9 +230,16 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
   ...props
 }: StyledDiffCodeViewProps<LAnnotation>) {
   const [hoveredUtilityButton, setHoveredUtilityButton] = useState<HTMLElement | null>(null);
+  // The viewer redraws for a new options object or item list, so keep them while nothing changed.
+  const keptOptions = useKeepUnchanged(options ?? {}, keepShallowEqual);
+  const keptItems = useKeepUnchanged(props.items, (previous, next) =>
+    previous && next ? keepUnchangedItems(previous, next) : next,
+  );
+  const viewProps =
+    props.items === undefined || keptItems === undefined ? props : { ...props, items: keptItems };
   const view = (
     <CodeView<LAnnotation>
-      {...props}
+      {...viewProps}
       {...(viewerRef ? { ref: viewerRef } : {})}
       className={
         className
@@ -239,7 +247,7 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
           : "diff-render-surface [--code-background:var(--background)] outline-none"
       }
       options={{
-        ...options,
+        ...keptOptions,
         unsafeCSS: unsafeCSSExtra
           ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
           : DIFF_VIEW_UNSAFE_CSS,
