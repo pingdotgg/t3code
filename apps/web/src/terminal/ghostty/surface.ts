@@ -693,7 +693,7 @@ export class GhosttyTerminalSurface {
     scrollbar.hidden = true;
     const scrollbarThumb = document.createElement("div");
     scrollbarThumb.className =
-      "absolute left-px right-[calc(1px+var(--app-scrollbar-edge-inset))] top-0 rounded-[3px] bg-[var(--app-scrollbar-thumb)] transition-[background-color] duration-[120ms] ease-[ease-out] group-hover:bg-[var(--app-scrollbar-thumb-hover)] group-focus-visible:bg-[var(--app-scrollbar-thumb-hover)]";
+      "absolute inset-x-px top-0 border-r-(length:--app-scrollbar-edge-inset) border-transparent bg-[var(--app-scrollbar-thumb)] bg-clip-padding rounded-[3px_calc(3px+var(--app-scrollbar-edge-inset))_calc(3px+var(--app-scrollbar-edge-inset))_3px/3px] transition-[background-color] duration-[120ms] ease-[ease-out] group-hover:bg-[var(--app-scrollbar-thumb-hover)] group-focus-visible:bg-[var(--app-scrollbar-thumb-hover)]";
     scrollbar.append(scrollbarThumb);
     mount.replaceChildren(canvas, input, scrollbar);
 

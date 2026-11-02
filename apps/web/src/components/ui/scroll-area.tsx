@@ -84,7 +84,7 @@ function ScrollBar({
   return (
     <ScrollAreaPrimitive.Scrollbar
       className={cn(
-        "flex opacity-0 transition-opacity delay-300 data-[orientation=horizontal]:mx-1 data-[orientation=horizontal]:mb-px data-[orientation=horizontal]:h-1.5 data-[orientation=vertical]:my-1 data-[orientation=vertical]:mr-px data-[orientation=vertical]:w-[calc(--spacing(1.5)+var(--app-scrollbar-edge-inset))] data-[orientation=vertical]:pr-(--app-scrollbar-edge-inset) data-[orientation=horizontal]:flex-col data-hovering:opacity-100 data-scrolling:opacity-100 data-hovering:delay-0 data-scrolling:delay-0 data-hovering:duration-100 data-scrolling:duration-100",
+        "flex opacity-0 transition-opacity delay-300 data-[orientation=horizontal]:mx-1 data-[orientation=horizontal]:mb-px data-[orientation=horizontal]:h-1.5 data-[orientation=vertical]:my-1 data-[orientation=vertical]:mr-px data-[orientation=vertical]:w-[calc(--spacing(1.5)+var(--app-scrollbar-edge-inset))] data-[orientation=horizontal]:flex-col data-hovering:opacity-100 data-scrolling:opacity-100 data-hovering:delay-0 data-scrolling:delay-0 data-hovering:duration-100 data-scrolling:duration-100",
         className,
       )}
       data-slot="scroll-area-scrollbar"
@@ -92,7 +92,7 @@ function ScrollBar({
       {...props}
     >
       <ScrollAreaPrimitive.Thumb
-        className="relative flex-1 rounded-full bg-[var(--app-scrollbar-thumb)] transition-colors hover:bg-[var(--app-scrollbar-thumb-hover)]"
+        className="relative flex-1 rounded-full bg-[var(--app-scrollbar-thumb)] bg-clip-padding data-[orientation=vertical]:border-r-(length:--app-scrollbar-edge-inset) data-[orientation=vertical]:border-transparent data-[orientation=vertical]:rounded-[3px_calc(3px+var(--app-scrollbar-edge-inset))_calc(3px+var(--app-scrollbar-edge-inset))_3px/3px] transition-colors hover:bg-[var(--app-scrollbar-thumb-hover)]"
         data-slot="scroll-area-thumb"
       />
     </ScrollAreaPrimitive.Scrollbar>
