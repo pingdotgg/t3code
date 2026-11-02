@@ -306,7 +306,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
       redeem:
         hubRedeems.get(key)?.redeem ??
-        (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
+        creditSource?.redeem ??
+        winner.redeem ??
+        previous.redeem ??
+        next.redeem,
       limits: {
         ...winner.limits,
         ...(creditSource?.limits.resetCredits
@@ -359,16 +362,17 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           accentColor: undefined,
           environments: [],
           sourceLabel,
-          redeem: account.usageLimits.resetCredits?.nextCreditId
-            ? {
-                environmentId,
-                input: {
-                  sourceId: source.id,
-                  accountId: account.id,
-                  creditId: account.usageLimits.resetCredits.nextCreditId,
-                },
-              }
-            : null,
+          redeem:
+            !account.routingDisabled && account.usageLimits.resetCredits?.nextCreditId
+              ? {
+                  environmentId,
+                  input: {
+                    sourceId: source.id,
+                    accountId: account.id,
+                    creditId: account.usageLimits.resetCredits.nextCreditId,
+                  },
+                }
+              : null,
           limits: account.usageLimits,
         });
       }
@@ -806,7 +810,9 @@ export function collectProviderUsageLimits(
         (a, b) =>
           Date.parse(b.account.usageLimits.checkedAt) - Date.parse(a.account.usageLimits.checkedAt),
       )[0];
-    const hubCreditId = hubCredits?.account.usageLimits.resetCredits?.nextCreditId;
+    const hubCreditId = !hubCredits?.account.routingDisabled
+      ? hubCredits?.account.usageLimits.resetCredits?.nextCreditId
+      : undefined;
     const showHubCredits =
       hubCredits &&
       (!credits ||
@@ -845,7 +851,7 @@ export function collectProviderUsageLimits(
         driver: account.driver,
         label: `${source.label} · ${account.id}`,
         sourceLabel: "CLI Proxy",
-        ...(account.usageLimits.resetCredits?.nextCreditId
+        ...(!account.routingDisabled && account.usageLimits.resetCredits?.nextCreditId
           ? {
               resetCreditInput: {
                 sourceId: source.id,
