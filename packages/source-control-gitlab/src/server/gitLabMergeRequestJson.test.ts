@@ -260,54 +260,25 @@ describe("decodePipelineStageChecksJson", () => {
     });
   }
 
-  it("shows each stage as GitLab reports it", () => {
+  it("shows every job under its stage", () => {
     const checks = expectSuccess(
       decodePipelineStageChecksJson(
         stagesJson([
           {
             name: "build",
             status: "success",
-            detailedStatus: { label: "passed", detailsPath: "/fork/web/-/pipelines/9#build" },
+            jobs: {
+              nodes: [
+                { name: "compile", status: "FAILED", retried: true, webPath: "/acme/web/-/jobs/1" },
+                {
+                  name: "compile",
+                  status: "SUCCESS",
+                  detailedStatus: { label: "passed" },
+                  webPath: "/acme/web/-/jobs/2",
+                },
+              ],
+            },
           },
-          // A job allowed to fail leaves its stage passed with warnings.
-          {
-            name: "test",
-            status: "success",
-            detailedStatus: { label: "passed with warnings" },
-            jobs: { nodes: [{ name: "lint", status: "FAILED", allowFailure: true }] },
-          },
-          { name: "deploy", status: "manual", detailedStatus: { label: "manual action" } },
-        ]),
-        "https://gitlab.com",
-      ),
-    );
-
-    expect(checks).toEqual([
-      {
-        name: "build",
-        status: "success",
-        description: "passed",
-        url: "https://gitlab.com/fork/web/-/pipelines/9#build",
-      },
-      {
-        name: "test",
-        status: "success",
-        description: "passed with warnings",
-        url: "https://gitlab.com/fork/web/-/pipelines/9",
-      },
-      {
-        name: "deploy",
-        status: "neutral",
-        description: "manual action",
-        url: "https://gitlab.com/fork/web/-/pipelines/9",
-      },
-    ]);
-  });
-
-  it("shows a failed stage as the jobs that failed it", () => {
-    const checks = expectSuccess(
-      decodePipelineStageChecksJson(
-        stagesJson([
           {
             name: "test",
             status: "failed",
@@ -325,46 +296,50 @@ describe("decodePipelineStageChecksJson", () => {
                   allowFailure: true,
                   webPath: "/acme/web/-/jobs/4",
                 },
-                {
-                  name: "e2e",
-                  status: "SUCCESS",
-                  allowFailure: false,
-                  webPath: "/acme/web/-/jobs/5",
-                },
+                { name: "slow", status: "CANCELED", webPath: "/acme/web/-/jobs/5" },
+                { name: "e2e", status: "RUNNING", webPath: "/acme/web/-/jobs/6" },
               ],
             },
+          },
+          {
+            name: "deploy",
+            status: "manual",
+            jobs: { nodes: [{ name: "release", status: "MANUAL", webPath: "/acme/web/-/jobs/7" }] },
           },
         ]),
         "https://gitlab.example.com",
       ),
     );
 
-    expect(checks).toEqual([
-      {
-        name: "test / unit",
-        status: "failure",
-        description: null,
-        url: "https://gitlab.example.com/acme/web/-/jobs/3",
-      },
+    expect(checks?.map((check) => [check.name, check.status, check.url])).toEqual([
+      ["build / compile", "success", "https://gitlab.example.com/acme/web/-/jobs/2"],
+      ["test / unit", "failure", "https://gitlab.example.com/acme/web/-/jobs/3"],
+      ["test / lint", "neutral", "https://gitlab.example.com/acme/web/-/jobs/4"],
+      ["test / slow", "cancelled", "https://gitlab.example.com/acme/web/-/jobs/5"],
+      ["test / e2e", "pending", "https://gitlab.example.com/acme/web/-/jobs/6"],
+      ["deploy / release", "neutral", "https://gitlab.example.com/acme/web/-/jobs/7"],
     ]);
+    expect(checks?.[0]?.description).toBe("passed");
   });
 
-  it("keeps a failed stage whose failed jobs were not all listed", () => {
-    const stage = {
-      name: "test",
-      status: "failure",
-      description: null,
-      url: "https://gitlab.com/fork/web/-/pipelines/9",
-    };
-    expect(
-      expectSuccess(
-        decodePipelineStageChecksJson(
-          stagesJson([{ name: "test", status: "failed", jobs: { nodes: [] } }]),
-          "https://gitlab.com",
-        ),
-      ),
-    ).toEqual([stage]);
-    // More failed jobs could sit past the first page.
+  it.each([
+    ["no jobs", undefined],
+    ["an empty job list", { nodes: [] }],
+    [
+      "more jobs than one page",
+      { nodes: [{ name: "unit", status: "FAILED" }], pageInfo: { hasNextPage: true } },
+    ],
+    ["a job GitLab could not resolve", { nodes: [{ name: "unit", status: "FAILED" }, null] }],
+    [
+      "a job without a name",
+      {
+        nodes: [
+          { name: "unit", status: "FAILED" },
+          { name: null, status: "FAILED" },
+        ],
+      },
+    ],
+  ])("keeps a stage whole where its jobs come back with %s", (_, jobs) => {
     expect(
       expectSuccess(
         decodePipelineStageChecksJson(
@@ -372,16 +347,21 @@ describe("decodePipelineStageChecksJson", () => {
             {
               name: "test",
               status: "failed",
-              jobs: {
-                nodes: [{ name: "unit", status: "FAILED", allowFailure: false }],
-                pageInfo: { hasNextPage: true },
-              },
+              detailedStatus: { label: "failed", detailsPath: "/fork/web/-/pipelines/9#test" },
+              ...(jobs === undefined ? {} : { jobs }),
             },
           ]),
           "https://gitlab.com",
         ),
       ),
-    ).toEqual([stage]);
+    ).toEqual([
+      {
+        name: "test",
+        status: "failure",
+        description: "failed",
+        url: "https://gitlab.com/fork/web/-/pipelines/9#test",
+      },
+    ]);
   });
 
   it("answers nothing where there are no stages to show", () => {

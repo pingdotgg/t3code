@@ -300,7 +300,7 @@ export const PIPELINE_STAGES_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String
             status
             detailedStatus { label detailsPath }
             jobs(first: 100) {
-              nodes { name status allowFailure webPath }
+              nodes { name status allowFailure retried webPath detailedStatus { label } }
               pageInfo { hasNextPage }
             }
           }
@@ -317,7 +317,9 @@ const RawStageJobSchema = Schema.Struct({
   name: OptionalString,
   status: OptionalString,
   allowFailure: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  retried: Schema.optional(Schema.NullOr(Schema.Boolean)),
   webPath: OptionalString,
+  detailedStatus: Schema.optional(Schema.NullOr(Schema.Struct({ label: OptionalString }))),
 });
 
 const RawStageSchema = Schema.Struct({
@@ -380,9 +382,9 @@ const RawPipelineStagesSchema = Schema.Struct({
 const decodePipelineStages = decodeJsonResult(RawPipelineStagesSchema);
 
 /**
- * The head pipeline as one check per stage, GitLab's own stage status included, except that a
- * failed stage is shown as the jobs that failed it. Null where there are no stages to show, or
- * GitLab returned only some of them, so the caller keeps the single pipeline check. `origin` turns GitLab's relative paths into links.
+ * The head pipeline as one check per job, named after its stage. A stage whose jobs GitLab did
+ * not list whole stays one check with GitLab's stage status. Null where there are no stages to
+ * show, or GitLab returned only some of them, so the caller keeps the single pipeline check.
  */
 export function decodePipelineStageChecksJson(
   raw: string,
@@ -406,33 +408,31 @@ export function decodePipelineStageChecksJson(
   for (const stage of pipeline?.stages?.nodes ?? []) {
     const name = trimmed(stage?.name);
     if (stage === null || name === null) continue;
-    const status = toPipelineStatus(stage.status);
-    // A job allowed to fail leaves its stage passed with warnings, so it never fails one. A
-    // stage with more jobs than one page stays whole, since its other failures went unread.
-    const failedJobs =
-      status === "failure" && stage.jobs?.pageInfo?.hasNextPage !== true
-        ? (stage.jobs?.nodes ?? []).flatMap((job) => {
-            const jobName = trimmed(job?.name);
-            return job === null ||
-              jobName === null ||
-              job.allowFailure === true ||
-              toPipelineStatus(job.status) !== "failure"
-              ? []
-              : [{ name: `${name} / ${jobName}`, url: link(trimmed(job.webPath)) }];
-          })
-        : [];
-    if (failedJobs.length > 0) {
-      for (const job of failedJobs) {
-        checks.push({ name: job.name, status: "failure", description: null, url: job.url });
-      }
+    const jobs = stage.jobs?.nodes ?? [];
+    const listedWhole =
+      jobs.length > 0 &&
+      stage.jobs?.pageInfo?.hasNextPage !== true &&
+      jobs.every((job) => job !== null && trimmed(job.name) !== null);
+    if (!listedWhole) {
+      checks.push({
+        name,
+        status: toPipelineStatus(stage.status),
+        description: trimmed(stage.detailedStatus?.label),
+        url: link(trimmed(stage.detailedStatus?.detailsPath) ?? trimmed(pipeline?.path)),
+      });
       continue;
     }
-    checks.push({
-      name,
-      status,
-      description: trimmed(stage.detailedStatus?.label),
-      url: link(trimmed(stage.detailedStatus?.detailsPath) ?? trimmed(pipeline?.path)),
-    });
+    for (const job of jobs) {
+      if (job === null || job.retried === true) continue;
+      const status = toPipelineStatus(job.status);
+      checks.push({
+        name: `${name} / ${trimmed(job.name)}`,
+        // The same reading as `manual`: GitLab was told this failure does not fail the pipeline.
+        status: status === "failure" && job.allowFailure === true ? "neutral" : status,
+        description: trimmed(job.detailedStatus?.label),
+        url: link(trimmed(job.webPath)),
+      });
+    }
   }
   return Result.succeed(checks.length === 0 ? null : checks);
 }

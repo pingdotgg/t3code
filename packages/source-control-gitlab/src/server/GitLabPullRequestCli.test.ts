@@ -1503,7 +1503,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         ),
       );
 
-    it.effect("shows the stages, and the failed stage as its failed job", () =>
+    it.effect("shows the stage jobs, and a stage GitLab listed no jobs for", () =>
       Effect.gen(function* () {
         answer(Effect.succeed(output(stages)));
 
