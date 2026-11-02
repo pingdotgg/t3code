@@ -76,13 +76,14 @@ export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnviro
   for (const name of CLAUDE_HOST_SESSION_VARIABLES) delete baseEnvironment[name];
   const environment = yield* mergeProviderInstanceEnvironment(instanceEnvironment, baseEnvironment);
   const settings = yield* readClaudeSettingsEnv(config, undefined, environment);
-  const usesApiKey = Boolean(environment.ANTHROPIC_API_KEY || settings.ANTHROPIC_API_KEY);
+  // Claude's settings env beats the process env, so an empty key in settings means no API key.
+  const apiKey = settings.ANTHROPIC_API_KEY ?? environment.ANTHROPIC_API_KEY;
   // With an API key, leave the entrypoint unset so the Agent SDK applies `sdk-ts`. Anthropic's
   // subscriber API credits cover the Agent SDK but answer `t3-code` with "Credit balance is too low".
   const entrypoint =
     settings.CLAUDE_CODE_ENTRYPOINT ||
     environment.CLAUDE_CODE_ENTRYPOINT ||
-    (usesApiKey ? undefined : "t3-code");
+    (apiKey ? undefined : "t3-code");
   return entrypoint ? { ...environment, CLAUDE_CODE_ENTRYPOINT: entrypoint } : environment;
 });
 
