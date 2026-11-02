@@ -15,6 +15,7 @@ import {
   buildReviewCommentPatch,
   createNativeReviewDiffTheme,
   NATIVE_REVIEW_DIFF_CONTENT_WIDTH,
+  reviewCommentDiffText,
 } from "./nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "./reviewModel";
 import { REVIEW_MONO_FONT_FAMILY } from "./reviewDiffRendering";
@@ -87,7 +88,7 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
     theme: appearanceScheme,
   });
   const snippetTokens = useMarkdownCodeHighlight({
-    code: props.comment.diff.trim(),
+    code: reviewCommentDiffText(props.comment.diff),
     language: props.comment.fenceLanguage ?? language,
     enabled: compactNativeRows.length === 0,
     theme: appearanceScheme,
@@ -235,7 +236,7 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
                     </NativeText>
                   ) /* oxlint-enable react/no-array-index-key */,
                 )
-              : props.comment.diff.trim()}
+              : reviewCommentDiffText(props.comment.diff)}
           </NativeText>
         </ScrollView>
       ) : null}

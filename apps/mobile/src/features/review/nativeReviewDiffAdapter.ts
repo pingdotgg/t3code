@@ -44,6 +44,10 @@ export function buildNativeReviewSnippetRows(
   }));
 }
 
+export function reviewCommentDiffText(diff: string): string {
+  return diff.trimStart().replace(/\n+$/, "");
+}
+
 export function buildReviewCommentPatch(comment: ReviewInlineComment): string {
   if ((comment.fenceLanguage ?? "diff") !== "diff") {
     return "";
@@ -51,7 +55,7 @@ export function buildReviewCommentPatch(comment: ReviewInlineComment): string {
   if (!comment.diff.trim()) {
     return "";
   }
-  const diff = comment.diff.trimStart().replace(/\n+$/, "");
+  const diff = reviewCommentDiffText(comment.diff);
 
   if (diff.startsWith("diff --git ")) {
     return diff;

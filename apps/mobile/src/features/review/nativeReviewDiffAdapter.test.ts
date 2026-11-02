@@ -10,6 +10,7 @@ import {
   buildNativeReviewDiffData,
   buildReviewCommentPatch,
   getCachedNativeReviewDiffData,
+  reviewCommentDiffText,
 } from "./nativeReviewDiffAdapter";
 import type { ReviewInlineComment } from "./reviewCommentSelection";
 import { buildReviewParsedDiff, type ReviewParsedDiff } from "./reviewModel";
@@ -62,6 +63,9 @@ describe("buildReviewCommentPatch", () => {
       { content: "", change: "context" },
     ]);
     expect(rows("@@ -4,1 +4,1 @@\n ")).toMatchObject([{ content: "", change: "context" }]);
+    expect(reviewCommentDiffText("\n@@ -3,1 +2,2 @@\n+two\t\n \n")).toBe(
+      "@@ -3,1 +2,2 @@\n+two\t\n ",
+    );
   });
 });
 
