@@ -2878,102 +2878,136 @@ describe("AcpAdapterV2", () => {
 
   // regression: #29291 Devin ends its prompt while a background shell runs and
   // reports the shell's completion outside any turn.
-  it.effect("keeps a Devin background shell running until Devin reports it finished", () =>
-    Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const path = yield* Path.Path;
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
-      let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
-      const backgroundMeta = {
-        "cognition.ai/inferenceToolName": "exec",
-        "cognition.ai/background": true,
-        "cognition.ai/backgroundShellId": "terminal-1",
-      };
-      const instanceId = ProviderInstanceId.make("devin-background-shell");
-      const adapter = yield* makeAcpRegistryAdapterV2({
-        instanceId,
-        selfInvocation: yield* resolveSelfInvocation(),
-        settings: DEVIN_SETTINGS,
-        environment: {},
-        makeRuntime: makeMockRuntime({
-          childProcessSpawner,
-          mockAgentPath,
-          wrapRuntime: (runtime) => ({
-            ...runtime,
-            handleSessionUpdate: (next) =>
-              Effect.sync(() => {
-                handler = next;
-              }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
-            prompt: () =>
-              Effect.gen(function* () {
-                const updates = [
-                  {
-                    sessionUpdate: "tool_call",
-                    toolCallId: "exec-1",
-                    title: "exec",
-                    kind: "execute",
-                    status: "pending",
-                    rawInput: { command: "node server.js" },
-                    _meta: { "cognition.ai/inferenceToolName": "exec" },
-                  },
-                  {
-                    sessionUpdate: "tool_call_update",
-                    toolCallId: "exec-1",
-                    status: "in_progress",
-                    _meta: backgroundMeta,
-                  },
-                  {
-                    sessionUpdate: "agent_message_chunk",
-                    content: { type: "text", text: "The server is running in the background." },
-                  },
-                ] satisfies Array<EffectAcpSchema.SessionUpdate>;
-                for (const update of updates)
-                  yield* handler!({ sessionId: "mock-session-1", update });
-                return { stopReason: "end_turn" as const };
-              }),
+  const openDevinBackgroundShell = Effect.fnUntraced(function* (name: string) {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const path = yield* Path.Path;
+    const mockAgentPath = yield* path.fromFileUrl(
+      new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+    );
+    type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+    let createTerminal: Parameters<Runtime["handleCreateTerminal"]>[0] | undefined;
+    let waitForExit: Parameters<Runtime["handleTerminalWaitForExit"]>[0] | undefined;
+    const runtimeInputs: Array<AcpAdapterV2RuntimeInput> = [];
+    const terminalIds: Array<string> = [];
+    const baseMakeRuntime = makeMockRuntime({
+      childProcessSpawner,
+      mockAgentPath,
+      wrapRuntime: (runtime) => ({
+        ...runtime,
+        handleSessionUpdate: (next) =>
+          Effect.sync(() => {
+            handler = next;
+          }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+        handleCreateTerminal: (next) =>
+          Effect.sync(() => {
+            createTerminal = next;
+          }).pipe(Effect.andThen(runtime.handleCreateTerminal(next))),
+        handleTerminalWaitForExit: (next) =>
+          Effect.sync(() => {
+            waitForExit = next;
+          }).pipe(Effect.andThen(runtime.handleTerminalWaitForExit(next))),
+        prompt: () =>
+          Effect.gen(function* () {
+            const toolCallId = `exec-${terminalIds.length + 1}`;
+            const { terminalId } = yield* createTerminal!(
+              { sessionId: "mock-session-1", command: "sleep 30" },
+              { requestId: `${toolCallId}-terminal`, method: "terminal/create" },
+            );
+            terminalIds.push(terminalId);
+            const updates = [
+              {
+                sessionUpdate: "tool_call",
+                toolCallId,
+                title: "exec",
+                kind: "execute",
+                status: "pending",
+                rawInput: { command: "sleep 30" },
+                content: [{ type: "terminal", terminalId }],
+                _meta: { "cognition.ai/inferenceToolName": "exec" },
+              },
+              {
+                sessionUpdate: "tool_call_update",
+                toolCallId,
+                status: "in_progress",
+                _meta: {
+                  "cognition.ai/inferenceToolName": "exec",
+                  "cognition.ai/background": true,
+                  "cognition.ai/backgroundShellId": terminalId,
+                },
+              },
+              // Devin follows with meta that no longer carries the background flag.
+              {
+                sessionUpdate: "tool_call_update",
+                toolCallId,
+                status: "in_progress",
+                _meta: { "cognition.ai/inferenceToolName": "exec" },
+              },
+              {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "The command is running in the background." },
+              },
+            ] satisfies Array<EffectAcpSchema.SessionUpdate>;
+            for (const update of updates) yield* handler!({ sessionId: "mock-session-1", update });
+            return { stopReason: "end_turn" as const };
           }),
-        }),
-      }).pipe(
-        Effect.provide(
-          Layer.mock(AcpRegistryCatalog)({ resolve: () => Effect.die("runtime is injected") }),
-        ),
-      );
-      const threadId = ThreadId.make("devin-background-shell");
-      const modelSelection = { instanceId, model: "default" } as const;
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const runtime = yield* adapter.openSession({
+      }),
+    });
+    const instanceId = ProviderInstanceId.make(name);
+    const adapter = yield* makeAcpRegistryAdapterV2({
+      instanceId,
+      selfInvocation: yield* resolveSelfInvocation(),
+      settings: DEVIN_SETTINGS,
+      environment: {},
+      makeRuntime: (runtimeInput) =>
+        Effect.sync(() => {
+          runtimeInputs.push(runtimeInput);
+        }).pipe(Effect.andThen(baseMakeRuntime(runtimeInput))),
+    }).pipe(
+      Effect.provide(
+        Layer.mock(AcpRegistryCatalog)({ resolve: () => Effect.die("runtime is injected") }),
+      ),
+    );
+    const threadId = ThreadId.make(name);
+    const modelSelection = { instanceId, model: "default" } as const;
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const sessionScope = yield* Scope.make();
+    yield* Effect.addFinalizer(() => Scope.close(sessionScope, Exit.void));
+    const runtime = yield* adapter
+      .openSession({
         threadId,
-        providerSessionId: ProviderSessionId.make("devin-background-shell-session"),
+        providerSessionId: ProviderSessionId.make(`${name}-session`),
         modelSelection,
         runtimePolicy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-      yield* runtime.events.pipe(
-        Stream.runForEach((event) => Queue.offer(events, event)),
-        Effect.forkScoped,
+      })
+      .pipe(Effect.provideService(Scope.Scope, sessionScope));
+    const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+    yield* runtime.events.pipe(
+      Stream.runForEach((event) => Queue.offer(events, event)),
+      Effect.forkScoped,
+    );
+    const until = Effect.fnUntraced(function* (
+      predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean,
+    ) {
+      const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      while (true) {
+        const event = yield* Queue.take(events);
+        seen.push(event);
+        if (predicate(event)) return seen;
+      }
+    });
+    const execItems = (seen: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>, id: string) =>
+      seen.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === id
+          ? [event.turnItem]
+          : [],
       );
-      const until = Effect.fnUntraced(function* (
-        predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean,
-      ) {
-        const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-        while (true) {
-          const event = yield* Queue.take(events);
-          seen.push(event);
-          if (predicate(event)) return seen;
-        }
-      });
+    const runTurn = Effect.fnUntraced(function* () {
       yield* runtime.startTurn(
         makeTurnInput({
           threadId,
@@ -2983,40 +3017,118 @@ describe("AcpAdapterV2", () => {
           now: yield* DateTime.now,
         }),
       );
-      const settled = yield* until((event) => event.type === "turn.terminal");
-      const terminal = settled.at(-1);
+      const seen = yield* until((event) => event.type === "turn.terminal");
+      const terminal = seen.at(-1);
       assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "completed");
-      const execUpdates = settled.flatMap((event) =>
-        event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === "exec-1"
-          ? [event.turnItem]
-          : [],
-      );
+      return {
+        seen,
+        providerTurnId: terminal?.type === "turn.terminal" ? terminal.providerTurnId : undefined,
+      };
+    });
+    // A usage update is projected immediately, so it marks everything emitted before it.
+    const sendAndFlush = Effect.fnUntraced(function* (update?: EffectAcpSchema.SessionUpdate) {
+      if (update !== undefined) yield* handler!({ sessionId: "mock-session-1", update });
+      yield* handler!({
+        sessionId: "mock-session-1",
+        update: { sessionUpdate: "usage_update", used: 1, size: 100 },
+      });
+      return yield* until((event) => event.type === "provider_thread.updated");
+    });
+    return {
+      runtime,
+      providerThread,
+      sessionScope,
+      runtimeInputs,
+      terminalIds,
+      until,
+      execItems,
+      runTurn,
+      sendAndFlush,
+      waitForExit: (terminalId: string) =>
+        waitForExit!(
+          { sessionId: "mock-session-1", terminalId },
+          { requestId: `${terminalId}-wait`, method: "terminal/wait_for_exit" },
+        ),
+    };
+  });
+
+  it.effect("keeps a Devin background shell running until Devin reports it finished", () =>
+    Effect.gen(function* () {
+      const shell = yield* openDevinBackgroundShell("devin-background-shell");
+      const { seen } = yield* shell.runTurn();
+      const execUpdates = shell.execItems(seen, "exec-1");
       assert.notInclude(
         execUpdates.map((item) => item.status),
         "completed",
         "the background shell is still running",
       );
       assert.equal(execUpdates.at(-1)?.status, "running");
-      yield* handler!({
-        sessionId: "mock-session-1",
-        update: {
-          sessionUpdate: "tool_call_update",
-          toolCallId: "exec-1",
-          status: "completed",
-          rawOutput: "server exited",
-          _meta: { "cognition.ai/inferenceToolName": "exec" },
-        },
+      const finished = shell
+        .execItems(
+          yield* shell.sendAndFlush({
+            sessionUpdate: "tool_call_update",
+            toolCallId: "exec-1",
+            status: "completed",
+            rawOutput: "server exited",
+            _meta: { "cognition.ai/inferenceToolName": "exec" },
+          }),
+          "exec-1",
+        )
+        .at(-1);
+      assert.equal(finished?.status, "completed");
+      assert.equal(
+        finished?.type === "command_execution" ? finished.output : undefined,
+        "server exited",
+      );
+      assert.equal(finished?.id, execUpdates.at(-1)?.id);
+      assert.equal(finished?.runId, execUpdates.at(-1)?.runId);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("stops a settled Devin run's background shell and keeps it stopped", () =>
+    Effect.gen(function* () {
+      const shell = yield* openDevinBackgroundShell("devin-background-shell-stop");
+      const { providerTurnId } = yield* shell.runTurn();
+      yield* shell.runtime.interruptTurn({
+        providerThread: shell.providerThread,
+        providerTurnId: providerTurnId!,
+        requestRuntimeRestart: true,
       });
-      const finished = (yield* until(
+      const stopped = shell.execItems(yield* shell.sendAndFlush(), "exec-1");
+      assert.deepEqual(
+        stopped.map((item) => item.status),
+        ["interrupted"],
+      );
+      const exit = yield* shell.waitForExit(shell.terminalIds[0]!);
+      assert.notEqual(exit.exitCode, 0);
+      const late = yield* shell.sendAndFlush({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "exec-1",
+        status: "completed",
+        _meta: { "cognition.ai/inferenceToolName": "exec" },
+      });
+      assert.deepEqual(shell.execItems(late, "exec-1"), []);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("ends carried Devin background shells when their session goes away", () =>
+    Effect.gen(function* () {
+      const shell = yield* openDevinBackgroundShell("devin-background-shell-session");
+      yield* shell.runTurn();
+      assert.isTrue(yield* shell.runtime.hasPendingBackgroundWork!);
+      yield* shell.runtimeInputs[0]!.onTermination!(
+        new EffectAcpErrors.AcpTransportError({ detail: "Injected termination", cause: "test" }),
+      );
+      const { seen } = yield* shell.runTurn();
+      assert.equal(shell.execItems(seen, "exec-1").at(-1)?.status, "interrupted");
+      assert.equal(shell.execItems(seen, "exec-2").at(-1)?.status, "running");
+      yield* Scope.close(shell.sessionScope, Exit.void);
+      const closed = yield* shell.until(
         (event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.nativeItemRef?.nativeId === "exec-1" &&
-          event.turnItem.status === "completed",
-      )).at(-1);
-      const item = finished?.type === "turn_item.updated" ? finished.turnItem : undefined;
-      assert.equal(item?.type === "command_execution" ? item.output : undefined, "server exited");
-      assert.equal(item?.id, execUpdates.at(-1)?.id);
-      assert.equal(item?.runId, execUpdates.at(-1)?.runId);
+          event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === "exec-2",
+      );
+      assert.equal(shell.execItems(closed, "exec-2").at(-1)?.status, "interrupted");
+      assert.isFalse(yield* shell.runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
