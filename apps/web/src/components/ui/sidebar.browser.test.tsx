@@ -103,7 +103,7 @@ describe("Sidebar", () => {
       expect(sidebar.inert).toBe(false);
       expect(getComputedStyle(container).transitionDuration).toBe(`${expected / 1000}s`);
       expect(gap.getBoundingClientRect().width).toBe(0);
-      sidebar.dispatchEvent(
+      edge.dispatchEvent(
         new PointerEvent("pointerout", {
           bubbles: true,
           pointerType: "mouse",

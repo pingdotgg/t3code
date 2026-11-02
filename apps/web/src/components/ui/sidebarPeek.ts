@@ -117,7 +117,7 @@ function createSidebarPeek() {
       clear();
       timer = setTimeout(() => publish(true), 110);
     },
-    edgeLeave: clear,
+    edgeLeave: hide,
     enter(event: React.PointerEvent) {
       if (event.pointerType !== "mouse") return;
       inside = true;
