@@ -685,7 +685,7 @@ const program = Effect.gen(function* () {
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
-            sessionUpdate: "tool_call",
+            sessionUpdate: "tool_call_update",
             toolCallId: "history-subagent-1",
             title: "History subagent",
             kind: "other",
