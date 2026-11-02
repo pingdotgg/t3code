@@ -7,6 +7,12 @@ import { nativeImage } from "electron";
 // Keep dbus-next out of desktop detection and PNG reads in the main process.
 
 export const HYPRLAND_CAPTURE_ACTION = "capture-window";
+
+export class CaptureSetupRequiredError extends Error {
+  constructor(state: string, options?: ErrorOptions) {
+    super(`${state} Open Settings → SnapShots to continue setup.`, options);
+  }
+}
 export const NIRI_CAPTURE_PATH = "/com/t3tools/SnapShot";
 export const NIRI_CAPTURE_INTERFACE = "com.t3tools.SnapShot";
 
