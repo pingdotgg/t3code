@@ -113,6 +113,12 @@ it("searches displayed prose and file-chip labels without hidden paths", () => {
   expect(
     assistantSegments("[a](/repo/a&b>c/page.tsx) and [b](/repo/c&d>e/page.tsx)", "/repo"),
   ).toEqual(["a page.tsx · repo/a&b>c and b page.tsx · repo/c&d>e"]);
+  expect(
+    assistantSegments(
+      String.raw`[a](</repo/a\<b &amp;c/page.tsx>) and [b](</repo/d\<e &amp;f/page.tsx>)`,
+      "/repo",
+    ),
+  ).toEqual(["a page.tsx · repo/a<b &c and b page.tsx · repo/d<e &f"]);
 });
 
 it("keeps fence paths literal and indexes file-chip labels in user messages", () => {
