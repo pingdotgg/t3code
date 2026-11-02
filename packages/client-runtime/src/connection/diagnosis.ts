@@ -26,7 +26,7 @@ export interface ConnectionDiagnosis {
   readonly hops: ReadonlyArray<ConnectionDiagnosisHop>;
   readonly steps: ReadonlyArray<string>;
   readonly facts: ReadonlyArray<readonly [label: string, value: string]>;
-  /** The troubleshooting guide section for this failure. Null for direct routes. */
+  /** The troubleshooting guide section for this failure. Null for direct routes, except a pending T3 Connect sign-in. */
   readonly moreInfoUrl: string | null;
 }
 
@@ -357,7 +357,10 @@ export function presentConnectionDiagnosis(
     hops,
     steps: steps(host, located, failure),
     facts,
-    moreInfoUrl: relayPath ? t3ConnectTroubleshootingUrl(helpSection(located, failure)) : null,
+    moreInfoUrl:
+      relayPath || located.cause === "session_pending"
+        ? t3ConnectTroubleshootingUrl(helpSection(located, failure))
+        : null,
   };
 }
 

@@ -140,6 +140,10 @@ describe("presentConnectionDiagnosis", () => {
     expect(diagnosis?.hops.find((hop) => hop.result === "failed")?.hop).toBe("device");
     expect(diagnosis?.steps.join(" ")).not.toContain("Mac mini");
     expect(diagnosis?.moreInfoUrl).toContain("sign-in-account-or-link-problems");
+    // A host with a LAN route as well uses the direct route, still authorized through T3 Connect.
+    expect(diagnose(backoff(failure), "direct")?.moreInfoUrl).toContain(
+      "sign-in-account-or-link-problems",
+    );
   });
 
   it("does not report hops as working when the failure names none", () => {
