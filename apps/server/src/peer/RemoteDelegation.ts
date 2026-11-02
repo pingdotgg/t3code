@@ -16,6 +16,7 @@ import {
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
@@ -78,6 +79,8 @@ export class RemoteDelegation extends Context.Service<
         readonly target: NonNullable<OrchestratorMcpDelegateTaskInput["target"]> & {
           readonly environmentId: EnvironmentId;
         };
+        /** The exact selection the task launches with there, as the user approved it. */
+        readonly modelSelection: ModelSelection;
       },
     ) => Effect.Effect<{ readonly taskId: NodeId }, OrchestratorMcpFailure>;
     /**
@@ -120,10 +123,41 @@ export function remoteModelSelection(
   return { instanceId, model, ...(options === undefined ? {} : { options }) };
 }
 
+/**
+ * A caller's key bound to the task's destination and exact selection, so the
+ * same key with another environment or target is another request: it asks and
+ * launches on its own instead of riding an earlier one's receipt.
+ */
+export const remoteRequestKey = Effect.fn("RemoteDelegation.remoteRequestKey")(function* (
+  key: string,
+  environmentId: EnvironmentId,
+  selection: ModelSelection,
+) {
+  const crypto = yield* Crypto.Crypto;
+  // Options compare as a set; a cleared list differs from none.
+  const options =
+    selection.options === undefined
+      ? "-"
+      : selection.options
+          .map((option) => `${option.id}=${typeof option.value}:${String(option.value)}`)
+          .toSorted()
+          .join("\u0001");
+  const digest = yield* crypto
+    .digest(
+      "SHA-256",
+      new TextEncoder().encode(
+        [key, environmentId, selection.instanceId, selection.model, options].join("\u0000"),
+      ),
+    )
+    .pipe(Effect.orDie);
+  // The launch there carries this key, and keys there are capped at 256 characters.
+  return Buffer.from(digest).toString("hex");
+});
+
 /** The command recording a remote task here; its receipt marks a delegation already made. */
-export const recordCommandId = (scope: ThreadScope, key: string) =>
+export const recordCommandId = (scope: Pick<ThreadScope, "requestNamespace">, requestKey: string) =>
   CommandId.make(
-    `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(key)}`,
+    `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(requestKey)}`,
   );
 
 /** The other side refused because the thread there runs above this caller's modes. */
@@ -247,13 +281,7 @@ const make = Effect.gen(function* () {
             'A task in a linked environment runs in that project\'s checkout; isolation "worktree" is not supported there. Omit isolation, or use t3_thread_launch with environmentId and a worktree workspaceStrategy.',
         });
       }
-      const modelSelection = remoteModelSelection(parent.thread.modelSelection, target);
-      if (modelSelection === undefined) {
-        return yield* new OrchestratorMcpFailure({
-          code: "target_required",
-          message: "Pass target.model from orchestrator_capabilities with this environmentId.",
-        });
-      }
+      const { modelSelection } = input;
       // Modes asked for are checked against this thread. Omitted ones are left
       // to the other side, which inherits this thread's modes capped by the
       // link's access, so a narrower link still takes the task.
@@ -265,16 +293,37 @@ const make = Effect.gen(function* () {
         input.interactionMode === undefined || input.interactionMode === "inherit"
           ? undefined
           : yield* resolveInteractionMode(parent.thread.interactionMode, input.interactionMode);
+      // One key for the launch there and the record here, so a retry finds both.
+      // Both are scoped to the provider session, as every key a caller passes is:
+      // the forwarder scopes the launch's, and the record's names it.
+      const key = yield* remoteRequestKey(
+        input.clientRequestId ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie)),
+        target.environmentId,
+        modelSelection,
+      ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      const commandId = recordCommandId(scope, key);
+      // A recorded request returns its task without reaching the other side again.
+      if (yield* threads.hasReceipt(commandId)) {
+        const taskId = IdAllocator.derive.delegatedTaskNode({ commandId });
+        const recorded = yield* readTask(scope.thread.threadId, taskId).pipe(
+          Effect.map(({ task }) => task),
+          Effect.orElseSucceed(() => undefined),
+        );
+        if (recorded === undefined) {
+          return yield* new OrchestratorMcpFailure({
+            code: "orchestration_error",
+            message: "The delegated task was not recorded.",
+          });
+        }
+        yield* followOne(scope.thread.threadId, taskId).pipe(Effect.forkIn(followers));
+        return { taskId };
+      }
       const projectId = yield* resolveRemoteProject(
         scope,
         target.environmentId,
         parent.thread.projectId,
         target.projectId,
       );
-      // One key for the launch there and the record here, so a retry finds both.
-      // Both are scoped to the provider session, as every key a caller passes is:
-      // the forwarder scopes the launch's, and the record's names it.
-      const key = input.clientRequestId ?? (yield* random.uuidV4());
       const task = taskPrompt(input);
       const title = input.title ?? parent.thread.title;
       const launched = yield* forwarding.call(
@@ -301,7 +350,6 @@ const make = Effect.gen(function* () {
         Effect.map(Option.getOrUndefined),
         Effect.orElseSucceed(() => undefined),
       );
-      const commandId = recordCommandId(scope, key);
       const remoteChild: OrchestrationV2RemoteTaskChild = {
         environmentId: target.environmentId,
         threadId: launched.threadId,

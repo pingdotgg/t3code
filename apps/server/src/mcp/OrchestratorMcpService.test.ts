@@ -3176,6 +3176,8 @@ describe("OrchestratorMcpService provider resolution", () => {
       /** The parent's run ends while its card waits. */
       readonly parentRunEndsOnAsk?: boolean;
       readonly hasReceipt?: (commandId: CommandId) => boolean;
+      /** The thread's selection, as `t3_thread_configure` leaves it, while its run keeps its own. */
+      readonly threadSelection?: Parameters<typeof parentProjection>[1];
     }) =>
       Effect.gen(function* () {
         const commands: Array<OrchestrationV2ServerCommand> = [];
@@ -3199,6 +3201,10 @@ describe("OrchestratorMcpService provider resolution", () => {
           const projection = parentProjection(delegations().length > 0 ? [task] : [], inherited);
           return {
             ...projection,
+            thread: {
+              ...projection.thread,
+              modelSelection: input.threadSelection ?? inherited,
+            },
             runs: projection.runs.map((run) =>
               parentRunEnded ? { ...run, status: "completed" } : run,
             ),
@@ -3390,6 +3396,40 @@ describe("OrchestratorMcpService provider resolution", () => {
         }),
     );
 
+    it.effect(
+      "asks before an omitted target inherits a model the agent set after its run began",
+      () =>
+        Effect.gen(function* () {
+          const configured = {
+            instanceId: codexInstanceId,
+            model: "other-model",
+            options: [{ id: "reasoningEffort", value: "max" }],
+          } as const;
+          for (const target of [undefined, { environmentId: remoteEnvironmentId }]) {
+            const { service, delegations, approvals, remoteDelegations } = yield* harness({
+              decide: () => "declined",
+              threadSelection: configured,
+            });
+            const failure = yield* delegate(service, target, "configured").pipe(Effect.flip);
+            assert.propertyVal(failure, "code", "delegation_not_approved");
+            // Without a target it would ask again, so the refusal does not suggest that.
+            assert.notInclude(failure.message, "without a target");
+            assert.deepEqual(
+              approvals().map(
+                (command) =>
+                  command.type === "delegation_approval.record" && [
+                    command.current,
+                    command.proposed,
+                  ],
+              ),
+              [[inherited, configured]],
+            );
+            assert.deepEqual(delegations(), []);
+            assert.deepEqual(remoteDelegations, []);
+          }
+        }),
+    );
+
     it.effect("starts no child when the user declines or the parent run ends first", () =>
       Effect.gen(function* () {
         for (const setup of [
@@ -3494,6 +3534,40 @@ describe("OrchestratorMcpService provider resolution", () => {
             assert.isTrue(Result.isFailure(result));
           }
         }
+        // The same key accepted for another environment asks again.
+        const proposed = { instanceId: codexInstanceId, model: "other-model" };
+        const elsewhere = RemoteDelegation.recordCommandId(
+          scope,
+          yield* RemoteDelegation.remoteRequestKey(
+            "remote-reused",
+            EnvironmentId.make("environment:mcp-providers-other"),
+            proposed,
+          ).pipe(Effect.provide(NodeServices.layer)),
+        );
+        const reused = yield* harness({
+          decide: () => "declined",
+          hasReceipt: (commandId) => commandId === elsewhere,
+        });
+        yield* delegate(
+          reused.service,
+          { environmentId: remoteEnvironmentId, model: "other-model" },
+          "remote-reused",
+        ).pipe(Effect.flip);
+        assert.equal(reused.approvals().length, 1);
+        assert.deepEqual(reused.remoteDelegations, []);
+        // An approved task goes there with the exact selection the card showed.
+        const exact = yield* harness({ decide: () => "approved" });
+        yield* delegate(
+          exact.service,
+          { environmentId: remoteEnvironmentId, model: "other-model", options: [] },
+          "remote-exact",
+        ).pipe(Effect.result);
+        assert.deepEqual(
+          exact.remoteDelegations.map(
+            (delegated) => (delegated as { modelSelection: unknown }).modelSelection,
+          ),
+          [{ ...proposed, options: [] }],
+        );
         // The inherited target goes there without a card.
         const { service, approvals, remoteDelegations } = yield* harness({
           decide: () => "pending",

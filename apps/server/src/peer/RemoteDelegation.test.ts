@@ -89,6 +89,8 @@ type LaunchedWith = Pick<
 /** The thread the box launches for the task, which the test finishes. */
 interface BoxThread {
   readonly launched: Ref.Ref<ThreadId | null>;
+  /** How many launches reached the box. */
+  readonly launches: Ref.Ref<number>;
   /** The link session that launched it, as the box stamps it. */
   readonly linkOrigin: Ref.Ref<{ readonly sessionId: string; readonly label: string } | null>;
   /** The parent the launch names, so the thread there can link back to it. */
@@ -139,6 +141,7 @@ interface BoxThread {
 const makeBoxThread = Effect.gen(function* () {
   return {
     launched: yield* Ref.make<ThreadId | null>(null),
+    launches: yield* Ref.make(0),
     linkOrigin: yield* Ref.make<{ readonly sessionId: string; readonly label: string } | null>(
       null,
     ),
@@ -438,6 +441,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
       Ref.get(thread.runless).pipe(
         Effect.flatMap((runless) =>
           Ref.set(thread.launched, input.threadId!).pipe(
+            Effect.andThen(Ref.update(thread.launches, (count) => count + 1)),
             Effect.andThen(Ref.set(thread.linkOrigin, input.linkOrigin ?? null)),
             Effect.andThen(Ref.set(thread.delegatedFrom, input.delegatedFrom ?? null)),
             Effect.andThen(Ref.set(thread.message, input.initialMessage?.text ?? null)),
@@ -931,6 +935,139 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
         state: "acknowledged",
         observedByRunId: parentRunId,
       });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+const approvalsOn = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
+  DelegationApprovals.DelegationApprovals.pipe(
+    Effect.provide(
+      DelegationApprovals.layer.pipe(
+        Layer.provide(Layer.succeed(ThreadManagement.ThreadManagementService, laptopEnv.threads)),
+      ),
+    ),
+  );
+
+/** The next delegation card asking the user, after `afterSequence`. */
+const nextCard = (
+  laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
+  afterSequence: number,
+) =>
+  laptopEnv.orchestrator
+    .streamStoredEventsFrom({
+      threadId: parentThreadId,
+      afterSequence,
+      eventType: "turn-item.updated",
+    })
+    .pipe(
+      Stream.filterMap((stored) =>
+        stored.event.type === "turn-item.updated" &&
+        stored.event.payload.type === "delegation_approval" &&
+        stored.event.payload.approvalStatus === "pending"
+          ? Result.succeed(stored.event.payload)
+          : Result.failVoid,
+      ),
+      Stream.runHead,
+      Effect.map(Option.getOrThrow),
+    );
+
+it.effect("a key reused with another target there asks again, and a retry launches nothing", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const approvals = yield* approvalsOn(a);
+
+      const first = yield* delegateToBox(a);
+      const retried = yield* delegateToBox(a);
+      expect(retried.taskId).toBe(first.taskId);
+      expect(yield* Ref.get(thread.launches)).toBe(1);
+
+      const sequence = yield* a.threads.getThreadEventSequence(parentThreadId);
+      const changed = yield* a
+        .call("delegate_task", {
+          task: "Run the full suite on the box.",
+          target: {
+            environmentId: box.environmentId,
+            providerInstanceId: instanceId,
+            model: "gpt-5.5",
+          },
+          mode: "async",
+          clientRequestId: "suite-on-box",
+        })
+        .pipe(Effect.forkChild);
+      const asked = yield* Effect.raceFirst(
+        nextCard(a, sequence).pipe(Effect.map((card) => ({ card }))),
+        Fiber.join(changed).pipe(Effect.map((result) => ({ result }))),
+      );
+      expect("card" in asked, JSON.stringify(asked)).toBe(true);
+      if (!("card" in asked)) return;
+      expect(yield* Ref.get(thread.launches)).toBe(1);
+      yield* approvals.answer({
+        threadId: parentThreadId,
+        turnItemId: asked.card.id,
+        decision: "decline",
+      });
+      expect((yield* Fiber.join(changed)).isError).toBe(true);
+      expect(yield* Ref.get(thread.launches)).toBe(1);
+      expect((yield* Ref.get(thread.launchedWith))?.modelSelection).toEqual(modelSelection);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("an approved task there launches with the target the user approved", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const approvals = yield* approvalsOn(a);
+
+      const approved = yield* a
+        .call("delegate_task", {
+          task: "Run the full suite on the box.",
+          target: {
+            environmentId: box.environmentId,
+            providerInstanceId: instanceId,
+            model: "gpt-5.5",
+          },
+          mode: "async",
+          clientRequestId: "suite-on-box",
+        })
+        .pipe(Effect.forkChild);
+      const card = yield* nextCard(a, 0);
+      // While the card waits, the agent points its own thread at that model with other options.
+      yield* a.threads.dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make("command:configure:laptop-parent"),
+        threadId: parentThreadId,
+        modelSelection: {
+          instanceId,
+          model: "gpt-5.5",
+          options: [{ id: "reasoningEffort", value: "max" }],
+        },
+      });
+      yield* approvals.answer({
+        threadId: parentThreadId,
+        turnItemId: card.id,
+        decision: "approve",
+      });
+      const started = yield* Fiber.join(approved);
+      expect(started.isError, JSON.stringify(started.content)).toBe(false);
+      expect((yield* Ref.get(thread.launchedWith))?.modelSelection).toEqual(card.proposed);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
