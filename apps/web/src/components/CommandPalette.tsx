@@ -59,8 +59,6 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
-  EyeIcon,
-  EyeOffIcon,
   FileSearchIcon,
   FolderGit2Icon,
   FolderIcon,
@@ -105,7 +103,7 @@ import {
   copyPromptLink,
   promptLinkRepositoryOf,
 } from "./promptLinks/copyPromptLink";
-import { useClientSettings, useUpdateEnvironmentSettings } from "../hooks/useSettings";
+import { useClientSettings } from "../hooks/useSettings";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
@@ -247,7 +245,7 @@ import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
-import { primaryServerKeybindingsAtom, threadTagToggleAtom } from "../state/server";
+import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
@@ -433,10 +431,6 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
-  const threadTagToggle = useAtomValue(threadTagToggleAtom);
-  const updateThreadTagToggleSettings = useUpdateEnvironmentSettings(
-    threadTagToggle?.environmentId ?? null,
-  );
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -1597,24 +1591,6 @@ function OpenCommandPaletteDialog(props: {
       shortcutCommand: direction === 1 ? "workspace.focusNext" : "workspace.focusPrevious",
       run: async () => {
         queueWorkspaceFocusFromPalette(direction);
-      },
-    });
-  }
-
-  if (threadTagToggle !== null) {
-    const hideTaggedThreads = threadTagToggle.hiding;
-    actionItems.push({
-      kind: "action",
-      value: "action:thread-tag-filter",
-      searchTerms: ["tags", "filter", "hide", "show", "threads", "recording"],
-      title: hideTaggedThreads ? "Show tagged threads" : "Hide tagged threads",
-      icon: hideTaggedThreads ? (
-        <EyeIcon className={ITEM_ICON_CLASS} />
-      ) : (
-        <EyeOffIcon className={ITEM_ICON_CLASS} />
-      ),
-      run: async () => {
-        updateThreadTagToggleSettings({ hideTaggedThreads: !hideTaggedThreads });
       },
     });
   }
