@@ -86,7 +86,7 @@ import { useUiStateStore } from "~/uiStateStore";
 import { Button } from "../ui/button";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { toastManager } from "../ui/toast";
-import { TooltipProvider } from "../ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
 import { PullRequestCopyableCode } from "./PullRequestCopyableCode";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
@@ -1413,7 +1413,6 @@ export function PullRequestDetailPanel({
         <PullRequestDetailCrumbs
           detail={detail}
           toneClassName={statePresentation?.toneClassName ?? null}
-          condensed={condensed}
           repositoryUrl={repositoryUrl}
           openOnHostText={openOnHostText}
           onBack={onBack}
@@ -1558,10 +1557,20 @@ export function PullRequestDetailPanel({
                   variant="avatar"
                   className="shrink-0"
                 />
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                        {detail.title}
+                      </span>
+                    }
+                  />
+                  <TooltipPopup side="top">{detail.title}</TooltipPopup>
+                </Tooltip>
                 <span className="shrink-0">
                   <RelativeTime timestamp={detail.updatedAt} />
                 </span>
-                {headerBranches}
+                <span className="hidden min-w-0 flex-1 @2xl/pr-header:flex">{headerBranches}</span>
               </div>
             ) : null}
           </div>

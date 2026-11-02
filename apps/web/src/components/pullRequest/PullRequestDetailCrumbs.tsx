@@ -14,7 +14,6 @@ interface CrumbsPullRequest {
   readonly provider: string;
   readonly number: number;
   readonly repository: string;
-  readonly title: string;
   readonly state: "open" | "merged" | "closed";
   readonly isDraft: boolean;
 }
@@ -99,7 +98,6 @@ function NumberLink({
 export function PullRequestDetailCrumbs({
   detail,
   toneClassName,
-  condensed,
   repositoryUrl,
   openOnHostText,
   onBack,
@@ -107,7 +105,6 @@ export function PullRequestDetailCrumbs({
 }: {
   detail: CrumbsPullRequest | null;
   toneClassName: string | null;
-  condensed: boolean;
   repositoryUrl: string | null;
   openOnHostText: string;
   onBack: (() => void) | undefined;
@@ -164,18 +161,6 @@ export function PullRequestDetailCrumbs({
               <state.Icon aria-hidden className="size-[11px]" />
               {state.label}
             </span>
-          ) : null}
-          {condensed ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="min-w-0 flex-1 basis-0 truncate font-medium text-foreground">
-                    {detail.title}
-                  </span>
-                }
-              />
-              <TooltipPopup side="top">{detail.title}</TooltipPopup>
-            </Tooltip>
           ) : null}
           {children}
         </>
