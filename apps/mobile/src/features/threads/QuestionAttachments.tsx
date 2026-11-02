@@ -7,7 +7,7 @@ import { useNativePaste } from "../../lib/useNativePaste";
 import { convertPastedImagesToAttachments } from "../../lib/composerImages";
 import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS, type UserInputQuestion } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { View } from "react-native";
+import { View, type TextInputInstance } from "react-native";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
@@ -47,6 +47,16 @@ export function QuestionAttachments(props: {
   const drafts = useAtomValue(composerDraftsAtom);
   const focusedRef = useRef(false);
   const onInputFocusChange = props.onInputFocusChange;
+  // A controlled `value` echoes each keystroke into the native field, which drops iOS autocorrect.
+  const inputRef = useRef<TextInputInstance>(null);
+  const [initialValue] = useState(props.value);
+  const reportedValueRef = useRef(props.value);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- an option tap empties the draft while the uncontrolled native field still shows text
+  useEffect(() => {
+    if (props.value !== "" || reportedValueRef.current === "") return;
+    reportedValueRef.current = "";
+    inputRef.current?.clear();
+  }, [props.value]);
   // The caller keys this component by request and question, so unmounting ends any open
   // picker's scope.
   const pickerScope = useRef<{ active: boolean }>({ active: false });
@@ -195,11 +205,15 @@ export function QuestionAttachments(props: {
       <VideoPreviewModal source={previewVideo} onRequestClose={() => setPreviewVideo(null)} />
       <TextInputWrapper onPaste={paste}>
         <TextInput
-          value={props.value}
+          ref={inputRef}
+          defaultValue={initialValue}
           multiline={props.question.initialAnswer !== undefined}
           submitBehavior={props.question.initialAnswer !== undefined ? "newline" : undefined}
           editable={!props.disabled}
-          onChangeText={props.onChangeText}
+          onChangeText={(value) => {
+            reportedValueRef.current = value;
+            props.onChangeText(value);
+          }}
           onFocus={() => {
             focusedRef.current = true;
             onInputFocusChange?.(true);
