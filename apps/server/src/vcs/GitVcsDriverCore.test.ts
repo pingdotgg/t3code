@@ -3512,6 +3512,21 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["commit", "--allow-empty", "-m", "detached"]);
         assert.notEqual(yield* snapshot, fetched);
 
+        const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* writeTextFile(
+          cwd,
+          ".git/packed-refs",
+          Array.from(
+            { length: 16_000 },
+            (_, index) => `${head.trim()} refs/heads/snapshot-${String(index).padStart(5, "0")}\n`,
+          ).join(""),
+        );
+        const large = yield* snapshot;
+        assert.isNotNull(large);
+        assert.equal(yield* snapshot, large);
+        yield* git(cwd, ["update-ref", "refs/heads/snapshot-00000", "HEAD~1"]);
+        assert.notEqual(yield* snapshot, large);
+
         assert.isNull(yield* driver.readRefSnapshot(yield* makeTmpDir()));
       }),
     );

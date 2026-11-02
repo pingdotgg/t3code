@@ -66,6 +66,7 @@ const legacyBranchBaseConfigKey = (branch: string) => `branch.${branch}.gh-merge
 const gitProcesses = Semaphore.makeUnsafe(8);
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
+const REF_SNAPSHOT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
 const RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
@@ -1643,6 +1644,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const readRefSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readRefSnapshot"] = (cwd) =>
     executeGit("GitVcsDriver.readRefSnapshot", cwd, ["show-ref", "--head"], {
       allowNonZeroExit: true,
+      maxOutputBytes: REF_SNAPSHOT_MAX_OUTPUT_BYTES,
     }).pipe(
       Effect.map((result) => (result.exitCode === 0 ? result.stdout : null)),
       Effect.orElseSucceed(() => null),
