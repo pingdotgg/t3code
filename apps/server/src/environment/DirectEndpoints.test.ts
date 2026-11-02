@@ -258,25 +258,27 @@ const layerServeProbe = (status: number) =>
     ),
   );
 
-const layerServeConfig = Layer.effect(
-  ServerConfig.ServerConfig,
-  Effect.map(ServerConfig.ServerConfig, (config) => ({
-    ...config,
-    host: "127.0.0.1",
-    tailscaleServeEnabled: true,
-    tailscaleServePort: 443,
-  })),
-).pipe(
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-direct-" })),
-  Layer.provide(NodeServices.layer),
-);
+const layerServeConfig = (host = "127.0.0.1") =>
+  Layer.effect(
+    ServerConfig.ServerConfig,
+    Effect.map(ServerConfig.ServerConfig, (config) => ({
+      ...config,
+      host,
+      port: 3773,
+      tailscaleServeEnabled: true,
+      tailscaleServePort: 443,
+    })),
+  ).pipe(
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-direct-" })),
+    Layer.provide(NodeServices.layer),
+  );
 
 const resolveWithServe = (probeStatus: number) =>
   Effect.flatMap(DirectEndpoints.DirectEndpoints, (service) => service.resolve()).pipe(
     Effect.provide(
       DirectEndpoints.layer.pipe(
         Layer.provide(
-          Layer.mergeAll(layerServeConfig, layerTailscaleUp, layerServeProbe(probeStatus)),
+          Layer.mergeAll(layerServeConfig(), layerTailscaleUp, layerServeProbe(probeStatus)),
         ),
       ),
     ),
@@ -301,7 +303,7 @@ describe("DirectEndpoints Tailscale Serve", () => {
         const service = yield* DirectEndpoints.make.pipe(
           Effect.provide(
             Layer.mergeAll(
-              layerServeConfig,
+              layerServeConfig("192.168.1.10"),
               layerTailscaleUp,
               Layer.succeed(
                 HttpClient.HttpClient,
@@ -320,16 +322,18 @@ describe("DirectEndpoints Tailscale Serve", () => {
         );
         const resolving = yield* Effect.forkScoped(service.resolve());
         yield* Deferred.await(probeStarted);
-        expect(yield* service.resolveAvailable()).toEqual([]);
+        const bound = { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" };
+        expect(yield* service.resolveAvailable()).toEqual([bound]);
         yield* Deferred.succeed(finishProbe, undefined);
         const validated = yield* Fiber.join(resolving);
         expect(validated).toEqual([
+          bound,
           { kind: "tailnet", httpBaseUrl: "https://bb-1.tail1234.ts.net/" },
         ]);
         expect(yield* service.resolveAvailable()).toEqual(validated);
         yield* Ref.set(status, 502);
-        expect(yield* service.resolve()).toEqual([]);
-        expect(yield* service.resolveAvailable()).toEqual([]);
+        expect(yield* service.resolve()).toEqual([bound]);
+        expect(yield* service.resolveAvailable()).toEqual([bound]);
       }).pipe(Effect.scoped),
   );
 
