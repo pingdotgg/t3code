@@ -1004,7 +1004,7 @@ describe("EnvironmentSupervisor", () => {
       const harness = yield* makeHarness({
         probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 

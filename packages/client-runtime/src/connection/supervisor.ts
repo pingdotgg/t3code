@@ -283,9 +283,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
-  // The primary environment served this client, so the device reporting
-  // offline (often wrongly) never parks it. The report still probes its live
-  // session, like any other network change.
+  // The primary environment served this client or runs beside it on loopback,
+  // so the device reporting offline (often wrongly) never parks it. The report
+  // still probes its live session, like any other network change.
   const targetNetwork = (network: NetworkStatus): NetworkStatus =>
     network === "offline" && target._tag === "PrimaryConnectionTarget" ? "unknown" : network;
   const initialIntent: SupervisorIntent = {
