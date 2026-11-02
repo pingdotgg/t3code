@@ -722,6 +722,23 @@ function makeCodexReplayTranscript(input: {
   };
 }
 
+function codexRateLimitsReadEntries(
+  response: { readonly result: unknown } | { readonly error: unknown },
+): Array<CodexReplay.CodexAppServerReplayEntry> {
+  return [
+    {
+      type: "expect_outbound",
+      label: "account/rateLimits/read",
+      frame: { id: 4, method: "account/rateLimits/read", params: null },
+    },
+    { type: "emit_inbound", label: "account/rateLimits/read", frame: { id: 4, ...response } },
+  ];
+}
+
+const CODEX_RATE_LIMITS_READ_FAILURE = {
+  error: { code: -32603, message: "Usage is unavailable." },
+} as const;
+
 function withReplayRequestId(
   entry: CodexReplay.CodexAppServerReplayEntry,
   id: number,
@@ -5257,6 +5274,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     },
     { name: "retry", code: "usageLimitExceeded", notification: true, expectedClass: "usage_limit" },
     {
+      name: "read-reset",
+      code: "usageLimitExceeded",
+      notification: true,
+      expectedClass: "usage_limit",
+    },
+    {
       name: "exhausted-429",
       code: "responseTooManyFailedAttempts",
       errorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 429 } },
@@ -5386,6 +5409,31 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 },
               },
             },
+            ...(scenario.expectedClass === "usage_limit" && scenario.name !== "deferred-reset"
+              ? codexRateLimitsReadEntries(
+                  scenario.name === "read-reset"
+                    ? {
+                        result: {
+                          rateLimits: {
+                            limitId: "codex",
+                            primary: {
+                              usedPercent: 0,
+                              windowDurationMins: 300,
+                              resetsAt: 1999990000,
+                            },
+                            secondary: {
+                              usedPercent: 100,
+                              windowDurationMins: 10080,
+                              resetsAt: 2000100000,
+                            },
+                            planType: "plus",
+                            rateLimitReachedType: "rate_limit_reached",
+                          },
+                        },
+                      }
+                    : CODEX_RATE_LIMITS_READ_FAILURE,
+                )
+              : []),
             ...(scenario.name === "late-reset" ? [snapshot] : []),
             ...(scenario.name === "deferred-reset"
               ? [
@@ -5446,7 +5494,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.failure.class, scenario.expectedClass);
         assert.equal(terminal.threadDisposition, "reusable");
-        if (scenario.name === "deferred-reset") assert.equal(terminal.failure.resetAt, resetAt);
+        if (scenario.name === "deferred-reset" || scenario.name === "read-reset")
+          assert.equal(terminal.failure.resetAt, resetAt);
+        if (scenario.name === "usage") assert.isNull(terminal.failure.resetAt);
         if (scenario.name === "matching-details")
           assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");
         if (scenario.name === "late-reset") {
@@ -5550,6 +5600,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   },
                 },
               },
+              ...(expectedClass === "usage_limit"
+                ? codexRateLimitsReadEntries(CODEX_RATE_LIMITS_READ_FAILURE)
+                : []),
             ],
           });
           const harness = yield* makeCodexReplayHarness(transcript);
