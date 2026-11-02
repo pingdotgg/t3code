@@ -303,7 +303,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const promptLink = promptLinkFor(text);
   // Find reads the DOM, so a folded prompt stays mounted but hidden while find is open.
   const bodyMounted = expanded || ctx.findActive;
-  const userMessageMeta = resolveUserMessageMeta(row.message.inputIntent, row.steerOffsetMs);
+  const userMessageMeta = resolveUserMessageMeta(row.message.inputIntent);
 
   return (
     <div
@@ -343,11 +343,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         ) : null}
       </div>
       {userMessageMeta && !row.continuesSteer ? (
-        <UserMessageMeta
-          intent={userMessageMeta.intent}
-          label={userMessageMeta.label}
-          offset={userMessageMeta.offset}
-        />
+        <UserMessageMeta intent={userMessageMeta.intent} label={userMessageMeta.label} />
       ) : null}
       <UserMessageProjectedStatus row={row} />
       {expanded ? (
@@ -804,7 +800,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       </div>
     ) : null;
 
-  const userMessageMeta = resolveUserMessageMeta(row.message.inputIntent, row.steerOffsetMs);
+  const userMessageMeta = resolveUserMessageMeta(row.message.inputIntent);
   // Touch shows actions all the time, and narrow lanes have no room beside the
   // bubble, so both keep the actions on their own line.
   const floatActions = row.groupedWithNext === true && !coarsePointer;
@@ -873,11 +869,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </div>
       ) : null}
       {userMessageMeta && !row.continuesSteer ? (
-        <UserMessageMeta
-          intent={userMessageMeta.intent}
-          label={userMessageMeta.label}
-          offset={userMessageMeta.offset}
-        />
+        <UserMessageMeta intent={userMessageMeta.intent} label={userMessageMeta.label} />
       ) : null}
       {mediaAboveText ? (
         <div className="flex max-w-[80%] justify-end">
@@ -1236,11 +1228,9 @@ const UserMessageBody = memo(function UserMessageBody(props: {
 function UserMessageMeta({
   intent,
   label,
-  offset,
 }: {
   readonly intent: "steer" | "promoted_queued_to_steer";
   readonly label: string;
-  readonly offset?: string | undefined;
 }) {
   return (
     <Tooltip>
@@ -1259,35 +1249,14 @@ function UserMessageMeta({
         {intent === "promoted_queued_to_steer"
           ? "Originally queued, then promoted to steer the active turn"
           : "Steered the active turn"}
-        {offset ? <span className="block">At {offset}</span> : null}
       </TooltipPopup>
     </Tooltip>
   );
 }
 
-function formatTurnOffset(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = String(totalSeconds % 60).padStart(2, "0");
-  return hours > 0
-    ? `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`
-    : `${minutes}:${seconds}`;
-}
-
-/** Meta under a prompt: steers carry the moment they landed in the turn. */
 function resolveUserMessageMeta(
   intent: ChatMessage["inputIntent"],
-  steerOffsetMs: number | undefined,
-): {
-  intent: "steer" | "promoted_queued_to_steer";
-  label: string;
-  offset?: string | undefined;
-} | null {
+): { intent: "steer" | "promoted_queued_to_steer"; label: string } | null {
   if (intent !== "steer" && intent !== "promoted_queued_to_steer") return null;
-  return {
-    intent,
-    label: "steer",
-    offset: steerOffsetMs === undefined ? undefined : formatTurnOffset(steerOffsetMs),
-  };
+  return { intent, label: "steer" };
 }
