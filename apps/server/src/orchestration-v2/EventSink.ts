@@ -3,6 +3,7 @@ import {
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2TurnItem,
   OrchestrationV2StoredEvent,
   ProviderThreadId,
   RunAttemptId,
@@ -127,6 +128,17 @@ export interface EventSinkV2Shape {
   /** Commits only if the full provider row equals expected; some writers do not advance updatedAt. */
   readonly writeIfProviderThreadUnchanged: (input: {
     readonly expected: OrchestrationV2ProviderThread;
+    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  }) => Effect.Effect<
+    {
+      readonly committed: boolean;
+      readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
+    },
+    EventSinkV2Error
+  >;
+  /** Commits only if each expected turn item row still equals its expected payload. */
+  readonly writeIfTurnItemsUnchanged: (input: {
+    readonly expected: ReadonlyArray<OrchestrationV2TurnItem>;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<
     {
@@ -616,6 +628,48 @@ const layerBase: Layer.Layer<
       );
     });
 
+    const writeIfTurnItemsUnchangedEffect = Effect.fn(
+      "orchestrationV2.EventSink.writeIfTurnItemsUnchanged",
+    )(function* (input: Parameters<EventSinkV2Shape["writeIfTurnItemsUnchanged"]>[0]) {
+      yield* Effect.annotateCurrentSpan({
+        "orchestration_v2.event_count": input.events.length,
+        "orchestration_v2.turn_item_count": input.expected.length,
+      });
+      const expected = yield* Effect.forEach(input.expected, (item) =>
+        ProjectionStore.encodeTurnItemPayload(item).pipe(
+          Effect.map((payloadJson) => ({ id: item.id, payloadJson })),
+        ),
+      );
+
+      return yield* commitThenPublish(
+        Effect.gen(function* () {
+          for (const item of expected) {
+            const rows = yield* sql<{ readonly payload_json: string }>`
+              SELECT payload_json
+              FROM orchestration_v2_projection_turn_items
+              WHERE turn_item_id = ${item.id}
+              LIMIT 1
+            `;
+            if (rows[0]?.payload_json !== item.payloadJson) {
+              return {
+                committed: false as const,
+                storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
+              };
+            }
+          }
+
+          const normalized = yield* normalizeEvents(input.events);
+          const storedEvents = yield* eventStore.append({ events: normalized });
+          const outcomes = yield* applyStoredEvents(storedEvents);
+          return { committed: true as const, storedEvents, outcomes };
+        }),
+        (result) =>
+          result.committed
+            ? publishStoredEvents(result.storedEvents, result.outcomes)
+            : Effect.void,
+      );
+    });
+
     const existingCommandResult =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(function* (commandId: CommandId) {
@@ -924,6 +978,12 @@ const layerBase: Layer.Layer<
         ),
       writeIfProviderThreadUnchanged: (input) =>
         writeIfProviderThreadUnchangedEffect(input).pipe(
+          Effect.mapError(
+            (cause) => new EventSinkWriteError({ eventCount: input.events.length, cause }),
+          ),
+        ),
+      writeIfTurnItemsUnchanged: (input) =>
+        writeIfTurnItemsUnchangedEffect(input).pipe(
           Effect.mapError(
             (cause) => new EventSinkWriteError({ eventCount: input.events.length, cause }),
           ),

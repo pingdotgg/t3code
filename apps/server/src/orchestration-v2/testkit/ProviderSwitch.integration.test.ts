@@ -1812,134 +1812,119 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
-  // regression: #15993 the agent releases its own Claude session through a tool call, by
-  // handing the thread off to a worktree or by switching its provider. Nothing is left to
-  // report how the call ended, so it stayed running and the thread stayed Waiting.
-  it.live.each(["handoff", "switch"] as const)(
-    "interrupts a tool call that a %s cuts off by releasing its session",
-    (release) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const key = `${release}-cuts-off-tool-call`;
-          const worktreePath = yield* checkpointWorkspace(key);
-          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-          const started = yield* Deferred.make<void>();
-          const toolCallId = TurnItemId.make(`turn-item:${key}`);
-          const scenarioThreadId = ThreadId.make(`thread:${key}`);
-          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
-            makeTestAdapter({
-              instanceId: CLAUDE_MODEL_SELECTION.instanceId,
-              driver: CLAUDE_DRIVER,
-              capabilities: ClaudeProviderCapabilitiesV2,
-              modelSelection: CLAUDE_MODEL_SELECTION,
-              responseByRunOrdinal: {},
-              capturedTurns,
-              holdFirstTurn: started,
-              heldRunningToolCall: {
-                id: toolCallId,
-                toolName:
-                  release === "handoff"
-                    ? "mcp__t3-code__t3_worktree_handoff"
-                    : "mcp__t3-code__t3_thread_configure",
-              },
-              backgroundTasksEndWithProcess: true,
-            }),
-            makeTestAdapter({
-              instanceId: CODEX_MODEL_SELECTION.instanceId,
-              driver: CODEX_DRIVER,
-              capabilities: CodexProviderCapabilitiesV2,
-              modelSelection: CODEX_MODEL_SELECTION,
-              responseByRunOrdinal: {},
-              capturedTurns,
-            }),
-          ]);
-          yield* Effect.gen(function* () {
-            const orchestrator = yield* Orchestrator.OrchestratorV2;
-            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-            const awaitEvent = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
-              orchestrator.streamDomainEvents.pipe(
-                Stream.filter(predicate),
-                Stream.take(1),
-                Stream.runDrain,
-                Effect.forkScoped,
-              );
-            yield* orchestrator.dispatch({
-              type: "thread.create",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: CommandId.make(`command:${key}:create`),
-              threadId: scenarioThreadId,
-              projectId: ProjectId.make(`project:${key}`),
-              title: "Tool call releases its session",
-              modelSelection: CLAUDE_MODEL_SELECTION,
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              branch: null,
-              worktreePath: null,
-            });
-            const toolCallRunning = yield* awaitEvent(
-              (event) =>
-                event.type === "turn-item.updated" &&
-                event.payload.id === toolCallId &&
-                event.payload.status === "running",
+  // regression: #15993 t3_worktree_handoff releases the Claude session that runs it. Nothing
+  // was left to report how the call ended, so it stayed running and the thread stayed Waiting.
+  it.live("interrupts the handoff tool call that releases its own session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const key = "handoff-cuts-off-tool-call";
+        const worktreePath = yield* checkpointWorkspace(key);
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const started = yield* Deferred.make<void>();
+        const toolCallId = TurnItemId.make(`turn-item:${key}`);
+        const scenarioThreadId = ThreadId.make(`thread:${key}`);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            holdFirstTurn: started,
+            heldRunningToolCall: {
+              id: toolCallId,
+              toolName: "mcp__t3-code__t3_worktree_handoff",
+            },
+            backgroundTasksEndWithProcess: true,
+          }),
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const awaitEvent = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+            orchestrator.streamDomainEvents.pipe(
+              Stream.filter(predicate),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
             );
-            yield* orchestrator.dispatch({
-              type: "message.dispatch",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: CommandId.make(`command:${key}:message`),
-              threadId: scenarioThreadId,
-              messageId: MessageId.make(`message:${key}`),
-              text: "Release this session",
-              attachments: [],
-              modelSelection: CLAUDE_MODEL_SELECTION,
-              dispatchMode: { type: "start_immediately" },
-            });
-            yield* Deferred.await(started);
-            yield* Fiber.join(toolCallRunning);
-
-            const runFailed = yield* awaitEvent(
-              (event) => event.type === "run.updated" && event.payload.status === "failed",
-            );
-            yield* orchestrator.dispatch(
-              release === "handoff"
-                ? {
-                    type: "thread.metadata.update",
-                    commandId: CommandId.make(`command:${key}:release`),
-                    threadId: scenarioThreadId,
-                    branch: `t3/${key}`,
-                    worktreePath,
-                    expectedWorktreePath: null,
-                  }
-                : {
-                    type: "provider.switch",
-                    commandId: CommandId.make(`command:${key}:release`),
-                    threadId: scenarioThreadId,
-                    modelSelection: CODEX_MODEL_SELECTION,
-                  },
-            );
-            yield* worker.drain();
-            yield* Fiber.join(runFailed);
-
-            const projection = yield* orchestrator.getThreadProjection(scenarioThreadId);
-            const toolCall = projection.turnItems.find((item) => item.id === toolCallId);
-            assert.equal(toolCall?.status, "interrupted");
-            assert.isNotNull(toolCall?.completedAt);
-            assert.deepEqual(
-              derivePendingBackgroundWork({
-                latestRun: projection.runs.at(-1),
-                providerThreads: projection.providerThreads,
-                turnItems: projection.turnItems,
-                activeProviderThreadId: projection.thread.activeProviderThreadId,
-                runs: projection.runs,
-              }),
-              [],
-            );
-          }).pipe(
-            Effect.provide(ProviderReplayHarness.layerWithRegistry({ name: key }, layerRegistry)),
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:${key}:create`),
+            threadId: scenarioThreadId,
+            projectId: ProjectId.make(`project:${key}`),
+            title: "Tool call releases its session",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          const toolCallRunning = yield* awaitEvent(
+            (event) =>
+              event.type === "turn-item.updated" &&
+              event.payload.id === toolCallId &&
+              event.payload.status === "running",
           );
-        }),
-      ),
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:${key}:message`),
+            threadId: scenarioThreadId,
+            messageId: MessageId.make(`message:${key}`),
+            text: "Release this session",
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* Deferred.await(started);
+          yield* Fiber.join(toolCallRunning);
+
+          const runFailed = yield* awaitEvent(
+            (event) => event.type === "run.updated" && event.payload.status === "failed",
+          );
+          yield* orchestrator.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`command:${key}:release`),
+            threadId: scenarioThreadId,
+            branch: `t3/${key}`,
+            worktreePath,
+            expectedWorktreePath: null,
+          });
+          yield* worker.drain();
+          yield* Fiber.join(runFailed);
+
+          const projection = yield* orchestrator.getThreadProjection(scenarioThreadId);
+          const toolCall = projection.turnItems.find((item) => item.id === toolCallId);
+          assert.equal(toolCall?.status, "interrupted");
+          assert.isNotNull(toolCall?.completedAt);
+          assert.deepEqual(
+            derivePendingBackgroundWork({
+              latestRun: projection.runs.at(-1),
+              providerThreads: projection.providerThreads,
+              turnItems: projection.turnItems,
+              activeProviderThreadId: projection.thread.activeProviderThreadId,
+              runs: projection.runs,
+            }),
+            [],
+          );
+        }).pipe(
+          Effect.provide(ProviderReplayHarness.layerWithRegistry({ name: key }, layerRegistry)),
+        );
+      }),
+    ),
   );
 
   it.live("checks the queued provider's capability while the current provider stays running", () =>
