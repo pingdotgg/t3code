@@ -65,10 +65,10 @@ A project on several machines must have every machine connected to pin or archiv
 ## Worktree base branch
 
 New worktrees start from the repository's default branch. If a project's work branches
-from somewhere else, such as `dev`, select the project and enter that branch, tag, or
-commit in **Settings → Worktrees → Base branch**. Leave it empty to go back to the
-repository default. You can still choose a different base for any single thread
-from the branch picker.
+from somewhere else, such as `dev`, select the project and pick that branch in
+**Settings → Worktrees → Base branch**. To use a tag or commit, type it in the picker's
+search. Choose **Repository default** to go back. You can still choose a different base
+for any single thread from the branch picker.
 
 ## Worktree branch names
 

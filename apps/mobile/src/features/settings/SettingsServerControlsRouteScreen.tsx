@@ -447,12 +447,26 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
               {props.page === "worktrees" ? (
                 <>
                   <SettingsSection title="New worktrees">
-                    <WorktreeBaseBranchSetting
-                      key={targetsKey}
-                      value={uniform("newWorktreesBaseBranch")}
-                      disabled={disabledFor("newWorktreesBaseBranch")}
-                      onChange={write}
-                    />
+                    {projectSelected ? (
+                      <SettingsRow
+                        icon="arrow.triangle.branch"
+                        label="Base branch"
+                        value={
+                          isMixed("newWorktreesBaseBranch")
+                            ? "Mixed"
+                            : uniform("newWorktreesBaseBranch") || "Repository default"
+                        }
+                        disabled={disabledFor("newWorktreesBaseBranch")}
+                        onPress={() => navigation.navigate("SettingsWorktreeBaseBranch")}
+                      />
+                    ) : (
+                      <WorktreeBaseBranchSetting
+                        key={targetsKey}
+                        value={uniform("newWorktreesBaseBranch")}
+                        disabled={disabledFor("newWorktreesBaseBranch")}
+                        onChange={write}
+                      />
+                    )}
                     <SettingsSwitchRow
                       icon="arrow.triangle.branch"
                       label="Start from remote"

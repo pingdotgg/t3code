@@ -1,7 +1,6 @@
-import { useRef } from "react";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
-import { Input } from "../ui/input";
+import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { BranchNamingSettings } from "./BranchNamingSettings";
 import { WorktreeSubmodulesRow } from "./ProjectDefaultsSettings";
@@ -23,17 +22,22 @@ import {
 
 function BaseBranchRow() {
   const settings = useScopedSettings();
-  const { targets } = useSettingsScope();
-  const scopeKey = targets.map((target) => `${target.environmentId}:${target.projectId}`).join(",");
-  const edited = useRef(false);
+  const { scope, target } = useSettingsScope();
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["newWorktreesBaseBranch"]);
+  const member =
+    (scope.kind === "project" || scope.kind === "checkout") && target?.projectId
+      ? scope.members.find(
+          (candidate) =>
+            candidate.id === target.projectId && candidate.environmentId === target.environmentId,
+        )
+      : undefined;
   return (
     <SettingsRow
       serverScoped
       settingKeys={["newWorktreesBaseBranch"]}
       {...searchableSetting("worktree-base-branch")}
-      description="The branch, tag, or commit new worktrees start from, such as dev. Leave empty to use the repository’s default branch. You can still pick another branch for each thread."
+      description="The branch new worktrees start from, such as dev. You can still pick another branch for each thread."
       resetAction={
         mixed || settings.newWorktreesBaseBranch !== "" ? (
           <SettingResetButton
@@ -43,23 +47,20 @@ function BaseBranchRow() {
         ) : null
       }
       control={
-        <Input
-          key={`${scopeKey}:${mixed}:${settings.newWorktreesBaseBranch}`}
-          aria-label="Base branch for new worktrees"
-          autoCapitalize="none"
-          spellCheck={false}
-          onChange={() => {
-            edited.current = true;
-          }}
-          placeholder={mixed ? "Mixed" : "Repository default"}
-          defaultValue={mixed ? "" : settings.newWorktreesBaseBranch}
-          onBlur={(event) => {
-            const value = event.target.value.trim();
-            if (edited.current && (mixed || value !== settings.newWorktreesBaseBranch))
-              updateSettings({ newWorktreesBaseBranch: value });
-            edited.current = false;
-          }}
-        />
+        <div className="w-48">
+          <WorktreeBaseBranchPicker
+            key={`${member?.environmentId}:${member?.workspaceRoot}`}
+            aria-label="Base branch for new worktrees"
+            environmentId={member?.environmentId ?? null}
+            cwd={member?.workspaceRoot ?? null}
+            value={mixed ? "" : settings.newWorktreesBaseBranch}
+            emptyLabel={mixed ? "Mixed" : "Repository default"}
+            onValueChange={(newWorktreesBaseBranch) => updateSettings({ newWorktreesBaseBranch })}
+            startFromOrigin={settings.newWorktreesStartFromOrigin}
+            defaultOption={{ label: "Repository default" }}
+            allowCustomRef
+          />
+        </div>
       }
     />
   );
