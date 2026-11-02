@@ -434,8 +434,9 @@ const SETTINGS_ENV_NAMES = [
   "CLAUDE_CODE_ENTRYPOINT",
 ] as const;
 export type ClaudeSettingsEnv = Partial<Record<(typeof SETTINGS_ENV_NAMES)[number], string>>;
+// Strict like Claude Code, which skips a settings file with comments or trailing commas.
 const decodeSettingsEnv = Schema.decodeUnknownEffect(
-  fromLenientJson(
+  Schema.fromJsonString(
     Schema.Struct({ env: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)) }),
   ),
 );
