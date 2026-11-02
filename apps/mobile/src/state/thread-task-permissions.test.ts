@@ -218,6 +218,7 @@ describe("mobile task permissions", () => {
     expect(state.approve).toHaveBeenCalledWith({
       environmentId: "secondary",
       input: {
+        creationSource: "mobile",
         threadId: "thread",
         requestId: "approval",
         decision: "decline",
@@ -282,7 +283,12 @@ describe("mobile task permissions", () => {
     await requests.onRespondToApproval(RuntimeRequestId.make("approval"), "accept");
     expect(state.approve).toHaveBeenCalledWith({
       environmentId: "secondary",
-      input: { threadId: "thread", requestId: "approval", decision: "accept" },
+      input: {
+        creationSource: "mobile",
+        threadId: "thread",
+        requestId: "approval",
+        decision: "accept",
+      },
     });
   });
 
@@ -314,7 +320,12 @@ describe("mobile task permissions", () => {
     await requests.onSubmitUserInput();
     expect(state.answer).toHaveBeenCalledWith({
       environmentId: "secondary",
-      input: { threadId: "thread", requestId: "input", answers: { language: "TypeScript" } },
+      input: {
+        creationSource: "mobile",
+        threadId: "thread",
+        requestId: "input",
+        answers: { language: "TypeScript" },
+      },
     });
   });
 });

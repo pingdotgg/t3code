@@ -7844,8 +7844,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
-    if (!mayStartSubagentFollowup(command)) return;
     const pending = yield* Ref.get(events);
+    const answeredQuestion = pending.some(
+      (event) =>
+        event.type === "runtime-request.updated" &&
+        event.payload.kind === "user_input" &&
+        event.payload.status === "resolved" &&
+        event.payload.responseCapability.type === "message" &&
+        command.messageId === MessageId.make(`async-answer:${event.payload.id}`),
+    );
+    if (!answeredQuestion && !mayStartSubagentFollowup(command)) return;
     const message = pending
       .flatMap((event) =>
         event.type === "message.updated" && event.payload.id === command.messageId
@@ -7866,7 +7874,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       child.lineage.relationshipToParent !== "subagent" ||
       parentThreadId === null ||
-      (command.notification === undefined &&
+      (!answeredQuestion &&
+        command.notification === undefined &&
         command.createdBy !== "user" &&
         command.senderThreadId !== parentThreadId)
     )
