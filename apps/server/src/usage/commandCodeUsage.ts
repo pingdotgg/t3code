@@ -59,7 +59,8 @@ function parseRecord(value: unknown, state: typeof ScanState.Type): readonly Usa
     entry.usage.costUsd >= 0
       ? entry.usage.costUsd
       : null;
-  if (totalTokens(totals) === 0 && reportedCostUsd === null) return [];
+  // Command Code may persist a placeholder with no usage; genuine free calls still have tokens.
+  if (totalTokens(totals) === 0 && (reportedCostUsd === null || reportedCostUsd === 0)) return [];
   return [
     {
       provider: "command-code",
@@ -69,7 +70,9 @@ function parseRecord(value: unknown, state: typeof ScanState.Type): readonly Usa
       totals,
       reportedCostUsd,
       speed: "standard",
-      dedupeKey: JSON.stringify(["command-code", state.sessionId, entry.id]),
+      // /fork copies message IDs and timestamps into a new session, but independent
+      // messages can reuse an ID. Normalize timestamps and retain model to distinguish them.
+      dedupeKey: JSON.stringify(["command-code", entry.id, timestampMs, entry.model]),
     },
   ];
 }

@@ -7,8 +7,13 @@ import {
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -46,6 +51,64 @@ it("recognizes Command Code by provider driver or ACP agent, never by instance k
     }),
   ).toBe(false);
 });
+
+it.effect("refreshes usage limits when a Command Code provider instance is added", () =>
+  Effect.gen(function* () {
+    const baseContext = yield* Layer.build(ServerSettings.layerTest());
+    const baseSettings = Context.get(baseContext, ServerSettings.ServerSettingsService);
+    const initial = yield* baseSettings.getSettings;
+    const current = yield* Ref.make(initial);
+    const updates = yield* Queue.unbounded<typeof initial>();
+    const firstEventObserved = yield* Deferred.make<void>();
+    const refreshedWithProvider = yield* Deferred.make<void>();
+    const settings = {
+      ...baseSettings,
+      getSettings: Ref.get(current).pipe(
+        Effect.tap((snapshot) =>
+          UsageLimitSources.hasConfiguredCommandCodeProvider(snapshot.providerInstances)
+            ? Deferred.succeed(refreshedWithProvider, undefined).pipe(Effect.ignore)
+            : Effect.void,
+        ),
+      ),
+      streamChanges: Stream.fromQueue(updates).pipe(
+        Stream.tap(() => Deferred.succeed(firstEventObserved, undefined).pipe(Effect.ignore)),
+      ),
+    };
+
+    const sources = yield* UsageLimitSources.make.pipe(
+      Effect.provideService(ServerSettings.ServerSettingsService, settings),
+    );
+    yield* sources.refresh;
+    yield* Queue.offer(updates, initial);
+    yield* Deferred.await(firstEventObserved);
+
+    const configured = {
+      ...initial,
+      providerInstances: {
+        ...initial.providerInstances,
+        [ProviderInstanceId.make("cc")]: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          config: { agentId: "command-code" },
+        },
+      },
+    };
+    yield* Ref.set(current, configured);
+    yield* Queue.offer(updates, configured);
+    yield* Deferred.await(refreshedWithProvider);
+  }).pipe(
+    Effect.provide([
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("Unexpected network request")),
+      ),
+      NodeCrypto.layer,
+    ]),
+    Effect.scoped,
+  ),
+);
 
 it.effect("keeps malformed source URLs encodable for config subscribers", () =>
   Effect.gen(function* () {

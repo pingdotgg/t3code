@@ -59,6 +59,20 @@ it("reads Command Code history for Usage cost, token and cache breakdown", async
         model: "free-model",
         usage: { inputTokens: 1, outputTokens: 2, costUsd: 0 },
       },
+      {
+        type: "message",
+        id: "empty-reply",
+        timestamp: "2026-10-31T19:06:45.000Z",
+        model: "free-model",
+        usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+      },
+      {
+        type: "message",
+        id: "missing-usage-reply",
+        timestamp: "2026-10-31T19:06:46.000Z",
+        model: "free-model",
+        usage: { inputTokens: 0, outputTokens: 0 },
+      },
       { type: "message", id: "assistant-without-usage", message: { role: "assistant" } },
     ];
     await NodeFSP.writeFile(file, lines.map((value) => JSON.stringify(value)).join("\n") + "\n");
@@ -75,6 +89,43 @@ it("reads Command Code history for Usage cost, token and cache breakdown", async
     assert.equal(scanned.records[2]?.dedupeKey, scanned.records[1]?.dedupeKey);
     assert.equal(scanned.records[3]?.reportedCostUsd, 0);
     assert.notEqual(scanned.records[3]?.dedupeKey, scanned.records[1]?.dedupeKey);
+    // Forked sessions copy the original message and timestamp but have a different session ID.
+    const forkFile = NodePath.join(dir, "fork.jsonl");
+    await NodeFSP.writeFile(
+      forkFile,
+      [
+        { type: "session", id: "thread-2" },
+        {
+          type: "message",
+          id: "reply-1",
+          timestamp: "2026-10-31T19:05:56.089000Z",
+          model: "deepseek/deepseek-v4-flash",
+          usage: {
+            inputTokens: 23006,
+            outputTokens: 7,
+            cacheReadTokens: 6144,
+            cacheWriteTokens: 0,
+            costUsd: 0.002551932,
+          },
+        },
+        {
+          type: "message",
+          id: "reply-1",
+          timestamp: "2026-10-31T19:06:47.000Z",
+          model: "deepseek/deepseek-v4-flash",
+          usage: { inputTokens: 12, outputTokens: 4, costUsd: 0.001 },
+        },
+      ]
+        .map((value) => JSON.stringify(value))
+        .join("\n") + "\n",
+    );
+    const forked = await readTranscriptRecords(forkFile, commandCodeUsageFormat);
+    assert.isNotNull(forked);
+    assert.lengthOf(forked.records, 2);
+    assert.equal(forked.records[0]?.sessionId, "thread-2");
+    assert.equal(forked.records[0]?.dedupeKey, scanned.records[0]?.dedupeKey);
+    // A reused message ID with a different timestamp is not a copied request.
+    assert.notEqual(forked.records[1]?.dedupeKey, scanned.records[0]?.dedupeKey);
     const repeated = await readTranscriptRecords(file, commandCodeUsageFormat, scanned.position);
     assert.isNotNull(repeated);
     assert.lengthOf(repeated.records, 0);

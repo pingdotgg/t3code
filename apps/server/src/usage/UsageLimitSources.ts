@@ -149,7 +149,12 @@ export const make = Effect.gen(function* () {
   }, refreshLock.withPermits(1));
 
   yield* settingsService.streamChanges.pipe(
-    Stream.map((settings) => settings.usageLimitSources),
+    // Adding/removing a Command Code ACP instance changes providerInstances,
+    // even when the explicit usage-limit source configuration is unchanged.
+    Stream.map((settings) => ({
+      usageLimitSources: settings.usageLimitSources,
+      providerInstances: settings.providerInstances,
+    })),
     Stream.changes,
     Stream.runForEach(() => refresh),
     Effect.forkScoped,

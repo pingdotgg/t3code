@@ -131,8 +131,8 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           />
           <img
             src="/assets/command-code-symbol-light.svg"
-            alt=""
-            aria-hidden
+            alt={props.decorative ? "" : props.displayName}
+            aria-hidden={props.decorative || undefined}
             className={cn("hidden size-5 shrink-0 object-contain dark:block", iconClassName)}
           />
         </>
