@@ -165,3 +165,44 @@ export function pruneNewTaskFlowStates(state: NavigationRoutes): void {
   if (kept.length === Object.keys(flows).length) return;
   appAtomRegistry.set(flowStatesAtom, Object.fromEntries(kept));
 }
+
+/**
+ * The project a new-task flow composes in. A draft stamped to a project stays bound to it while
+ * the flow still points at that machine: when the project is not loaded, the flow has no project
+ * and reports the stamp's machine, instead of moving the draft to another project or machine.
+ */
+export function selectNewTaskProject<
+  P extends { readonly environmentId: EnvironmentId; readonly id: ProjectId },
+>(input: {
+  readonly flow: Pick<NewTaskFlowState, "environmentId" | "projectKey">;
+  readonly stamp:
+    | { readonly environmentId: EnvironmentId; readonly projectId: ProjectId }
+    | undefined;
+  readonly projects: ReadonlyArray<P>;
+}): { readonly project: P | null; readonly boundMissing: EnvironmentId | null } {
+  const { flow, stamp, projects } = input;
+  if (
+    stamp !== undefined &&
+    (flow.environmentId === null || flow.environmentId === stamp.environmentId) &&
+    !projects.some(
+      (project) => project.environmentId === stamp.environmentId && project.id === stamp.projectId,
+    )
+  ) {
+    return { project: null, boundMissing: stamp.environmentId };
+  }
+  const environmentId =
+    flow.environmentId !== null &&
+    projects.some((project) => project.environmentId === flow.environmentId)
+      ? flow.environmentId
+      : (projects[0]?.environmentId ?? null);
+  const inEnvironment = projects.filter((project) => project.environmentId === environmentId);
+  return {
+    project:
+      inEnvironment.find(
+        (project) => scopedProjectKey(project.environmentId, project.id) === flow.projectKey,
+      ) ??
+      inEnvironment[0] ??
+      null,
+    boundMissing: null,
+  };
+}

@@ -9,6 +9,7 @@ import {
   pruneNewTaskFlowStates,
   readNewTaskFlowState,
   resolveRouteDraft,
+  selectNewTaskProject,
   stampedEnvironmentProjectsLoading,
   updateNewTaskFlowState,
 } from "./new-task-flow-state";
@@ -150,5 +151,57 @@ describe("stampedEnvironmentProjectsLoading", () => {
       }),
     ).toBe(false);
     expect(stampedEnvironmentProjectsLoading({ ...settled, shellHasError: true })).toBe(false);
+  });
+});
+
+describe("selectNewTaskProject", () => {
+  const envA = EnvironmentId.make("env-a");
+  const envB = EnvironmentId.make("env-b");
+  const a1 = { environmentId: envA, id: ProjectId.make("a1") };
+  const a2 = { environmentId: envA, id: ProjectId.make("a2") };
+  const b1 = { environmentId: envB, id: ProjectId.make("b1") };
+  const stampB1 = { environmentId: envB, projectId: b1.id };
+  const flowOn = (environmentId: EnvironmentId | null, project: typeof a1 | null) => ({
+    environmentId,
+    projectKey: project === null ? null : `${project.environmentId}:${project.id}`,
+  });
+
+  it.each([
+    ["opens the bound project", flowOn(envB, b1), stampB1, [a1, b1], b1, null],
+    ["never moves a bound draft to another machine", flowOn(envB, b1), stampB1, [a1], null, envB],
+    [
+      "never moves a bound draft to another project on its machine",
+      flowOn(envB, b1),
+      stampB1,
+      [a1, { environmentId: envB, id: ProjectId.make("b2") }],
+      null,
+      envB,
+    ],
+    [
+      "follows the user to another machine before the draft is retargeted",
+      flowOn(envA, null),
+      stampB1,
+      [a1, a2],
+      a1,
+      null,
+    ],
+    [
+      "falls back as before for a draft not yet created",
+      flowOn(envB, b1),
+      undefined,
+      [a1],
+      a1,
+      null,
+    ],
+    [
+      "keeps the selected project when there is no stamp",
+      flowOn(envA, a2),
+      undefined,
+      [a1, a2],
+      a2,
+      null,
+    ],
+  ] as const)("%s", (_label, flow, stamp, projects, project, boundMissing) => {
+    expect(selectNewTaskProject({ flow, stamp, projects })).toEqual({ project, boundMissing });
   });
 });

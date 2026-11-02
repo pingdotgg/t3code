@@ -104,6 +104,7 @@ import {
   readNewTaskFlowState,
   resolveRouteDraft,
   type RouteDraftResolution,
+  selectNewTaskProject,
   stampedEnvironmentProjectsLoading,
   updateNewTaskFlowState,
 } from "./new-task-flow-state";
@@ -181,6 +182,8 @@ type NewTaskFlowContextValue = {
    * compares this with its own draft id.
    */
   readonly missingRouteDraftId: string | null;
+  /** The machine whose project this flow's draft is bound to, while that project is not loaded. */
+  readonly boundProjectMissingOn: EnvironmentId | null;
   readonly selectEnvironment: (environmentId: EnvironmentId) => void;
   readonly switchEnvironment: (environmentId: EnvironmentId) => Promise<boolean>;
   readonly switchingToEnvironmentId: EnvironmentId | null;
@@ -284,7 +287,6 @@ export function NewTaskFlowProvider(
   const flowState =
     routeDraftResolution.kind === "open" ? routeDraftResolution.flow : storedFlowState;
   const {
-    environmentId: selectedEnvironmentIdOverride,
     projectKey: selectedProjectKey,
     draftKey: activeDraftKey,
     submitting,
@@ -306,26 +308,17 @@ export function NewTaskFlowProvider(
   // binding outlives the draft's project stamp (submit clears it).
   const updateFlow = (patch: Partial<NewTaskFlowState>) =>
     updateNewTaskFlowState(flowKey, { ...readFlow(), ...patch });
-  const selectedEnvironmentId =
-    selectedEnvironmentIdOverride !== null &&
-    projects.some((project) => project.environmentId === selectedEnvironmentIdOverride)
-      ? selectedEnvironmentIdOverride
-      : (projects[0]?.environmentId ?? null);
-  const projectsForEnvironment = pipe(
+  const activeDraftStamp = useComposerDraft(activeDraftKey).project;
+  const selection = selectNewTaskProject({
+    flow: flowState,
+    stamp: activeDraftStamp,
     projects,
-    Arr.filter((project) => project.environmentId === selectedEnvironmentId),
-  );
+  });
+  const selectedEnvironmentId = selection.project?.environmentId ?? selection.boundMissing ?? null;
 
   // A route draft still waiting for its environment has no project yet: the
   // fallback would show, and could send to, another environment's project.
-  const selectedProject =
-    routeDraftResolution.kind === "pending"
-      ? null
-      : (projectsForEnvironment.find(
-          (project) => scopedProjectKey(project.environmentId, project.id) === selectedProjectKey,
-        ) ??
-        projectsForEnvironment[0] ??
-        null);
+  const selectedProject = routeDraftResolution.kind === "pending" ? null : selection.project;
 
   const linkedEnvironments = useLinkedEnvironments(selectedProject?.environmentId ?? null);
   const storedStickyModelSelection = useStickyComposerModelSelection();
@@ -891,6 +884,7 @@ export function NewTaskFlowProvider(
     getSelectedProjectKey: () => readFlow().projectKey,
     missingRouteDraftId:
       routeDraftResolution.kind === "missing" ? (props.routeDraftId ?? null) : null,
+    boundProjectMissingOn: selection.boundMissing,
     selectEnvironment,
     switchEnvironment,
     switchingToEnvironmentId,

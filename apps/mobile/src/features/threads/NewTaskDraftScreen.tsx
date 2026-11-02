@@ -684,6 +684,32 @@ export function NewTaskDraftScreen(props: {
     return message.messageId;
   }
 
+  if (!selectedProject && flow.boundProjectMissingOn !== null) {
+    return (
+      <ThreadScreenFallback
+        header={
+          <AppBar
+            title="New thread"
+            sidebar={false}
+            onBack={goBack}
+            options={{
+              ...threadHeaderAppearance(NATIVE_LIQUID_GLASS_SUPPORTED),
+              unstable_headerSubtitle: undefined,
+              unstable_headerRightItems: () => [],
+              unstable_headerToolbarItems: () => [],
+            }}
+          />
+        }
+      >
+        <View className="flex-1 justify-end gap-3 p-4">
+          <Text className="text-foreground-muted">
+            {selectedEnvironmentLabel}'s project is not available. Your draft is saved on this
+            device.
+          </Text>
+        </View>
+      </ThreadScreenFallback>
+    );
+  }
   // Keep the current surface until the local draft selection is ready. Publishing
   // an empty loading surface here flashes between two already-cached threads.
   if (!selectedProject) return null;
