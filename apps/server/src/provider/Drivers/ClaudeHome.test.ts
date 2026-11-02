@@ -218,6 +218,15 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         JSON.stringify({ env: { CLAUDE_CODE_ENTRYPOINT: 1, ANTHROPIC_API_KEY: "key" } }),
       );
       expect(yield* entrypoint(subscription)).toBeUndefined();
+
+      // Claude Code skips a settings file that is not strict JSON, so its key does not count.
+      for (const invalid of [
+        '// note\n{"env":{"ANTHROPIC_API_KEY":"key"}}',
+        '{"env":{"ANTHROPIC_API_KEY":"key",},}',
+      ]) {
+        yield* fileSystem.writeFileString(project, invalid);
+        expect(yield* entrypoint(subscription)).toBe("t3-code");
+      }
     }),
   );
 });
