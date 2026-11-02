@@ -5487,6 +5487,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const plan = (yield* sql.unsafe<{ readonly detail: string }>(
           `EXPLAIN QUERY PLAN ${statement}`,
         )).map((row) => row.detail);
+        assert.include(
+          plan.join("\n"),
+          "orchestration_v2_projection_runs_latest_executed_idx",
+          marker,
+        );
+        if (marker === "AS failure_payload_json") {
+          assert.include(
+            plan.join("\n"),
+            "orchestration_v2_projection_turn_items_usage_limit_idx",
+            marker,
+          );
+        }
         const bindingLookup = plan.findIndex((detail) => detail.startsWith("SEARCH binding "));
         const sessionLookup = plan.findIndex((detail) => detail.startsWith("SEARCH session "));
         assert.isAtLeast(bindingLookup, 0, marker);
