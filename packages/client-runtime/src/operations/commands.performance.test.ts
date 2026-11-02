@@ -174,7 +174,7 @@ const makeSupervisor = Effect.fn("CommandPerformance.makeSupervisor")(function* 
         },
       },
     } as never),
-    subscribeServerConfig: (requestInput) => client.subscribeServerConfig(requestInput),
+    subscribeServerConfig: (requestInput = {}) => client.subscribeServerConfig(requestInput),
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),

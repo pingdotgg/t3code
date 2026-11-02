@@ -25,6 +25,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -1346,6 +1347,76 @@ const seedRestartCancelledChild = (input: {
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "subagent follow-ups",
   (it) => {
+    it.effect("recovers a reserved delivery without loading conversation history", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:bounded-delivery-recovery");
+        const runId = RunId.make("run:bounded-delivery-recovery");
+        const taskId = NodeId.make("task:bounded-delivery-recovery");
+        yield* seedParentWithTerminalTask({
+          threadId,
+          runId,
+          taskId,
+          projectId: ProjectId.make("project:bounded-delivery-recovery"),
+          rootNodeId: NodeId.make("node:bounded-delivery-recovery"),
+          deliveryState: "claimed",
+          deliveryTaskIds: [taskId],
+          completionWake: "always",
+          now,
+        });
+        for (const suffix of ["first", "second"]) {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`event:bounded-delivery-history:${suffix}`),
+                type: "message.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  id: MessageId.make(`message:bounded-delivery-history:${suffix}`),
+                  threadId,
+                  runId: null,
+                  nodeId: null,
+                  createdBy: "user",
+                  creationSource: "web",
+                  role: "user",
+                  text: "Unrelated historical input",
+                  attachments: [],
+                  streaming: false,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+            ],
+          });
+        }
+        const statements: string[] = [];
+        const tracer = Tracer.make({
+          span(options) {
+            const span = new Tracer.NativeSpan(options);
+            const end = span.end.bind(span);
+            span.end = (time, exit) => {
+              end(time, exit);
+              const query = span.attributes.get("db.query.text");
+              if (typeof query === "string") statements.push(query);
+            };
+            return span;
+          },
+        });
+        yield* orchestrator.recoverDelegatedTasks.pipe(Effect.withTracer(tracer));
+        assert.isFalse(statements.some((query) => query.includes("MIN(ordinal)")));
+        const messageReads = statements.filter((query) =>
+          query.includes("FROM orchestration_v2_projection_messages"),
+        );
+        assert.isNotEmpty(messageReads);
+        assert.isTrue(messageReads.every((query) => query.includes("message_id IN")));
+        const wake = yield* requests.take;
+        assert.equal(wake.delegatedCompletion?.parentRunId, runId);
+      }),
+    );
     it.effect("keeps a checkpoint completion committed between finalize's read and write", () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -3193,9 +3264,12 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
                 occurredAt: now,
                 payload: {
                   ...providerThread,
-                  pendingBackgroundTasks: open
-                    ? [{ taskId: "sleep-900", kind: "command" as const }]
-                    : [],
+                  pendingBackgroundTasks: [
+                    ...(open
+                      ? [{ taskId: "sleep-900", kind: "command" as const, awaited: true as const }]
+                      : []),
+                    { taskId: "log-watcher", kind: "monitor" as const },
+                  ],
                 },
               }
             : {
