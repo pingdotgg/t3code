@@ -1,4 +1,7 @@
-import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
+import type {
+  SidebarProjectGroupMember,
+  SidebarProjectSnapshot,
+} from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
 import type { ResolvedSettingsScope, SettingsScopeSearch } from "./settingsScope";
 
@@ -57,6 +60,7 @@ export function settingsScopeProjectMachines(
 
 export const ALL_ENVIRONMENTS_VALUE = "all";
 export const ALL_PROJECTS_VALUE = "all";
+export const ALL_CHECKOUTS_VALUE = "all";
 
 export function environmentAxisValue(
   search: SettingsScopeSearch,
@@ -94,6 +98,40 @@ export function selectProjectAxis(search: SettingsScopeSearch, value: string): S
   const next: SettingsScopeSearch = {};
   if (value !== ALL_PROJECTS_VALUE) next.project = value;
   if (search.machine) next.machine = search.machine;
+  return next;
+}
+
+/** Empty unless the selection spans several checkouts of one environment, which only this axis can split. */
+export function settingsScopeCheckoutChoices(
+  group: SidebarProjectSnapshot,
+  search: Pick<SettingsScopeSearch, "machine" | "checkout">,
+): readonly SidebarProjectGroupMember[] {
+  const selected = group.memberProjects.find(
+    (member) => member.physicalProjectKey === search.checkout,
+  );
+  const environmentId = search.machine ?? selected?.environmentId;
+  const members =
+    environmentId === undefined
+      ? group.memberProjects
+      : group.memberProjects.filter((member) => member.environmentId === environmentId);
+  return members.length > 1 &&
+    members.every((member) => member.environmentId === members[0]!.environmentId)
+    ? members
+    : [];
+}
+
+export function selectCheckoutAxis(
+  search: SettingsScopeSearch,
+  checkout: SidebarProjectGroupMember | null,
+): SettingsScopeSearch {
+  const next: SettingsScopeSearch = {};
+  if (search.project) next.project = search.project;
+  if (checkout) {
+    next.machine = checkout.environmentId;
+    next.checkout = checkout.physicalProjectKey;
+  } else if (search.machine) {
+    next.machine = search.machine;
+  }
   return next;
 }
 

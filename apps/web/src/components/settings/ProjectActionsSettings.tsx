@@ -172,8 +172,17 @@ export function ProjectActionsSettings() {
       />
       {mixed ? (
         <SettingsRow
-          title="Different actions across environments"
-          description="Choose one environment to edit its list. Adding an action here adds it on every selected environment."
+          {...(targets.every((candidate) => candidate.environmentId === target?.environmentId)
+            ? {
+                title: "Different actions across checkouts",
+                description:
+                  "Choose one checkout above to edit its list. Adding an action here adds it to every checkout.",
+              }
+            : {
+                title: "Different actions across environments",
+                description:
+                  "Choose one environment to edit its list. Adding an action here adds it on every selected environment.",
+              })}
         />
       ) : (
         <ProjectActionsList
