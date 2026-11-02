@@ -116,20 +116,19 @@ it("opening a thread or returning to the window on a touch tablet does not focus
   const router = getRouter(
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${first.id}`] }),
   );
-  // Fake frames hold each thread entry's focus frame until the test advances it.
-  using _timers = fakeTimers();
   await using _app = await openAtTabletSize(router);
   const composer = page.getByTestId("composer-editor");
-
-  // Focusing the editor raises the on-screen keyboard, which shrinks the page on iPadOS.
   await expect.element(page.getByText(`Answer 0 for ${first.id}.`)).toBeVisible();
-  await expect.element(composer).toBeVisible();
-  vi.advanceTimersToNextFrame();
-  expect(document.activeElement).not.toBe(composer.element());
 
+  // Fake frames hold the next thread entry's focus frame until the test advances it.
+  using _timers = fakeTimers();
   // The shell subscription outlives each render, so the sidebar lists only the first test's threads.
   router.history.push(`/${ENVIRONMENT_ID}/${second.id}`);
   await expect.element(page.getByText(`Answer 0 for ${second.id}.`)).toBeVisible();
+  vi.advanceTimersToNextFrame();
+  // Focusing the editor raises the on-screen keyboard, which shrinks the page on iPadOS.
+  expect(document.activeElement).not.toBe(composer.element());
+
   returnToWindow();
   expect(document.activeElement).not.toBe(composer.element());
 });
