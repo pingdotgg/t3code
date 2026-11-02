@@ -40,6 +40,8 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         environment,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
+        // Grok config may always-approve; ask mode sends tool approvals here, and none are granted.
+        runtimeMode: "approval-required",
       }).pipe(
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, commandSpawner),

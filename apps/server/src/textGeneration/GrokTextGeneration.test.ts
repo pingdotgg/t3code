@@ -34,7 +34,7 @@ function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
     env,
     source: execScriptSource({
       scriptPath: mockAgentPath,
-      expectedArgs: ["agent", "stdio"],
+      expectedArgs: ["--permission-mode", "default", "agent", "stdio"],
     }),
   });
 }
