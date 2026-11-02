@@ -6,8 +6,8 @@ need a separate branch and working directory.
 ## Resize or hide the sidebar
 
 On web and desktop, drag the sidebar's right edge to resize it. Continue left past its minimum
-width until **Release to hide** appears, then release to hide it. Dragging back right before
-releasing cancels hiding.
+width to preview hiding it, then release to keep it hidden. Dragging back right before releasing
+shows it again and continues resizing.
 
 With hover reveal off, move the mouse to the left window edge to find a handle. Drag it right or
 click it to show the sidebar again. With hover reveal on, resizing the revealed sidebar changes

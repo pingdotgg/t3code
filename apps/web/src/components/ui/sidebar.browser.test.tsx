@@ -92,11 +92,19 @@ describe("Sidebar", () => {
       target.dispatchEvent(new PointerEvent(type, { ...pointer, clientX }));
     dispatch(rail, "pointerdown", 255);
     dispatch(rail, "pointermove", 0);
-    await vi.waitFor(() => expect(sidebar.hasAttribute("data-collapse-pending")).toBe(true));
+    await vi.waitFor(() =>
+      expect(
+        sidebar.querySelector('[data-slot="sidebar-container"]')!.getBoundingClientRect().right,
+      ).toBe(0),
+    );
     expect(sidebar.dataset.state).toBe("expanded");
     expect(onResize).not.toHaveBeenCalled();
     dispatch(rail, "pointermove", 280);
-    await vi.waitFor(() => expect(sidebar.hasAttribute("data-collapse-pending")).toBe(false));
+    await vi.waitFor(() =>
+      expect(
+        sidebar.querySelector('[data-slot="sidebar-container"]')!.getBoundingClientRect().left,
+      ).toBe(0),
+    );
     dispatch(rail, "pointerup", 280);
     expect(onResize).toHaveBeenLastCalledWith(281);
     expect(sidebar.dataset.state).toBe("expanded");
@@ -145,13 +153,19 @@ describe("Sidebar", () => {
       };
       rail.dispatchEvent(new PointerEvent("pointerdown", pointer));
       rail.dispatchEvent(new PointerEvent("pointermove", { ...pointer, clientX: 0 }));
-      await vi.waitFor(() => expect(sidebar.hasAttribute("data-collapse-pending")).toBe(true));
+      await vi.waitFor(() =>
+        expect(
+          sidebar.querySelector('[data-slot="sidebar-container"]')!.getBoundingClientRect().right,
+        ).toBe(0),
+      );
       if (eventType === "blur") window.dispatchEvent(new Event("blur"));
       else rail.dispatchEvent(new PointerEvent(eventType, { ...pointer, clientX: 0 }));
       rail.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: 0 }));
       expect(sidebar.dataset.state).toBe("expanded");
       expect(onResize).not.toHaveBeenCalled();
-      expect(sidebar.hasAttribute("data-collapse-pending")).toBe(false);
+      expect(
+        sidebar.querySelector('[data-slot="sidebar-container"]')!.getBoundingClientRect().left,
+      ).toBe(0);
     },
   );
 });
