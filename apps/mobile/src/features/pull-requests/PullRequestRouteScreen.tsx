@@ -404,12 +404,12 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   // A manual description save racing a checkbox save could land first and be overwritten. Runs
   // are tagged with their pull request, as Android swaps the shown one in place.
   const pullRequestKey = `${params.environmentId}:${params.projectId}:${params.host}:${params.repository}#${params.number}`;
-  const [taskSaving, setTaskSaving] = useState<{ readonly pullRequest: string } | null>(null);
-  const descriptionSaving = taskSaving?.pullRequest === pullRequestKey;
+  const [taskSaves, setTaskSaves] = useState<ReadonlyArray<{ readonly pullRequest: string }>>([]);
+  const descriptionSaving = taskSaves.some((run) => run.pullRequest === pullRequestKey);
   const startTaskSave = () => {
     const run = { pullRequest: pullRequestKey };
-    setTaskSaving(run);
-    return () => setTaskSaving((current) => (current === run ? null : current));
+    setTaskSaves((runs) => [...runs, run]);
+    return () => setTaskSaves((runs) => runs.filter((current) => current !== run));
   };
   const filesContent = usePullRequestFilesSection(params);
   const guidesEnabled = useReviewGuidesEnabled(params);
