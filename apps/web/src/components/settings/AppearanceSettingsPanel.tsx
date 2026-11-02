@@ -1,3 +1,4 @@
+import { TimelineBackgroundSettings } from "./TimelineBackgroundSettings";
 import type { CSSProperties } from "react";
 import { useState } from "react";
 import {
@@ -161,6 +162,8 @@ export function AppearanceSettingsPanel() {
           />
         </div>
       </SettingsSection>
+
+      <TimelineBackgroundSettings />
 
       <SettingsSection id="appearance-interface" title="Interface">
         <SettingsRow

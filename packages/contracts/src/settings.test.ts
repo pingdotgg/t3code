@@ -484,3 +484,31 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
 });
+
+describe("chat wallpaper settings", () => {
+  it("defaults older clients to no wallpaper and round-trips image controls", () => {
+    expect(decodeClientSettings({})).toMatchObject({
+      timelineBackgroundImage: "",
+      timelineBackgroundOpacity: 20,
+      timelineBackgroundBlur: 0,
+    });
+    const patch = {
+      timelineBackgroundImage: "data:image/png;base64,aGVsbG8=",
+      timelineBackgroundOpacity: 35,
+      timelineBackgroundBlur: 2,
+    };
+    expect(decodeClientSettingsPatch(patch)).toEqual(patch);
+    expect(decodeClientSettings(encodeClientSettings(decodeClientSettings(patch)))).toMatchObject(
+      patch,
+    );
+    for (const invalid of [
+      { timelineBackgroundOpacity: -1 },
+      { timelineBackgroundOpacity: 101 },
+      { timelineBackgroundOpacity: 0.5 },
+      { timelineBackgroundBlur: 31 },
+      { timelineBackgroundImage: "x".repeat(1_500_001) },
+    ]) {
+      expect(() => decodeClientSettingsPatch(invalid)).toThrow();
+    }
+  });
+});

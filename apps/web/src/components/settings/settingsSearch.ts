@@ -310,6 +310,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "appearance",
   },
   {
+    id: "appearance-wallpaper",
+    title: "Chat wallpaper",
+    to: "/settings/appearance",
+    searchTerms: ["background", "image", "opacity", "blur"],
+  },
+  {
     // Prefixed because the slider control already owns the `appearance-contrast` id.
     id: "setting-appearance-contrast",
     title: "Contrast",
