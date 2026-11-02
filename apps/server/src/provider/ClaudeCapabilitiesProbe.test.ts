@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - cleanup uses Node's retrying rm, which the FileSystem service does not expose.
+import * as NodeOS from "node:os";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ClaudeSettings, type ServerProvider } from "@t3tools/contracts";
 import { vi } from "vite-plus/test";
@@ -110,7 +112,6 @@ it.effect("starts the CLI again only when a source of its command list changes",
       path.join(config, "workflows", "a.js"),
       path.join(config, "synced", "account", "a", "SKILL.md"),
       path.join(config, "settings.json"),
-      path.join(config, "remote-settings.json"),
       path.join(config, "plugins", "installed_plugins.json"),
       path.join(config, "plugins", "synced", "account", ".marketplace-a.json"),
       path.join(config, "plugins", "cache", "market", "plugin", "1.0.0", "commands", "a.md"),
@@ -199,12 +200,67 @@ it.effect("always starts the CLI when its sources cannot be vouched for", () =>
       });
 
     yield* probesTwice(yield* makeCommands({ CLAUDE_CODE_PLUGIN_DIRS: "/elsewhere" }));
+    for (const environment of [
+      { CLAUDE_CODE_PLUGIN_USE_ZIP_CACHE: "1" },
+      { CLAUDE_CODE_REMOTE_SETTINGS_PATH: "/elsewhere" },
+      { GIT_DIR: "/elsewhere" },
+      { GIT_COMMON_DIR: "/elsewhere" },
+      { GIT_WORK_TREE: "/elsewhere" },
+      { GIT_CEILING_DIRECTORIES: "/elsewhere" },
+    ]) {
+      yield* probesTwice(yield* makeCommands(environment));
+    }
+    yield* probesTwice(yield* makeCommands()).pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+    );
+    yield* probesTwice(yield* makeCommands({ WSL_INTEROP: "/run/WSL/1_interop" })).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+    );
 
+    const fileSystem = yield* FileSystem.FileSystem;
     const commands = yield* makeCommands();
     const settings = path.join(cwd, ".claude", "settings.json");
     yield* write(settings, '{"env":{"CLAUDE_CODE_PLUGIN_SEED_DIR":"/elsewhere"}}');
     yield* probesTwice(commands);
     yield* write(settings, "{}");
+
+    yield* write(settings, '{"env":{"\\u0043LAUDE_CODE_PLUGIN_CACHE_DIR":"/elsewhere"}}');
+    yield* probesTwice(commands);
+    yield* write(settings, "{}");
+
+    for (const plist of [
+      `/Library/Managed Preferences/${NodeOS.userInfo().username}/com.anthropic.claudecode.plist`,
+      "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+    ]) {
+      const fixturePlist = path.join(root, "managed.plist");
+      yield* write(fixturePlist);
+      yield* probesTwice(commands).pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fileSystem,
+          stat: (entry) => fileSystem.stat(entry === plist ? fixturePlist : entry),
+        }),
+      );
+    }
+
+    for (const contents of [
+      '{"env":{"CLAUDE_CONFIG_DIR":"/elsewhere"}}',
+      '{"env":{"HOME":"/elsewhere"}}',
+      '{"env":{"USERPROFILE":"/elsewhere"}}',
+      '{"permissions":{"additionalDirectories":["/elsewhere"]}}',
+      '{"policyHelpers":{"macos":{"command":"helper"}}}',
+    ]) {
+      yield* write(settings, contents);
+      yield* probesTwice(commands);
+    }
+    yield* write(settings, "{}");
+
+    const remoteSettings = path.join(config, "remote-settings.json");
+    yield* write(remoteSettings, '{"env":{"CLAUDE_CODE_PLUGIN_CACHE_DIR":"/elsewhere"}}');
+    yield* probesTwice(commands);
+    yield* write(remoteSettings, "{}");
+    yield* probesTwice(commands);
+    yield* fileSystem.remove(remoteSettings);
 
     const redirectedPlugins = path.join(root, "redirected-plugins");
     const redirectedCommand = path.join(
@@ -229,8 +285,10 @@ it.effect("always starts the CLI when its sources cannot be vouched for", () =>
       yield* write(settingsPath, "{}");
     }
 
+    const managedPath = (entry: string) =>
+      entry.replace(/^\/etc\/claude-code(?=\/|$)/, path.join(root, "ClaudeCode"));
     yield* Effect.gen(function* () {
-      const managedCommands = yield* makeCommands({ PROGRAMDATA: root });
+      const managedCommands = yield* makeCommands();
       const dropIn = path.join(root, "ClaudeCode", "managed-settings.d", "plugins.json");
       yield* write(dropIn, "{}");
       const beforeManaged = probes();
@@ -248,9 +306,30 @@ it.effect("always starts the CLI when its sources cannot be vouched for", () =>
       yield* managedCommands.get(machine, cwd);
       assert.strictEqual(probes(), beforeManagedEdit + 1);
       yield* write(dropIn, "{}");
-    }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(FileSystem.FileSystem, {
+        ...fileSystem,
+        stat: (entry) => fileSystem.stat(managedPath(entry)),
+        readDirectory: (entry) => fileSystem.readDirectory(managedPath(entry)),
+        readFileString: (entry) => fileSystem.readFileString(managedPath(entry)),
+      }),
+    );
 
     const installed = path.join(config, "plugins", "installed_plugins.json");
+    for (const installPath of [
+      path.join(config, "plugins", "marketplaces", "a"),
+      path.join(config, "plugins", "store", "a"),
+      path.join(config, "plugins"),
+    ]) {
+      yield* write(
+        installed,
+        JSON.stringify({
+          plugins: { "a@b": [{ installPath }] },
+        }),
+      );
+      yield* probesTwice(commands);
+    }
     yield* write(
       installed,
       JSON.stringify({ plugins: { "a@b": [{ installPath: path.join(root, "elsewhere") }] } }),

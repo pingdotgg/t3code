@@ -625,7 +625,13 @@ const CLAUDE_COMMAND_SOURCE_REDIRECTS = [
   "CLAUDE_CODE_MANAGED_SETTINGS_PATH",
   "CLAUDE_CODE_PLUGIN_DIRS",
   "CLAUDE_CODE_PLUGIN_SEED_DIR",
+  "CLAUDE_CODE_PLUGIN_USE_ZIP_CACHE",
+  "CLAUDE_CODE_REMOTE_SETTINGS_PATH",
   "CLAUDE_CODE_USE_COWORK_PLUGINS",
+  "GIT_DIR",
+  "GIT_COMMON_DIR",
+  "GIT_WORK_TREE",
+  "GIT_CEILING_DIRECTORIES",
 ];
 // The CLI rewrites these on its own: `store` on every start, the rest on background syncs.
 // Marketplace clones can be huge, and only their manifests, added separately, feed the list.
@@ -664,8 +670,8 @@ const InstalledPluginPaths = Schema.fromJsonString(
 );
 
 /**
- * A digest of every local file the CLI builds its `initialize` command list from, checked
- * against 2.1.316 by changing each source and comparing real probe output. `undefined` means
+ * A digest of local command sources, audited against the 2.1.316 loader and isolated probes.
+ * `undefined` means
  * the sources cannot be vouched for, so the caller must probe. Account state and remote flags
  * live outside these files, so callers also pass the health check's view as `machineState`.
  */
@@ -682,6 +688,16 @@ export const fingerprintClaudeCommandSources = Effect.fn("fingerprintClaudeComma
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const platform = yield* HostProcess.Platform;
+    // Windows and WSL also load managed settings from registry keys outside this walk.
+    if (
+      platform === "win32" ||
+      (platform === "linux" &&
+        (environment.WSL_DISTRO_NAME !== undefined ||
+          environment.WSL_INTEROP !== undefined ||
+          /microsoft/i.test(NodeOS.release())))
+    ) {
+      return undefined;
+    }
     const home = yield* HostProcess.HomeDirectory;
     const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
     const pluginsPath = yield* resolveClaudePluginsPath(configDirPath, cwd, environment);
@@ -721,6 +737,10 @@ export const fingerprintClaudeCommandSources = Effect.fn("fingerprintClaudeComma
         .readFileString(settingsPath)
         .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined));
       if (
+        /\\u[0-9a-f]{4}/i.test(contents ?? "") ||
+        ["CLAUDE_CONFIG_DIR", "HOME", "USERPROFILE", "additionalDirectories", "policyHelpers"].some(
+          (name) => contents?.includes(name),
+        ) ||
         contents?.includes("CLAUDE_CODE_PLUGIN_CACHE_DIR") ||
         CLAUDE_COMMAND_SOURCE_REDIRECTS.some((name) => contents?.includes(name))
       ) {
@@ -761,7 +781,6 @@ export const fingerprintClaudeCommandSources = Effect.fn("fingerprintClaudeComma
       for (const subdirectory of [...CLAUDE_COMMAND_SUBDIRECTORIES, "synced"]) {
         yield* addStat(path.join(configDirPath, subdirectory));
       }
-      yield* addStat(path.join(configDirPath, "remote-settings.json"));
       yield* addStat(path.join(configDirPath, "policy-limits.json"));
 
       for (const directory of claudeManagedDirectories(path, platform, environment)) {
@@ -780,10 +799,20 @@ export const fingerprintClaudeCommandSources = Effect.fn("fingerprintClaudeComma
           yield* addStat(path.join(directory, ".claude", subdirectory));
         }
       }
-      if (platform === "darwin") {
-        const { username } = NodeOS.userInfo();
-        yield* addStat(`/Library/Managed Preferences/${username}/com.anthropic.claudecode.plist`);
-        yield* addStat("/Library/Managed Preferences/com.anthropic.claudecode.plist");
+      // Remote policy also depends on signatures and consent, not just the settings bytes.
+      for (const settingsPath of [
+        path.join(configDirPath, "remote-settings.json"),
+        ...(platform === "darwin"
+          ? [
+              `/Library/Managed Preferences/${NodeOS.userInfo().username}/com.anthropic.claudecode.plist`,
+              "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+            ]
+          : []),
+      ]) {
+        const info = yield* fileSystem
+          .stat(settingsPath)
+          .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined));
+        if (info !== undefined) return yield* Effect.fail("redirected" as const);
       }
 
       yield* addStat(
@@ -797,7 +826,13 @@ export const fingerprintClaudeCommandSources = Effect.fn("fingerprintClaudeComma
         for (const { installPath } of installs) {
           if (
             installPath !== undefined &&
-            !isInsideDirectory(path, pluginsPath, path.resolve(workspace, installPath))
+            (!isInsideDirectory(path, pluginsPath, path.resolve(workspace, installPath)) ||
+              path.resolve(workspace, installPath) === pluginsPath ||
+              CLAUDE_PLUGIN_ROOT_IGNORED.has(
+                path
+                  .relative(pluginsPath, path.resolve(workspace, installPath))
+                  .split(path.sep)[0] ?? "",
+              ))
           ) {
             return yield* Effect.fail("pluginOutsideCache" as const);
           }
