@@ -59,6 +59,10 @@ describe("semver helpers", () => {
   });
 
   it("honors caret range upper bounds for zero-major versions", () => {
+    expect(satisfiesSemverRange("0.5.0", "^0")).toBe(true);
+    expect(satisfiesSemverRange("0.0.4", "^0.0")).toBe(true);
+    expect(satisfiesSemverRange("1.0.0", "^0")).toBe(false);
+    expect(satisfiesSemverRange("0.1.0", "^0.0")).toBe(false);
     expect(satisfiesSemverRange("0.2.3", "^0.2.3")).toBe(true);
     expect(satisfiesSemverRange("0.2.9", "^0.2.3")).toBe(true);
     expect(satisfiesSemverRange("0.3.0", "^0.2.3")).toBe(false);
@@ -74,6 +78,8 @@ describe("semver helpers", () => {
     expect(source).toContain("function satisfiesSemverRange");
     expect(source).not.toContain(": string");
     expect(source).not.toContain(": boolean");
+    expect(recreated("0.5.0", "^0")).toBe(true);
+    expect(recreated("0.0.4", "^0.0")).toBe(true);
     expect(recreated("24.10.0", ">=24.10")).toBe(true);
     expect(recreated("24.9.9", ">=24.10")).toBe(false);
   });
