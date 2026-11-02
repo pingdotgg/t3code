@@ -12,7 +12,7 @@ import { useThreadActions } from "../hooks/useThreadActions";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { readThreadShell } from "../state/entities";
 import { subscribeLayoutThreadsClosedByUser } from "./layoutStore";
-import { noteTabCloseSettled, targetSettlesOnClose } from "./settleOnClose";
+import { targetSettlesOnClose } from "./settleOnClose";
 
 /** Only user closes settle eligible threads; working, queued, pinned and snoozed threads keep their
  * state. Unsent drafts also hide their surfaces. */
@@ -36,9 +36,7 @@ export function useSettleOnLayoutClose(): void {
             continue;
           }
           if (!targetSettlesOnClose(target, now)) continue;
-          void settle(target.threadRef).then((result) => {
-            if (result._tag === "Success") noteTabCloseSettled();
-          });
+          void settle(target.threadRef);
         }
       }),
     [settle],
