@@ -22,17 +22,19 @@ export function usePreviewPanelInlineSize(
     readonly enabled?: boolean | undefined;
     readonly widthStorageKey?: string | undefined;
     readonly defaultWidth?: number | undefined;
+    readonly preferredSiblingWidth?: number | undefined;
     readonly container?: HTMLElement | null | undefined;
   } = {},
 ): PreviewPanelInlineSize {
   const enabled = options.enabled ?? true;
   const container = options.container;
+  const [availableWidth, setAvailableWidth] = useState(PREVIEW_PANEL_DEFAULT_WIDTH);
   const [maxWidth, setMaxWidth] = useState(() =>
     getPreviewPanelMaxWidth(typeof window === "undefined" ? 1280 : window.innerWidth),
   );
   const { width, handlers } = useResizableWidth({
     storageKey: options.widthStorageKey ?? PREVIEW_PANEL_WIDTH_STORAGE_KEY,
-    defaultWidth: options.defaultWidth ?? PREVIEW_PANEL_DEFAULT_WIDTH,
+    defaultWidth: options.defaultWidth ?? availableWidth,
     minWidth: PREVIEW_PANEL_MIN_WIDTH,
     maxWidth,
     edge: "left",
@@ -40,10 +42,16 @@ export function usePreviewPanelInlineSize(
   const observeRow = (host: HTMLElement) => {
     const row = container ?? (enabled ? host.parentElement : null) ?? null;
     // Ref callbacks run before paint, so the width is clamped without an over-wide
-    // flash on mount. Only the derived cap is stored: the row resizes every frame
-    // of a sidebar drag, but an unchanged cap skips re-rendering the owner.
+    // flash on mount. Store only derived widths so unchanged bounds and defaults
+    // skip re-rendering the owner during a sidebar drag.
     const measure = () => {
       setMaxWidth(getPreviewPanelMaxWidth(window.innerWidth, row?.clientWidth));
+      setAvailableWidth(
+        Math.max(
+          PREVIEW_PANEL_DEFAULT_WIDTH,
+          Math.floor(row?.clientWidth ?? 0) - (options.preferredSiblingWidth ?? Infinity),
+        ),
+      );
     };
     measure();
     let frame = 0;
