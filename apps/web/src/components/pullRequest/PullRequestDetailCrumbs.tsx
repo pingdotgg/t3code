@@ -98,12 +98,14 @@ function NumberLink({
 export function PullRequestDetailCrumbs({
   detail,
   toneClassName,
+  repositoryUrl,
   openOnHostText,
   onBack,
   children,
 }: {
   detail: CrumbsPullRequest | null;
   toneClassName: string | null;
+  repositoryUrl: string | null;
   openOnHostText: string;
   onBack: (() => void) | undefined;
   children?: ReactNode;
@@ -120,6 +122,25 @@ export function PullRequestDetailCrumbs({
               plural={sourceControlClients.get(detail.provider).changeRequest.plural}
             />
           ) : null}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                repositoryUrl ? (
+                  <InlineButton
+                    tone="muted"
+                    onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}
+                  >
+                    {detail.repository}
+                  </InlineButton>
+                ) : (
+                  <span className="shrink-0">{detail.repository}</span>
+                )
+              }
+            />
+            <TooltipPopup side="top">
+              {repositoryUrl ? `Open ${detail.repository} repository` : detail.repository}
+            </TooltipPopup>
+          </Tooltip>
           <NumberLink
             detail={detail}
             toneClassName={toneClassName}
