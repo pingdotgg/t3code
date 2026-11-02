@@ -1,8 +1,8 @@
 import { use, type CSSProperties } from "react";
 
-import { resolveDiffThemeName } from "../../lib/diffRendering";
 import type { EmbeddedScript } from "../../lib/embeddedScripts";
 import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
+import { useDiffThemeNames } from "../../hooks/useSettings";
 
 interface SyntaxToken {
   readonly content: string;
@@ -39,9 +39,10 @@ export function HighlightedTokens({
   theme: "light" | "dark";
   wordClassName?: string;
 }) {
-  const highlighter = use(getSyntaxHighlighterPromise(language));
-  for (const script of embedded) use(getSyntaxHighlighterPromise(script.language));
-  const themeName = resolveDiffThemeName(theme);
+  const themeNames = useDiffThemeNames();
+  const highlighter = use(getSyntaxHighlighterPromise(language, themeNames));
+  for (const script of embedded) use(getSyntaxHighlighterPromise(script.language, themeNames));
+  const themeName = themeNames[theme];
   const tokenize = (text: string, lang: string) =>
     highlighter.codeToTokens(text, { lang, theme: themeName }).tokens;
   const lines = keyedLines(

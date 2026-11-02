@@ -4,12 +4,13 @@ import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import * as Schema from "effect/Schema";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { getRenderedAppearance, subscribeRenderedAppearance } from "../hooks/useTheme";
-import { resolveDiffThemeName } from "../lib/diffRendering";
+import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
+import { resolveDiffThemeNames } from "../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 
 export class DiffWorkerError extends Schema.TaggedError<DiffWorkerError>()("DiffWorkerError", {
   operation: Schema.Literals(["create-worker", "get-render-options", "set-render-options"]),
-  themeName: Schema.Literals(["pierre-dark", "t3-light"]),
+  themeName: Schema.String,
   cause: Schema.Defect(),
 }) {
   override get message(): string {
@@ -32,8 +33,12 @@ let sharedWorkerPool:
     }
   | undefined;
 
+function currentDiffThemeName() {
+  return resolveDiffThemeNames(getClientSettings())[getRenderedAppearance()];
+}
+
 function applyDiffWorkerTheme(pool: WorkerPoolManager) {
-  const themeName = resolveDiffThemeName(getRenderedAppearance());
+  const themeName = currentDiffThemeName();
   let operation: DiffWorkerError["operation"] = "get-render-options";
   void (async () => {
     try {
@@ -47,10 +52,10 @@ function applyDiffWorkerTheme(pool: WorkerPoolManager) {
   })();
 }
 
-// The pool follows the rendered appearance for as long as it lives, so it never depends on a
-// mounted provider to carry a theme change across.
+// The pool follows the rendered appearance and code theme for as long as it lives, so it never
+// depends on a mounted provider to carry a theme change across.
 function createDiffWorkerPool(poolSize: number) {
-  const themeName = resolveDiffThemeName(getRenderedAppearance());
+  const themeName = currentDiffThemeName();
   const pool = new WorkerPoolManager(
     {
       workerFactory: () => {
@@ -70,9 +75,14 @@ function createDiffWorkerPool(poolSize: number) {
       useTokenTransformer: true,
     },
   );
+  const unsubscribeAppearance = subscribeRenderedAppearance(() => applyDiffWorkerTheme(pool));
+  const unsubscribeSettings = subscribeClientSettings(() => applyDiffWorkerTheme(pool));
   return {
     pool,
-    unsubscribeTheme: subscribeRenderedAppearance(() => applyDiffWorkerTheme(pool)),
+    unsubscribeTheme: () => {
+      unsubscribeAppearance();
+      unsubscribeSettings();
+    },
     consumers: 0,
     idleTimer: undefined,
   };

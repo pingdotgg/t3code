@@ -123,7 +123,10 @@ export function composerCodeBlockHighlight(options: {
                     languageOfInfoString(String(node.attrs.language ?? "")) || "text";
                   const signature = blockSignature(node, theme);
                   // Cache failure as plain text to clear retained colors.
-                  const highlighter = await getSyntaxHighlighterPromise(language).catch(() => null);
+                  const highlighter = await getSyntaxHighlighterPromise(language, {
+                    light: theme,
+                    dark: theme,
+                  }).catch(() => null);
                   // An older request must not bypass the debounce if its text returns.
                   if (disposed || live !== signatures || cache.has(signature)) return;
                   cache.set(signature, {
