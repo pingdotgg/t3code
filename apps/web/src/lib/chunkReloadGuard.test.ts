@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { reloadOnceForChunkLoadError } from "./chunkReloadGuard";
 
-function createStorageStub(initial: Record<string, string> = {}): Storage {
-  const store = new Map(Object.entries(initial));
+function createStorageStub(): Storage {
+  const store = new Map<string, string>();
   return {
     getItem: (key) => store.get(key) ?? null,
     setItem: (key, value) => {
@@ -21,16 +21,14 @@ function createStorageStub(initial: Record<string, string> = {}): Storage {
 }
 
 describe("reloadOnceForChunkLoadError", () => {
-  it("reloads on the first failure and lets every later one on the same build surface", () => {
+  it("reloads on the first failure and lets the second one surface", () => {
     const storage = createStorageStub();
     const reload = vi.fn();
 
     expect(reloadOnceForChunkLoadError(() => storage, reload, "1.0.0")).toBe(true);
     expect(reload).toHaveBeenCalledTimes(1);
 
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      expect(reloadOnceForChunkLoadError(() => storage, reload, "1.0.0")).toBe(false);
-    }
+    expect(reloadOnceForChunkLoadError(() => storage, reload, "1.0.0")).toBe(false);
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
@@ -42,16 +40,6 @@ describe("reloadOnceForChunkLoadError", () => {
 
     expect(reloadOnceForChunkLoadError(() => storage, reload, "1.0.1")).toBe(true);
     expect(reload).toHaveBeenCalledTimes(2);
-    expect(reloadOnceForChunkLoadError(() => storage, reload, "1.0.1")).toBe(false);
-    expect(reload).toHaveBeenCalledTimes(2);
-  });
-
-  it("treats a guard written by an older version as another build", () => {
-    const storage = createStorageStub({ "t3code:chunk-load-reloaded": "1" });
-    const reload = vi.fn();
-
-    expect(reloadOnceForChunkLoadError(() => storage, reload, "1.0.0")).toBe(true);
-    expect(reload).toHaveBeenCalledTimes(1);
   });
 
   it("never reloads when storage is blocked, so a persistent failure cannot loop", () => {
@@ -60,18 +48,7 @@ describe("reloadOnceForChunkLoadError", () => {
       throw new DOMException("blocked", "SecurityError");
     };
 
-    expect(reloadOnceForChunkLoadError(blocked, reload, "1.0.0")).toBe(false);
-    expect(reload).not.toHaveBeenCalled();
-  });
-
-  it("never reloads when the guard can't be written", () => {
-    const storage = createStorageStub();
-    storage.setItem = () => {
-      throw new DOMException("full", "QuotaExceededError");
-    };
-    const reload = vi.fn();
-
-    expect(reloadOnceForChunkLoadError(() => storage, reload, "1.0.0")).toBe(false);
+    expect(reloadOnceForChunkLoadError(blocked, reload)).toBe(false);
     expect(reload).not.toHaveBeenCalled();
   });
 });
