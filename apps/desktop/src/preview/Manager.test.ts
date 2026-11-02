@@ -145,6 +145,7 @@ const {
   createFromPath,
   fromId,
   getFocusedWebContents,
+  getDisplayMatching,
   mkdir,
   previewSession,
   showItemInFolder,
@@ -160,6 +161,7 @@ const {
   })),
   fromId: vi.fn<(_id?: number) => Electron.WebContents | null>((_id?: number) => null),
   getFocusedWebContents: vi.fn(() => null),
+  getDisplayMatching: vi.fn(() => ({ scaleFactor: 1 })),
   mkdir: vi.fn((_path: string) => undefined),
   previewSession: { on: vi.fn() },
   showItemInFolder: vi.fn(),
@@ -182,6 +184,7 @@ vi.mock("electron", () => ({
   nativeImage: {
     createFromPath,
   },
+  screen: { getDisplayMatching },
   shell: {
     showItemInFolder,
   },
@@ -266,6 +269,7 @@ const withManager = <A>(
 interface TestCapturedPreviewImage {
   readonly toJPEG: () => Buffer;
   readonly toBitmap?: () => Buffer;
+  readonly resize?: (size: { width: number; height: number }) => TestCapturedPreviewImage;
   readonly getSize: () => { readonly width: number; readonly height: number };
 }
 
@@ -519,6 +523,7 @@ const makeTestPictureInPictureWindow = (loadURL: () => Promise<void> = async () 
   const webContentsListeners = new Map<string, () => void>();
   const send = vi.fn();
   let destroyed = false;
+  let contentSize = [480, 320];
   const webContents = {
     on: vi.fn((event: string, listener: () => void) => {
       webContentsListeners.set(event, listener);
@@ -536,8 +541,11 @@ const makeTestPictureInPictureWindow = (loadURL: () => Promise<void> = async () 
     setAlwaysOnTop: vi.fn(),
     setVisibleOnAllWorkspaces: vi.fn(),
     setAspectRatio: vi.fn(),
-    getContentSize: vi.fn(() => [480, 320]),
-    setContentSize: vi.fn(),
+    getBounds: vi.fn(() => ({ x: 0, y: 0, width: contentSize[0], height: contentSize[1] })),
+    getContentSize: vi.fn(() => contentSize),
+    setContentSize: vi.fn((width: number, height: number) => {
+      contentSize = [width, height];
+    }),
     loadURL: vi.fn(loadURL),
     showInactive: vi.fn(() => {
       if (destroyed) throw new Error("Picture-in-picture window is closed.");
@@ -558,6 +566,8 @@ const makeTestPictureInPictureWindow = (loadURL: () => Promise<void> = async () 
 describe("PreviewManager", () => {
   beforeEach(() => {
     browserWindowConstructor.mockReset();
+    getDisplayMatching.mockReset();
+    getDisplayMatching.mockReturnValue({ scaleFactor: 1 });
     fromId.mockClear();
     getFocusedWebContents.mockReset();
     getFocusedWebContents.mockReturnValue(null);
@@ -2268,10 +2278,77 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect(
+    "sizes PiP pixels for its display and resize without changing source layout",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const frames = yield* Queue.unbounded<{ width: number; height: number; data: string }>();
+          let sourceSize = { width: 1280, height: 720 };
+          const encodedSizes: Array<{ width: number; height: number }> = [];
+          const resizeTargets: Array<{ width: number; height: number }> = [];
+          const imageAt = (size: { width: number; height: number }): TestCapturedPreviewImage => ({
+            getSize: () => size,
+            toBitmap: () => Buffer.from("unchanged page"),
+            toJPEG: () => {
+              encodedSizes.push(size);
+              return Buffer.from(JSON.stringify(size));
+            },
+            resize: ({ width, height }) => {
+              resizeTargets.push({ width, height });
+              return imageAt({ width, height });
+            },
+          });
+          fromId.mockReturnValue(makeTestPreviewWebContents(async () => imageAt(sourceSize)));
+          const { pictureInPictureWindow, send } = makeTestPictureInPictureWindow();
+          send.mockImplementation((_channel, frame) => {
+            Queue.offerUnsafe(frames, frame);
+          });
+          browserWindowConstructor.mockImplementation(function () {
+            return pictureInPictureWindow;
+          });
+          yield* manager.createTab("tab_pip_pixels");
+          yield* manager.registerWebview("tab_pip_pixels", 42);
+          yield* manager.openPictureInPicture("tab_pip_pixels");
+          const first = yield* Queue.take(frames);
+          expect(first).toMatchObject(sourceSize);
+          expect(encodedSizes).toEqual([{ width: 523, height: 294 }]);
+          expect(resizeTargets).toEqual([{ width: 523, height: 294 }]);
+
+          yield* TestClock.adjust(84);
+          expect(encodedSizes).toHaveLength(1);
+          expect(resizeTargets).toHaveLength(1);
+          for (const [width, height, scaleFactor, expected] of [
+            [400, 225, 1, { width: 400, height: 225 }],
+            [400, 225, 2, { width: 800, height: 450 }],
+            [400, 225, 1.25, { width: 500, height: 281 }],
+            [1600, 900, 2, { width: 1280, height: 720 }],
+          ] as const) {
+            pictureInPictureWindow.setContentSize(width, height);
+            getDisplayMatching.mockReturnValue({ scaleFactor });
+            yield* TestClock.adjust(84);
+            const frame = yield* Queue.take(frames);
+            expect(frame).toMatchObject(sourceSize);
+            expect(JSON.parse(Buffer.from(frame.data, "base64").toString())).toEqual(expected);
+          }
+          expect(pictureInPictureWindow.setAspectRatio.mock.calls).toEqual([[0], [1280 / 720]]);
+
+          sourceSize = { width: 720, height: 1280 };
+          pictureInPictureWindow.setContentSize(225, 400);
+          getDisplayMatching.mockReturnValue({ scaleFactor: 1 });
+          yield* TestClock.adjust(84);
+          expect(yield* Queue.take(frames)).toMatchObject(sourceSize);
+          expect(encodedSizes.at(-1)).toEqual({ width: 240, height: 427 });
+          expect(pictureInPictureWindow.setAspectRatio.mock.calls.at(-1)).toEqual([720 / 1280]);
+        }),
+      ),
+  );
+
   effectIt.effect("shows picture-in-picture and keeps capturing after stalled captures", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         const image = {
+          resize: () => image,
           toJPEG: () => Buffer.from("preview-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         };
