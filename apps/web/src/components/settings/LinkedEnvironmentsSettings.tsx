@@ -62,11 +62,17 @@ export function LinkedEnvironmentsSettings({
   const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }));
   // Links made outside this client bump nothing the shared list reads, so showing the panel
   // asks again. Listing probes every linked environment, too costly for a timer nobody asked for.
-  useLiveRefresh(links.isPending ? null : links.refresh, {
-    key: `linked-environments:${environmentId}`,
-    intervalMs: null,
-    refreshOnShow: true,
-  });
+  // A list still loading counts as read now, so the next return to the window asks again.
+  useLiveRefresh(
+    () => {
+      if (!links.isPending) links.refresh();
+    },
+    {
+      key: `linked-environments:${environmentId}`,
+      intervalMs: null,
+      refreshOnShow: true,
+    },
+  );
   const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));
   const search = searchableSetting("linked-environments");
   return (
