@@ -526,8 +526,23 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
-          case "attachment.cleanup":
-            return resourceCleanup.cleanupAttachments(effect.request.attachmentIds).pipe(
+          case "attachment.cleanup": {
+            const request = effect.request;
+            return Effect.gen(function* () {
+              // A stale queued edit can restore a dropped file before this cleanup runs.
+              const referenced = request.skipReferenced
+                ? new Set(
+                    (yield* threads.getThreadRecords(effect.threadId, ["messages"], {
+                      messageRoles: ["user"],
+                    })).messages.flatMap((message) =>
+                      message.attachments.map((attachment) => attachment.id),
+                    ),
+                  )
+                : new Set<string>();
+              yield* resourceCleanup.cleanupAttachments(
+                request.attachmentIds.filter((id) => !referenced.has(id)),
+              );
+            }).pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({
@@ -537,6 +552,7 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          }
           case "thread-title.generate":
             return threadTitleRegeneration
               .execute({

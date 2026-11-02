@@ -6551,7 +6551,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       );
       assert.deepEqual(
         yield* effectRequests("runtime-layer-queued-edit-drop-attachments"),
-        [{ type: "attachment.cleanup", attachmentIds: [dropped.id] }],
+        [{ type: "attachment.cleanup", attachmentIds: [dropped.id], skipReferenced: true }],
         "dropped files are deleted unless another message still uses them",
       );
 

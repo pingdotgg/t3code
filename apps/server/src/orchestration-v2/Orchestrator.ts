@@ -9890,7 +9890,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           id: `effect:${command.commandId}:attachment.cleanup`,
           commandId: command.commandId,
           threadId: command.threadId,
-          request: { type: "attachment.cleanup", attachmentIds: droppedAttachmentIds },
+          request: {
+            type: "attachment.cleanup",
+            attachmentIds: droppedAttachmentIds,
+            skipReferenced: true,
+          },
         } satisfies PendingOrchestrationEffectV2,
       ]);
     }
