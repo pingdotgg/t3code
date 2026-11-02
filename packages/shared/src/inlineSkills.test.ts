@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { formatProviderSkillDisplayName } from "./inlineSkills.ts";
+import { formatProviderSkillDisplayName, matchInlineSkills } from "./inlineSkills.ts";
 
 describe("formatProviderSkillDisplayName", () => {
   it.each([
@@ -15,5 +15,39 @@ describe("formatProviderSkillDisplayName", () => {
     expect(formatProviderSkillDisplayName({ name: "gh-fix-ci", displayName: " Fix CI " })).toBe(
       "Fix CI",
     );
+  });
+});
+
+describe("matchInlineSkills", () => {
+  it("preserves offsets, skill identity, first-name precedence, and unknown tokens", () => {
+    const first = { name: "design", displayName: "Design" };
+    const duplicate = { name: "design", displayName: "Other design" };
+    const namespaced = { name: "pdf:pdf" };
+    expect([
+      ...matchInlineSkills("Use $design then $missing and $pdf:pdf, $pdf:pdf $design", [
+        first,
+        duplicate,
+        namespaced,
+      ]),
+    ]).toEqual([
+      { start: 4, end: 11, skill: first, rawText: "$design" },
+      { start: 40, end: 48, skill: namespaced, rawText: "$pdf:pdf" },
+      { start: 49, end: 56, skill: first, rawText: "$design" },
+    ]);
+  });
+
+  it("bounds name reads for repeated known and unknown tokens", () => {
+    let nameReads = 0;
+    const skills = Array.from({ length: 128 }, (_, index) => ({
+      get name() {
+        nameReads += 1;
+        return `skill-${index}`;
+      },
+    }));
+    const text = Array.from({ length: 100 }, () => "$skill-127 $missing").join(" ");
+    const matches = [...matchInlineSkills(text, skills)];
+    expect(matches).toHaveLength(100);
+    expect(matches.every((match) => match.skill === skills[127])).toBe(true);
+    expect(nameReads).toBeLessThanOrEqual(2 * skills.length);
   });
 });
