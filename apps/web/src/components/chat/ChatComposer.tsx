@@ -2,6 +2,7 @@ import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { useAppModalOpen } from "../sidebar/mainAppLocation";
 import {
   resolveCompatibleRuntimeMode,
   runtimeModeConfig,
@@ -2283,7 +2284,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // The collapsed mobile web composer keeps a second controls row inside the card.
   const showInlineRestingControls = isComposerCollapsedMobile;
   const composerControlsHidden = showInlineRestingControls && !restingControlsVisible;
-  if (composerControlsHidden && isComposerModelPickerOpen) {
+  // Popovers stack above app modals, so a picker left open would cover Settings or Usage.
+  const appModalOpen = useAppModalOpen();
+  if ((composerControlsHidden || appModalOpen) && isComposerModelPickerOpen) {
     setIsComposerModelPickerOpen(false);
   }
   const collapsedComposerImagePreviews =
