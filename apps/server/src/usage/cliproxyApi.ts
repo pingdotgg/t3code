@@ -239,7 +239,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
     const response = yield* decodeApiResponse(raw);
     if (response.status_code < 200 || response.status_code >= 300) {
       return yield* new UsageLimitSourceError({
-        detail: `The provider refused the hub request (HTTP ${response.status_code}).`,
+        detail:
+          response.status_code === 401
+            ? "HTTP 401: sign-in expired. Sign in to this account again."
+            : `The provider refused the hub request (HTTP ${response.status_code}).`,
       });
     }
     return response.body;
@@ -269,6 +272,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const base = {
       id: account.id,
+      routingDisabled: account.disabled ?? false,
       driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
       ...(account.email ? { email: account.email } : {}),
       ...(account.id_token?.chatgpt_account_id?.trim()
@@ -354,12 +358,14 @@ export const makeCliproxyApi = Effect.gen(function* () {
       };
     });
     return yield* read.pipe(
-      Effect.orElseSucceed(() => ({
+      Effect.orElseSucceed((error) => ({
         ...base,
         usageLimits: makeUnavailableUsageLimits({
           checkedAt,
           reason: "probeFailed",
-          message: "The hub could not read this account's usage.",
+          message: isUsageLimitSourceError(error)
+            ? error.detail
+            : "The hub could not decode this account's usage.",
         }),
       })),
     );
@@ -376,10 +382,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ),
     );
     return yield* Effect.forEach(
-      accounts.filter(
-        (account) =>
-          !account.disabled && (account.provider === "codex" || account.provider === "claude"),
-      ),
+      accounts.filter((account) => account.provider === "codex" || account.provider === "claude"),
       (account) => readAccount(config, account),
       { concurrency: 4 },
     );
