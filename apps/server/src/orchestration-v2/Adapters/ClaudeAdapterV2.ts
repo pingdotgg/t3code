@@ -2685,6 +2685,17 @@ const decodeClaudeSubagentCacheSettings = Schema.decodeUnknownEffect(
     ),
   ),
 );
+const decodeClaudeCompactSettings = Schema.decodeUnknownEffect(
+  fromLenientJson(
+    Schema.Struct({
+      autoCompactWindow: Schema.optionalKey(Schema.Unknown),
+      modelSettings: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+    }),
+  ),
+);
+const decodeClaudeCompactWindow = Schema.decodeUnknownOption(
+  Schema.Union([Schema.Int, Schema.Literal("auto")]),
+);
 const decodeClaudeEnvSettings = Schema.decodeUnknownEffect(
   fromLenientJson(
     Schema.StructWithRest(
@@ -4022,6 +4033,7 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
 interface ActiveClaudeTurnContext {
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
+  readonly autoCompactWindow: string;
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
   nativeMessageCursor: string | null;
@@ -4675,15 +4687,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       if (path.dirname(directory) === directory) return cwd;
     }
   });
-  // Settings env beats the process env, --settings over local over project over user, and a local
-  // file an older Claude Code left in cwd applies under the root one. resolveSettings reads local
-  // from cwd only.
-  const resolveToolSearchOverride = Effect.fn("ClaudeAdapterV2.resolveToolSearchOverride")(
-    function* (cwd: string | null, launchArgSettings: ClaudeSdkSettings | undefined) {
-      const launchValue = launchArgSettings?.env?.ENABLE_TOOL_SEARCH;
-      if (typeof launchValue === "string") return claudeToolSearchOverride(launchValue);
+  const settingsFilesByPrecedence = Effect.fn("ClaudeAdapterV2.settingsFilesByPrecedence")(
+    function* (cwd: string | null) {
       const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
-      const settingsFiles = [
+      return [
         ...(cwd === null || localDirectory === null
           ? []
           : [
@@ -4693,13 +4700,67 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ]),
         path.join(homePath, "settings.json"),
       ];
-      for (const settingsFile of settingsFiles) {
+    },
+  );
+  // Settings env beats the process env, --settings over local over project over user, and a local
+  // file an older Claude Code left in cwd applies under the root one. resolveSettings reads local
+  // from cwd only.
+  const resolveToolSearchOverride = Effect.fn("ClaudeAdapterV2.resolveToolSearchOverride")(
+    function* (cwd: string | null, launchArgSettings: ClaudeSdkSettings | undefined) {
+      const launchValue = launchArgSettings?.env?.ENABLE_TOOL_SEARCH;
+      if (typeof launchValue === "string") return claudeToolSearchOverride(launchValue);
+      for (const settingsFile of yield* settingsFilesByPrecedence(cwd)) {
         const value = yield* readToolSearchSetting(settingsFile);
         if (value !== undefined) return claudeToolSearchOverride(value);
       }
       return claudeToolSearchOverride(adapterOptions.environment.ENABLE_TOOL_SEARCH);
     },
   );
+
+  const resolveAutoCompactWindow = Effect.fn("ClaudeAdapterV2.resolveAutoCompactWindow")(function* (
+    cwd: string | null,
+    modelSelection: ModelSelection,
+  ) {
+    if (adapterOptions.settings.autoCompactWindow !== "")
+      return adapterOptions.settings.autoCompactWindow;
+    const model = compileClaudeModelSelection(modelSelection).apiModelId.replace(/\[1m\]$/i, "");
+    const windowFrom = (settings: unknown) => {
+      if (typeof settings !== "object" || settings === null) return undefined;
+      const models = Reflect.get(settings, "modelSettings");
+      const modelSetting =
+        typeof models === "object" && models !== null ? Reflect.get(models, model) : undefined;
+      const modelWindow =
+        typeof modelSetting === "object" && modelSetting !== null
+          ? Reflect.get(modelSetting, "autoCompactWindow")
+          : undefined;
+      const validWindow = (value: unknown) => {
+        const selected = Option.getOrUndefined(decodeClaudeCompactWindow(value));
+        return selected === "auto"
+          ? ""
+          : typeof selected === "number" && selected >= 100_000 && selected <= 1_000_000
+            ? String(selected)
+            : undefined;
+      };
+      return validWindow(modelWindow) ?? validWindow(Reflect.get(settings, "autoCompactWindow"));
+    };
+    const launch = yield* readClaudeLaunchArgSettings({
+      settings: adapterOptions.settings,
+      cwd,
+      fileSystem,
+      path,
+    });
+    const launchWindow = windowFrom(launch);
+    if (launchWindow !== undefined) return launchWindow;
+    for (const settingsFile of yield* settingsFilesByPrecedence(cwd)) {
+      const settings = yield* fileSystem.readFileString(settingsFile).pipe(
+        Effect.flatMap(decodeClaudeCompactSettings),
+        Effect.orElseSucceed(() => undefined),
+      );
+      const value = windowFrom(settings);
+      if (value !== undefined) return value;
+    }
+    return "";
+  });
 
   const userInvocableSkills = (cwd: string | null) =>
     discoverClaudeSkills(
@@ -5083,7 +5144,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             usage,
             context.input.modelSelection,
             DateTime.formatIso(now),
-            adapterOptions.settings.autoCompactWindow,
+            context.autoCompactWindow,
             context.streamUsage?.requestedAt,
           );
           if (tokenUsage.inputTokens <= 0) return;
@@ -8721,10 +8782,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   tokenUsage: {
                     usedTokens: afterTokenCount,
                     maxTokens,
-                    ...claudeAutoCompactThreshold(
-                      adapterOptions.settings.autoCompactWindow,
-                      maxTokens,
-                    ),
+                    ...claudeAutoCompactThreshold(context.autoCompactWindow, maxTokens),
                     updatedAt: DateTime.formatIso(now),
                   },
                 },
@@ -10584,9 +10642,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                     Effect.provideService(Path.Path, path),
                   );
+            const autoCompactWindow = yield* resolveAutoCompactWindow(
+              turnInput.runtimePolicy.cwd,
+              turnInput.modelSelection,
+            );
             const querySession = yield* openQuery(turnInput, nativeThreadId);
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
+              autoCompactWindow,
               queryPolicy: querySession.queryPolicy,
               nativeThreadId,
               nativeTurnId,

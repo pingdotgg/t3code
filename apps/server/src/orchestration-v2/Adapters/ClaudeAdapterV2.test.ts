@@ -6886,12 +6886,91 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { autoCompactWindow: "200000", model: "claude-sonnet-4-6", threshold: undefined },
     { autoCompactWindow: "650000", model: "claude-sonnet-4-6", threshold: undefined },
     { autoCompactWindow: "650000", model: "uncatalogued-model", threshold: 617_000 },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":500000}',
+      threshold: 467_000,
+    },
+    {
+      autoCompactWindow: "300000",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":500000}',
+      threshold: 267_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":500000}',
+      projectSettings: '{"autoCompactWindow":400000}',
+      threshold: 367_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings:
+        '{"autoCompactWindow":500000,"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":450000}}}',
+      threshold: 417_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":500000}',
+      projectSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":"auto"}}}',
+      threshold: undefined,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":500000}',
+      launchArgs: `--settings '{"autoCompactWindow":350000}'`,
+      threshold: 317_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":"invalid"}',
+      threshold: undefined,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":500000}',
+      projectSettings: '{"autoCompactWindow":50000}',
+      threshold: 467_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings:
+        '{"autoCompactWindow":500000,"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":50000}}}',
+      threshold: 467_000,
+    },
   ])(
     "ignores stale snapshots after compaction and reports threshold $autoCompactWindow for $model",
-    ({ autoCompactWindow, model, threshold }) =>
+    ({ autoCompactWindow, model, threshold, userSettings, projectSettings, launchArgs }) =>
       Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-compact-" });
+        const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-compact-" });
+        if (userSettings !== undefined) {
+          yield* fileSystem.writeFileString(path.join(home, "settings.json"), userSettings);
+        }
+        if (projectSettings !== undefined) {
+          yield* fileSystem.makeDirectory(path.join(project, ".claude"));
+          yield* fileSystem.writeFileString(
+            path.join(project, ".claude", "settings.json"),
+            projectSettings,
+          );
+        }
         const harness = yield* makeWakeHarnessWithOptions({
-          settings: { ...DEFAULT_CLAUDE_SETTINGS, autoCompactWindow },
+          settings: {
+            ...DEFAULT_CLAUDE_SETTINGS,
+            autoCompactWindow,
+            homePath: home,
+            launchArgs: launchArgs ?? "",
+          },
         });
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -6902,6 +6981,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             text: "Continue.",
             attachments: [],
             modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model },
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              ...CLAUDE_TEST_RUNTIME_POLICY,
+              cwd: project,
+            }),
           }),
         );
         const usage = { ...zeroUsage, input_tokens: 1_000, output_tokens: 75 };
