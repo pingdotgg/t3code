@@ -785,7 +785,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                               className="-mx-3.5"
                             />
                           ) : (
-                            <View style={{ height: 32 }} />
+                            <View style={{ height: 44 }} />
                           )}
                         </View>
                       ) : null}
