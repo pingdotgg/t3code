@@ -13,6 +13,7 @@ import {
   type PersistedAttachmentVerification,
 } from "@t3tools/client-runtime/state/attachments";
 import { create } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 
@@ -78,6 +79,21 @@ function clearUploadState(imageId: string): void {
     delete uploadsByImageId[imageId];
     return { uploadsByImageId };
   });
+}
+
+export function useAttachmentUploads(
+  attachments: ReadonlyArray<{ readonly id: string }>,
+): Readonly<Record<string, AttachmentUploadState>> {
+  return useAttachmentUploadStore(
+    useShallow((state) => {
+      const uploads: Record<string, AttachmentUploadState> = {};
+      for (const { id } of attachments) {
+        const upload = state.uploadsByImageId[id];
+        if (upload !== undefined) uploads[id] = upload;
+      }
+      return uploads;
+    }),
+  );
 }
 
 export function readAttachmentUpload(imageId: string): AttachmentUploadState | undefined {

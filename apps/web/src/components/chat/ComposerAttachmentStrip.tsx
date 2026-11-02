@@ -15,7 +15,7 @@ import {
   type DraftId,
   composerFileNeedsReattach,
 } from "../../composerDraftStore";
-import { retryAttachmentUpload, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
+import { retryAttachmentUpload, useAttachmentUploads } from "../../lib/attachmentUploadQueue";
 import { formatAttachmentUploadProgress } from "../../lib/attachmentUploadState";
 import { isHeicImageFile } from "../../lib/imageCompression";
 import {
@@ -147,7 +147,7 @@ export function ComposerAttachmentMediaRow({
   readonly onRemoveImage: (imageId: string) => void;
   readonly onRemoveFile: (fileId: string) => void;
 }) {
-  const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
+  const uploadsByImageId = useAttachmentUploads([...expandedImages, ...videos]);
   const pendingSnapShotIdSet = new Set(pendingSnapShotIds);
   const nonPersistedImageIdSet = new Set(nonPersistedImageIds);
   return (
@@ -427,7 +427,7 @@ export function ComposerAttachmentFileList({
   readonly onPreviewFile: (fileId: string) => void;
   readonly onRemoveFile: (fileId: string) => void;
 }) {
-  const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
+  const uploadsByImageId = useAttachmentUploads(files);
   return (
     <div className="mb-3 flex flex-col gap-1">
       {files.map((file) => {

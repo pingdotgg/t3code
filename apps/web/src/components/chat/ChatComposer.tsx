@@ -132,7 +132,7 @@ import {
   releaseAttachmentUpload,
   releaseDraftAttachment,
   startAttachmentUpload,
-  useAttachmentUploadStore,
+  useAttachmentUploads,
 } from "../../lib/attachmentUploadQueue";
 import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -721,7 +721,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   } = useComposerImageGroups(attachmentDraftTarget, composerImages, composerPreviewAnnotations);
   const preparingComposerImages = usePreparingComposerImages(attachmentTargetKey);
   const nonPersistedComposerImageIds = attachmentDraft.nonPersistedImageIds;
-  const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
+  const uploadsByImageId = useAttachmentUploads([...composerImages, ...composerFiles]);
   const openPrLink = useOpenPrLink(routeThreadRef);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const previewFile = composerFiles.find((file) => file.id === previewFileId);
