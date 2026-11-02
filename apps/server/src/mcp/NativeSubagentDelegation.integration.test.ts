@@ -212,6 +212,7 @@ const makeHarness = (name: string) =>
     const interrupts: Array<ThreadId | null> = [];
     // The MCP service subscribes to stored events when it starts waiting; tests wait on that.
     const streamCalls = yield* Queue.unbounded<StreamCall>();
+    const callerResolutions = yield* Queue.unbounded<string>();
     const layerAdapters = ProviderAdapterRegistry.layerSingle(
       makeAdapter(cwd, turns, stops, interrupts),
     );
@@ -240,11 +241,26 @@ const makeHarness = (name: string) =>
         ),
       ),
     );
+    const layerMcpSessions = Layer.effect(
+      McpProviderSessions.McpProviderSessions,
+      Effect.map(McpProviderSessions.McpProviderSessions, (sessions) => ({
+        ...sessions,
+        resolveNativeCaller: (input) =>
+          Effect.gen(function* () {
+            // The registry does no I/O before suspending on its caller wait.
+            const caller = yield* Effect.forkChild(sessions.resolveNativeCaller(input), {
+              startImmediately: true,
+            });
+            yield* Queue.offer(callerResolutions, input.callId);
+            return yield* Fiber.join(caller);
+          }),
+      })),
+    ).pipe(Layer.provide(McpProviderSessions.layer));
     const layerTest = OrchestratorMcpService.layer.pipe(
       Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
       Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
       Layer.provideMerge(Layer.merge(layerOrchestrator, layerThreads)),
-      Layer.provideMerge(McpProviderSessions.layer),
+      Layer.provideMerge(layerMcpSessions),
       Layer.provide(
         Layer.mergeAll(
           layerAdapters,
@@ -532,6 +548,11 @@ const makeHarness = (name: string) =>
         listed,
         childTurn,
         nextStreamCall,
+        nextCallerResolution: (callId: string) =>
+          Stream.fromQueue(callerResolutions).pipe(
+            Stream.filter((resolved) => resolved === callId),
+            Stream.runHead,
+          ),
       };
     }).pipe(Effect.provide(context));
   });
@@ -670,6 +691,7 @@ it.effect(
         const unbound = yield* Effect.forkChild(
           Effect.exit(h.delegate(scope("claude-tool:nobody"), "x")),
         );
+        yield* h.nextCallerResolution("claude-tool:nobody");
         yield* TestClock.adjust("5 seconds");
         assert.isTrue(Exit.isFailure(yield* Fiber.join(unbound)));
 
