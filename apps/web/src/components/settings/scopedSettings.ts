@@ -30,6 +30,20 @@ import type { ResolvedSettingsScope } from "./settingsScope";
 
 export type ScopedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
 
+export function createScopedSettingsSaveQueue() {
+  let pending: Promise<void> | undefined;
+  return (save: () => Promise<void>) => {
+    const next = pending ? pending.then(save, save) : save();
+    pending = next;
+    void next
+      .finally(() => {
+        if (pending === next) pending = undefined;
+      })
+      .catch(() => {});
+    return next;
+  };
+}
+
 interface ScopedSettingsEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;

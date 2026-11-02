@@ -14,6 +14,7 @@ import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
   applyPendingScopedWrites,
+  createScopedSettingsSaveQueue,
   type PendingScopedWrite,
   persistScopedSettingsPatch,
   planProjectOverridesClear,
@@ -144,6 +145,45 @@ describe("scoped settings targets", () => {
 });
 
 describe("scoped settings writes", () => {
+  it("plans dependent project saves after their predecessor settles without carrying failed values", async () => {
+    for (const succeeds of [true, false]) {
+      const enqueue = createScopedSettingsSaveQueue();
+      let release: () => void = () => {};
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let confirmed = environment("Server");
+      const first = enqueue(async () => {
+        const plan = planScopedSettingsPatch(checkout, [confirmed], { branchNamingMode: "custom" });
+        await pending;
+        if (succeeds) {
+          confirmed = environment("Server", {
+            settings: applyServerSettingsPatch(
+              confirmed.serverConfig!.settings,
+              plan.serverWrites[0]!.patch,
+            ),
+          });
+        }
+      });
+      const second = enqueue(async () => {
+        const plan = planScopedSettingsPatch(checkout, [confirmed], {
+          branchNameInstructions: "Use verify/ followed by a short description.",
+        });
+        confirmed = environment("Server", {
+          settings: applyServerSettingsPatch(
+            confirmed.serverConfig!.settings,
+            plan.serverWrites[0]!.patch,
+          ),
+        });
+      });
+      release();
+      await Promise.all([first, second]);
+      expect(confirmed.serverConfig!.settings.projectSettingsOverrides[projectId]).toEqual({
+        ...(succeeds ? { branchNamingMode: "custom" } : {}),
+        branchNameInstructions: "Use verify/ followed by a short description.",
+      });
+    }
+  });
   it("edits the effective machine policy without changing other machines' rules", () => {
     const custom = environment("Laptop", {
       settings: {

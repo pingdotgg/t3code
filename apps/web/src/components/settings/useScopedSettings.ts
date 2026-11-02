@@ -21,6 +21,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
+  createScopedSettingsSaveQueue,
   persistScopedSettingsPatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
@@ -33,6 +34,25 @@ import {
   type ProjectOverrideEntry,
   type ScopedSettingsPatch,
 } from "./scopedSettings";
+
+const enqueueProjectSave = createScopedSettingsSaveQueue();
+const confirmedSaves = new Map<
+  PendingScopedWrite["environmentId"],
+  { readonly previous: ServerSettings | undefined; readonly settings: ServerSettings }
+>();
+
+function confirmedEnvironments(environments: ReturnType<typeof useSettingsScope>["environments"]) {
+  return environments.map((environment) => {
+    const config = appAtomRegistry.get(
+      serverEnvironment.configValueAtom(environment.environmentId),
+    );
+    const saved = confirmedSaves.get(environment.environmentId);
+    if (saved && config && saved.previous === config.settings)
+      return { ...environment, serverConfig: { ...config, settings: saved.settings } };
+    confirmedSaves.delete(environment.environmentId);
+    return { ...environment, serverConfig: config ?? null };
+  });
+}
 
 const savedSettings = (environmentId: PendingScopedWrite["environmentId"]) =>
   appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.settings;
@@ -66,7 +86,7 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
 
 function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
-  return (plan: ReturnType<typeof planScopedSettingsPatch>, onFailed?: () => void) => {
+  const persist = (plan: ReturnType<typeof planScopedSettingsPatch>, onFailed?: () => void) => {
     if (plan.unavailableReason) {
       toastManager.add({
         type: "warning",
@@ -74,7 +94,7 @@ function useRunScopedPlan() {
         description: plan.unavailableReason,
       });
       onFailed?.();
-      return;
+      return Promise.resolve();
     }
     const pending = plan.serverWrites.map(({ environmentId, patch }): PendingScopedWrite => ({
       environmentId,
@@ -90,7 +110,7 @@ function useRunScopedPlan() {
           return saved && savedOver !== undefined ? [{ ...write, savedOver }] : [];
         }),
       );
-    void persistScopedSettingsPatch(
+    return persistScopedSettingsPatch(
       plan,
       async (request) => {
         const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
@@ -106,6 +126,12 @@ function useRunScopedPlan() {
               ),
             )
           : await persistServer(request);
+        if (result._tag === "Success") {
+          confirmedSaves.set(request.environmentId, {
+            previous: savedSettings(request.environmentId),
+            settings: result.value,
+          });
+        }
         settle(
           { environmentId: request.environmentId, patch: request.input.patch },
           result._tag === "Success",
@@ -136,6 +162,15 @@ function useRunScopedPlan() {
         for (const write of pending) settle(write, false);
       });
   };
+  return (
+    plan: () => ReturnType<typeof planScopedSettingsPatch>,
+    projectWrite: boolean,
+    onFailed?: () => void,
+  ) => {
+    // Project override entries replace whole objects, so dependent saves must plan after confirmation.
+    const save = () => persist(plan(), onFailed);
+    void (projectWrite ? enqueueProjectSave(save) : save());
+  };
 }
 
 export function useUpdateScopedSettings() {
@@ -143,7 +178,11 @@ export function useUpdateScopedSettings() {
   const run = useRunScopedPlan();
   /** `onFailed` runs when any target rejects or drops the patch, so a draft can fall back. */
   return (patch: ScopedSettingsPatch, options?: { readonly onFailed?: () => void }) =>
-    run(planScopedSettingsPatch(scope, environments, patch), options?.onFailed);
+    run(
+      () => planScopedSettingsPatch(scope, confirmedEnvironments(environments), patch),
+      scope.kind === "project" || scope.kind === "checkout",
+      options?.onFailed,
+    );
 }
 
 export function useClearScopedSettings() {
@@ -151,7 +190,11 @@ export function useClearScopedSettings() {
   const run = useRunScopedPlan();
   return (keys: readonly ProjectScopedServerSettingKey[]) => {
     if (context === null) return;
-    run(planScopedSettingsClear(context.scope, context.environments, keys));
+    run(
+      () =>
+        planScopedSettingsClear(context.scope, confirmedEnvironments(context.environments), keys),
+      true,
+    );
   };
 }
 
@@ -163,7 +206,10 @@ export function useClearProjectOverrides() {
     keys: readonly ProjectScopedServerSettingKey[],
   ) => {
     if (context === null) return;
-    run(planProjectOverridesClear(context.environments, entries, keys));
+    run(
+      () => planProjectOverridesClear(confirmedEnvironments(context.environments), entries, keys),
+      true,
+    );
   };
 }
 
