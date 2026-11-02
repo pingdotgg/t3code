@@ -358,25 +358,39 @@ describe("pickProjectFavicon", () => {
 });
 
 describe("syncHtmlFullscreen", () => {
-  const fullscreenWindow = (fullscreen: boolean) => {
+  const fullscreenWindow = (fullscreen: boolean, { animatedExit = false } = {}) => {
     let current = fullscreen;
+    let exiting = false;
+    const queued: boolean[] = [];
     const leaveListeners: Array<() => void> = [];
+    const leave = () => {
+      current = false;
+      for (const listener of leaveListeners) listener();
+    };
+    // Like macOS, an animated exit keeps reporting fullscreen and queues requests until it ends.
     const setFullScreen = vi.fn((next: boolean) => {
-      const left = current && !next;
-      current = next;
-      if (left) for (const listener of leaveListeners.splice(0)) listener();
+      if (exiting) queued.push(next);
+      else if (next) current = true;
+      else if (!current) return;
+      else if (animatedExit) exiting = true;
+      else leave();
     });
+    const finishExit = () => {
+      exiting = false;
+      leave();
+      for (const next of queued.splice(0)) setFullScreen(next);
+    };
     const window = {
       webContents: { id: 1 },
       isDestroyed: () => false,
       isFullScreen: () => current,
       setFullScreen,
-      once: (event: string, listener: () => void) => {
+      on: (event: string, listener: () => void) => {
         if (event === "leave-full-screen") leaveListeners.push(listener);
       },
     } as unknown as Electron.BrowserWindow;
     const layer = Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(window) });
-    return { window, setFullScreen, layer };
+    return { window, setFullScreen, finishExit, layer };
   };
   const fromMainRenderer = { sender: { id: 1 } };
 
@@ -411,6 +425,21 @@ describe("syncHtmlFullscreen", () => {
       yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
 
       assert.isTrue(window.isFullScreen());
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("takes the screen again when the video returns during an animated exit", () => {
+    const { window, finishExit, layer } = fullscreenWindow(false, { animatedExit: true });
+    return Effect.gen(function* () {
+      yield* syncHtmlFullscreen.handler(true, fromMainRenderer);
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+      yield* syncHtmlFullscreen.handler(true, fromMainRenderer);
+      finishExit();
+      assert.isTrue(window.isFullScreen());
+
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+      finishExit();
+      assert.isFalse(window.isFullScreen());
     }).pipe(Effect.provide(layer));
   });
 });
