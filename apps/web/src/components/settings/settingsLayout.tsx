@@ -244,9 +244,9 @@ export function SettingsSection({
             </h2>
             {titleAction}
           </div>
-          <div className="ml-auto flex min-h-7 min-w-7 items-center justify-end">
-            {headerAction}
-          </div>
+          {headerAction ? (
+            <div className="flex min-h-7 min-w-7 items-center justify-end">{headerAction}</div>
+          ) : null}
         </div>
       )}
       <SettingsGroup data-settings-scroll-target={hideTitle ? "" : undefined} variant={variant}>
