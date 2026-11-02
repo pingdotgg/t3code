@@ -104,7 +104,10 @@ const make = Effect.gen(function* () {
   const htmlRenders = yield* Ref.make(new Map<ThreadId, ReadonlyArray<KeptHtmlRender>>());
   // A replaced or cleared credential drops its thread's bindings, so none answer for the next.
   const nativeCallers = new Map<ThreadId, Map<string, ThreadId>>();
-  const nativeCallerWaiters = new Map<string, Deferred.Deferred<ThreadId>>();
+  const nativeCallerWaiters = new Map<
+    string,
+    { readonly deferred: Deferred.Deferred<ThreadId>; pending: number }
+  >();
   const waiterKey = (threadId: ThreadId, callId: string) => `${threadId}\u0000${callId}`;
   return McpProviderSessions.of({
     set: Effect.fn("McpProviderSessions.set")(function* (config) {
@@ -151,7 +154,7 @@ const make = Effect.gen(function* () {
       }
       nativeCallers.set(input.threadId, bound);
       const waiter = nativeCallerWaiters.get(waiterKey(input.threadId, input.callId));
-      if (waiter !== undefined) yield* Deferred.succeed(waiter, input.callerThreadId);
+      if (waiter !== undefined) yield* Deferred.succeed(waiter.deferred, input.callerThreadId);
     }),
     resolveNativeCaller: Effect.fn("McpProviderSessions.resolveNativeCaller")(function* (input) {
       // Only the thread's current credential reads its bindings, also after waiting for one.
@@ -162,13 +165,20 @@ const make = Effect.gen(function* () {
       const bound = nativeCallers.get(input.threadId)?.get(input.callId);
       if (bound !== undefined) return bound;
       const key = waiterKey(input.threadId, input.callId);
-      const waiter = nativeCallerWaiters.get(key) ?? (yield* Deferred.make<ThreadId>());
+      const waiter = nativeCallerWaiters.get(key) ?? {
+        deferred: yield* Deferred.make<ThreadId>(),
+        pending: 0,
+      };
+      waiter.pending += 1;
       nativeCallerWaiters.set(key, waiter);
-      const awaited = yield* Deferred.await(waiter).pipe(
+      const awaited = yield* Deferred.await(waiter.deferred).pipe(
         Effect.timeoutOption(NATIVE_CALLER_WAIT),
         Effect.ensuring(
           Effect.sync(() => {
-            if (nativeCallerWaiters.get(key) === waiter) nativeCallerWaiters.delete(key);
+            waiter.pending -= 1;
+            if (waiter.pending === 0 && nativeCallerWaiters.get(key) === waiter) {
+              nativeCallerWaiters.delete(key);
+            }
           }),
         ),
       );

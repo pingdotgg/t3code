@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as McpProviderSessions from "./McpProviderSessions.ts";
 
@@ -45,4 +46,35 @@ it.effect("a call waiting on its caller never resolves through the next credenti
       ThreadId.make("thread:native-child"),
     );
   }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+it.effect.each(["interrupted", "timed out"] as const)(
+  "keeps a shared caller waiter after another resolver is %s",
+  (settlement) =>
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* sessions.set(session("credential:current"));
+      const input = {
+        threadId,
+        providerSessionId: "credential:current",
+        callId: "codex-thread:native",
+      };
+      const first = yield* Effect.forkChild(sessions.resolveNativeCaller(input), {
+        startImmediately: true,
+      });
+      yield* TestClock.adjust("1 second");
+      const second = yield* Effect.forkChild(sessions.resolveNativeCaller(input), {
+        startImmediately: true,
+      });
+      if (settlement === "interrupted") {
+        yield* Fiber.interrupt(first);
+      } else {
+        yield* TestClock.adjust("4 seconds");
+        assert.isUndefined(yield* Fiber.join(first));
+      }
+      const callerThreadId = ThreadId.make("thread:native-child");
+      yield* sessions.bindNativeCaller({ ...input, callerThreadId });
+      yield* TestClock.adjust("5 seconds");
+      assert.equal(yield* Fiber.join(second), callerThreadId);
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
 );
