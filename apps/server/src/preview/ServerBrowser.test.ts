@@ -200,11 +200,11 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       viewport = size;
     }),
     goto: vi.fn(async (next: string) => {
-      url = next;
-      events.emit("load");
       const pending = initialNavigation;
       initialNavigation = null;
       await pending?.();
+      url = next;
+      events.emit("load");
     }),
     goBack: vi.fn(async () => {}),
     goForward: vi.fn(async () => {}),
@@ -650,6 +650,49 @@ it.effect("a desktop page that loaded before the server attached reports its loa
         url: "https://example.com/loaded",
         title: "test page",
       });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("Stop settles an initial navigation before its request event", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const started = Promise.withResolvers<void>();
+      const committed = Promise.withResolvers<void>();
+      initialNavigation = () => {
+        started.resolve();
+        return committed.promise;
+      };
+      yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
+      const { tabId } = yield* manager.open({
+        threadId: scope.thread.threadId,
+        runtime: "server",
+        url: "https://example.com/pending",
+      });
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* Effect.promise(() => started.promise);
+      const cdp = contexts.at(-1)!.sessions.at(-1)!;
+      const send = cdp.send.getMockImplementation()!;
+      cdp.send.mockImplementation(async (operation, input) => {
+        if (operation === "Page.stopLoading") committed.reject(new Error("net::ERR_ABORTED"));
+        return send(operation, input);
+      });
+      yield* viewer.input({ type: "stopLoading" });
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions.find((session) => session.tabId === tabId)?.navStatus).toEqual({
+        _tag: "Idle",
+      });
+      let settled = yield* PubSub.take(events);
+      while (
+        settled.type !== "navigated" ||
+        settled.tabId !== tabId ||
+        settled.snapshot.navStatus._tag !== "Idle"
+      ) {
+        settled = yield* PubSub.take(events);
+      }
     }),
   ).pipe(Effect.provide(layer)),
 );
