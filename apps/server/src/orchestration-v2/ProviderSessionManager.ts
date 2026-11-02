@@ -1150,7 +1150,11 @@ export const layerWithOptions = (
           if (hasPendingWork) {
             const now = yield* Clock.currentTimeMillis;
             const pinnedSinceMs = entry.pinnedSinceMs ?? now;
-            if (now - pinnedSinceMs < maxIdlePinMs) {
+            // Process-bound work cannot survive release, even when it has stopped emitting progress.
+            if (
+              probedRuntime.backgroundTasksEndWithProcess === true ||
+              now - pinnedSinceMs < maxIdlePinMs
+            ) {
               const shouldContinuePin = yield* Ref.modify(sessions, (latest) => {
                 const latestEntry = latest.get(key);
                 if (
@@ -1213,10 +1217,8 @@ export const layerWithOptions = (
           ),
         );
 
-      // Provider activity restarts the pin budget, so background work that keeps
-      // reporting progress (a long Claude workflow) is never cut off; only work
-      // that went silent for maxIdlePinMs is released. Progress events can be
-      // frequent, so keep this untraced.
+      // Provider activity restarts the pin budget for work that can outlive the process.
+      // Progress events can be frequent, so keep this untraced.
       const scheduleIdleReleaseInternal = Effect.fnUntraced(function* (
         providerSessionId: ProviderSessionId,
         options?: { readonly providerActivity?: boolean },
