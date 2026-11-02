@@ -16,7 +16,6 @@ import {
   allowedMergeMethods,
   canPerformPullRequestAction,
   mergeUnavailableReason,
-  MERGE_CONFLICT_REASON,
   MERGE_METHODS,
   pullRequestActionLabel,
 } from "./pullRequestActions";
@@ -24,6 +23,7 @@ import { pullRequestStackMerge, singlePullRequestMergeAllowed } from "./pullRequ
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
+import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import type { PullRequestStackState } from "./usePullRequestStack";
 
 export function PullRequestMergeControls(props: {
@@ -82,8 +82,24 @@ export function PullRequestMergeControls(props: {
       ? `${MERGE_METHODS[method].title} stack (${scope.layers.length})`
       : MERGE_METHODS[method].title
     : "Merge unavailable";
-  const autoMergeArmed = pr.state === "open" && pr.autoMergeEnabled === true;
-  const armedLabel = `Auto-merge pending${pr.autoMergeMethod ? ` (${pr.autoMergeMethod})` : ""}`;
+  // States the button itself names, instead of a reason line under it.
+  const status: { label: string; icon: AppSymbolName; final?: boolean } | null =
+    pr.state === "merged"
+      ? { label: "Merged", icon: PullRequestGlyph.merged, final: true }
+      : pr.state === "closed"
+        ? { label: "Closed", icon: PullRequestGlyph.closed, final: true }
+        : pr.isDraft
+          ? { label: "Draft", icon: PullRequestGlyph.draft }
+          : pr.mergeability === "conflicting"
+            ? { label: "Resolve conflicts to merge", icon: PullRequestGlyph.conflicting }
+            : pr.autoMergeEnabled
+              ? {
+                  label: `Auto-merge pending${pr.autoMergeMethod ? ` (${pr.autoMergeMethod})` : ""}`,
+                  icon: "clock",
+                }
+              : checkingStack && !busy
+                ? { label: "Checking stack…", icon: PullRequestGlyph.merged }
+                : null;
   const autoAction = pr.autoMergeEnabled ? "disable-auto-merge" : "enable-auto-merge";
   const canAutoMerge =
     !busy &&
@@ -174,39 +190,41 @@ export function PullRequestMergeControls(props: {
             ? "Working…"
             : !permissions.connected
               ? "Reconnect to merge"
-              : autoMergeArmed
-                ? armedLabel
-                : label
+              : (status?.label ?? label)
         }
         accessibilityLabel={
-          autoMergeArmed
-            ? `${armedLabel}, merges once its requirements are met`
+          status
+            ? status.label
             : scope
               ? `${label}, ${scope.layers.length} stack layers through #${pr.number}`
               : label
         }
-        icon={autoMergeArmed ? "clock" : PullRequestGlyph.merged}
-        disabled={!canMerge || autoMergeArmed}
-        loading={busy || (!autoMergeArmed && checkingStack)}
+        icon={status?.icon ?? PullRequestGlyph.merged}
+        disabled={!canMerge || status !== null}
+        loading={busy || checkingStack}
         onPress={() => confirm("merge")}
         menuTitle="Merge options"
-        actions={[
-          ...methods.map((id) => ({
-            id,
-            title: MERGE_METHODS[id].title,
-            state: id === method ? ("on" as const) : ("off" as const),
-            attributes: { disabled: !canMerge && !canAutoMerge },
-          })),
-          ...(canAutoMerge
-            ? [
-                {
-                  id: autoAction,
-                  title: pr.autoMergeEnabled ? "Disable auto-merge" : "Enable auto-merge",
-                  image: "clock",
-                },
+        actions={
+          status?.final
+            ? []
+            : [
+                ...methods.map((id) => ({
+                  id,
+                  title: MERGE_METHODS[id].title,
+                  state: id === method ? ("on" as const) : ("off" as const),
+                  attributes: { disabled: !canMerge && !canAutoMerge },
+                })),
+                ...(canAutoMerge
+                  ? [
+                      {
+                        id: autoAction,
+                        title: pr.autoMergeEnabled ? "Disable auto-merge" : "Enable auto-merge",
+                        image: "clock",
+                      },
+                    ]
+                  : []),
               ]
-            : []),
-        ]}
+        }
         onPressAction={(id) => {
           const selected = methods.find((method) => method === id);
           if (selected) {
@@ -215,12 +233,7 @@ export function PullRequestMergeControls(props: {
           } else if (id === autoAction && canAutoMerge) confirm(autoAction);
         }}
       />
-      {permissions.connected &&
-      !autoMergeArmed &&
-      reason &&
-      reason !== MERGE_CONFLICT_REASON &&
-      reason !== "Checking stack membership…" &&
-      !(checkingStack && reason === "Refresh the stack before merging.") ? (
+      {permissions.connected && !status && reason ? (
         <Text className="px-1 text-xs text-foreground-muted">{reason}</Text>
       ) : null}
       {stack.error && stack.supportsStackActions ? (
