@@ -63,7 +63,7 @@ and `thread/fork` config, with the provider-session token in an
 `Authorization` header. The same server is registered twice:
 
 - `t3-code`: every tool except `t3_thread_wait`.
-- `t3code`: only `t3_thread_wait`, with `omit_tools_from = ["code_mode", "deferred"]`.
+- `t3-code-direct`: only `t3_thread_wait`, with `omit_tools_from = ["code_mode", "deferred"]`.
 
 Code Mode runs a nested call as part of a script, so the model keeps working
 while a blocking wait runs. The second entry makes the wait a direct tool call,
