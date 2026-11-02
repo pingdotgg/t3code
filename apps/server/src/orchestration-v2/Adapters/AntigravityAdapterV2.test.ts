@@ -42,6 +42,7 @@ import {
 } from "./AntigravityAdapterV2.ts";
 
 const flavor = makeAntigravityAcpAdapterFlavor({
+  userHome: process.cwd(),
   instanceId: ProviderInstanceId.make("antigravity-test"),
   random: undefined as never,
   fileSystem: undefined as never,
@@ -156,6 +157,7 @@ describe("AntigravityAdapterV2 compaction", () => {
       );
       const instanceId = ProviderInstanceId.make("antigravity-compaction-test");
       const adapter = yield* makeAntigravityAdapterV2({
+        userHome: process.cwd(),
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
@@ -214,6 +216,7 @@ describe("AntigravityAdapterV2 session open", () => {
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("antigravity-sign-in-test");
       const adapter = yield* makeAntigravityAdapterV2({
+        userHome: process.cwd(),
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: () => Effect.fail(cause),
@@ -262,6 +265,7 @@ describe("AntigravityAdapterV2 client file system", () => {
       const crypto = yield* SecureRandom.SecureRandom;
       const instanceId = ProviderInstanceId.make("antigravity-containment-test");
       const adapter = yield* makeAntigravityAdapterV2({
+        userHome: process.cwd(),
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
@@ -402,6 +406,9 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
       const promptReceived = yield* Deferred.make<Parameters<RuntimeService["prompt"]>[0]>();
       const host = yield* ProviderHost.ProviderHost;
+      const logs = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-workspace-log-" });
+      const requestLog = path.join(logs, "requests.ndjson");
+      const constructions: Array<{ cwd: string; policyCwd: string | null }> = [];
       const document = ChatFileAttachment.make({
         type: "file",
         id: "native-pdf",
@@ -414,26 +421,36 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       let readTextFile: Parameters<RuntimeService["handleReadTextFile"]>[0] | undefined;
       const instanceId = ProviderInstanceId.make("antigravity-workspace-change-test");
       const adapter = yield* makeAntigravityAdapterV2({
+        userHome: process.cwd(),
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: (input) =>
-          makeAntigravityAcpRuntime({
+        makeRuntime: (input) => {
+          constructions.push({ cwd: input.cwd, policyCwd: input.runtimePolicy.cwd });
+          return makeAntigravityAcpRuntime({
             ...input,
             childProcessSpawner,
             spawn: {
               command: process.execPath,
               args: [mockAgentPath],
               cwd: input.cwd,
-              env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_HANG_PROMPT_FOREVER: "1" },
+              env: {
+                T3_ACP_ANTIGRAVITY: "1",
+                T3_ACP_AGENT_VERSION: "1.4.5",
+                T3_ACP_SESSION_LIFECYCLE: "1",
+                T3_ACP_RESUME_READ_PATH: path.join(input.cwd, "b.txt"),
+                T3_ACP_REQUEST_LOG_PATH: requestLog,
+                T3_ACP_HANG_PROMPT_FOREVER: constructions.length === 1 ? "0" : "1",
+              },
             },
           }).pipe(
             Effect.provideService(SecureRandom.SecureRandom, crypto),
             Effect.map((runtime): RuntimeService => ({
               ...runtime,
               prompt: (request) =>
-                Deferred.succeed(promptReceived, request).pipe(
-                  Effect.andThen(runtime.prompt(request)),
-                ),
+                (constructions.length === 1
+                  ? Effect.void
+                  : Deferred.succeed(promptReceived, request)
+                ).pipe(Effect.andThen(runtime.prompt(request))),
               start: () =>
                 runtime.start().pipe(
                   Effect.map((started) => ({
@@ -452,7 +469,8 @@ describe("AntigravityAdapterV2 workspace changes", () => {
                   readTextFile = handler;
                 }).pipe(Effect.andThen(runtime.handleReadTextFile(handler))),
             })),
-          ),
+          );
+        },
         withProcess: (_stop, task) => task,
         defaultModel: Effect.undefined,
       });
@@ -460,6 +478,13 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       const workspaceB = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-b-" });
       yield* fileSystem.writeFileString(path.join(workspaceA, "a.txt"), "from a");
       yield* fileSystem.writeFileString(path.join(workspaceB, "b.txt"), "from b");
+      for (const [workspace, marker] of [
+        [workspaceA, "WORKSPACE_A"],
+        [workspaceB, "WORKSPACE_B"],
+      ] as const) {
+        yield* fileSystem.writeFileString(path.join(workspace, "AGENTS.md"), `${marker}_AGENTS`);
+        yield* fileSystem.writeFileString(path.join(workspace, "GEMINI.md"), `${marker}_GEMINI`);
+      }
       const policyFor = (cwd: string) =>
         ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
@@ -480,54 +505,106 @@ describe("AntigravityAdapterV2 workspace changes", () => {
         runtimePolicy: policyFor(workspaceA),
       });
       const now = yield* DateTime.now;
-      yield* session
-        .startTurn({
-          appThread: {
-            createdBy: "user",
-            creationSource: "web",
-            id: threadId,
-            projectId: ProjectId.make("project-antigravity-workspace-change"),
-            title: "Antigravity workspace change",
-            providerInstanceId: instanceId,
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: workspaceB,
-            activeProviderThreadId: providerThread.id,
-            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-            forkedFrom: null,
-            createdAt: now,
-            updatedAt: now,
-            archivedAt: null,
-            settledOverride: null,
-            settledAt: null,
-            lastVisitedAt: null,
-            deletedAt: null,
-          },
-          threadId,
-          runId: RunId.make("run-antigravity-workspace-change"),
-          runOrdinal: 1,
-          providerTurnOrdinal: 1,
-          attemptId: RunAttemptId.make("attempt-antigravity-workspace-change"),
-          rootNodeId: NodeId.make("node-antigravity-workspace-change"),
-          providerThread,
-          message: {
-            createdBy: "user",
-            creationSource: "web",
-            messageId: MessageId.make("message-antigravity-workspace-change"),
-            text: "read b.txt",
-            attachments: [document],
-          },
+      const turnInput: ProviderAdapter.ProviderAdapterV2TurnInput = {
+        appThread: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project-antigravity-workspace-change"),
+          title: "Antigravity workspace change",
+          providerInstanceId: instanceId,
           modelSelection,
-          runtimePolicy: policyFor(workspaceB),
-        })
-        .pipe(Effect.forkScoped);
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: workspaceB,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        threadId,
+        runId: RunId.make("run-antigravity-workspace-change"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("attempt-antigravity-workspace-change"),
+        rootNodeId: NodeId.make("node-antigravity-workspace-change"),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("message-antigravity-workspace-change"),
+          text: "read b.txt",
+          attachments: [document],
+        },
+        modelSelection,
+        runtimePolicy: policyFor(workspaceB),
+      };
+      yield* session.startTurn({
+        ...turnInput,
+        appThread: { ...turnInput.appThread, worktreePath: workspaceA },
+        runtimePolicy: policyFor(workspaceA),
+        runId: RunId.make("run-antigravity-workspace-a"),
+        attemptId: RunAttemptId.make("attempt-antigravity-workspace-a"),
+        rootNodeId: NodeId.make("node-antigravity-workspace-a"),
+        message: {
+          ...turnInput.message,
+          messageId: MessageId.make("message-antigravity-workspace-a"),
+          text: "remember workspace A",
+        },
+      });
+      yield* session.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      yield* session.startTurn({ ...turnInput, runOrdinal: 2, providerTurnOrdinal: 2 });
       yield* session.events.pipe(
         Stream.filter((event) => event.type === "provider_turn.updated"),
         Stream.runHead,
       );
       const sent = yield* Deferred.await(promptReceived);
+      const requests = (yield* fileSystem.readFileString(requestLog))
+        .trim()
+        .split("\n")
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              method: string;
+              params: { sessionId?: string; cwd?: string; _meta?: unknown };
+            },
+        );
+      const setup = requests.filter((request) =>
+        ["session/new", "session/load", "session/resume"].includes(request.method),
+      );
+      assert.deepEqual(constructions, [
+        { cwd: workspaceA, policyCwd: workspaceA },
+        { cwd: workspaceB, policyCwd: workspaceB },
+      ]);
+      assert.deepEqual(
+        setup.map((request) => request.method),
+        ["session/new", "session/resume"],
+      );
+      assert.equal(setup[1]?.params.sessionId, providerThread.nativeThreadRef?.nativeId);
+      assert.equal(setup[1]?.params.cwd, workspaceB);
+      const originalRules = JSON.stringify(setup[0]?.params._meta);
+      const refreshedRules = JSON.stringify(setup[1]?.params._meta);
+      assert.include(originalRules, "WORKSPACE_A_AGENTS");
+      assert.include(originalRules, "WORKSPACE_A_GEMINI");
+      assert.include(refreshedRules, "WORKSPACE_B_AGENTS");
+      assert.include(refreshedRules, "WORKSPACE_B_GEMINI");
+      assert.notInclude(refreshedRules, "WORKSPACE_A");
+      assert.notInclude(JSON.stringify(sent.prompt), "WORKSPACE_A");
+      const snapshot = yield* session.readThreadSnapshot({ providerThread });
+      assert.include(JSON.stringify(snapshot), "native-resume-started");
+      assert.include(JSON.stringify(snapshot), "native-resume-read:");
+      assert.include(JSON.stringify(snapshot), "from b");
+      assert.include(JSON.stringify(snapshot), "remember workspace A");
       assert.deepEqual(
         sent.prompt.filter((block) => block.type === "resource_link"),
         [
@@ -584,6 +661,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
       const failed = { ...report, html: "<p>Revenue</p>" };
       const errored = { ...report, html: "<p>Revenue error</p>" };
       const adapter = yield* makeAntigravityAdapterV2({
+        userHome: process.cwd(),
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
@@ -868,6 +946,7 @@ describe("AntigravityAdapterV2 subagent reads", () => {
       const instanceId = ProviderInstanceId.make("antigravity-subagent-reads-test");
       const threadId = ThreadId.make("thread-antigravity-subagent-reads");
       const adapter = yield* makeAntigravityAdapterV2({
+        userHome: process.cwd(),
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
@@ -1060,6 +1139,7 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
       const modesSet: Array<string> = [];
       const instanceId = ProviderInstanceId.make("antigravity-ceiling-test");
       const adapter = yield* makeAntigravityAdapterV2({
+        userHome: process.cwd(),
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
@@ -1114,7 +1194,7 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
 });
 
 describe("AntigravityAdapterV2 session system prompt", () => {
-  it.effect.each(["1.4.5", "1.4.1"])(
+  it.effect.each(["1.4.5", "1.4.1", "1.5.1"])(
     "carries PR linking once in the %s session setup or once per turn",
     (agentVersion) =>
       Effect.gen(function* () {
@@ -1130,8 +1210,10 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
         const promptReceived = yield* Deferred.make<Parameters<RuntimeService["prompt"]>[0]>();
         const instanceId = ProviderInstanceId.make("antigravity-system-prompt-test");
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-home-" });
         const adapter = yield* makeAntigravityAdapterV2({
           instanceId,
+          userHome: home,
           selfInvocation: yield* resolveSelfInvocation(),
           makeRuntime: (input) =>
             makeAntigravityAcpRuntime({
@@ -1162,6 +1244,19 @@ describe("AntigravityAdapterV2 session system prompt", () => {
           defaultModel: Effect.undefined,
         });
         const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-sp-" });
+        yield* fileSystem.makeDirectory(path.join(home, ".gemini"));
+        yield* fileSystem.writeFileString(
+          path.join(home, ".gemini", "GEMINI.md"),
+          "GLOBAL_RULE_28704: Use global conventions.",
+        );
+        yield* fileSystem.writeFileString(
+          path.join(workspace, "AGENTS.md"),
+          "PROJECT_RULE_28704: Use repository conventions.",
+        );
+        yield* fileSystem.writeFileString(
+          path.join(workspace, "GEMINI.md"),
+          "GEMINI_RULE_28704: Use Gemini conventions.",
+        );
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
           interactionMode: "default",
@@ -1235,6 +1330,12 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         assert.include(sent, "through the Antigravity harness, as gemini-test-low");
         if (agentVersion === "1.4.5") {
           assert.include(append, "pull_request_linking");
+          assert.include(append, "GLOBAL_RULE_28704");
+          assert.include(append, "PROJECT_RULE_28704");
+          assert.include(append, "GEMINI_RULE_28704");
+          assert.isBelow(append.indexOf("GLOBAL_RULE_28704"), append.indexOf("PROJECT_RULE_28704"));
+          assert.isBelow(append.indexOf("PROJECT_RULE_28704"), append.indexOf("GEMINI_RULE_28704"));
+          assert.notInclude(sent, "PROJECT_RULE_28704");
           assert.notInclude(sent, "<pull_request_linking>");
         } else {
           assert.notInclude(append, "systemPrompt");
