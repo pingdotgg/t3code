@@ -304,7 +304,11 @@ function AgentActivity(
               lineLimit(1),
             ]}
           >
-            {attentionRows.length > 0 ? summary : activeLabel}
+            {attentionRows.length > 0
+              ? summary
+              : doneSuffix
+                ? `${activeLabel} · ${doneSuffix}`
+                : activeLabel}
           </Text>
           <Spacer minLength={6} />
         </HStack>
