@@ -64,6 +64,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   const discovered = yield* Deferred.make<void, AcpErrors.AcpError>();
   const closed = yield* Deferred.make<void>();
   const authenticateCalled = yield* Deferred.make<void>();
+  const sessionRequested = yield* Deferred.make<void>();
   const events: string[] = [];
   let receiveAuthorizationUrl:
     | ((url: string) => Effect.Effect<void, AcpErrors.AcpError>)
@@ -72,7 +73,12 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   let catalog = ["previous-account-model"];
   const auth = yield* makeAntigravityAuth({
     instanceId,
-    makeRuntime: (input) =>
+    makeRuntime: (input: {
+      readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, AcpErrors.AcpError>;
+      readonly requestLogger?: (
+        event: AcpSessionRuntime.AcpSessionRequestLogEvent,
+      ) => Effect.Effect<void, never>;
+    }) =>
       Effect.gen(function* () {
         receiveAuthorizationUrl = input.onAuthorizationUrl;
         events.push("process-open");
@@ -101,7 +107,16 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
                 }
               }
               yield* Deferred.await(authenticated);
+              yield* (
+                input.requestLogger?.({
+                  method: "authenticate",
+                  payload: { methodId: "oauth-personal" },
+                  status: "succeeded",
+                  result: {},
+                }) ?? Effect.void
+              );
               events.push("session-new");
+              yield* Deferred.succeed(sessionRequested, undefined);
               yield* Deferred.await(discovered);
               return started;
             }),
@@ -133,6 +148,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     discovered,
     closed,
     authenticateCalled,
+    sessionRequested,
     events,
     catalog: () => catalog,
     forwarded: () => forwarded,
@@ -287,6 +303,35 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       yield* TestClock.adjust("300 seconds");
       const failed = yield* phase(harness.auth, "failed");
       assert.equal(failed.message, "Google sign-in expired. Start sign-in again.");
+    }),
+  );
+
+  it.effect("does not blame the network when stored sign-in succeeds but no session opens", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ interactive: false });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.await(harness.sessionRequested);
+
+      yield* TestClock.adjust("300 seconds");
+      const failed = yield* phase(harness.auth, "failed");
+      assert.notInclude(failed.message ?? "", "could not reach Google");
+      assert.match(failed.message ?? "", /session/i);
+    }),
+  );
+
+  it.effect("does not call a completed Google sign-in expired when no session opens", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.await(harness.sessionRequested);
+
+      yield* TestClock.adjust("300 seconds");
+      const failed = yield* phase(harness.auth, "failed");
+      assert.notInclude(failed.message ?? "", "expired");
+      assert.match(failed.message ?? "", /session/i);
     }),
   );
 
