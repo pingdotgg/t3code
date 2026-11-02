@@ -49,6 +49,17 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }),
     );
 
+    it.effect("leaves CLAUDE_CONFIG_DIR unset when homePath is the default Claude home", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const baseEnv = { CLAUDE_CONFIG_DIR: "/tmp/claude-inherited", KEEP: "1" };
+
+        for (const homePath of ["~/.claude", `${path.join(NodeOS.homedir(), ".claude")}/`]) {
+          expect(yield* makeClaudeEnvironment({ homePath }, baseEnv)).toEqual({ KEEP: "1" });
+        }
+      }),
+    );
+
     it.effect("separates capability probes by cwd", () =>
       Effect.gen(function* () {
         const config = { binaryPath: "claude", homePath: "" };
