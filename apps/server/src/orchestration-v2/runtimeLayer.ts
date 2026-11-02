@@ -164,6 +164,7 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
 const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      GitVcsDriver.layer,
       layerContextHandoffServiceProvided,
       layerEventSink,
       IdAllocator.layer,
@@ -185,6 +186,7 @@ const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
 const layerCheckpointRollbackServiceProvided = CheckpointRollbackService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      GitVcsDriver.layer,
       ProjectStore.layer,
       layerCheckpointServiceProvided,
       layerEventSink,

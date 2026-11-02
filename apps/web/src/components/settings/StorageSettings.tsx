@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
@@ -49,6 +49,9 @@ import {
 } from "./useScopedSettings";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 
+// Home, root, UNC, and drive-absolute values; anything else, including C:folder, is relative.
+const NON_RELATIVE_WORKTREES_DIRECTORY = /^(?:$|~(?:$|[\\/])|[\\/]|[A-Za-z]:[\\/])/;
+
 export function WorktreesDirectoryRow() {
   const { connectedEnvironments, targets } = useSettingsScope();
   const settings = useScopedSettings();
@@ -56,6 +59,8 @@ export function WorktreesDirectoryRow() {
   const mixed = useScopedSettingsMixed(["worktreesDirectory"]);
   const edited = useRef(false);
   const draft = useRef("");
+  const [error, setError] = useState<{ readonly inputKey: string; readonly message: string }>();
+  const errorId = useId();
   if (
     connectedEnvironments.some(
       (environment) =>
@@ -64,12 +69,42 @@ export function WorktreesDirectoryRow() {
   )
     return null;
   const scopeKey = targets.map((target) => target.environmentId).join(",");
+  const inputKey = `${scopeKey}:${mixed}:${settings.worktreesDirectory}`;
+  const errorMessage = error?.inputKey === inputKey ? error.message : undefined;
+  const save = (value: string) => {
+    // Writes reach only connected servers, so offline ones never receive the value.
+    const unsupported = NON_RELATIVE_WORKTREES_DIRECTORY.test(value)
+      ? []
+      : connectedEnvironments.filter(
+          (environment) =>
+            environment.serverConfig?.environment.capabilities.repositoryWorktreesDirectory !==
+            true,
+        );
+    if (unsupported.length > 0) {
+      setError({
+        inputKey,
+        message: `Update T3 Code on ${unsupported
+          .map((environment) => environment.label)
+          .join(", ")} to use a relative folder, or enter an absolute folder such as ~/worktrees.`,
+      });
+      return;
+    }
+    setError(undefined);
+    updateSettings({ worktreesDirectory: value });
+  };
 
   return (
     <SettingsRow
       {...searchableSetting("storage-worktrees-location")}
       description={
-        "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. Existing worktrees stay where they are. Leave empty to use the T3 home folder."
+        "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. A relative folder such as .claude/worktrees is created inside each repository's main checkout. Existing worktrees stay where they are. Leave empty to use the T3 home folder."
+      }
+      status={
+        errorMessage ? (
+          <span id={errorId} role="alert" className="text-destructive">
+            {errorMessage}
+          </span>
+        ) : undefined
       }
       serverScoped
       settingKeys={["worktreesDirectory"]}
@@ -83,8 +118,10 @@ export function WorktreesDirectoryRow() {
       }
       control={
         <Input
-          key={`${scopeKey}:${mixed}:${settings.worktreesDirectory}`}
+          key={inputKey}
           aria-label="Worktree location"
+          aria-invalid={errorMessage ? true : undefined}
+          aria-describedby={errorMessage ? errorId : undefined}
           autoCapitalize="none"
           spellCheck={false}
           placeholder={mixed ? "Mixed" : "Default"}
@@ -96,11 +133,11 @@ export function WorktreesDirectoryRow() {
             edited.current = true;
             draft.current = resolvePastedPath(draft.current, event.target.value);
             event.target.value = draft.current;
+            setError(undefined);
           }}
           onBlur={(event) => {
             const value = event.target.value.trim();
-            if (edited.current && (mixed || value !== settings.worktreesDirectory))
-              updateSettings({ worktreesDirectory: value });
+            if (edited.current && (mixed || value !== settings.worktreesDirectory)) save(value);
             edited.current = false;
           }}
         />
