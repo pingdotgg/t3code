@@ -82,7 +82,7 @@ index 3381c5fd207ebb4cd8e0301aac59d307939ff162..481cdb4bc64ea5ae49919071f686324f
 -
 -        listOf(
 +      val stream = intent.getParcelableExtraCompat<Uri>(Intent.EXTRA_STREAM)
-+      val text = intent.getStringExtra(Intent.EXTRA_TEXT)
++      val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
 +      if (stream == null) {
 +        if (!type.startsWith("text/") || text == null) return emptyList()
 +        return listOf(

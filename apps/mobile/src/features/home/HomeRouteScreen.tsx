@@ -10,7 +10,10 @@ import { useMemo, useState } from "react";
 import { Platform, useWindowDimensions } from "react-native";
 
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  pickableProjectGroups,
+  resolveScratchProjectScopeKey,
+} from "@t3tools/client-runtime/state/project-grouping";
 
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects } from "../../state/entities";
@@ -138,11 +141,13 @@ export function HomeRouteScreen() {
   );
   const projectFilterOptions = useMemo(
     () =>
-      buildHomeProjectScopes({
-        projects,
-        environmentId: selectedEnvironmentId,
-        projectGroupingMode: listOptions.projectGroupingMode,
-      }).map((scope) => ({
+      pickableProjectGroups(
+        buildHomeProjectScopes({
+          projects,
+          environmentId: selectedEnvironmentId,
+          projectGroupingMode: listOptions.projectGroupingMode,
+        }),
+      ).map((scope) => ({
         key: scope.key,
         label: scope.title,
       })),

@@ -478,6 +478,24 @@ it.layer(layerTest)("CodexDriver", (it) => {
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
   );
 
+  it.effect("uses each instance's environment CODEX_HOME for continuation", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-driver-" });
+      for (const [index, account] of ["work", "personal", "work "].entries()) {
+        const codexHome = NodePath.join(tempDir, account);
+        const instance = yield* CodexDriver.create({
+          instanceId: ProviderInstanceId.make(`account-${index}`),
+          displayName: account,
+          enabled: false,
+          environment: [{ name: "CODEX_HOME", value: codexHome, sensitive: false }],
+          config: CodexDriver.defaultConfig(),
+        });
+        expect(instance.continuationIdentity.continuationKey).toBe(`codex:home:${codexHome}`);
+      }
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
+  );
+
   for (const fixture of [
     {
       name: "leaves mise npm-backend installations manual-only",
@@ -667,7 +685,9 @@ it.layer(layerTest)("CodexDriver", (it) => {
             homePath: NodePath.join(tempDir, "codex-home"),
           },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, metadataSpawner));
-        const capabilities = yield* instance.snapshot.resolveMaintenance();
+        const capabilities = yield* instance.snapshot
+          .resolveMaintenance()
+          .pipe(Effect.provideService(HostProcess.Environment, { PATH: "" }));
         const latestVersion = yield* resolveLatestProviderVersion(capabilities).pipe(
           Effect.provideServiceEffect(
             ProviderLatestVersions.ProviderLatestVersions,

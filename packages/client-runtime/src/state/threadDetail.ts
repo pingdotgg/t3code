@@ -14,6 +14,7 @@ import {
   type ThreadQueueWorkflowState,
 } from "./threadWorkflows.ts";
 import { deriveThreadTurnSubagents, type ThreadTurnSubagents } from "./threadSubagents.ts";
+import { presentRunStop, type RunStopPresentation } from "./threadExecution.ts";
 import {
   deriveThreadCheckpointSummaries,
   type ThreadCheckpointSummary,
@@ -147,6 +148,26 @@ function sameVisibleTurnItemStructure(before: VisibleTurnItem, after: VisibleTur
   );
 }
 
+function isStreamingAssistantMessage(visibleItem: VisibleTurnItem): boolean {
+  return visibleItem.item.type === "assistant_message" && visibleItem.item.streaming;
+}
+
+/** Whether `next` only streams more text into assistant messages that were already streaming. */
+function sameApartFromStreamedAssistantText(
+  previous: OrchestrationV2ThreadProjection["visibleTurnItems"],
+  next: OrchestrationV2ThreadProjection["visibleTurnItems"],
+): boolean {
+  return sameProjectionArray(
+    previous,
+    next,
+    (before, after) =>
+      before === after ||
+      (isStreamingAssistantMessage(before) &&
+        isStreamingAssistantMessage(after) &&
+        sameVisibleTurnItemStructure(before, after)),
+  );
+}
+
 /**
  * Whether `previous` and `next` have the same ThreadStructure: they differ
  * only by text streamed into existing assistant and reasoning items or by a
@@ -266,6 +287,32 @@ export function createEnvironmentThreadDetailAtoms<E>(
     );
   });
 
+  // Holds while only streamed assistant text moves, so the timeline re-renders on structure;
+  // each streaming message reads its text through assistantMessageTextAtom.
+  const timelineVisibleTurnItemsAtomFamily = Atom.family((key: string) => {
+    let previous = EMPTY_VISIBLE_TURN_ITEMS;
+    return Atom.make((get) => {
+      const next = get(visibleTurnItemsAtomFamily(key));
+      if (!sameApartFromStreamedAssistantText(previous, next)) previous = next;
+      return previous;
+    }).pipe(
+      Atom.setIdleTTL(0),
+      Atom.withLabel(`environment-thread-timeline-visible-turn-items:${key}`),
+    );
+  });
+
+  const assistantMessageTextAtomFamily = Atom.family((key: string) => {
+    const separator = key.lastIndexOf("\u0000");
+    const thread = key.slice(0, separator);
+    const itemId = key.slice(separator + 1);
+    return Atom.make((get) => {
+      const item = get(visibleTurnItemsAtomFamily(thread)).find(
+        (visibleItem) => visibleItem.item.id === itemId,
+      )?.item;
+      return item?.type === "assistant_message" ? item.text : null;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-assistant-message-text:${key}`));
+  });
+
   const queueWorkflowAtomFamily = Atom.family((key: string) => {
     let previous: Pick<
       OrchestrationV2ThreadProjection,
@@ -293,6 +340,32 @@ export function createEnvironmentThreadDetailAtoms<E>(
       }
       return value;
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-queue:${key}`));
+  });
+  const runStopAtomFamily = Atom.family((key: string) => {
+    let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems"> | null = null;
+    let stop: RunStopPresentation | null = null;
+    return Atom.make((get) => {
+      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      if (projection === null) {
+        previous = null;
+        stop = null;
+      } else if (
+        projection.runs !== previous?.runs ||
+        projection.turnItems !== previous?.turnItems
+      ) {
+        const { runs, turnItems } = projection;
+        previous = { runs, turnItems };
+        const next = presentRunStop(previous);
+        if (
+          next?.state !== stop?.state ||
+          next?.runId !== stop?.runId ||
+          next?.requestedAt !== stop?.requestedAt ||
+          next?.background !== stop?.background
+        )
+          stop = next;
+      }
+      return stop;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-run-stop:${key}`));
   });
   const queuedCountAtomFamily = Atom.family((key: string) => {
     let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "messages"> | null = null;
@@ -435,6 +508,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     pendingRequestsAtom: (ref: ScopedThreadRef) => pendingRequestsAtomFamily(threadKey(ref)),
     queueWorkflowAtom: (ref: ScopedThreadRef) => queueWorkflowAtomFamily(threadKey(ref)),
     queuedCountAtom: (ref: ScopedThreadRef) => queuedCountAtomFamily(threadKey(ref)),
+    runStopAtom: (ref: ScopedThreadRef) => runStopAtomFamily(threadKey(ref)),
     turnSubagentsAtom: (ref: ScopedThreadRef) => turnSubagentsAtomFamily(threadKey(ref)),
     checkpointSummariesAtom: (ref: ScopedThreadRef) =>
       checkpointSummariesAtomFamily(threadKey(ref)),
@@ -444,6 +518,10 @@ export function createEnvironmentThreadDetailAtoms<E>(
     visibleTurnItemsAtom: (ref: ScopedThreadRef) => visibleTurnItemsAtomFamily(threadKey(ref)),
     quietVisibleTurnItemsAtom: (ref: ScopedThreadRef) =>
       quietVisibleTurnItemsAtomFamily(threadKey(ref)),
+    timelineVisibleTurnItemsAtom: (ref: ScopedThreadRef) =>
+      timelineVisibleTurnItemsAtomFamily(threadKey(ref)),
+    assistantMessageTextAtom: (ref: ScopedThreadRef, itemId: string) =>
+      assistantMessageTextAtomFamily(`${threadKey(ref)}\u0000${itemId}`),
     statusAtom: (ref: ScopedThreadRef) => statusAtomFamily(threadKey(ref)),
     sequenceAtom: (ref: ScopedThreadRef) => sequenceAtomFamily(threadKey(ref)),
     errorAtom: (ref: ScopedThreadRef) => errorAtomFamily(threadKey(ref)),

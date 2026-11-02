@@ -433,7 +433,12 @@ export const make = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const cached = authenticated.get(login.url);
     if (token && cached?.token === token && now - cached.time < 30_000) return token;
-    yield* execute({ command: "fj", cwd, args: ["--host", login.url, "whoami"] });
+    // fj reads the cwd repository even with --host and fails on an unborn branch.
+    yield* execute({
+      command: "fj",
+      cwd: yield* HostProcess.HomeDirectory,
+      args: ["--host", login.url, "whoami"],
+    });
     // fj owns OAuth renewal. Re-read the file after it has refreshed an expired token.
     const refreshed = (yield* readKeys(cwd)).hosts[login.name]?.token;
     if (!refreshed)

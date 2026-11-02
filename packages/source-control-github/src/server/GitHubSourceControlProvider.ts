@@ -859,6 +859,9 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("github"),
+    resolveRemoteWebHost: Effect.fn("GitHubSourceControlProvider.resolveRemoteWebHost")(
+      ({ context }) => Effect.succeed(gitHubApiHostForRemote(context.remoteUrl)),
+    ),
     // GitHub matches bare heads; read a full page to disambiguate forks by owner.
     headBranchProbe: ({ headSelectors }) => ({
       headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
@@ -993,10 +996,13 @@ export const make = Effect.gen(function* () {
     ),
     getRepositoryCloneUrls: Effect.fn("GitHubSourceControlProvider.getRepositoryCloneUrls")(
       function* (input) {
-        const fallbackHost = (yield* resolveRepository(input).pipe(
-          Effect.map((locator) => locator.host),
-          Effect.orElseSucceed(() => environment.GH_HOST ?? "github.com"),
-        )).toLowerCase();
+        const fallbackHost = (
+          input.host ??
+          (yield* resolveRepository(input).pipe(
+            Effect.map((locator) => locator.host),
+            Effect.orElseSucceed(() => environment.GH_HOST ?? "github.com"),
+          ))
+        ).toLowerCase();
         const bareName = input.repository.trim().replace(/\.git$/i, "");
         const locator =
           parseGitHubRepositorySelector(input.repository, fallbackHost) ??

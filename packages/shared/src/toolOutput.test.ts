@@ -29,11 +29,16 @@ describe("compactDynamicToolOutput", () => {
       scheduledTaskId: "scheduled-1",
       status: "failed",
       summary: "A child failed; the tool itself succeeded.",
+      unlinked: [{ repository: "acme/app", state: "merged", numbers: [1] }],
+      unlinkedCount: 1,
+      linkedCount: 2,
     };
     expect(compactDynamicToolOutput(output)).toEqual({
       thread: { threadId: "thread-1" },
       taskId: "task-1",
       scheduledTaskId: "scheduled-1",
+      linkedCount: 2,
+      unlinkedCount: 1,
     });
     expect(output.thread.messages).toEqual(["Private message"]);
   });

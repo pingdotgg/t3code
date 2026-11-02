@@ -409,7 +409,7 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
       // The launcher found on PATH is remembered for a service that cannot see it.
       assert.equal(
         yield* fs.readFileString(path.join(baseDir, "runtime", "launchers")),
-        `${path.join(customBinDir, "t3")}\n${path.join(binDir, "t3")}\n`,
+        `${path.join(customBinDir, "t3")}\n\n${path.join(binDir, "t3")}\n`,
       );
       assert.deepEqual((yield* fs.readDirectory(versionsDir)).toSorted(), [
         ".staging-abc",
@@ -425,6 +425,52 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
         "2.0.0",
         "other",
       ]);
+    }),
+  );
+
+  it.effect.each([
+    // An interrupted append cut this record short.
+    { name: "an unterminated launcher record", recorded: "/opt/t", cut: "" },
+    // Another process's append is cut short after prune reads the records.
+    { name: "a record cut short after the read", recorded: "/opt/t3\n", cut: "/opt/t" },
+  ])("remembers a launcher found on PATH after $name", ({ recorded, cut }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { baseDir, versionsDir } = yield* setup(["1.0.0", "1.1.0"]);
+      const binDir = path.join(baseDir, "custom-bin");
+      yield* fs.makeDirectory(binDir);
+      yield* fs.symlink(path.join(versionsDir, "1.0.0", "t3"), path.join(binDir, "t3"));
+      const launchersFile = path.join(baseDir, "runtime", "launchers");
+      yield* fs.writeFileString(launchersFile, recorded);
+      const prune = (environment: Record<string, string>) =>
+        prunePinnedRuntimes({ baseDir, keep: [] }).pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, lsofRunner("p1\nftxt\nn/bin/sh\n")),
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(HostProcess.Environment, environment),
+          Effect.provideService(HostProcess.HomeDirectory, baseDir),
+        );
+
+      yield* prune({ PATH: binDir }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          readFileString: (file, encoding) =>
+            fs
+              .readFileString(file, encoding)
+              .pipe(
+                Effect.tap(() =>
+                  file === launchersFile
+                    ? fs.writeFileString(file, cut, { flag: "a" })
+                    : Effect.void,
+                ),
+              ),
+        }),
+      );
+      // A service that cannot see the interactive PATH.
+      const removed = yield* prune({});
+
+      assert.deepEqual(removed, []);
+      assert.isTrue(yield* fs.exists(path.join(versionsDir, "1.0.0", "t3")));
     }),
   );
 

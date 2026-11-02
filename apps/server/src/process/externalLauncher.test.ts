@@ -5,6 +5,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -712,6 +713,79 @@ it.effect.skipIf(windowsHost)("ignores unusable app bundles and keeps PATH launc
     );
     assert.equal(spawned?.command, "cursor");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "memoizes editor discovery and refreshes in the background after the cache window",
+  () => {
+    let statCalls = 0;
+    const rescanned = Deferred.makeUnsafe<void>();
+    let initialScanDone = false;
+    const fileInfo = { type: "File" } as FileSystem.File.Info;
+    const layerLauncher = ExternalLauncher.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          FileSystem.layerNoop({
+            stat: () =>
+              Effect.sync(() => {
+                statCalls += 1;
+                return fileInfo;
+              }).pipe(
+                Effect.tap(() =>
+                  initialScanDone ? Deferred.succeed(rescanned, undefined) : Effect.void,
+                ),
+              ),
+          }),
+          Path.layer,
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => Effect.sync(() => makeMockDetachedHandle())),
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+
+      const first = yield* launcher.resolveAvailableEditors();
+      assert.equal(first.includes("vscode"), true);
+      const statCallsAfterFirstScan = statCalls;
+      initialScanDone = true;
+      assert.isAbove(statCallsAfterFirstScan, 0);
+
+      // Past the shared command-resolution cache TTL (30s) but within the
+      // discovery cache window: the memoized set is reused without any scan.
+      yield* TestClock.adjust("31 seconds");
+      const second = yield* launcher.resolveAvailableEditors();
+      assert.deepEqual([...second], [...first]);
+      assert.equal(statCalls, statCallsAfterFirstScan);
+
+      // Past the discovery cache window the next call still answers from the
+      // memoized set and rescans in the background.
+      yield* TestClock.adjust("30 seconds");
+      const third = yield* launcher.resolveAvailableEditors();
+      assert.deepEqual([...third], [...first]);
+      yield* Deferred.await(rescanned);
+      assert.isAbove(statCalls, statCallsAfterFirstScan);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerLauncher,
+          Layer.succeed(HostProcess.Platform, "win32"),
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                PATH: "C:\\t3-editor-discovery-cache-test",
+                PATHEXT: ".COM;.EXE;.BAT;.CMD",
+              },
+            }),
+          ),
+          TestClock.layer(),
+        ),
+      ),
+    );
+  },
 );
 
 it.effect("keeps scanning after the caller is interrupted and shares that scan", () => {

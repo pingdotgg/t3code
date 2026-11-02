@@ -1454,7 +1454,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       if (input.authSecret !== null) {
         authSecrets.delete(input.key);
       }
-      if (input.promptCount >= 2) {
+      if (input.promptCount >= 2 || SshAuth.isSshAgentSigningFailure(input.error)) {
         return yield* input.error;
       }
 

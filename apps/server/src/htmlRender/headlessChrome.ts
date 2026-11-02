@@ -247,7 +247,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   let disconnected: BrowserFailure | undefined;
   let nextId = 0;
 
-  const post = (method: string, params: Record<string, unknown>, sessionId: string) =>
+  const post = (method: string, params: Record<string, unknown>, sessionId?: string) =>
     Queue.offer(
       outgoing,
       new TextEncoder().encode(
@@ -372,6 +372,18 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     Effect.ignore,
     Effect.andThen(disconnect),
     Effect.forkScoped,
+  );
+
+  // Signals can miss a confined browser (AppArmor in LXC), so ask it to quit first.
+  // Runs before the spawn's release, which still signals a browser that stays up.
+  yield* Effect.addFinalizer(() =>
+    disconnected
+      ? Effect.void
+      : post("Browser.close", {}).pipe(
+          Effect.andThen(child.exitCode),
+          Effect.timeout("2 seconds"),
+          Effect.ignore,
+        ),
   );
 
   const send = Effect.fn("headlessChrome.send")(function* <A>(

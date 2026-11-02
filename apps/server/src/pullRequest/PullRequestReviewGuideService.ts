@@ -344,7 +344,10 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.map((result) => result.stdout));
     const [nameOnly, patch] = yield* Effect.all(
-      [diff(["--name-only", "-z"]), diff(["--unified=0", "--no-color", "--no-ext-diff"])],
+      [
+        diff(["--name-only", "-z"]),
+        diff(["--unified=0", "--no-color", "--no-ext-diff", "--no-textconv"]),
+      ],
       { concurrency: "unbounded" },
     );
     return parseReviewGuideChange(nameOnly, patch);

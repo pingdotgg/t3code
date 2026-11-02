@@ -31,6 +31,10 @@
       "types": "./src/themePreview.ts",
       "import": "./src/themePreview.ts"
     },
+    "./textDirection": {
+      "types": "./src/textDirection.ts",
+      "import": "./src/textDirection.ts"
+    },
     "./projectFavicon": {
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"
@@ -331,6 +335,10 @@
       "types": "./src/AgentScope.ts",
       "import": "./src/AgentScope.ts"
     },
+    "./managedPolicyFile": {
+      "types": "./src/managedPolicyFile.ts",
+      "import": "./src/managedPolicyFile.ts"
+    },
     "./HostProcess": {
       "types": "./src/HostProcess.ts",
       "import": "./src/HostProcess.ts"
@@ -463,6 +471,10 @@
       "types": "./src/markdownWindowsPaths.ts",
       "import": "./src/markdownWindowsPaths.ts"
     },
+    "./generatedImageMarkdown": {
+      "types": "./src/generatedImageMarkdown.ts",
+      "import": "./src/generatedImageMarkdown.ts"
+    },
     "./markdownPipeline": {
       "types": "./src/markdownPipeline.ts",
       "import": "./src/markdownPipeline.ts"
@@ -521,11 +533,13 @@
     "@noble/hashes": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "effect": "catalog:",
+    "ffi-rs": "1.3.2",
     "jose": "catalog:",
     "mdast-util-directive": "catalog:",
     "mdast-util-to-hast": "^13.2.1",
     "micromark-extension-directive": "catalog:",
     "micromark-util-character": "catalog:",
+    "property-information": "^7.2.0",
     "rehype-raw": "catalog:",
     "rehype-sanitize": "catalog:",
     "remark-breaks": "catalog:",

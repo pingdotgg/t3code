@@ -5,6 +5,8 @@ import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  DeviceId,
+  DeviceOperationError,
   EnvironmentId,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
@@ -18,12 +20,21 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpBody, HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 
 import * as ProjectService from "../project/ProjectService.ts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as McpOAuth from "../auth/McpOAuth.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+
+import * as DeviceService from "../device/DeviceService.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -139,6 +150,86 @@ const callTool = (name: string, args: Record<string, unknown>) =>
   });
 
 const callSnapshot = (args: Record<string, unknown>) => callTool("preview_snapshot", args);
+
+it.effect.each([
+  { input: {}, open: false, message: "No device is open in this thread. Call device_open first." },
+  {
+    input: { deviceId: "missing" },
+    open: false,
+    message: "Device missing is not open in this thread. Call device_open first.",
+  },
+  {
+    input: {},
+    open: true,
+    message:
+      "Device screenshot failed: Could not communicate with device support. Try refreshing devices.",
+  },
+  {
+    input: {},
+    open: true,
+    rejected: true,
+    message:
+      "Device screenshot failed: The device hub could not complete the request. Call device_list to check the device state, and device_open if it needs to be reopened.",
+  },
+])(
+  "preserves actionable screenshot failure text: $message",
+  ({ input, open, message, ...options }) =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server.callTool({ name: "device_screenshot", arguments: input }).pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, {
+          ...invocation,
+          capabilities: new Set(["device"] as const),
+        }),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([{ type: "text", text: message }]);
+      expect(result.structuredContent).toMatchObject({
+        error: { message, operation: "screenshot" },
+      });
+      expect(JSON.stringify(result)).not.toContain("private hub output");
+    }).pipe(
+      Effect.provide(
+        McpHttpServer.layerDeviceToolkit.pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+          Layer.provide(
+            Layer.mock(DeviceService.DeviceService)({
+              locateSession: () => Effect.succeedNone,
+              sessionsForThread: () =>
+                Effect.succeed(
+                  open
+                    ? [
+                        {
+                          threadId,
+                          hostId: "local",
+                          deviceId: DeviceId.make("phone"),
+                          platform: "ios",
+                          openedAt: "2026-10-23T00:00:00Z",
+                        },
+                      ]
+                    : [],
+                ),
+              screenshot: () =>
+                Effect.fail(
+                  new DeviceOperationError({
+                    operation: "screenshot",
+                    reason:
+                      "rejected" in options && options.rejected ? "hub_rejected" : "request_failed",
+                    cause: new Error("private hub output"),
+                  }),
+                ),
+            }),
+          ),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-mcp-test-" })),
+          Layer.provide(NodeServices.layer),
+        ),
+      ),
+      Effect.scoped,
+    ),
+);
 
 const layerRecordingTools = (calls: Array<unknown>) => {
   const RecordingToolkit = Toolkit.make(
@@ -862,6 +953,106 @@ it.effect("admits provider and OAuth client credentials and points only clients 
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
+
+it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected credentials", () => {
+  const messages: Array<unknown> = [];
+  const logger = Logger.make(({ message }) => messages.push(message));
+  const layerAuth = Layer.mergeAll(EnvironmentAuth.layer, McpSessionRegistry.layer).pipe(
+    Layer.provideMerge(
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getEnvironmentId: Effect.succeed(environmentId),
+      }),
+    ),
+    Layer.provideMerge(Sqlite.layerMemory),
+    Layer.provide(ServerSecretStore.layer),
+    Layer.provide(ManagedPolicy.layerTest()),
+    Layer.provideMerge(ServerEnvironment.layerIdentity),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-auth-header-test-" })),
+    Layer.provideMerge(NodeServices.layer),
+  );
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const issued = yield* registry.issue({
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      });
+      const providerToken = issued.config.authorizationHeader.slice("Bearer ".length);
+      const oauth = yield* auth.issueMcpClientSession({
+        label: "MCP header test",
+        access: "read-only",
+        peerLink: false,
+        client: { deviceType: "bot" },
+      });
+      yield* HttpRouter.serve(
+        McpHttpServer.layerMcpTransport.pipe(
+          Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+          Layer.provide(ServerSettings.layerTest()),
+        ),
+        { disableListenLog: true, disableLogger: true },
+      ).pipe(Layer.build);
+      const httpClient = yield* HttpClient.HttpClient;
+      const initialize = (authorization?: string) =>
+        httpClient.post("/mcp", {
+          headers: {
+            accept: "application/json, text/event-stream",
+            ...(authorization === undefined ? {} : { authorization }),
+          },
+          body: HttpBody.text(
+            `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"mcp-header-test","version":"1.0.0"}}}`,
+            "application/json",
+          ),
+        });
+
+      for (const scheme of ["Bearer", "bearer", "bEaReR"]) {
+        for (const [kind, token] of [
+          ["provider", providerToken],
+          ["OAuth", oauth.token],
+        ]) {
+          const response = yield* initialize(`${scheme} ${token}`);
+          expect.soft(response.status, `${kind} ${scheme}`).toBe(200);
+        }
+      }
+      messages.length = 0;
+      for (const [authorization, reason] of [
+        [undefined, "missing_authorization_header"],
+        [`Basic ${providerToken}`, "unsupported_scheme"],
+        ["Bearer", "missing_bearer_token"],
+        ["bEaReR ", "missing_bearer_token"],
+        [`bearer ${providerToken.toUpperCase()}`, "unknown_or_expired_token"],
+        [`bEaReR ${oauth.token.toUpperCase()}`, "unknown_or_expired_token"],
+      ] as const) {
+        const response = yield* initialize(authorization);
+        expect(response.status).toBe(401);
+        expect
+          .soft(messages.at(-1))
+          .toEqual(["rejected MCP request with an unusable credential", { reason }]);
+        const body = yield* response.text;
+        expect(body).not.toContain(providerToken);
+        expect(body).not.toContain(oauth.token);
+        expect(JSON.stringify(response.headers)).not.toContain(providerToken);
+        expect(JSON.stringify(response.headers)).not.toContain(oauth.token);
+      }
+      yield* registry.revokeThread(threadId);
+      yield* auth.revokeSession(oauth.sessionId);
+      for (const token of [providerToken, oauth.token]) {
+        expect((yield* initialize(`bearer ${token}`)).status).toBe(401);
+      }
+      expect(JSON.stringify(messages)).not.toContain(providerToken);
+      expect(JSON.stringify(messages)).not.toContain(oauth.token);
+      expect(JSON.stringify(messages)).not.toContain(providerToken.toUpperCase());
+      expect(JSON.stringify(messages)).not.toContain(oauth.token.toUpperCase());
+    }),
+  ).pipe(
+    Effect.provide(
+      layerAuth.pipe(
+        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provideMerge(Logger.layer([logger], { mergeWithExisting: false })),
+      ),
+    ),
+  );
+});
 
 it.effect("hides tools for links and refuses another environment while the beta is off", () =>
   Effect.scoped(

@@ -108,6 +108,7 @@ async function startFakeDesktop(input: {
   });
 
   return {
+    directory: target.directory,
     received,
     close: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -134,9 +135,10 @@ const fakeDesktop = Effect.fn(function* (
 const withTempDirectory = <A, E, R>(
   prefix: string,
   use: (root: string) => Effect.Effect<A, E, R>,
+  tempDir = NodeOS.tmpdir(),
 ) =>
   Effect.acquireUseRelease(
-    Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), prefix))),
+    Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(tempDir, prefix))),
     use,
     (root) => Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true })),
   );
@@ -215,6 +217,60 @@ describe("t3 server command safety", () => {
 });
 
 describe("t3 app", () => {
+  it.live.each(["permissions", "owner", "symlink", "missing owner"] as const)(
+    "rejects unsafe %s on the socket directory before sending",
+    (unsafe) =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcess.Platform;
+        if (platform === "win32") return;
+        yield* withTempDirectory(
+          "t3-app-unsafe-",
+          (root) =>
+            Effect.gen(function* () {
+              const previousTmpdir = process.env.TMPDIR;
+              yield* Effect.acquireRelease(
+                Effect.sync(() => {
+                  process.env.TMPDIR = root;
+                }),
+                () =>
+                  Effect.sync(() => {
+                    if (previousTmpdir === undefined) delete process.env.TMPDIR;
+                    else process.env.TMPDIR = previousTmpdir;
+                  }),
+              );
+              const baseDir = NodePath.join(root, ".t3");
+              const userId = yield* HostProcess.UserId;
+              assert(userId !== undefined);
+              const expectedUserId =
+                unsafe === "missing owner" ? undefined : unsafe === "owner" ? userId + 1 : userId;
+              const desktop = yield* fakeDesktop({ baseDir }).pipe(
+                Effect.provideService(HostProcess.UserId, expectedUserId),
+              );
+              const directory = desktop.directory;
+              assert(directory !== null);
+              if (unsafe === "permissions") {
+                yield* Effect.promise(() => NodeFSP.chmod(directory, 0o755));
+              } else if (unsafe === "symlink") {
+                const moved = NodePath.join(root, "moved");
+                yield* Effect.promise(() => NodeFSP.rename(directory, moved));
+                yield* Effect.promise(() => NodeFSP.symlink(moved, directory));
+              }
+              const result = yield* runCli(["app"]).pipe(
+                Effect.provideService(HostProcess.HomeDirectory, root),
+                Effect.provideService(HostProcess.UserId, expectedUserId),
+                Effect.result,
+              );
+              expect(desktop.received).toEqual([]);
+              expect(result).toMatchObject({
+                _tag: "Failure",
+                failure: { _tag: "DesktopAppUnreachableError" },
+              });
+            }).pipe(Effect.scoped),
+          "/tmp",
+        );
+      }),
+  );
+
   it.effect("uses T3CODE_HOME or --base-dir and sends the default or explicit path", () =>
     withTempDirectory("t3-app-command-test-", (root) =>
       Effect.gen(function* () {

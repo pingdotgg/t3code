@@ -192,6 +192,49 @@ function makeTestInstance(input: MakeInstanceInput) {
 }
 
 describe("DesktopBackendManager", () => {
+  it.effect("notifies readiness waiters on HTTP readiness and stop without clock advancement", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const probe = yield* Deferred.make<void>();
+        const ready = yield* Deferred.make<void>();
+        const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.acquireRelease(
+                Effect.succeed(
+                  makeProcess({
+                    exitCode: Deferred.await(exit),
+                    kill: () =>
+                      Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)).pipe(Effect.asVoid),
+                  }),
+                ),
+                () => Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)),
+              ),
+            ),
+          ),
+          httpClientLayer: Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Deferred.succeed(probe, undefined).pipe(
+                Effect.andThen(Deferred.await(ready)),
+                Effect.as(HttpClientResponse.fromWeb(request, new Response("{}"))),
+              ),
+            ),
+          ),
+        });
+        yield* instance.start;
+        yield* Deferred.await(probe);
+        const waiter = yield* instance.waitForReady(Duration.seconds(15)).pipe(Effect.forkChild);
+        yield* Deferred.succeed(ready, undefined);
+        assert.isTrue(yield* Fiber.join(waiter));
+        yield* instance.stop();
+        assert.isFalse(yield* instance.waitForReady(Duration.seconds(15)));
+      }),
+    ),
+  );
+
   it.effect("spawns the backend with fd3 bootstrap and fd4 telemetry", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -628,6 +671,44 @@ describe("DesktopBackendManager", () => {
         assert.equal(failure.reason, "The server could not start (code=1).");
         assert.isTrue(failure.output.endsWith(message));
         assert.isTrue(failure.output.isWellFormed());
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("waits out a slow startup and reports one that never becomes ready", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const reports = yield* Queue.unbounded<DesktopBackendManager.BackendStartupFailure>();
+        const startInstance = (status: Ref.Ref<number>, onReady?: Effect.Effect<void>) =>
+          makeTestInstance({
+            spawnerLayer: Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make(() =>
+                Effect.succeed(makeProcess({ exitCode: Effect.never })),
+              ),
+            ),
+            httpClientLayer: layerHttpClient((request) =>
+              Ref.get(status).pipe(Effect.map((code) => responseForRequest(request, code))),
+            ),
+            onStartupFailure: (failure) => Queue.offer(reports, failure).pipe(Effect.asVoid),
+            ...(onReady ? { onReady } : {}),
+          }).pipe(Effect.tap((instance) => instance.start));
+
+        const slowStatus = yield* Ref.make(503);
+        const ready = yield* Deferred.make<void>();
+        yield* startInstance(slowStatus, Deferred.succeed(ready, undefined).pipe(Effect.asVoid));
+        yield* TestClock.adjust(Duration.seconds(66));
+        yield* Ref.set(slowStatus, 200);
+        yield* TestClock.adjust(Duration.millis(100));
+        yield* Deferred.await(ready);
+        assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
+
+        yield* startInstance(yield* Ref.make(503));
+        yield* TestClock.adjust(Duration.seconds(179));
+        assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
+        yield* TestClock.adjust(Duration.seconds(1));
+        const failure = yield* Queue.take(reports);
+        assert.equal(failure.reason, "The server started but did not become ready in time.");
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );

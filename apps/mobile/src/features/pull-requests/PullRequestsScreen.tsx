@@ -6,11 +6,12 @@ import {
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
-import { use, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { use, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   Keyboard,
   Platform,
+  Pressable,
   RefreshControl,
   ScrollView,
   View,
@@ -20,6 +21,7 @@ import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeS
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
@@ -32,7 +34,6 @@ import {
   usePullRequestListFilters,
   type PullRequestFilterMenu,
 } from "./PullRequestListFilters";
-import { PullRequestCardRow } from "./PullRequestControls";
 import { usePullRequestList } from "./usePullRequestList";
 import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
@@ -48,6 +49,7 @@ import {
 } from "./pullRequestList";
 import { useDebouncedValue } from "../../state/queries";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { useSearchScrollRestoration } from "../workspace/useSearchScrollRestoration";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 
 function PullRequestScrollView(props: ScrollViewProps) {
@@ -58,26 +60,38 @@ function PullRequestScrollView(props: ScrollViewProps) {
   );
 }
 
-function PullRequestListErrors(props: { readonly messages: readonly string[] }) {
+function PullRequestListError(props: { readonly message: string }) {
   const [expanded, setExpanded] = useState(false);
-  const title = `${props.messages.length} ${props.messages.length === 1 ? "error" : "errors"} loading pull requests`;
   return (
-    <View>
-      <PullRequestCardRow
-        title={title}
-        icon="exclamationmark.triangle"
-        compact
-        last
-        expanded={expanded}
-        accessibilityLabel={`${title}. ${expanded ? "Hide" : "Show"} details`}
-        onPress={() => setExpanded((value) => !value)}
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={props.message}
+      accessibilityState={{ expanded }}
+      onPress={() => setExpanded((value) => !value)}
+      // A long press selects the text; collapsing under that selection crashes Android's
+      // smart-select animation, so it must not also count as a press.
+      onLongPress={() => undefined}
+      className="min-h-11 flex-row items-center gap-3 px-4 py-2.5 active:opacity-70"
+    >
+      <SymbolView
+        name="exclamationmark.triangle"
+        size={18}
+        tintColorClassName="accent-icon-muted"
       />
-      {expanded ? (
-        <Text selectable className="px-4 pb-3 text-sm text-foreground-muted">
-          {props.messages.join("\n")}
-        </Text>
-      ) : null}
-    </View>
+      <Text
+        selectable={expanded}
+        numberOfLines={expanded ? undefined : 1}
+        ellipsizeMode="tail"
+        className="min-w-0 flex-1 text-sm text-foreground-muted"
+      >
+        {props.message}
+      </Text>
+      <SymbolView
+        name={expanded ? "chevron.up" : "chevron.down"}
+        size={11}
+        tintColorClassName="accent-icon-muted"
+      />
+    </Pressable>
   );
 }
 
@@ -105,21 +119,12 @@ export function PullRequestsScreen(
   const listRef = useRef<LegendListRef>(null);
   const tab = workspace.state.tabs.pullRequests;
   const [initialScrollOffset] = useState(() => workspace.getScrollOffset("pullRequests"));
-  // Cancelling search restores the offset recorded when search opened. The
-  // toolbar that cancels has no handle on this list, so the list scrolls itself
-  // once it sees the tab come back to resting.
-  const previousSearchMode = useRef(tab.searchMode);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list to the offset saved when search opened once the tab returns to resting
-  useEffect(() => {
-    const restoringSearch =
-      previousSearchMode.current !== "resting" && tab.searchMode === "resting";
-    previousSearchMode.current = tab.searchMode;
-    if (restoringSearch)
-      void listRef.current?.scrollToOffset({
-        offset: tab.scrollOffset - (Platform.OS === "ios" ? insets.top : 0),
-        animated: false,
-      });
-  }, [tab.searchMode, tab.scrollOffset, insets.top]);
+  useSearchScrollRestoration(tab.searchMode, () => {
+    void listRef.current?.scrollToOffset({
+      offset: tab.scrollOffset - (Platform.OS === "ios" ? insets.top : 0),
+      animated: false,
+    });
+  });
   const maintainVisiblePosition = {
     data: tab.searchMode === "resting",
     shouldRestorePosition: () => workspace.getScrollOffset("pullRequests") > 0,
@@ -334,13 +339,14 @@ export function PullRequestsScreen(
           <>
             <PullRequestListFilters sidebar={sidebar} filters={filters} />
             {result.data?.errors.length ? (
-              <PullRequestListErrors
-                key={JSON.stringify(targets)}
-                messages={result.data.errors.map(
-                  (error) =>
-                    `${error.projectTitle || environments.find((environment) => environment.environmentId === error.environmentId)?.environmentLabel || "Environment"}: ${error.message}`,
-                )}
-              />
+              <View key={JSON.stringify(targets)}>
+                {result.data.errors.map((error) => (
+                  <PullRequestListError
+                    key={`${error.environmentId} ${error.projectTitle} ${error.message}`}
+                    message={`${error.projectTitle || environments.find((environment) => environment.environmentId === error.environmentId)?.environmentLabel || "Environment"}: ${error.message}`}
+                  />
+                ))}
+              </View>
             ) : null}
           </>
         }

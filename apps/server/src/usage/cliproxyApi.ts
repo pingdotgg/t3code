@@ -55,6 +55,17 @@ const ClaudeWindow = Schema.Struct({
 const ClaudeUsage = Schema.Struct({
   five_hour: Schema.optional(Schema.NullOr(ClaudeWindow)),
   seven_day: Schema.optional(Schema.NullOr(ClaudeWindow)),
+  spend: Schema.optional(Schema.Unknown),
+  extra_usage: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        is_enabled: Schema.Boolean,
+        monthly_limit: Schema.NullOr(Schema.Number),
+        used_credits: Schema.NullOr(Schema.Number),
+        utilization: Schema.NullOr(Schema.Number),
+      }),
+    ),
+  ),
   limits: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -279,6 +290,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
               ]
             : [],
         );
+        const rateLimits = {
+          five_hour: usage.five_hour ?? null,
+          seven_day: usage.seven_day ?? null,
+          model_scoped,
+          spend: usage.spend,
+          extra_usage: usage.extra_usage ?? null,
+        };
         return {
           ...base,
           plan: "Claude Subscription",
@@ -286,11 +304,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
             checkedAt,
             response: {
               rate_limits_available: true,
-              rate_limits: {
-                five_hour: usage.five_hour ?? null,
-                seven_day: usage.seven_day ?? null,
-                model_scoped,
-              },
+              rate_limits: rateLimits,
             },
           }).limits,
         };
