@@ -17,6 +17,7 @@ import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
+import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
@@ -46,14 +47,18 @@ type DesktopLifecycleRegistrationServices =
   | ElectronWindow.ElectronWindow;
 
 /**
- * @effect-expect-leaking DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme | ElectronWindow
+ * @effect-expect-leaking DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme | ElectronUpdater | ElectronWindow
  */
 export class DesktopLifecycle extends Context.Service<
   DesktopLifecycle,
   {
     readonly relaunch: (
       reason: string,
-    ) => Effect.Effect<void, never, DesktopLifecycleRuntimeServices>;
+    ) => Effect.Effect<
+      void,
+      never,
+      DesktopLifecycleRuntimeServices | ElectronUpdater.ElectronUpdater
+    >;
     readonly register: Effect.Effect<
       void,
       never,
@@ -217,6 +222,7 @@ export const make = DesktopLifecycle.of({
     const electronApp = yield* ElectronApp.ElectronApp;
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const state = yield* DesktopState.DesktopState;
+    const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
     yield* logLifecycleInfo("desktop relaunch requested", { reason });
     yield* Effect.gen(function* () {
       yield* Effect.yieldNow;
@@ -226,6 +232,9 @@ export const make = DesktopLifecycle.of({
         yield* electronApp.exit(75);
         return;
       }
+      // app.exit still emits "quit", where electron-updater would install a
+      // downloaded update under the relaunched app on Windows and Linux.
+      yield* electronUpdater.setAutoInstallOnAppQuit(false);
       // Startup already acted on the app link that launched it; passing it on replays it.
       const appLinkPrefix = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}:`;
       const args = yield* HostProcess.Arguments;

@@ -11,6 +11,7 @@ import type * as Electron from "electron";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
+import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
@@ -226,9 +227,10 @@ describe("DesktopLifecycle", () => {
     }),
   );
 
-  it.effect("relaunches without the app link that launched it", () =>
+  it.effect("disarms updates and drops startup app links on relaunch", () =>
     Effect.gen(function* () {
       const relaunched = yield* Deferred.make<Electron.RelaunchOptions>();
+      let armed = true;
       const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
         platform: "linux",
         isDevelopment: false,
@@ -239,8 +241,19 @@ describe("DesktopLifecycle", () => {
             new Map(),
             Effect.void,
             () => Effect.void,
-            (options) => Deferred.succeed(relaunched, options).pipe(Effect.asVoid),
+            (options) =>
+              Effect.sync(() => {
+                assert.isFalse(armed);
+              }).pipe(Effect.andThen(Deferred.succeed(relaunched, options)), Effect.asVoid),
           ),
+        ),
+        Layer.provideMerge(
+          Layer.mock(ElectronUpdater.ElectronUpdater, {
+            setAutoInstallOnAppQuit: (value) =>
+              Effect.sync(() => {
+                armed = value;
+              }),
+          }),
         ),
         Layer.provideMerge(layerElectronTheme),
         Layer.provideMerge(layerElectronWindow()),

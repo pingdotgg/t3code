@@ -12,6 +12,17 @@ import * as References from "effect/References";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { vi } from "vite-plus/test";
+
+const { mkdirSyncMock, writeFileSyncMock } = vi.hoisted(() => ({
+  mkdirSyncMock: vi.fn<typeof import("node:fs").mkdirSync>(),
+  writeFileSyncMock: vi.fn<typeof import("node:fs").writeFileSync>(),
+}));
+vi.mock("node:fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs")>()),
+  mkdirSync: mkdirSyncMock,
+  writeFileSync: writeFileSyncMock,
+}));
 
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
@@ -321,45 +332,46 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("restores download state and permits retry after interruption", () =>
-    Effect.gen(function* () {
-      const actionStarted = yield* Deferred.make<void>();
-      let disableDifferentialCalls = 0;
-      const harness = makeHarness({
-        setDisableDifferentialDownload: Effect.suspend(() => {
-          disableDifferentialCalls += 1;
-          if (disableDifferentialCalls === 1) {
-            return Effect.void;
-          }
-          if (disableDifferentialCalls === 2) {
-            return Deferred.succeed(actionStarted, undefined).pipe(Effect.andThen(Effect.never));
-          }
-          return Effect.void;
-        }),
-      });
+  it.effect("keeps a canceled request's native download eligible for normal quit", () => {
+    writeFileSyncMock.mockReset();
+    const downloadStarted = Deferred.makeUnsafe<void>();
+    const nativeDownload = Promise.withResolvers<void>();
+    const harness = makeHarness({
+      platform: "win32",
+      downloadUpdate: Deferred.succeed(downloadStarted, undefined).pipe(
+        Effect.andThen(Effect.promise(() => nativeDownload.promise)),
+      ),
+    });
 
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const updates = yield* DesktopUpdates.DesktopUpdates;
-          yield* updates.configure;
-          harness.emit("update-available", { version: "1.2.4" });
-          yield* flushCallbacks;
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
 
-          const downloadFiber = yield* updates.download.pipe(Effect.forkScoped);
-          yield* Deferred.await(actionStarted);
-          yield* Fiber.interrupt(downloadFiber);
+        const request = yield* updates.download.pipe(Effect.forkScoped);
+        yield* Deferred.await(downloadStarted);
+        yield* Fiber.interrupt(request);
+        const reservedAfterCancellation = yield* updates.isActionActive;
 
-          const interruptedState = yield* updates.getState;
-          assert.equal(interruptedState.status, "available");
-          assert.isNull(interruptedState.message);
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        nativeDownload.resolve();
+        yield* flushCallbacks;
 
-          const retry = yield* updates.download;
-          assert.isTrue(retry.accepted);
-          assert.isTrue(retry.completed);
-        }),
-      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-    }),
-  );
+        assert.equal((yield* updates.getState).downloadedVersion, "1.2.4");
+        harness.emit("quit", {}, 0);
+        assert.equal(writeFileSyncMock.mock.calls.length, 1);
+        assert.deepEqual(JSON.parse(String(writeFileSyncMock.mock.calls[0]![1])), {
+          fromVersion: "1.2.3",
+          targetVersion: "1.2.4",
+        });
+        assert.isTrue(reservedAfterCancellation);
+        assert.isFalse(yield* updates.isActionActive);
+        assert.equal(harness.quitAndInstalls(), 0);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
 
   it.effect("clears quitting state after an unexpected install setup failure", () => {
     const harness = makeHarness({
@@ -502,6 +514,7 @@ describe("DesktopUpdates", () => {
 
   it.effect("keeps windows and restarts backends when quitAndInstall fails", () => {
     const harness = makeHarness({
+      platform: "win32",
       quitAndInstall: Effect.fail(
         new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
           channel: "latest",
@@ -517,12 +530,17 @@ describe("DesktopUpdates", () => {
         const desktopState = yield* DesktopState.DesktopState;
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        yield* updates.download;
+        assert.equal(harness.autoInstallOnAppQuitCalls.at(-1), true);
         harness.emit("update-downloaded", { version: "1.2.4" });
         yield* flushCallbacks;
 
         const result = yield* updates.install;
         assert.isTrue(result.accepted);
         assert.isFalse(yield* Ref.get(desktopState.quitting));
+        assert.equal(harness.autoInstallOnAppQuitCalls.at(-1), false);
         assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
         assert.equal(harness.updateRestartMarkers.size, 0);
         assert.equal(harness.installRecords.size, 0);
@@ -697,12 +715,16 @@ describe("DesktopUpdates", () => {
   });
 
   it.effect("ignores a finished download from a track it no longer follows", () => {
-    const harness = makeHarness();
+    const harness = makeHarness({ platform: "win32" });
 
     return Effect.scoped(
       Effect.gen(function* () {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        yield* updates.download;
+        assert.equal(harness.autoInstallOnAppQuitCalls.at(-1), true);
         // A backed-out switch's download keeps reporting progress until it finishes.
         harness.emit("download-progress", { percent: 40 });
         yield* flushCallbacks;
@@ -712,6 +734,9 @@ describe("DesktopUpdates", () => {
         const state = yield* updates.getState;
         assert.equal(state.downloadedVersion, null);
         assert.notEqual(state.status, "downloading");
+        assert.equal(harness.autoInstallOnAppQuitCalls.at(-1), false);
+        yield* TestClock.adjust("4 minutes");
+        assert.equal(harness.checkCount(), 2);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -914,6 +939,179 @@ describe("DesktopUpdates", () => {
         }),
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     }),
+  );
+});
+
+/** A harness whose update feed announces `feed.version` on every check. */
+function makeFeedHarness(
+  options: Parameters<typeof makeHarness>[0] = {},
+  feed: { version: string | null } = { version: "1.2.4" },
+) {
+  let emit: ReturnType<typeof makeHarness>["emit"] | undefined;
+  const harness = makeHarness({
+    platform: "win32",
+    ...options,
+    checkForUpdates: Effect.sync(() => {
+      if (feed.version === null) emit?.("update-not-available");
+      else emit?.("update-available", { version: feed.version });
+    }),
+  });
+  emit = harness.emit;
+  return { harness, feed };
+}
+
+const failDownload = Effect.fail(
+  new ElectronUpdater.ElectronUpdaterDownloadUpdateError({
+    channel: null,
+    cause: new Error("blocked"),
+  }),
+);
+
+describe("DesktopUpdates background downloads", () => {
+  it.effect.each(["win32", "linux"] as const)(
+    "keeps a slow startup download through polls and reports an unapplied quit install on %s",
+    (platform) => {
+      writeFileSyncMock.mockReset();
+      const releaseDownload = Deferred.makeUnsafe<void>();
+      const { harness, feed } = makeFeedHarness({
+        platform,
+        env: { APPIMAGE: "/tmp/T3Code.AppImage" },
+        downloadUpdate: Deferred.await(releaseDownload),
+      });
+
+      return Effect.gen(function* () {
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            yield* TestClock.adjust(Duration.seconds(15));
+            assert.equal(harness.downloadCount(), 1);
+            assert.equal(harness.autoInstallOnAppQuitCalls.at(-1), true);
+
+            yield* TestClock.adjust(Duration.minutes(4));
+            assert.equal((yield* updates.getState).status, "downloading");
+            assert.isFalse((yield* updates.check("manual")).checked);
+            assert.equal(harness.downloadCount(), 1);
+
+            harness.emit("update-downloaded", { version: "1.2.4" });
+            yield* Deferred.succeed(releaseDownload, undefined);
+            yield* flushCallbacks;
+            feed.version = "1.2.5";
+            yield* TestClock.adjust(Duration.minutes(4));
+            assert.equal((yield* updates.getState).downloadedVersion, "1.2.4");
+            assert.equal(harness.checkCount(), 1);
+            assert.equal(harness.downloadCount(), 1);
+
+            // A manual check can clear UI state while the old installer remains queued.
+            yield* updates.check("manual");
+            assert.equal((yield* updates.getState).availableVersion, "1.2.5");
+            assert.isNull((yield* updates.getState).downloadedVersion);
+            yield* TestClock.adjust(Duration.minutes(4));
+            assert.equal(harness.checkCount(), 2);
+            assert.equal(harness.downloadCount(), 1);
+            assert.equal(writeFileSyncMock.mock.calls.length, 0);
+          }),
+        ).pipe(Effect.provide(harness.layer));
+
+        harness.emit("quit", {}, 0);
+        assert.equal(writeFileSyncMock.mock.calls.length, 1);
+        const [recordPath, installRecord] = writeFileSyncMock.mock.calls[0]!;
+        assert.isTrue(
+          String(recordPath).endsWith(DesktopUpdates.DESKTOP_UPDATE_INSTALL_RECORD_FILE),
+        );
+        assert.deepEqual(JSON.parse(String(installRecord)), {
+          fromVersion: "1.2.3",
+          targetVersion: "1.2.4",
+        });
+
+        const restarted = makeFeedHarness({
+          platform,
+          installRecord: String(installRecord),
+          env: { APPIMAGE: "/tmp/T3Code.AppImage" },
+        });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            yield* TestClock.adjust(Duration.minutes(5));
+            assert.equal((yield* updates.getState).notAppliedVersion, "1.2.4");
+            assert.equal(restarted.harness.downloadCount(), 0);
+            assert.isTrue((yield* updates.download).accepted);
+            assert.equal(restarted.harness.downloadCount(), 1);
+          }),
+        ).pipe(Effect.provide(restarted.harness.layer));
+      }).pipe(Effect.provide(TestClock.layer()));
+    },
+  );
+
+  it.effect("keeps manual Download and disarms its installer when the channel changes", () => {
+    const { harness } = makeFeedHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        const result = yield* updates.check("manual");
+        assert.equal(result.state.status, "available");
+        assert.equal(harness.downloadCount(), 0);
+
+        assert.isTrue((yield* updates.download).completed);
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.equal(harness.autoInstallOnAppQuitCalls.at(-1), true);
+
+        const state = yield* updates.setChannel("nightly");
+        assert.isNull(state.downloadedVersion);
+        assert.equal(harness.autoInstallOnAppQuitCalls.at(-1), false);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect.each(["darwin", "linux"] as const)("keeps explicit Install on %s", (platform) => {
+    const { harness } = makeFeedHarness({ platform, packageType: "deb" });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* TestClock.adjust(Duration.seconds(15));
+
+        assert.equal(harness.downloadCount(), 1);
+        assert.notInclude(harness.autoInstallOnAppQuitCalls, true);
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.isTrue((yield* updates.install).accepted);
+        assert.equal(harness.quitAndInstalls(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect(
+    "disarms a failed download, skips background retries, and permits manual or newer retries",
+    () => {
+      const { harness, feed } = makeFeedHarness({ downloadUpdate: failDownload });
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          yield* TestClock.adjust(Duration.seconds(15));
+          assert.equal(harness.downloadCount(), 1);
+          assert.equal(harness.autoInstallOnAppQuitCalls.at(-1), false);
+
+          yield* TestClock.adjust(Duration.minutes(8));
+          assert.equal(harness.checkCount(), 3);
+          assert.equal(harness.downloadCount(), 1);
+
+          assert.isTrue((yield* updates.download).accepted);
+          assert.equal(harness.downloadCount(), 2);
+          feed.version = "1.2.5";
+          yield* TestClock.adjust(Duration.minutes(4));
+          assert.equal(harness.downloadCount(), 3);
+          assert.equal(harness.autoInstallOnAppQuitCalls.at(-1), false);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    },
   );
 });
 

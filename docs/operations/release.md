@@ -471,8 +471,8 @@ available.
 - `apps/desktop/src/main.ts` only wires the updater layers into the desktop runtime.
 - Update UX:
   - Background checks run on startup delay + interval.
-  - No automatic download or install.
-  - The desktop UI shows a rocket update button when an update is available; click once to download, click again after download to restart/install.
+  - Updates found by the startup and interval checks download automatically and install when the app quits. macOS and `.deb` installs are never armed for quit: Squirrel.Mac stages an armed update irreversibly, and dpkg asks for a password. They wait for **Install**. A version whose install did not apply is not downloaded again in the background.
+  - A manual check only reports; the update button downloads, then restarts to install right away.
 - Provider: GitHub Releases (`provider: github`) configured at build time.
 - Repository slug source:
   - `T3CODE_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.

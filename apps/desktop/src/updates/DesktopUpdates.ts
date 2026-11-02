@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Electron's final quit event cannot await asynchronous filesystem writes.
+import * as NodeFS from "node:fs";
 import {
   DESKTOP_UPDATE_RESTART_MARKER_FILE,
   DesktopUpdateChannelSchema,
@@ -14,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -362,6 +365,7 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
 
 /** @public */
 export const make = Effect.gen(function* () {
+  const scope = yield* Scope.Scope;
   const config = yield* DesktopConfig.DesktopConfig;
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const desktopState = yield* DesktopState.DesktopState;
@@ -382,6 +386,10 @@ export const make = Effect.gen(function* () {
   const finishedUpdateActions = yield* PubSub.unbounded<UpdateAction>();
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
+  // Pollers must not retry a persistently failing download every four minutes.
+  const failedDownloads = new Set<string>();
+  // Manual checks can clear downloadedVersion while the native installer stays queued.
+  let downloadedInstallerVersion: string | null = null;
   const notAppliedVersionRef = yield* Ref.make(Option.none<string>());
   // The release a track switch's database check cleared. A build crosses to another track only
   // through such a switch, and never below that release: version order alone cannot tell whether
@@ -587,15 +595,28 @@ export const make = Effect.gen(function* () {
         );
   });
 
-  const downloadAvailableUpdate = Effect.gen(function* () {
+  const downloadAvailableUpdate = Effect.fn("desktop.updates.downloadAvailableUpdate")(function* (
+    actionReservation: "acquire" | "held" = "acquire",
+  ) {
     const state = yield* Ref.get(updateStateRef);
-    if (!(yield* Ref.get(updaterConfiguredRef)) || state.status !== "available") {
+    if (
+      (yield* Ref.get(desktopState.quitting)) ||
+      !(yield* Ref.get(updaterConfiguredRef)) ||
+      state.status !== "available"
+    ) {
       return { accepted: false, completed: false };
     }
 
-    if (!(yield* tryStartUpdateAction("download"))) {
+    if (actionReservation === "held") {
+      yield* Ref.set(activeUpdateActionRef, Option.some("download"));
+    } else if (!(yield* tryStartUpdateAction("download"))) {
       return { accepted: false, completed: false };
     }
+
+    const releaseFailedDownload = Effect.sync(() => {
+      downloadedInstallerVersion = null;
+      if (state.availableVersion !== null) failedDownloads.add(state.availableVersion);
+    }).pipe(Effect.andThen(electronUpdater.setAutoInstallOnAppQuit(false)));
 
     return yield* Effect.gen(function* () {
       yield* setState(reduceDesktopUpdateStateOnDownloadStart(state));
@@ -603,12 +624,21 @@ export const make = Effect.gen(function* () {
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
       );
       yield* logUpdaterInfo("downloading update");
+      // Squirrel stages macOS updates irreversibly when this flag is true.
+      // Keep staging behind Install; .deb installs also need an explicit action.
+      yield* electronUpdater.setAutoInstallOnAppQuit(
+        environment.platform !== "darwin" && !isDebPackage,
+      );
+      downloadedInstallerVersion = null;
       yield* electronUpdater.downloadUpdate;
+      downloadedInstallerVersion ??= state.availableVersion;
+      if (downloadedInstallerVersion !== null) failedDownloads.delete(downloadedInstallerVersion);
       return { accepted: true, completed: true };
     }).pipe(
       Effect.catchTags({
         ElectronUpdaterDownloadUpdateError: Effect.fn("desktop.updates.handleDownloadFailure")(
           function* (error) {
+            yield* releaseFailedDownload;
             yield* updateState((current) =>
               reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
             );
@@ -622,9 +652,14 @@ export const make = Effect.gen(function* () {
         ),
       }),
       Effect.onInterrupt(() =>
-        updateState((current) => (current.status === "downloading" ? state : current)).pipe(
-          Effect.asVoid,
-        ),
+        electronUpdater
+          .setAutoInstallOnAppQuit(false)
+          .pipe(
+            Effect.andThen(
+              updateState((current) => (current.status === "downloading" ? state : current)),
+            ),
+            Effect.asVoid,
+          ),
       ),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
@@ -632,6 +667,7 @@ export const make = Effect.gen(function* () {
         }
         const error = new DesktopUpdateUnexpectedActionError({ action: "download", cause });
         return Effect.gen(function* () {
+          yield* releaseFailedDownload;
           yield* updateState((current) =>
             reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
           );
@@ -644,8 +680,27 @@ export const make = Effect.gen(function* () {
         });
       }),
       Effect.ensuring(finishUpdateAction("download")),
+      // Native downloads outlive request cancellation. Keep their reservation and
+      // quit-install flag until completion or service shutdown.
+      Effect.forkIn(scope),
+      Effect.flatMap(Fiber.join),
     );
-  }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
+  });
+
+  const checkAndDownloadInBackground = Effect.fn("desktop.updates.checkAndDownloadInBackground")(
+    function* (reason: "startup" | "poll") {
+      if (downloadedInstallerVersion !== null || !(yield* tryStartUpdateAction("check"))) return;
+      yield* Effect.gen(function* () {
+        if (!(yield* checkForUpdates(reason, "held"))) return;
+        const version = (yield* Ref.get(updateStateRef)).availableVersion;
+        if (version === null || failedDownloads.has(version)) return;
+        const notApplied = yield* Ref.get(notAppliedVersionRef);
+        if (Option.isSome(notApplied) && notApplied.value === version) return;
+        // Retain the reservation so another check or channel change cannot replace this release.
+        yield* downloadAvailableUpdate("held");
+      }).pipe(Effect.ensuring(finishUpdateAction("check")));
+    },
+  );
 
   const updateRestartMarkerDir = environment.path.join(environment.baseDir, "runtime");
   const updateRestartMarkerPath = environment.path.join(
@@ -712,6 +767,7 @@ export const make = Effect.gen(function* () {
 
   const resetInstallAction = Effect.all(
     [
+      electronUpdater.setAutoInstallOnAppQuit(false),
       finishUpdateAction("install"),
       Ref.set(desktopState.quitting, false),
       Ref.set(installRunningBackendsRef, []),
@@ -731,6 +787,7 @@ export const make = Effect.gen(function* () {
     );
     if (!ownsRecovery) return;
 
+    yield* electronUpdater.setAutoInstallOnAppQuit(false);
     yield* Ref.set(desktopState.quitting, false);
     yield* removeUpdateRestartMarker;
     yield* removeInstallRecord;
@@ -885,7 +942,7 @@ export const make = Effect.gen(function* () {
 
   const startUpdatePollers: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
     yield* Effect.sleep(AUTO_UPDATE_STARTUP_DELAY).pipe(
-      Effect.andThen(checkForUpdates("startup")),
+      Effect.andThen(checkAndDownloadInBackground("startup")),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.void;
@@ -900,7 +957,7 @@ export const make = Effect.gen(function* () {
       Effect.forkScoped,
     );
     yield* Effect.sleep(AUTO_UPDATE_POLL_INTERVAL).pipe(
-      Effect.andThen(checkForUpdates("poll")),
+      Effect.andThen(checkAndDownloadInBackground("poll")),
       Effect.forever,
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
@@ -1064,6 +1121,8 @@ export const make = Effect.gen(function* () {
           const state = yield* Ref.get(updateStateRef);
           // A download can finish after its track switch moved on; never offer that build.
           if (!(yield* offerable(info.version, state))) {
+            yield* electronUpdater.setAutoInstallOnAppQuit(false);
+            downloadedInstallerVersion = null;
             yield* logUpdaterInfo("ignoring download outside the selected channel or its floor", {
               version: info.version,
               channel: state.channel,
@@ -1076,6 +1135,7 @@ export const make = Effect.gen(function* () {
             }
             return;
           }
+          downloadedInstallerVersion = info.version;
           yield* setState(reduceDesktopUpdateStateOnDownloadComplete(state, info.version));
           yield* logUpdaterInfo("update downloaded", { version: info.version });
         }),
@@ -1157,6 +1217,23 @@ export const make = Effect.gen(function* () {
 
       yield* electronUpdater.setAutoDownload(false);
       yield* electronUpdater.setAutoInstallOnAppQuit(false);
+      // Register before downloading: electron-updater adds its synchronous
+      // installer to this same event only after a download completes.
+      yield* electronUpdater.onInstallOnAppQuit(() => {
+        if (downloadedInstallerVersion === null) return;
+        try {
+          NodeFS.mkdirSync(updateRestartMarkerDir, { recursive: true });
+          NodeFS.writeFileSync(
+            installRecordPath,
+            JSON.stringify({
+              fromVersion: environment.appVersion,
+              targetVersion: downloadedInstallerVersion,
+            }),
+          );
+        } catch {
+          // A failed record must not prevent the updater's quit listener.
+        }
+      });
       yield* applyAutoUpdaterChannel(settings.updateChannel);
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
@@ -1241,6 +1318,8 @@ export const make = Effect.gen(function* () {
             ),
           );
 
+        yield* electronUpdater.setAutoInstallOnAppQuit(false);
+        downloadedInstallerVersion = null;
         const disabledReason = yield* resolveDisabledReason;
         yield* setState(yield* baseUpdateState(nextChannel, disabledReason));
 
@@ -1276,7 +1355,7 @@ export const make = Effect.gen(function* () {
       };
     }),
     download: Effect.gen(function* () {
-      const result = yield* downloadAvailableUpdate;
+      const result = yield* downloadAvailableUpdate();
       return {
         accepted: result.accepted,
         completed: result.completed,

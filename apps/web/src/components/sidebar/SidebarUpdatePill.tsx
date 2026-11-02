@@ -234,6 +234,7 @@ function SidebarUpdateControl() {
   const run = useUpdateEverythingRun();
   const isRunningEverything = run !== null;
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
+    hasUpdateAction: action !== "none" || isDownloading,
     isAnimationLatched: isCheckAnimationLatched,
     isChecking: state?.status === "checking",
     prefersReducedMotion,
