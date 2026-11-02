@@ -6,7 +6,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 
-import { parseThreadKey, threadKey } from "./entities.ts";
+import { threadKey } from "./entities.ts";
 
 type FilterableThread = Pick<
   OrchestrationV2ThreadShell,
@@ -64,7 +64,7 @@ export function hasHiddenTag(
 
 /**
  * Keys of threads the tag filter hides. Children (subagents, side chats, delegated tasks) follow
- * their parent; while the parent's environment hides tags, an unloaded parent hides them too.
+ * their parent; while any environment hides tags, a child whose parent is not loaded stays hidden.
  * For a partial list such as an archive page, `alreadyHidden` and `loadedElsewhere` give the
  * hidden and loaded keys of live threads, so a live parent counts as loaded.
  */
@@ -91,9 +91,7 @@ export function hiddenThreadKeys(
       });
     }
   }
-  const hidingByEnvironment = new Map(
-    environments.map((environment) => [environment.environmentId, environment.hiddenTags !== null]),
-  );
+  const hidingAnywhere = environments.some((environment) => environment.hiddenTags !== null);
   const hiddenByKey = new Map<string, boolean>();
   const isHidden = (key: string): boolean => {
     if (alreadyHidden.has(key)) return true;
@@ -109,11 +107,7 @@ export function hiddenThreadKeys(
       hiddenByKey.set(key, false);
       return false;
     }
-    if (
-      parentKey !== null &&
-      !followsParent &&
-      hidingByEnvironment.get(parseThreadKey(parentKey).environmentId) === true
-    ) {
+    if (parentKey !== null && !followsParent && hidingAnywhere) {
       hiddenByKey.set(key, true);
       return true;
     }

@@ -66,7 +66,7 @@ import {
   useThreadProjection,
   useThreadRelationshipShells,
   useHiddenThreadKeys,
-  useHiddenThreadTags,
+  useAnyEnvironmentHiding,
 } from "../../state/entities";
 import { useEnvironment, useEnvironmentProviders } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
@@ -390,7 +390,7 @@ export function ThreadRelationshipsPanel(props: {
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
   const relationshipShells = useThreadRelationshipShells(ref);
   const hiddenKeys = useHiddenThreadKeys();
-  const hidingHere = useHiddenThreadTags(props.environmentId) !== null;
+  const hidingAnywhere = useAnyEnvironmentHiding();
   const allProjects = useProjects();
   const archived = useArchivedThreadSnapshots([props.environmentId]);
   const archivedShells = archived.snapshots.find(
@@ -474,7 +474,7 @@ export function ThreadRelationshipsPanel(props: {
   // While hiding, an unloaded parent, fork or transfer may be hidden; unloaded subagent
   // children (idle, left out of the shell) follow this visible thread, so they stay.
   const isHiddenUnloadedRelation = (row: { threadId: ThreadId; edge: ThreadRelationshipEdge }) =>
-    hidingHere &&
+    hidingAnywhere &&
     graph.nodes.get(row.threadId)?.missing === true &&
     (row.edge.kind !== "subagent" || isParentThreadRelationship(row.edge, props.threadId));
   const currentProject = projects.find((project) => project.id === currentThread?.projectId);

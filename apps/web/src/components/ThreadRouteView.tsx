@@ -13,6 +13,7 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
   useEnvironmentThreadRefs,
+  useAnyEnvironmentHiding,
   useHiddenThreadTags,
   useQuietThreadShell,
 } from "../state/entities";
@@ -99,16 +100,14 @@ export function ThreadRouteView({
   const unlistedParentShell = useQuietThreadShell(
     unlistedParentKey === null ? null : parseThreadKey(unlistedParentKey),
   );
-  const unlistedParentHiddenTags = useHiddenThreadTags(
-    unlistedParentKey === null ? null : parseThreadKey(unlistedParentKey).environmentId,
-  );
+  const hidingAnywhere = useAnyEnvironmentHiding();
   // Off-shell threads: a child follows its parent; while hiding, an unloaded parent hides it too.
   const unlistedHidden =
     unlistedThread !== null &&
     (unlistedParentKey === null
       ? hasHiddenTag(unlistedThread.tags, unlistedHiddenTags)
       : unlistedParentShell === null
-        ? unlistedParentHiddenTags !== null || hasHiddenTag(unlistedThread.tags, unlistedHiddenTags)
+        ? hidingAnywhere
         : hiddenKeys.has(unlistedParentKey));
   const hiddenByTagFilter =
     serverThreadRef !== null && (hiddenKeys.has(threadKey(serverThreadRef)) || unlistedHidden);

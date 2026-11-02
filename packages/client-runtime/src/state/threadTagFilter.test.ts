@@ -78,16 +78,17 @@ describe("hiddenThreadKeys", () => {
     expect([...archived]).toEqual([key(linked, "delegated-from-private")]);
   });
 
-  it("hides a child whose parent is not loaded while the parent's environment hides tags", () => {
+  it("hides a child whose parent is not loaded while any environment hides tags", () => {
     const orphan = thread("orphan-task", [], undefined, { environmentId: local, id: "archived" });
-    const keys = (localTags: Array<string> | null) => [
+    const keys = (localTags: Array<string> | null, linkedTags: Array<string> | null) => [
       ...hiddenThreadKeys([
         { environmentId: local, threads: [], hiddenTags: localTags },
-        { environmentId: linked, threads: [orphan], hiddenTags: null },
+        { environmentId: linked, threads: [orphan], hiddenTags: linkedTags },
       ]),
     ];
-    expect(keys(["private"])).toEqual([key(linked, "orphan-task")]);
-    expect(keys(null)).toEqual([]);
+    expect(keys(["private"], null)).toEqual([key(linked, "orphan-task")]);
+    expect(keys(null, ["client"])).toEqual([key(linked, "orphan-task")]);
+    expect(keys(null, null)).toEqual([]);
   });
 
   it("applies each environment's own tags", () => {
