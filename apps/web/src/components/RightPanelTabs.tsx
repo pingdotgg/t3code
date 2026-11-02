@@ -768,6 +768,12 @@ function RightPanelTab(
   );
 }
 
+const PANE_BODY_SURFACE_CLASS: Partial<Record<RightPanelSurface["kind"], string>> = {
+  "pull-request": "bg-(--code-surface)",
+  file: "bg-(--code-surface)",
+  terminal: "bg-(--terminal-background)",
+};
+
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const focusedSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
@@ -1196,7 +1202,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           "@container/diff-toolbar flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1",
           // A layout pane's row lines up with its chat's header and starts at
           // the pane's edge, under its notch.
-          notched ? "relative z-10 ps-1.5 pe-2 md:ps-0" : "pl-2",
+          notched
+            ? cn(
+                "relative z-10 ps-1.5 pe-2 md:ps-0",
+                (focusedSurface && PANE_BODY_SURFACE_CLASS[focusedSurface.kind]) ?? "bg-background",
+              )
+            : "pl-2",
           !notched && (props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3"),
           ownsDesktopTitleBar && "drag-region",
           ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
@@ -1206,7 +1217,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         )}
         data-right-panel-tabbar
         data-pane-header={notched ? "" : undefined}
-        data-floating-pane-header={notched ? "" : undefined}
       >
         <PanelTabsNotch notched={notched} addButton={addSurfaceMenu}>
           {layoutTabId !== null
