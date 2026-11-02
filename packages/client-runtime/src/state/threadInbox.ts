@@ -227,7 +227,8 @@ export function createInboxReturnTracker() {
         }
       }
       schedule();
-      const observedWorking = new Map([...states].map(([key, state]) => [key, state.working]));
+      const observedWorking = new Map<string, boolean>();
+      states.forEach((state, key) => observedWorking.set(key, state.working));
       const observedReturns = new Map(returns);
       return {
         isWorking: (thread) => observedWorking.get(keyOf(thread)) ?? isThreadWorking(thread),
