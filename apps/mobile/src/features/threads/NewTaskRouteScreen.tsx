@@ -244,7 +244,14 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const scratchOption =
     reservedDestinationProject === null
       ? resolveNewTaskScratchOption({
-          environments: connectedEnvironments,
+          // Explicit choice stays on the tapped machine: never fall back to
+          // another environment's scratch space from this picker.
+          environments:
+            routePreferredEnvironmentId === undefined
+              ? connectedEnvironments
+              : connectedEnvironments.filter(
+                  (environment) => String(environment.environmentId) === routePreferredEnvironmentId,
+                ),
           serverConfigs,
           selectedEnvironmentId: preferredEnvironmentId,
         })
