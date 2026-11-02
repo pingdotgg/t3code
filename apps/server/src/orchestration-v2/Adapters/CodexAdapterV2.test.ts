@@ -900,14 +900,30 @@ describe("CodexAdapterV2 process exit", () => {
           canonical: undefined,
         }),
       ),
-      Layer.provide(NodeServices.layer),
+      Layer.provide(
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(999_999_999),
+                exitCode: Effect.never,
+                isRunning: Effect.succeed(true),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: Stream.never,
+                stderr: Stream.empty,
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              }),
+            ),
+          ),
+        ),
+      ),
     );
     return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-cli-" });
-      const binaryPath = `${dir}/codex`;
-      yield* fs.writeFileString(binaryPath, "#!/bin/sh\ncat > /dev/null\n");
-      yield* fs.chmod(binaryPath, 0o755);
       const factory = yield* CodexAdapterV2.CodexAppServerClientFactory;
       yield* Effect.scoped(
         factory
@@ -916,13 +932,13 @@ describe("CodexAdapterV2 process exit", () => {
             threadId: ThreadId.make("thread-codex-agent"),
             providerSessionId: ProviderSessionId.make("session-codex-agent"),
             runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-            settings: { ...DEFAULT_CODEX_SETTINGS, binaryPath },
+            settings: DEFAULT_CODEX_SETTINGS,
             environment: {},
           })
           .pipe(Effect.tap(() => Effect.sync(() => assert.equal(runningAgents, 1)))),
       );
       assert.equal(runningAgents, 0);
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(factoryLayer, NodeServices.layer)));
+    }).pipe(Effect.provide(factoryLayer));
   });
 });
 
