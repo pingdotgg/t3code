@@ -3,7 +3,7 @@ import {
   type WorktreeSetupSnapshot,
   type WorktreeSetupStage,
 } from "@t3tools/contracts";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { formatDuration, formatLiveDuration } from "@t3tools/shared/orchestrationTiming";
 import {
   CheckIcon,
   CircleAlertIcon,
@@ -42,7 +42,7 @@ function elapsedMs(startedAt: string | null, endMs: number): number | null {
 /** Mounted only while setup runs, so finished setups never subscribe to the tick. */
 function LiveElapsed({ startedAt }: { startedAt: string }) {
   const elapsed = elapsedMs(startedAt, useNowSecond());
-  return elapsed === null ? null : <>{formatDuration(elapsed)}</>;
+  return elapsed === null ? null : <>{formatLiveDuration(elapsed)}</>;
 }
 
 /** A finished duration, or a ticking one while setup is still running. */

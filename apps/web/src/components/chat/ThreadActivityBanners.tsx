@@ -12,7 +12,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-execution";
 import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
 import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { formatLiveDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 import {
   CircleDashedIcon,
@@ -138,7 +138,7 @@ export function runStopNowItem(input: {
       <>
         <span
           ref={tickTextContent(
-            (nowMs) => formatDuration(Math.max(1_000, nowMs - requestedAtMs)),
+            (nowMs) => formatLiveDuration(Math.max(1_000, nowMs - requestedAtMs)),
             true,
           )}
           className="tabular-nums"
@@ -227,7 +227,7 @@ export function backgroundWorkNowItem(input: {
         {startedAtMs === null ? null : (
           <span
             ref={tickTextContent(
-              (nowMs) => formatDuration(Math.max(1_000, nowMs - startedAtMs)),
+              (nowMs) => formatLiveDuration(Math.max(1_000, nowMs - startedAtMs)),
               true,
             )}
             className="tabular-nums"

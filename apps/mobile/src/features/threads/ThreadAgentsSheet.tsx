@@ -10,7 +10,11 @@ import {
   type OrchestrationV2Subagent,
   type ThreadId,
 } from "@t3tools/contracts";
-import { deriveSubagentElapsedMs, formatDuration } from "@t3tools/shared/orchestrationTiming";
+import {
+  deriveSubagentElapsedMs,
+  formatDuration,
+  formatLiveDuration,
+} from "@t3tools/shared/orchestrationTiming";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as DateTime from "effect/DateTime";
 import { Atom } from "effect/reactivity";
@@ -251,5 +255,6 @@ function useSubagentElapsed(
     },
     nowMs,
   );
-  return elapsedMs === null || elapsedMs === 0 ? null : formatDuration(elapsedMs);
+  if (elapsedMs === null || elapsedMs === 0) return null;
+  return running ? formatLiveDuration(elapsedMs) : formatDuration(elapsedMs);
 }
