@@ -8,7 +8,11 @@ import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import { readClaudeSettingsEnv } from "./ClaudeSkills.ts";
+import {
+  type ClaudeSettingsEnv,
+  readClaudeSessionSettingsEnv,
+  readClaudeSettingsEnv,
+} from "./ClaudeSkills.ts";
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
@@ -62,10 +66,24 @@ const CLAUDE_HOST_SESSION_VARIABLES = [
   "CLAUDE_AGENT_SDK_VERSION",
 ];
 
-/**
- * Base env for the Claude processes T3 Code runs, before `makeClaudeEnvironment`.
- * Claude Code reads its entrypoint from the process env, not its settings `env`, so T3 Code applies that override itself.
- */
+const T3_CODE_ENTRYPOINT = "t3-code";
+
+// Claude Code reads its entrypoint only from the process env, so T3 Code applies settings itself.
+// An API key leaves it unset for the Claude default: subscriber API credits answer `t3-code` with
+// "Credit balance is too low". Settings env beats the process env, so an empty key means no key.
+function withClaudeEntrypoint(
+  environment: NodeJS.ProcessEnv,
+  settings: ClaudeSettingsEnv,
+): NodeJS.ProcessEnv {
+  const { CLAUDE_CODE_ENTRYPOINT: current, ...rest } = environment;
+  const configured = current === T3_CODE_ENTRYPOINT ? undefined : current;
+  const apiKey = settings.ANTHROPIC_API_KEY ?? environment.ANTHROPIC_API_KEY;
+  const entrypoint =
+    settings.CLAUDE_CODE_ENTRYPOINT || configured || (apiKey ? undefined : T3_CODE_ENTRYPOINT);
+  return entrypoint ? { ...rest, CLAUDE_CODE_ENTRYPOINT: entrypoint } : rest;
+}
+
+/** Base env for the Claude processes T3 Code runs, before `makeClaudeEnvironment`. */
 export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnvironment")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   instanceEnvironment: ProviderInstanceEnvironment | undefined,
@@ -75,17 +93,26 @@ export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnviro
   delete baseEnvironment.CLAUDE_CODE_ENTRYPOINT;
   for (const name of CLAUDE_HOST_SESSION_VARIABLES) delete baseEnvironment[name];
   const environment = yield* mergeProviderInstanceEnvironment(instanceEnvironment, baseEnvironment);
-  const settings = yield* readClaudeSettingsEnv(config, undefined, environment);
-  // Claude's settings env beats the process env, so an empty key in settings means no API key.
-  const apiKey = settings.ANTHROPIC_API_KEY ?? environment.ANTHROPIC_API_KEY;
-  // With an API key, leave the entrypoint unset so the Agent SDK applies `sdk-ts`. Anthropic's
-  // subscriber API credits cover the Agent SDK but answer `t3-code` with "Credit balance is too low".
-  const entrypoint =
-    settings.CLAUDE_CODE_ENTRYPOINT ||
-    environment.CLAUDE_CODE_ENTRYPOINT ||
-    (apiKey ? undefined : "t3-code");
-  return entrypoint ? { ...environment, CLAUDE_CODE_ENTRYPOINT: entrypoint } : environment;
+  return withClaudeEntrypoint(
+    environment,
+    yield* readClaudeSettingsEnv(config, undefined, environment),
+  );
 });
+
+/** The env for one Claude process in `cwd`, labeled from the settings that process will load. */
+export const resolveClaudeSessionEnvironment = Effect.fn("resolveClaudeSessionEnvironment")(
+  function* (
+    config: Pick<ClaudeSettings, "homePath">,
+    environment: NodeJS.ProcessEnv,
+    cwd: string | undefined,
+    launchArgEnv?: Readonly<Record<string, unknown>>,
+  ) {
+    return withClaudeEntrypoint(
+      environment,
+      yield* readClaudeSessionSettingsEnv(config, cwd, environment, launchArgEnv),
+    );
+  },
+);
 
 /** managed-mcp.json excludes other MCP config and forbids --strict-mcp-config; omit the flag when present. */
 export const hasClaudeManagedMcpConfig = Effect.fn("hasClaudeManagedMcpConfig")(function* () {
