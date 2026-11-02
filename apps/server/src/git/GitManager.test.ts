@@ -571,6 +571,7 @@ function runStackedAction(
     commitMessage?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
+    providerTerminology?: boolean;
   },
   options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
 ) {
@@ -5519,6 +5520,60 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           label: "Creating pull request...",
         }),
       ]);
+    }),
+  );
+
+  it.effect("says pull request for a GitLab branch when provider terminology is off", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/generic-terms"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "terms.txt"), "terms\n");
+      yield* runGit(repoDir, ["add", "terms.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Generic terms"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/generic-terms"]);
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          kind: "gitlab",
+          prListSequence: [
+            [],
+            [
+              {
+                number: 12,
+                title: "Generic terms",
+                url: "https://gitlab.com/pingdotgg/codething-mvp/-/merge_requests/12",
+                baseRefName: "main",
+                headRefName: "feature/generic-terms",
+                state: "open",
+                isCrossRepository: false,
+              },
+            ],
+          ],
+        },
+      });
+      const labels: string[] = [];
+
+      const result = yield* runStackedAction(
+        manager,
+        { cwd: repoDir, action: "create_pr", providerTerminology: false },
+        {
+          progressReporter: {
+            publish: (event) =>
+              Effect.sync(() => {
+                if (event.kind === "phase_started") labels.push(event.label);
+              }),
+          },
+        },
+      );
+
+      expect(labels).toEqual([
+        "Preparing PR...",
+        "Generating PR content...",
+        "Creating pull request...",
+      ]);
+      expect(result.toast.title).toBe("Created PR #12");
     }),
   );
 });

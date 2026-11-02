@@ -1,4 +1,7 @@
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  changeRequestTermsFor,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
@@ -78,7 +81,7 @@ function NumberLink({
               "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
               toneClassName,
             )}
-            aria-label={`Open ${sourceControlClients.get(detail.provider).changeRequest.singular} #${detail.number} on host`}
+            aria-label={`Open ${changeRequestTermsFor(detail.provider).singular} #${detail.number} on host`}
           >
             #{detail.number}
             <ExternalLinkIcon aria-hidden className="size-2.5" />

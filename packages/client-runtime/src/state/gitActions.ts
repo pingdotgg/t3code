@@ -3,7 +3,7 @@ import type {
   GitStackedAction,
   VcsStatusResult,
 } from "@t3tools/contracts";
-import { type ChangeRequestTerminology, sourceControlClients } from "../sourceControlClients.ts";
+import { type ChangeRequestTerminology, changeRequestTermsFor } from "../sourceControlClients.ts";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
@@ -46,7 +46,7 @@ export type GitActionRequestInput = Pick<
 export function changeRequestTerminologyFor(
   gitStatus: VcsStatusResult | null,
 ): ChangeRequestTerminology {
-  return sourceControlClients.get(gitStatus?.sourceControlProvider?.kind).changeRequest;
+  return changeRequestTermsFor(gitStatus?.sourceControlProvider?.kind);
 }
 
 export function buildMenuItems(

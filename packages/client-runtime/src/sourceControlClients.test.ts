@@ -1,7 +1,12 @@
 import { ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { appSignInTargetForRemote, sourceControlClients } from "./sourceControlClients.ts";
+import {
+  appSignInTargetForRemote,
+  changeRequestTermsFor,
+  setProviderChangeRequestTerms,
+  sourceControlClients,
+} from "./sourceControlClients.ts";
 import { normalizeThreadPullRequestKey } from "./threadPullRequests.ts";
 
 const parse = (url: string) => {
@@ -384,5 +389,32 @@ describe("appSignInTargetForRemote", () => {
   it("skips hosts the app is not registered on", () => {
     expect(appSignInTargetForRemote("https://ghe.acme.test/acme/web.git")).toBeNull();
     expect(appSignInTargetForRemote("https://gitlab.com/acme/web.git")).toBeNull();
+  });
+});
+
+describe("changeRequestTermsFor", () => {
+  it("follows the host unless provider terminology is off", () => {
+    expect(changeRequestTermsFor("gitlab")).toEqual({
+      shortLabel: "MR",
+      shortLabelWithArticle: "an MR",
+      singular: "merge request",
+      plural: "merge requests",
+    });
+    expect(changeRequestTermsFor(sourceControlClients.get("bitbucket")).singular).toBe(
+      "pull request",
+    );
+    setProviderChangeRequestTerms(false);
+    try {
+      for (const kind of ["gitlab", "github", "unknown"]) {
+        expect(changeRequestTermsFor(kind), kind).toEqual({
+          shortLabel: "PR",
+          shortLabelWithArticle: "a PR",
+          singular: "pull request",
+          plural: "pull requests",
+        });
+      }
+    } finally {
+      setProviderChangeRequestTerms(true);
+    }
   });
 });

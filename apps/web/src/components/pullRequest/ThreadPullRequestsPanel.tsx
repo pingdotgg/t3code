@@ -1,5 +1,7 @@
 import type { ProjectId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
+  capitalizeTerm,
+  changeRequestTermsFor,
   sourceControlClients,
   UNKNOWN_SOURCE_CONTROL_CLIENT,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -246,7 +248,7 @@ function LinkRowImpl({
                   <TooltipPopup>
                     {stack.kind === "native"
                       ? `${sourceControlClients.hostLabelForChangeRequestUrl(link.url)} stack of ${stack.size}: merging a layer lands the ones below it.`
-                      : `${stack.size} ${linkHost.changeRequest.plural} chained by base branch.`}
+                      : `${stack.size} ${changeRequestTermsFor(linkHost).plural} chained by base branch.`}
                   </TooltipPopup>
                 </Tooltip>
               ) : null}
@@ -281,7 +283,7 @@ function LinkRowImpl({
         <PullRequestSpeedActions
           entry={actionEntry}
           hostActions={linkHostActions}
-          terminology={linkHost.changeRequest}
+          terminology={changeRequestTermsFor(linkHost)}
         />
       ) : null}
       <span
@@ -426,17 +428,21 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   const rowInputs = { speedMode, environmentProjects, capabilities, supportsWatch, thread };
 
   if (linkCount === 0) {
+    const { plural, singular } = changeRequestTermsFor(
+      environmentProjects.find((project) => project.id === thread?.projectId)?.repositoryIdentity
+        ?.provider,
+    );
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
         <PullRequestGlyph.link aria-hidden className="size-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium">No linked pull requests</p>
+        <p className="text-sm font-medium">No linked {plural}</p>
         <p className="max-w-60 text-xs text-muted-foreground">
-          Pull requests the agent opens from this thread land here. Link one yourself from a URL or
-          a number.
+          {capitalizeTerm(plural)} the agent opens from this thread land here. Link one yourself
+          from a URL or a number.
         </p>
         <Button size="sm" variant="outline" onClick={openLinkDialog}>
           <PlusIcon className="size-3.5" />
-          Link pull request
+          Link {singular}
         </Button>
       </div>
     );

@@ -1,8 +1,9 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { ThreadPullRequestLink, VcsStatusResult } from "@t3tools/contracts";
 import {
-  sourceControlClients,
   type ChangeRequestTerminology,
+  changeRequestTermsFor,
+  sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 
 import {
@@ -36,7 +37,7 @@ export function presentThreadPr(
   pr: ThreadPr,
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
 ): ThreadPrPresentation {
-  const { changeRequest } = sourceControlClients.get(provider?.kind);
+  const changeRequest = changeRequestTermsFor(provider?.kind);
   const isDraft = pr.state === "open" && pr.isDraft === true;
   return {
     kind: "pull-request",
@@ -59,8 +60,9 @@ export function presentThreadLinkedPullRequests(
   const link = resolveThreadCurrentPullRequestLink(links);
   const badge = resolveThreadPullRequestBadge(links);
   if (link === null || badge === null) return null;
-  const { changeRequest } =
-    sourceControlClients.findByChangeRequestUrl(link.url) ?? sourceControlClients.get(undefined);
+  const changeRequest = changeRequestTermsFor(
+    sourceControlClients.findByChangeRequestUrl(link.url),
+  );
   const snapshot = link.snapshot;
   const linkedCount = badge.kind === "pull-request" && badge.others > 0 ? badge.others + 1 : null;
   const isMultiple = badge.kind === "stack" || linkedCount !== null;

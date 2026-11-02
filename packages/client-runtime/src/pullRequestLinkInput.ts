@@ -1,7 +1,11 @@
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 
-import { sourceControlClients, type ChangeRequestTerminology } from "./sourceControlClients.ts";
+import {
+  type ChangeRequestTerminology,
+  changeRequestTermsFor,
+  sourceControlClients,
+} from "./sourceControlClients.ts";
 
 const PULL_REQUEST_NUMBER_PATTERN = /^#?(\d+)$/;
 
@@ -47,7 +51,7 @@ export function pullRequestLinkProject(identity: RepositoryIdentity | null | und
   return {
     host,
     repository,
-    terminology: definition.changeRequest,
+    terminology: changeRequestTermsFor(definition),
     webUrl: (number: number) =>
       definition.changeRequestUrl({
         host,

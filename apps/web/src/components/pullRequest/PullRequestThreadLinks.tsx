@@ -9,7 +9,10 @@ import { useState } from "react";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  changeRequestTermsFor,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import {
   useAnyEnvironmentHiding,
@@ -62,8 +65,7 @@ function EnabledPullRequestThreadLinks({
 }: PullRequestThreadLinksProps) {
   const parsedUrl = sourceControlClients.parseChangeRequestUrl(url);
   const parsed = parsedUrl?.link ?? null;
-  const term = (parsedUrl?.definition ?? sourceControlClients.get(undefined)).changeRequest
-    .singular;
+  const term = changeRequestTermsFor(parsedUrl?.definition).singular;
   const thread = useThreadShell(threadRef?.environmentId === environmentId ? threadRef : null);
   const currentThreadRef = thread === null ? null : threadRef;
   const linking = usePullRequestLinking(environmentId);

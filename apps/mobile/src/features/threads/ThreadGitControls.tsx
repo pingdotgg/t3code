@@ -17,7 +17,7 @@ import {
   resolveQuickAction,
 } from "@t3tools/client-runtime/state/vcs";
 import { useNavigation } from "@react-navigation/native";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermsFor } from "@t3tools/client-runtime/source-control-clients";
 
 import { useEnvironmentScope } from "../../state/session";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
@@ -64,9 +64,7 @@ function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
     parts.push(`${gitStatus.behindCount} behind`);
   }
   if (gitStatus.pr?.state === "open") {
-    const { shortLabel } = sourceControlClients.get(
-      gitStatus.sourceControlProvider?.kind,
-    ).changeRequest;
+    const { shortLabel } = changeRequestTermsFor(gitStatus.sourceControlProvider?.kind);
     parts.push(`${shortLabel} #${gitStatus.pr.number}`);
   }
 
@@ -169,9 +167,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   })();
 
   const openExistingPr = async () => {
-    const { shortLabel, singular } = sourceControlClients.get(
-      gitStatus?.sourceControlProvider?.kind,
-    ).changeRequest;
+    const { shortLabel, singular } = changeRequestTermsFor(gitStatus?.sourceControlProvider?.kind);
     const prUrl = gitStatus?.pr?.state === "open" ? gitStatus.pr.url : null;
     if (!prUrl) {
       Dialog.alert(`No open ${shortLabel}`, `This branch does not have an open ${singular}.`);

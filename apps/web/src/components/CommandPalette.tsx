@@ -25,7 +25,10 @@ import {
   type AddProjectRemoteSource,
   type AddProjectRemoteSourceReadiness,
 } from "@t3tools/client-runtime/operations/projects";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  changeRequestTermsFor,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import {
@@ -1362,7 +1365,13 @@ function OpenCommandPaletteDialog(props: {
           ? ["copy", "pull request", "link", "reference"]
           : ["copy", "thread", "thread id", "reference"],
       title:
-        activeThreadReferenceCopyTarget.kind === "pull-request" ? "Copy PR link" : "Copy thread",
+        activeThreadReferenceCopyTarget.kind === "pull-request"
+          ? `Copy ${
+              changeRequestTermsFor(
+                sourceControlClients.findByChangeRequestUrl(activeThreadReferenceCopyTarget.value),
+              ).shortLabel
+            } link`
+          : "Copy thread",
       description: activeThreadReferenceCopyTarget.description,
       icon: <LinkIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "thread.copyReference",
@@ -1375,11 +1384,18 @@ function OpenCommandPaletteDialog(props: {
     threadPullRequestLinkMode(activeThreadServerConfig?.environment.capabilities) !== "unsupported"
   ) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    const { plural, singular } = changeRequestTermsFor(
+      projects.find(
+        (project) =>
+          project.environmentId === activeThread.environmentId &&
+          project.id === activeThread.projectId,
+      )?.repositoryIdentity?.provider,
+    );
     actionItems.push({
       kind: "action",
       value: "action:link-pull-request",
-      searchTerms: ["link", "pull request", "pr", "attach", "stack"],
-      title: "Link pull request to thread",
+      searchTerms: ["link", "pull request", "pr", "merge request", "mr", "attach", "stack"],
+      title: `Link ${singular} to thread`,
       icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
       run: async () => {
         openLinkPullRequestDialog(threadRef);
@@ -1388,8 +1404,8 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:open-thread-pull-requests",
-      searchTerms: ["pull requests", "linked", "stack", "prs"],
-      title: "Show linked pull requests",
+      searchTerms: ["pull requests", "merge requests", "linked", "stack", "prs", "mrs"],
+      title: `Show linked ${plural}`,
       disabled: visibleThreadPullRequests(activeThread.pullRequests).length === 0,
       icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
       run: async () => {

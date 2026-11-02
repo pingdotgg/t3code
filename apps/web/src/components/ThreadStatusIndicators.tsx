@@ -38,7 +38,10 @@ import { linkedPullRequestDetailAtom, useSharedPullRequestSummary } from "../sta
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  changeRequestTermsFor,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import {
   pullRequestMatchesSearchQuery,
   resolveThreadLastVisitedAt,
@@ -123,7 +126,7 @@ function linkedPullRequestReference(fallback: ThreadLinkedPullRequest) {
 
 function changeRequestTerminologyForUrl(url: string | undefined) {
   const host = url === undefined ? null : sourceControlClients.findByChangeRequestUrl(url);
-  return (host ?? sourceControlClients.get(undefined)).changeRequest;
+  return changeRequestTermsFor(host);
 }
 
 export function linkedPullRequestSnapshotStatus(
@@ -416,7 +419,7 @@ export function prStatusIndicator(
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
 ): PrStatusIndicator | null {
   if (!pr) return null;
-  const { shortLabel } = sourceControlClients.get(provider?.kind).changeRequest;
+  const { shortLabel } = changeRequestTermsFor(provider?.kind);
   const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true });
 
   const tooltipLead = `${shortLabel} #${pr.number} - ${state.label}`;

@@ -5,7 +5,7 @@ import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermsFor } from "@t3tools/client-runtime/source-control-clients";
 import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import {
@@ -53,9 +53,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   const target = pullRequestTarget(route.params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
   const pr = detail.data;
-  const { singular } = sourceControlClients.get(
-    (pr ?? route.params.initialSummary)?.provider,
-  ).changeRequest;
+  const { singular } = changeRequestTermsFor((pr ?? route.params.initialSummary)?.provider);
   const canWrite = useAtomValue(
     composerPullRequests.requestReviewers.permissionAtom(target.environmentId),
   );

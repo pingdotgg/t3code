@@ -1,6 +1,6 @@
 import {
   capitalizeTerm,
-  sourceControlClients,
+  changeRequestTermsFor,
 } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type {
@@ -646,7 +646,7 @@ export function PullRequestTimelineTab({
   onRefresh: () => void;
 }) {
   const events = buildPullRequestTimeline(detail);
-  const term = sourceControlClients.get(detail.provider).changeRequest.singular;
+  const term = changeRequestTermsFor(detail.provider).singular;
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
     canReact: detail.capabilities.reactions === true,

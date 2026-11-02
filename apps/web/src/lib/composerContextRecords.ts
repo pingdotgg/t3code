@@ -1,5 +1,6 @@
 import {
   capitalizeTerm,
+  changeRequestTermsFor,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import {
@@ -101,7 +102,7 @@ export function pullRequestContextDisplayState(
 export function pullRequestContextKindLabel(comment: ReviewCommentPresentation): string {
   const url = comment.pullRequest?.url;
   const host = url === undefined ? null : sourceControlClients.findByChangeRequestUrl(url);
-  const term = (host ?? sourceControlClients.get(undefined)).changeRequest.singular;
+  const term = changeRequestTermsFor(host).singular;
   const state = pullRequestContextDisplayState(comment);
   if (state === null) return capitalizeTerm(term);
   return `${capitalizeTerm(state)} ${term}`;

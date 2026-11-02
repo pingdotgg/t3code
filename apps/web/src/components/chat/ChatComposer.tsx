@@ -1,3 +1,4 @@
+import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -442,6 +443,7 @@ export interface ChatComposerProps {
   gitCwd: string | null;
   pullRequestProjectId: ProjectId | null;
   pullRequestRepository: string | null;
+  pullRequestTerms: ChangeRequestTerminology;
   threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
   onComposerOverlayHeightChange: (height: number) => void;
   /** The new-thread strip names the permissions, so the controls row hides its chip. */
@@ -567,6 +569,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     gitCwd,
     pullRequestProjectId,
     pullRequestRepository,
+    pullRequestTerms,
     threadPullRequests,
     onComposerOverlayHeightChange,
     promptRef,
@@ -1151,6 +1154,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadId,
     pullRequestProjectId,
     pullRequestRepository,
+    pullRequestTerms,
     threadPullRequests,
     planModeUiEnabled,
     sideChatAvailable: props.sideChatAvailable === true,
@@ -3337,7 +3341,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 {composerSuggestionsVisible && composerMenuItems.length === 0
                   ? isComposerMenuLoading
                     ? composerTriggerKind === "pull-request"
-                      ? "Finding pull request..."
+                      ? `Finding ${pullRequestTerms.singular}...`
                       : composerTriggerKind === "skill" || composerTriggerKind === "slash-command"
                         ? "Searching workspace skills..."
                         : "Searching workspace files..."
@@ -3352,6 +3356,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     resolvedTheme={resolvedTheme}
                     isLoading={isComposerMenuLoading}
                     triggerKind={composerTriggerKind}
+                    pullRequestTerms={pullRequestTerms}
                     emptyStateText={composerMenuEmptyState}
                     activeItemId={activeComposerMenuItem?.id ?? null}
                     onHighlightedItemChange={onComposerMenuItemHighlightedStable}

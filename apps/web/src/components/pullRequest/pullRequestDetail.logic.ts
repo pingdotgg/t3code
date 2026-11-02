@@ -1,7 +1,8 @@
 import {
   capitalizeTerm,
-  sourceControlClients,
   type ChangeRequestTerminology,
+  changeRequestTermsFor,
+  sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
 import {
@@ -663,7 +664,7 @@ export function buildPullRequestTimeline(
   > &
     Partial<Pick<PullRequestDetailView, "reviewThreads">>,
 ): ReadonlyArray<PullRequestTimelineEvent> {
-  const term = sourceControlClients.get(detail.provider).changeRequest.singular;
+  const term = changeRequestTermsFor(detail.provider).singular;
   return [
     {
       id: "created",
@@ -773,8 +774,7 @@ function boundedField(value: string): string {
 // Prompt builders are handed a change request's URL, not its detail; a URL no host claims reads
 // as the default host, as an unreported repository does.
 function terminologyForUrl(url: string): ChangeRequestTerminology {
-  return (sourceControlClients.findByChangeRequestUrl(url) ?? sourceControlClients.get(undefined))
-    .changeRequest;
+  return changeRequestTermsFor(sourceControlClients.findByChangeRequestUrl(url));
 }
 
 function reviewThreadContext(

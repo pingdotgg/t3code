@@ -20,6 +20,7 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts/settings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { setProviderChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import {
   isAtomCommandInterrupted,
   runAtomCommand,
@@ -94,6 +95,7 @@ function getClientSettingsSnapshot(): ClientSettings {
 
 function replaceClientSettingsSnapshot(settings: ClientSettings): void {
   clientSettingsSnapshot = settings;
+  setProviderChangeRequestTerms(settings.providerSpecificTerminology);
   emitClientSettingsChange();
 }
 

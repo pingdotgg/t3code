@@ -1,6 +1,7 @@
 import { resolvePullRequestDetailChecks } from "@t3tools/client-runtime/pull-request-checks";
 import {
   capitalizeTerm,
+  changeRequestTermsFor,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestChangeBreakdownRows } from "../pullRequest/PullRequestChangeBreakdownStat";
@@ -138,9 +139,9 @@ export function ThreadDetailsPrRow({
   const checksQuery = useEnvironmentQueryRefresh(checksAtom);
   const checksAreNewer = useEnvironmentQueryIsNewer(checksAtom, detailAtom);
   const detail = resolvePullRequestDetailChecks(detailData, checksData, checksAreNewer);
-  const terminology = sourceControlClients.get(
+  const terminology = changeRequestTermsFor(
     detail?.provider ?? project?.repositoryIdentity?.provider,
-  ).changeRequest;
+  );
   const open = reference !== null && (detail?.state ?? pr?.state) === "open";
   const refreshKey = `${environmentId}:${project?.id}:${reference?.host}:${reference?.repository}:${number}`;
   useLiveRefresh(

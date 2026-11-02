@@ -18,7 +18,10 @@ import {
   type PullRequestLinkedThreadsResult,
 } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  changeRequestTermsFor,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import { useRef, useState } from "react";
 import { Platform } from "react-native";
@@ -103,7 +106,7 @@ export function usePullRequestThreads(
   const [busy, setBusy] = useState(false);
   const ask = async (thread?: LinkedThread, task: PullRequestAgentTask = "ask") => {
     if (!pr || !canAsk || pending.current) return;
-    const terminology = sourceControlClients.get(pr.provider).changeRequest;
+    const terminology = changeRequestTermsFor(pr.provider);
     pending.current = true;
     setBusy(true);
     const result = await settlePromise(async () => {

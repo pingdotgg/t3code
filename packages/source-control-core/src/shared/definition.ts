@@ -544,6 +544,21 @@ function defaultRepositorySelector(
   return identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null;
 }
 
+const PULL_REQUEST_TERMINOLOGY: ChangeRequestTerminology = {
+  shortLabel: "PR",
+  shortLabelWithArticle: "a PR",
+  singular: "pull request",
+  plural: "pull requests",
+};
+
+/** A host's own change request terms, or "pull request" for every host when turned off. */
+export function resolveChangeRequestTerms(
+  definition: Pick<SourceControlDefinition, "changeRequest">,
+  useProviderTerms: boolean,
+): ChangeRequestTerminology {
+  return useProviderTerms ? definition.changeRequest : PULL_REQUEST_TERMINOLOGY;
+}
+
 export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlDefinition = {
   kind: SourceControlProviderKind.make("unknown"),
   label: "source control",

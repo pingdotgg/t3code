@@ -311,6 +311,15 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings provider terminology", () => {
+  it("uses each host's own terms unless turned off", () => {
+    expect(decodeClientSettings({}).providerSpecificTerminology).toBe(true);
+    expect(
+      decodeClientSettings({ providerSpecificTerminology: false }).providerSpecificTerminology,
+    ).toBe(false);
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],

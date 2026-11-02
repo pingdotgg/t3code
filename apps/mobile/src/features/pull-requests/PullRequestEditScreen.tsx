@@ -1,7 +1,7 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
   capitalizeTerm,
-  sourceControlClients,
+  changeRequestTermsFor,
 } from "@t3tools/client-runtime/source-control-clients";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
@@ -40,7 +40,7 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
   const updateComment = useAtomCommand(composerPullRequests.updateComment, {
     reportFailure: false,
   });
-  const singular = sourceControlClients.get(pr?.provider).changeRequest.singular;
+  const singular = changeRequestTermsFor(pr?.provider).singular;
   const original =
     params.field === "comment"
       ? params.comment.body

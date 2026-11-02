@@ -1,4 +1,4 @@
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermsFor } from "@t3tools/client-runtime/source-control-clients";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import type { ComponentProps } from "react";
 import { View } from "react-native";
@@ -59,9 +59,7 @@ export function statusSummary(
     parts.push(`${gitStatus.behindCount} behind`);
   }
   if (gitStatus.pr?.state === "open") {
-    const { shortLabel } = sourceControlClients.get(
-      gitStatus.sourceControlProvider?.kind,
-    ).changeRequest;
+    const { shortLabel } = changeRequestTermsFor(gitStatus.sourceControlProvider?.kind);
     parts.push(`${shortLabel} #${gitStatus.pr.number} open`);
   }
 

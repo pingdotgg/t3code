@@ -1,4 +1,7 @@
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  changeRequestTermsFor,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import { applyPullRequestDraftFilterChange } from "@t3tools/client-runtime/pull-request-query";
 import { Spinner } from "~/components/ui/spinner";
 import type { PullRequestSpeedActionResult } from "~/components/pullRequest/PullRequestSpeedActions";
@@ -1393,9 +1396,9 @@ export function PullRequestsPage() {
     event.stopPropagation();
     if (event.repeat) return;
     const url = openPanelPullRequestUrl;
-    const { shortLabel, singular } = (
-      sourceControlClients.findByChangeRequestUrl(url) ?? sourceControlClients.get(undefined)
-    ).changeRequest;
+    const { shortLabel, singular } = changeRequestTermsFor(
+      sourceControlClients.findByChangeRequestUrl(url),
+    );
     void writeTextToClipboard(url, `${singular} link`).then(
       (didCopy) => {
         if (didCopy)

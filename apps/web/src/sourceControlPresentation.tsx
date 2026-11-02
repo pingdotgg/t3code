@@ -1,6 +1,9 @@
 import type { ElementType } from "react";
 import type { SourceControlProviderInfo } from "@t3tools/contracts";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  changeRequestTermsFor,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import type {
   ChangeRequestTerminology,
   SourceControlDefinition,
@@ -42,7 +45,7 @@ function presentDefinition(
   return {
     definition,
     providerName,
-    terminology: definition.changeRequest,
+    terminology: changeRequestTermsFor(definition),
     Icon: sourceControlIcon(definition),
   };
 }

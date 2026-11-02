@@ -1,7 +1,9 @@
 import { builtInSourceControlDefinitions } from "@t3tools/source-control-definitions/registry";
 import {
+  type ChangeRequestTerminology,
   HostCredentialSettings,
   readSourceControlHostSettings,
+  resolveChangeRequestTerms,
   type SourceControlAppSignIn,
   type SourceControlDefinition,
 } from "@t3tools/source-control-core/shared/definition";
@@ -24,6 +26,26 @@ export {
 } from "@t3tools/source-control-core/shared/definition";
 
 export const sourceControlClients = builtInSourceControlDefinitions;
+
+// Mirrors the client's `providerSpecificTerminology` setting, so plain functions can read it.
+let providerChangeRequestTerms = true;
+
+export function providerChangeRequestTermsEnabled(): boolean {
+  return providerChangeRequestTerms;
+}
+
+export function setProviderChangeRequestTerms(enabled: boolean): void {
+  providerChangeRequestTerms = enabled;
+}
+
+/** The change request terms to show for a host kind or definition, honoring the user's setting. */
+export function changeRequestTermsFor(
+  host: SourceControlDefinition | string | null | undefined,
+): ChangeRequestTerminology {
+  const definition =
+    typeof host === "object" && host !== null ? host : sourceControlClients.get(host);
+  return resolveChangeRequestTerms(definition, providerChangeRequestTerms);
+}
 
 /** The saved per-hostname accounts and tokens of a host whose definition has `credentials`. */
 export function readHostCredentialSettings(

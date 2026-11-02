@@ -1,5 +1,6 @@
 import {
   capitalizeTerm,
+  changeRequestTermsFor,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
@@ -39,7 +40,7 @@ export function PullRequestComposer({
   onReviewSubmitted: () => void;
   openReviewRequest?: number | undefined;
 }) {
-  const term = sourceControlClients.get(detail.provider).changeRequest.singular;
+  const term = changeRequestTermsFor(detail.provider).singular;
   const [open, setOpen] = useState(false);
   const [reviewPending, setReviewPending] = useState(false);
   const [requestedMode, setRequestedMode] = useState<"comment" | "review">("comment");

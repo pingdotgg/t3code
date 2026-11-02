@@ -4,6 +4,7 @@ import { useNavigation } from "@react-navigation/native";
 import type { PullRequestAction, PullRequestDetail } from "@t3tools/contracts";
 import {
   capitalizeTerm,
+  changeRequestTermsFor,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import Animated from "react-native-reanimated";
@@ -57,7 +58,7 @@ export function PullRequestStatusMenu(props: RowProps) {
   const action = usePullRequestAction(props.params, props.pr);
   const actions = STATUS_ACTIONS.filter(action.available);
   const status = pullRequestStatus(props.pr);
-  const terminology = sourceControlClients.get(props.pr.provider).changeRequest;
+  const terminology = changeRequestTermsFor(props.pr.provider);
   const term = capitalizeTerm(terminology.singular);
   const trigger = (
     <Pressable
@@ -143,7 +144,7 @@ export function PullRequestChecksRow(props: RowProps) {
                 action.confirm(
                   "approve-workflows",
                   "Approve workflows",
-                  `Allow this ${definition.changeRequest.singular}'s workflows to run? Review the workflow changes first.`,
+                  `Allow this ${changeRequestTermsFor(definition).singular}'s workflows to run? Review the workflow changes first.`,
                 )
               }
             />

@@ -15,8 +15,9 @@ import type {
 import { useRef, useState } from "react";
 import {
   capitalizeTerm,
-  sourceControlClients,
   type ChangeRequestTerminology,
+  changeRequestTermsFor,
+  sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useClientSettings, useEnvironmentSettings } from "~/hooks/useSettings";
@@ -215,7 +216,7 @@ export function usePullRequestCloseBatch(onClosed: (entry: EnvironmentPullReques
         setClosingKeys(new Set(pending.current));
         if (result._tag === "Failure") {
           failures.push(
-            `#${entry.number}: ${readableFailure(squashAtomCommandFailure(result), actionFailureHints(sourceControlClients.get(entry.provider).changeRequest.singular).close)}`,
+            `#${entry.number}: ${readableFailure(squashAtomCommandFailure(result), actionFailureHints(changeRequestTermsFor(entry.provider).singular).close)}`,
           );
           return;
         }
@@ -263,10 +264,9 @@ export function usePullRequestHandoffs({
   // Serialize all handoffs because they check out the same pull request.
   const [handoff, setHandoff] = useState<string | null>(null);
   // Prompt links hand over a URL alone, so the URL is what names the host.
-  const terminology = (
-    (detail && sourceControlClients.findByChangeRequestUrl(detail.url)) ||
-    sourceControlClients.get(undefined)
-  ).changeRequest;
+  const terminology = changeRequestTermsFor(
+    detail && sourceControlClients.findByChangeRequestUrl(detail.url),
+  );
 
   // Questions must not change checkouts or create worktrees.
   const openThreadWithTask = async (
