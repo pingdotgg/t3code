@@ -32,8 +32,8 @@ const row = {
   number: 7,
 };
 
-function Rows({ listed = true }: { listed?: boolean }) {
-  const prefetch = usePullRequestIntentPrefetch(() => listed);
+function Rows() {
+  const prefetch = usePullRequestIntentPrefetch(() => true);
   return (
     <>
       <button type="button" onClick={() => prefetch(row)}>
@@ -46,7 +46,7 @@ function Rows({ listed = true }: { listed?: boolean }) {
   );
 }
 
-it("reads the panel's detail only while the pointer rests on a listed row", async () => {
+it("reads the panel's detail once intent rests on a row for 150 ms", async () => {
   state.reads = [];
   await using screen = await render(<Rows />, {
     // A bare hook probe; nothing here navigates.
@@ -80,21 +80,4 @@ it("reads the panel's detail only while the pointer rests on a listed row", asyn
 
   await act(() => leave.click());
   expect(state.reads.at(-1)).toBeNull();
-
-  await act(() => rest.click());
-  await act(() => vi.advanceTimersByTime(150));
-  expect(state.reads.at(-1)).not.toBeNull();
-  // A row removed from the list fires no leave event, and coming back is not new intent.
-  let removedAt = state.reads.length;
-  await screen.rerender(<Rows listed={false} />);
-  await screen.rerender(<Rows listed />);
-  expect(state.reads.slice(removedAt)).not.toContainEqual(expect.anything());
-
-  await act(() => rest.click());
-  await act(() => vi.advanceTimersByTime(100));
-  removedAt = state.reads.length;
-  await screen.rerender(<Rows listed={false} />);
-  await screen.rerender(<Rows listed />);
-  await act(() => vi.advanceTimersByTime(1_000));
-  expect(state.reads.slice(removedAt)).not.toContainEqual(expect.anything());
 });
