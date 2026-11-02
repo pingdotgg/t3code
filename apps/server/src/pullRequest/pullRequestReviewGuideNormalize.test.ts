@@ -377,6 +377,7 @@ describe("groupReviewGuideFiles", () => {
       stop({
         title: "Implementation",
         excerpts: [
+          { ...excerpt("src/a.ts", 10, 14), caption: "Repeated caption" },
           { ...excerpt("src/a.ts", 30, 30, "old"), caption: "Previous contract" },
           { ...excerpt("src/a.ts", 40, 50), caption: "Implementation" },
         ],
@@ -398,7 +399,7 @@ describe("groupReviewGuideFiles", () => {
     expect(result[2]?.notes).toEqual([]);
     expect(groupReviewGuideFiles(result)).toEqual(result);
     expect(original[0]?.files).toEqual([{ path: "src/a.ts" }, { path: "docs/readme.md" }]);
-    expect(original[2]?.excerpts).toHaveLength(2);
+    expect(original[2]?.excerpts).toHaveLength(3);
   });
 
   it("does not merge separately anchored ranges when their combined length would drop notes", () => {

@@ -150,7 +150,17 @@ export function groupReviewGuideFiles(
   const listed = new Set<string>();
   for (const stop of stops) {
     for (const excerpt of stop.excerpts) {
-      chapters[owners.get(excerpt.path)!]!.excerpts.push(excerpt);
+      const target = chapters[owners.get(excerpt.path)!]!.excerpts;
+      if (
+        !target.some(
+          (other) =>
+            other.path === excerpt.path &&
+            other.side === excerpt.side &&
+            other.start === excerpt.start &&
+            other.end === excerpt.end,
+        )
+      )
+        target.push(excerpt);
     }
     for (const file of stop.files) {
       if (excerpted.has(file.path) || listed.has(file.path)) continue;

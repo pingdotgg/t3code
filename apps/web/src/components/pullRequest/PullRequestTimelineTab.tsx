@@ -724,7 +724,7 @@ export function PullRequestTimelineTab({
       keyExtractor={rowKey}
       renderItem={renderRow}
       estimatedItemSize={140}
-      className={cn("scrollbar-gutter-both px-4", embedded ? "py-2" : "h-full")}
+      className={cn("scrollbar-gutter-both px-4", embedded ? "h-[min(60vh,40rem)] py-2" : "h-full")}
       contentContainerClassName="relative mx-auto w-full max-w-3xl before:absolute before:bottom-10 before:left-[15px] before:top-6 before:w-px before:bg-border/45"
       ListHeaderComponent={<div className="pt-5">{order === "newest" ? pendingCards : null}</div>}
       ListFooterComponent={<div className="pb-5">{order === "oldest" ? pendingCards : null}</div>}

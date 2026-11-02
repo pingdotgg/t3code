@@ -577,7 +577,33 @@ it.effect("requires orchestration permission for provider-backed commit message 
     expect((yield* command.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
       AuthOrchestrationOperateScope,
     );
+    const commit = createCommandPermissions(runtime, WS_METHODS.reviewCommit);
+    for (const action of ["commit", "commit-push"] as const) {
+      const input = { cwd: "/repo", message: " \n", action };
+      expect(registry.get(commit.permissionAtom(env, input))).toBe(false);
+      expect(
+        (yield* commit.authorize(registry, env, input).pipe(Effect.flip)).requiredPermission,
+      ).toBe(AuthOrchestrationOperateScope);
+      yield* commit.authorize(registry, env, { ...input, message: "Provided message" });
+    }
+    yield* commit.authorize(registry, env, { cwd: "/repo", message: "", action: "amend" });
     registry.set(sessions(env), AsyncResult.success(grant(true)));
     expect(registry.get(command.permissionAtom(env))).toBe(true);
+    expect(
+      (yield* commit
+        .authorize(registry, env, { cwd: "/repo", message: "", action: "commit" })
+        .pipe(Effect.flip)).requiredPermission,
+    ).toBe(AuthSourceControlWriteScope);
+    registry.set(
+      sessions(env),
+      AsyncResult.success({
+        ...grant(true),
+        scopes: [AuthSourceControlWriteScope, AuthOrchestrationOperateScope],
+        permissions: [AuthSourceControlWriteScope, AuthOrchestrationOperateScope],
+      }),
+    );
+    for (const action of ["commit", "commit-push"] as const) {
+      yield* commit.authorize(registry, env, { cwd: "/repo", message: "", action });
+    }
   }),
 );

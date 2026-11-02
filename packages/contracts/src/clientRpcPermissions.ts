@@ -10,6 +10,7 @@ import {
   AuthTerminalOperateScope,
   type AuthEnvironmentScope,
 } from "./auth.ts";
+import { ReviewCommitInput } from "./review.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
 
@@ -80,6 +81,7 @@ export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
+const decodeReviewCommit = Schema.decodeUnknownSync(ReviewCommitInput);
 
 export function clientRpcRequiredScopes(
   method: string,
@@ -88,6 +90,11 @@ export function clientRpcRequiredScopes(
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)
+      return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
+  }
+  if (method === WS_METHODS.reviewCommit && input !== undefined) {
+    const payload = decodeReviewCommit(input);
+    if (payload.action !== "amend" && payload.message.trim().length === 0)
       return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
   }
   if (method === WS_METHODS.gitRunStackedAction && input !== undefined) {

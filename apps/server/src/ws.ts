@@ -3085,10 +3085,13 @@ export const layerWsRpc = (
         [WS_METHODS.reviewGetBranchCommits]: (input) => review.getBranchCommits(input),
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
-        [WS_METHODS.reviewSetStaged]: (input) => review.setStaged(input),
-        [WS_METHODS.reviewCommit]: (input) => review.commit(input),
+        [WS_METHODS.reviewSetStaged]: (input) =>
+          review.setStaged(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+        [WS_METHODS.reviewCommit]: (input) =>
+          review.commit(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.reviewGenerateCommitMessage]: (input) => review.generateCommitMessage(input),
-        [WS_METHODS.reviewRevert]: (input) => review.revert(input),
+        [WS_METHODS.reviewRevert]: (input) =>
+          review.revert(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),
         [WS_METHODS.terminalAttach]: (input, metadata) =>
           terminalManager.attachOutputStream(input, terminalViewerId(metadata)),

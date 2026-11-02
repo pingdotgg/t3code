@@ -62,7 +62,8 @@ export function ReviewDisplayOptions({
                   </Text>
                 </Pressable>
                 <Switch
-                  accessibilityLabel={option.label}
+                  accessible={false}
+                  importantForAccessibility="no-hide-descendants"
                   value={option.checked}
                   disabled={option.disabled}
                   onValueChange={option.onChange}

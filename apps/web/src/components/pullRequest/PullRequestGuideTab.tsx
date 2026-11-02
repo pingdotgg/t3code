@@ -155,11 +155,6 @@ export function PullRequestGuideTab({
   if (guide === null) {
     return renderFallback(
       <div className="mb-4 flex flex-col gap-2" aria-busy={running}>
-        <style>{`
-          @keyframes guide-status-glimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
-          [data-guide-generating] { background: linear-gradient(100deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%); background-size: 200% 100%; background-clip: text; color: transparent; animation: guide-status-glimmer 2.4s ease-in-out infinite; animation-play-state: var(--visible-animation-state, paused); }
-          @media (prefers-reduced-motion: reduce) { [data-guide-generating] { animation: none; } }
-        `}</style>
         <h2
           ref={running && active ? observeVisibleAnimation : undefined}
           role="status"
