@@ -186,10 +186,14 @@ When a provider CLI is behind its latest release, its provider card shows the
 available version. **Update now** runs the installer that owns the CLI
 (Homebrew, or a global npm, pnpm, Yarn, Bun, Volta, or Vite+ install), or the
 CLI's own update command when T3 Code cannot tell. Update a CLI installed with
-mise through mise. Cursor and Antigravity update with T3 Code. Homebrew and
+mise through mise. Cursor updates with T3 Code. Homebrew and
 Chocolatey installs compare against the version their package manager offers,
 which can trail the npm release; update Claude installed with Chocolatey
 through Chocolatey.
+
+The managed runtimes for Antigravity and for Codex connected through ChatGPT
+first install the release T3 Code tested. When T3 Code finds a newer compatible
+release, their setup in **Settings → Providers** offers an update.
 
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom
