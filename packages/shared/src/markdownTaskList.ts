@@ -44,7 +44,7 @@ function plainText(node: Nodes): string {
  * Task list items in document order, the order renderers number their checkboxes in. `text` is
  * the item's first paragraph as plain text, to check a renderer's item against the source.
  */
-export function markdownTaskListItems(
+function markdownTaskListItems(
   markdown: string,
 ): ReadonlyArray<{ readonly markerOffset: number | null; readonly text: string }> {
   const items: Array<{ markerOffset: number | null; text: string }> = [];
