@@ -1640,6 +1640,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
   });
 
+  const readRefSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readRefSnapshot"] = (cwd) =>
+    executeGit("GitVcsDriver.readRefSnapshot", cwd, ["show-ref", "--head"], {
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.map((result) => (result.exitCode === 0 ? result.stdout : null)),
+      Effect.orElseSucceed(() => null),
+    );
+
   const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (
     cwd: string,
   ) {
@@ -4965,6 +4973,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetails,
     statusDetailsLocal,
     statusDetailsRemote,
+    readRefSnapshot,
     prepareCommitContext,
     commit: Effect.fnUntraced(function* (cwd, subject, body, options) {
       return yield* withListRefsInvalidation(cwd, commit(cwd, subject, body, options));

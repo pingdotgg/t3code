@@ -3477,6 +3477,45 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("a ref snapshot changes when any fetch or commit moves refs", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(updater, ["clone", remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const snapshot = driver.readRefSnapshot(cwd);
+
+        // Newer Git can create origin/HEAD on the first fetch.
+        yield* git(cwd, ["fetch", "origin"]);
+        const initial = yield* snapshot;
+        assert.isNotNull(initial);
+        yield* git(cwd, ["fetch", "origin"]);
+        assert.equal(yield* snapshot, initial);
+
+        yield* writeTextFile(updater, "remote.txt", "remote\n");
+        yield* git(updater, ["add", "remote.txt"]);
+        yield* git(updater, ["commit", "-m", "remote commit"]);
+        yield* git(updater, ["push", "origin", initialBranch]);
+        assert.equal(yield* snapshot, initial);
+        yield* git(cwd, ["fetch", "origin"]);
+        const fetched = yield* snapshot;
+        assert.notEqual(fetched, initial);
+
+        yield* git(cwd, ["checkout", "--detach"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "detached"]);
+        assert.notEqual(yield* snapshot, fetched);
+
+        assert.isNull(yield* driver.readRefSnapshot(yield* makeTmpDir()));
+      }),
+    );
+
     it.effect("does not start Git auto-maintenance from background upstream fetches", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
