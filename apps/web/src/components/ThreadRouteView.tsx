@@ -190,7 +190,8 @@ export function ThreadRouteView({
   } else if (hiddenByTagFilter) {
     redirect = <Navigate to="/" replace />;
   } else if (offShellBlocked) {
-    if (unlistedThread !== null) redirect = <Navigate to="/" replace />;
+    // Before the shell bootstraps, a listed visible thread can still look off-shell.
+    if (bootstrapComplete && unlistedThread !== null) redirect = <Navigate to="/" replace />;
   } else if (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null)) {
     view = (
       <ChatView

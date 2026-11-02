@@ -190,19 +190,25 @@ export const providersIgnoringCheckedAtAtom = Atom.family((environmentId: Enviro
 );
 
 /**
- * The tag-filter toggle: null when no connected environment lists tags to hide. The write target
- * is an environment this client may write settings on, primary first; shared settings carry the
- * switch to the rest.
+ * The tag-filter toggle: null when no connected environment lists tags to hide. `hiding` is on
+ * while any environment hides tags. The write target is the best environment this client may
+ * write settings on, primary first; shared settings carry the switch to the rest.
  */
 type ThreadTagToggle = { readonly hiding: boolean; readonly environmentId: EnvironmentId } | null;
 
 export const threadTagToggleAtom = Atom.make((get): ThreadTagToggle => {
   const primaryEnvironmentId = get(primaryEnvironmentIdAtom);
-  let toggle: ThreadTagToggle = null;
+  let tagged = false;
+  let hiding = false;
+  let target: EnvironmentId | null = null;
   let rank = -1;
   for (const environmentId of enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))) {
     const settings = get(serverEnvironment.settingsValueAtom(environmentId));
-    if (settings === null || !settings.hiddenThreadTags.some((tag) => tag.trim() !== "")) continue;
+    if (settings === null) continue;
+    if (settings.hiddenThreadTags.some((tag) => tag.trim() !== "")) {
+      tagged = true;
+      hiding ||= settings.hideTaggedThreads;
+    }
     const writable = sessionHasScope(
       get(environmentSession.sessionStateAtom(environmentId)),
       AuthSettingsWriteScope,
@@ -210,10 +216,10 @@ export const threadTagToggleAtom = Atom.make((get): ThreadTagToggle => {
     const nextRank = (writable ? 2 : 0) + (environmentId === primaryEnvironmentId ? 1 : 0);
     if (nextRank > rank) {
       rank = nextRank;
-      toggle = { hiding: settings.hideTaggedThreads, environmentId };
+      target = environmentId;
     }
   }
-  return toggle;
+  return tagged && target !== null ? { hiding, environmentId: target } : null;
 }).pipe(
   Atom.withEquality(
     (a: ThreadTagToggle, b: ThreadTagToggle) =>
