@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - checks the host's default Codex directory without writing to it.
 import * as NodeURL from "node:url";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
@@ -284,7 +285,7 @@ it.live.each(
     ),
 );
 
-it.live(
+it.live.skipIf(!symlinksSupported)(
   "managed additional account preserves dirty legacy SQLite state and returns a structured setup error",
   () =>
     Effect.gen(function* () {

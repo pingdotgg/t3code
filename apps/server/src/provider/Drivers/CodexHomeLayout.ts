@@ -213,9 +213,6 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
   const effectiveHomePath = layout.effectiveHomePath;
   if (layout.mode !== "authOverlay" || !effectiveHomePath) return environment;
 
-  const override = environment.CODEX_SQLITE_HOME?.trim();
-  if (override) return { ...environment, CODEX_SQLITE_HOME: override };
-
   const fileSystem = yield* FileSystem.FileSystem;
   const entries = yield* fileSystem.readDirectory(effectiveHomePath).pipe(
     Effect.catchTags({
@@ -232,20 +229,11 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
     }),
   );
   const sqliteEntries = entries.filter((entry) => SQLITE_ENTRY_NAME.test(entry));
-
-  // Unix resolves database symlinks before journal placement, so preserve existing overlays.
-  if (!(yield* HostProcess.isWindows)) {
-    return {
-      ...environment,
-      CODEX_SQLITE_HOME: sqliteEntries.length > 0 ? effectiveHomePath : layout.sharedHomePath,
-    };
-  }
-
   const path = yield* Path.Path;
   const regularDatabases = new Set<string>();
   const regularSidecars: Array<{ readonly entryName: string; readonly databaseName: string }> = [];
-  let linkedEntry: string | undefined;
   let hasLocalSqlite = false;
+
   for (const entryName of sqliteEntries) {
     const linkPath = path.join(effectiveHomePath, entryName);
     const state = yield* readLinkState({
@@ -256,18 +244,11 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
       linkPath,
     });
     if (state._tag === "Symlink") {
-      linkedEntry ??= entryName;
-      if (
-        path.resolve(effectiveHomePath, state.target).toLowerCase() !==
-        path.join(layout.sharedHomePath, entryName).toLowerCase()
-      ) {
-        return yield* new CodexShadowHomeSqliteConflictError({
-          sharedHomePath: layout.sharedHomePath,
-          effectiveHomePath,
-          entryName,
-        });
-      }
-      continue;
+      return yield* new CodexShadowHomeSqliteConflictError({
+        sharedHomePath: layout.sharedHomePath,
+        effectiveHomePath,
+        entryName,
+      });
     }
     if (state._tag !== "NotSymlink") continue;
     hasLocalSqlite = true;
@@ -281,12 +262,16 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
     }
   }
 
-  if (linkedEntry && hasLocalSqlite) {
-    return yield* new CodexShadowHomeSqliteConflictError({
-      sharedHomePath: layout.sharedHomePath,
-      effectiveHomePath,
-      entryName: linkedEntry,
-    });
+  const override = environment.CODEX_SQLITE_HOME?.trim();
+  if (override) return { ...environment, CODEX_SQLITE_HOME: override };
+
+  // Unix resolves regular database paths before journal placement. Existing private SQLite
+  // families can therefore remain private, but legacy database symlinks are rejected above.
+  if (!(yield* HostProcess.isWindows)) {
+    return {
+      ...environment,
+      CODEX_SQLITE_HOME: hasLocalSqlite ? effectiveHomePath : layout.sharedHomePath,
+    };
   }
 
   for (const sidecar of regularSidecars) {
@@ -464,6 +449,7 @@ const ensureShadowAuthIsPrivate = Effect.fn("CodexHomeLayout.ensureShadowAuthIsP
 
 export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome")(function* (
   layout: CodexHomeLayout,
+  environment: NodeJS.ProcessEnv = {},
 ) {
   if (layout.mode !== "authOverlay") return;
   const effectiveHomePath = layout.effectiveHomePath;
@@ -479,7 +465,7 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
   const path = yield* Path.Path;
 
   // Refuse dangerous legacy SQLite layouts before materialization mutates any shadow-home entry.
-  yield* codexHomeEnvironment(layout, {}).pipe(Effect.asVoid);
+  yield* codexHomeEnvironment(layout, environment).pipe(Effect.asVoid);
 
   const makeDirectory = (directoryPath: string) =>
     fileSystem.makeDirectory(directoryPath, { recursive: true }).pipe(

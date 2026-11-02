@@ -370,7 +370,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
         }),
     );
 
-    it.effect.skipIf(!symlinksSupported || !windowsHost)(
+    it.effect.skipIf(!symlinksSupported)(
       "refuses a dirty legacy SQLite overlay before materialization mutates other entries",
       () =>
         Effect.gen(function* () {
@@ -427,8 +427,8 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
         }),
     );
 
-    it.effect.skipIf(!symlinksSupported || !windowsHost)(
-      "routes a clean legacy SQLite link to the shared home without deleting the link",
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses a clean legacy SQLite link instead of silently redirecting it",
       () =>
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -443,16 +443,16 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
           );
 
-          yield* materializeCodexShadowHome(layout);
-          yield* materializeCodexShadowHome(layout);
-          const environment = yield* codexHomeEnvironment(layout, {});
+          const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
 
-          expect(environment.CODEX_SQLITE_HOME).toBe(sharedHome);
+          expect(error).toBeInstanceOf(CodexShadowHomeSqliteConflictError);
+          expect(error).toMatchObject({ entryName: "state_5.sqlite" });
           expect(yield* fileSystem.readLink(linkedDatabase)).toBe(database);
+          expect(yield* fileSystem.readFileString(database)).toBe("shared-database");
         }),
     );
 
-    it.effect.skipIf(!symlinksSupported || !windowsHost)(
+    it.effect.skipIf(!symlinksSupported)(
       "refuses a legacy SQLite link that points outside the shared home",
       () =>
         Effect.gen(function* () {
@@ -509,7 +509,58 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
       }),
     );
 
-    it.effect.skipIf(!symlinksSupported || !windowsHost)(
+    it.effect(
+      "materialization honors an explicit SQLite override without deleting dormant sidecars",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowHome = yield* makeTempDir("t3code-codex-shadow-");
+          const customHome = yield* makeTempDir("t3code-codex-custom-sqlite-");
+          const sidecar = path.join(shadowHome, "state_5.sqlite-wal");
+          yield* writeTextFile(sidecar, "legacy-wal");
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+          const launchEnvironment = { CODEX_SQLITE_HOME: customHome };
+
+          yield* materializeCodexShadowHome(layout, launchEnvironment);
+          const environment = yield* codexHomeEnvironment(layout, launchEnvironment);
+
+          expect(environment.CODEX_SQLITE_HOME).toBe(customHome);
+          expect(yield* fileSystem.readFileString(sidecar)).toBe("legacy-wal");
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "explicit SQLite overrides still refuse legacy database symlinks",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowHome = yield* makeTempDir("t3code-codex-shadow-");
+          const customHome = yield* makeTempDir("t3code-codex-custom-sqlite-");
+          const database = path.join(sharedHome, "state_5.sqlite");
+          const linkedDatabase = path.join(shadowHome, "state_5.sqlite");
+          yield* writeTextFile(database, "shared-database");
+          yield* fileSystem.symlink(database, linkedDatabase);
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+
+          const error = yield* materializeCodexShadowHome(layout, {
+            CODEX_SQLITE_HOME: customHome,
+          }).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(CodexShadowHomeSqliteConflictError);
+          expect(error).toMatchObject({ entryName: "state_5.sqlite" });
+          expect(yield* fileSystem.readLink(linkedDatabase)).toBe(database);
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
       "refuses a legacy linked database with a shadow-local SHM without changing either file",
       () =>
         Effect.gen(function* () {

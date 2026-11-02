@@ -91,7 +91,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       environmentId,
       profileKey,
     ]);
-    const homeEnvironment = yield* materializeCodexShadowHome(homeLayout).pipe(
+    const homeEnvironment = yield* materializeCodexShadowHome(homeLayout, options.environment).pipe(
       Effect.andThen(() => codexHomeEnvironment(homeLayout, options.environment)),
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
