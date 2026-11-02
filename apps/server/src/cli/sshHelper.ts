@@ -6,7 +6,12 @@ import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { Argument, Command } from "effect/cli";
+
+import packageJson from "../../package.json" with { type: "json" };
+import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
 
 const canBind = (port: number) =>
   new Promise<boolean>((resolve) => {
@@ -124,7 +129,36 @@ const runtimePort = Command.make("runtime-port", {
   ),
 );
 
+const decodeRunningServer = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ pid: Schema.Number, serverVersion: Schema.String })),
+);
+
+/** True when the runtime file names `pid` and a server version at or above `ownVersion`. */
+export const keepsRunningServer = (runtimeJson: string, pid: number, ownVersion: string) =>
+  Option.match(decodeRunningServer(runtimeJson), {
+    onNone: () => false,
+    onSome: (runtime) =>
+      runtime.pid === pid &&
+      isExactServiceVersion(runtime.serverVersion) &&
+      compareExactServiceVersions(runtime.serverVersion, ownVersion) >= 0,
+  });
+
+/** Exits 0 when the managed server `pid` runs this version or a newer one, else 1. */
+const keepServer = Command.make("keep-server", {
+  runtimeFile: Argument.String("runtime-file"),
+  pid: Argument.Int("pid"),
+}).pipe(
+  Command.withHandler(({ runtimeFile, pid }) =>
+    Effect.sync(() => {
+      const runtimeJson = NodeFS.existsSync(runtimeFile)
+        ? NodeFS.readFileSync(runtimeFile, "utf8")
+        : "";
+      if (!keepsRunningServer(runtimeJson, pid, packageJson.version)) process.exitCode = 1;
+    }),
+  ),
+);
+
 export const sshHelperCommand = Command.make("__ssh-helper").pipe(
   Command.unlisted,
-  Command.withSubcommands([pickPort, waitReady, runtimePort]),
+  Command.withSubcommands([pickPort, waitReady, runtimePort, keepServer]),
 );

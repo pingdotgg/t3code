@@ -517,6 +517,12 @@ const canBind = (port) =>
       process.kill(runtime.pid, 0);
       return process.stdout.write(runtime.pid + " " + runtime.port);
     } catch {}
+  } else if (helper === "keep-server") {
+    try {
+      const runtime = JSON.parse(fs.readFileSync(a, "utf8"));
+      const order = runtime.serverVersion.localeCompare(version, "en", { numeric: true });
+      if (String(runtime.pid) === b && order >= 0) return;
+    } catch {}
   }
   process.exitCode = 1;
 })();
