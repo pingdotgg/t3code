@@ -34,19 +34,16 @@ import {
   type BrowserImportSource,
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
-  managedCapabilityDenial,
 } from "@t3tools/contracts";
-import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
 import { isValidSearchUrlTemplate } from "@t3tools/shared/preview";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
-import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { cn, randomUUID } from "~/lib/utils";
-import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
+import { useEnvironments } from "~/state/environments";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -71,7 +68,6 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
-import { readLocalApi } from "~/localApi";
 
 import { toastManager } from "../ui/toast";
 import {
@@ -117,6 +113,7 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { BrowserImportWizard, type WizardTarget } from "./BrowserImportWizard";
 import type { ImportOutcome } from "./browserImportWizard.logic";
+import { useBrowserCookieImport } from "./useBrowserCookieImport";
 
 const FILL_VALUE = "fill";
 const RESPONSIVE_VALUE = "responsive";
@@ -201,7 +198,7 @@ export const importPolicyRefusal = (cause: unknown): string | undefined => {
   );
 };
 
-async function importBrowserCookiesIntoTarget(
+export async function importBrowserCookiesIntoTarget(
   bridge: NonNullable<typeof previewBridge>,
   source: BrowserImportSource,
   environmentId: EnvironmentId,
@@ -1107,18 +1104,23 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const settingsHydrated = useClientSettingsHydrated();
   const updateSettings = useUpdatePrimarySettings();
   const { environments, isReady: environmentsReady } = useEnvironments();
-  const primaryEnvironment = usePrimaryEnvironment();
-  // Cookie import runs on this desktop, whose policy the primary environment reports.
-  const cookieImportDenial = managedCapabilityDenial(
-    usePrimaryManagedPolicy(),
-    "browserCookieImport",
-  );
-  const [sources, setSources] = useState<ReadonlyArray<BrowserImportSource> | null>(null);
-  const [importSession, setImportSession] = useState<{
-    readonly source: BrowserImportSource;
-    readonly environmentId: EnvironmentId;
-    readonly environmentName: string;
-  } | null>(null);
+  const {
+    sources,
+    importableSources,
+    importSession,
+    setImportSession,
+    importInFlight,
+    importInFlightRef,
+    cookieImportDenial,
+    primaryEnvironment,
+    listedProfiles,
+    atProfileLimit,
+    loadSources,
+    startImportSession,
+    runWizardImport,
+    refreshImportSource,
+    openFullDiskAccessSettings,
+  } = useBrowserCookieImport();
   const [profilePendingRemoval, setProfilePendingRemoval] = useState<BrowserProfile | null>(null);
   const [profilePendingClear, setProfilePendingClear] = useState<BrowserProfile | null>(null);
   const [profileRemovalError, setProfileRemovalError] = useState<string | null>(null);
@@ -1145,12 +1147,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     environments.length,
     serverProfileData.environmentIds.length,
   );
-  const importInFlightRef = useRef(false);
-  const [importInFlight, setImportInFlight] = useState(false);
   const profileWritesDisabled = disabled || !settingsHydrated;
-
-  const profiles = resolveBrowserProfiles(userProfiles);
-  const listedProfiles = profiles.filter((profile) => profile.kind !== "incognito");
   const resolvedDefaultId =
     findBrowserProfile(listedProfiles, defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID;
 
@@ -1235,59 +1232,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     setProfilePendingRemoval(null);
   };
 
-  const importableSources = (sources ?? []).filter(
-    (source) =>
-      source.unavailable !== "notInstalled" && source.unavailable !== "unsupportedPlatform",
-  );
 
-  const loadSources = () => {
-    if (!previewBridge) return;
-    void previewBridge
-      .listBrowserImportSources()
-      .then(setSources)
-      .catch(() => setSources((previous) => previous ?? []));
-  };
-
-  const runWizardImport = async (
-    source: BrowserImportSource,
-    environmentId: EnvironmentId,
-    input: { readonly sourceProfileDirectory: string; readonly target: WizardTarget },
-  ): Promise<ImportOutcome> => {
-    if (!previewBridge) return { kind: "blocked", reason: "sessionUnavailable" };
-    if (!settingsHydrated) return { kind: "blocked", reason: "sessionUnavailable" };
-    if (
-      input.target.kind === "existing" &&
-      !resolveBrowserProfiles(getClientSettings().browserProfiles).some(
-        (profile) => profile.id === input.target.profileId,
-      )
-    ) {
-      return { kind: "blocked", reason: "readFailed" };
-    }
-    if (importInFlightRef.current) return { kind: "blocked", reason: "readFailed" };
-    importInFlightRef.current = true;
-    setImportInFlight(true);
-    return importBrowserCookiesIntoTarget(previewBridge, source, environmentId, input).finally(
-      () => {
-        importInFlightRef.current = false;
-        setImportInFlight(false);
-      },
-    );
-  };
-
-  const refreshImportSource = async (
-    sourceId: BrowserImportSource["id"],
-  ): Promise<BrowserImportSource | undefined> => {
-    if (!previewBridge) return undefined;
-    try {
-      const latest = await previewBridge.listBrowserImportSources();
-      setSources(latest);
-      return latest.find((source) => source.id === sourceId);
-    } catch {
-      return undefined;
-    }
-  };
-
-  const atProfileLimit = userProfiles.length >= BROWSER_PROFILE_MAX_COUNT;
 
   return (
     <SettingsRow
@@ -1332,18 +1277,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                     <MenuItem
                       key={source.id}
                       disabled={!settingsHydrated || primaryEnvironment == null}
-                      onClick={() => {
-                        if (!settingsHydrated || primaryEnvironment == null) return;
-                        setImportSession({
-                          source,
-                          environmentId: primaryEnvironment.environmentId,
-                          environmentName: resolveEnvironmentOptionLabel({
-                            isPrimary: true,
-                            environmentId: primaryEnvironment.environmentId,
-                            runtimeLabel: primaryEnvironment.label,
-                          }),
-                        });
-                      }}
+                      onClick={() => startImportSession(source)}
                     >
                       {source.name}
                     </MenuItem>
@@ -1552,17 +1486,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
               ? () => window.desktopBridge!.checkSystemPermission("full-disk-access")
               : undefined
           }
-          onOpenFullDiskAccessSettings={async () => {
-            await readLocalApi()
-              ?.shell.openSystemSettings("full-disk-access")
-              .catch(() => {
-                toastManager.add({
-                  type: "error",
-                  title: "Could not open System Settings",
-                  description: "Open Privacy & Security → Full Disk Access manually.",
-                });
-              });
-          }}
+          onOpenFullDiskAccessSettings={openFullDiskAccessSettings}
           onClose={() => setImportSession(null)}
         />
       ) : null}

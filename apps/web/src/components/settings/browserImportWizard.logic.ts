@@ -16,7 +16,14 @@ export type WizardTargetSelection =
 export function initialTargetSelection(
   canCreateProfile: boolean,
   targetProfiles: ReadonlyArray<WizardTargetProfile>,
+  preferredProfileId?: string,
 ): WizardTargetSelection {
+  if (
+    preferredProfileId !== undefined &&
+    targetProfiles.some((profile) => profile.id === preferredProfileId)
+  ) {
+    return { kind: "existing", profileId: preferredProfileId };
+  }
   if (canCreateProfile) return { kind: "new" };
   const first = targetProfiles[0];
   return first ? { kind: "existing", profileId: first.id } : { kind: "new" };

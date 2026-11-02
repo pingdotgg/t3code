@@ -6,6 +6,8 @@ import {
   EnvironmentId,
   FILL_PREVIEW_VIEWPORT,
   ThreadId,
+  type BrowserImportResult,
+  type BrowserImportSource,
 } from "@t3tools/contracts";
 import { type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -37,6 +39,17 @@ const mocks = vi.hoisted(() => ({
   recordingTabIds: new Set<string>(),
   recordingRuntimeTabId: null as string | null,
   recordVisitForThread: vi.fn(),
+  listBrowserImportSources: vi.fn<() => Promise<ReadonlyArray<BrowserImportSource>>>(
+    async () => [],
+  ),
+  importBrowserCookies: vi.fn<
+    (input: {
+      readonly environmentId: EnvironmentId;
+      readonly sourceId: BrowserImportSource["id"];
+      readonly sourceProfileDirectory: string;
+      readonly targetProfileId: string;
+    }) => Promise<BrowserImportResult>
+  >(async () => ({ imported: 12, skipped: 0, skippedDomains: [] })),
 }));
 
 const STUB_BROWSER_DEFAULTS = {
@@ -67,6 +80,8 @@ vi.mock(import("./previewBridge"), async (original) => ({
     resetZoom: vi.fn(async () => undefined),
     clearCookies: vi.fn(async () => undefined),
     clearCache: vi.fn(async () => undefined),
+    listBrowserImportSources: mocks.listBrowserImportSources,
+    importBrowserCookies: mocks.importBrowserCookies,
     pictureInPicture: {
       open: mocks.openPictureInPicture,
       close: mocks.closePictureInPicture,
@@ -128,7 +143,15 @@ vi.mock(import("~/state/environments"), async (original) => ({
   ...(await original()),
   useEnvironment: (() => ({ label: "WSL" })) as never,
   useEnvironmentHttpBaseUrl: () => "http://172.25.85.75:3773",
-  usePrimaryEnvironmentId: () => null,
+  usePrimaryEnvironmentId: () => EnvironmentId.make("environment-1"),
+  usePrimaryEnvironment: () => ({
+    environmentId: EnvironmentId.make("environment-1"),
+    label: "This Mac",
+  }),
+}));
+vi.mock(import("~/hooks/useSettings"), async (original) => ({
+  ...(await original()),
+  useClientSettingsHydrated: () => true,
 }));
 vi.mock(import("~/browser/browserRecording"), async (original) => ({
   ...(await original()),
@@ -341,5 +364,45 @@ describe("PreviewView", () => {
     await expect.element(address).not.toHaveFocus();
     act(() => dispatchPreviewAction("focus-url"));
     await expect.element(address).toHaveFocus();
+  });
+  it("opens the cookie import wizard from the toolbar menu with the active profile preselected", async () => {
+    setup();
+    mocks.listBrowserImportSources.mockResolvedValue([
+      {
+        id: "chrome",
+        name: "Chrome",
+        profiles: [{ directory: "Default", name: "Personal", cookieCount: 42 }],
+      },
+      {
+        id: "safari",
+        name: "Safari",
+        profiles: [{ directory: "Default", name: "Safari", cookieCount: 18 }],
+      },
+    ]);
+    await using _screen = await render(view());
+
+    await userEvent.click(page.getByRole("button", { name: "Preview menu" }));
+    await vi.waitFor(() => expect(mocks.listBrowserImportSources).toHaveBeenCalledOnce());
+
+    await userEvent.click(page.getByRole("menuitem", { name: "Import cookies from" }));
+    await expect.element(page.getByRole("menuitem", { name: "Chrome" })).toBeVisible();
+    await expect.element(page.getByRole("menuitem", { name: "Safari" })).toBeVisible();
+
+    await userEvent.click(page.getByRole("menuitem", { name: "Chrome" }));
+    await expect.element(page.getByRole("heading", { name: "Import from Chrome" })).toBeVisible();
+
+    const defaultProfileTile = page.getByRole("button", { name: /Default\s+Existing profile/i });
+    await expect.element(defaultProfileTile).toHaveAttribute("aria-pressed", "true");
+
+    await userEvent.click(page.getByRole("button", { name: "Import", exact: true }));
+    await vi.waitFor(() =>
+      expect(mocks.importBrowserCookies).toHaveBeenCalledWith({
+        environmentId: TEST_THREAD_REF.environmentId,
+        sourceId: "chrome",
+        sourceProfileDirectory: "Default",
+        targetProfileId: DEFAULT_BROWSER_PROFILE_ID,
+      }),
+    );
+    await expect.element(page.getByRole("heading", { name: "Imported 12 cookies" })).toBeVisible();
   });
 });
