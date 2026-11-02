@@ -1356,7 +1356,11 @@ function ThreadDetailBody(
     !isProviderSubagent &&
     !composerSlotHidden &&
     !props.isSavingQueuedEdit &&
-    !props.draftMode?.interactionLocked;
+    !props.draftMode?.interactionLocked &&
+    !(
+      voiceInputSession.ownerKey === props.composerDraftKey &&
+      voiceInputBlocksSubmission(voiceInputSession.controller.currentState)
+    );
   const handleCiteAssistantText = (citation: AssistantCitation) => {
     if (
       !canCiteAssistantText ||
