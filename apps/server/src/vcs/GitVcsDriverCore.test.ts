@@ -2634,11 +2634,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("reads range patches from source without running textconv", () =>
+    it.effect("reads range patches from source without textconv or color", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         yield* git(cwd, ["config", "diff.probe.textconv", "touch textconv-ran; echo converted"]);
+        yield* git(cwd, ["config", "color.ui", "always"]);
         yield* git(cwd, ["checkout", "-b", "feature/range"]);
         yield* writeTextFile(cwd, ".gitattributes", "*.doc diff=probe\n");
         yield* writeTextFile(cwd, "notes.doc", "source line\n");
@@ -2656,12 +2657,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.include(context.diffPatch, "+plain line");
         assert.include(context.diffPatch, "Binary files /dev/null and b/binary.dat differ");
         assert.include(context.diffSummary, "notes.doc");
+        for (const output of [context.commitSummary, context.diffSummary, context.diffPatch]) {
+          assert.notInclude(output, "\u001b[");
+        }
         assert.isFalse(yield* fileSystem.exists(`${cwd}/textconv-ran`));
 
         yield* writeTextFile(cwd, "notes.doc", "updated source line\n");
         const staged = yield* driver.prepareCommitContext(cwd, ["notes.doc"]);
         assert.include(staged?.stagedPatch ?? "", "+updated source line");
         assert.notInclude(staged?.stagedPatch ?? "", "converted");
+        assert.notInclude(staged?.stagedPatch ?? "", "\u001b[");
         assert.include(staged?.stagedSummary ?? "", "notes.doc");
         assert.isFalse(yield* fileSystem.exists(`${cwd}/textconv-ran`));
       }),
