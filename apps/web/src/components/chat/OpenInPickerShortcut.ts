@@ -15,7 +15,7 @@ import {
   openRemoteEditorUrl,
   useRemoteCapableEditors,
   useRemoteOpenState,
-  wslCapableEditors,
+  useWslCapableEditors,
 } from "../../remoteOpen";
 import { registerCommands } from "../../shortcuts/dispatcher";
 import { shellEnvironment } from "../../state/shell";
@@ -62,12 +62,13 @@ export function useOpenFavoriteEditorShortcut({
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const remote = useRemoteOpenState(environmentId);
   const remoteCapableEditors = useRemoteCapableEditors();
+  const wslEditors = useWslCapableEditors();
   // Matches the picker: remote editors run on the viewing machine.
   const effectiveEditors =
     remote.mode === "local-exec"
       ? availableEditors
       : remote.mode === "wsl-links"
-        ? wslCapableEditors(remoteCapableEditors)
+        ? wslEditors
         : remoteCapableEditors;
   const [preferredEditor] = usePreferredEditor(effectiveEditors);
 

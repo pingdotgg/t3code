@@ -171,25 +171,29 @@ export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteO
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 
 // Probed once per page: installed editors rarely change, and the probe spawns processes.
-const remoteCapableEditorsAtom = Atom.make((get): ReadonlyArray<EditorId> => {
+const remoteCapableEditorsAtom = Atom.make((get): ReadonlyArray<EditorId> | null => {
   const probe = window.desktopBridge?.probeRemoteEditors;
   probe?.().then(
     (ids) => {
       const remoteCapable = ids.filter((id) => REMOTE_CAPABLE_EDITOR_IDS.includes(id));
-      if (remoteCapable.length > 0) get.setSelf(remoteCapable);
+      get.setSelf(remoteCapable);
     },
     () => undefined,
   );
-  return REMOTE_FALLBACK_EDITORS;
+  return null;
 }).pipe(Atom.keepAlive, Atom.withLabel("remote-capable-editors"));
 
 export function wslCapableEditors(editors: ReadonlyArray<EditorId>): ReadonlyArray<EditorId> {
-  const supported = editors.filter((editor) => WSL_REMOTE_EDITOR_IDS.some((id) => id === editor));
-  return supported.length > 0 ? supported : REMOTE_FALLBACK_EDITORS;
+  return editors.filter((editor) => WSL_REMOTE_EDITOR_IDS.some((id) => id === editor));
 }
 
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
-  return useAtomValue(remoteCapableEditorsAtom);
+  const editors = useAtomValue(remoteCapableEditorsAtom);
+  return editors && editors.length > 0 ? editors : REMOTE_FALLBACK_EDITORS;
+}
+
+export function useWslCapableEditors(): ReadonlyArray<EditorId> {
+  return wslCapableEditors(useAtomValue(remoteCapableEditorsAtom) ?? []);
 }
 
 /** Resolves false when the desktop refuses the URL, including unsupported editor schemes. */

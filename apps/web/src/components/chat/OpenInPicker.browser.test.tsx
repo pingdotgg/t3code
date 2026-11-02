@@ -61,6 +61,8 @@ vi.mock(import("../../remoteOpen"), async (importOriginal) => ({
   ...(await importOriginal()),
   useRemoteOpenState: () => state.remote,
   useRemoteCapableEditors: () => state.clientEditors,
+  useWslCapableEditors: () =>
+    state.clientEditors.filter((id) => id === "vscode" || id === "vscode-insiders"),
   useRemoteOpenHint: () => [false, state.markHintSeen] as const,
   openRemoteEditorUrl: state.openUrl,
 }));
@@ -223,6 +225,17 @@ describe("remote editor links", () => {
       "vscode://vscode-remote/wsl+Ubuntu/home/theo/My%20Project",
     );
     expect(state.run).not.toHaveBeenCalled();
+  });
+
+  it("disables WSL editor actions when no supported handler is detected", async () => {
+    await using fixture = await setup();
+    const { renderPicker, primaryButton, pressOpenFavorite } = fixture;
+    state.remote = { mode: "wsl-links", distro: "Ubuntu" };
+    state.clientEditors = ["cursor"];
+    await renderPicker();
+    expect(primaryButton().disabled).toBe(true);
+    expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
+    expect(state.openUrl).not.toHaveBeenCalled();
   });
 
   it("opens the WSL workspace from the favorite-editor shortcut", async () => {

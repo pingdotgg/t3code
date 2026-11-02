@@ -157,9 +157,8 @@ import { cn } from "../lib/utils";
 import {
   openRemoteEditorUrl,
   resolveRemoteOpenState,
-  useRemoteCapableEditors,
   useRemoteOpenResolution,
-  wslCapableEditors,
+  useWslCapableEditors,
 } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
@@ -641,8 +640,8 @@ function useChatMarkdownState({
     markdownServerConfigFieldsAtom(environmentId),
   );
   const projects = useProjects();
-  const remoteEditors = useRemoteCapableEditors();
-  const [wslEditor] = usePreferredEditor(wslCapableEditors(remoteEditors));
+  const wslEditors = useWslCapableEditors();
+  const [wslEditor] = usePreferredEditor(wslEditors);
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
   const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);

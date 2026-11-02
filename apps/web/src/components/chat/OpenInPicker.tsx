@@ -16,7 +16,7 @@ import { editorLabelForPlatform } from "../../editorLabels";
 import {
   openRemoteEditorUrl,
   useRemoteCapableEditors,
-  wslCapableEditors,
+  useWslCapableEditors,
   useRemoteOpenHint,
   useRemoteOpenState,
 } from "../../remoteOpen";
@@ -238,6 +238,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   const canOpenEditor = remote.mode !== "remote-unavailable" && !isHostEditorDenied;
   const [menuOpen, setMenuOpen] = useComposerMenuState(isHostEditorDenied);
   const remoteCapableEditors = useRemoteCapableEditors();
+  const wslEditors = useWslCapableEditors();
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
   const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
   // Remote editors run on the viewing machine; only desktop can probe that PATH.
@@ -245,7 +246,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     remote.mode === "local-exec"
       ? availableEditors
       : remote.mode === "wsl-links"
-        ? wslCapableEditors(remoteCapableEditors)
+        ? wslEditors
         : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
 

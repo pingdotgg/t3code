@@ -269,8 +269,8 @@ describe("buildWslOpenUrl", () => {
 });
 
 describe("wslCapableEditors", () => {
-  it("retains the VS Code fallback when the probe only finds other editors", () => {
-    expect(wslCapableEditors(["cursor"])).toEqual(["vscode"]);
+  it("only offers detected WSL editors", () => {
+    expect(wslCapableEditors(["cursor"])).toEqual([]);
     expect(wslCapableEditors(["cursor", "vscode-insiders"])).toEqual(["vscode-insiders"]);
   });
 });
