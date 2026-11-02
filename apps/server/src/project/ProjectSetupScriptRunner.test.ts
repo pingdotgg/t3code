@@ -38,6 +38,7 @@ const openSnapshot = (history: string): TerminalSessionSnapshot => ({
 });
 
 const makeHarness = Effect.fn(function* (options: {
+  readonly command?: string;
   readonly history?: string;
   readonly opening?: Deferred.Deferred<void>;
   readonly shell?: string | null;
@@ -87,7 +88,7 @@ const makeHarness = Effect.fn(function* (options: {
         {
           id: "setup",
           name: "Setup",
-          command: "vp i",
+          command: options.command ?? "vp i",
           icon: "configure",
           runOnWorktreeCreate: true,
         },
@@ -101,6 +102,7 @@ const makeHarness = Effect.fn(function* (options: {
 
 const setup = Effect.fn(function* (
   options: {
+    readonly command?: string;
     readonly history?: string;
     readonly shell?: string | null;
   } = {},
@@ -122,14 +124,28 @@ describe("ProjectSetupScriptRunner", () => {
     }),
   );
 
-  it.effect("types a Nushell wrapper once its line editor starts", () =>
-    Effect.gen(function* () {
-      const { writes, emit } = yield* setup({ shell: "/opt/homebrew/bin/nu" });
-      yield* TestClock.adjust("1 second");
-      expect(yield* Queue.size(writes)).toBe(0);
-      yield* emit({ ...event, type: "output", data: "> \x1b[?2004h" });
-      expect(yield* Queue.take(writes)).toMatch(/^ let __t3c = try \{\rvp i\r0 \} catch /);
-    }),
+  it.effect.each([
+    { command: "vp i", escaped: "vp i" },
+    {
+      command: 'print "quoted"; print \'C:\\tools\'; print "$env.PATH"\nexit 7 # comment\r\n\t',
+      escaped:
+        'print \\"quoted\\"; print \'C:\\\\tools\'; print \\"$env.PATH\\"\\u{a}exit 7 # comment\\u{d}\\u{a}\\u{9}',
+    },
+  ])(
+    "types a complete Nushell wrapper once its line editor starts ($command)",
+    ({ command, escaped }) =>
+      Effect.gen(function* () {
+        const { writes, emit } = yield* setup({ shell: "/opt/homebrew/bin/nu", command });
+        yield* TestClock.adjust("1 second");
+        expect(yield* Queue.size(writes)).toBe(0);
+        yield* emit({ ...event, type: "output", data: "> \x1b[?2004h" });
+        const written = yield* Queue.take(writes);
+        const sentinel = written.match(/__T3_SETUP_DONE___[0-9a-f]{32}:/)?.[0];
+        expect(sentinel).toBeDefined();
+        expect(written).toBe(
+          ` $env.LAST_EXIT_CODE = 0; try { ^$nu.current-exe --login --commands "${escaped}" } catch { if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } }; print $"\\n${sentinel}($env.LAST_EXIT_CODE)"\r`,
+        );
+      }),
   );
 
   it.effect("shows a startup prompt and types only once the line editor starts", () =>

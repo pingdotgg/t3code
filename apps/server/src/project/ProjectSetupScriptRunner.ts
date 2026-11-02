@@ -189,9 +189,13 @@ function wrapCommandForCompletion(
       return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
     case "fish":
       return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
-    // Nu skips the rest of the input after an error, and catch would hide errors that carry no exit code.
-    case "nushell":
-      return `let __t3c = try {\r${body}\r0 } catch {|e| if $e.exit_code? == null { print -e $e.rendered }; $e.exit_code? | default 1 }; print $"\\n${sentinel}($__t3c)"`;
+    case "nushell": {
+      const escaped = command.replace(/["\\\x00-\x1f]/g, (char) =>
+        char === '"' || char === "\\" ? `\\${char}` : `\\u{${char.charCodeAt(0).toString(16)}}`,
+      );
+      // Nu's catch records vary across versions, and exit bypasses catch entirely.
+      return `$env.LAST_EXIT_CODE = 0; try { ^$nu.current-exe --login --commands "${escaped}" } catch { if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } }; print $"\\n${sentinel}($env.LAST_EXIT_CODE)"`;
+    }
     case "posix":
       return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
   }
