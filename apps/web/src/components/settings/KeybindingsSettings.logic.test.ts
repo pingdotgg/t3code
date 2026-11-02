@@ -298,6 +298,27 @@ describe("KeybindingsSettings.logic", () => {
     ).toEqual(["New local thread", ...expected.ctrl].toSorted());
   });
 
+  it.each([
+    {
+      platform: "MacIntel",
+      visible: ["", "!isMac || terminalFocus", "isMac", "isMac && isDesktop"],
+    },
+    { platform: "Linux x86_64", visible: ["", "!isMac", "!isMac || terminalFocus"] },
+  ])("lists only the $platform platform variants", ({ platform, visible }) => {
+    const rows = buildKeybindingRows(
+      compileResolvedKeybindingsConfig([
+        { command: "layout.focusDown", key: "mod+alt+arrowdown", when: "isMac" },
+        { command: "layout.focusDown", key: "alt+shift+arrowdown", when: "!isMac" },
+        { command: "layout.focusDown", key: "mod+alt+j", when: "isMac && isDesktop" },
+        { command: "layout.focusDown", key: "ctrl+j", when: "!isMac || terminalFocus" },
+        { command: "layout.focusDown", key: "f9" },
+      ]),
+      platform,
+    );
+
+    expect(rows.map((row) => row.when).toSorted()).toEqual(visible);
+  });
+
   it("keeps mod and ctrl shortcuts apart when their when contexts differ", () => {
     const rows = buildKeybindingRows(
       compileResolvedKeybindingsConfig([
