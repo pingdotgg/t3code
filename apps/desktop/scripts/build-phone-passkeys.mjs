@@ -7,10 +7,14 @@ if (process.platform === "linux") {
   const root = new URL("../../../native/phone-passkeys/", import.meta.url);
   const targetDir = NodeURL.fileURLToPath(new URL("target", root));
   // The desktop app uses this helper whenever it exists, so a stale build must not outlive a failed one.
-  const removeHelper = () =>
-    NodeFS.rmSync(NodeURL.fileURLToPath(new URL("target/debug/t3-phone-passkeys", root)), {
-      force: true,
-    });
+  const helper = NodeURL.fileURLToPath(new URL("target/debug/t3-phone-passkeys", root));
+  const removeHelper = () => {
+    try {
+      NodeFS.rmSync(helper, { force: true });
+    } catch (error) {
+      console.warn(`[phone-passkeys] Could not remove the stale helper at ${helper}: ${error}`);
+    }
+  };
   const available = (command, args) =>
     NodeChildProcess.spawnSync(command, args, { stdio: "ignore" }).status === 0;
   if (!available("cargo", ["--version"]) || !available("pkg-config", ["--exists", "libudev"])) {

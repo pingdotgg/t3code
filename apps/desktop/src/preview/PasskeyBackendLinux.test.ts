@@ -154,4 +154,19 @@ describe("Linux phone passkeys", () => {
       assert.strictEqual(child.stdout.listenerCount("data"), 0);
     },
   );
+
+  it("falls back to native when the helper fails before the QR prompt is shown", async () => {
+    const { backend, context, send, prompt } = setup();
+    prompt.loadURL.mockReturnValueOnce(new Promise(() => {}));
+    const pending = backend.get({ challenge: new Uint8Array([1]) }, context);
+    send({ type: "qr", url: "FIDO:/12345678901234567890" });
+    send({ type: "error", message: "Could not open the channel" });
+    assert.deepStrictEqual(await pending, {
+      success: false,
+      error: "NotSupportedError",
+      fallbackToNative: true,
+    });
+    assert.strictEqual(prompt.show.mock.calls.length, 0);
+    assert.strictEqual(prompt.destroy.mock.calls.length, 1);
+  });
 });

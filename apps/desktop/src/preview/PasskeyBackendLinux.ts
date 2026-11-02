@@ -149,6 +149,7 @@ export const linuxPasskeyBackend = (executable: string): PasskeyBackend => {
       const lines = NodeReadline.createInterface({ input: child.stdout });
       let prompt: BrowserWindow | undefined;
       let settled = false;
+      let promptShown = false;
       const finish = (result: PasskeyCeremonyResult) => {
         if (settled) return;
         settled = true;
@@ -159,8 +160,8 @@ export const linuxPasskeyBackend = (executable: string): PasskeyBackend => {
         resolve(result);
       };
       const cancel = () => finish(notAllowed);
-      // Before the QR prompt exists, the user has no other way to pick a security key.
-      const fallbackBeforePrompt = () => finish(prompt ? notAllowed : fallbackToNative);
+      // Until the QR prompt is visible, the user has no other way to pick a security key.
+      const fallbackBeforePrompt = () => finish(promptShown ? notAllowed : fallbackToNative);
       context.signal.addEventListener("abort", cancel, { once: true });
       child.once("error", () => finish(fallbackToNative));
       child.once("close", fallbackBeforePrompt);
@@ -174,7 +175,7 @@ export const linuxPasskeyBackend = (executable: string): PasskeyBackend => {
             return;
           }
           if (event.type === "error") {
-            if (!prompt) {
+            if (!promptShown) {
               finish(fallbackToNative);
               return;
             }
@@ -224,7 +225,9 @@ export const linuxPasskeyBackend = (executable: string): PasskeyBackend => {
               `data:text/html;charset=utf-8,${encodeURIComponent(dialogHtml(context.origin, event.url, operation))}`,
             )
             .then(() => {
-              if (!settled) prompt?.show();
+              if (settled) return;
+              promptShown = true;
+              prompt?.show();
             })
             .catch(cancel);
         } catch {
