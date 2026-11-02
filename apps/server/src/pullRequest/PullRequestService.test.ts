@@ -38,6 +38,8 @@ import {
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./PullRequestService.ts";
+import { makeThreadPullRequests } from "@t3tools/source-control-core/shared/threadPullRequests";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 
 function project(input: {
@@ -1729,11 +1731,25 @@ it.effect("routes matching HTTP authorities and rejects a different web port", (
           }),
         ],
       });
+      const selected = makeThreadPullRequests(
+        sourceControlDefinitions,
+      ).resolveThreadCurrentPullRequestLink([
+        {
+          host: "code.example",
+          repository: "team/repo",
+          number: 42,
+          url: `http://code.example:4000/team/repo/${kind === "gitlab" ? "-/merge_requests" : kind === "forgejo" ? "pulls" : "pull"}/42`,
+          source: "manual",
+          linkedAt: "2026-01-01T00:00:00.000Z",
+          snapshot: null,
+          stack: null,
+        },
+      ])!;
       const ref = {
         projectId: "http" as ProjectId,
-        host: "code.example:4000",
-        repository: "team/repo",
-        number: 42,
+        host: selected.host,
+        repository: selected.repository,
+        number: selected.number,
       };
       assert.strictEqual((yield* service.preview(ref)).number, 42);
       assert.strictEqual((yield* service.detail(ref)).body, "Port detail");

@@ -180,12 +180,27 @@ export function makeThreadPullRequests(
     return { kind: "single", link: latest };
   }
 
+  const routedLinks = new WeakMap<ThreadPullRequestLink, ThreadPullRequestLink>();
+
   function resolveThreadCurrentPullRequestLink(
     links: ReadonlyArray<ThreadPullRequestLink>,
   ): ThreadPullRequestLink | null {
     const current = resolveThreadCurrentPullRequest(links);
     if (current === null) return null;
-    return current.kind === "single" ? current.link : current.top;
+    const link = current.kind === "single" ? current.link : current.top;
+    const cached = routedLinks.get(link);
+    if (cached !== undefined) return cached;
+    const parsed = parse(link.url);
+    const authority =
+      parsed?.host === link.host.trim().toLowerCase() &&
+      parsed.repository === link.repository.trim().toLowerCase() &&
+      parsed.number === link.number
+        ? parsed.authority
+        : undefined;
+    const routed =
+      authority === undefined || authority === link.host ? link : { ...link, host: authority };
+    routedLinks.set(link, routed);
+    return routed;
   }
 
   function resolveThreadPullRequestChains(
