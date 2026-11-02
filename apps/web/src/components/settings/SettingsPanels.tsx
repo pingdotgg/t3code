@@ -999,7 +999,9 @@ export function GeneralSettingsPanel() {
                   className="w-full sm:w-40"
                   aria-label={t("settings.general.quitConfirmation.a11y")}
                 >
-                  <SelectValue>{t(QUIT_CONFIRMATION_MODE_LABELS[settings.confirmQuit])}</SelectValue>
+                  <SelectValue>
+                    {t(QUIT_CONFIRMATION_MODE_LABELS[settings.confirmQuit])}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   {Object.entries(QUIT_CONFIRMATION_MODE_LABELS).map(([value, label]) => (
