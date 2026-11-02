@@ -79,4 +79,16 @@ describe("getLocalVoiceTranscriber", () => {
     expect(error).toMatchObject({ code: "cancelled" });
     expect(mocks.transcribe).not.toHaveBeenCalled();
   });
+
+  it("prepares and transcribes the preferred locale instead of the device locale", async () => {
+    mocks.prepare.mockResolvedValue("pt-BR");
+    const options = { signal: new AbortController().signal };
+    const prepared = await getLocalVoiceTranscriber("pt-BR")!.prepare(options);
+    await prepared.transcribe("file:///voice.m4a", options);
+
+    expect(mocks.isAvailable).toHaveBeenCalledWith("pt-BR");
+    expect(mocks.prepare).toHaveBeenCalledWith("pt-BR");
+    expect(mocks.transcribe).toHaveBeenCalledWith(audio, "pt-BR");
+    expect(prepared.locale).toBe("pt-BR");
+  });
 });

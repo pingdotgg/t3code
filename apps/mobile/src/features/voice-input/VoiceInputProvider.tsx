@@ -91,7 +91,14 @@ const voiceInputAtom = Atom.make((get) => {
   });
   const session: VoiceInputSession = new VoiceInputSession({
     recorder,
-    getTranscriber: getLocalVoiceTranscriber,
+    getTranscriber: () => {
+      const preferences = registry.get(mobilePreferencesAtom);
+      return getLocalVoiceTranscriber(
+        AsyncResult.isSuccess(preferences)
+          ? (preferences.value.dictationLocale ?? undefined)
+          : undefined,
+      );
+    },
     requestPermission: async () => {
       const permission = await requestRecordingPermissionsAsync();
       return { granted: permission.granted, canAskAgain: permission.canAskAgain };

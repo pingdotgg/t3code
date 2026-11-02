@@ -33,8 +33,8 @@ function getNativeErrorCode(error: unknown): string | undefined {
   return typeof error.code === "string" ? error.code : undefined;
 }
 
-export function getLocalVoiceTranscriber(): VoiceTranscriber | null {
-  const locale = getDeviceLocale();
+export function getLocalVoiceTranscriber(preferredLocale?: string): VoiceTranscriber | null {
+  const locale = preferredLocale ?? getDeviceLocale();
   if (!AppleTranscription.isAvailable(locale)) return null;
   return { prepare: (options) => prepareVoiceTranscription(locale, options) };
 }
@@ -63,7 +63,7 @@ async function prepareVoiceTranscription(
     if (getNativeErrorCode(error) === "AppleTranscriptionUnsupportedLocale") {
       throw new VoiceTranscriptionError(
         "unsupported-locale",
-        "Voice transcription does not support this device language.",
+        "Voice transcription does not support this language.",
         { cause: error },
       );
     }
