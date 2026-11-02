@@ -421,7 +421,8 @@ const linkDestinationProcessor = unified().use(remarkParse).use(remarkKeepWindow
 export function decodeMarkdownLinkEscapes(href: string): string {
   // Only the parser knows character references, so destinations that may have one go through it.
   if (href.includes("&")) {
-    const destination = /\s/.test(href) ? `<${href}>` : href;
+    // The extractor drops angle brackets, and only that form keeps an unmatched `)` in the path.
+    const destination = /[<>]/.test(href) ? href : `<${href}>`;
     const paragraph = linkDestinationProcessor.parse(`[](${destination})`).children[0];
     const link = paragraph?.type === "paragraph" ? paragraph.children[0] : undefined;
     if (link?.type === "link") return link.url;
