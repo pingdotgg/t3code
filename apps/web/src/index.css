@@ -2455,6 +2455,11 @@ code {
   text-decoration: none;
 }
 
+/* Delimiters of source restored by undo or redo, once the caret leaves it. */
+.composer-rich-marker-hidden {
+  display: none;
+}
+
 /* Selected chips (node selection from arrowing into or clicking a chip). */
 .composer-tiptap .ProseMirror-selectednode {
   outline: 2px solid var(--ring);

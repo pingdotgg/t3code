@@ -1,5 +1,5 @@
-import { type Command, Mark as TiptapMark } from "@tiptap/core";
-import { isHistoryTransaction, undoDepth } from "@tiptap/pm/history";
+import { type Command, Extension, Mark as TiptapMark } from "@tiptap/core";
+import { isHistoryTransaction, redo, redoDepth, undo, undoDepth } from "@tiptap/pm/history";
 import type { MarkType, Node as ProseMirrorNode } from "@tiptap/pm/model";
 import {
   AllSelection,
@@ -11,6 +11,7 @@ import {
   TextSelection,
   type Transaction,
 } from "@tiptap/pm/state";
+import { type Mapping, StepMap } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 
 import {
@@ -22,8 +23,8 @@ import { caretTakesMarksBefore, serializeEditorDoc } from "~/composer-rich-text-
 
 // Styled text the selection touches becomes source text with the source mark,
 // parsed back once the selection leaves. History steps only replay on the shape
-// they were recorded in, so the history records both rewrites; that clears redo,
-// so after undo or redo they wait for the next recorded edit.
+// they were recorded in, so the history records both rewrites. Recording would
+// clear redo after undo or redo, so until the next edit see `normalizeDetached`.
 
 const STYLE_MARKS: RichTextMark[] = ["bold", "italic", "strike", "code"];
 const PREVIEW_TAGS: Record<Exclude<RichTextMark, "code">, string> = {
@@ -198,21 +199,20 @@ export const collapseShownMarkdownSource: Command = ({ tr }) => {
   return true;
 };
 
-/** Shows styled text the selection touches as Markdown, and parses source it left. */
-function normalizeMarkdownSource(state: EditorState, typed: boolean): Transaction | null {
-  const type = state.schema.marks[MARKDOWN_SOURCE_MARK];
-  if (!type) return null;
-  const tr = state.tr;
-  collapseMarkdownSource(tr, (region) => touches(state.selection, region));
+function mapRange(mapping: Mapping, { from, to }: TextRange): TextRange {
+  return { from: mapping.map(from, 1), to: mapping.map(to, -1) };
+}
+
+/** Shows styled text the selection touches as Markdown, returning the source it added. */
+function revealStyledText(tr: Transaction, type: MarkType, typed: boolean, takesBefore: boolean) {
+  const { schema } = tr.doc.type;
   const selection = tr.selection;
   const ranges = collectStyledRanges(tr.doc).filter((range) => touches(selection, range));
-  if (ranges.length === 0) return tr.docChanged ? tr : null;
-
-  const takesBefore = caretTakesMarksBefore(state);
+  const revealed: { range: TextRange; step: number }[] = [];
   const insertions: { at: number; length: number; closing: boolean }[] = [];
   for (const range of ranges.toReversed()) {
     for (const name of STYLE_MARKS) {
-      const markType = state.schema.marks[name];
+      const markType = schema.marks[name];
       if (markType) tr.removeMark(range.from, range.to, markType);
     }
     let length = 0;
@@ -222,12 +222,14 @@ function normalizeMarkdownSource(state: EditorState, typed: boolean): Transactio
       (left, right) => right.at - left.at || Number(left.closing) - Number(right.closing),
     );
     for (const { at, closing, text } of markers) {
-      tr.insert(at, state.schema.text(text, [type.create()]));
+      tr.insert(at, schema.text(text, [type.create()]));
       insertions.push({ at, length: text.length, closing });
       length += text.length;
     }
     tr.addMark(range.from, range.to + length, type.create());
+    revealed.push({ range: { from: range.from, to: range.to + length }, step: tr.steps.length });
   }
+  if (ranges.length === 0) return [];
   // A caret that arrives at a styled edge stays outside its markers. One that
   // just typed styled text stays inside them, so the next character continues it.
   const map = (pos: number) => {
@@ -238,12 +240,76 @@ function normalizeMarkdownSource(state: EditorState, typed: boolean): Transactio
     }
     return next;
   };
-  return tr.setSelection(mapSelection(tr, selection, map));
+  tr.setSelection(mapSelection(tr, selection, map));
+  return revealed.map(({ range, step }) => mapRange(tr.mapping.slice(step), range));
 }
 
-function previewDecorations(doc: ProseMirrorNode, type: MarkType): DecorationSet {
+/** Shows styled text the selection touches as Markdown, and parses source it left. */
+function normalizeMarkdownSource(state: EditorState, typed: boolean): Transaction | null {
+  const type = state.schema.marks[MARKDOWN_SOURCE_MARK];
+  if (!type) return null;
+  const tr = state.tr;
+  collapseMarkdownSource(tr, (region) => touches(state.selection, region));
+  revealStyledText(tr, type, typed, caretTakesMarksBefore(state));
+  return tr.docChanged ? tr : null;
+}
+
+/**
+ * After undo or redo, history items may point inside shown source, and a
+ * rewrite in the history would clear redo. So until the next recorded edit,
+ * rewrites stay out of it and only remove text they added: source the history
+ * knows is hidden instead of parsed, and source revealed here is parsed back.
+ */
+function normalizeDetached(state: EditorState, revealed: TextRange[]): Transaction | null {
+  const type = state.schema.marks[MARKDOWN_SOURCE_MARK];
+  if (!type) return null;
+  const tr = state.tr;
+  const kept: TextRange[] = [];
+  for (const region of revealed.toSorted((left, right) => right.from - left.from)) {
+    if (touches(state.selection, region)) kept.push(region);
+    else collapseRegion(tr, region, type);
+  }
+  const added = revealStyledText(tr, type, false, caretTakesMarksBefore(state));
+  if (!tr.docChanged) return null;
+  const shown = [...kept.map((region) => mapRange(tr.mapping, region)), ...added];
+  return tr.setMeta(markdownSourceKey, shown).setMeta("addToHistory", false);
+}
+
+/** Parses the source `normalizeDetached` revealed, leaving the document the history knows. */
+function collapseRevealed(state: EditorState, revealed: TextRange[]): Transaction {
+  const tr = state.tr;
+  const type = state.schema.marks[MARKDOWN_SOURCE_MARK];
+  if (type) {
+    for (const region of revealed.toSorted((left, right) => right.from - left.from)) {
+      collapseRegion(tr, region, type);
+    }
+  }
+  return tr.setMeta(markdownSourceKey, []).setMeta("addToHistory", false);
+}
+
+/** Replays `edit` after undoing `collapse`, so the history records the reveal with the edit. */
+function rebaseEdit(tr: Transaction, collapse: Transaction, edit: Transaction): Transaction {
+  for (let index = collapse.steps.length - 1; index >= 0; index--) {
+    tr.step(collapse.steps[index]!.invert(collapse.docs[index]!));
+  }
+  for (const step of edit.steps) tr.step(step);
+  tr.setSelection(edit.selection.map(tr.doc, StepMap.empty)).setTime(edit.time);
+  if (edit.storedMarksSet) tr.setStoredMarks(edit.storedMarks);
+  if (edit.scrolledIntoView) tr.scrollIntoView();
+  // Metadata has no public accessor, and grouping, paste rules and composition read it.
+  type WithMeta = { meta: Record<string, unknown> };
+  Object.assign((tr as unknown as WithMeta).meta, (edit as unknown as WithMeta).meta);
+  return tr;
+}
+
+function previewDecorations(
+  doc: ProseMirrorNode,
+  type: MarkType,
+  hidden: Selection | null,
+): DecorationSet {
   const decorations: Decoration[] = [];
   for (const region of sourceRegions(doc, type)) {
+    const hide = hidden !== null && !touches(hidden, region);
     const { text, units } = regionUnits(doc, region);
     const codeTicks = new Set<number>();
     forEachUnitRun(units, (start, end, marks) => {
@@ -268,12 +334,12 @@ function previewDecorations(doc: ProseMirrorNode, type: MarkType): DecorationSet
       }
     });
     forEachUnitRun(
-      units.map((marks, index) => (marks === null && !codeTicks.has(index) ? null : [])),
+      units.map((marks, index) => (marks === null && (hide || !codeTicks.has(index)) ? null : [])),
       (start, end, marks) => {
         if (marks !== null) return;
         decorations.push(
           Decoration.inline(region.from + start, region.from + end, {
-            class: "composer-rich-marker",
+            class: hide ? "composer-rich-marker-hidden" : "composer-rich-marker",
           }),
         );
       },
@@ -282,7 +348,13 @@ function previewDecorations(doc: ProseMirrorNode, type: MarkType): DecorationSet
   return DecorationSet.create(doc, decorations);
 }
 
-type MarkdownSourceState = { decorations: DecorationSet; afterHistory: boolean };
+type MarkdownSourceState = {
+  decorations: DecorationSet;
+  /** From an undo or redo until the next recorded edit; see `normalizeDetached`. */
+  detached: boolean;
+  /** Source `normalizeDetached` revealed, which the history knows as styled text. */
+  revealed: TextRange[];
+};
 
 const markdownSourceKey = new PluginKey<MarkdownSourceState>("composer-markdown-source");
 
@@ -300,25 +372,46 @@ function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
     },
     state: {
       init: (_, state) => ({
-        decorations: previewDecorations(state.doc, type),
-        afterHistory: false,
+        decorations: previewDecorations(state.doc, type, null),
+        detached: false,
+        revealed: [],
       }),
-      apply: (tr, old, _, state) => ({
-        decorations: tr.docChanged ? previewDecorations(state.doc, type) : old.decorations,
-        afterHistory: isHistoryTransaction(tr)
-          ? true
-          : tr.docChanged && tr.getMeta("addToHistory") !== false
-            ? false
-            : old.afterHistory,
-      }),
+      apply: (tr, old, _, state) => {
+        const history = isHistoryTransaction(tr);
+        const detached =
+          history || (old.detached && !(tr.docChanged && tr.getMeta("addToHistory") !== false));
+        const own = tr.getMeta(markdownSourceKey) as TextRange[] | undefined;
+        const revealed =
+          !detached || history
+            ? []
+            : (own ??
+              (tr.docChanged
+                ? old.revealed.map((range) => mapRange(tr.mapping, range))
+                : old.revealed));
+        const redraw = tr.docChanged || detached !== old.detached || (detached && tr.selectionSet);
+        return {
+          decorations: redraw
+            ? previewDecorations(state.doc, type, detached ? state.selection : null)
+            : old.decorations,
+          detached,
+          revealed,
+        };
+      },
     },
     props: {
       decorations: (state) => markdownSourceKey.getState(state)?.decorations,
     },
     appendTransaction(transactions, _, state) {
       // Rewriting text mid-composition would break the IME's preedit.
-      if (view?.composing || markdownSourceKey.getState(state)?.afterHistory) return null;
+      if (view?.composing) return null;
+      // Rewrites appended to an undo or redo join its history step, which leaves
+      // the other direction unmapped. The dispatch hook normalizes after it instead.
+      if (transactions.some((tr) => isHistoryTransaction(tr) || tr.getMeta(markdownSourceKey))) {
+        return null;
+      }
       if (!transactions.some((tr) => tr.docChanged || tr.selectionSet)) return null;
+      const source = markdownSourceKey.getState(state);
+      if (source?.detached) return normalizeDetached(state, source.revealed);
       const tr = normalizeMarkdownSource(
         state,
         transactions.some((item) => item.docChanged),
@@ -329,6 +422,44 @@ function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
     },
   });
 }
+
+/** Keeps source `normalizeDetached` revealed out of what undo, redo and edits see. */
+const MarkdownSourceHistoryExtension = Extension.create({
+  name: "composer-markdown-source-history",
+  // Runs after undo grouping, so a rebased edit keeps the grouping chosen for it.
+  priority: 1,
+  dispatchTransaction({ transaction, next }) {
+    const { editor } = this;
+    const revealed = markdownSourceKey.getState(editor.state)?.revealed ?? [];
+    if (isHistoryTransaction(transaction)) {
+      if (revealed.length === 0) {
+        next(transaction);
+      } else {
+        const undoing = redoDepth(editor.state.apply(transaction)) > redoDepth(editor.state);
+        next(collapseRevealed(editor.state, revealed));
+        (undoing ? undo : redo)(editor.state, next);
+      }
+      const source = markdownSourceKey.getState(editor.state);
+      const tr = editor.view.composing
+        ? null
+        : normalizeDetached(editor.state, source?.revealed ?? []);
+      if (tr) next(tr);
+      return;
+    }
+    const recordedEdit =
+      transaction.docChanged &&
+      transaction.getMeta("addToHistory") !== false &&
+      transaction.getMeta(markdownSourceKey) === undefined;
+    // Rebuilding the edit would reset the IME's preedit.
+    if (revealed.length === 0 || !recordedEdit || editor.view.composing) {
+      next(transaction);
+      return;
+    }
+    const collapse = collapseRevealed(editor.state, revealed);
+    next(collapse);
+    next(rebaseEdit(editor.state.tr, collapse, transaction));
+  },
+});
 
 export const ComposerMarkdownSourceExtension = TiptapMark.create({
   name: MARKDOWN_SOURCE_MARK,
@@ -361,6 +492,9 @@ export const ComposerMarkdownSourceExtension = TiptapMark.create({
       "Mod-Shift-s": toggle("strike"),
       "Mod-e": toggle("code"),
     };
+  },
+  addExtensions() {
+    return [MarkdownSourceHistoryExtension];
   },
   addProseMirrorPlugins() {
     return [markdownSourcePlugin(this.type)];

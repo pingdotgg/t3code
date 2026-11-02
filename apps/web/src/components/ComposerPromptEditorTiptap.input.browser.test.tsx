@@ -346,6 +346,14 @@ describe("Markdown markers around styled text", () => {
     });
     expect(value()).toBe("**bold** after!");
     expect(textWithMark(editor, "markdownSource")).toEqual(["**bold**"]);
+    const end = () => editor.state.doc.content.size - 1;
+    // Undo restored the markers as text; leaving hides them without touching the text undo needs.
+    await act(async () => {
+      editor.commands.setTextSelection(end());
+    });
+    expect(value()).toBe("**bold** after!");
+    const hidden = editor.view.dom.querySelectorAll(".composer-rich-marker-hidden");
+    expect(Array.from(hidden, (marker) => marker.textContent)).toEqual(["**", "**"]);
     await act(async () => {
       editor.commands.undo();
     });
@@ -354,6 +362,8 @@ describe("Markdown markers around styled text", () => {
     await act(async () => {
       editor.commands.setTextSelection(3);
     });
+    expect(editor.state.doc.textContent).toBe("**bold** after");
+    expect(textWithMark(editor, "markdownSource")).toEqual(["**bold**"]);
     await act(async () => {
       editor.commands.redo();
     });
@@ -379,7 +389,46 @@ describe("Markdown markers around styled text", () => {
     await act(async () => {
       editor.commands.undo();
     });
-    expect(value()).toBe("**bold** after");
+    // Undo puts the caret back inside the styled text.
+    expect(editor.state.doc.textContent).toBe("**bold** after");
+    await act(async () => {
+      editor.commands.setTextSelection(end());
+    });
+    expect(editor.state.doc.textContent).toBe("bold after");
+    expect(textWithMark(editor, "bold")).toEqual(["bold"]);
+    // After a completed redo, markers still follow the caret, and Delete edits the opening one.
+    await userEvent.keyboard("?");
+    await act(async () => {
+      editor.commands.undo();
+    });
+    await act(async () => {
+      editor.commands.redo();
+    });
+    expect(editor.state.doc.textContent).toBe("bold after?");
+    await act(async () => {
+      editor.commands.setTextSelection(1);
+    });
+    expect(editor.state.doc.textContent).toBe("**bold** after?");
+    expect(textWithMark(editor, "markdownSource")).toEqual(["**bold**"]);
+    await act(async () => {
+      editor.commands.setTextSelection(end());
+    });
+    expect(editor.state.doc.textContent).toBe("bold after?");
+    expect(textWithMark(editor, "bold")).toEqual(["bold"]);
+    await act(async () => {
+      editor.commands.setTextSelection(1);
+    });
+    await userEvent.keyboard("{Delete}");
+    expect(value()).toBe("*bold** after?");
+    await act(async () => {
+      editor.commands.undo();
+    });
+    expect(value()).toBe("**bold** after?");
+    expect(textWithMark(editor, "markdownSource")).toEqual(["**bold**"]);
+    await act(async () => {
+      editor.commands.setTextSelection(end());
+    });
+    expect(editor.state.doc.textContent).toBe("bold after?");
     expect(textWithMark(editor, "bold")).toEqual(["bold"]);
   });
 
