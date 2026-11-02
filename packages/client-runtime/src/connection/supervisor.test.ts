@@ -312,7 +312,7 @@ describe("EnvironmentSupervisor", () => {
   it.effect("waits while offline and connects immediately when the network returns", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ networkStatus: "offline" });
-      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
@@ -330,6 +330,23 @@ describe("EnvironmentSupervisor", () => {
         generation: 1,
         lastFailure: null,
       });
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+    }),
+  );
+
+  it.effect("connects to the primary environment while the device reports offline", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ networkStatus: "offline" });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const settled = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" || state.phase === "offline",
+      );
+
+      expect(settled).toMatchObject({ phase: "connected", attempt: 1, lastFailure: null });
       expect(yield* Ref.get(harness.prepareCount)).toBe(1);
     }),
   );
