@@ -93,6 +93,29 @@ const requireDeviceAccess = McpInvocationContext.requireThreadMcpCapability("dev
   ),
 );
 
+export const resolveHostId = Effect.fn("handlers.resolveHostId")(function* (
+  hosts: ReadonlyArray<DeviceHostSummary>,
+  hostId: string | undefined,
+): Effect.fn.Return<DeviceHostId | undefined, DeviceToolUnavailableError> {
+  if (!hostId) return undefined;
+  const exact = hosts.find((host) => host.id === hostId);
+  if (exact) return exact.id;
+  const labelMatches = hosts.filter((host) => host.label.toLowerCase() === hostId.toLowerCase());
+  if (labelMatches.length === 1) return labelMatches[0]!.id;
+  const candidates = labelMatches.length > 1 ? labelMatches : hosts;
+  const listed = [
+    ...candidates.slice(0, 10).map((host) => `${host.label.slice(0, 64)} (${host.id})`),
+    ...(candidates.length > 10 ? [`${candidates.length - 10} more`] : []),
+  ].join(", ");
+  const selector = hostId.slice(0, 128);
+  return yield* new DeviceToolUnavailableError({
+    reason:
+      labelMatches.length > 1
+        ? `Several device hosts are named ${selector}; pass one id: ${listed}.`
+        : `No device host ${selector}. Known hosts: ${listed || "none"}.`,
+  });
+});
+
 const hostName = (host: { readonly id: DeviceHostId; readonly label?: string | undefined }) =>
   host.label === undefined ? `hostId ${host.id}` : `'${host.label}' (hostId ${host.id})`;
 
@@ -177,7 +200,7 @@ const handlers = {
             "Device support is off. Ask the user to enable it in the Device panel before installing or starting device tools.",
         });
       }
-      const hostId = input?.hostId;
+      const hostId = yield* resolveHostId(state.hosts, input?.hostId);
       const open = state.sessions
         .filter((session) => session.threadId === scope.thread.threadId)
         .map((session) => ({ hostId: session.hostId, deviceId: session.deviceId }));
@@ -204,7 +227,8 @@ const handlers = {
             "Device support is off. Ask the user to enable it in the Device panel before installing or starting device tools.",
         });
       }
-      const target = yield* pickDevice(state, input);
+      const hostId = yield* resolveHostId(state.hosts, input.hostId);
+      const target = yield* pickDevice(state, { ...input, hostId });
       // Resolve consent and agent connectivity before booting or registering a session.
       if (!(yield* devices.agentReadinessIfSupported(target.hostId))) {
         return yield* new DeviceToolUnavailableError({
@@ -273,14 +297,18 @@ const handlers = {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
       const threadId = scope.thread.threadId;
+      const hostId =
+        input.hostId === undefined
+          ? undefined
+          : yield* resolveHostId((yield* devices.state).hosts, input.hostId);
       const target =
         input.deviceId === undefined
           ? (yield* devices.sessionsForThread(threadId)).findLast(
-              (session) => input.hostId === undefined || session.hostId === input.hostId,
+              (session) => hostId === undefined || session.hostId === hostId,
             )
           : Option.getOrUndefined(
               yield* devices
-                .locateSession({ threadId, deviceId: input.deviceId, hostId: input.hostId })
+                .locateSession({ threadId, deviceId: input.deviceId, hostId })
                 .pipe(mapLocateErrors),
             );
       if (!target) {
@@ -307,13 +335,17 @@ const handlers = {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
       const deviceId = input.deviceId;
+      const inputHostId =
+        input.hostId === undefined
+          ? undefined
+          : yield* resolveHostId((yield* devices.state).hosts, input.hostId);
       const open =
         deviceId === undefined
           ? Option.none()
           : yield* devices
-              .locateSession({ threadId: scope.thread.threadId, deviceId, hostId: input.hostId })
+              .locateSession({ threadId: scope.thread.threadId, deviceId, hostId: inputHostId })
               .pipe(mapLocateErrors);
-      const hostId = Option.isSome(open) ? open.value.hostId : input.hostId;
+      const hostId = Option.isSome(open) ? open.value.hostId : inputHostId;
       yield* devices.close({
         threadId: scope.thread.threadId,
         ...(hostId === undefined ? {} : { hostId }),
