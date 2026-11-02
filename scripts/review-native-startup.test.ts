@@ -1,12 +1,15 @@
-// @effect-diagnostics nodeBuiltinImport:off - Exercises real native startup imports in a process without DOM globals.
-import * as NodeChildProcess from "node:child_process";
-import * as NodeURL from "node:url";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { describe, expect, it } from "vite-plus/test";
 
 // Vitest's DOM setup can hide this native startup crash; load the actual modules
 // in a fresh process with no browser globals or web-component registration.
 describe("native diff startup", () => {
-  it("loads shared staging arithmetic and parses full file data without a DOM", () => {
+  it("loads shared staging arithmetic and parses full file data without a DOM", async () => {
     const entry = new URL("../packages/client-runtime/src/reviewDiffMetadata.ts", import.meta.url)
       .href;
     const staging = new URL(
@@ -17,12 +20,16 @@ describe("native diff startup", () => {
       "../apps/mobile/src/features/review/workingChangesProjection.ts",
       import.meta.url,
     ).href;
-    const result = NodeChildProcess.execFileSync(
-      process.execPath,
-      [
-        "--input-type=module",
-        "--eval",
-        `
+    const result = await Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const child = yield* spawner.spawn(
+        ChildProcess.make(
+          process.execPath,
+          [
+            "--input-type=module",
+            "--eval",
+            `
           import assert from 'node:assert/strict';
           for (const name of ['window', 'document', 'HTMLElement', 'customElements']) {
             assert.equal(name in globalThis, false);
@@ -39,9 +46,21 @@ describe("native diff startup", () => {
           assert.equal(file.additionLines[0], 'new\\n');
           console.log('native startup passed');
         `,
-      ],
-      { cwd: NodeURL.fileURLToPath(new URL("..", import.meta.url)), encoding: "utf8" },
-    );
+          ],
+          { cwd: yield* path.fromFileUrl(new URL("..", import.meta.url)) },
+        ),
+      );
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          child.stdout.pipe(Stream.decodeText, Stream.mkString),
+          child.stderr.pipe(Stream.decodeText, Stream.mkString),
+          child.exitCode,
+        ],
+        { concurrency: "unbounded" },
+      );
+      expect(Number(exitCode), stderr).toBe(0);
+      return stdout;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.runPromise);
     expect(result.trim()).toBe("native startup passed");
   });
 });
