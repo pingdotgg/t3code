@@ -57,9 +57,9 @@ const FAVICON_CANDIDATES = [
   "assets/logo.svg",
   "assets/logo.png",
   ".idea/icon.svg",
-  "web/favicon.png",
   "Resources/AppIcon.icns",
   "AppIcon.icns",
+  "web/favicon.png",
 ] as const;
 
 const ICON_SOURCE_FILES = [
