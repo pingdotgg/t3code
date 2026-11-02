@@ -217,6 +217,10 @@ describe("Open VSX themes", () => {
           "editor.findMatchHighlightBackground": "#445566",
           "editor.findMatchHighlightForeground": "#ffffff",
         },
+        "tokenColors": [
+          { "scope": "comment", "settings": { "foreground": "#777777" } },
+          { "scope": "string", "settings": { "foreground": "#aaaaaa" } },
+        ],
       }`,
     );
     zip.file(
@@ -226,7 +230,8 @@ describe("Open VSX themes", () => {
         "colors": {
           "editor.background": "#111111",
           "editor.findMatchHighlightBackground": "#ffffff20"
-        }
+        },
+        "tokenColors": [{ "scope": ["string"], "settings": { "foreground": "#aaffaa" } }]
       }`,
     );
     zip.file(
@@ -335,6 +340,14 @@ describe("Open VSX themes", () => {
     expect(themeColorToHex(paired.colors.searchMatchActiveForeground)).toBe("#ffffff");
     expect(themeColorToHex(paired.colors.searchMatchBackground)).toBe("#bbddff");
     expect(themeColorToHex(paired.colors.searchMatchForeground)).toBe("#112233");
+    expect(paired.syntax).toMatchObject({
+      dark: {
+        comment: { color: "#777777" },
+        string: { color: "#aaffaa" },
+        foreground: { color: "#eeeeee" },
+      },
+    });
+    expect(paired.syntax).not.toHaveProperty("light");
 
     packagedManifest.contributes.themes[0]!.label = "Renamed Dark";
     packagedManifest.contributes.themes[1]!.label = "Renamed Light";

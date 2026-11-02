@@ -4,8 +4,7 @@ import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import * as Schema from "effect/Schema";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { getRenderedAppearance, subscribeRenderedAppearance } from "../hooks/useTheme";
-import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
-import { resolveDiffThemeNames } from "../lib/diffRendering";
+import { getDiffThemeNames, subscribeDiffThemeNames } from "../hooks/useSettings";
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 
 export class DiffWorkerError extends Schema.TaggedError<DiffWorkerError>()("DiffWorkerError", {
@@ -34,7 +33,7 @@ let sharedWorkerPool:
   | undefined;
 
 function currentDiffThemeName() {
-  return resolveDiffThemeNames(getClientSettings())[getRenderedAppearance()];
+  return getDiffThemeNames()[getRenderedAppearance()];
 }
 
 function applyDiffWorkerTheme(pool: WorkerPoolManager) {
@@ -76,12 +75,12 @@ function createDiffWorkerPool(poolSize: number) {
     },
   );
   const unsubscribeAppearance = subscribeRenderedAppearance(() => applyDiffWorkerTheme(pool));
-  const unsubscribeSettings = subscribeClientSettings(() => applyDiffWorkerTheme(pool));
+  const unsubscribeCodeTheme = subscribeDiffThemeNames(() => applyDiffWorkerTheme(pool));
   return {
     pool,
     unsubscribeTheme: () => {
       unsubscribeAppearance();
-      unsubscribeSettings();
+      unsubscribeCodeTheme();
     },
     consumers: 0,
     idleTimer: undefined,

@@ -22,7 +22,15 @@ import { useCustomThemes } from "../../hooks/useCustomThemes";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { useTheme } from "../../hooks/useTheme";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import {
+  Select,
+  SelectGroup,
+  SelectGroupLabel,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ThemeLibrary } from "./ThemeSettings";
 import {
@@ -37,7 +45,7 @@ import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
 import { CodeFontPreview } from "./SettingsFontPreviews";
-import { CODE_THEME_OPTIONS } from "../../lib/diffRendering";
+import { CODE_THEME_OPTIONS, IMPORTED_CODE_THEME_PREFIX } from "../../lib/diffRendering";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -89,6 +97,7 @@ const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
 function CodeThemeSettingsRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const customThemes = useCustomThemes();
   const halves = [
     { appearance: "light", label: "Light", value: settings.codeThemeLight },
     { appearance: "dark", label: "Dark", value: settings.codeThemeDark },
@@ -116,7 +125,14 @@ function CodeThemeSettingsRow() {
       control={
         <div className="flex w-full gap-2 sm:w-auto">
           {halves.map(({ appearance, label, value }) => {
-            const selected = CODE_THEME_OPTIONS[appearance].find((option) => option.id === value);
+            const importedOptions = customThemes.flatMap((theme) =>
+              theme.syntax?.[appearance]
+                ? [{ id: `${IMPORTED_CODE_THEME_PREFIX}${theme.id}`, label: theme.label }]
+                : [],
+            );
+            const selected = [...CODE_THEME_OPTIONS[appearance], ...importedOptions].find(
+              (option) => option.id === value,
+            );
             return (
               <Select
                 key={appearance}
@@ -145,6 +161,16 @@ function CodeThemeSettingsRow() {
                       {option.label}
                     </SelectItem>
                   ))}
+                  {importedOptions.length > 0 ? (
+                    <SelectGroup>
+                      <SelectGroupLabel>Imported</SelectGroupLabel>
+                      {importedOptions.map((option) => (
+                        <SelectItem key={option.id} value={option.id}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ) : null}
                 </SelectPopup>
               </Select>
             );

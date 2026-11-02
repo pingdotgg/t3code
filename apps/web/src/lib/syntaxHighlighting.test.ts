@@ -2,7 +2,13 @@ import { getFiletypeFromFileName } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "./syntaxHighlighting";
-import { CODE_THEME_OPTIONS, DIFF_THEME_NAMES } from "./diffRendering";
+import { parseVsCodeThemeFile } from "../vscodeThemeImport";
+import {
+  CODE_THEME_OPTIONS,
+  DIFF_THEME_NAMES,
+  IMPORTED_CODE_THEME_PREFIX,
+  resolveDiffThemeNames,
+} from "./diffRendering";
 
 describe("dialect file types", () => {
   it.each([
@@ -45,4 +51,38 @@ it.each(
   });
   expect(highlighter.getTheme(theme).type).toBe(appearance);
   expect(new Set(tokens.flat().map((token) => token.color)).size).toBeGreaterThan(2);
+});
+
+it("highlights code in an imported theme's syntax colors and falls back once it is gone", async () => {
+  const theme = parseVsCodeThemeFile({
+    name: "Imported Night",
+    type: "dark",
+    colors: { "editor.background": "#101010", "editor.foreground": "#dddddd" },
+    tokenColors: [
+      { scope: "storage.type", settings: { foreground: "#ff00aa" } },
+      { scope: "comment", settings: { foreground: "#00ff99", fontStyle: "italic" } },
+    ],
+  });
+  const settings = {
+    codeThemeLight: "",
+    codeThemeDark: `${IMPORTED_CODE_THEME_PREFIX}${theme.id}`,
+  };
+  const themes = resolveDiffThemeNames(settings, [theme]);
+  expect(themes.light).toBe(DIFF_THEME_NAMES.light);
+
+  const highlighter = await getSyntaxHighlighterPromise("typescript", themes);
+  const { tokens } = highlighter.codeToTokens("const answer = 42; // ok", {
+    lang: "typescript",
+    theme: themes.dark,
+  });
+  const colorOf = (content: string) =>
+    tokens
+      .flat()
+      .find((token) => token.content.includes(content))
+      ?.color?.toLowerCase();
+  expect(colorOf("const")).toBe("#ff00aa");
+  expect(colorOf("// ok")).toBe("#00ff99");
+  expect(colorOf("answer")).toBe("#dddddd");
+
+  expect(resolveDiffThemeNames(settings, [])).toEqual(DIFF_THEME_NAMES);
 });

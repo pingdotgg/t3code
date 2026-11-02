@@ -24,6 +24,8 @@ const MAX_THEMES_PER_EXTENSION = 40;
 const MAX_INCLUDE_DEPTH = 8;
 const MAX_PACKAGE_PATH_LENGTH = 1_024;
 const MAX_COLOR_VALUE_LENGTH = 128;
+const MAX_TOKEN_COLOR_RULES = 2_000;
+const MAX_TOKEN_SCOPE_LENGTH = 4_096;
 const MAX_RESOLVED_THEME_FILES = MAX_THEMES_PER_EXTENSION * MAX_INCLUDE_DEPTH;
 const SUPPORTED_LICENSES = new Set([
   "0BSD",
@@ -343,9 +345,37 @@ function sanitizeThemeObject(value: Record<string, unknown>): Record<string, unk
       }
     }
   }
+  const tokenColors = Array.isArray(value.tokenColors)
+    ? value.tokenColors.slice(0, MAX_TOKEN_COLOR_RULES).flatMap((rule) => {
+        if (!isRecord(rule) || !isRecord(rule.settings)) return [];
+        const scope = Array.isArray(rule.scope) ? rule.scope.join(",") : rule.scope;
+        // A dropped scope would turn the rule into the theme's default text color.
+        if (
+          scope !== undefined &&
+          (typeof scope !== "string" || scope.length > MAX_TOKEN_SCOPE_LENGTH)
+        ) {
+          return [];
+        }
+        const { foreground, fontStyle } = rule.settings;
+        return [
+          {
+            ...(scope !== undefined ? { scope } : {}),
+            settings: {
+              ...(typeof foreground === "string" && foreground.length <= MAX_COLOR_VALUE_LENGTH
+                ? { foreground }
+                : {}),
+              ...(typeof fontStyle === "string" && fontStyle.length <= MAX_COLOR_VALUE_LENGTH
+                ? { fontStyle }
+                : {}),
+            },
+          },
+        ];
+      })
+    : [];
   return {
     ...(typeof value.include === "string" ? { include: value.include } : {}),
     colors,
+    ...(tokenColors.length > 0 ? { tokenColors } : {}),
   };
 }
 
@@ -560,6 +590,10 @@ async function loadThemeObject(
   const nextAncestors = new Set(ancestors);
   nextAncestors.add(path);
   const base = await loadThemeObject(zip, includePath, cache, budget, nextAncestors, signal);
+  const tokenColors = [
+    ...(Array.isArray(base.tokenColors) ? base.tokenColors : []),
+    ...(Array.isArray(value.tokenColors) ? value.tokenColors : []),
+  ];
   const resolved = {
     ...base,
     ...value,
@@ -567,6 +601,8 @@ async function loadThemeObject(
       ...(isRecord(base.colors) ? base.colors : {}),
       ...(isRecord(value.colors) ? value.colors : {}),
     },
+    // Later rules win ties, so the including theme's rules follow its base's.
+    ...(tokenColors.length > 0 ? { tokenColors } : {}),
   };
   cache.set(path, resolved);
   return resolved;

@@ -104,8 +104,7 @@ import {
   markAsClipboardEdit,
 } from "~/composer-undo-grouping";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
-import { resolveDiffThemeNames } from "~/lib/diffRendering";
-import { getClientSettings, subscribeClientSettings } from "~/hooks/useSettings";
+import { getDiffThemeNames, subscribeDiffThemeNames } from "~/hooks/useSettings";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
 import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
@@ -866,9 +865,8 @@ function createComposerExtensions(richText: boolean) {
             },
           }),
           composerCodeBlockHighlight({
-            resolveTheme: () =>
-              resolveDiffThemeNames(getClientSettings())[resolvedThemeFromDocument()],
-            subscribeToThemeChanges: subscribeClientSettings,
+            resolveTheme: () => getDiffThemeNames()[resolvedThemeFromDocument()],
+            subscribeToThemeChanges: subscribeDiffThemeNames,
           }),
           ...ComposerBlockExtensions.map((extension) =>
             extension.name === "blockquote"

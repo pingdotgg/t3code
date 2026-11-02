@@ -330,6 +330,8 @@ function ThemeImportBody({
     theme: ThemeDefinition,
     preferredName?: string | null,
   ): ThemeDefinition => {
+    const withSyntax = (copy: ThemeDefinition): ThemeDefinition =>
+      theme.syntax ? { ...copy, syntax: theme.syntax } : copy;
     if (preferredName && preferredName.toLowerCase() !== theme.label.toLowerCase()) {
       const candidate = parseThemeFile({
         version: THEME_FILE_VERSION,
@@ -339,7 +341,9 @@ function ThemeImportBody({
         ...(theme.variants ? { variants: theme.variants } : {}),
         ...(theme.managed ? { managed: true } : {}),
       });
-      if (!getCustomThemes().some((existing) => existing.id === candidate.id)) return candidate;
+      if (!getCustomThemes().some((existing) => existing.id === candidate.id)) {
+        return withSyntax(candidate);
+      }
     }
     for (let copy = 1; copy < 100; copy += 1) {
       const candidate = parseThemeFile({
@@ -351,7 +355,7 @@ function ThemeImportBody({
         ...(theme.managed ? { managed: true } : {}),
       });
       if (getCustomThemes().some((existing) => existing.id === candidate.id)) continue;
-      return candidate;
+      return withSyntax(candidate);
     }
     throw new Error(`Too many copies of "${theme.label}".`);
   };

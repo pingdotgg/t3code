@@ -14,6 +14,7 @@ import {
   type ThemeColorRole,
   type ThemeDefinition,
 } from "./themePalette";
+import type { ThemeSyntax } from "@t3tools/shared/themePalettes";
 
 type VsCodeRgba = { r: number; g: number; b: number; a: number };
 type VsCodeRgb = { r: number; g: number; b: number };
@@ -125,6 +126,154 @@ function contrastRatio(first: VsCodeRgb, second: VsCodeRgb): number {
 
 function hexToRgb(value: string): VsCodeRgb {
   return parseVsCodeColor(themeColorToHex(value) ?? value) ?? { r: 0, g: 0, b: 0, a: 1 };
+}
+
+// Highlights token types with representative TextMate scopes, tried in order. A token type
+// left unmatched inherits its parent's color, as `keyword.control` does `keyword`.
+const SYNTAX_SCOPES: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
+  ["attribute", ["entity.other.attribute-name"]],
+  ["boolean", ["constant.language.boolean"]],
+  ["comment", ["comment.line.double-slash", "comment.block"]],
+  ["comment.doc", ["comment.block.documentation"]],
+  ["constant", ["variable.other.constant", "constant.other"]],
+  ["constant.builtin", ["constant.language", "support.constant"]],
+  ["constructor", ["entity.name.function.constructor", "entity.name.class"]],
+  ["diff.minus", ["markup.deleted"]],
+  ["diff.plus", ["markup.inserted"]],
+  ["embedded", ["meta.embedded"]],
+  ["emphasis", ["markup.italic"]],
+  ["emphasis.strong", ["markup.bold"]],
+  ["enum", ["entity.name.type.enum"]],
+  ["function", ["entity.name.function", "support.function", "meta.function-call"]],
+  ["keyword", ["keyword.control", "keyword", "storage.type"]],
+  ["keyword.control", ["keyword.control.flow"]],
+  ["keyword.declaration", ["storage.type", "storage.modifier"]],
+  ["keyword.import", ["keyword.control.import"]],
+  ["keyword.operator", ["keyword.operator.expression", "keyword.operator.new"]],
+  ["label", ["entity.name.label"]],
+  ["link_text", ["string.other.link", "markup.underline.link"]],
+  ["link_uri", ["markup.underline.link"]],
+  ["namespace", ["entity.name.namespace", "entity.name.type.module", "entity.name.module"]],
+  ["number", ["constant.numeric.decimal"]],
+  ["operator", ["keyword.operator.assignment", "keyword.operator"]],
+  ["preproc", ["meta.preprocessor"]],
+  [
+    "property",
+    ["variable.other.property", "variable.other.object.property", "support.type.property-name"],
+  ],
+  ["property.json_key", ["support.type.property-name.json"]],
+  ["punctuation", ["punctuation.separator", "punctuation"]],
+  ["punctuation.bracket", ["punctuation.definition.block", "meta.brace"]],
+  ["punctuation.delimiter", ["punctuation.separator.comma", "punctuation.terminator"]],
+  ["punctuation.list_marker", ["punctuation.definition.list.begin.markdown"]],
+  ["punctuation.special", ["punctuation.definition.template-expression"]],
+  ["selector", ["entity.name.tag.css"]],
+  ["selector.class", ["entity.other.attribute-name.class.css"]],
+  ["selector.id", ["entity.other.attribute-name.id.css"]],
+  ["selector.pseudo", ["entity.other.attribute-name.pseudo-class.css"]],
+  ["string", ["string.quoted.double", "string"]],
+  ["string.escape", ["constant.character.escape"]],
+  ["string.regex", ["string.regexp"]],
+  ["string.special.symbol", ["constant.other.symbol"]],
+  ["tag", ["entity.name.tag"]],
+  ["text.literal", ["markup.inline.raw", "markup.raw"]],
+  ["title", ["markup.heading", "entity.name.section"]],
+  ["type", ["entity.name.type", "support.type", "entity.name.class"]],
+  ["type.builtin", ["support.type.primitive", "support.type.builtin"]],
+  ["type.class", ["entity.name.type.class", "entity.name.class"]],
+  ["variable", ["variable.other.readwrite", "variable"]],
+  ["variable.parameter", ["variable.parameter"]],
+  ["variable.special", ["variable.language"]],
+  ["variant", ["variable.other.enummember"]],
+];
+
+type TokenColorRule = {
+  selectors: ReadonlyArray<string>;
+  unscoped: boolean;
+  color?: string;
+  fontStyle?: string;
+};
+
+function syntaxColor(value: unknown): string | undefined {
+  const color = parseVsCodeColor(value);
+  if (!color) return undefined;
+  const alpha = Math.round(color.a * 255);
+  return alpha >= 255 ? toHex(color) : `${toHex(color)}${alpha.toString(16).padStart(2, "0")}`;
+}
+
+function parseTokenColorRules(tokenColors: unknown): ReadonlyArray<TokenColorRule> {
+  if (!Array.isArray(tokenColors)) return [];
+  return tokenColors.flatMap((rule): TokenColorRule[] => {
+    if (!isRecord(rule) || !isRecord(rule.settings)) return [];
+    const scopes =
+      typeof rule.scope === "string"
+        ? rule.scope.split(",")
+        : Array.isArray(rule.scope)
+          ? rule.scope.filter((scope): scope is string => typeof scope === "string")
+          : [];
+    const color = syntaxColor(rule.settings.foreground);
+    const fontStyle =
+      typeof rule.settings.fontStyle === "string" ? rule.settings.fontStyle : undefined;
+    return [
+      {
+        // A token has no parent scopes here, so descendant and exclusion selectors never match.
+        selectors: scopes.map((scope) => scope.trim()).filter((scope) => /^\w[\w.-]*$/.test(scope)),
+        unscoped: rule.scope === undefined,
+        ...(color ? { color } : {}),
+        ...(fontStyle !== undefined ? { fontStyle } : {}),
+      },
+    ];
+  });
+}
+
+// TextMate precedence: the longest matching selector wins, then the later rule.
+function matchTokenColorRule(
+  rules: ReadonlyArray<TokenColorRule>,
+  scope: string,
+  property: "color" | "fontStyle",
+): TokenColorRule | undefined {
+  let best: TokenColorRule | undefined;
+  let bestDepth = 0;
+  for (const rule of rules) {
+    if (rule[property] === undefined) continue;
+    for (const selector of rule.selectors) {
+      if (scope !== selector && !scope.startsWith(`${selector}.`)) continue;
+      const depth = selector.split(".").length;
+      if (depth >= bestDepth) {
+        best = rule;
+        bestDepth = depth;
+      }
+    }
+  }
+  return best;
+}
+
+function parseVsCodeTokenColors(
+  tokenColors: unknown,
+  editorForeground: unknown,
+): ThemeSyntax | null {
+  const rules = parseTokenColorRules(tokenColors);
+  const syntax: Record<string, ThemeSyntax[string]> = {};
+  for (const [tokenType, scopes] of SYNTAX_SCOPES) {
+    for (const scope of scopes) {
+      const color = matchTokenColorRule(rules, scope, "color")?.color;
+      if (!color) continue;
+      const fontStyle = matchTokenColorRule(rules, scope, "fontStyle")?.fontStyle ?? "";
+      const style = {
+        color,
+        ...(fontStyle.includes("italic") ? { font_style: "italic" as const } : {}),
+        ...(fontStyle.includes("bold") ? { font_weight: 700 as const } : {}),
+      };
+      const dot = tokenType.lastIndexOf(".");
+      const parent = dot > 0 ? syntax[tokenType.slice(0, dot)] : undefined;
+      if (!parent || JSON.stringify(parent) !== JSON.stringify(style)) syntax[tokenType] = style;
+      break;
+    }
+  }
+  if (Object.keys(syntax).length === 0) return null;
+  const foreground =
+    rules.find((rule) => rule.unscoped && rule.color)?.color ?? syntaxColor(editorForeground);
+  return foreground ? { ...syntax, foreground: { color: foreground } } : syntax;
 }
 
 export function isVsCodeThemeFile(value: unknown): boolean {
@@ -375,13 +524,20 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
 
   const name = resolveName(value);
   const generatedId = themeIdFromName(name);
-  return parseThemeFile({
-    version: THEME_FILE_VERSION,
-    ...(isReservedThemeId(generatedId) ? { id: `${generatedId}-vscode` } : {}),
-    name,
-    appearance,
-    colors: { ...derived, ...overrides },
-  });
+  const syntax = parseVsCodeTokenColors(
+    value.tokenColors,
+    colors["editor.foreground"] ?? colors.foreground,
+  );
+  return {
+    ...parseThemeFile({
+      version: THEME_FILE_VERSION,
+      ...(isReservedThemeId(generatedId) ? { id: `${generatedId}-vscode` } : {}),
+      name,
+      appearance,
+      colors: { ...derived, ...overrides },
+    }),
+    ...(syntax ? { syntax: { [appearance]: syntax } } : {}),
+  };
 }
 
 export function pairVsCodeThemes(
@@ -414,16 +570,21 @@ export function pairVsCodeThemes(
   for (const [key, group] of groups) {
     if (group.light.length === 1 && group.dark.length === 1) {
       try {
+        const [light, dark] = [group.light[0]!, group.dark[0]!];
+        const syntax = { ...light.syntax, ...dark.syntax };
         paired.push({
           order: group.order,
-          theme: parseThemeFile({
-            version: THEME_FILE_VERSION,
-            ...(options?.pairedId ? { id: options.pairedId(group.light[0]!, group.dark[0]!) } : {}),
-            name: key,
-            appearance: "light",
-            colors: group.light[0]!.colors,
-            variants: { dark: group.dark[0]!.colors },
-          }),
+          theme: {
+            ...parseThemeFile({
+              version: THEME_FILE_VERSION,
+              ...(options?.pairedId ? { id: options.pairedId(light, dark) } : {}),
+              name: key,
+              appearance: "light",
+              colors: light.colors,
+              variants: { dark: dark.colors },
+            }),
+            ...(Object.keys(syntax).length > 0 ? { syntax } : {}),
+          },
         });
         continue;
       } catch {}
@@ -441,14 +602,17 @@ export function resolveThemeLabelCollisions(
 ): ReadonlyArray<ThemeDefinition> {
   const rename = (theme: ThemeDefinition, name: string): ThemeDefinition | null => {
     try {
-      return parseThemeFile({
-        version: THEME_FILE_VERSION,
-        name: name.slice(0, 48),
-        appearance: theme.appearance,
-        colors: theme.colors,
-        ...(theme.variants ? { variants: theme.variants } : {}),
-        ...(theme.managed ? { managed: true } : {}),
-      });
+      return {
+        ...parseThemeFile({
+          version: THEME_FILE_VERSION,
+          name: name.slice(0, 48),
+          appearance: theme.appearance,
+          colors: theme.colors,
+          ...(theme.variants ? { variants: theme.variants } : {}),
+          ...(theme.managed ? { managed: true } : {}),
+        }),
+        ...(theme.syntax ? { syntax: theme.syntax } : {}),
+      };
     } catch {
       return null;
     }

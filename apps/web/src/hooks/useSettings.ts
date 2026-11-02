@@ -62,6 +62,8 @@ import {
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { resolveDiffThemeNames, type DiffThemeNames } from "~/lib/diffRendering";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { getCustomThemes, subscribeToCustomThemes } from "~/themePalette";
+import { useCustomThemes } from "./useCustomThemes";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -424,7 +426,21 @@ export function useBoringSidebarEnabled(): boolean {
 }
 
 export function useDiffThemeNames(): DiffThemeNames {
-  return useClientSettings(resolveDiffThemeNames);
+  const themes = useCustomThemes();
+  return useClientSettings((settings) => resolveDiffThemeNames(settings, themes));
+}
+
+export function getDiffThemeNames(): DiffThemeNames {
+  return resolveDiffThemeNames(getClientSettings(), getCustomThemes());
+}
+
+export function subscribeDiffThemeNames(listener: () => void): () => void {
+  const unsubscribeSettings = subscribeClientSettings(listener);
+  const unsubscribeThemes = subscribeToCustomThemes(listener);
+  return () => {
+    unsubscribeSettings();
+    unsubscribeThemes();
+  };
 }
 
 export async function prepareModelPreferencesPatch(

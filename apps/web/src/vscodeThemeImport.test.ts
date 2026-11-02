@@ -439,6 +439,38 @@ describe("VS Code theme import", () => {
     expect(green).toBeGreaterThan(red);
   });
 
+  it("converts tokenColors into syntax colors by TextMate precedence", () => {
+    const theme = parseVsCodeThemeFile({
+      ...VSCODE_DARK,
+      tokenColors: [
+        { settings: { foreground: "#cccccc" } },
+        { scope: "keyword", settings: { foreground: "#ff0000" } },
+        {
+          scope: ["keyword.control.import"],
+          settings: { foreground: "#00ff00", fontStyle: "italic" },
+        },
+        { scope: "comment", settings: { foreground: "#88888880", fontStyle: "italic bold" } },
+        { scope: "string, constant.character.escape", settings: { foreground: "#0000ff" } },
+        { scope: "constant.character.escape", settings: { foreground: "#123456" } },
+        { scope: "source.ts string", settings: { foreground: "#ffffff" } },
+        { scope: "entity.name.function", settings: { fontStyle: "bold" } },
+      ],
+    });
+
+    const syntax = theme.syntax?.dark;
+    expect(syntax).toMatchObject({
+      foreground: { color: "#cccccc" },
+      keyword: { color: "#ff0000" },
+      "keyword.import": { color: "#00ff00", font_style: "italic" },
+      comment: { color: "#88888880", font_style: "italic", font_weight: 700 },
+      string: { color: "#0000ff" },
+      "string.escape": { color: "#123456" },
+    });
+    expect(syntax).not.toHaveProperty("function");
+    expect(theme.syntax).not.toHaveProperty("light");
+    expect(parseVsCodeThemeFile(VSCODE_DARK)).not.toHaveProperty("syntax");
+  });
+
   it("pairs light and dark files from one family into dual-mode themes", () => {
     const make = (name: string, type: "light" | "dark") =>
       parseVsCodeThemeFile({

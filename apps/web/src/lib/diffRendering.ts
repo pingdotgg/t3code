@@ -1,6 +1,7 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
-import { parseDiffFromFile } from "@pierre/diffs";
+import { parseDiffFromFile, registerCustomTheme } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
+import type { ThemeDefinition, ThemeSyntax } from "@t3tools/shared/themePalettes";
 import { READABLE_LIGHT_THEME_NAME } from "./readableSyntaxTheme";
 
 // Light mode uses a darker pierre-light so syntax stays readable on every code surface.
@@ -50,20 +51,54 @@ export const CODE_THEME_OPTIONS = {
   ],
 } as const satisfies Record<"light" | "dark", ReadonlyArray<{ id: string; label: string }>>;
 
-function offeredThemeName(appearance: "light" | "dark", preference: string): DiffThemeName {
-  return CODE_THEME_OPTIONS[appearance].some((option) => option.id === preference)
-    ? preference
-    : DIFF_THEME_NAMES[appearance];
+/** Code theme preference for an imported app theme that carries syntax colors. */
+export const IMPORTED_CODE_THEME_PREFIX = "theme:";
+
+const registeredImportedThemes = new Set<string>();
+
+// Named by content: Highlights caches a palette by name, and a re-imported theme keeps its id.
+function importedThemeName(appearance: "light" | "dark", syntax: ThemeSyntax): DiffThemeName {
+  const name = `t3-imported-${appearance}-${fnv1a32(JSON.stringify(syntax)).toString(36)}`;
+  if (!registeredImportedThemes.has(name)) {
+    registeredImportedThemes.add(name);
+    const { foreground, ...tokens } = syntax;
+    registerCustomTheme(
+      name,
+      async () => ({
+        name,
+        appearance,
+        style: { ...(foreground ? { "editor.foreground": foreground.color } : {}), syntax: tokens },
+      }),
+      "zed",
+    );
+  }
+  return name;
 }
 
-// Unknown names, such as one a newer client saved, keep the default palette.
-export function resolveDiffThemeNames(settings: {
-  readonly codeThemeLight: string;
-  readonly codeThemeDark: string;
-}): DiffThemeNames {
+function offeredThemeName(
+  appearance: "light" | "dark",
+  preference: string,
+  themes: ReadonlyArray<ThemeDefinition>,
+): DiffThemeName {
+  if (CODE_THEME_OPTIONS[appearance].some((option) => option.id === preference)) {
+    return preference;
+  }
+  if (preference.startsWith(IMPORTED_CODE_THEME_PREFIX)) {
+    const themeId = preference.slice(IMPORTED_CODE_THEME_PREFIX.length);
+    const syntax = themes.find((theme) => theme.id === themeId)?.syntax?.[appearance];
+    if (syntax) return importedThemeName(appearance, syntax);
+  }
+  return DIFF_THEME_NAMES[appearance];
+}
+
+// Unknown names, such as a deleted theme or one a newer client saved, keep the default palette.
+export function resolveDiffThemeNames(
+  settings: { readonly codeThemeLight: string; readonly codeThemeDark: string },
+  themes: ReadonlyArray<ThemeDefinition>,
+): DiffThemeNames {
   return {
-    light: offeredThemeName("light", settings.codeThemeLight),
-    dark: offeredThemeName("dark", settings.codeThemeDark),
+    light: offeredThemeName("light", settings.codeThemeLight, themes),
+    dark: offeredThemeName("dark", settings.codeThemeDark, themes),
   };
 }
 
