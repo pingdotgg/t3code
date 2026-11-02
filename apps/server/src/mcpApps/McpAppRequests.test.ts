@@ -88,7 +88,7 @@ function makeLayer(input: {
           getThreadRecords: (id: ThreadId) =>
             Effect.succeed({
               thread: {
-                archivedAt: input.archived === true ? new Date(0) : null,
+                archivedAt: input.archived === true ? DateTime.makeUnsafe(0) : null,
                 lineage:
                   deepParent(id) !== null
                     ? {
