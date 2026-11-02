@@ -8212,6 +8212,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             return settled;
           }
+          const parentToolUseId = parentToolUseIdFromSdkMessage(message);
+          const taskId =
+            message.type === "system" && message.subtype === "task_progress"
+              ? message.task_id
+              : parentToolUseId === null
+                ? undefined
+                : (yield* Ref.get(sessionSubagentTaskIdsByToolUseId)).get(parentToolUseId);
+          if (taskId === undefined && parentToolUseId === null) {
+            return null;
+          }
           const bufferedStarts = (
             (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? []
           ).flatMap((entry) =>
@@ -8221,13 +8231,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? [entry]
               : [],
           );
-          const parentToolUseId = parentToolUseIdFromSdkMessage(message);
-          const taskId =
-            message.type === "system" && message.subtype === "task_progress"
-              ? message.task_id
-              : parentToolUseId === null
-                ? undefined
-                : (yield* Ref.get(sessionSubagentTaskIdsByToolUseId)).get(parentToolUseId);
           const returnedToolUseIds = new Set(
             [...claudeToolResultBlocksFromAssistantMessage(message), ...userResults].map(
               (toolResult) => toolResult.tool_use_id,
@@ -8245,7 +8248,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return null;
           }
           if (taskId === undefined) {
-            return parentToolUseId === null ? null : settled;
+            return settled;
           }
           if (
             returnedToolUseIds.size > 0 &&

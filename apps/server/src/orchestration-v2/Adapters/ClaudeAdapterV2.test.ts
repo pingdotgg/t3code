@@ -11089,7 +11089,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }),
     );
   const makeSubagentToolResultFrame = (input: {
-    readonly parentToolUseId: string;
+    readonly parentToolUseId: string | null;
     readonly uuid: string;
     readonly toolUseId: string;
   }) =>
@@ -12319,6 +12319,173 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("settles an open call when its parentless result arrives while the root is idle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TOOL_USE_ID = "toolu-idle-root-result";
+        const BASH = "toolu-idle-root-result-bash";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-idle-root-result"),
+            text: "Audit in the background.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          makeSubagentTaskStartedFrame({
+            taskId: "task-idle-root-result",
+            toolUseId: TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000b11",
+          }),
+          ...makeSubagentAssistantFrames({
+            parentToolUseId: TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000b12",
+            bashToolUseId: BASH,
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000b13",
+            result: "Auditing in the background.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* harness.awaitTerminal(1);
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeSubagentToolResultFrame({
+            parentToolUseId: null,
+            uuid: "00000000-0000-4000-8000-000000000b14",
+            toolUseId: BASH,
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === BASH &&
+              event.turnItem.status === "completed",
+          ),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("leaves buffered wake evidence unread for idle stream frames", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TASK_ID = "task-idle-stream";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-idle-stream"),
+            text: "Audit in the background.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: TASK_ID,
+            description: "Audit recent commits",
+            subagent_type: "general-purpose",
+            is_backgrounded: true,
+            task_type: "local_agent",
+            prompt: "Audit the last five commits.",
+            uuid: "00000000-0000-4000-8000-000000000b01",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000b02",
+            result: "Auditing in the background.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* harness.awaitTerminal(1);
+
+        let bufferedEntryReads = 0;
+        const bufferedStart = Object.defineProperty(
+          {
+            type: "system",
+            task_id: "task-idle-stream-other",
+            description: "Check the changelog",
+            subagent_type: "general-purpose",
+            is_backgrounded: true,
+            task_type: "local_agent",
+            prompt: "Check the changelog.",
+            uuid: "00000000-0000-4000-8000-000000000b03",
+            session_id: WAKE_NATIVE_SESSION,
+          },
+          "subtype",
+          {
+            enumerable: true,
+            get: () => {
+              bufferedEntryReads += 1;
+              return "task_started";
+            },
+          },
+        );
+        const readsThroughProgress = (description: string, frames: ReadonlyArray<SDKMessage>) =>
+          Effect.gen(function* () {
+            for (const frame of frames) {
+              yield* Queue.offer(harness.sdkMessages, frame);
+            }
+            yield* Queue.offer(
+              harness.sdkMessages,
+              claudeSdkFrame({
+                type: "system",
+                subtype: "task_progress",
+                task_id: TASK_ID,
+                description,
+                usage: { total_tokens: 1, tool_uses: 1, duration_ms: 1 },
+                uuid: "00000000-0000-4000-8000-000000000b04",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            );
+            yield* harness.until(() =>
+              harness.events.some(
+                (event) =>
+                  event.type === "subagent.updated" && event.subagent.progress === description,
+              ),
+            );
+            return bufferedEntryReads;
+          });
+
+        const afterBuffering = yield* readsThroughProgress("buffered", [
+          claudeSdkFrame(bufferedStart),
+        ]);
+        const afterProgress = yield* readsThroughProgress("progress only", []);
+        const afterStreams = yield* readsThroughProgress("after streams", [
+          usageStreamFrame({ type: "ping" }),
+          usageStreamFrame({ type: "ping" }, "toolu-idle-stream"),
+        ]);
+
+        const readsPerProgress = afterProgress - afterBuffering;
+        assert.isAbove(readsPerProgress, 0);
+        assert.strictEqual(afterStreams - afterProgress, readsPerProgress);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
   );
 
   it.effect("holds subagent frames that precede task_started and shows its result once", () =>
