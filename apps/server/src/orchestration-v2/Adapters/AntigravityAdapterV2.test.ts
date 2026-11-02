@@ -1074,6 +1074,8 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
     const threadId = ThreadId.make("thread-antigravity-running-command");
     const adapter = yield* makeAntigravityAdapterV2({
       instanceId,
+      // An empty profile has no session log, so only a typed refusal fails a turn.
+      profileDirectory: yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped(),
       selfInvocation: yield* resolveSelfInvocation(),
       makeRuntime: (input) =>
         makeAntigravityAcpRuntime({
@@ -1343,10 +1345,12 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
       if (hasPendingBackgroundWork === undefined) {
         return assert.fail("Antigravity sessions must report pending background work");
       }
-      const startCommand = (ordinal: number, toolCallId: string) =>
+      const startPrompt = (ordinal: number) =>
+        session
+          .startTurn(turnInput(ordinal, false))
+          .pipe(Effect.forkScoped, Effect.andThen(Queue.take(prompts)));
+      const runCommand = (toolCallId: string) =>
         Effect.gen(function* () {
-          yield* session.startTurn(turnInput(ordinal, false)).pipe(Effect.forkScoped);
-          const prompt = yield* Queue.take(prompts);
           yield* send({
             sessionUpdate: "tool_call",
             toolCallId,
@@ -1356,7 +1360,6 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
             rawInput: { CommandLine: "npm run build" },
           });
           assert.isTrue(yield* hasPendingBackgroundWork);
-          return prompt;
         });
       const failedTerminal = Effect.gen(function* () {
         const event = yield* takeUntil((event) => event.type === "turn.terminal");
@@ -1366,14 +1369,24 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
       });
 
       // A rejected prompt takes its commands with it, so nothing may block a replacement session.
-      const rejected = yield* startCommand(1, "rejected-build");
+      const rejected = yield* startPrompt(1);
+      yield* runCommand("rejected-build");
       yield* Deferred.fail(rejected, EffectAcpErrors.AcpRequestError.internalError());
       const rejectedTerminal = yield* failedTerminal;
       assert.isUndefined(rejectedTerminal.childTurnsContinue);
       assert.isFalse(yield* hasPendingBackgroundWork, "the rejected prompt's command is gone");
 
+      // A hidden failure keeps the command until the next turn replaces the agent process.
+      const refused = yield* startPrompt(2);
+      yield* runCommand("replaced-build");
+      yield* Deferred.succeed(refused, { stopReason: "refusal" });
+      assert.isTrue((yield* failedTerminal).childTurnsContinue);
+      assert.isTrue(yield* hasPendingBackgroundWork);
+      const errored = yield* startPrompt(3);
+      assert.isFalse(yield* hasPendingBackgroundWork, "the replaced process's command is gone");
+
       // An idle error leaves the agent and its command running for the same run.
-      const errored = yield* startCommand(2, "surviving-build");
+      yield* runCommand("surviving-build");
       yield* Deferred.succeed(errored, { stopReason: "error" });
       const erroredTerminal = yield* failedTerminal;
       assert.isTrue(erroredTerminal.childTurnsContinue);
