@@ -31,6 +31,7 @@ import {
   CloudDownloadIcon,
   CloudUploadIcon,
   FileDiffIcon,
+  FolderXIcon,
   GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
@@ -965,6 +966,9 @@ export default function GitActionsControl({
   const activeServerThread =
     activeServerThreadShell ?? activeServerThreadProjection?.projection.thread ?? null;
   const isLocalDraftThread = activeDraftThread !== null && activeServerThread === null;
+  const activeWorktreePath = activeServerThread
+    ? activeServerThread.worktreePath
+    : (activeDraftThread?.worktreePath ?? null);
   const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
@@ -1484,7 +1488,13 @@ export default function GitActionsControl({
 
   return (
     <>
-      {!showActions ? null : !isRepo ? (
+      {!showActions ? null : !isRepo && activeWorktreePath !== null ? (
+        // A worktree is always a checkout, so a non-repository status means its folder is gone.
+        <ThreadDetailsControl size="xs" variant="ghost" part="row" panel tone="muted" disabled>
+          <FolderXIcon className="size-3.5" aria-hidden />
+          <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Worktree missing</span>
+        </ThreadDetailsControl>
+      ) : !isRepo ? (
         <ThreadDetailsControl
           size="xs"
           variant="ghost"
