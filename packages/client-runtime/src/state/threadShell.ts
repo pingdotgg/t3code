@@ -11,13 +11,13 @@ import {
   isProviderNativeSubagentThread,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 import { presentThreadShell, threadRuntimeIsActive } from "./models.ts";
 import { hiddenThreadKeys, NO_HIDDEN_THREADS } from "./threadTagFilter.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
+import { lazySchemaEquivalence } from "./schemaEquivalence.ts";
 import {
   arrayElementsEqual,
   parseProjectRefCollectionKey,
@@ -165,7 +165,7 @@ export function childThreadInputsTitle(
     : `${children.length} ${noun}s need ${need}`;
 }
 
-const sameWireThreadShell = Schema.toEquivalence(OrchestrationV2ThreadShell);
+const sameWireThreadShell = lazySchemaEquivalence(OrchestrationV2ThreadShell);
 
 // While a run streams, the server bumps the shell's timestamps, item counts and
 // latest message several times a second. Only the zero crossing of the counts

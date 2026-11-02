@@ -13,6 +13,8 @@ export interface ManagedServerProvider {
     readonly fresh?: boolean;
   }) => Effect.Effect<ProviderMaintenanceCapabilities>;
   readonly getSnapshot: Effect.Effect<ServerProvider>;
+  /** Await live discovery before using a persisted snapshot to select a provider. */
+  readonly ensureReady?: Effect.Effect<ServerProvider>;
   readonly refresh: Effect.Effect<ServerProvider>;
   readonly refreshUsage?: Effect.Effect<void, ServerSettingsError>;
   readonly streamChanges: Stream.Stream<ServerProvider>;

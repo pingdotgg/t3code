@@ -23,6 +23,7 @@ import {
   isRejectedBootstrapCredentialError,
   isRejectedSecondaryBootstrap,
   nextRejectedSecondaryBootstrap,
+  nextPlatformReconcileAt,
   primaryRegistrationToRetainAfterTopologyRead,
   prepareDesktopSshEnvironment,
   provisionDesktopSshEnvironment,
@@ -448,5 +449,34 @@ describe("primary topology cache", () => {
         cause: new Error("IPC unavailable"),
       }),
     ).toBe(cached);
+  });
+});
+
+describe("platform reconcile deadlines", () => {
+  it("stays asleep without expiring credentials and wakes for the earliest refresh", () => {
+    const cache = new Map<
+      string,
+      {
+        signature: string;
+        registration: never;
+        refreshAtEpochMs?: number;
+        expiresAtEpochMs?: number;
+      }
+    >([["primary", { signature: "primary", registration: {} as never }]]);
+    expect(nextPlatformReconcileAt(cache, new Map(), undefined, 0)).toBeUndefined();
+    cache.set("secondary", {
+      signature: "secondary",
+      registration: {} as never,
+      refreshAtEpochMs: 15_000,
+      expiresAtEpochMs: 20_000,
+    });
+    expect(nextPlatformReconcileAt(cache, new Map(), undefined, 0)).toBe(15_000);
+    expect(nextPlatformReconcileAt(cache, new Map(), 3_000, 0)).toBe(3_000);
+    const rejected = new Map([
+      ["secondary", nextRejectedSecondaryBootstrap(undefined, "secondary", 16_000)],
+    ]);
+    expect(nextPlatformReconcileAt(cache, rejected, undefined, 16_000)).toBe(20_000);
+    expect(nextPlatformReconcileAt(cache, rejected, undefined, 20_000)).toBe(76_000);
+    expect(nextPlatformReconcileAt(cache, rejected, 83_000, 80_000)).toBe(83_000);
   });
 });

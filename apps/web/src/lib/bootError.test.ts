@@ -11,6 +11,67 @@ import {
 const desktopWith = (getState: () => Promise<DesktopCliCommandState>) =>
   ({ cliCommand: { getState } }) as unknown as DesktopBridge;
 
+function deferred<A>() {
+  let resolve!: (value: A | PromiseLike<A>) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<A>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+it.each(["module", "backend", "route", "success", "rejection"])(
+  "settles bootstrap (%s)",
+  async (stage) => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const imported = deferred<void>();
+    const token = deferred<string>();
+    const view = deferred<void>();
+    const module = deferred<{ startup: () => Promise<void> }>();
+    const showBootError = vi.fn();
+    const startup = vi.fn(() => view.promise);
+    vi.stubGlobal("window", {
+      desktopBridge: {
+        getLocalEnvironmentEnabled: () => true,
+        getLocalEnvironmentBearerToken: () => token.promise,
+      },
+    });
+    vi.doMock("../main", () => {
+      imported.resolve();
+      return module.promise;
+    });
+    vi.doMock("./bootError", () => ({ showBootError }));
+    try {
+      await import("../bootstrap");
+      await imported.promise;
+      if (stage !== "module") module.resolve({ startup });
+      if (stage !== "backend") token.resolve("bearer");
+      if (stage === "success") view.resolve();
+      if (stage === "rejection") view.reject(new Error("first route failed"));
+      await vi.advanceTimersByTimeAsync(60_000);
+      if (stage === "success") {
+        expect(showBootError).not.toHaveBeenCalled();
+      } else {
+        expect(showBootError).toHaveBeenCalledOnce();
+        expect(showBootError.mock.calls[0]?.[0]).toBeInstanceOf(Error);
+      }
+      module.resolve({ startup });
+      token.resolve("bearer");
+      view.resolve();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(showBootError).toHaveBeenCalledTimes(stage === "success" ? 0 : 1);
+    } finally {
+      vi.doUnmock("../main");
+      vi.doUnmock("./bootError");
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+      vi.resetModules();
+    }
+  },
+);
+
 const notOnPath = (launcherPath: string | null): DesktopCliCommandState => ({
   supported: launcherPath !== null,
   installedPath: null,

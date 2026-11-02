@@ -376,11 +376,7 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
           ),
           Effect.forkIn(scope),
         );
-        yield* nativeClient.sampleNow.pipe(
-          Effect.flatMap(ingestNative),
-          Effect.ignore,
-          Effect.forkIn(scope),
-        );
+        yield* refresh.pipe(Effect.ignore, Effect.forkIn(scope));
         yield* Ref.set(liveState, { retainCount: 1, scope: Option.some(scope) });
       }),
     ),
@@ -450,8 +446,10 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
     Effect.forkScoped,
   );
 
-  const refresh: ResourceTelemetry["Service"]["refresh"] = nativeClient.sampleNow.pipe(
+  const refresh: ResourceTelemetry["Service"]["refresh"] = nativeClient.retain.pipe(
+    Effect.andThen(nativeClient.sampleNow),
     Effect.flatMap(ingestNative),
+    Effect.scoped,
     Effect.mapError(
       (cause) =>
         new ResourceTelemetryRefreshFailed({

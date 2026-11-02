@@ -71,7 +71,7 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
 
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
-      Scheduler.layer,
+      Layer.mock(Scheduler.Scheduler)({ register: () => Effect.void }),
       ManagedPolicy.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({

@@ -77,12 +77,16 @@ const make = Effect.gen(function* () {
   // Beside the store's own files so the same owner-only directory and cleanup rules apply.
   const filesDir = store.directory === undefined ? undefined : path.join(store.directory, "files");
 
-  const salt = Buffer.from(
-    yield* store.getOrCreateRandom("secret-request-salt", 32).pipe(Effect.orDie),
-  ).toString("hex");
+  const getSalt = yield* Effect.cached(
+    store.getOrCreateRandom("secret-request-salt", 32).pipe(
+      Effect.map((bytes) => Buffer.from(bytes).toString("hex")),
+      Effect.orDie,
+    ),
+  );
 
   const answer: SecretRequests["Service"]["answer"] = Effect.fn("SecretRequests.answer")(
     function* (input) {
+      const salt = yield* getSalt;
       yield* Effect.annotateCurrentSpan({
         "orchestration_v2.thread_id": input.threadId,
         "secret_request.answer": input.answer.type,
@@ -168,6 +172,7 @@ const make = Effect.gen(function* () {
 
   const savedRef: SecretRequests["Service"]["savedRef"] = Effect.fn("SecretRequests.savedRef")(
     function* (input) {
+      const salt = yield* getSalt;
       const ref = refFor(salt, input.threadId, input.turnItemId);
       const stored = yield* store.get(storeName(ref)).pipe(Effect.orElseSucceed(Option.none));
       return Option.map(stored, () => ref);
@@ -251,7 +256,7 @@ const make = Effect.gen(function* () {
       return yield* new SecretRequestError({ reason: "not_a_file_request" });
     }
     if (filesDir === undefined) return yield* new SecretRequestError({ reason: "store_failed" });
-    const ref = refFor(salt, input.threadId, item.id);
+    const ref = refFor(yield* getSalt, input.threadId, item.id);
     const file = path.join(filesDir, ref.slice(SECRET_REF_PREFIX.length));
     return yield* Effect.gen(function* () {
       // One use: the file counts as delivered only once the stored copy is gone. A retry with the

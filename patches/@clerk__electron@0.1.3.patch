@@ -1,0 +1,41 @@
+diff --git a/dist/cjs/index.js b/dist/cjs/index.js
+--- a/dist/cjs/index.js
++++ b/dist/cjs/index.js
+@@ -96 +96 @@
+-	electron.app.setAsDefaultProtocolClient(options.renderer.scheme);
++	if (options.registerAsDefaultProtocolClient !== false) electron.app.setAsDefaultProtocolClient(options.renderer.scheme);
+@@ -234 +233,0 @@
+-	loadNativeModule().catch((error) => console.warn(error.message));
+@@ -320 +319 @@
+-			electron.protocol.registerSchemesAsPrivileged([{
++			if (options.registerRendererScheme !== false) electron.protocol.registerSchemesAsPrivileged([{
+@@ -331 +330 @@
+-			teardowns.push(setupOAuthTransportIpcHandlers({ renderer: options.renderer }));
++			teardowns.push(setupOAuthTransportIpcHandlers({ renderer: options.renderer, registerAsDefaultProtocolClient: options.registerAsDefaultProtocolClient }));
+diff --git a/dist/esm/index.js b/dist/esm/index.js
+--- a/dist/esm/index.js
++++ b/dist/esm/index.js
+@@ -95 +95 @@
+-	app.setAsDefaultProtocolClient(options.renderer.scheme);
++	if (options.registerAsDefaultProtocolClient !== false) app.setAsDefaultProtocolClient(options.renderer.scheme);
+@@ -233 +232,0 @@
+-	loadNativeModule().catch((error) => console.warn(error.message));
+@@ -319 +318 @@
+-			protocol.registerSchemesAsPrivileged([{
++			if (options.registerRendererScheme !== false) protocol.registerSchemesAsPrivileged([{
+@@ -330 +329 @@
+-			teardowns.push(setupOAuthTransportIpcHandlers({ renderer: options.renderer }));
++			teardowns.push(setupOAuthTransportIpcHandlers({ renderer: options.renderer, registerAsDefaultProtocolClient: options.registerAsDefaultProtocolClient }));
+diff --git a/dist/types/main/oauth-transport.d.ts b/dist/types/main/oauth-transport.d.ts
+--- a/dist/types/main/oauth-transport.d.ts
++++ b/dist/types/main/oauth-transport.d.ts
+@@ -3,0 +4 @@
++    registerAsDefaultProtocolClient?: boolean;
+diff --git a/dist/types/shared/types.d.ts b/dist/types/shared/types.d.ts
+--- a/dist/types/shared/types.d.ts
++++ b/dist/types/shared/types.d.ts
+@@ -16,0 +17,4 @@
++    /** Set false when the application registers the OS protocol handler after showing its window. Defaults to true. */
++    registerAsDefaultProtocolClient?: boolean;
++    /** Set false when the application registered renderer scheme privileges before ready. Defaults to true. */
++    registerRendererScheme?: boolean;

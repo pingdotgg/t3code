@@ -36,7 +36,8 @@ it("initializes React refresh before a shared UI chunk runs in bundled dev", asy
     await NodeFSP.writeFile(
       NodePath.join(root, "src/main.tsx"),
       `import { Shared } from "./shared";
-export const startup = Promise.resolve().then(() => globalThis.onStarted(Shared()));`,
+globalThis.onLoaded();
+export function startup() { globalThis.onStarted(Shared()); }`,
     );
 
     server = await createServer({
@@ -93,7 +94,14 @@ export const startup = Promise.resolve().then(() => globalThis.onStarted(Shared(
       runner,
       `import assert from "node:assert/strict";
 const started = Promise.withResolvers();
+const loaded = Promise.withResolvers();
+const backend = Promise.withResolvers();
+const desktop = process.argv[2] === "desktop";
 globalThis.window = globalThis;
+if (desktop) window.desktopBridge = {
+  getLocalEnvironmentEnabled: () => true,
+  getLocalEnvironmentBearerToken: () => backend.promise,
+};
 globalThis.document = {
   createElement: () => ({ relList: { supports: () => true } }),
   getElementById: () => null,
@@ -103,16 +111,25 @@ globalThis.__rolldown_runtime__ = {
   registerModule() {},
   createModuleHotContext: () => ({ accept() {} }),
 };
-globalThis.onStarted = started.resolve;
+let hasStarted = false;
+globalThis.onLoaded = loaded.resolve;
+globalThis.onStarted = (element) => { hasStarted = true; started.resolve(element); };
 console.error = (_message, error) => started.reject(error);
 await import("./assets/index.js");
+await loaded.promise;
+if (desktop) {
+  assert.equal(hasStarted, false);
+  backend.resolve("bearer");
+}
 const element = await started.promise;
 assert.equal(element.props.children, "ready");
 assert.equal(typeof window.$RefreshReg$, "function");
 console.log("App started with React refresh ready.");`,
     );
-    const result = await execFile("node", [runner]);
-    expect(result.stdout).toContain("App started with React refresh ready.");
+    for (const surface of ["web", "desktop"]) {
+      const result = await execFile("node", [runner, surface]);
+      expect(result.stdout).toContain("App started with React refresh ready.");
+    }
   } finally {
     await server?.close();
     await NodeFSP.rm(root, { recursive: true, force: true });

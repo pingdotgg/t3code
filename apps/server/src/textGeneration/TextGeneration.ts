@@ -20,7 +20,6 @@ import { TextGenerationError } from "@t3tools/contracts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
-import * as ThreadTitleLinks from "./ThreadTitleLinks.ts";
 
 export type {
   BranchNameGenerationInput,
@@ -52,6 +51,7 @@ const resolveInstance = (
   instanceId: ProviderInstanceId,
 ): Effect.Effect<ProviderInstance["textGeneration"], TextGenerationError> =>
   registry.getInstance(instanceId).pipe(
+    Effect.tap((instance) => instance?.snapshot.ensureReady ?? Effect.void),
     Effect.flatMap((instance) =>
       instance
         ? Effect.succeed(instance.textGeneration)
@@ -80,10 +80,11 @@ export const make = Effect.gen(function* () {
       modelSelection: ModelSelection,
     ) => Effect.Effect<A, TextGenerationError>,
   ) {
-    const snapshots = yield* registry.listInstances.pipe(
-      Effect.flatMap((instances) =>
-        Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot),
-      ),
+    const instances = yield* registry.listInstances;
+    let snapshots = yield* Effect.forEach(instances, (instance) =>
+      instance.instanceId === selection.instanceId
+        ? (instance.snapshot.ensureReady ?? instance.snapshot.getSnapshot)
+        : instance.snapshot.getSnapshot,
     );
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const limited = exhaustedUsageWindow(
@@ -92,6 +93,11 @@ export const make = Effect.gen(function* () {
       selection.model,
     );
     if (limited) {
+      snapshots = yield* Effect.forEach(
+        instances,
+        (instance) => instance.snapshot.ensureReady ?? instance.snapshot.getSnapshot,
+        { concurrency: "unbounded" },
+      );
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(
           (cause) =>
@@ -155,7 +161,8 @@ export const make = Effect.gen(function* () {
           Effect.gen(function* () {
             const linkedContext =
               input.linkedContext ??
-              (yield* ThreadTitleLinks.resolveThreadTitleLinks(input).pipe(
+              (yield* Effect.promise(() => import("./ThreadTitleLinks.ts")).pipe(
+                Effect.flatMap((links) => links.resolveThreadTitleLinks(input)),
                 Effect.provideService(
                   SourceControlProviderRegistry.SourceControlProviderRegistry,
                   sourceControl,

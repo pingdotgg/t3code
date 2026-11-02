@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   allowed: new Set<string>(),
   remote: { mode: "local-exec" } as RemoteOpenState,
   clientEditors: ["vscode"] as readonly EditorId[],
+  editorsPending: false,
   run: vi.fn(),
   openUrl: vi.fn(),
   setPreferred: vi.fn(),
@@ -41,7 +42,10 @@ vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
 }));
 vi.mock(import("../../state/environments"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useEnvironment: (() => ({ label: "Test host" })) as never,
+  useEnvironment: (() => ({
+    label: "Test host",
+    serverConfig: { availableEditorsPending: state.editorsPending },
+  })) as never,
 }));
 vi.mock(import("../../editorPreferences"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -79,6 +83,7 @@ async function setup() {
   state.allowed.clear();
   state.remote = { mode: "local-exec" };
   state.clientEditors = editors;
+  state.editorsPending = false;
   state.run.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.openUrl.mockReset().mockResolvedValue(true);
   state.setPreferred.mockReset();
@@ -168,6 +173,25 @@ async function setup() {
 }
 
 describe("host editor access", () => {
+  it("keeps discovery pending until late editors arrive or the inventory is empty", async () => {
+    await using fixture = await setup();
+    state.allowed.add(selected);
+    state.editorsPending = true;
+    await fixture.renderPicker([]);
+    expect(fixture.primaryButton().disabled).toBe(true);
+    await fixture.click(fixture.byLabel("Choose editor"));
+    await expect.element(fixture.screen.getByText("Finding installed editors...")).toBeVisible();
+    await expect
+      .element(fixture.screen.getByText("No installed editors found"))
+      .not.toBeInTheDocument();
+    state.editorsPending = false;
+    await fixture.renderPicker(editors);
+    await expect.element(fixture.screen.getByText("VS Code", { exact: true })).toBeVisible();
+    expect(fixture.primaryButton().disabled).toBe(false);
+    await fixture.renderPicker([]);
+    await expect.element(fixture.screen.getByText("No installed editors found")).toBeVisible();
+    expect(state.run).not.toHaveBeenCalled();
+  });
   it("uses the selected grant for both the button and a retained shortcut", async () => {
     await using fixture = await setup();
     const { renderPicker, byLabel, primaryButton, click, pressOpenFavorite } = fixture;

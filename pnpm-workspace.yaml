@@ -404,6 +404,7 @@ patchedDependencies:
   # Observe the owned host exit independently of descendants retaining its stdio.
   "@muse-code/sdk@1.4.6": patches/@muse-code__sdk@1.4.6.patch
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
+  "@clerk/electron@0.1.3": patches/@clerk__electron@0.1.3.patch
 
 peerDependencyRules:
   allowAny:

@@ -1,6 +1,5 @@
 import type {
   DesktopHostTelemetrySnapshot,
-  ResourceMonitorSnapshotEvent,
   ResourceTelemetryHealth,
   ResourceTelemetryHistory,
   ResourceTelemetryHistoryBucket,
@@ -9,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
+import type { NativeTelemetryHistorySnapshot } from "./NativeTelemetryClient.ts";
 
 import {
   emptyTelemetryCounters,
@@ -55,7 +55,7 @@ export interface BuildResourceTelemetryHistoryInput {
   readonly serverPid: number;
   readonly sidecarPid: Option.Option<number>;
   readonly desktopSnapshot: Option.Option<DesktopHostTelemetrySnapshot>;
-  readonly snapshots: ReadonlyArray<ResourceMonitorSnapshotEvent>;
+  readonly snapshots: ReadonlyArray<NativeTelemetryHistorySnapshot>;
   readonly health: ResourceTelemetryHealth;
 }
 
@@ -206,7 +206,8 @@ export function buildResourceTelemetryHistory(
     );
     const merged = mergeProcesses({
       serverPid: input.serverPid,
-      sidecarPid: input.sidecarPid,
+      sidecarPid:
+        snapshot.sidecarPid === undefined ? input.sidecarPid : Option.some(snapshot.sidecarPid),
       fallbackSampledAtMs: snapshot.sampledAtUnixMs,
       nativeSnapshot: Option.some(snapshot),
       desktopSnapshot: Option.none(),

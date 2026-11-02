@@ -19,7 +19,6 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as NodeCrypto from "node:crypto";
 
 import * as ServerConfig from "../config.ts";
-import { openZipArchive } from "../zipArchive.ts";
 
 // Update the version, sizes and hashes from each chrome-headless-shell zip listed at
 // https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json
@@ -244,6 +243,7 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
 
   const extract = Effect.fn("PreviewBrowser.extract")(
     function* (release: PreviewBrowserRelease, archivePath: string, destination: string) {
+      const { openZipArchive } = yield* Effect.promise(() => import("../zipArchive.ts"));
       const archive = yield* openZipArchive(
         archivePath,
         (detail, cause) => new PreviewBrowserInstallError({ detail, cause }),

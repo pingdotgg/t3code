@@ -52,7 +52,7 @@ export interface GhosttyTerminalFont {
 
 let symbolsFontLoad: Promise<void> | null = null;
 
-function ensureTerminalSymbolsFont(): Promise<void> {
+export function preloadTerminalSymbolsFont(): Promise<void> {
   if (symbolsFontLoad !== null) return symbolsFontLoad;
   symbolsFontLoad = (async () => {
     try {
@@ -561,6 +561,7 @@ export class GhosttyTerminalSurface {
   private compositionInputToSuppress: string | null = null;
   private compositionSuppressionTimer: number | null = null;
   private cursorOn = true;
+  private cursorBlinksRemaining = 0;
   private renderedCursorY: number | null = null;
   private forceFullRender = true;
   private scrollbarDirty = true;
@@ -704,7 +705,7 @@ export class GhosttyTerminalSurface {
     const fontSize = terminalFontSize(options.font?.size);
     try {
       // Load bundled fonts before measuring; fallback metrics would size the wrong grid.
-      await ensureTerminalSymbolsFont();
+      await preloadTerminalSymbolsFont();
     } catch {}
     const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
     const metrics = measureGhosttyCell(context, fontSize, fontFamily);
@@ -737,6 +738,7 @@ export class GhosttyTerminalSurface {
     if (this.disposed || this.visible === visible) return;
     this.visible = visible;
     this.cursorOn = true;
+    this.cursorBlinksRemaining = 2;
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     if (!visible) {
@@ -757,6 +759,7 @@ export class GhosttyTerminalSurface {
     );
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
+    this.cursorBlinksRemaining = 2;
     this.scrollbarDirty = true;
     this.requestRender();
   }
@@ -768,6 +771,7 @@ export class GhosttyTerminalSurface {
     this.core.resetAndWrite(data);
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
+    this.cursorBlinksRemaining = 2;
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     this.requestRender();
@@ -821,6 +825,7 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return;
     // Restart from render; reduced motion left the steady cursor with no blink timer.
     this.cursorOn = true;
+    this.cursorBlinksRemaining = 2;
     this.requestRender();
   };
 
@@ -1238,6 +1243,7 @@ export class GhosttyTerminalSurface {
   private readonly onFocus = () => {
     this.focused = true;
     this.cursorOn = true;
+    this.cursorBlinksRemaining = 2;
     this.requestRender();
   };
 
@@ -2029,6 +2035,7 @@ export class GhosttyTerminalSurface {
     if (!this.blinkEnabled()) return;
     this.cursorTimer = window.setTimeout(() => {
       this.cursorTimer = null;
+      this.cursorBlinksRemaining -= 1;
       this.cursorOn = !this.cursorOn;
       this.requestRender();
     }, CURSOR_BLINK_INTERVAL_MS);
@@ -2036,7 +2043,8 @@ export class GhosttyTerminalSurface {
 
   private blinkEnabled(): boolean {
     const snapshot = this.snapshot;
-    if (!snapshot || !this.visible || !this.hasSize) return false;
+    if (!snapshot || !this.visible || !this.hasSize || this.cursorBlinksRemaining === 0)
+      return false;
     return shouldBlinkTerminalCursor({
       focused: this.focused,
       cursorBlinking: snapshot.cursorBlinking,

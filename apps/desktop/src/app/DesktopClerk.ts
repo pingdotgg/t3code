@@ -1,6 +1,6 @@
+import { desktopBootState } from "./desktopBootState.ts";
 import { createClerkBridge } from "@clerk/electron";
 import * as NodeURL from "node:url";
-import { storage } from "@clerk/electron/storage";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -21,7 +21,7 @@ import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
-import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
+import { openClerkTokenStorage, type ClerkTokenStorage } from "./ClerkTokenStore.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
@@ -55,6 +55,7 @@ export class DesktopClerkBridgeCleanupError extends Schema.TaggedError<DesktopCl
 export class DesktopClerk extends Context.Service<
   DesktopClerk,
   {
+    readonly registerProtocolClient: Effect.Effect<void>;
     readonly configure: Effect.Effect<
       void,
       never,
@@ -85,14 +86,25 @@ export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHos
     : __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__,
 );
 
+function createLazyClerkTokenStorage(directory: string): ClerkTokenStorage {
+  let adapter: Promise<ClerkTokenStorage> | undefined;
+  const load = () =>
+    (adapter ??= import("@clerk/electron/storage").then(({ storage }) =>
+      storage({ path: directory }),
+    ));
+  return {
+    getItem: async (key) => (await load()).getItem(key),
+    setItem: async (key, value) => (await load()).setItem(key, value),
+    removeItem: async (key) => (await load()).removeItem(key),
+  };
+}
+
 function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean, userDataPath: string) {
   return createClerkBridge({
-    storage: openClerkTokenStorage(
-      stateDir,
-      (directory) => storage({ path: directory }),
-      userDataPath,
-    ),
+    storage: openClerkTokenStorage(stateDir, createLazyClerkTokenStorage, userDataPath),
     manageSingleInstanceLock: false,
+    registerAsDefaultProtocolClient: false,
+    registerRendererScheme: !desktopBootState(),
     passkeys: true,
     renderer: {
       scheme: ElectronProtocol.getDesktopScheme(isDevelopment),
@@ -112,7 +124,8 @@ export const make = Effect.gen(function* () {
   yield* electronApp.setPath("userData", userDataPath);
 
   // Clerk skips the profile lock on macOS. Interrupt before runtime construction because quit is asynchronous.
-  if (!(yield* electronApp.requestSingleInstanceLock)) {
+  const boot = desktopBootState();
+  if (!boot && !(yield* electronApp.requestSingleInstanceLock)) {
     yield* electronApp.quit;
     return yield* Effect.interrupt;
   }
@@ -133,6 +146,8 @@ export const make = Effect.gen(function* () {
   yield* electronApp.on("open-url", (event: { preventDefault: () => void }, url: string) => {
     if (handleOpenUrl(url)) event.preventDefault();
   });
+
+  boot?.detachLinkListeners();
 
   yield* Effect.acquireRelease(
     Effect.try({
@@ -157,7 +172,25 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.orDie),
   );
 
+  // Replay after Clerk's OAuth transport is listening, including callbacks received during boot.
+  boot?.replayLinkEvents();
+
+  let protocolRegistrationScheduled = false;
+  const registerProtocolClient = Effect.gen(function* () {
+    if (protocolRegistrationScheduled) return;
+    protocolRegistrationScheduled = true;
+    // Give the painted window an event-loop turn before native OS registration.
+    yield* Effect.callback<void>((resume) => {
+      const immediate = setImmediate(() => resume(Effect.void));
+      return Effect.sync(() => clearImmediate(immediate));
+    });
+    yield* electronApp.setAsDefaultProtocolClient(
+      ElectronProtocol.getDesktopScheme(environment.isDevelopment),
+    );
+  });
+
   return DesktopClerk.of({
+    registerProtocolClient,
     configure: Effect.gen(function* () {
       const electronApp = yield* ElectronApp.ElectronApp;
       const electronWindow = yield* ElectronWindow.ElectronWindow;

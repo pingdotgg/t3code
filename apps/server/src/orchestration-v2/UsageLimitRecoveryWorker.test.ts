@@ -54,7 +54,6 @@ it.effect("idle sweeps skip SQL until the next wake time or a relevant event", (
     );
     yield* Effect.gen(function* () {
       assert.equal(yield* Queue.take(queries), 0);
-      // Eleven idle ticks before the recorded wake time, then the wake tick itself.
       yield* TestClock.adjust("60 seconds");
       assert.equal(yield* Queue.take(queries), 60_000);
       yield* Queue.offer(events, {
@@ -62,10 +61,9 @@ it.effect("idle sweeps skip SQL until the next wake time or a relevant event", (
         payload: { type: "assistant_message" },
       } as never);
       yield* TestClock.adjust("30 seconds");
+      assert.equal(yield* Queue.size(queries), 0);
       yield* Queue.offer(events, { type: "run.updated", payload: { status: "failed" } } as never);
-      yield* TestClock.adjust("5 seconds");
-      // A streaming item at 90s does not wake it; the failed run does on the 95s tick.
-      assert.equal(yield* Queue.take(queries), 95_000);
+      assert.equal(yield* Queue.take(queries), 90_000);
     }).pipe(Effect.provide(layer));
   }),
 );

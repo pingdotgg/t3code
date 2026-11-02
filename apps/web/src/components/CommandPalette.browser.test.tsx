@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
-import { render } from "../../test/render";
+import { act, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
+import { loadCommandPaletteDialog } from "../commandPaletteModule";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { CommandPalette } from "./CommandPalette";
 
@@ -14,6 +15,8 @@ describe("CommandPalette open intents", () => {
   it("opens New thread in... with focus in the search input, not the Back button", async () => {
     setup();
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(loadCommandPaletteDialog);
+    await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
 
     openCommandPalette({ open: "new-thread-in" });
 

@@ -9,6 +9,8 @@ import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { afterAll, beforeEach, vi } from "vite-plus/test";
 
@@ -81,6 +83,11 @@ const layerDesktopClerk = (
       events.push("requestSingleInstanceLock");
       return requestSingleInstanceLockMock();
     }),
+    setAsDefaultProtocolClient: (scheme: string) =>
+      Effect.sync(() => {
+        events.push(`register:${scheme}`);
+        return true;
+      }),
     quit: Effect.sync(() => {
       events.push("quit");
     }),
@@ -117,7 +124,7 @@ describe("DesktopClerk", () => {
     storageMock.mockReset();
   });
 
-  it.each([
+  it.live.each([
     {
       name: "packaged macOS",
       isDevelopment: false,
@@ -152,7 +159,7 @@ describe("DesktopClerk", () => {
         return { cleanup: vi.fn(), isPrimaryInstance: true };
       });
       // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- The assertion IS that the layer builds synchronously; it.effect would mask a regression to async.
-      Effect.runSync(
+      const context = Effect.runSync(
         Effect.scoped(
           Layer.build(
             layerDesktopClerk(isDevelopment, events, platform, DesktopPreReadyFileSystem.layer),
@@ -167,10 +174,41 @@ describe("DesktopClerk", () => {
         "on:open-url",
         "createClerkBridge",
       ]);
-      assert.deepEqual(storageMock.mock.calls, [
-        [{ path: NodePath.join(NodePath.resolve(clerkStateDir), "clerk") }],
-      ]);
-      assert.notStrictEqual(createClerkBridgeMock.mock.calls[0]?.[0]?.storage, storageAdapter);
+      assert.equal(
+        createClerkBridgeMock.mock.calls[0]?.[0]?.registerAsDefaultProtocolClient,
+        false,
+      );
+      const clerk = Context.get(context, DesktopClerk.DesktopClerk);
+      return Effect.gen(function* () {
+        const registration = yield* Effect.forkChild(clerk.registerProtocolClient);
+        assert.ok(!events.some((event) => event.startsWith("register:")));
+        yield* Fiber.join(registration);
+        yield* clerk.registerProtocolClient;
+        assert.deepEqual(
+          events.filter((event) => event.startsWith("register:")),
+          [`register:${isDevelopment ? "t3code-dev" : "t3code"}`],
+        );
+        assert.equal(storageMock.mock.calls.length, 0);
+        const tokenStorage = createClerkBridgeMock.mock.calls[0]?.[0]?.storage;
+        storageAdapter.getItem.mockResolvedValueOnce("saved-client");
+        assert.deepEqual(
+          yield* Effect.promise(() =>
+            Promise.all([
+              tokenStorage.getItem("client"),
+              tokenStorage.setItem("client", "updated-client"),
+              tokenStorage.removeItem("other"),
+            ]),
+          ),
+          ["saved-client", undefined, undefined],
+        );
+        assert.equal(storageAdapter.getItem.mock.lastCall?.[0], "client");
+        assert.deepEqual(storageAdapter.setItem.mock.lastCall, ["client", "updated-client"]);
+        assert.deepEqual(storageAdapter.removeItem.mock.lastCall, ["other"]);
+        assert.deepEqual(storageMock.mock.calls, [
+          [{ path: NodePath.join(NodePath.resolve(clerkStateDir), "clerk") }],
+        ]);
+        assert.notStrictEqual(createClerkBridgeMock.mock.calls[0]?.[0]?.storage, storageAdapter);
+      }).pipe(Effect.scoped);
     },
   );
 

@@ -1,7 +1,3 @@
-import { fromLenientJson } from "@t3tools/shared/schemaJson";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
-
 import {
   DEFAULT_LINUX_PASSWORD_STORE,
   normalizeLinuxPasswordStorePreference,
@@ -10,10 +6,10 @@ import {
   type LinuxPasswordStorePreference,
 } from "../linuxSecretStorage.ts";
 import {
-  resolveDesktopBaseDir,
-  resolveDesktopStateDir,
-  type JoinPath,
-} from "./DesktopStatePaths.ts";
+  earlyDesktopSettingsPath as resolveEarlyDesktopSettingsPath,
+  parseEarlySettings,
+} from "./earlySettings.ts";
+type JoinPath = (first: string, ...segments: string[]) => string;
 
 interface EarlyDesktopSettingsInput {
   readonly env: NodeJS.ProcessEnv;
@@ -38,42 +34,15 @@ const trimNonEmpty = (value: string | undefined): string | null => {
   return trimmed && trimmed.length > 0 ? trimmed : null;
 };
 
-const EarlyDesktopSettingsJson = fromLenientJson(
-  Schema.Struct({
-    linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
-  }),
-);
-const decodeEarlyDesktopSettingsJson = Schema.decodeSync(EarlyDesktopSettingsJson);
-
 const isDevelopmentEnvironment = (env: NodeJS.ProcessEnv): boolean =>
   trimNonEmpty(env.VITE_DEV_SERVER_URL) !== null;
-
-function resolveEarlyDesktopSettingsPath(input: {
-  readonly env: NodeJS.ProcessEnv;
-  readonly homeDirectory: string;
-  readonly joinPath: JoinPath;
-}): string {
-  const t3Home = Option.fromUndefinedOr(input.env.T3CODE_HOME);
-  const baseDir = resolveDesktopBaseDir({
-    homeDirectory: input.homeDirectory,
-    joinPath: input.joinPath,
-    t3Home,
-  });
-  const stateDir = resolveDesktopStateDir({
-    baseDir,
-    isDevelopment: isDevelopmentEnvironment(input.env),
-    joinPath: input.joinPath,
-    t3Home,
-  });
-  return input.joinPath(stateDir, "desktop-settings.json");
-}
 
 export function resolveEarlyLinuxPasswordStorePreference(
   input: EarlyDesktopSettingsInput,
 ): LinuxPasswordStorePreference {
   const settingsPath = resolveEarlyDesktopSettingsPath(input);
   try {
-    const parsed = decodeEarlyDesktopSettingsJson(input.readFileString(settingsPath));
+    const parsed = parseEarlySettings(input.readFileString(settingsPath));
     return normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore);
   } catch {
     return DEFAULT_LINUX_PASSWORD_STORE;
@@ -91,16 +60,6 @@ const isHyprlandSession = (env: NodeJS.ProcessEnv): boolean =>
     .split(":")
     .some((name) => name.trim().toLowerCase() === "hyprland");
 
-const HyprctlVersionJson = fromLenientJson(
-  Schema.Struct({
-    version: Schema.String,
-    tag: Schema.String,
-    commit: Schema.String,
-    dirty: Schema.Boolean,
-  }),
-);
-const decodeHyprctlVersionJson = Schema.decodeSync(HyprctlVersionJson);
-
 // Hyprland 0.48.0 rejects advertised set_primaries (hyprwm/Hyprland#9444); 0.51.0 accepts it (hyprwm/Hyprland#11499).
 // Check commits because dev and Nix builds can retain release versions and tags.
 const AFFECTED_HYPRLAND_RELEASE_COMMITS: ReadonlyMap<string, string> = new Map([
@@ -113,9 +72,13 @@ const AFFECTED_HYPRLAND_RELEASE_COMMITS: ReadonlyMap<string, string> = new Map([
 
 const hasBrokenColorManager = (readHyprctlVersionJson: () => string): boolean => {
   try {
-    const { version, tag, commit, dirty } = decodeHyprctlVersionJson(readHyprctlVersionJson());
+    const { version, tag, commit, dirty } = parseEarlySettings(readHyprctlVersionJson());
     return (
-      AFFECTED_HYPRLAND_RELEASE_COMMITS.get(version) === commit && tag === `v${version}` && !dirty
+      typeof version === "string" &&
+      typeof dirty === "boolean" &&
+      AFFECTED_HYPRLAND_RELEASE_COMMITS.get(version) === commit &&
+      tag === `v${version}` &&
+      !dirty
     );
   } catch {
     return false;
