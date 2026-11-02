@@ -28,6 +28,7 @@ import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-
 import {
   canSnooze,
   effectiveSnoozed,
+  snoozeWakeLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
@@ -215,12 +216,7 @@ import {
 } from "./Sidebar.drag";
 import { SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
-import {
-  pickSnoozePreset,
-  resolveSnoozePresets,
-  snoozeWakeShortLabel,
-  type SnoozePreset,
-} from "./Sidebar.snooze";
+import { pickSnoozePreset, resolveSnoozePresets, type SnoozePreset } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -3488,11 +3484,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }
                             snoozeWakeLabelText={
                               section === "snoozed" && thread.snoozedUntil != null
-                                ? snoozeWakeShortLabel(
-                                    thread.snoozedUntil,
-                                    new Date(),
-                                    timestampFormat,
-                                  )
+                                ? snoozeWakeLabel(thread.snoozedUntil, {
+                                    now: new Date().toISOString(),
+                                  })
                                 : null
                             }
                             wokeAt={threadWokeAt(thread, { now: snoozeNow })}

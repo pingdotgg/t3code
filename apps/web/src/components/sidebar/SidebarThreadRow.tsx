@@ -655,8 +655,7 @@ type SidebarThreadRowProps = {
   dropVerb: SidebarDropVerb | null;
   dragOverPinned: boolean;
   sweepAction: SidebarSweepAction | null;
-  // Absolute wake time ("9:00", "Mon 9:00") for rows in the
-  // snoozed shelf.
+  // Relative wake time ("30m", "2h", "3d") for rows in the snoozed shelf.
   snoozeWakeLabelText: string | null;
   wokeAt: string | null;
   isActive: boolean;
