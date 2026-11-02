@@ -46,8 +46,8 @@ import {
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
-  removeAntigravityRuntimeTempDirs,
   removeAntigravitySessionFiles,
+  retireAntigravityRuntimeTempDirs,
 } from "../acp/AntigravitySessionFiles.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -150,9 +150,11 @@ export const AntigravityDriver: ProviderDriver<
       directories.runtimeTemp,
       path.join(profileDirectory, "antigravity-acp", "tmp"),
     ]) {
-      yield* removeAntigravityRuntimeTempDirs(directory).pipe(
+      const removeRetired = yield* retireAntigravityRuntimeTempDirs(directory).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
       );
+      yield* Effect.forkScoped(removeRetired);
     }
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER,
@@ -242,6 +244,7 @@ export const AntigravityDriver: ProviderDriver<
       );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...input,
+        runtimeVersion: executable.version,
         authMethod: auth.authMethod,
         childProcessSpawner: spawner,
         spawn: buildAntigravityAcpSpawnInput({
@@ -345,7 +348,11 @@ export const AntigravityDriver: ProviderDriver<
     const authFlow: AntigravityAuth = yield* makeAntigravityAuth({
       instanceId,
       makeRuntime: makeDisposableRuntime,
-      onAuthenticated: publishCatalog,
+      // A new sign-in may be another account; drop any in-flight quota read first.
+      onAuthenticated: (started, runtime) =>
+        Effect.suspend(() => provider.onSignedIn).pipe(
+          Effect.andThen(publishCatalog(started, runtime)),
+        ),
       onSignedOut: Effect.suspend(() => provider.onSignedOut),
       usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
     });
@@ -427,6 +434,7 @@ export const AntigravityDriver: ProviderDriver<
       makeRuntime,
       withProcess: authFlow.withProcess,
       defaultModel,
+      profileDirectory,
       onSessionStarted: provider.onSessionStarted,
       onSessionEvent: (event) => {
         if (event._tag === "ConfigOptionsUpdated") {
