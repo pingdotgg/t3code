@@ -112,9 +112,16 @@ export function ThreadRouteView({
         : hiddenKeys.has(unlistedParentKey));
   const hiddenByTagFilter =
     serverThreadRef !== null && (hiddenKeys.has(threadKey(serverThreadRef)) || unlistedHidden);
-  // Cached detail can predate a tag or an archive, so while hiding wait for the server's copy.
-  const awaitingLiveDetail =
-    hidingAnywhere && unlistedThreadRef !== null && unlistedThreadDetail.status !== "live";
+  // Cached detail can predate a tag or an archive, so while hiding an off-shell thread opens only
+  // as the child of a loaded, visible parent (lineage never changes); anything else stays closed.
+  const offShellBlocked =
+    hidingAnywhere &&
+    unlistedThreadRef !== null &&
+    !(
+      unlistedParentKey !== null &&
+      unlistedParentShell !== null &&
+      !hiddenKeys.has(unlistedParentKey)
+    );
   const renderState = resolveThreadRouteRenderState({
     bootstrapComplete,
     serverThreadExists: serverThreadShell !== null,
@@ -186,8 +193,8 @@ export function ThreadRouteView({
     }
   } else if (hiddenByTagFilter) {
     redirect = <Navigate to="/" replace />;
-  } else if (awaitingLiveDetail) {
-    view = null;
+  } else if (offShellBlocked) {
+    if (unlistedThread !== null) redirect = <Navigate to="/" replace />;
   } else if (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null)) {
     view = (
       <ChatView
