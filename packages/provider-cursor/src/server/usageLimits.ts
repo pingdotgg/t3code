@@ -16,10 +16,10 @@ import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
+import { DEFAULT_CURSOR_API_ENDPOINT, exchangeCursorApiKey } from "./apiKey.ts";
 import * as CursorKeychain from "./CursorKeychain.ts";
 
 const CursorCredentials = Schema.Struct({ accessToken: Schema.optional(Schema.String) });
-const DEFAULT_CURSOR_API_ENDPOINT = "https://api2.cursor.sh";
 const decodeCredentials = Schema.decodeEffect(Schema.fromJsonString(CursorCredentials));
 const CursorUsageResponse = Schema.Struct({
   billingCycleEnd: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
@@ -77,19 +77,25 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
       DEFAULT_CURSOR_API_ENDPOINT
     ).replace(/\/$/, "");
     let token = environment.CURSOR_AUTH_TOKEN?.trim();
-    // An explicit API key can name a different account from the stored login.
-    if (!token && environment.CURSOR_API_KEY?.trim()) {
-      return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
-    }
+    const apiKey = environment.CURSOR_API_KEY?.trim();
     const credentialStore = environment.AGENT_CLI_CREDENTIAL_STORE;
-    if (!token && credentialStore === "memory") {
+    // An API key can name a different account from the stored login, so read the key's own.
+    if (!token && apiKey) {
+      if (endpoint !== DEFAULT_CURSOR_API_ENDPOINT) {
+        return makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "unsupported",
+          message: "Cursor usage for an API key requires the default Cursor endpoint.",
+        });
+      }
+      token = yield* exchangeCursorApiKey(apiKey);
+    } else if (!token && credentialStore === "memory") {
       return makeUnavailableUsageLimits({
         checkedAt,
         reason: "unsupported",
         message: "Cursor usage requires a CLI login or CURSOR_AUTH_TOKEN.",
       });
-    }
-    if (!token && platform === "darwin" && credentialStore !== "file") {
+    } else if (!token && platform === "darwin" && credentialStore !== "file") {
       if (!allowKeychain) {
         return makeUnavailableUsageLimits({
           checkedAt,
