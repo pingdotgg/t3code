@@ -255,7 +255,7 @@ export function DraftHeroHeadline({
       <DraftProjectRow
         key={group.projectKey}
         selected={!isScratchDraft && group.projectKey === activeProjectKey}
-        icon={<ProjectFavicon project={group} className="size-4 shrink-0" />}
+        icon={<ProjectFavicon project={targetProject} className="size-4 shrink-0" />}
         label={targetProject.title}
         badge={
           showProjectEnvironments ? (
