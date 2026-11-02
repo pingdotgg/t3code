@@ -404,6 +404,7 @@ export function parseChangeRequestPath(url: URL, route: RegExp): ParsedChangeReq
         repository: repository.toLowerCase(),
         number,
         repositoryUrl: `${url.origin}/${repository}`,
+        ...(url.port ? { authority: url.host.toLowerCase() } : {}),
       }
     : null;
 }
