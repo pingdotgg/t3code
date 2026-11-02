@@ -1922,6 +1922,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           }),
         ].map((provider) => ({
           ...provider,
+          supportedRuntimeModes: ["approval-required", "full-access"] as const,
           models: provider.models.map((model) => ({
             ...model,
             capabilities: {
@@ -1939,6 +1940,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         const catalog = yield* Ref.make<ReadonlyArray<ServerProvider>>(snapshots);
         const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
         const accepted = yield* Ref.make(false);
+        const parentLimited = yield* Ref.make(false);
         const everyCandidateDisabled = yield* Ref.make(false);
         const task = {
           id: taskId,
@@ -1964,12 +1966,20 @@ describe("OrchestratorMcpService provider resolution", () => {
           NodeServices.layer,
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadRecords: (threadId) =>
-              Ref.get(accepted).pipe(
-                Effect.map((isAccepted) =>
-                  threadId === parentThreadId
-                    ? parentProjection(isAccepted ? [task] : [])
-                    : childProjection,
-                ),
+              Effect.all([Ref.get(accepted), Ref.get(parentLimited)]).pipe(
+                Effect.map(([isAccepted, limited]) => {
+                  if (threadId !== parentThreadId) return childProjection;
+                  const parent = parentProjection(isAccepted ? [task] : []);
+                  return {
+                    ...parent,
+                    thread: {
+                      ...parent.thread,
+                      runtimeMode: limited
+                        ? ("approval-required" as const)
+                        : parent.thread.runtimeMode,
+                    },
+                  };
+                }),
               ),
             getThreadShell: (id) =>
               Effect.succeed({
@@ -2035,6 +2045,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           const first = yield* service.delegateTask(scope, {
             task: "Summarize the diff.",
             target: requestedTarget,
+            runtimeMode: "full-access",
             mode: "async",
             clientRequestId: "delegate-driver-retry-after-disable-1",
           });
@@ -2048,16 +2059,17 @@ describe("OrchestratorMcpService provider resolution", () => {
           yield* Ref.set(everyCandidateDisabled, true);
           yield* Ref.set(
             catalog,
-            snapshots.map((provider) =>
-              crossProject && provider.instanceId === altInstanceId
-                ? { ...provider, models: [] }
-                : provider,
-            ),
+            snapshots.map((provider) => ({
+              ...provider,
+              supportedRuntimeModes: ["approval-required"] as const,
+              models: crossProject && provider.instanceId === altInstanceId ? [] : provider.models,
+            })),
           );
 
           const retry = yield* service.delegateTask(scope, {
             task: "Summarize the diff.",
             target: requestedTarget,
+            runtimeMode: "full-access",
             mode: "async",
             clientRequestId: "delegate-driver-retry-after-disable-1",
           });
@@ -2069,6 +2081,18 @@ describe("OrchestratorMcpService provider resolution", () => {
             modelSelection: { instanceId: string; model: string };
           };
           assert.deepEqual(retryCommand.modelSelection, selection);
+          yield* Ref.set(parentLimited, true);
+          const narrowed = yield* service
+            .delegateTask(scope, {
+              task: "Summarize the diff.",
+              target: requestedTarget,
+              runtimeMode: "full-access",
+              mode: "async",
+              clientRequestId: "delegate-driver-retry-after-disable-1",
+            })
+            .pipe(Effect.flip);
+          assert.equal(narrowed.code, "runtime_mode_escalation_denied");
+          assert.lengthOf(yield* Ref.get(dispatched), 2);
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
       }),
   );

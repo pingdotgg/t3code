@@ -2365,9 +2365,8 @@ const make = Effect.gen(function* () {
           ? yield* resolveTargetRechecking({ parent, projectId, target: input.target, providers })
           : {
               modelSelection: committedChild.modelSelection,
-              supportedRuntimeModes: providers.find(
-                (provider) => provider.instanceId === committedChild.modelSelection.instanceId,
-              )?.supportedRuntimeModes,
+              // Receipt replays start no work; only the parent-mode ceiling applies.
+              supportedRuntimeModes: undefined,
             };
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
