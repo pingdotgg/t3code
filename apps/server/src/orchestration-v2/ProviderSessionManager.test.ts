@@ -3784,6 +3784,80 @@ it.effect(
 );
 
 it.effect(
+  "ProviderSessionManagerV2 MCP app calls reuse any load of the thread without hiding a turn's resume",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const runtimeCalls = yield* Ref.make<ReadonlyArray<string>>([]);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const turnThreadId = ThreadId.make("mcp-app-turn-thread");
+        const cardThreadId = ThreadId.make("mcp-app-card-thread");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const turnProviderThread = makeProviderThread({
+          idAllocator,
+          threadId: turnThreadId,
+          providerSessionId,
+          now,
+          nativeThreadId: "native-turn",
+        });
+        const cardProviderThread = makeProviderThread({
+          idAllocator,
+          threadId: cardThreadId,
+          providerSessionId,
+          now,
+          nativeThreadId: "native-card",
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: turnThreadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: cardThreadId, now }),
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId: turnThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const resumeForTurn = (providerThread: typeof turnProviderThread, threadId: ThreadId) =>
+          runtime.resumeThread({ providerThread, threadId, modelSelection, runtimePolicy });
+        const mcpApps = runtime.mcpApps;
+        assert.isDefined(mcpApps);
+
+        yield* resumeForTurn(turnProviderThread, turnThreadId);
+        yield* mcpApps!.listTools({ providerThread: turnProviderThread, server: "rating" });
+        yield* mcpApps!.listTools({ providerThread: cardProviderThread, server: "rating" });
+        yield* resumeForTurn(cardProviderThread, cardThreadId);
+
+        assert.deepEqual(yield* Ref.get(runtimeCalls), [
+          "resume native-turn mcp=true",
+          "listTools native-turn",
+          "resume native-card mcp=true",
+          "listTools native-card",
+          "resume native-card mcp=true",
+        ]);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            runtimeCalls,
+            hasPendingBackgroundWork: Effect.succeed(true),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 rejects a second thread when the provider runtime is exclusive",
   () =>
     Effect.gen(function* () {
