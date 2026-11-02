@@ -1,7 +1,21 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Schema from "effect/Schema";
 import { totalTokens } from "@t3tools/provider-core/server/usage";
 
-import { codexUsageFormat, initialCodexScanState, parseCodexLine } from "./codexUsage.ts";
+import {
+  codexUsageFormat,
+  initialCodexScanState,
+  parseCodexLine as parseCodexRecords,
+  CodexScanState,
+} from "./codexUsage.ts";
+
+const decodeCodexScanState = Schema.decodeUnknownSync(CodexScanState);
+
+function parseCodexLine(line: string, state: CodexScanState) {
+  const records = parseCodexRecords(line, state);
+  expect(records.length).toBeLessThanOrEqual(1);
+  return records[0] ?? null;
+}
 
 describe("parseCodexLine", () => {
   const sessionMeta = JSON.stringify({
@@ -48,6 +62,116 @@ describe("parseCodexLine", () => {
         info: { last_token_usage: last, total_token_usage: total, ...extra },
       },
     });
+
+  const recorded = (usage: unknown, turn_id = "turn-1") =>
+    JSON.stringify({
+      type: "token_usage_record",
+      timestamp: "2026-08-01T05:17:48.919Z",
+      payload: { turn_id, response_id: "response", usage },
+    });
+
+  it("recovers an interrupted request only when pending usage exactly explains the next snapshot", () => {
+    let state = initialCodexScanState();
+    const first = counters(100, 20);
+    const interrupted = counters(150, 10);
+    const next = counters(200, 30);
+    const lines = [
+      sessionMeta.replace('"id":', '"model_provider":"openai","id":'),
+      turnContext.replace('"model":', '"turn_id":"turn-1","model":'),
+      recorded(first),
+      counted(first, first),
+      recorded(interrupted),
+      JSON.stringify({ type: "event_msg", payload: { type: "turn_aborted", turn_id: "turn-1" } }),
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-6-sol", turn_id: "turn-2" } }),
+      JSON.stringify({
+        type: "event_msg",
+        payload: { type: "thread_settings_applied", thread_settings: { service_tier: "fast" } },
+      }),
+      recorded(next, "turn-2"),
+      counted(next, counters(450, 60)),
+    ];
+    const records = lines.flatMap((line) => {
+      state = decodeCodexScanState(JSON.parse(JSON.stringify(state)));
+      return codexUsageFormat.parseLine(line, state);
+    });
+
+    expect(records.map((record) => totalTokens(record.totals))).toEqual([120, 160, 230]);
+    expect(records.map((record) => record.model)).toEqual([
+      "gpt-5.6-sol",
+      "gpt-5.6-sol",
+      "gpt-6-sol",
+    ]);
+    expect(records.map((record) => record.unresolvedServiceTierTurnId)).toEqual([
+      "turn-1",
+      "turn-1",
+      undefined,
+    ]);
+    expect(records.map((record) => record.speed)).toEqual(["standard", "standard", "fast"]);
+    expect(records[1]?.timestampMs).toBe(Date.parse("2026-08-01T05:17:48.919Z"));
+    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+    expect(codexUsageFormat.parseLine(counted(next, counters(450, 60)), state)).toEqual([]);
+  });
+
+  it("keeps counters authoritative when multiple request records precede a single-request delta", () => {
+    const state = initialCodexScanState();
+    const records = [
+      turnContext,
+      counted(counters(100, 20), counters(100, 20)),
+      recorded(counters(150, 10)),
+      recorded(counters(200, 30)),
+      counted(counters(200, 30), counters(300, 50)),
+      recorded(counters(10, 2)),
+      counted(counters(10, 2), counters(310, 52)),
+    ].flatMap((line) => codexUsageFormat.parseLine(line, state));
+    expect(records.map((record) => totalTokens(record.totals))).toEqual([120, 230, 12]);
+    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+  });
+
+  it("requires every pending counter and the latest request to match, then discards the evidence", () => {
+    const interrupted = {
+      ...counters(150, 10),
+      cached_input_tokens: 30,
+      reasoning_output_tokens: 5,
+    };
+    const next = counters(200, 30);
+    for (const field of Object.keys(interrupted) as (keyof typeof interrupted)[]) {
+      const state = initialCodexScanState();
+      const changed = { ...interrupted, [field]: interrupted[field] + 1 };
+      if (field === "input_tokens" || field === "output_tokens") changed.total_tokens += 1;
+      const records = [
+        turnContext,
+        counted(counters(100, 20), counters(100, 20)),
+        recorded(changed),
+        recorded(next),
+        counted(next, {
+          ...counters(450, 60),
+          cached_input_tokens: 30,
+          reasoning_output_tokens: 5,
+        }),
+        counted(next, {
+          ...counters(800, 100),
+          cached_input_tokens: 60,
+          reasoning_output_tokens: 10,
+        }),
+      ].flatMap((line) => codexUsageFormat.parseLine(line, state));
+      expect(
+        records.map((record) => totalTokens(record.totals)),
+        field,
+      ).toEqual([120]);
+      expect(codexUsageFormat.readMalformedRecords?.(state), field).toBe(2);
+    }
+
+    const state = initialCodexScanState();
+    const records = [
+      turnContext,
+      counted(counters(100, 20), counters(100, 20)),
+      recorded(counters(200, 30)),
+      recorded(counters(150, 10)),
+      counted(next, counters(450, 60)),
+    ].flatMap((line) => codexUsageFormat.parseLine(line, state));
+    expect(records.map((record) => totalTokens(record.totals))).toEqual([120]);
+    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(1);
+  });
 
   it("attributes usage to the model from the preceding turn context", () => {
     const state = initialCodexScanState();
