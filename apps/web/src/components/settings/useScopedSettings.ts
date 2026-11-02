@@ -50,6 +50,7 @@ function confirmedEnvironments(environments: ReturnType<typeof useSettingsScope>
 
 const savedSettings = (environmentId: PendingScopedWrite["environmentId"]) =>
   appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.settings;
+const pendingConfigSubscriptions = new Map<PendingScopedWrite["environmentId"], () => void>();
 
 function updatePendingScopedWrites(
   update: (writes: readonly PendingScopedWrite[]) => readonly PendingScopedWrite[],
@@ -59,6 +60,25 @@ function updatePendingScopedWrites(
       pendingScopedWriteApplies(write, savedSettings(write.environmentId)),
     ),
   );
+  const environments = new Set(
+    appAtomRegistry.get(pendingScopedWritesAtom).map((write) => write.environmentId),
+  );
+  for (const [environmentId, unsubscribe] of pendingConfigSubscriptions) {
+    if (environments.has(environmentId)) continue;
+    unsubscribe();
+    pendingConfigSubscriptions.delete(environmentId);
+  }
+  for (const environmentId of environments) {
+    if (pendingConfigSubscriptions.has(environmentId)) continue;
+    pendingConfigSubscriptions.set(
+      environmentId,
+      appAtomRegistry.subscribe(
+        serverEnvironment.configValueAtom(environmentId),
+        () => updatePendingScopedWrites((current) => current),
+        { immediate: false },
+      ),
+    );
+  }
 }
 
 export function useScopedSettings<T = UnifiedSettings>(
@@ -90,34 +110,41 @@ function useRunScopedPlan() {
       onFailed?.();
       return Promise.resolve();
     }
-    const pending = plan.serverWrites.map(({ environmentId, patch }): PendingScopedWrite => ({
-      environmentId,
-      patch,
-    }));
-    updatePendingScopedWrites((current) => [...current, ...pending]);
+    const pending = plan.serverWrites.map(
+      ({ environmentId, patch, previous }): PendingScopedWrite => ({
+        environmentId,
+        patch,
+        savedOver: savedSettings(environmentId) ?? previous,
+      }),
+    );
+    updatePendingScopedWrites((current) => [
+      ...current,
+      ...pending.map((write) => {
+        const previous = current
+          .filter(
+            (candidate) =>
+              candidate.environmentId === write.environmentId && candidate.confirmed !== undefined,
+          )
+          .at(-1);
+        return {
+          ...write,
+          predecessors: previous?.confirmed
+            ? [...(previous.predecessors ?? []), previous.confirmed]
+            : [],
+        };
+      }),
+    ]);
     const settle = (
       target: Pick<PendingScopedWrite, "environmentId" | "patch">,
       confirmed?: ServerSettings,
     ) =>
-      updatePendingScopedWrites((current) => {
-        const previous = current
-          .filter(
-            (write) =>
-              write.environmentId === target.environmentId && write.confirmed !== undefined,
-          )
-          .at(-1);
-        const predecessors = previous?.confirmed
-          ? [...(previous.predecessors ?? []), previous.confirmed]
-          : [];
-        return current.flatMap((write) => {
+      updatePendingScopedWrites((current) =>
+        current.flatMap((write) => {
           if (write.environmentId !== target.environmentId || write.patch !== target.patch)
             return [write];
-          const savedOver = savedSettings(write.environmentId);
-          return confirmed && savedOver !== undefined
-            ? [{ ...write, savedOver, confirmed, predecessors }]
-            : [];
-        });
-      });
+          return confirmed ? [{ ...write, confirmed }] : [];
+        }),
+      );
     return persistScopedSettingsPatch(
       plan,
       async (request) => {
