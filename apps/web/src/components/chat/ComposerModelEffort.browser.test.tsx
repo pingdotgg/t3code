@@ -42,6 +42,7 @@ const models: ReadonlyArray<ServerProviderModel> = [
             { id: "low", label: "Low" },
             { id: "medium", label: "Medium" },
             { id: "high", label: "High" },
+            { id: "max", label: "Max" },
           ],
         },
         {
@@ -88,25 +89,48 @@ function Column() {
   );
 }
 
-it("draws an agent's reasoning as bars and keeps its mode out of the levels", async () => {
+it("navigates an agent's reasoning by letter and arrow and keeps its mode out of the levels", async () => {
   await using screen = await render(<Column />, { router: false }); // no routes involved
   const status = screen.getByRole("status");
   expect(status.element().querySelector("[data-composer-effort-glyph]")).not.toBeNull();
   await expect.element(status).toHaveTextContent("");
 
   const levels = screen.getByRole("radiogroup", { name: "Thinking" });
-  await expect.element(levels.getByRole("radio")).toHaveLength(3);
+  await expect.element(levels.getByRole("radio")).toHaveLength(4);
   await expect.element(screen.getByRole("radio", { name: "Plan" })).not.toBeInTheDocument();
 
-  // Up and Down walk from the levels through the option rows without opening their menus.
   await userEvent.tab();
   await expect.element(screen.getByRole("radio", { name: "Medium" })).toHaveFocus();
-  await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
+  await userEvent.keyboard("{Control>}h{/Control}");
+  await expect.element(screen.getByRole("radio", { name: "Medium" })).toHaveFocus();
+  await userEvent.keyboard("h");
+  await expect.element(screen.getByRole("radio", { name: "High" })).toHaveFocus();
+  await userEvent.keyboard("q");
+  await expect.element(screen.getByRole("radio", { name: "High" })).toHaveFocus();
+  await expect
+    .element(screen.getByRole("radio", { name: "Medium" }))
+    .toHaveAttribute("aria-checked", "true");
+  await userEvent.keyboard("{Enter}");
+  await expect
+    .element(screen.getByRole("radio", { name: "High" }))
+    .toHaveAttribute("aria-checked", "true");
+  await userEvent.keyboard("l{Enter}{ArrowDown}");
+  await expect
+    .element(screen.getByRole("radio", { name: "Low" }))
+    .toHaveAttribute("aria-checked", "true");
+  await expect.element(screen.getByRole("radio", { name: "Medium" })).toHaveFocus();
+  await userEvent.keyboard("m");
+  await expect.element(screen.getByRole("radio", { name: "Max" })).toHaveFocus();
+  await userEvent.keyboard("M");
+  await expect.element(screen.getByRole("radio", { name: "Medium" })).toHaveFocus();
+  await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}");
   const speed = screen.getByRole("button", { name: "Speed: Standard" });
   await expect.element(speed).toHaveFocus();
   await expect.element(page.getByRole("menuitemradio")).not.toBeInTheDocument();
   await userEvent.keyboard("{ArrowRight}");
   await expect.element(page.getByRole("menuitemradio", { name: "Standard" })).toHaveFocus();
+  await userEvent.keyboard("f");
+  await expect.element(page.getByRole("menuitemradio", { name: "Fast" })).toHaveFocus();
   await userEvent.keyboard("{ArrowLeft}");
   await expect.element(page.getByRole("menuitemradio")).not.toBeInTheDocument();
   await expect.element(speed).toHaveFocus();
