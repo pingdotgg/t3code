@@ -295,6 +295,10 @@ function cursorSource(summary: { readonly sources: readonly UsageSource[] }) {
   return summary.sources.find((source) => source.fingerprint.provider === "cursor");
 }
 
+function cursorSources(summary: { readonly sources: readonly UsageSource[] }) {
+  return summary.sources.filter((source) => source.fingerprint.provider === "cursor");
+}
+
 const seedCodexHistory = (input: {
   id: string;
   nativeTurnId?: string;
@@ -1637,9 +1641,35 @@ describe("UsageService", () => {
       yield* TestClock.setTime(CURSOR_NOW);
       const cursor = makeFakeCursor();
       cursor.state.events = [{ timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 7 }];
-      const summary = yield* Effect.gen(function* () {
-        const service = yield* makeWithCursor(cursor.read);
-        return yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+      let revoked = false;
+      yield* Effect.gen(function* () {
+        const service = yield* makeWithCursor((credential, sinceMs, untilMs) =>
+          revoked && (credential as { apiKey?: string }).apiKey === "second-key"
+            ? Effect.succeed({
+                accountKey: null,
+                records: [],
+                missing: false,
+                error: "Cursor account usage could not be read.",
+              })
+            : cursor.read(credential, sinceMs, untilMs),
+        );
+        const first = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.strictEqual(cursor.state.credentials.length, 2);
+        assert.deepStrictEqual(
+          cursorSources(first).map((source) => source.distinctSessions),
+          [1],
+        );
+
+        // The revoked key keeps its stale cache, which must not replace the working key's history.
+        revoked = true;
+        cursor.state.events.push({ timestampMs: CURSOR_NOW - 2 * HOUR_MS, outputTokens: 5 });
+        yield* TestClock.adjust(Duration.minutes(2));
+        const second = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.deepStrictEqual(
+          cursorSources(second).map((source) => source.status),
+          ["ok"],
+        );
+        assert.strictEqual(totalOutputTokens(second), 12);
       }).pipe(
         Effect.provide(
           layerService({
@@ -1663,12 +1693,6 @@ describe("UsageService", () => {
             environment: {},
           }),
         ),
-      );
-      assert.strictEqual(cursor.state.credentials.length, 2);
-      const sources = summary.sources.filter((source) => source.fingerprint.provider === "cursor");
-      assert.deepStrictEqual(
-        sources.map((source) => source.distinctSessions),
-        [1],
       );
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
