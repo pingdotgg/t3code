@@ -301,6 +301,7 @@ export const PIPELINE_STAGES_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String
             detailedStatus { label detailsPath }
             jobs(first: 100) { nodes { name status allowFailure webPath } }
           }
+          pageInfo { hasNextPage }
         }
       }
     }
@@ -340,7 +341,16 @@ const RawPipelineStagesSchema = Schema.Struct({
                     path: OptionalString,
                     stages: Schema.optional(
                       Schema.NullOr(
-                        Schema.Struct({ nodes: Schema.Array(Schema.NullOr(RawStageSchema)) }),
+                        Schema.Struct({
+                          nodes: Schema.Array(Schema.NullOr(RawStageSchema)),
+                          pageInfo: Schema.optional(
+                            Schema.NullOr(
+                              Schema.Struct({
+                                hasNextPage: Schema.optional(Schema.NullOr(Schema.Boolean)),
+                              }),
+                            ),
+                          ),
+                        }),
                       ),
                     ),
                   }),
@@ -358,8 +368,8 @@ const decodePipelineStages = decodeJsonResult(RawPipelineStagesSchema);
 
 /**
  * The head pipeline as one check per stage, GitLab's own stage status included, except that a
- * failed stage is shown as the jobs that failed it. Null where there are no stages to show, so
- * the caller keeps the single pipeline check. `origin` turns GitLab's relative paths into links.
+ * failed stage is shown as the jobs that failed it. Null where there are no stages to show, or
+ * more than one page of them, so the caller keeps the single pipeline check. `origin` turns GitLab's relative paths into links.
  */
 export function decodePipelineStageChecksJson(
   raw: string,
@@ -370,6 +380,9 @@ export function decodePipelineStageChecksJson(
     return Result.fail(decoded.failure);
   }
   const pipeline = decoded.success.data?.project?.mergeRequest?.headPipeline;
+  if (pipeline?.stages?.pageInfo?.hasNextPage === true) {
+    return Result.succeed(null);
+  }
   const link = (path: string | null) => (path?.startsWith("/") ? `${origin}${path}` : null);
   const checks: Array<PullRequestCheck> = [];
   for (const stage of pipeline?.stages?.nodes ?? []) {

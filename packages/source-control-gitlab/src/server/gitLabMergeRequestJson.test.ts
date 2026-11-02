@@ -239,7 +239,10 @@ describe("decodeMergeRequestDetailJson", () => {
 });
 
 describe("decodePipelineStageChecksJson", () => {
-  function stagesJson(stages: ReadonlyArray<Record<string, unknown>> | null): string {
+  function stagesJson(
+    stages: ReadonlyArray<Record<string, unknown>> | null,
+    hasNextPage = false,
+  ): string {
     return JSON.stringify({
       data: {
         project: {
@@ -247,7 +250,10 @@ describe("decodePipelineStageChecksJson", () => {
             headPipeline:
               stages === null
                 ? null
-                : { path: "/fork/web/-/pipelines/9", stages: { nodes: stages } },
+                : {
+                    path: "/fork/web/-/pipelines/9",
+                    stages: { nodes: stages, pageInfo: { hasNextPage } },
+                  },
           },
         },
       },
@@ -368,6 +374,15 @@ describe("decodePipelineStageChecksJson", () => {
     expect(expectSuccess(decodePipelineStageChecksJson(stagesJson([]), "https://gitlab.com"))).toBe(
       null,
     );
+    // A stage past the first page could be the failed one.
+    expect(
+      expectSuccess(
+        decodePipelineStageChecksJson(
+          stagesJson([{ name: "build", status: "success" }], true),
+          "https://gitlab.com",
+        ),
+      ),
+    ).toBe(null);
     // GitLab answers an error it hit with no data at all.
     expect(
       expectSuccess(
