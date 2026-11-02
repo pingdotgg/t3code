@@ -5,8 +5,10 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import {
+  homebrewOwnershipFromCommandPath,
   makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
+  resolveHomebrewProviderMaintenance,
   type ProviderMaintenanceCapabilitiesResolver,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import { FX_DRIVER_KIND } from "./acpSupport.ts";
@@ -26,32 +28,33 @@ export const fetchLatestFxVersion = Effect.fn("fetchLatestFxVersion")(function* 
   );
 });
 
-/**
- * `fx upgrade` replaces the executable it runs from, so the update runs the
- * instance's resolved binary, wherever `binaryPath` points. fx after 0.0.13
- * needs macOS 15 (Darwin 24) and `fx upgrade` does not check, so older Macs
- * get no update offer or latest-version check.
- */
+// fx after 0.0.13 needs Darwin 24, but its updater does not check the host version.
 export const makeFxMaintenance = (
   lookupLatestVersion: Effect.Effect<string | null>,
   osRelease: string = NodeOS.release(),
 ): ProviderMaintenanceCapabilitiesResolver => ({
-  resolve: (context) =>
-    Effect.succeed(
-      context === null || (context.platform === "darwin" && Number.parseInt(osRelease, 10) < 24)
-        ? makeManualOnlyProviderMaintenanceCapabilities({
-            provider: FX_DRIVER_KIND,
-            packageName: null,
-          })
-        : makeProviderMaintenanceCapabilities({
-            provider: FX_DRIVER_KIND,
-            packageName: null,
-            updateExecutable: context.resolvedCommandPath,
-            updateArgs: ["upgrade"],
-            updateLockKey: `fx:${context.realCommandPath}`,
-            platform: context.platform,
-            env: context.env,
-            lookupLatestVersion,
-          }),
-    ),
+  resolve: Effect.fn("FxMaintenance.resolve")(function* (context) {
+    const input = { provider: FX_DRIVER_KIND, packageName: null };
+    const manualOnly = makeManualOnlyProviderMaintenanceCapabilities(input);
+    if (
+      context === null ||
+      (context.platform === "darwin" && Number.parseInt(osRelease, 10) < 24)
+    ) {
+      return manualOnly;
+    }
+    const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
+    if (homebrew) {
+      if (homebrew.kind !== "formula" || homebrew.name !== "fx-agent") return manualOnly;
+      return (yield* resolveHomebrewProviderMaintenance(input, homebrew, context)) ?? manualOnly;
+    }
+    return makeProviderMaintenanceCapabilities({
+      ...input,
+      updateExecutable: context.resolvedCommandPath,
+      updateArgs: ["upgrade"],
+      updateLockKey: `fx:${context.realCommandPath}`,
+      platform: context.platform,
+      env: context.env,
+      lookupLatestVersion,
+    });
+  }),
 });
