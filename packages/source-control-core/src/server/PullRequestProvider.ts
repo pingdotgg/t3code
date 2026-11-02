@@ -53,6 +53,11 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
     ]),
     detail: Schema.String,
     retryAt: Schema.optional(Schema.Number),
+    /**
+     * Why the host would not return a repository and what to change, in the reader's terms.
+     * Shown beside that repository in the list; `detail` is about the failed call instead.
+     */
+    accessHint: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -69,6 +74,7 @@ export interface ProviderChangeRequestWatchFingerprint {
 export interface PullRequestProviderFailure {
   readonly reason: PullRequestProviderError["reason"];
   readonly retryAt?: number | undefined;
+  readonly accessHint?: string | undefined;
 }
 
 export interface ProviderChangeRequest {
@@ -302,6 +308,11 @@ export interface PullRequestProviderApi {
    * definition's `publicHost` can be read from a project with no checkout of its repository.
    */
   readonly readsPublicHostWithoutCheckout?: boolean;
+  /**
+   * Absent means every host detected as this kind is read. A host it refuses is listed as one that
+   * cannot be browsed here, and nothing is sent for it.
+   */
+  readonly servesHost?: (host: string) => boolean;
 
   readonly getViewer: (input: {
     readonly cwd: string;
@@ -352,6 +363,16 @@ export interface PullRequestProviderApi {
   readonly getChangeRequest: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestDetail, PullRequestProviderError>;
+
+  /**
+   * For a provider that holds change request reads of its own: called when the service drops its
+   * reads, so a refresh or a finished turn reaches the host. No scope forgets everything; a scope
+   * without a number forgets the repository's change requests.
+   */
+  readonly forgetChangeRequestReads?: (scope?: {
+    readonly repository: string;
+    readonly number?: number;
+  }) => Effect.Effect<void>;
 
   readonly getChangeRequestPreview?: (
     input: ProviderRepositoryRef & { readonly number: number },

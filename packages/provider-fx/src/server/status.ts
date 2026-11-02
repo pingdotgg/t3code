@@ -19,7 +19,6 @@ import {
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
-  DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   nonEmptyTrimmed,
   parseGenericCliVersion,
@@ -135,6 +134,8 @@ const FxModels = Schema.fromJsonString(
 );
 const decodeFxModels = Schema.decodeUnknownOption(FxModels);
 
+const VERSION_PROBE_TIMEOUT_MS = 10_000;
+
 function fxAuth(auth: string | undefined): ServerProviderAuth {
   const method = nonEmptyTrimmed(auth);
   if (method === undefined) return { status: "unknown" };
@@ -163,7 +164,7 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
   }
 
   const versionResult = yield* runFxCli(settings, ["--version"], environment).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
     Effect.result,
   );
   if (Result.isFailure(versionResult) || Option.isNone(versionResult.success)) {

@@ -15,7 +15,6 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -244,7 +243,6 @@ const expectPreviousRelease = Effect.fn("test.expectPreviousAntigravityRelease")
 it.layer(NodeServices.layer)("Antigravity installation", (it) => {
   it.effect("activates a validated runtime before profile cleanup finishes", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const node = yield* HostProcess.ExecutablePath;
       const cleanupEntered = yield* Deferred.make<void>();
@@ -289,13 +287,6 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       );
       const { installation } = yield* makeHarness({
         useDefaultValidation: true,
-        fileSystem: FileSystem.FileSystem.of({
-          ...fs,
-          remove: (directory, options) =>
-            directory.includes("t3-antigravity-validate-") && options?.recursive
-              ? fs.remove(directory, options).pipe(Effect.andThen(TestClock.adjust("2 minutes")))
-              : fs.remove(directory, options),
-        }),
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner));
       yield* installation.start;
       expect((yield* terminalState(installation)).phase).toBe("succeeded");

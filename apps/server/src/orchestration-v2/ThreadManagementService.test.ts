@@ -27,6 +27,8 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import { AgentScope } from "@t3tools/shared/AgentScope";
+
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -594,5 +596,176 @@ it.effect.each([
     yield* service.settleAfterRun({ projectId, threadId, runId });
 
     expect(dispatched).toEqual(settles ? ["thread.settle"] : []);
+  }),
+);
+
+it.effect.each([
+  {
+    name: "kills the thread's own agent and ends its turn",
+    others: [] as ReadonlyArray<string>,
+    killed: true,
+    expected: { outcome: "killed", sharedWithThreadIds: [] },
+    teardown: ["release"],
+  },
+  {
+    name: "keeps a process another working thread shares and only ends this turn",
+    others: ["thread:thread-management:force-stop:other"],
+    killed: false,
+    expected: {
+      outcome: "shared",
+      sharedWithThreadIds: ["thread:thread-management:force-stop:other"],
+    },
+    teardown: ["detach"],
+  },
+  {
+    name: "still settles a finished run's background work in a shared process",
+    others: ["thread:thread-management:force-stop:other"],
+    killed: false,
+    settledRun: true,
+    expected: {
+      outcome: "shared",
+      sharedWithThreadIds: ["thread:thread-management:force-stop:other"],
+    },
+    teardown: ["detach"],
+  },
+  {
+    name: "detaches when a sibling starts a turn just before the session is released",
+    others: [] as ReadonlyArray<string>,
+    killed: false,
+    siblingBusy: true,
+    expected: { outcome: "shared", sharedWithThreadIds: [] },
+    teardown: ["release", "detach"],
+  },
+  {
+    name: "reports a teardown that has not finished in time as still releasing",
+    others: [] as ReadonlyArray<string>,
+    killed: false,
+    releaseHangs: true,
+    expected: { outcome: "releasing", sharedWithThreadIds: [] },
+    teardown: ["release"],
+  },
+])("Force stop $name", ({ others, killed, expected, teardown, ...row }) =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:thread-management:force-stop");
+    const providerSessionId = ProviderSessionId.make("provider-session:force-stop");
+    const providerThreadId = ProviderThreadId.make("provider-thread:force-stop");
+    const runId = RunId.make("run:thread-management:force-stop");
+    const dispatched: Array<OrchestrationV2Command | { readonly type: string }> = [];
+    const teardowns: Array<string> = [];
+    const tornDown = yield* Deferred.make<void>();
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+          isLive: () => Effect.succeed(true),
+          otherWorkingThreads: () => Effect.succeed(others.map((id) => ThreadId.make(id))),
+          releaseUnlessBusy: () =>
+            Effect.sync(() => teardowns.push("release")).pipe(
+              Effect.andThen(
+                "releaseHangs" in row ? Effect.never : Effect.succeed(!("siblingBusy" in row)),
+              ),
+            ),
+          detach: () =>
+            Effect.sync(() => teardowns.push("detach")).pipe(
+              Effect.andThen(Deferred.succeed(tornDown, undefined)),
+              Effect.asVoid,
+            ),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: { id: threadId, deletedAt: null },
+              runs: [
+                {
+                  id: runId,
+                  ordinal: 1,
+                  status: "settledRun" in row ? "completed" : "running",
+                  activeAttemptId: "attempt",
+                },
+                // A queued follow-up neither supersedes the request nor becomes the target.
+                { id: RunId.make("run:queued-follow-up"), ordinal: 2, status: "queued" },
+              ],
+              providerThreads: [{ id: providerThreadId, appThreadId: threadId, providerSessionId }],
+              providerTurns: [
+                {
+                  id: "provider-turn:force-stop",
+                  providerThreadId,
+                  runAttemptId: "attempt",
+                  status: "settledRun" in row ? "completed" : "running",
+                },
+              ],
+            } as unknown as OrchestrationV2ThreadProjection),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command);
+              return { sequence: 1, storedEvents: [] } as never;
+            }),
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(AgentScope, {
+          ...AgentScope.defaultValue(),
+          kill: () => Effect.succeed(killed),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      const stopping = yield* service.forceStopThread({ threadId, runId }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 seconds");
+      expect(yield* Fiber.join(stopping)).toEqual(expected);
+      expect(dispatched).toMatchObject([
+        {
+          type: "thread.background-work.settle",
+          providerThreadId,
+          reason: "Force stopped by user",
+        },
+      ]);
+      if (teardown.at(-1) === "detach") yield* Deferred.await(tornDown);
+      expect(teardowns).toEqual(teardown);
+    }).pipe(Effect.provide(layerTest));
+  }),
+);
+
+it.effect("Force stop refuses once a newer run has started, before killing anything", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:thread-management:force-stop-superseded");
+    let killed = false;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: { id: threadId, deletedAt: null },
+              runs: [
+                { id: RunId.make("run:stopped"), ordinal: 1, status: "running" },
+                { id: RunId.make("run:newer"), ordinal: 2, status: "running" },
+              ],
+              providerThreads: [],
+              providerTurns: [],
+            } as unknown as OrchestrationV2ThreadProjection),
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(AgentScope, {
+          ...AgentScope.defaultValue(),
+          kill: () => Effect.sync(() => (killed = true)),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const error = yield* Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      return yield* Effect.flip(
+        service.forceStopThread({ threadId, runId: RunId.make("run:stopped") }),
+      );
+    }).pipe(Effect.provide(layerTest));
+    expect(error.reason).toBe("superseded");
+    expect(killed).toBe(false);
   }),
 );

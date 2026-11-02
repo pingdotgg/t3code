@@ -151,6 +151,12 @@ export const AntigravityDriver: ProviderDriver<
       path.join(profileDirectory, "antigravity-acp", "tmp"),
     ]) {
       yield* runtimeTemp.adopt(directory);
+      const parent = path.dirname(directory);
+      const prefix = `${path.basename(directory)}.old-`;
+      const entries = yield* fileSystem.readDirectory(parent).pipe(Effect.orElseSucceed(() => []));
+      for (const entry of entries) {
+        if (entry.startsWith(prefix)) yield* runtimeTemp.adopt(path.join(parent, entry));
+      }
     }
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER,
