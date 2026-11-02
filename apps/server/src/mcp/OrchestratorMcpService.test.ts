@@ -937,6 +937,7 @@ describe("OrchestratorMcpService", () => {
           }),
           Layer.mock(ProjectService.ProjectService)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         );
         const scope: McpInvocationScope = {
@@ -970,6 +971,7 @@ describe("OrchestratorMcpService", () => {
             childThreadId,
             grandchildThreadId,
             descendantThreadId,
+            parentThreadId,
           ]);
 
           yield* Ref.set(raised, true);
