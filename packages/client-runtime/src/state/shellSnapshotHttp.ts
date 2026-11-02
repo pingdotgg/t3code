@@ -38,7 +38,9 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
 }) {
   const endpoint = {
     query: {
-      ...(input.omitIdleSubagents === true ? { omitIdleSubagents: "1" } : {}),
+      ...(input.omitIdleSubagents === true
+        ? { omitIdleSubagents: "1", omitIdleSubagentParents: "1" }
+        : {}),
       ...(input.omitOlderSettled === true ? { omitOlderSettled: "1" } : {}),
     },
   };

@@ -66,10 +66,28 @@ export function threadFamilyRowsMissingFromShell(input: {
 }
 
 /**
+ * Roots of subagents and side chats whose parent row the shell left out. A shell sent with
+ * `omitIdleSubagentParents` drops idle chains, so a child that wakes later arrives without them.
+ */
+function rootsWithMissingParents(
+  threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+): ReadonlyArray<ThreadId> {
+  const present = new Set<ThreadId>(threads.map((thread) => thread.id));
+  const roots = new Set<ThreadId>();
+  for (const { lineage } of threads) {
+    if (lineage.parentThreadId === null || present.has(lineage.parentThreadId)) continue;
+    if (lineage.relationshipToParent === "subagent" || lineage.sideChat === true) {
+      roots.add(lineage.rootThreadId);
+    }
+  }
+  return [...roots];
+}
+
+/**
  * Shells with `omitIdleSubagents` or `omitOlderSettled` leave rows to on-demand reads: a family is
  * every active thread sharing a `lineage.rootThreadId`, read once per shell generation; shelf pages
  * and search rows mount through `mountRows`. All merge behind shell rows, which win (deltas carry
- * every change), and are never persisted.
+ * every change), and are never persisted. A child whose parent row is missing reads its family too.
  */
 export function createThreadFamilyAtoms<R, ER, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
@@ -203,16 +221,29 @@ export function createThreadFamilyAtoms<R, ER, E>(
       readonly families: ReadonlyArray<OrchestrationV2ThreadFamily>;
       readonly merged: OrchestrationV2ShellSnapshot;
     } | null = null;
+    let orphans: {
+      readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
+      readonly rows: ReadonlyArray<Atom.Atom<ReadonlyArray<OrchestrationV2ThreadFamily>>>;
+    } | null = null;
     return Atom.make((get): OrchestrationV2ShellSnapshot | null => {
       const state = shellStateValue(get(shellStateAtom(environmentId)));
       const snapshot = state === null ? null : Option.getOrNull(state.snapshot);
       const mounts = get(mountsAtom(environmentId));
-      if (snapshot === null || state === null || mounts.size === 0) return snapshot;
+      if (snapshot === null || state === null) return snapshot;
+      if (orphans?.threads !== snapshot.threads) {
+        orphans = {
+          threads: snapshot.threads,
+          rows: rootsWithMissingParents(snapshot.threads).map((root) =>
+            familyRowsAtom(familyKey(environmentId, root)),
+          ),
+        };
+      }
+      if (mounts.size === 0 && orphans.rows.length === 0) return snapshot;
       // A read from before the latest authoritative snapshot can hold threads removed before it,
       // and that snapshot cleared those removals; such reads (a cached search) wait for new ones.
       const cut = snapshot.olderSettled?.asOfSequence ?? 0;
-      const families = [...mounts.values()].flatMap(({ rows }) =>
-        get(rows).filter((read) => read.snapshotSequence >= cut),
+      const families = [...[...mounts.values()].map(({ rows }) => rows), ...orphans.rows].flatMap(
+        (rows) => get(rows).filter((read) => read.snapshotSequence >= cut),
       );
       // Most shell updates move only the cursor. With the same rows, removals and families, keep
       // the merged rows so thread lists skip their rebuild.

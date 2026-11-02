@@ -78,7 +78,10 @@ on which data is current.
 Shell snapshots can leave rows out when the client asks. Servers that advertise
 `shellThreadFamilies` leave out idle subagent children: a child stays while it
 has a live or queued run, a pending request or background work, or a subagent
-child of its own, so badge and working walks never meet a gap. Servers that also
+child of its own, so badge and working walks never meet a gap. Clients that also
+send `omitIdleSubagentParents` keep an idle child only while a live subagent is
+below it. A child that wakes later reaches them through the live tail without the
+idle rows above it, so they read its family whenever a parent row is missing. Servers that also
 advertise `shellOlderSettled` keep only the 25 newest settled top-level threads
 (and any tied with the 25th, pinned, snoozed, live, or above a kept child); the
 snapshot's `olderSettled` names that cut and counts the rest per project. Left-out
