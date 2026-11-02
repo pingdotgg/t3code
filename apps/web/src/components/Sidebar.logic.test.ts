@@ -624,9 +624,64 @@ describe("getFallbackThreadIdAfterDelete", () => {
       deletedThreadId: ThreadId.make("thread-active"),
       deletedThreadIds: new Set([ThreadId.make("thread-active"), ThreadId.make("thread-newest")]),
       sortOrder: "created_at",
+      now: "2026-03-09T11:00:00.000Z",
     });
 
     expect(fallbackThreadId).toBe(ThreadId.make("thread-next"));
+  });
+
+  it.each([
+    {
+      state: "snoozed",
+      overrides: { snoozedUntil: "2026-03-09T14:00:00.000Z" },
+      eligible: false,
+    },
+    {
+      state: "settled",
+      overrides: { settledOverride: "settled" as const },
+      eligible: false,
+    },
+    {
+      state: "expired snooze",
+      overrides: { snoozedUntil: "2026-03-09T10:30:00.000Z" },
+      eligible: true,
+    },
+    {
+      state: "snoozed but waiting on input",
+      overrides: { snoozedUntil: "2026-03-09T14:00:00.000Z", hasPendingUserInput: true },
+      eligible: true,
+    },
+  ])("respects $state visibility when choosing a fallback", ({ overrides, eligible }) => {
+    const deletedThread = makeThread({ id: ThreadId.make("deleted") });
+    const candidate = makeThread({
+      id: ThreadId.make("candidate"),
+      createdAt: "2026-03-09T10:10:00.000Z",
+      ...overrides,
+    });
+    const olderVisibleThread = makeThread({ id: ThreadId.make("older-visible") });
+    const otherProjectThread = makeThread({
+      id: ThreadId.make("other-project"),
+      projectId: ProjectId.make("project-2"),
+      createdAt: "2026-03-09T10:15:00.000Z",
+    });
+    const input = {
+      deletedThreadId: deletedThread.id,
+      sortOrder: "created_at" as const,
+      now: "2026-03-09T11:00:00.000Z",
+    };
+
+    expect(
+      getFallbackThreadIdAfterDelete({
+        ...input,
+        threads: [deletedThread, candidate, olderVisibleThread, otherProjectThread],
+      }),
+    ).toBe(eligible ? candidate.id : olderVisibleThread.id);
+    expect(
+      getFallbackThreadIdAfterDelete({
+        ...input,
+        threads: [deletedThread, candidate, otherProjectThread],
+      }),
+    ).toBe(eligible ? candidate.id : null);
   });
 });
 
