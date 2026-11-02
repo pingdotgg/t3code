@@ -3431,7 +3431,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("reports remote status on unborn HEAD without failing", () =>
+    it.effect("reports status on unborn HEAD without failing or dropping its upstream", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const driver = yield* GitVcsDriver.GitVcsDriver;
@@ -3445,6 +3445,17 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(status.hasUpstream, false);
         assert.equal(status.aheadCount, 0);
         assert.equal(status.behindCount, 0);
+
+        const seed = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithCommit(seed);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(seed, ["push", remote, `HEAD:refs/heads/${initialBranch}`]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["fetch", "origin"]);
+        yield* git(cwd, ["config", `branch.${initialBranch}.remote`, "origin"]);
+        yield* git(cwd, ["config", `branch.${initialBranch}.merge`, `refs/heads/${initialBranch}`]);
+        assert.equal((yield* driver.statusDetailsLocal(cwd)).hasUpstream, true);
       }),
     );
 
@@ -5668,7 +5679,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("pushes with upstream setup and skips when already up to date", () =>
+    it.effect("pushes, skips when up to date, and republishes a deleted upstream", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const remote = yield* makeTmpDir("git-remote-");
@@ -5703,6 +5714,17 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           status: "skipped_up_to_date",
           branch: "feature/push",
         });
+
+        yield* git(cwd, ["push", "origin", "--delete", "feature/push"]);
+        yield* writeTextFile(cwd, "followup.txt", "followup\n");
+        yield* git(cwd, ["add", "-A"]);
+        yield* (yield* GitVcsDriver.GitVcsDriver).commit(cwd, "Add followup", "");
+        const republished = yield* (yield* GitVcsDriver.GitVcsDriver).pushCurrentBranch(cwd, null);
+        assert.deepInclude(republished, { status: "pushed", branch: "feature/push" });
+        assert.equal(
+          yield* git(remote, ["--git-dir=.", "rev-parse", "refs/heads/feature/push"]),
+          yield* git(cwd, ["rev-parse", "HEAD"]),
+        );
       }),
     );
 
