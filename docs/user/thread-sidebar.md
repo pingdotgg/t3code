@@ -285,6 +285,24 @@ To choose what the thread details card shows, right-click the card or open
 shortcuts, such as Open in editor and project scripts. **Reset to default** brings
 back the standard rows.
 
+## Follow what the agent is doing
+
+**Activity** shows where a thread stands without scrolling back through the chat.
+At the top, it says whether the agent is working, waiting for you, finished,
+stopped with plan steps left, or finished with errors, and when it last changed.
+Below that are the plan, when the provider sends one, the files the agent changed,
+and the steps it finished this turn. It works with every provider.
+
+On web and desktop, choose **Activity** from the **+** menu in the right panel.
+When the agent is waiting for approval, you can approve or decline it from the top
+of the panel. To bind a shortcut, use the `activity.toggle` command in
+**Settings → Keybindings**. To open it when each turn starts, turn on **Open the
+Activity panel when the agent starts** in **Settings → Diffs & pull requests**.
+That setting is not used in a narrow window, and a panel you open or close yourself
+is left alone.
+
+On mobile, open **Activity** from the thread's git menu.
+
 ## Side chats
 
 A side chat lets you ask a question about a thread without adding to it. It starts
