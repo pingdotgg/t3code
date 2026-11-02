@@ -42,7 +42,15 @@ import {
   GitCommitHorizontalIcon,
   PanelRightIcon,
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useEffectEvent, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { type PullRequestDetailTab, useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
@@ -81,7 +89,7 @@ import { useUiStateStore } from "~/uiStateStore";
 import { Button } from "../ui/button";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { toastManager } from "../ui/toast";
-import { TooltipProvider } from "../ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
 import { PullRequestCopyableCode } from "./PullRequestCopyableCode";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
@@ -392,6 +400,42 @@ export function PullRequestDetailPanel({
   } else if (!tabMountState.tabs.has(tab)) {
     setTabMountState({ key: tabScopeKey, tabs: new Set(tabMountState.tabs).add(tab) });
   }
+  const [condensedByTab, setCondensedByTab] = useState<
+    Partial<Record<PullRequestDetailTab, boolean>>
+  >({});
+  const condensed = condensedByTab[tab] ?? false;
+  const scrollerByTab = useRef<Partial<Record<PullRequestDetailTab, HTMLElement | null>>>({});
+  const [scrollerRefs] = useState(() => ({
+    summary: (node: HTMLElement | null) => {
+      scrollerByTab.current.summary = node;
+    },
+    timeline: (node: HTMLElement | null) => {
+      scrollerByTab.current.timeline = node;
+    },
+    code: (node: HTMLElement | null) => {
+      scrollerByTab.current.code = node;
+    },
+  }));
+  const foldRef = useRef<HTMLDivElement | null>(null);
+  const condensedRowRef = useRef<HTMLDivElement | null>(null);
+  const compensationRef = useRef<{
+    tab: PullRequestDetailTab;
+    scroller: HTMLElement;
+    target: number;
+  } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the scroller's scrollTop before paint after the header condenses
+  useLayoutEffect(() => {
+    const compensation = compensationRef.current;
+    if (compensation === null) return;
+    compensationRef.current = null;
+    if (
+      !condensed ||
+      compensation.tab !== tab ||
+      scrollerByTab.current[tab] !== compensation.scroller
+    )
+      return;
+    compensation.scroller.scrollTop = Math.max(0, compensation.target);
+  }, [condensed, tab]);
   const [titleScope, setTitleScope] = useState<{
     readonly pullRequestKey: string;
     readonly text: string;
@@ -1353,6 +1397,29 @@ export function PullRequestDetailPanel({
       </TooltipProvider>
     );
 
+  const headerBranches = detail ? (
+    <span className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1.5 font-mono text-caption text-dim-foreground">
+      <PullRequestBaseBranch
+        compact
+        baseBranch={detail.baseBranch}
+        freshness={freshness}
+        stacked={isStackedPullRequest}
+        pending={actionPending}
+        onUpdate={(method) => void perform("update-branch", undefined, method)}
+        iconClassName="size-3"
+      />
+      <ArrowLeftIcon aria-label="receives changes from" className="size-3 shrink-0" />
+      <PullRequestCopyableCode
+        key={detail.headBranch}
+        className="min-w-12 rounded-kbd bg-secondary px-1.5 py-px text-muted-foreground"
+        value={detail.headBranch}
+        target="branch name"
+        copyLabel={`Copy ${terminology.singular} branch`}
+        copiedLabel="Branch name copied"
+      />
+    </span>
+  ) : null;
+
   if (detailQuery.isPending && !detail) {
     return (
       <PullRequestDetailGhost
@@ -1393,6 +1460,7 @@ export function PullRequestDetailPanel({
         <PullRequestDetailCrumbs
           detail={detail}
           toneClassName={statePresentation?.toneClassName ?? null}
+          repositoryUrl={repositoryUrl}
           openOnHostText={openOnHostText}
           onBack={onBack}
         >
@@ -1510,47 +1578,93 @@ export function PullRequestDetailPanel({
           ) : null}
         </div>
 
-        {detail ? (
-          <div className="col-span-2 flex min-w-0 flex-col gap-1.5 px-4 pt-1.5 pb-2.5">
-            <PullRequestTitleEditor
-              environmentId={environmentId}
-              reference={reference}
-              detail={detail}
-              canWriteSourceControl={canWriteSourceControl}
-              value={titleDraft}
-              onValueChange={(text) =>
-                setTitleScope(text === null ? null : { pullRequestKey, text })
-              }
-              onSaved={refreshDetail}
-            />
-            <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-meta text-muted-foreground">
-              <PullRequestActorLabel actor={detail.author} profileUrl={authorProfileUrl} />
-              <span className="shrink-0">
-                <RelativeTime timestamp={detail.updatedAt} />
-              </span>
-              <span className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1.5 font-mono text-caption text-dim-foreground">
-                <PullRequestBaseBranch
-                  compact
-                  baseBranch={detail.baseBranch}
-                  freshness={freshness}
-                  stacked={isStackedPullRequest}
-                  pending={actionPending}
-                  onUpdate={(method) => void perform("update-branch", undefined, method)}
-                  iconClassName="size-3"
+        <div
+          className={cn(
+            "col-span-2 grid",
+            condensed
+              ? "grid-rows-[1fr]"
+              : "grid-rows-[0fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+          )}
+        >
+          <div
+            ref={condensedRowRef}
+            className={cn(
+              "min-h-0 overflow-hidden transition-[opacity,transform] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none",
+              condensed
+                ? "translate-y-0 opacity-100 delay-50"
+                : "translate-y-1 opacity-0 duration-100",
+            )}
+            inert={!condensed}
+          >
+            {detail ? (
+              <div className="flex min-w-0 items-center gap-2 px-4 pt-1 pb-1 text-meta text-muted-foreground">
+                <PullRequestActorLabel
+                  actor={detail.author}
+                  profileUrl={authorProfileUrl}
+                  variant="avatar"
+                  className="shrink-0"
                 />
-                <ArrowLeftIcon aria-label="receives changes from" className="size-3 shrink-0" />
-                <PullRequestCopyableCode
-                  key={detail.headBranch}
-                  className="min-w-12 rounded-kbd bg-secondary px-1.5 py-px text-muted-foreground"
-                  value={detail.headBranch}
-                  target="branch name"
-                  copyLabel={`Copy ${terminology.singular} branch`}
-                  copiedLabel="Branch name copied"
-                />
-              </span>
-            </div>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                        {detail.title}
+                      </span>
+                    }
+                  />
+                  <TooltipPopup side="top">{detail.title}</TooltipPopup>
+                </Tooltip>
+                <span className="shrink-0">
+                  <RelativeTime timestamp={detail.updatedAt} />
+                </span>
+                <span className="hidden min-w-0 flex-1 @2xl/pr-header:flex">{headerBranches}</span>
+              </div>
+            ) : null}
           </div>
-        ) : null}
+        </div>
+
+        <div
+          className={cn(
+            "col-span-2 grid",
+            condensed
+              ? "grid-rows-[0fr]"
+              : "grid-rows-[1fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+          )}
+        >
+          <div
+            ref={foldRef}
+            className={cn(
+              "min-h-0 overflow-hidden transition-[opacity,transform] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none",
+              condensed
+                ? "-translate-y-1 opacity-0 duration-100"
+                : "translate-y-0 opacity-100 delay-50",
+            )}
+            inert={condensed}
+          >
+            {detail ? (
+              <div className="col-span-2 flex min-w-0 flex-col gap-1.5 px-4 pt-1.5 pb-2.5">
+                <PullRequestTitleEditor
+                  environmentId={environmentId}
+                  reference={reference}
+                  detail={detail}
+                  canWriteSourceControl={canWriteSourceControl}
+                  value={titleDraft}
+                  onValueChange={(text) =>
+                    setTitleScope(text === null ? null : { pullRequestKey, text })
+                  }
+                  onSaved={refreshDetail}
+                />
+                <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-meta text-muted-foreground">
+                  <PullRequestActorLabel actor={detail.author} profileUrl={authorProfileUrl} />
+                  <span className="shrink-0">
+                    <RelativeTime timestamp={detail.updatedAt} />
+                  </span>
+                  {headerBranches}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
 
         {detail ? (
           <nav
@@ -1651,7 +1765,25 @@ export function PullRequestDetailPanel({
         repository={reference.repository}
         className="border-b border-(--detail-separator)"
       />
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div
+        className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+        onScrollCapture={(event) => {
+          const scroller = scrollerByTab.current[tab];
+          if (event.target !== scroller || scroller === null || scroller === undefined) return;
+          const top = scroller.scrollTop;
+          const previous = condensedByTab[tab] ?? false;
+          const foldHeight = foldRef.current?.scrollHeight ?? 0;
+          let next = previous;
+          if (previous) {
+            if (top < 4 && foldHeight > 0) next = false;
+          } else if (foldHeight > 0 && top > foldHeight + 32) {
+            const chromeDelta = foldHeight - (condensedRowRef.current?.scrollHeight ?? 0);
+            compensationRef.current = { tab, scroller, target: top - chromeDelta };
+            next = true;
+          }
+          if (next !== previous) setCondensedByTab({ ...condensedByTab, [tab]: next });
+        }}
+      >
         {detailQuery.error && !detail ? (
           <PullRequestsUnavailableState
             {...(isPullRequestNotFound(detailQuery.failure)
@@ -1678,6 +1810,7 @@ export function PullRequestDetailPanel({
             {mountedTabs.has("summary") ? (
               <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
                 <PullRequestSummaryTab
+                  scrollerRef={scrollerRefs.summary}
                   readiness={readinessCard}
                   environmentId={environmentId}
                   threadRef={threadRef}
@@ -1738,6 +1871,7 @@ export function PullRequestDetailPanel({
                   />
                 ) : (
                   <PullRequestTimelineTab
+                    scrollerRef={scrollerRefs.timeline}
                     detail={detail}
                     environmentId={environmentId}
                     threadRef={threadRef}
@@ -1757,6 +1891,7 @@ export function PullRequestDetailPanel({
                   }
                 >
                   <PullRequestCodeTab
+                    scrollerRef={scrollerRefs.code}
                     toolbarContainer={codeToolbarContainer}
                     onAddToAgentSelection={addSelectionToAgent}
                     environmentId={environmentId}
