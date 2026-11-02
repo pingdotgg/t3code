@@ -73,7 +73,10 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { measureRestingComposerControls } from "./chat/restingComposerControlsMeasurement";
-import { resolveRestingComposerControlsNaturalWidth } from "./composerFooterLayout";
+import {
+  resolveRestingComposerControlsMinimumWidth,
+  resolveRestingComposerControlsNaturalWidth,
+} from "./composerFooterLayout";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import { cn } from "~/lib/utils";
 import { observeResize } from "~/lib/observeResize";
@@ -815,6 +818,9 @@ function useStripCompaction(): readonly [
         if (!(child instanceof HTMLElement)) continue;
         const controls = child.querySelector<HTMLElement>(RESTING_CONTROLS_SELECTOR);
         const controlsMeasurement = controls ? measureRestingComposerControls(controls) : null;
+        if (controlsMeasurement) {
+          child.style.minWidth = `${resolveRestingComposerControlsMinimumWidth(controlsMeasurement)}px`;
+        }
         const width = controlsMeasurement
           ? resolveRestingComposerControlsNaturalWidth(controlsMeasurement)
           : contentWidth(child);

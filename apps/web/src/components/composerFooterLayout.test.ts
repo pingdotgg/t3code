@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveContextStripCompaction } from "./BranchToolbar.logic";
 import {
   resolveRestingComposerControlsLayout,
+  resolveRestingComposerControlsMinimumWidth,
   resolveRestingComposerControlsNaturalWidth,
 } from "./composerFooterLayout";
 
@@ -165,5 +166,12 @@ describe("resolveRestingComposerControlsLayout with icon-only controls", () => {
       pickerIconOnly: true,
       visible: true,
     });
+    const minimumWidth = resolveRestingComposerControlsMinimumWidth(tray);
+    expect(resolveRestingComposerControlsLayout({ ...tray, hostWidth: minimumWidth }).visible).toBe(
+      true,
+    );
+    expect(
+      resolveRestingComposerControlsLayout({ ...tray, hostWidth: minimumWidth - 1 }).visible,
+    ).toBe(false);
   });
 });
