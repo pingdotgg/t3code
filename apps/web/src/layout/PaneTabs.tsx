@@ -9,13 +9,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import {
   ChartNoAxesColumnIcon,
-  FileDiff,
-  Files,
-  Globe2,
-  MessagesSquare,
   PanelRightIcon,
   SettingsIcon,
-  Smartphone,
   SquareDashedIcon,
   SquarePenIcon,
   SquareTerminal,
@@ -26,15 +21,10 @@ import {
   useLayoutEffect,
   useRef,
   type ReactNode,
-  type ComponentType,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 
-import {
-  selectThreadRightPanelState,
-  useRightPanelStore,
-  type RightPanelSurface,
-} from "../rightPanelStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import {
   isThreadlessHomeRef,
   isThreadlessSurfacesRef,
@@ -44,9 +34,12 @@ import {
 
 import { ProjectFavicon } from "../components/ProjectFavicon";
 import { ContentButton } from "../components/ui/button";
+import { PANE_INACTIVE_TAB_TITLE_CLASS } from "../components/PaneNotch";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
+import { ThreadSurfaceTabIcon } from "../components/SurfaceTabIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useThreadPreviewState } from "../previewStateStore";
 import { contextMenuShortcutFields, shortcutLabelForCommand } from "../keybindings";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
@@ -74,9 +67,7 @@ import { useLayoutPane } from "./layoutPaneContext";
 import { useLayoutStore } from "./layoutStore";
 import { setWheelScroller, wheelDeltaPx } from "../motion/gesture";
 import { observeResize } from "../lib/observeResize";
-import { useThreadPreviewState } from "../previewStateStore";
 import { surfaceTabTitle, terminalTabTitle } from "./surfaceTabLabels";
-import { PullRequestSurfaceIcon } from "../components/RightPanelTabs";
 
 const EMPTY_TABS: readonly LayoutTab[] = [];
 
@@ -410,7 +401,10 @@ export const LayoutPaneTab = memo(function LayoutPaneTab({ tab }: { tab: LayoutT
           }
         >
           <span className={LAYOUT_TAB_ICON_CLASS}>{label.icon}</span>
-          <span className="min-w-[4ch] truncate" dir={textDirection(label.title)}>
+          <span
+            className={cn("min-w-[4ch]", PANE_INACTIVE_TAB_TITLE_CLASS)}
+            dir={textDirection(label.title)}
+          >
             {label.title}
           </span>
         </TooltipTrigger>
@@ -521,10 +515,7 @@ export function useLayoutTabLabel(tab: LayoutTab): {
   }
   if (tab.content.kind === "surface") {
     // The resource owns the title. Its thread, location and state belong in the tooltip.
-    const { Icon } =
-      tab.content.surfaceId === THREAD_TERMINAL_SURFACE_ID
-        ? { Icon: SquareTerminal }
-        : layoutSurfaceLabel(surface);
+    const threadTerminal = tab.content.surfaceId === THREAD_TERMINAL_SURFACE_ID;
     const threadTitle =
       thread?.title ??
       (surfaceDraft ? "New thread" : null) ??
@@ -536,11 +527,12 @@ export function useLayoutTabLabel(tab: LayoutTab): {
             ? "~"
             : null))
         : null);
-    const title = surface
+    const label = surface
       ? (sideChat?.title ?? surfaceTabTitle(surface, preview, terminal?.state.summary?.label))
       : terminalRef
         ? terminalTabTitle(activeTerminalId, terminal?.state.summary?.label)
         : "Surface";
+    const title = threadTitle ? `${label} · ${threadTitle}` : label;
     const root =
       thread?.worktreePath ?? surfaceDraft?.worktreePath ?? project?.workspaceRoot ?? home;
     const path =
@@ -566,19 +558,13 @@ export function useLayoutTabLabel(tab: LayoutTab): {
             : "Idle"
         : null;
     return {
-      icon:
-        surface?.kind === "pull-request" ? (
-          <PullRequestSurfaceIcon
-            surface={surface}
-            environmentId={surfaceThreadRef?.environmentId ?? null}
-            seed={undefined}
-          />
-        ) : (
-          <Icon
-            aria-hidden
-            className={cn("size-3.5 shrink-0", terminalRunning && "text-success-foreground")}
-          />
-        ),
+      icon: threadTerminal ? (
+        <SquareTerminal aria-hidden className="size-3.5 shrink-0" />
+      ) : surface ? (
+        <ThreadSurfaceTabIcon threadRef={tab.content.threadRef} surface={surface} />
+      ) : (
+        <PanelRightIcon aria-hidden className="size-3.5 shrink-0" />
+      ),
       title,
       tooltip: [
         title,
@@ -601,32 +587,4 @@ export function useLayoutTabLabel(tab: LayoutTab): {
       <ProjectFavicon project={project} className="size-3.5 shrink-0" />
     ) : null;
   return { icon, title, tooltip: project ? `${project.title} / ${title}` : title };
-}
-
-/** A surface's short name and icon for its tab. */
-function layoutSurfaceLabel(surface: RightPanelSurface | null): {
-  Icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
-} {
-  switch (surface?.kind) {
-    case "diff":
-      return { Icon: FileDiff };
-    case "files":
-      return { Icon: Files };
-    case "file":
-      return { Icon: Files };
-    case "terminal":
-      return { Icon: SquareTerminal };
-    case "pull-request":
-      return { Icon: PullRequestGlyph.pullRequest };
-    case "pull-requests":
-      return { Icon: PullRequestGlyph.link };
-    case "device":
-      return { Icon: Smartphone };
-    case "preview":
-      return { Icon: Globe2 };
-    case "side-chat":
-      return { Icon: MessagesSquare };
-    default:
-      return { Icon: PanelRightIcon };
-  }
 }

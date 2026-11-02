@@ -15,6 +15,9 @@ import { cn } from "../lib/utils";
 export const PANE_TAB_CLASS =
   "inline-flex h-7 min-w-0 max-w-80 items-center gap-1.75 rounded-control px-2.5 text-control text-strong-foreground outline-none [-webkit-app-region:no-drag] focus-visible:inset-ring-2 focus-visible:inset-ring-ring";
 
+export const PANE_TAB_TITLE_CLASS = "max-w-68 truncate";
+export const PANE_INACTIVE_TAB_TITLE_CLASS = "max-w-40 truncate";
+
 /** The thread tab opens its action menu while keeping the notch's tab geometry. */
 export function PaneTabButton({ className, render, ...props }: useRender.ComponentProps<"button">) {
   return useRender({
