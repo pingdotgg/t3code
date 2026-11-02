@@ -3178,6 +3178,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     { reason: "not-found", activityFails: false },
     { reason: "failed", activityFails: true },
     { reason: "not-found", activityFails: true },
+    { reason: "forbidden", activityFails: true },
   ] as const)(
     "handles repeated host read failures: $reason (activity fails: $activityFails)",
     ({ reason, activityFails }) =>
@@ -3222,7 +3223,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         let passed = false;
         let genericFailure = false;
         const activityFailures = yield* Queue.unbounded<void>();
-        const readFailure = (operation: string, failure: "failed" | "not-found") =>
+        const readFailure = (operation: string, failure: "failed" | "not-found" | "forbidden") =>
           new PullRequestOperationError({
             operation,
             detail: "host read failed",
@@ -3295,7 +3296,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         }
 
         const thread = yield* orchestrator.getThreadShell(threadId);
-        if (reason === "not-found") {
+        if (reason !== "failed") {
           assert.isUndefined(thread?.pullRequests?.[0]?.watch);
           assert.deepEqual(yield* summaries, ["#8: stopped watching, could not read it"]);
           return;

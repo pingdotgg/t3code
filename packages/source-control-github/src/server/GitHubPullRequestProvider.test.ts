@@ -69,6 +69,38 @@ it.effect("maps credential verification failures without relabeling operation fa
   }),
 );
 
+it.effect.each([
+  { status: 403, reason: "forbidden" },
+  { status: 503, reason: "failed" },
+])("classifies GitHub response $status as $reason", ({ status, reason }) =>
+  Effect.gen(function* () {
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+          revalidateChecks: (_input, read) => read,
+          getPullRequestDetail: () =>
+            Effect.fail(
+              new GitHubRequestPolicy.GitHubApiResponseError({
+                host: "github.com",
+                operation: "detail",
+                status,
+              }),
+            ),
+        }),
+      ),
+    );
+    const error = yield* provider
+      .getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      })
+      .pipe(Effect.flip);
+    expect(error.reason).toBe(reason);
+  }),
+);
+
 it.effect("advertises standalone branch deletion for source repository writers", () =>
   Effect.gen(function* () {
     let action: string | undefined;
