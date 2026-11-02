@@ -29,6 +29,7 @@ const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing(3)))";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
+const SIDEBAR_COLLAPSE_DRAG_RATIO = 0.51;
 const SIDEBAR_TITLEBAR_CONTROL_SIZE = "max-sm:[--workspace-titlebar-control-size:--spacing(8)]";
 
 type SidebarContextProps = {
@@ -582,7 +583,8 @@ function SidebarRail({
       bounds: { min: options.minWidth, max: options.maxWidth },
       cancelOnInterrupt: true,
       resize(nextWidth, rawWidth) {
-        collapsePending = canCollapse && rawWidth < options.minWidth - 48;
+        collapsePending =
+          canCollapse && rawWidth < options.minWidth * (1 - SIDEBAR_COLLAPSE_DRAG_RATIO);
         const accepted =
           options.shouldAcceptWidth?.({
             currentWidth: width,
