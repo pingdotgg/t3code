@@ -5709,6 +5709,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           status: OrchestrationV2Subagent["status"],
           resultOverride?: string | null,
         ) {
+          yield* flushSubagentAssistant(subagent);
           yield* mutateCarryoverSubagentStatus(subagent, status, resultOverride);
           const now = subagent.task.updatedAt;
           const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id;
@@ -7291,6 +7292,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
           }
           yield* closeTextStreams(context);
+          // Ingestion may stop at turn.terminal, before a delayed flush would run.
+          yield* Effect.forEach(context.subagents.values(), flushSubagentAssistant, {
+            discard: true,
+          });
           if (settledStatus !== "failed") {
             yield* emitProviderRetry(context, settledStatus);
           }
