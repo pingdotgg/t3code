@@ -60,7 +60,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
   });
 
   it.effect(
-    "drops the launching Claude session and labels processes t3-code unless overridden",
+    "drops the launching Claude session and labels subscription processes t3-code unless overridden",
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -88,6 +88,31 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
           CLAUDE_EFFORT: "low",
           KEEP: "1",
         });
+
+        const apiKey = { name: "ANTHROPIC_API_KEY", value: "key", sensitive: true };
+        expect(yield* mergeClaudeProcessEnvironment({ homePath }, [apiKey], host)).toEqual({
+          ANTHROPIC_API_KEY: "key",
+          KEEP: "1",
+        });
+        expect(
+          (yield* mergeClaudeProcessEnvironment({ homePath }, undefined, {
+            ...host,
+            ANTHROPIC_API_KEY: "key",
+          })).CLAUDE_CODE_ENTRYPOINT,
+        ).toBeUndefined();
+        expect(
+          (yield* mergeClaudeProcessEnvironment({ homePath }, [apiKey, ...instance], host))
+            .CLAUDE_CODE_ENTRYPOINT,
+        ).toBe("instance");
+
+        yield* fileSystem.writeFileString(
+          path.join(homePath, "settings.json"),
+          JSON.stringify({ env: { ANTHROPIC_API_KEY: "key" } }),
+        );
+        expect(
+          (yield* mergeClaudeProcessEnvironment({ homePath }, undefined, host))
+            .CLAUDE_CODE_ENTRYPOINT,
+        ).toBeUndefined();
 
         yield* fileSystem.writeFileString(
           path.join(homePath, "settings.json"),
