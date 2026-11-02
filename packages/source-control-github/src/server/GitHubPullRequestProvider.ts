@@ -123,7 +123,9 @@ function gitHubProviderFailure(
     case "GitHubApiResponseError":
       return {
         reason:
-          error.status === 403 || error.githubErrorTypes?.includes("FORBIDDEN")
+          error.status === 403 ||
+          (error.githubErrorTypes?.includes("FORBIDDEN") &&
+            error.githubErrorTypes.every((type) => type === "FORBIDDEN" || type === "NOT_FOUND"))
             ? "forbidden"
             : "failed",
       };

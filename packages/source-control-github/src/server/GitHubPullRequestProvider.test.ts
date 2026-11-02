@@ -74,6 +74,9 @@ it.effect.each([
   { status: 503, githubErrorTypes: [], reason: "failed" },
   { status: 200, githubErrorTypes: ["FORBIDDEN"], reason: "forbidden" },
   { status: 200, githubErrorTypes: ["INTERNAL"], reason: "failed" },
+  { status: 200, githubErrorTypes: ["FORBIDDEN", "NOT_FOUND"], reason: "forbidden" },
+  { status: 200, githubErrorTypes: ["FORBIDDEN", "INTERNAL"], reason: "failed" },
+  { status: 200, githubErrorTypes: ["FORBIDDEN", null], reason: "failed" },
 ])("classifies GitHub response $status as $reason", ({ status, githubErrorTypes, reason }) =>
   Effect.gen(function* () {
     const provider = yield* make.pipe(
