@@ -318,9 +318,8 @@ object AgentNotifications {
     }
   }
 
-  private fun base(context: Context, channel: String): NotificationCompat.Builder {
-    val icon = context.resources.getIdentifier("notification_icon", "drawable", context.packageName)
-    return NotificationCompat.Builder(context, channel)
+  private fun base(context: Context, channel: String): NotificationCompat.Builder =
+    NotificationCompat.Builder(context, channel)
       .setPriority(
         if (channel ==
           ALERT_CHANNEL
@@ -331,10 +330,9 @@ object AgentNotifications {
         }
       )
       .setDefaults(if (channel == ALERT_CHANNEL) Notification.DEFAULT_ALL else 0)
-      .setSmallIcon(if (icon != 0) icon else android.R.drawable.ic_dialog_info)
+      .setSmallIcon(R.drawable.agent_activity_mark)
       .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
       .setShowWhen(false)
-  }
 
   private fun contentIntent(
     context: Context,
