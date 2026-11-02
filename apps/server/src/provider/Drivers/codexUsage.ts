@@ -81,12 +81,6 @@ const CodexUnreportedRequest = Schema.Struct({
 type CodexUnreportedRequest = typeof CodexUnreportedRequest.Type;
 type CodexRequestAttribution = Omit<CodexUnreportedRequest, "usage">;
 
-const sameAttribution = (a: CodexRequestAttribution, b: CodexRequestAttribution) =>
-  a.model === b.model &&
-  a.turnId === b.turnId &&
-  a.speed === b.speed &&
-  a.sawThreadSettings === b.sawThreadSettings;
-
 // An interrupted turn can end before a snapshot reports its last request. Bill those requests only
 // when the `token_usage_record`s since the previous snapshot explain the whole gap; `last` is the
 // final one.
@@ -129,8 +123,7 @@ export const CodexScanState = Schema.Struct({
   lastCumulativeUsage: Schema.mutableKey(Schema.NullOr(CodexTokenUsage)),
   // Optional so scan states cached before this field existed stay valid.
   sequenceStartSignature: Schema.mutableKey(Schema.optionalKey(Schema.String)),
-  // `token_usage_record` usage since the last cumulative snapshot, one entry per run of records
-  // with the same attribution, timestamped by its first record.
+  // `token_usage_record` usage since the last cumulative snapshot, one entry per record.
   unreportedRequests: Schema.mutableKey(
     Schema.optionalKey(Schema.mutable(Schema.Array(CodexUnreportedRequest))),
   ),
@@ -173,6 +166,18 @@ function isForkedSessionMeta(payload: Record<string, unknown>): boolean {
   const spawn = (subagent as Record<string, unknown>)["thread_spawn"];
   if (typeof spawn !== "object" || spawn === null) return false;
   return typeof (spawn as Record<string, unknown>)["parent_thread_id"] === "string";
+}
+
+// The first usage line past the copied burst ends suppression for the rest of the rollout.
+function isForkCopy(state: CodexScanState, timestampMs: number): boolean {
+  if (!state.suppressingForkCopies) return false;
+  if (timestampMs - state.forkCopyAnchorMs < FORK_COPY_MAX_GAP_MS) {
+    state.forkCopyAnchorMs = timestampMs;
+    return true;
+  }
+  state.suppressingForkCopies = false;
+  state.lastUsageSignature = null;
+  return false;
 }
 
 /**
@@ -233,17 +238,8 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
     const usage = readCodexTokenUsage(payloadRecord["usage"]);
     if (timestampMs === null || usage === null || state.model.length === 0) return [];
     // Copied history is already billed in the parent.
-    if (state.suppressingForkCopies) return [];
-    const attribution = codexAttribution(state, timestampMs);
-    const pending = (state.unreportedRequests ??= []);
-    const run = pending.at(-1);
-    if (run === undefined || !sameAttribution(run, attribution)) {
-      pending.push({ ...attribution, usage });
-      return [];
-    }
-    const sum = advanceCodexUsage(run.usage, usage);
-    if (sum === null) delete state.unreportedRequests;
-    else pending[pending.length - 1] = { ...run, usage: sum };
+    if (isForkCopy(state, timestampMs)) return [];
+    (state.unreportedRequests ??= []).push({ ...codexAttribution(state, timestampMs), usage });
     return [];
   }
 
@@ -271,20 +267,15 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
   const hasCumulative = rawCumulative !== undefined && rawCumulative !== null;
   const cumulative = hasCumulative ? readCodexTokenUsage(rawCumulative) : null;
 
-  if (state.suppressingForkCopies) {
-    if (timestampMs - state.forkCopyAnchorMs < FORK_COPY_MAX_GAP_MS) {
-      state.forkCopyAnchorMs = timestampMs;
-      // Copied history is already billed in the parent, but establishes the child's baseline.
-      const signature = last === null ? null : JSON.stringify(last);
-      if (cumulative !== null) rebaseCodexUsage(state, cumulative);
-      else if (!hasCumulative && last !== null && signature !== state.lastUsageSignature) {
-        state.lastCumulativeUsage = advanceCodexUsage(state.lastCumulativeUsage, last);
-      }
-      state.lastUsageSignature = signature;
-      return [];
+  if (isForkCopy(state, timestampMs)) {
+    // Copied history is already billed in the parent, but establishes the child's baseline.
+    const signature = last === null ? null : JSON.stringify(last);
+    if (cumulative !== null) rebaseCodexUsage(state, cumulative);
+    else if (!hasCumulative && last !== null && signature !== state.lastUsageSignature) {
+      state.lastCumulativeUsage = advanceCodexUsage(state.lastCumulativeUsage, last);
     }
-    state.suppressingForkCopies = false;
-    state.lastUsageSignature = null;
+    state.lastUsageSignature = signature;
+    return [];
   }
 
   const previous = state.lastCumulativeUsage;

@@ -359,41 +359,48 @@ describe("parseCodexLine", () => {
     expect(state.malformedRecords).toBe(1);
   });
 
-  it("bills each interrupted turn's request with the model and tier it was read under", () => {
+  it("bills each interrupted turn's request with the model, tier and time it was read under", () => {
     const state = initialCodexScanState();
-    const line = (type: string, second: number, payload: Record<string, unknown>) =>
-      JSON.stringify({ type, timestamp: `2026-08-01T05:17:0${second}.000Z`, payload });
-    const context = (second: number, turn_id: string, model: string) =>
-      line("turn_context", second, { turn_id, model });
-    const tier = (second: number, service_tier: string) =>
-      line("event_msg", second, {
+    const line = (type: string, time: string, payload: Record<string, unknown>) =>
+      JSON.stringify({ type, timestamp: `2026-11-0${time}Z`, payload });
+    const context = (time: string, turn_id: string, model: string) =>
+      line("turn_context", time, { turn_id, model });
+    const tier = (time: string, service_tier: string) =>
+      line("event_msg", time, {
         type: "thread_settings_applied",
         thread_settings: { service_tier },
       });
-    const request = (second: number, usage: unknown) =>
-      line("token_usage_record", second, { usage });
+    const request = (time: string, usage: unknown) => line("token_usage_record", time, { usage });
+    const snapshot = (time: string, last: unknown, total: unknown) =>
+      line("event_msg", time, {
+        type: "token_count",
+        info: { last_token_usage: last, total_token_usage: total },
+      });
     const parsed = [
-      line("session_meta", 0, { id: "session-a", model_provider: "openai" }),
-      context(0, "turn-1", "gpt-6-sol"),
-      request(1, counters(100, 20)),
-      counted(counters(100, 20), counters(100, 20)),
-      request(2, counters(150, 10)),
-      tier(3, "priority"),
-      context(3, "turn-2", "gpt-6-astra"),
-      request(4, counters(50, 5)),
-      request(5, counters(30, 5)),
-      tier(6, "default"),
-      context(6, "turn-3", "gpt-6-sol"),
-      request(7, counters(200, 30)),
-      counted(counters(200, 30), counters(530, 70)),
+      line("session_meta", "1T23:59:50", { id: "session-a", model_provider: "openai" }),
+      context("1T23:59:50", "turn-1", "gpt-6-sol"),
+      request("1T23:59:51", counters(100, 20)),
+      snapshot("1T23:59:52", counters(100, 20), counters(100, 20)),
+      // One interrupted turn whose requests straddle midnight.
+      request("1T23:59:59", counters(150, 10)),
+      request("2T00:00:01", counters(50, 5)),
+      tier("2T00:00:02", "priority"),
+      context("2T00:00:02", "turn-2", "gpt-6-astra"),
+      request("2T00:00:03", counters(50, 5)),
+      request("2T00:00:04", counters(30, 5)),
+      tier("2T00:00:05", "default"),
+      context("2T00:00:05", "turn-3", "gpt-6-sol"),
+      request("2T00:00:06", counters(200, 30)),
+      snapshot("2T00:00:07", counters(200, 30), counters(580, 75)),
     ].flatMap((value) => parseCodexRecords(value, state));
 
+    const at = (time: string) => Date.parse(`2026-11-0${time}Z`);
     expect(
       parsed.map((record) => ({
         tokens: totalTokens(record.totals),
         model: record.model,
         speed: record.speed,
-        second: Math.floor(record.timestampMs / 1000) % 60,
+        timestampMs: record.timestampMs,
         unresolvedServiceTierTurnId: record.unresolvedServiceTierTurnId,
       })),
     ).toEqual([
@@ -401,28 +408,42 @@ describe("parseCodexLine", () => {
         tokens: 120,
         model: "gpt-6-sol",
         speed: "standard",
-        second: 49,
+        timestampMs: at("1T23:59:52"),
         unresolvedServiceTierTurnId: "turn-1",
       },
       {
         tokens: 160,
         model: "gpt-6-sol",
         speed: "standard",
-        second: 2,
+        timestampMs: at("1T23:59:59"),
         unresolvedServiceTierTurnId: "turn-1",
       },
       {
-        tokens: 90,
+        tokens: 55,
+        model: "gpt-6-sol",
+        speed: "standard",
+        timestampMs: at("2T00:00:01"),
+        unresolvedServiceTierTurnId: "turn-1",
+      },
+      {
+        tokens: 55,
         model: "gpt-6-astra",
         speed: "fast",
-        second: 4,
+        timestampMs: at("2T00:00:03"),
+        unresolvedServiceTierTurnId: undefined,
+      },
+      {
+        tokens: 35,
+        model: "gpt-6-astra",
+        speed: "fast",
+        timestampMs: at("2T00:00:04"),
         unresolvedServiceTierTurnId: undefined,
       },
       {
         tokens: 230,
         model: "gpt-6-sol",
         speed: "standard",
-        second: 49,
+        timestampMs: at("2T00:00:07"),
         unresolvedServiceTierTurnId: undefined,
       },
     ]);
@@ -766,6 +787,27 @@ describe("parseCodexLine", () => {
         processed: [first, copied, afterBurst, next],
         skipped: codexUsageFormat.readMalformedRecords?.(state),
       }).toEqual({ processed: [120, 0, 120, 35], skipped: 0 });
+    });
+
+    it("bills the child's first request when its turn is interrupted before any snapshot", () => {
+      const state = initialCodexScanState();
+      const forkInstant = "2026-08-01T05:00:00.000Z";
+      const request = (timestamp: string, usage: unknown) =>
+        JSON.stringify({ type: "token_usage_record", timestamp, payload: { usage } });
+      const billed = [
+        meta({ id: "child", timestamp: forkInstant, forkedFromId: "parent" }),
+        stamped(forkInstant, turnContext),
+        request("2026-08-01T05:00:00.001Z", counters(100, 20)),
+        stamped("2026-08-01T05:00:00.001Z", counted(counters(100, 20), counters(100, 20))),
+        request("2026-08-01T05:00:06.000Z", counters(150, 10)),
+        request("2026-08-01T05:00:10.000Z", counters(200, 30)),
+        stamped("2026-08-01T05:00:10.000Z", counted(counters(200, 30), counters(450, 60))),
+      ].flatMap((line) => parseCodexRecords(line, state));
+
+      expect({
+        processed: billed.map((record) => totalTokens(record.totals)),
+        skipped: codexUsageFormat.readMalformedRecords?.(state),
+      }).toEqual({ processed: [160, 230], skipped: 0 });
     });
   });
 });
