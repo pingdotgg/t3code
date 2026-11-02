@@ -100,9 +100,11 @@ it.effect.each([
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
       const mainListeners = new Map<string, () => void>();
       let closeCount = 0;
+      let mainVisible = visible;
       const main = {
         isDestroyed: () => false,
-        isVisible: () => visible,
+        isVisible: () => mainVisible,
+        on: (event: string, listener: () => void) => mainListeners.set(event, listener),
         once: (event: string, listener: () => void) => mainListeners.set(event, listener),
       } as unknown as Electron.BrowserWindow;
       const mainRef = yield* Ref.make(Option.some(main));
@@ -175,11 +177,19 @@ it.effect.each([
         if (closeMain) yield* Ref.set(mainRef, Option.none());
         yield* SubscriptionRef.set(state.primaryBackendStartup, { _tag: "Ready" });
         yield* Deferred.await(remembered);
-        if (closeMain) {
+        if (closeMain || !visible) {
           expect(closeCount).toBe(0);
-          yield* Ref.set(mainRef, Option.some(main));
-          appListeners.get("browser-window-created")?.({}, main);
+          if (closeMain) {
+            yield* Ref.set(mainRef, Option.some(main));
+            mainVisible = false;
+            appListeners.get("browser-window-created")?.({}, main);
+          }
           mainListeners.get("ready-to-show")?.();
+          expect(closeCount).toBe(0);
+          mainVisible = true;
+          const show = mainListeners.get("show");
+          expect(show).toBeDefined();
+          show!();
         }
         yield* Effect.promise(() => closed.promise);
         expect(closeCount).toBe(1);
