@@ -177,11 +177,13 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           "//attacker.test/s/a.ts",
           "/\\attacker.test\\s",
         ];
+        const realpath = vi.mocked(NodeFSP.realpath).mockClear();
         expect((yield* service.getMetadata({ paths, resolveRealPath: true })).entries).toEqual([
           null,
           null,
           null,
         ]);
+        expect(realpath).not.toHaveBeenCalled();
         expect(statted).toEqual([]);
       }),
     );
