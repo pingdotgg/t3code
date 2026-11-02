@@ -1600,6 +1600,7 @@ it.layer(
               Layer.provideMerge(layerInstanceRegistry),
               Layer.provideMerge(layerModelManifest),
               Layer.provideMerge(layerLatestVersions),
+              Layer.provide(layerUnusedMutator),
               Layer.provideMerge(
                 ServerConfig.layerTest(process.cwd(), {
                   prefix: "t3-provider-registry-model-cache-",
