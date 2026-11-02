@@ -1,4 +1,5 @@
 import {
+  ContextHandoffId,
   MessageId,
   ProviderInstanceId,
   type OrchestrationV2ThreadProjection,
@@ -19,6 +20,7 @@ const run = (
     ordinal,
     status,
     completedAt: null,
+    contextHandoffId: null,
     userMessageId: MessageId.make(message),
     modelSelection: selection(model),
   }) as OrchestrationV2ThreadProjection["runs"][number];
@@ -46,6 +48,19 @@ describe("modelSwitchSince", () => {
         selection("a"),
       ),
     ).toEqual({ modelSwitch: { from: selection("b"), to: selection("a") } });
+  });
+
+  it("counts a wake whose handoff row shows the swap", () => {
+    const wake = {
+      ...run("wake", 2, "other"),
+      contextHandoffId: ContextHandoffId.make("handoff"),
+    };
+    expect(
+      modelSwitchSince(
+        { runs: [run("first", 1, "a"), wake], turnItems: shown("first") },
+        selection("other"),
+      ),
+    ).toEqual({});
   });
 
   it("records nothing for a first run or an unchanged selection", () => {

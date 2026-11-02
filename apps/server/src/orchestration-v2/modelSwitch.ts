@@ -7,8 +7,8 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 
 /**
- * The model or effort change a new run brings, measured from the latest run whose message is in
- * the timeline, so consecutive dividers always chain. `baseline` stands in when there is none,
+ * The model or effort change a new run brings, measured from the latest run the timeline shows,
+ * through its message or its handoff row, so consecutive dividers always chain. `baseline` stands in when there is none,
  * such as a fork's source run. Callers skip starts with a context handoff; the handoff item already
  * shows those.
  */
@@ -23,9 +23,9 @@ export function modelSwitchSince(
   let previous: OrchestrationV2ThreadProjection["runs"][number] | undefined;
   for (const run of projection.runs) {
     // Pending queued messages are hidden until their run starts.
-    if (run.status === "rolled_back" || run.status === "queued" || !shown.has(run.userMessageId)) {
-      continue;
-    }
+    if (run.status === "rolled_back" || run.status === "queued") continue;
+    // A wake shows as a notification, but its context handoff row still shows the swap.
+    if (!shown.has(run.userMessageId) && run.contextHandoffId === null) continue;
     if (previous === undefined || runRanAfter(run, previous)) previous = run;
   }
   const from = previous?.modelSelection ?? baseline;
