@@ -84,15 +84,12 @@ export function isQualifiedAntigravityRelease(version: string | null | undefined
   return version?.trim() === "1.4.5";
 }
 
-// Must match the first agy-acp-server release that offers every model to `t3-code`.
-const T3_CLIENT_NAME_RELEASE = [1, 4, 6] as const;
+// Must match the first agy-acp-server release with the agent changes made for T3 Code.
+const T3_CODE_CHANGES_RELEASE = [1, 4, 6] as const;
 
-/** Older releases offer non-Gemini models only to allowlisted clients such as Zed. */
-export function antigravityClientInfo(version: string | null | undefined) {
+function antigravityHasT3CodeChanges(version: string | null | undefined): boolean {
   const parsed = parseAntigravityVersion(version);
-  return parsed !== undefined && compareVersions(parsed, T3_CLIENT_NAME_RELEASE) >= 0
-    ? { name: "t3-code", title: "T3 Code", version: packageJson.version }
-    : { name: "zed", version: "0.0.0" };
+  return parsed !== undefined && compareVersions(parsed, T3_CODE_CHANGES_RELEASE) >= 0;
 }
 
 /**
@@ -116,6 +113,13 @@ export function antigravitySessionMeta(
       : {}),
   };
   return Object.keys(antigravity).length === 0 ? undefined : { antigravity };
+}
+
+/** Older releases offer non-Gemini models only to allowlisted clients such as Zed. */
+export function antigravityClientInfo(version: string | null | undefined) {
+  return antigravityHasT3CodeChanges(version)
+    ? { name: "t3-code", title: "T3 Code", version: packageJson.version }
+    : { name: "zed", version: "0.0.0" };
 }
 
 export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(function* (
