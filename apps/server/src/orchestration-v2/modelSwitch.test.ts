@@ -18,6 +18,7 @@ const run = (
   ({
     ordinal,
     status,
+    completedAt: null,
     userMessageId: MessageId.make(message),
     modelSelection: selection(model),
   }) as OrchestrationV2ThreadProjection["runs"][number];
@@ -46,8 +47,12 @@ describe("modelSwitchSince", () => {
     ).toEqual({ modelSwitch: { from: selection("b"), to: selection("a") } });
   });
 
-  it("records nothing for the first run or an unchanged selection", () => {
+  it("records nothing for a first run or an unchanged selection", () => {
     expect(modelSwitchSince({ runs: [], turnItems: [] }, selection("a"))).toEqual({});
+    // A fork's first message compares with the run it forked from.
+    expect(modelSwitchSince({ runs: [], turnItems: [] }, selection("a"), selection("b"))).toEqual({
+      modelSwitch: { from: selection("b"), to: selection("a") },
+    });
     expect(
       modelSwitchSince({ runs: [run("first", 1, "a")], turnItems: shown("first") }, selection("a")),
     ).toEqual({});
