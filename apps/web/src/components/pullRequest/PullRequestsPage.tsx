@@ -1134,8 +1134,15 @@ export function PullRequestsPage() {
       {panelToggleControls}
     </div>
   );
+  // A search or a later page can fail for a repository the baseline read; both are this scope's.
+  const noticeSources = [baselineQuery.data, answered].filter((answer) => answer != null);
   const listNotices = pullRequestListNotices(
-    baselineQuery.data ?? listData ?? { unreadableHosts: {}, errors: [] },
+    {
+      unreadableHosts: Object.fromEntries(
+        noticeSources.flatMap((answer) => Object.entries(answer.unreadableHosts)),
+      ),
+      errors: noticeSources.flatMap((answer) => answer.errors),
+    },
     projects,
     capableEnvironments.length > 1 ? environmentLabels : null,
   );
