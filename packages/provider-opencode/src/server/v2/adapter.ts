@@ -3306,17 +3306,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         Effect.orElseSucceed(() => new Set<string>()),
       );
 
-    // A directory OpenCode is still scanning lists none or some of its skills; its model list waits for the scan.
+    // A directory OpenCode is still scanning lists none or some of its skills.
+    // OpenCode 2.2.5 answers its model list only once the scan has ended (observed, not documented).
     const skillsMentioned = Effect.fnUntraced(function* (
       location: { readonly directory: string },
       mentions: ReadonlyArray<string>,
     ) {
-      let known = yield* listSkills(location);
+      const known = yield* listSkills(location);
       if (mentions.some((name) => !known.has(name))) {
-        yield* client.model
-          .list({ location })
-          .pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.ignore);
-        known = yield* listSkills(location);
+        yield* readModels(location.directory);
+        for (const name of yield* listSkills(location)) known.add(name);
       }
       return mentions.filter((name) => known.has(name));
     });

@@ -2289,6 +2289,40 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "keeps a $skill found on the first read when the reread after the scan comes back empty",
+    () =>
+      Effect.gen(function* () {
+        const prompts: Array<unknown> = [];
+        const greet = {
+          id: "greet",
+          name: "greet",
+          path: `${WORK}/.opencode/skills/greet/SKILL.md`,
+          content: "Say hello.",
+        };
+        const { runtime, thread } = yield* resumed(
+          [
+            out("skill.list", { "location[directory]": WORK }),
+            reply("skill.list", { location: { directory: WORK }, data: [greet] }),
+            ...directoryModels(WORK),
+            out("skill.list", { "location[directory]": WORK }),
+            reply("skill.list", { location: { directory: WORK }, data: [] }),
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            event("session.execution.succeeded", { sessionID: SESSION }),
+          ],
+          { onPrompt: (input) => prompts.push(input) },
+        );
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn({
+          ...turnInput(thread),
+          message: { ...turnInput(thread).message, text: "$greet then echo $HOME" },
+        });
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+        assert.deepInclude(prompts[0], { skills: [{ id: "greet" }] });
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps a turn still running after a reconnect open for its next events", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
