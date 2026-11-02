@@ -245,7 +245,7 @@ function isYarnGlobalCommandPath(commandPath: string): boolean {
  * Version-manager installs are pinned in its config, so updating them means editing that.
  * A command wrapper is a symlink to the `mise` binary, which dispatches on argv[0].
  */
-function isMiseCommandPath(commandPath: string): boolean {
+export function isMiseCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
   return (
     normalized.includes("/mise/installs/") ||
@@ -708,7 +708,7 @@ export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProv
   },
 );
 
-const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
+export const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
   context: ProviderMaintenanceResolutionContext,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;

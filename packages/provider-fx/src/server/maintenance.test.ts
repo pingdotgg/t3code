@@ -146,7 +146,39 @@ it.layer(NodeServices.layer)("fx maintenance", (it) => {
         canUpdate: true,
         updateCommand: `'${binaryPath}' upgrade`,
       });
-    }),
+
+      const resolver = makeFxMaintenance(Effect.succeed("0.0.15"), "24.0.0");
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-fx-mise-" });
+      const wrapperPath = path.join(directory, "fx");
+      for (const managedPath of [
+        "/home/fx/.local/share/mise/installs/fx/0.0.15/bin/fx",
+        "/home/fx/.local/share/mise/shims/fx",
+        "/home/fx/.local/share/mise/command-wrappers/fx",
+      ]) {
+        for (const paths of [
+          { resolvedCommandPath: managedPath, realCommandPath: binaryPath },
+          { resolvedCommandPath: binaryPath, realCommandPath: managedPath },
+        ]) {
+          expect(
+            (yield* resolver.resolve({ binaryPath, ...paths, platform: "linux", env: {} })).update,
+          ).toBeNull();
+        }
+      }
+      for (const command of ["x", "exec"]) {
+        yield* fs.writeFileString(wrapperPath, `#!/bin/sh\nexec mise ${command} -- fx "$@"\n`);
+        expect(
+          (yield* resolver.resolve({
+            binaryPath: wrapperPath,
+            resolvedCommandPath: wrapperPath,
+            realCommandPath: wrapperPath,
+            platform: "linux",
+            env: {},
+          })).update,
+        ).toBeNull();
+      }
+    }).pipe(Effect.scoped),
   );
 
   it.effect("leaves the latest version unknown when the release file is unusable", () =>

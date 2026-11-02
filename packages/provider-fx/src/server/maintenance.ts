@@ -6,6 +6,8 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import {
   homebrewOwnershipFromCommandPath,
+  isMiseCommandPath,
+  isMiseWrapperScript,
   makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
   resolveHomebrewProviderMaintenance,
@@ -39,6 +41,13 @@ export const makeFxMaintenance = (
     if (
       context === null ||
       (context.platform === "darwin" && Number.parseInt(osRelease, 10) < 24)
+    ) {
+      return manualOnly;
+    }
+    if (
+      isMiseCommandPath(context.resolvedCommandPath) ||
+      isMiseCommandPath(context.realCommandPath) ||
+      (yield* isMiseWrapperScript(context))
     ) {
       return manualOnly;
     }
