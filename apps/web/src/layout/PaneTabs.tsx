@@ -23,6 +23,7 @@ import {
   memo,
   useLayoutEffect,
   useRef,
+  useState,
   type ReactNode,
   type ComponentType,
   type MouseEvent as ReactMouseEvent,
@@ -67,6 +68,7 @@ import { closeLayoutTabByUser, closeOtherLayoutTabsByUser, splitLayoutTab } from
 import { beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
 import { useLayoutStore } from "./layoutStore";
+import { tabSettlesOnClose } from "./settleOnClose";
 import { setWheelScroller, wheelDeltaPx } from "../motion/gesture";
 import { observeResize } from "../lib/observeResize";
 
@@ -219,15 +221,23 @@ export function buildLayoutTabMenuItems(
       separatorBefore: true,
     });
   }
+  const now = new Date().toISOString();
   items.push({
     id: "layout:close-tab",
-    label: "Close",
+    label: tabSettlesOnClose(location.tab, now) ? "Close and settle" : "Close",
     icon: "x",
     ...keys("tab.close"),
     separatorBefore: !items.some((item) => item.id === "layout:copy-link"),
   });
   if (hasSiblings) {
-    items.push({ id: "layout:close-other-tabs", label: "Close others", icon: "copy-x" });
+    const othersSettle = location.pane.tabs.some(
+      (tab) => tab.id !== tabId && tabSettlesOnClose(tab, now),
+    );
+    items.push({
+      id: "layout:close-other-tabs",
+      label: othersSettle ? "Close others and settle" : "Close others",
+      icon: "copy-x",
+    });
   }
   return items;
 }
@@ -342,8 +352,15 @@ export const LAYOUT_TAB_ICON_CLASS = "contents [visibility:var(--tab-icon-visibi
 export function LayoutTabCloseButton({ tabId, title }: { tabId: string; title: string }) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcut = shortcutLabelForCommand(keybindings, "tab.close");
+  const [settles, setSettles] = useState(false);
   return (
-    <Tooltip>
+    <Tooltip
+      onOpenChange={(open) => {
+        if (!open) return;
+        const tab = findLayoutTab(useLayoutStore.getState().layout, (t) => t.id === tabId)?.tab;
+        setSettles(tab !== undefined && tabSettlesOnClose(tab, new Date().toISOString()));
+      }}
+    >
       <TooltipTrigger
         render={
           <ContentButton
@@ -358,7 +375,10 @@ export function LayoutTabCloseButton({ tabId, title }: { tabId: string; title: s
       >
         <XIcon aria-hidden className="size-3" />
       </TooltipTrigger>
-      <TooltipPopup side="bottom">Close tab{shortcut ? ` (${shortcut})` : ""}</TooltipPopup>
+      <TooltipPopup side="bottom">
+        {settles ? "Close and settle" : "Close tab"}
+        {shortcut ? ` (${shortcut})` : ""}
+      </TooltipPopup>
     </Tooltip>
   );
 }

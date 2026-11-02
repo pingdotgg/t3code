@@ -882,6 +882,21 @@ type SidebarThreadStatusInput = Pick<
   | "blockedOnThreadWait"
 >;
 
+export function threadSettlesOnTabClose(
+  thread:
+    | (SidebarThreadStatusInput &
+        ThreadSnoozeShell &
+        Pick<SidebarThreadSummary, "archivedAt" | "settledOverride" | "pinnedAt">)
+    | null,
+  now: string,
+): boolean {
+  if (!thread || thread.archivedAt != null) return false;
+  if (thread.settledOverride === "settled" || thread.pinnedAt != null) return false;
+  if (effectiveSnoozed(thread, { now })) return false;
+  const status = resolveSidebarThreadStatus(thread);
+  return status !== "working" && status !== "approval" && status !== "input";
+}
+
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
     return "approval";

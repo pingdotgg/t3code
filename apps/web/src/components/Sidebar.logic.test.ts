@@ -30,6 +30,7 @@ import {
   sortScopedProjectsForSidebar,
   sortSidebarV2ProjectGroups,
   shouldNavigateAfterThreadPark,
+  threadSettlesOnTabClose,
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
@@ -306,6 +307,39 @@ describe("resolveSidebarThreadStatus", () => {
         runtime: { ...runtime, status: "idle" as const, lastError: "persisted" },
       }),
     ).toBe("waiting");
+  });
+
+  it("settles a closed tab's thread only once it has stopped and nothing else holds it", () => {
+    const now = "2026-03-09T10:00:00.000Z";
+    const done = {
+      ...idle,
+      runtime: { ...runtime, status: "completed" as const },
+      archivedAt: null,
+      settledOverride: null,
+      pinnedAt: null,
+      snoozedUntil: null,
+    };
+    expect(threadSettlesOnTabClose(done, now)).toBe(true);
+    expect(threadSettlesOnTabClose({ ...done, runtime: null }, now)).toBe(true);
+    expect(
+      threadSettlesOnTabClose({ ...done, runtime: { ...runtime, status: "failed" as const } }, now),
+    ).toBe(true);
+    expect(
+      threadSettlesOnTabClose({ ...done, snoozedUntil: "2026-03-09T09:00:00.000Z" }, now),
+    ).toBe(true);
+
+    expect(threadSettlesOnTabClose(null, now)).toBe(false);
+    expect(threadSettlesOnTabClose({ ...done, runtime }, now)).toBe(false);
+    expect(threadSettlesOnTabClose({ ...done, hasPendingApprovals: true }, now)).toBe(false);
+    expect(threadSettlesOnTabClose({ ...done, hasPendingUserInput: true }, now)).toBe(false);
+    expect(threadSettlesOnTabClose({ ...done, settledOverride: "settled" as const }, now)).toBe(
+      false,
+    );
+    expect(threadSettlesOnTabClose({ ...done, pinnedAt: now }, now)).toBe(false);
+    expect(threadSettlesOnTabClose({ ...done, archivedAt: now }, now)).toBe(false);
+    expect(
+      threadSettlesOnTabClose({ ...done, snoozedUntil: "2026-03-09T11:00:00.000Z" }, now),
+    ).toBe(false);
   });
 
   it("shows Merged ahead of Done but behind live and wake states", () => {

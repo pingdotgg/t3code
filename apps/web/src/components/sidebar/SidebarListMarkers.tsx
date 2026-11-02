@@ -1,8 +1,9 @@
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { type ReactNode, useLayoutEffect } from "react";
+import { type ReactNode, useLayoutEffect, useState } from "react";
 import { cn } from "~/lib/utils";
+import { useTabCloseSettles } from "../../layout/settleOnClose";
 import {
   animateSidebarLayoutChanges,
   sidebarMarkerId,
@@ -123,6 +124,9 @@ export function SidebarSectionHeader(props: {
       : props.marker === "snoozed-header"
         ? "snoozed"
         : "settled";
+  const closeSettles = useTabCloseSettles((state) => (shelf === "settled" ? state.count : 0));
+  const [closeSettlesAtMount] = useState(closeSettles);
+  const pulseKey = closeSettles > closeSettlesAtMount ? closeSettles : 0;
   return (
     <SortableSidebarMarker
       marker={props.marker}
@@ -148,9 +152,18 @@ export function SidebarSectionHeader(props: {
                 : "settled"
         }
         data-testid={`sidebar-${shelf}-shelf-toggle`}
-        accessory={<span className="text-meta tabular-nums">{props.count}</span>}
+        accessory={
+          <span
+            key={pulseKey}
+            className={cn("text-meta tabular-nums", pulseKey > 0 && "animate-stash-pulse-count")}
+          >
+            {props.count}
+          </span>
+        }
       >
-        {props.label}
+        <span key={pulseKey} className={cn(pulseKey > 0 && "animate-stash-pulse-row")}>
+          {props.label}
+        </span>
       </CollapsibleSectionHeader>
     </SortableSidebarMarker>
   );
