@@ -1662,7 +1662,7 @@ describe("UsageService", () => {
 
         // The revoked key keeps its stale cache, which must not replace the working key's history.
         revoked = true;
-        cursor.state.events.push({ timestampMs: CURSOR_NOW - 2 * HOUR_MS, outputTokens: 5 });
+        cursor.state.events.push({ timestampMs: CURSOR_NOW + 60 * 1000, outputTokens: 5 });
         yield* TestClock.adjust(Duration.minutes(2));
         const second = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
         assert.deepStrictEqual(
