@@ -1801,17 +1801,23 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
-  it.effect.each(["initial", "late", "withdrawn", "omitted"] as const)(
+  it.effect.each(["initial", "late", "withdrawn", "withdrawn-upgrade", "omitted"] as const)(
     "learns the %s direct endpoint over T3 Connect",
     (discovery) =>
       Effect.gen(function* () {
         const relayEntry: ConnectionCatalogEntry =
-          discovery === "withdrawn" || discovery === "omitted"
+          discovery.startsWith("withdrawn") || discovery === "omitted"
             ? {
                 target: LAN_ROUTE.target,
                 profile: Option.some(
                   new BearerConnectionProfile({
                     ...Option.getOrThrow(LAN_ROUTE.profile),
+                    ...(discovery === "withdrawn-upgrade"
+                      ? {
+                          httpBaseUrl: "https://old.example.test/",
+                          wsBaseUrl: "wss://old.example.test/",
+                        }
+                      : {}),
                     learned: true,
                     authorization: "t3-connect",
                   }),
@@ -1899,6 +1905,12 @@ describe("EnvironmentSupervisor routes", () => {
           yield* Deferred.await(discoveryStarted);
         }
         yield* Deferred.succeed(finishDiscovery, undefined);
+        if (discovery === "withdrawn-upgrade") {
+          yield* Deferred.await(discoveryProcessed);
+          yield* TestClock.adjust("60 seconds");
+          expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(2);
+          return;
+        }
         if (discovery === "withdrawn" || discovery === "omitted") {
           yield* Deferred.await(discoveryProcessed);
           expect(yield* Ref.get(learned)).toContain(
