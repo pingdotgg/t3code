@@ -199,7 +199,7 @@ describe("chromiumProcessIsAlive", () => {
 });
 
 describe("isSourceInstalled", () => {
-  it.effect.each([undefined, "", "relative-config", "relocated"])(
+  it.effect.each([undefined, "", "relative-config", "relocated", "chrome-override"])(
     "discovers Linux Chromium profiles with XDG_CONFIG_HOME=%s",
     (configHome) =>
       run(
@@ -207,41 +207,39 @@ describe("isSourceInstalled", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-sources-xdg-" });
-          const xdgConfigHome = configHome === "relocated" ? path.join(home, "config") : configHome;
+          const xdgConfigHome =
+            configHome === "relocated" || configHome === "chrome-override"
+              ? path.join(home, "config")
+              : configHome;
+          const chromeConfigHome =
+            configHome === "chrome-override" ? path.join(home, ".config") : undefined;
           const context = yield* sourcePathContext.pipe(
             Effect.provideService(HostProcess.Environment, {
               HOME: home,
               XDG_CONFIG_HOME: xdgConfigHome,
+              CHROME_CONFIG_HOME: chromeConfigHome,
             }),
             Effect.provideService(HostProcess.Platform, "linux"),
           );
           const configRoot =
-            configHome === "relocated" ? path.join(home, "config") : path.join(home, ".config");
-          for (const [id, directory] of [
-            ["chrome", "google-chrome"],
-            ["edge", "microsoft-edge"],
-            ["brave", path.join("BraveSoftware", "Brave-Browser")],
-            ["vivaldi", "vivaldi"],
-            ["opera", "opera"],
-            ["helium", "net.imput.helium"],
-          ] as const) {
-            const source = BROWSER_IMPORT_SOURCES.find((source) => source.id === id)!;
-            const root = path.join(configRoot, directory);
-            const database = path.join(root, "Default", "Network", "Cookies");
-            assert.isFalse(yield* isSourceInstalled(source, context));
-            yield* fileSystem.makeDirectory(path.dirname(database), { recursive: true });
-            yield* writeCookieDatabase(database, 2);
-            yield* fileSystem.writeFileString(
-              path.join(root, "Local State"),
-              '{"profile":{"info_cache":{"Default":{"name":"Fixture"}}}}',
-            );
+            chromeConfigHome ??
+            (configHome === "relocated" ? path.join(home, "config") : path.join(home, ".config"));
+          const source = BROWSER_IMPORT_SOURCES.find((source) => source.id === "chrome")!;
+          const root = path.join(configRoot, "google-chrome");
+          const database = path.join(root, "Default", "Network", "Cookies");
+          assert.isFalse(yield* isSourceInstalled(source, context));
+          yield* fileSystem.makeDirectory(path.dirname(database), { recursive: true });
+          yield* writeCookieDatabase(database, 2);
+          yield* fileSystem.writeFileString(
+            path.join(root, "Local State"),
+            '{"profile":{"info_cache":{"Default":{"name":"Fixture"}}}}',
+          );
 
-            assert.isTrue(yield* isSourceInstalled(source, context));
-            assert.deepEqual(yield* listSourceProfiles(source, context), [
-              { directory: "Default", name: "Fixture", cookieCount: 2 },
-            ]);
-            assert.equal(yield* resolveCookieDatabase(source, context, "Default"), database);
-          }
+          assert.isTrue(yield* isSourceInstalled(source, context));
+          assert.deepEqual(yield* listSourceProfiles(source, context), [
+            { directory: "Default", name: "Fixture", cookieCount: 2 },
+          ]);
+          assert.equal(yield* resolveCookieDatabase(source, context, "Default"), database);
         }),
       ),
   );

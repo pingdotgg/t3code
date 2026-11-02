@@ -17,6 +17,7 @@ export interface BrowserImportPathContext {
   readonly platform: NodeJS.Platform;
   readonly home: string;
   readonly linuxConfigHome: string;
+  readonly linuxChromeConfigHome: string;
   readonly appData: string | undefined;
   readonly localAppData: string | undefined;
 }
@@ -69,7 +70,10 @@ const chromiumSource = (input: {
         : undefined;
     }
     return input.linuxSegments
-      ? context.path.join(context.linuxConfigHome, ...input.linuxSegments)
+      ? context.path.join(
+          input.id === "chrome" ? context.linuxChromeConfigHome : context.linuxConfigHome,
+          ...input.linuxSegments,
+        )
       : undefined;
   },
 });
@@ -295,12 +299,16 @@ export const sourcePathContext = Effect.gen(function* () {
   const environment = yield* HostProcess.Environment;
   const home = environment.HOME ?? environment.USERPROFILE ?? "";
   const xdgConfigHome = environment.XDG_CONFIG_HOME;
+  const linuxConfigHome =
+    xdgConfigHome && path.isAbsolute(xdgConfigHome) ? xdgConfigHome : path.join(home, ".config");
+  const chromeConfigHome = environment.CHROME_CONFIG_HOME;
   return {
     path,
     platform,
     home,
-    linuxConfigHome:
-      xdgConfigHome && path.isAbsolute(xdgConfigHome) ? xdgConfigHome : path.join(home, ".config"),
+    linuxConfigHome,
+    linuxChromeConfigHome:
+      chromeConfigHome && path.isAbsolute(chromeConfigHome) ? chromeConfigHome : linuxConfigHome,
     appData: environment.APPDATA,
     localAppData: environment.LOCALAPPDATA,
   } satisfies BrowserImportPathContext;
