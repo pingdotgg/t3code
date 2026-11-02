@@ -965,7 +965,7 @@ const make = Effect.gen(function* () {
       // An aborted navigation is usually a download; its `download` event settles the status.
       if (errorText.includes("ERR_ABORTED")) {
         if (tab.stoppedGeneration === generation) {
-          settleAbortedNavigation(tab, generation, request.url(), undefined);
+          settleStoppedNavigation(tab, generation);
           return;
         }
         const url = request.url();
@@ -1068,6 +1068,14 @@ const make = Effect.gen(function* () {
   const clearAbortedNavigation = (tab: ServerTab) => {
     if (tab.abortedNavigation !== null) clearTimeout(tab.abortedNavigation.timer);
     tab.abortedNavigation = null;
+  };
+
+  const settleStoppedNavigation = (tab: ServerTab, generation: number) => {
+    if (tab.navigationGeneration !== generation || !tab.loading) return;
+    clearAbortedNavigation(tab);
+    tab.loading = false;
+    if (tab.page.url() === "about:blank") report(tab, { _tag: "Idle" });
+    else void reportLoaded(tab);
   };
 
   const settleAbortedNavigation = (
@@ -2509,11 +2517,7 @@ const make = Effect.gen(function* () {
         tab.stoppedGeneration = generation;
         await session.send("Page.stopLoading");
         // Stopping a committed document need not emit Playwright's load or requestfailed events.
-        if (tab.navigationGeneration === generation && tab.loading) {
-          clearAbortedNavigation(tab);
-          tab.loading = false;
-          await reportLoaded(tab);
-        }
+        settleStoppedNavigation(tab, generation);
         return;
       }
       case "reload":

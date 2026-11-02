@@ -664,9 +664,17 @@ it.live.each([
   { method: "goForward" as const, message: { type: "history", delta: 1 }, abortEvent: "before" },
   { method: "reload" as const, message: { type: "reload" }, abortEvent: "after" },
   { method: "reload" as const, message: { type: "reload" }, abortEvent: "none" },
-])("viewer $method Stop settles ($abortEvent abort event)", ({ method, message, abortEvent }) =>
+  ...["before", "after", "none"].map((abortEvent) => ({
+    method: "goto" as const,
+    message: { type: "navigate", url: "http://10.255.255.1/" },
+    abortEvent,
+    blank: true,
+  })),
+])("viewer $method Stop settles ($abortEvent, blank=$blank)", (testCase) =>
   Effect.scoped(
     Effect.gen(function* () {
+      const { method, message, abortEvent } = testCase;
+      const blank = "blank" in testCase;
       const { browser, broker, tabId } = yield* ready;
       const manager = yield* Manager.PreviewManager;
       const events = yield* manager.subscribeEvents;
@@ -702,14 +710,14 @@ it.live.each([
         return send(operation, input);
       });
       const correction = yield* Effect.gen(function* () {
-        yield* viewer.input({ type: "navigate", url: "http://localhost:5173/fixed" });
+        if (!blank) yield* viewer.input({ type: "navigate", url: "http://localhost:5173/fixed" });
         yield* viewer.input({ type: "text", text: "hello" });
       }).pipe(Effect.forkScoped);
       yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
       // The text reaches the page while the first navigation is still uncommitted.
       yield* Effect.promise(() => typed.promise);
       expect(page.goto).toHaveBeenLastCalledWith(
-        "http://localhost:5173/fixed",
+        blank ? "http://10.255.255.1/" : "http://localhost:5173/fixed",
         expect.objectContaining({ waitUntil: "commit" }),
       );
       expect(contexts[0]!.sessions.at(-1)!.send).toHaveBeenCalledWith("Input.insertText", {
@@ -726,7 +734,7 @@ it.live.each([
       const reader = yield* browser.attachViewer(viewerInput(tabId, false));
       yield* reader.input({ type: "stopLoading" });
       expect(cancelled).toBe(false);
-      if (abortEvent === "none") committed.resolve();
+      if (abortEvent === "none" && !blank) committed.resolve();
       yield* viewer.input({ type: "stopLoading" });
       expect(cancelled).toBe(true);
       if (abortEvent === "after") page.emit("requestfailed", request);
@@ -737,12 +745,20 @@ it.live.each([
         input: {},
       });
       expect(status.loading).toBe(false);
+      if (blank) {
+        const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+        expect(sessions.find((session) => session.tabId === tabId)?.navStatus).toEqual({
+          _tag: "Idle",
+        });
+      }
+      const expectedStatus = blank ? "Idle" : "Success";
       let settled = yield* PubSub.take(events);
-      while (settled.type !== "navigated" || settled.snapshot.navStatus._tag !== "Success") {
+      while (settled.type !== "navigated" || settled.snapshot.navStatus._tag !== expectedStatus) {
         settled = yield* PubSub.take(events);
       }
-      expect(settled.snapshot.navStatus.url).toBe("http://localhost:5173/fixed");
-      expect(page[method]).toHaveBeenCalledTimes(method === "goto" ? 2 : 1);
+      if (settled.snapshot.navStatus._tag === "Success")
+        expect(settled.snapshot.navStatus.url).toBe("http://localhost:5173/fixed");
+      expect(page[method]).toHaveBeenCalledTimes(method === "goto" && !blank ? 2 : 1);
       yield* viewer.input({ type: "releaseControl" });
       yield* Fiber.join(navigation);
       yield* Fiber.join(correction);
