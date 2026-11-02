@@ -21,6 +21,9 @@ import {
 const decodeProjectCreatePayload = Schema.decodeUnknownSync(ProjectCreatePayload);
 const decodeProjectUpdatePayload = Schema.decodeUnknownSync(ProjectUpdatePayload);
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
+const fileErrorSchema = Schema.Union([ProjectReadFileError, ProjectWriteFileError]);
+const encodeFileError = Schema.encodeSync(fileErrorSchema);
+const decodeFileError = Schema.decodeUnknownSync(fileErrorSchema);
 
 describe("project RPC errors", () => {
   it("derives stable messages from structured request context while retaining causes", () => {
@@ -54,6 +57,24 @@ describe("project RPC errors", () => {
     expect(readError.message).toBe("Failed to read workspace file 'src/index.ts' in '/workspace'.");
     expect(readError.message).not.toContain(cause.message);
     expect(readError.cause).toBe(cause);
+
+    for (const relativePath of [" ", " report.txt "]) {
+      const resolvedPath = `/workspace/${relativePath}`;
+      for (const FileError of [ProjectReadFileError, ProjectWriteFileError]) {
+        const error = new FileError({
+          cwd: "/workspace",
+          relativePath,
+          failure: "operation_failed",
+          resolvedPath,
+          operationPath: resolvedPath,
+        });
+        expect(decodeFileError(encodeFileError(error))).toMatchObject({
+          relativePath,
+          resolvedPath,
+          operationPath: resolvedPath,
+        });
+      }
+    }
 
     const contentSearchError = new ProjectSearchContentsError({
       cwd: "/workspace",
