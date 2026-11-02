@@ -18,11 +18,11 @@ export function initialTargetSelection(
   targetProfiles: ReadonlyArray<WizardTargetProfile>,
   preferredProfileId?: string,
 ): WizardTargetSelection {
-  if (
-    preferredProfileId !== undefined &&
-    targetProfiles.some((profile) => profile.id === preferredProfileId)
-  ) {
-    return { kind: "existing", profileId: preferredProfileId };
+  if (preferredProfileId !== undefined) {
+    if (targetProfiles.some((profile) => profile.id === preferredProfileId)) {
+      return { kind: "existing", profileId: preferredProfileId };
+    }
+    return { kind: "new" };
   }
   if (canCreateProfile) return { kind: "new" };
   const first = targetProfiles[0];

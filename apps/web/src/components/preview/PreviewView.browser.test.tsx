@@ -144,10 +144,10 @@ vi.mock(import("~/state/environments"), async (original) => ({
   useEnvironment: (() => ({ label: "WSL" })) as never,
   useEnvironmentHttpBaseUrl: () => "http://172.25.85.75:3773",
   usePrimaryEnvironmentId: () => EnvironmentId.make("environment-1"),
-  usePrimaryEnvironment: () => ({
+  usePrimaryEnvironment: (() => ({
     environmentId: EnvironmentId.make("environment-1"),
     label: "This Mac",
-  }),
+  })) as never,
 }));
 vi.mock(import("~/hooks/useSettings"), async (original) => ({
   ...(await original()),

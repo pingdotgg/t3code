@@ -229,6 +229,8 @@ export function PreviewView({
   const cookieImport = useBrowserCookieImport();
   const canImportCookiesInTab =
     Boolean(previewBridge) &&
+    snapshot !== null &&
+    runtimeTabId !== null &&
     (!serverOwnsRendering || nativeServerTab) &&
     (primaryEnvironmentId === null || threadRef.environmentId === primaryEnvironmentId);
   const panelRect = useBrowserSurfaceStore((state) =>

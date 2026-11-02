@@ -29,7 +29,7 @@ export interface BrowserImportSession {
   readonly environmentName: string;
 }
 
-export function filterImportableBrowserSources(
+function filterImportableBrowserSources(
   sources: ReadonlyArray<BrowserImportSource> | null,
 ): ReadonlyArray<BrowserImportSource> {
   return (sources ?? []).filter(
@@ -98,21 +98,17 @@ export function useBrowserCookieImport(options?: {
     if (importInFlightRef.current) return { kind: "blocked", reason: "readFailed" };
     importInFlightRef.current = true;
     setImportInFlight(true);
-    try {
-      const outcome = await importBrowserCookiesIntoTarget(
-        previewBridge,
-        source,
-        environmentId,
-        input,
-      );
-      if (outcome.kind === "imported" && outcome.imported > 0) {
-        options?.onImported?.(input.target);
-      }
-      return outcome;
-    } finally {
-      importInFlightRef.current = false;
-      setImportInFlight(false);
-    }
+    return importBrowserCookiesIntoTarget(previewBridge, source, environmentId, input)
+      .then((outcome) => {
+        if (outcome.kind === "imported" && outcome.imported > 0) {
+          options?.onImported?.(input.target);
+        }
+        return outcome;
+      })
+      .finally(() => {
+        importInFlightRef.current = false;
+        setImportInFlight(false);
+      });
   };
 
   const refreshImportSource = async (

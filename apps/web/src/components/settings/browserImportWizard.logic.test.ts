@@ -34,6 +34,9 @@ describe("wizard target selection", () => {
     expect(initialTargetSelection(true, profiles, "incognito")).toEqual({
       kind: "new",
     });
+    expect(initialTargetSelection(false, profiles, "incognito")).toEqual({
+      kind: "new",
+    });
   });
 
   it("rejects an existing target that is no longer listed", () => {
