@@ -70,9 +70,7 @@ export function useComposerAttachmentActions(props: {
     await withDraftOperation(key, async (signal) => {
       let placeholderIds: ReadonlyArray<string> = [];
       await pickComposerMedia({
-        existingCount:
-          countComposerDraftAttachmentsAfterSelection(key, insertion) +
-          (appAtomRegistry.get(composerPendingMediaAtom)[key]?.length ?? 0),
+        existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
         maxVideoBytes: capabilities?.fileAttachments?.maxUploadBytes,
         onPicked: (placeholders) => {
           placeholderIds = placeholders.map(({ id }) => id);
