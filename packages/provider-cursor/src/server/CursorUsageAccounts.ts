@@ -299,14 +299,16 @@ const make = Effect.gen(function* () {
       );
       const uniqueApiKeys = [...new Set(apiKeys.filter((apiKey) => apiKey !== undefined))];
       if (uniqueApiKeys.length > 0) {
-        const sources = yield* Effect.forEach(uniqueApiKeys, (apiKey) =>
-          accountSource(
-            { kind: "apiKey", apiKey },
-            authPath,
-            windowStartMs,
-            retentionCutoffMs,
-            awaitRefresh,
-          ),
+        const sources: ReadonlyArray<ProviderUsageScan | null> = yield* Effect.forEach(
+          uniqueApiKeys,
+          (apiKey) =>
+            accountSource(
+              { kind: "apiKey", apiKey },
+              authPath,
+              windowStartMs,
+              retentionCutoffMs,
+              awaitRefresh,
+            ),
         );
         // Keys for one account share its source, and a repeated source would count sessions twice.
         // A key whose refresh failed still holds older records, so a current read wins.
