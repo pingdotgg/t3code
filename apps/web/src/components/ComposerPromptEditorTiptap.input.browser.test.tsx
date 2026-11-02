@@ -160,6 +160,10 @@ it("bolds with Mod+B at a collapsed cursor and over a selection", async () => {
   await userEvent.keyboard(modB);
   await userEvent.keyboard(" now");
   await vi.waitFor(() => expect(textWithMark(editor, "bold")).toEqual([" now"]));
+  await userEvent.keyboard(modB);
+  await userEvent.keyboard(" done");
+  await vi.waitFor(() => expect(editor.getText()).toBe("ship it now done"));
+  expect(textWithMark(editor, "bold")).toEqual([" now"]);
 
   await act(async () => {
     editor.commands.setTextSelection({ from: 1, to: 5 });
