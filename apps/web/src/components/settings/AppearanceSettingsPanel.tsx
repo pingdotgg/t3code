@@ -348,6 +348,29 @@ export function AppearanceSettingsPanel() {
             />
           }
         />
+        <SettingsRow
+          {...searchableSetting("sidebar-reveal-on-hover")}
+          description="Temporarily reveal the hidden sidebar by resting the mouse at the left edge. The chat keeps its width."
+          resetAction={
+            settings.sidebarRevealOnHover !== DEFAULT_UNIFIED_SETTINGS.sidebarRevealOnHover ? (
+              <SettingResetButton
+                label="reveal sidebar on hover"
+                onClick={() =>
+                  updateSettings({
+                    sidebarRevealOnHover: DEFAULT_UNIFIED_SETTINGS.sidebarRevealOnHover,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarRevealOnHover}
+              onCheckedChange={(checked) => updateSettings({ sidebarRevealOnHover: checked })}
+              aria-label="Reveal sidebar on hover"
+            />
+          }
+        />
         <AdvancedSettings
           targetIds={[
             searchableSetting("panel-animations").id,

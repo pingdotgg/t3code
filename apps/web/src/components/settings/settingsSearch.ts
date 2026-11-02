@@ -361,6 +361,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "sidebar-reveal-on-hover",
+    title: "Reveal sidebar on hover",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar auto appear hover peek hidden left edge mouse"],
+  },
+  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",

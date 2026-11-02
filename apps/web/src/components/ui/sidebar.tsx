@@ -22,6 +22,7 @@ import { setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
 import * as Schema from "effect/Schema";
 import { announceSidebarVisibility } from "~/lib/accessibilityAnnouncements";
+import { useSidebarPeek } from "./sidebarPeek";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
@@ -78,6 +79,7 @@ type SidebarResolvedResizableOptions = {
 type SidebarInstanceContextProps = {
   resizable: SidebarResolvedResizableOptions | null;
   side: "left" | "right";
+  revealed?: boolean;
 };
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null);
@@ -264,6 +266,7 @@ function Sidebar({
   side = "left",
   variant = "sidebar",
   collapsible = "offcanvas",
+  revealOnHover = false,
   resizable = false,
   className,
   children,
@@ -272,13 +275,22 @@ function Sidebar({
   side?: "left" | "right";
   variant?: "sidebar" | "floating" | "inset";
   collapsible?: "offcanvas" | "icon" | "none";
+  revealOnHover?: boolean;
   resizable?: boolean | SidebarResizableOptions;
 }) {
   const { isMobile, state, openMobile, setOpenMobile, setMobileSheetElement } = useSidebar();
   const offcanvasCollapsed = !isMobile && collapsible === "offcanvas" && state === "collapsed";
+  const hasHover = useMediaQuery("(any-hover: hover) and (any-pointer: fine)");
+  const { ref: peekRef, ...peek } = useSidebarPeek(
+    revealOnHover && offcanvasCollapsed && side === "left" && hasHover,
+  );
 
   const resolvedResizable = resolveSidebarResizable({ collapsible, isMobile, resizable });
-  const instanceContextValue: SidebarInstanceContextProps = { side, resizable: resolvedResizable };
+  const instanceContextValue: SidebarInstanceContextProps = {
+    side,
+    resizable: resolvedResizable,
+    revealed: peek.revealed,
+  };
 
   if (collapsible === "none") {
     return (
@@ -340,11 +352,28 @@ function Sidebar({
 
   return (
     <SidebarInstanceContext value={instanceContextValue}>
+      {revealOnHover && offcanvasCollapsed && side === "left" && hasHover && (
+        <div
+          aria-hidden="true"
+          className="fixed bottom-0 left-0 top-[var(--workspace-topbar-height)] z-40 w-1.5 [-webkit-app-region:no-drag]"
+          data-slot="sidebar-hover-edge"
+          onPointerEnter={peek.edgeEnter}
+          onPointerLeave={peek.edgeLeave}
+        />
+      )}
       <div
         className="group peer hidden text-sidebar-foreground md:block"
         data-collapsible={state === "collapsed" ? collapsible : ""}
         data-collapsible-mode={collapsible}
-        inert={offcanvasCollapsed}
+        inert={offcanvasCollapsed && !peek.revealed}
+        data-revealed={peek.revealed ? "true" : undefined}
+        ref={peekRef}
+        onPointerEnter={peek.enter}
+        onPointerLeave={peek.leave}
+        onFocusCapture={peek.focus}
+        onBlurCapture={peek.blur}
+        onPointerUp={peek.release}
+        onLostPointerCapture={peek.release}
         data-side={side}
         data-slot="sidebar"
         data-state={state}
@@ -367,12 +396,13 @@ function Sidebar({
             "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) md:flex",
             "[[data-panel-animations=true]_&]:transition-[left,right,width] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
             side === "left"
-              ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
+              ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] group-data-[revealed=true]:left-0"
               : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
             variant === "floating" || variant === "inset"
               ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
               : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
             className,
+            peek.revealed && "z-[45] shadow-xl",
           )}
           data-slot="sidebar-container"
           {...props}
@@ -435,12 +465,12 @@ function SidebarRail({
   const sidebarInstance = React.use(SidebarInstanceContext);
   const suppressClickRef = React.useRef(false);
   const resolvedResizable = sidebarInstance?.resizable ?? null;
-  const canResize = resolvedResizable !== null && open;
+  const canResize = resolvedResizable !== null && (open || sidebarInstance?.revealed === true);
   const railLabel = canResize ? "Resize Sidebar" : "Toggle Sidebar";
   const railTitle = canResize ? "Drag to resize sidebar" : "Toggle Sidebar";
   const resize = useResizeDrag<HTMLButtonElement>((event) => {
     const options = resolvedResizable;
-    if (!options || !open) return null;
+    if (!options || !canResize) return null;
     const rail = event.currentTarget;
     const wrapper = rail.closest<HTMLElement>("[data-slot='sidebar-wrapper']");
     const sidebarRoot = rail.closest<HTMLElement>("[data-slot='sidebar']");
@@ -454,7 +484,7 @@ function SidebarRail({
     // Write width only to gap/container during drag; inherited --sidebar-width restyles the whole app, so
     // update it at commit.
     const widthTargets = [
-      sidebarRoot.querySelector<HTMLElement>("[data-slot='sidebar-gap']"),
+      ...(open ? [sidebarRoot.querySelector<HTMLElement>("[data-slot='sidebar-gap']")] : []),
       sidebarContainer,
     ].filter((element): element is HTMLElement => element !== null);
     const setTargetWidth = (value: number) => {
@@ -530,7 +560,7 @@ function SidebarRail({
       event.preventDefault();
       return;
     }
-    if (resolvedResizable && open) {
+    if (canResize) {
       event.preventDefault();
       return;
     }
@@ -552,6 +582,7 @@ function SidebarRail({
               "group-data-[collapsible=offcanvas]:translate-x-0 hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:after:left-full",
               "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
               "[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",
+              "group-data-[revealed=true]:pointer-events-auto",
               className,
             )}
             data-sidebar="rail"
