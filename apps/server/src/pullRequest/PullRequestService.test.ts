@@ -1700,34 +1700,49 @@ it.effect("names an SSH remote's web host from a later checkout when the first c
   }),
 );
 
-it.effect("rejects a different Forgejo HTTP port for an HTTP checkout", () =>
+it.effect("routes matching HTTP authorities and rejects a different web port", () =>
   Effect.gen(function* () {
-    const service = yield* makeService({
-      projects: [
-        project({
-          id: "http",
-          title: "http",
-          workspaceRoot: "/http",
-          repository: "team/repo",
-          provider: SourceControlProviderKind.make("forgejo"),
-          host: "code.example",
-          remoteUrl: "http://code.example:4000/team/repo.git",
-        }),
-      ],
-      providers: [fakePullRequestProvider(SourceControlProviderKind.make("forgejo"))],
-    });
-    const failure = yield* service
-      .summary(
-        {
-          projectId: "http" as ProjectId,
-          host: "code.example:3000",
-          repository: "team/repo",
-          number: 42,
-        },
-        { recoverTransientFailure: false },
-      )
-      .pipe(Effect.flip);
-    assert.strictEqual(failure._tag, "PullRequestUnavailableError");
+    for (const kind of ["forgejo", "github", "gitlab"] as const) {
+      const reads: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "http",
+            title: "http",
+            workspaceRoot: "/http",
+            repository: "team/repo",
+            provider: kind,
+            host: "code.example",
+            remoteUrl: "http://code.example:4000/team/repo.git",
+          }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make(kind), {
+            getChangeRequestPreview: (input) => {
+              reads.push(input.host);
+              return Effect.succeed(changeRequest(42, "2026-07-02T00:00:00Z"));
+            },
+            getChangeRequest: (input) => {
+              reads.push(input.host);
+              return Effect.succeed({ ...hostedChangeRequest("Port detail"), number: 42 });
+            },
+          }),
+        ],
+      });
+      const ref = {
+        projectId: "http" as ProjectId,
+        host: "code.example:4000",
+        repository: "team/repo",
+        number: 42,
+      };
+      assert.strictEqual((yield* service.preview(ref)).number, 42);
+      assert.strictEqual((yield* service.detail(ref)).body, "Port detail");
+      assert.deepStrictEqual(reads, ["code.example:4000", "code.example:4000"]);
+      const failure = yield* service
+        .summary({ ...ref, host: "code.example:3000" }, { recoverTransientFailure: false })
+        .pipe(Effect.flip);
+      assert.strictEqual(failure._tag, "PullRequestUnavailableError");
+    }
   }),
 );
 
