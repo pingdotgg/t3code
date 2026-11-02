@@ -739,6 +739,8 @@ export const PullRequestActionInput = Schema.Struct({
   action: PullRequestAction,
   mergeMethod: Schema.optional(PullRequestMergeMethod),
   updateMethod: Schema.optional(PullRequestUpdateMethod),
+  /** Opt-in, because older clients decode the action's success as void and reject a summary. */
+  replyWithSummary: Schema.optional(Schema.Literal(true)),
 });
 export type PullRequestActionInput = typeof PullRequestActionInput.Type;
 

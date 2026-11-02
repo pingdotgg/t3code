@@ -1248,7 +1248,13 @@ it.effect("returns the host's merged reply as a summary and trusts it without an
       const observedAt = Date.parse("2026-09-03T02:00:01.000Z");
       yield* TestClock.setTime(observedAt);
 
-      const result = yield* service.runAction({ ...reference, action: "merge" });
+      // Clients that did not ask decode the success as void, so they must get nothing back.
+      assert.isUndefined(yield* service.runAction({ ...reference, action: "merge" }));
+      const result = yield* service.runAction({
+        ...reference,
+        action: "merge",
+        replyWithSummary: true,
+      });
 
       assert.deepStrictEqual(result, {
         ...merged,

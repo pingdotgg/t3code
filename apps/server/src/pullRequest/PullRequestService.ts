@@ -3621,7 +3621,7 @@ export const make = Effect.gen(function* () {
         });
       }
     }
-    return summary;
+    return input.replyWithSummary === true ? summary : undefined;
   });
 
   const credentialCached =

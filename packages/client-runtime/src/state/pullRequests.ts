@@ -127,12 +127,17 @@ function updateCached<A, E>(
   registry.update(atom, AsyncResult.map(update));
 }
 
-type ActionReplyPatch = (
-  registry: AtomRegistry.AtomRegistry,
-  environmentId: EnvironmentId,
-  reference: PullRequestRef,
-  reply: PullRequestSummary | undefined,
-) => Effect.Effect<void>;
+interface ActionReplyPatch {
+  /** The read this reader is waiting on, if any. */
+  readonly pendingRead: (registry: AtomRegistry.AtomRegistry) => object | undefined;
+  readonly apply: (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    reference: PullRequestRef,
+    reply: PullRequestSummary | undefined,
+    readsBeforeSend: ReadonlySet<object>,
+  ) => Effect.Effect<void>;
+}
 
 // Module-wide so readers built by separate factories, such as linked summaries, are patched too.
 const actionReplyPatches = new WeakMap<object, ActionReplyPatch>();
@@ -252,38 +257,54 @@ function actionPatchedQuery<Input, A, E>(
     writableQuery(atom, options.idleTtlMs),
   );
   return (target: { readonly environmentId: EnvironmentId; readonly input: Input }) => {
-    const atom = writable(source(target));
+    const query = source(target);
+    const atom = writable(query);
     if (actionReplyPatches.has(atom)) return atom;
-    actionReplyPatches.set(
-      atom,
-      Effect.fnUntraced(function* (registry, environmentId, reference, reply) {
-        if (environmentId !== target.environmentId || !options.concerns(target.input, reference))
-          return;
-        if (reply === undefined) {
-          return options.rereadWithoutReply === true ? registry.refresh(atom) : undefined;
-        }
-        const shown = Option.flatMap(
-          registry.getNodes().get(atom)?.valueOption() ?? Option.none(),
-          (current: AsyncResult.AsyncResult<A, E>) => AsyncResult.value(current),
-        );
-        // A read with nothing to show began before the action; restart it rather than guess.
-        if (Option.isNone(shown)) return registry.refresh(atom);
-        const patched = options.patch(target.input, shown.value, reference, reply);
-        if (patched === "refresh") return registry.refresh(atom);
-        const reread = options.rereads?.(shown.value, reply) === true;
-        const next = reuseUnchanged(shown.value, patched);
-        if (next === shown.value) return reread ? registry.refresh(atom) : undefined;
-        yield* options.onAnswer?.(target, next, registry) ?? Effect.void;
-        updateCached(registry, atom, () => next, reread);
-        if (options.persistence !== undefined) {
-          yield* options.persistence.save(
-            environmentId,
-            queryPersistenceKey(options.label, target.input),
-            next,
+    const pendingRead = (registry: AtomRegistry.AtomRegistry) => {
+      const result = Option.getOrUndefined(
+        registry.getNodes().get(query)?.valueOption() ?? Option.none(),
+      ) as AsyncResult.AsyncResult<A, E> | undefined;
+      return result?.waiting === true ? result : undefined;
+    };
+    actionReplyPatches.set(atom, {
+      pendingRead,
+      apply: Effect.fnUntraced(
+        function* (registry, environmentId, reference, reply, readsBeforeSend) {
+          if (environmentId !== target.environmentId || !options.concerns(target.input, reference))
+            return;
+          const pending = pendingRead(registry);
+          // A read sent after the action already sees its result; one sent before may not.
+          const freshRead = pending !== undefined && !readsBeforeSend.has(pending);
+          const reread = () => (freshRead ? undefined : registry.refresh(atom));
+          if (reply === undefined) {
+            return options.rereadWithoutReply === true ? reread() : undefined;
+          }
+          const shown = Option.flatMap(
+            registry.getNodes().get(atom)?.valueOption() ?? Option.none(),
+            (current: AsyncResult.AsyncResult<A, E>) => AsyncResult.value(current),
           );
-        }
-      }),
-    );
+          if (Option.isNone(shown)) return reread();
+          const patched = options.patch(target.input, shown.value, reference, reply);
+          if (patched === "refresh") return reread();
+          const lacking = options.rereads?.(shown.value, reply) === true;
+          const next = reuseUnchanged(shown.value, patched);
+          if (next === shown.value) return lacking ? reread() : undefined;
+          yield* options.onAnswer?.(target, next, registry) ?? Effect.void;
+          if (lacking || (pending !== undefined && !freshRead)) registry.refresh(atom);
+          registry.update(
+            atom,
+            AsyncResult.map(() => next),
+          );
+          if (options.persistence !== undefined) {
+            yield* options.persistence.save(
+              environmentId,
+              queryPersistenceKey(options.label, target.input),
+              next,
+            );
+          }
+        },
+      ),
+    });
     return atom;
   };
 }
@@ -590,17 +611,27 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       });
       preparedInput = { ...actionInput, mergeMethod };
     }
-    return yield* routedRequest(WS_METHODS.pullRequestsRunAction, preparedInput);
+    return yield* routedRequest(WS_METHODS.pullRequestsRunAction, {
+      ...preparedInput,
+      replyWithSummary: true,
+    });
   });
+  const actionReplyReaders = (registry: AtomRegistry.AtomRegistry) =>
+    Array.from(registry.getNodes().keys()).flatMap((atom) => {
+      const patch = typeof atom === "string" ? undefined : actionReplyPatches.get(atom);
+      return patch === undefined ? [] : [patch];
+    });
+  const readsInFlight = (registry: AtomRegistry.AtomRegistry): ReadonlySet<object> =>
+    new Set(actionReplyReaders(registry).flatMap((reader) => reader.pendingRead(registry) ?? []));
   const applyActionReply = Effect.fn("PullRequests.applyActionReply")(function* (
     registry: AtomRegistry.AtomRegistry,
     environmentId: EnvironmentId,
     reference: PullRequestRef,
     reply: PullRequestSummary | undefined,
+    readsBeforeSend: ReadonlySet<object>,
   ) {
-    for (const atom of registry.getNodes().keys()) {
-      const patch = typeof atom === "string" ? undefined : actionReplyPatches.get(atom);
-      if (patch !== undefined) yield* patch(registry, environmentId, reference, reply);
+    for (const reader of actionReplyReaders(registry)) {
+      yield* reader.apply(registry, environmentId, reference, reply, readsBeforeSend);
     }
     if (reply !== undefined && reference.expectedAccountId === undefined) {
       yield* (
@@ -761,8 +792,9 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       // Preparation belongs to the write's lane. Refreshable queries would restart it after
       // every preceding action, and preparing outside the lane could reorder the clicks.
       execute: runAction,
+      onStart: (_target, registry) => readsInFlight(registry),
       // Loaded readers show the reply, or re-read when the host's reply lacked the pull request.
-      onSuccess: ({ environmentId, input }, registry, reply) => {
+      onSuccess: ({ environmentId, input }, registry, reply, readsBeforeSend) => {
         const { projectId, host, repository, number, expectedAccountId } = input;
         return applyActionReply(
           registry,
@@ -775,6 +807,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
             ...(expectedAccountId === undefined ? {} : { expectedAccountId }),
           },
           reply,
+          readsBeforeSend ?? new Set(),
         );
       },
       scheduler: commandScheduler,

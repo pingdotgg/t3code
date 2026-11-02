@@ -1256,6 +1256,71 @@ it.effect("keeps an action's reply when a refresh started before the action answ
   ),
 );
 
+it.effect("keeps a list read the server's refresh started before the action replied", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const refreshEvents = yield* PubSub.unbounded<number>();
+      let state: "open" | "merged" = "open";
+      let reads = 0;
+      const actionInputs: unknown[] = [];
+      const listWaiting = Latch.makeUnsafe();
+      const release = yield* Deferred.make<void>();
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.fromPubSub(refreshEvents),
+        [WS_METHODS.pullRequestsList]: () =>
+          Effect.gen(function* () {
+            reads++;
+            const entries = [
+              { ...actionReference, state, isDraft: false, updatedAt: actionReply.updatedAt },
+            ];
+            if (reads === 2) yield* Deferred.await(release);
+            return {
+              entries,
+              viewers: {},
+              providers: [],
+              errors: [],
+              truncated: false,
+              nextCursors: {},
+            };
+          }),
+        [WS_METHODS.pullRequestsRunAction]: (input: unknown) =>
+          Effect.gen(function* () {
+            actionInputs.push(input);
+            state = "merged";
+            // The server announces its refresh before it replies.
+            yield* PubSub.publish(refreshEvents, 1);
+            yield* listWaiting.await;
+            return actionReply;
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const list = atoms.list({ environmentId: target.environmentId, input: { state: "all" } });
+      const unmount = registry.mount(list);
+      yield* Effect.addFinalizer(() => Effect.sync(unmount));
+      yield* Effect.promise(() => executeAtomQuery(registry, list));
+      const stop = registry.subscribe(list, (result) => {
+        if (result.waiting) listWaiting.openUnsafe();
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(stop));
+
+      yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          ...target,
+          input: { ...actionReference, action: "merge" },
+        }),
+      );
+      yield* Deferred.succeed(release, undefined);
+
+      expect(
+        (yield* AtomRegistry.getResult(registry, list, { suspendOnWaiting: true })).entries,
+      ).toMatchObject([{ state: "merged" }]);
+      expect(reads).toBe(2);
+      expect(actionInputs).toEqual([expect.objectContaining({ replyWithSummary: true })]);
+    }),
+  ),
+);
+
 it.effect("shows a reopen reply at once and re-reads the fields it lacks", () =>
   Effect.scoped(
     Effect.gen(function* () {

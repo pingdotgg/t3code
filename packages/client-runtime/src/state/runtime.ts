@@ -950,11 +950,20 @@ export function createEnvironmentRpcCommand<
   ER,
   TTag extends EnvironmentUnaryRpcTag,
   Input extends EnvironmentRpcInput<TTag> = EnvironmentRpcInput<TTag>,
+  Started = undefined,
 >(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
   options: {
     readonly label: string;
     readonly tag: TTag;
+    /** Runs once authorized, as the request starts; what it returns reaches `onSuccess`. */
+    readonly onStart?: (
+      target: {
+        readonly environmentId: EnvironmentIdType;
+        readonly input: NoInfer<Input>;
+      },
+      registry: AtomRegistry.AtomRegistry,
+    ) => Started;
     readonly execute?: (
       input: Input,
     ) => Effect.Effect<
@@ -974,6 +983,7 @@ export function createEnvironmentRpcCommand<
       },
       registry: AtomRegistry.AtomRegistry,
       result: EnvironmentRpcSuccess<TTag>,
+      started: Started | undefined,
     ) => Effect.Effect<void, never, R>;
     readonly onSettled?: (
       target: {
@@ -994,15 +1004,21 @@ export function createEnvironmentRpcCommand<
         environmentId,
         input,
       };
+      let started: Started | undefined;
       // Routing requires consent on the origin as well as the actual destination.
       // The transport check below deliberately checks the destination again.
       return permissions.authorize(registry, environmentId, input).pipe(
-        Effect.andThen(() => options.execute?.(input) ?? requestGuarded(options.tag, input)),
+        Effect.andThen(() => {
+          started = options.onStart?.(target, registry);
+          return options.execute?.(input) ?? requestGuarded(options.tag, input);
+        }),
         Effect.provideService(RpcPermissionGuard, {
           authorize: (id, method, payload) =>
             createCommandPermissions(runtime, method).authorize(registry, id, payload),
         }),
-        Effect.tap((result) => options.onSuccess?.(target, registry, result) ?? Effect.void),
+        Effect.tap(
+          (result) => options.onSuccess?.(target, registry, result, started) ?? Effect.void,
+        ),
         Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
       );
     },
