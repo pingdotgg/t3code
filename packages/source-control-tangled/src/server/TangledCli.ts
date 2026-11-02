@@ -163,9 +163,10 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError((cause: VcsError) => fromVcsError(input.cwd, cause)));
     if (result.exitCode !== 0) {
       const detail = tangledErrorMessage(result) ?? `tg ${input.args[0] ?? ""} failed.`;
-      const authentication = /invalid_grant|not authenticated|not logged in|session expired/iu.test(
-        detail,
-      );
+      const authentication =
+        /invalid_grant|not authenticated|not logged in|session expired|OAuth permissions changed/iu.test(
+          detail,
+        );
       return yield* new TangledCliError({
         cwd: input.cwd,
         reason: authentication ? "authentication" : "failed",

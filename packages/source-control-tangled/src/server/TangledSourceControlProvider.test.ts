@@ -752,7 +752,7 @@ describe("TangledSourceControlProvider.make", () => {
 describe("TangledCli environment flags", () => {
   const signedIn = encodeJson({ authenticated: true, handle: "alice.example" });
 
-  it.effect("defaults to the appview and knot the settings schema carries", () => {
+  it.effect("defaults to the current Tangled appview and knot", () => {
     const runs: Array<{ readonly args: ReadonlyArray<string>; readonly env: unknown }> = [];
     const layer = TestSourceControlHost.layer({
       process: {
@@ -773,7 +773,7 @@ describe("TangledCli environment flags", () => {
       assert.deepStrictEqual(runs[0]?.args, ["auth", "status", "--json"]);
       // `tg` has no global `--knot`, so both reach it through the environment it documents.
       assert.deepStrictEqual(runs[0]?.env, {
-        TG_APPVIEW: TangledClient.DEFAULT_APPVIEW,
+        TG_APPVIEW: "https://api.tangled.org",
         TG_KNOT: TangledClient.DEFAULT_KNOT,
       });
     }).pipe(Effect.provide(TangledCli.layer.pipe(Layer.provideMerge(layer))));

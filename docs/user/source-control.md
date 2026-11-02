@@ -131,16 +131,19 @@ Merging a stack lands it through GitCafe, and updating a branch restacks the lay
 
 ### Tangled
 
-Install the [Tangled CLI (`tg`)](https://tangled.org/aly.codes/tg) and sign in:
+Install v0.8.0 or later of the [Tangled CLI (`tg`)](https://tangled.org/aly.codes/tg) and sign in:
 
 ```bash
 tg auth login
 ```
 
+After upgrading from an older release, sign in again if `tg` reports that OAuth permissions changed.
+
 Git push and clone use SSH, so add a key under **Settings → Keys** on tangled.org first.
 **Settings → Source Control → Tangled** holds the two values `tg` needs: the **knot** that hosts
 new repositories (`knot1.tangled.sh` by default) and the **appview** that resolves handles and
-repositories (`https://api.next.tangled.org` by default). Leave a field blank to let `tg` use its
+repositories (`https://api.tangled.org` by default). If you previously saved
+`https://api.next.tangled.org`, update the Appview field. Leave a field blank to let `tg` use its
 own configuration in `~/.config/tg/config.toml`.
 
 Tangled has no private repositories, so a project published to it is public.

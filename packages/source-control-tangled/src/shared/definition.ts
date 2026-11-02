@@ -19,7 +19,7 @@ const KIND = SourceControlProviderKind.make("tangled");
  * The appview and knot `tg` reads when it has nothing else configured. Both are overridable in
  * Source Control settings, which is how a self-hosted appview or a different knot is reached.
  */
-export const DEFAULT_APPVIEW = "https://api.next.tangled.org";
+const DEFAULT_APPVIEW = "https://api.tangled.org";
 export const DEFAULT_KNOT = "knot1.tangled.sh";
 
 export const settings = makeProviderSettingsSchema({

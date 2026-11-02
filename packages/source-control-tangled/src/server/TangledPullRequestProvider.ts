@@ -171,6 +171,19 @@ export const make = Effect.gen(function* () {
   }) {
     const pulls = yield* listed(input);
     if (pulls.length === 0) return [];
+    // org.tangled.track.ticket keys are repository-local numbers, with gaps for issues.
+    const tickets = pulls.map((entry) => ({
+      entry,
+      number: /^[1-9]\d*$/u.test(entry.pull.rkey) ? Number(entry.pull.rkey) : NaN,
+    }));
+    if (tickets.every(({ number }) => Number.isSafeInteger(number))) {
+      return tickets
+        .sort((a, b) => a.number - b.number)
+        .map(({ entry, number }) => ({
+          entry,
+          changeRequest: toChangeRequest(entry, number, input.repository),
+        }));
+    }
     const offset = yield* offsets.lookup(input.repository);
     if (offset === null) {
       // A repository may gain enough rows to resolve its numbering on the next attempt.
