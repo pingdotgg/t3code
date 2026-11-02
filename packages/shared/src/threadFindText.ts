@@ -148,14 +148,6 @@ function markdownThreadFindText(
       let candidate: string | null = null;
       if (node.tagName === "a" && typeof href === "string") {
         candidate = href;
-      } else if (
-        node.tagName === "code" &&
-        !inPre &&
-        node.properties?.dataInlineCode !== undefined
-      ) {
-        candidate = inlineCodeFilePathCandidate(
-          (node.children ?? []).map((child) => child.value ?? "").join(""),
-        );
       }
       const target = candidate ? resolveMarkdownFileLinkTarget(candidate, cwd) : null;
       if (target) {
