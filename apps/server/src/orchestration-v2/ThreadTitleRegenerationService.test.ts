@@ -1,4 +1,5 @@
 import { assert, describe, it, vi } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   ChatAttachmentId,
@@ -98,6 +99,7 @@ function makeHarness(
         layerProjectedProjects,
         Layer.mock(TextGeneration.TextGeneration)({ generateThreadTitle }),
         layerServerSettings,
+        NodeServices.layer,
       ),
     ),
   );
@@ -113,7 +115,11 @@ function makeHarness(
   };
 }
 
-function createThread(input: { readonly command: string; readonly thread: string }) {
+function createThread(input: {
+  readonly command: string;
+  readonly thread: string;
+  readonly worktreePath?: string;
+}) {
   return Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;
     const threadId = ThreadId.make(input.thread);
@@ -127,7 +133,7 @@ function createThread(input: { readonly command: string; readonly thread: string
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
-      worktreePath: null,
+      worktreePath: input.worktreePath ?? null,
       createdBy: "user",
       creationSource: "web",
     });
@@ -397,6 +403,7 @@ describe("ThreadTitleRegenerationService", () => {
         const threadId = yield* createThread({
           command: "command:title:landing:create",
           thread: "thread:title:landing",
+          worktreePath: "/repo-worktrees/removed-by-cleanup",
         });
         yield* dispatchUserMessage({
           command: "command:title:landing:message",
