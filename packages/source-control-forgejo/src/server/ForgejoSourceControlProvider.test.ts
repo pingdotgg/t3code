@@ -224,6 +224,9 @@ it.effect(
       ["warning", "release/1.x", "passing"],
       ["success", "unprotected", "failing"],
       ["empty", "unprotected", undefined],
+      ["unavailable", "release/1.x", undefined],
+      ["success", "unavailable", undefined],
+      ["success", "forbidden", undefined],
     ] as const;
     const pulls = cases.map(([sha, base], index) => ({
       ...requiredChecksPullRequest,
@@ -253,6 +256,7 @@ it.effect(
         1,
       );
       for (const [index, row] of cases.entries()) {
+        if (row[0] === "unavailable" || row[1] === "unavailable") continue;
         const summary = yield* provider.getChangeRequestSummary!({
           ...requiredChecksInput,
           number: index + 1,
@@ -266,6 +270,25 @@ it.effect(
             const [path, query] = input.path.split("?");
             reads.set(input.path, (reads.get(input.path) ?? 0) + 1);
             let response: unknown;
+            if (path?.endsWith("/forbidden"))
+              return Effect.fail(
+                new ForgejoCli.ForgejoCliError({
+                  command: "fj",
+                  cwd: "/repo",
+                  detail: "Forbidden",
+                  reason: "forbidden",
+                  httpStatus: 403,
+                }),
+              );
+            if (path?.endsWith("/unavailable"))
+              return Effect.fail(
+                new ForgejoCli.ForgejoCliError({
+                  command: "fj",
+                  cwd: "/repo",
+                  detail: "Service unavailable",
+                  httpStatus: 503,
+                }),
+              );
             if (path === "repos/acme/web/pulls") response = pulls;
             else if (path?.startsWith("repos/acme/web/pulls/"))
               response = pulls[Number(path.split("/").at(-1)) - 1];
