@@ -955,6 +955,36 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect.skipIf(!symlinksSupported)(
+      "excludes T3 Code's own folders when its home is reached through a symlink",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const realBaseDir = yield* fileSystem.realPath(
+            yield* makeTempDir("t3code-scanner-base-"),
+          );
+          const linkParent = yield* makeTempDir("t3code-scanner-links-");
+          const configBaseDir = path.join(linkParent, "t3-home");
+          yield* fileSystem.symlink(realBaseDir, configBaseDir);
+
+          // Providers record the resolved cwd, so a projectless chat shows up under the real home.
+          const scratchCwd = path.join(realBaseDir, "scratch", "2026-01-01-quiet-fox");
+          yield* fileSystem.makeDirectory(scratchCwd, { recursive: true });
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+            contents: claudeSessionLine(scratchCwd),
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          });
+
+          const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
+
+          expect(result.candidates).toEqual([]);
+        }),
+    );
+
     it.effect("finds the cwd on a later line when the first records carry none", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
