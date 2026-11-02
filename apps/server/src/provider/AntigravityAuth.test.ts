@@ -69,6 +69,9 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   let receiveAuthorizationUrl:
     | ((url: string) => Effect.Effect<void, AcpErrors.AcpError>)
     | undefined;
+  let logRequest:
+    | ((event: AcpSessionRuntime.AcpSessionRequestLogEvent) => Effect.Effect<void>)
+    | undefined;
   let forwarded = 0;
   let catalog = ["previous-account-model"];
   const auth = yield* makeAntigravityAuth({
@@ -76,6 +79,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     makeRuntime: (input) =>
       Effect.gen(function* () {
         receiveAuthorizationUrl = input.onAuthorizationUrl;
+        logRequest = input.requestLogger;
         events.push("process-open");
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
@@ -95,6 +99,13 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
           start: () =>
             Effect.gen(function* () {
               events.push("authenticate");
+              yield* (
+                input.requestLogger?.({
+                  method: "authenticate",
+                  payload: { methodId: "oauth-personal" },
+                  status: "started",
+                }) ?? Effect.void
+              );
               yield* Deferred.succeed(authenticateCalled, undefined);
               if (options.interactive !== false && input.onAuthorizationUrl) {
                 for (const url of options.authorizationUrls ?? [authorizationUrl]) {
@@ -152,6 +163,10 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
         receiveAuthorizationUrl
           ? receiveAuthorizationUrl(url)
           : Effect.die("Authorization URL receiver is not ready."),
+      ),
+    logRequest: (event: AcpSessionRuntime.AcpSessionRequestLogEvent) =>
+      Effect.suspend(() =>
+        logRequest ? logRequest(event) : Effect.die("Request logger is not ready."),
       ),
   };
 });
@@ -344,6 +359,29 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
         .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
       assert.equal(current.phase, "verifying");
       assert.isNull(current.authorizationUrl);
+    }),
+  );
+
+  it.effect("shows the new Google link when the agent authenticates again", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.await(harness.sessionRequested);
+
+      const retryUrl = authorizationUrl.replace("state=test-state", "state=retry-state");
+      yield* harness.logRequest({
+        method: "authenticate",
+        payload: { methodId: "oauth-personal" },
+        status: "started",
+      });
+      yield* harness.receiveAuthorizationUrl(retryUrl);
+      const current = yield* harness.auth.controller
+        .subscribe(owner)
+        .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+      assert.equal(current.phase, "waiting");
+      assert.equal(current.authorizationUrl, retryUrl);
     }),
   );
 

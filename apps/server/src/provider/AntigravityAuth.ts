@@ -305,10 +305,11 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
       const runtime = yield* options.makeRuntime({
         onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url),
         // start() also opens the session, which can hang after authentication succeeds.
+        // A retry after auth-required starts a new attempt that may show a new Google link.
         requestLogger: (event) => {
-          if (event.method !== "authenticate" || event.status !== "succeeded") return Effect.void;
-          flow.authenticated = true;
-          return publishVerifying(flow);
+          if (event.method !== "authenticate" || event.status === "failed") return Effect.void;
+          flow.authenticated = event.status === "succeeded";
+          return flow.authenticated ? publishVerifying(flow) : Effect.void;
         },
       });
       const started = yield* runtime.start();
