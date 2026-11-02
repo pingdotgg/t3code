@@ -381,6 +381,7 @@ interface ServerTab {
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
   navigationGeneration: number;
+  stoppedGeneration: number | null;
 
   abortedNavigation: {
     readonly url: string;
@@ -1012,6 +1013,7 @@ const make = Effect.gen(function* () {
       recordingStart: null,
       initialNavigation: null,
       navigationGeneration: 0,
+      stoppedGeneration: null,
       abortedNavigation: null,
       captureLock: Promise.resolve(),
       capturing: 0,
@@ -1090,6 +1092,10 @@ const make = Effect.gen(function* () {
       if (generation !== tab.navigationGeneration) return;
       // An aborted navigation is usually a download; its `download` event settles the status.
       if (errorText.includes("ERR_ABORTED")) {
+        if (tab.stoppedGeneration === generation) {
+          settleAbortedNavigation(tab, generation, request.url(), undefined);
+          return;
+        }
         const url = request.url();
         const navigationGeneration = tab.navigationGeneration;
         clearAbortedNavigation(tab);
@@ -2843,6 +2849,10 @@ const make = Effect.gen(function* () {
             ? tab.page.goBack(VIEWER_NAVIGATION_OPTIONS)
             : tab.page.goForward(VIEWER_NAVIGATION_OPTIONS),
         );
+        return;
+      case "stopLoading":
+        tab.stoppedGeneration = tab.navigationGeneration;
+        await session.send("Page.stopLoading");
         return;
       case "reload":
         if (message.ignoreCache === true) {
