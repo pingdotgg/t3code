@@ -14,15 +14,21 @@ import {
 } from "@t3tools/contracts";
 import { normalizeNativeMarkdownUrl } from "../lib/markdownLinks";
 import { AsyncResult } from "effect/reactivity";
+import * as Haptics from "expo-haptics";
 import { useEffect, useRef, useState } from "react";
 
 import { useRefreshAssetUrl } from "./assets";
 import { appAtomRegistry } from "./atom-registry";
 import { useEnvironmentQuery } from "./query";
 import { environmentSession } from "./session";
-import { downloadAndShareAttachment, shareLocalAttachment } from "../lib/attachmentDownload";
+import {
+  downloadAndShareAttachment,
+  downloadAttachmentForPreview,
+  shareLocalAttachment,
+} from "../lib/attachmentDownload";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
+import { canSaveImageToLibrary, saveImageToLibrary } from "../lib/saveImageToLibrary";
 
 function allowsHostMedia(session: SessionGrantInput | null) {
   return session === null || sessionGrantsScope(session, AuthFilesystemReadScope);
@@ -53,41 +59,23 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
     source && "resource" in source ? source.resource : null,
   );
   const controller = useRef<AbortController | null>(null);
-  const [sharing, setSharing] = useState(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the in-flight media share when the component unmounts
+  const [busy, setBusy] = useState<"share" | "save-image" | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the in-flight media task when the component unmounts
   useEffect(() => () => controller.current?.abort(), []);
 
-  const share = () => {
+  const run = (
+    kind: "share" | "save-image",
+    task: (source: MediaActionsSource, signal: AbortSignal) => Promise<void>,
+  ) => {
     if (!source || controller.current || !canReadHostMedia(hostEnvironmentId)) return;
     const request = new AbortController();
     controller.current = request;
-    setSharing(true);
-    return (async () => {
-      if ("attachment" in source) {
-        const preview = await loadLocalAttachmentPreview(source.attachment, request.signal);
-        if (!preview) return;
-        const shared = await settlePromise(() =>
-          preview.share(request.signal, source.sourceIdentifier),
-        );
-        preview.dispose();
-        if (AsyncResult.isFailure(shared)) throw squashAtomCommandFailure(shared);
-        return;
-      }
-      const uri = "uri" in source ? normalizeNativeMarkdownUrl(source.uri) : await refresh();
-      if (request.signal.aborted || !canReadHostMedia(hostEnvironmentId)) return;
-      if (uri === null) throw new Error("The file could not be loaded. Reconnect and try again.");
-      const input = {
-        attachment: { name: source.name, mimeType: source.mimeType },
-        signal: request.signal,
-        sourceIdentifier: source.sourceIdentifier,
-      };
-      if (/^(file|content):/i.test(uri)) await shareLocalAttachment({ ...input, uri });
-      else await downloadAndShareAttachment({ ...input, url: uri });
-    })()
+    setBusy(kind);
+    return task(source, request.signal)
       .catch((error: unknown) => {
         if (!request.signal.aborted) {
           Dialog.alert(
-            "Could not share file",
+            kind === "share" ? "Could not share file" : "Could not save image",
             error instanceof Error ? error.message : "Try again.",
           );
         }
@@ -95,10 +83,63 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
       .finally(() => {
         if (controller.current === request) {
           controller.current = null;
-          if (!request.signal.aborted) setSharing(false);
+          if (!request.signal.aborted) setBusy(null);
         }
       });
   };
+
+  const hostUri = async (source: MediaActionsSource, signal: AbortSignal) => {
+    const uri = "uri" in source ? normalizeNativeMarkdownUrl(source.uri) : await refresh();
+    if (signal.aborted || !canReadHostMedia(hostEnvironmentId)) return null;
+    if (uri === null) throw new Error("The file could not be loaded. Reconnect and try again.");
+    return uri;
+  };
+
+  const share = () =>
+    run("share", async (source, signal) => {
+      if ("attachment" in source) {
+        const preview = await loadLocalAttachmentPreview(source.attachment, signal);
+        if (!preview) return;
+        const shared = await settlePromise(() => preview.share(signal, source.sourceIdentifier));
+        preview.dispose();
+        if (AsyncResult.isFailure(shared)) throw squashAtomCommandFailure(shared);
+        return;
+      }
+      const uri = await hostUri(source, signal);
+      if (uri === null) return;
+      const input = {
+        attachment: { name: source.name, mimeType: source.mimeType },
+        signal,
+        sourceIdentifier: source.sourceIdentifier,
+      };
+      if (/^(file|content):/i.test(uri)) await shareLocalAttachment({ ...input, uri });
+      else await downloadAndShareAttachment({ ...input, url: uri });
+    });
+
+  const localImageFile = async (source: MediaActionsSource, signal: AbortSignal) => {
+    if ("attachment" in source) return loadLocalAttachmentPreview(source.attachment, signal);
+    const uri = await hostUri(source, signal);
+    if (uri === null) return null;
+    if (/^(file|content):/i.test(uri)) return { uri, dispose: () => {} };
+    return downloadAttachmentForPreview({
+      url: uri,
+      attachment: { name: source.name, mimeType: source.mimeType },
+      signal,
+    });
+  };
+
+  const saveImage = () =>
+    run("save-image", async (source, signal) => {
+      const file = await localImageFile(source, signal);
+      if (!file) return;
+      try {
+        if (signal.aborted) return;
+        await saveImageToLibrary(file.uri, source.mimeType, source.name);
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      } finally {
+        file.dispose();
+      }
+    });
 
   const reference = source?.reference;
   const relativePath = reference?.kind === "file" ? reference.relativePath : undefined;
@@ -152,18 +193,33 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
                 },
               ]
             : []),
+          ...(canSaveImageToLibrary(source.mimeType)
+            ? [
+                {
+                  id: "save-image" as const,
+                  title: busy === "save-image" ? "Saving image…" : "Save image",
+                  run: saveImage,
+                  disabled: busy !== null || !canReadMedia,
+                },
+              ]
+            : []),
           {
             id: "save" as const,
-            title: sharing ? "Opening share sheet…" : "Save or share",
+            title:
+              busy === "share"
+                ? "Opening share sheet…"
+                : canSaveImageToLibrary(source.mimeType)
+                  ? "Share"
+                  : "Save or share",
             run: share,
-            disabled: sharing || !canReadMedia,
+            disabled: busy !== null || !canReadMedia,
           },
         ]
       : [];
   return {
     title: reference?.kind === "file" ? reference.path : reference?.url,
     actions,
-    sharing,
+    sharing: busy === "share",
     share,
   };
 }

@@ -1,7 +1,9 @@
 import AVFoundation
 import ExpoModulesCore
+import Photos
 import Security
 import UIKit
+import UniformTypeIdentifiers
 
 @ExpoModule("T3NativeControls")
 public final class T3NativeControlsModule: Module {
@@ -123,6 +125,11 @@ public final class T3NativeControlsModule: Module {
     AsyncFunction("shareFileFromSource") { (url: URL, title: String, identifier: String, promise: Promise) in
       try self.shareFile(url: url, title: title, sourceIdentifier: identifier, promise: promise)
     }.runOnQueue(.main)
+
+    // Photos names the asset itself, so iOS ignores the Android display name.
+    AsyncFunction("saveImageToLibrary") { (url: URL, mimeType: String, _: String, promise: Promise) in
+      Self.saveImageToLibrary(url: url, mimeType: mimeType, promise: promise)
+    }
   }
 
   // UIKit presenters are main-actor isolated rather than run on the JS thread
@@ -295,6 +302,34 @@ public final class T3NativeControlsModule: Module {
 
   private func dismissFilePresentation(identifier: String) {
     if filePresentation?.identifier == identifier { filePresentation?.dismiss() }
+  }
+
+  private static func saveImageToLibrary(url: URL, mimeType: String, promise: Promise) {
+    PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+      guard status == .authorized || status == .limited else {
+        promise.reject(NSError(
+          domain: "T3NativePhotos",
+          code: 1,
+          userInfo: [NSLocalizedDescriptionKey: "Allow T3 Code to add photos in Settings."]
+        ))
+        return
+      }
+      PHPhotoLibrary.shared().performChanges({
+        let options = PHAssetResourceCreationOptions()
+        options.uniformTypeIdentifier = UTType(mimeType: mimeType)?.identifier
+        PHAssetCreationRequest.forAsset().addResource(with: .photo, fileURL: url, options: options)
+      }) { saved, error in
+        if saved {
+          promise.resolve(nil)
+        } else {
+          promise.reject(error ?? NSError(
+            domain: "T3NativePhotos",
+            code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "Photos could not save this image."]
+          ))
+        }
+      }
+    }
   }
 
   private func shareFile(url: URL, title: String, sourceIdentifier: String, promise: Promise) throws {
