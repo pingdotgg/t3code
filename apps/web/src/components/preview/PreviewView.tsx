@@ -959,7 +959,7 @@ export function PreviewView({
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col bg-background surface-grain"
+      className="flex min-h-0 flex-1 flex-col bg-background"
       data-thread-key={scopedThreadKey(threadRef)}
     >
       {pickActive && runtimeTabId && annotationVoice ? (
