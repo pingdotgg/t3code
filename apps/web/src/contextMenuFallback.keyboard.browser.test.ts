@@ -1,4 +1,5 @@
 import { expect, it } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import {
   dismissContextMenu,
   isContextMenuOpen,
@@ -103,4 +104,21 @@ it("closes without taking focus back when focus moves elsewhere", async () => {
   destination.focus();
   await expect(result).resolves.toBeNull();
   expect(document.activeElement).toBe(destination);
+});
+
+it("closes on a press at its opener without the press reopening it", async () => {
+  using fixture = setup();
+  let opens = 0;
+  fixture.origin.addEventListener("click", () => {
+    opens += 1;
+    void showContextMenuFallback(items, { x: 300, y: 300 });
+  });
+  await userEvent.click(fixture.origin);
+  expect(isContextMenuOpen()).toBe(true);
+  await userEvent.click(fixture.origin);
+  expect(isContextMenuOpen()).toBe(false);
+  expect(opens).toBe(1);
+  await userEvent.click(fixture.origin);
+  expect(isContextMenuOpen()).toBe(true);
+  expect(opens).toBe(2);
 });

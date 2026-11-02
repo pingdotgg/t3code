@@ -228,6 +228,23 @@ function isNodeWithinMenuStack(target: EventTarget | null, menuStack: readonly H
   return false;
 }
 
+const PRESS_ACTIVATION_EVENTS = ["click", "auxclick", "dblclick"] as const;
+
+function swallowPressActivation() {
+  const swallow = (event: Event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  const release = () => {
+    for (const type of PRESS_ACTIVATION_EVENTS) document.removeEventListener(type, swallow, true);
+    document.removeEventListener("pointerdown", release, true);
+    document.removeEventListener("keydown", release, true);
+  };
+  for (const type of PRESS_ACTIVATION_EVENTS) document.addEventListener(type, swallow, true);
+  document.addEventListener("pointerdown", release, true);
+  document.addEventListener("keydown", release, true);
+}
+
 let activeContextMenuDismiss: ((restoreFocus?: boolean) => void) | null = null;
 
 export function isContextMenuOpen(): boolean {
@@ -358,6 +375,7 @@ export function showContextMenuFallback<T extends string>(
       if (!canDismissFromPointer || isNodeWithinMenuStack(event.target, menuStack)) {
         return;
       }
+      swallowPressActivation();
       cleanup(null);
     };
 
