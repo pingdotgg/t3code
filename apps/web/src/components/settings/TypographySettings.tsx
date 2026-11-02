@@ -46,16 +46,18 @@ import {
 let fontDefaultFamilies: { readonly sans: string; readonly code: string } | undefined;
 
 function resolveFontDefaultFamilies() {
-  fontDefaultFamilies ??= {
+  if (fontDefaultFamilies !== undefined) return fontDefaultFamilies;
+  const families = {
     sans: resolveDefaultFamilyLabel(DEFAULT_SANS_FONT_STACK) ?? "System default",
     code: resolveDefaultFamilyLabel(DEFAULT_CODE_FONT_STACK) ?? "System monospace",
   };
-  return fontDefaultFamilies;
+  if (document.fonts.status === "loaded") fontDefaultFamilies = families;
+  return families;
 }
 
 function useFontDefaultFamilies() {
   const settings = useScopedSettings();
-  const defaults = resolveFontDefaultFamilies();
+  const [defaults] = useState(resolveFontDefaultFamilies);
   return {
     sans: defaults.sans,
     code: defaults.code,
