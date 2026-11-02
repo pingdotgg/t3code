@@ -15,6 +15,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -248,10 +249,11 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const platform = yield* HostProcess.Platform;
+        const longDirectory = Array.from({ length: 6 }, () => "é".repeat(95)).join("/");
         yield* writeTextFile(
           cwd,
           ".gitignore",
-          "node_modules/\ndist/\n\\[id\\]/\n*.map\nfoo\n!foo/\n",
+          "node_modules/\ndist/\n\\[id\\]/\n*.map\n!src/keep.map\nfoo\n!foo/\n",
         );
         yield* Effect.forEach(
           [
@@ -259,6 +261,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             "dist",
             "[id]",
             "src",
+            longDirectory,
             ...(platform !== "win32" ? [":foo"] : []),
           ].flatMap((directory) =>
             Array.from({ length: 1001 }, (_, index) => `${directory}/pkg-${index}.js`),
@@ -272,6 +275,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           "i/page.tsx",
           "[id]/page.tsx",
           "src/bundle.map",
+          "src/keep.map",
+          `${longDirectory}/bundle.map`,
         ]) {
           yield* writeTextFile(cwd, relativePath);
         }
@@ -280,13 +285,27 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           yield* fileSystem.symlink(path.join(cwd, "src"), path.join(cwd, "node_modules/link"));
         }
 
-        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const vcsProcess = yield* VcsProcess.VcsProcess;
+        const ignoreInputs: string[] = [];
+        const workspaceEntries = yield* WorkspaceEntries.make.pipe(
+          Effect.provide(WorkspaceSearchIndex.WorkspaceSearchIndexMap.layer),
+          Effect.provideService(
+            VcsProcess.VcsProcess,
+            VcsProcess.VcsProcess.of({
+              run: (input) => {
+                if (input.args.includes("check-ignore")) ignoreInputs.push(input.stdin ?? "");
+                return vcsProcess.run(input);
+              },
+            }),
+          ),
+        );
         for (const { directoryPath, ignored, except } of [
           { directoryPath: "node_modules", ignored: true, except: [] },
           { directoryPath: "dist", ignored: true, except: ["dist/kept.js", "dist/vendored"] },
           // git reads `[id]/page.tsx` as a pathspec, which matches the tracked `i/page.tsx`.
           { directoryPath: "[id]", ignored: true, except: ["[id]/page.tsx"] },
           { directoryPath: "src", ignored: false, except: ["src/bundle.map"] },
+          { directoryPath: longDirectory, ignored: false, except: [`${longDirectory}/bundle.map`] },
           ...(platform !== "win32"
             ? [
                 // git refuses to classify paths beyond a symlink, so nothing there is labelled.
@@ -296,6 +315,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
               ]
             : []),
         ]) {
+          ignoreInputs.length = 0;
           const { entries } = yield* workspaceEntries.list({ cwd, directoryPath });
           expect(entries.length, directoryPath).toBeGreaterThan(1000);
           expect(
@@ -305,7 +325,40 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
               .toSorted(),
             directoryPath,
           ).toEqual(except);
+          expect(ignoreInputs.length, directoryPath).toBeLessThanOrEqual(
+            directoryPath === longDirectory ? 3 : 2,
+          );
+          expect(ignoreInputs.every((input) => Buffer.byteLength(input) <= 1024 * 1024)).toBe(true);
+          if (directoryPath === "node_modules") expect(ignoreInputs).toEqual(["node_modules\0"]);
         }
+      }),
+    );
+
+    it.effect("retains earlier ignore labels when a later path makes git fail", () =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcess.Platform;
+        if (platform === "win32") return;
+        const cwd = yield* makeTempDir({ git: true });
+        const paths = Array.from(
+          { length: 6000 },
+          (_, index) => `${index.toString().padStart(4, "0")}-${"x".repeat(240)}.map`,
+        );
+        yield* writeTextFile(cwd, ".gitignore", "*.map\n");
+        yield* Effect.forEach(paths, (relativePath) => writeTextFile(cwd, relativePath), {
+          concurrency: 32,
+          discard: true,
+        });
+        yield* writeTextFile(cwd, ":(attr:x)bad.map");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const { entries } = yield* workspaceEntries.list({ cwd, directoryPath: "" });
+        // The first chunk includes .gitignore; Git rejects the pathspec in the next one.
+        expect(
+          entries
+            .filter((entry) => entry.ignored)
+            .map((entry) => entry.path)
+            .toSorted(),
+        ).toEqual(paths.slice(0, 5999));
       }),
     );
 

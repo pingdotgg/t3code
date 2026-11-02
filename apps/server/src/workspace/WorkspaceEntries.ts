@@ -115,7 +115,11 @@ export class WorkspaceEntries extends Context.Service<
 const IGNORED_FILES_LIMIT = 200;
 
 /** Paths sent to one `git check-ignore` call when labelling a folder's children. */
-const IGNORE_CHECK_CHUNK_SIZE = 1000;
+const IGNORE_CHECK_CHUNK_SIZE = 10_000;
+const IGNORE_CHECK_FALLBACK_CHUNK_SIZE = 1000;
+// NUL-delimited stdout echoes input paths; stay well below the 16 MiB output limit.
+const IGNORE_CHECK_MAX_INPUT_BYTES = 1024 * 1024;
+const PARENT_IGNORE_CHECK_THRESHOLD = 1000;
 
 /** Children classified at once when listing a folder; each symlink costs a realpath and a stat. */
 const SYMLINK_RESOLVE_BATCH_SIZE = 64;
@@ -412,7 +416,7 @@ export const make = Effect.gen(function* () {
         // Check ignored folders once to avoid child index lookups; exit 0 guarantees no tracked descendants.
         // Symlinks and pathspec magic still need per-child checks.
         if (
-          entries.length > IGNORE_CHECK_CHUNK_SIZE &&
+          entries.length > PARENT_IGNORE_CHECK_THRESHOLD &&
           target.relativePath !== "" &&
           !throughSymlink &&
           !/^:|[*?[\\]/.test(target.relativePath) &&
@@ -424,12 +428,36 @@ export const make = Effect.gen(function* () {
           };
         }
         const ignored = new Set<string>();
-        for (let offset = 0; offset < entries.length; offset += IGNORE_CHECK_CHUNK_SIZE) {
-          const result = yield* checkIgnore(
-            entries.slice(offset, offset + IGNORE_CHECK_CHUNK_SIZE).map((entry) => entry.path),
-          );
+        let chunkSize = IGNORE_CHECK_CHUNK_SIZE;
+        for (let offset = 0; offset < entries.length;) {
+          const paths: string[] = [];
+          let inputBytes = 0;
+          for (const entry of entries.slice(offset, offset + chunkSize)) {
+            const entryBytes = Buffer.byteLength(entry.path) + 1;
+            if (paths.length > 0 && inputBytes + entryBytes > IGNORE_CHECK_MAX_INPUT_BYTES) {
+              // Keep the error fallback aligned with the original groups when they fit the byte cap.
+              if (paths.length > IGNORE_CHECK_FALLBACK_CHUNK_SIZE) {
+                paths.length -= paths.length % IGNORE_CHECK_FALLBACK_CHUNK_SIZE;
+              }
+              break;
+            }
+            paths.push(entry.path);
+            inputBytes += entryBytes;
+          }
+          const result = yield* checkIgnore(paths);
+          // Preserve earlier chunks' labels if a later path makes Git reject the batch.
+          if (
+            result &&
+            result.exitCode !== 0 &&
+            result.exitCode !== 1 &&
+            paths.length > IGNORE_CHECK_FALLBACK_CHUNK_SIZE
+          ) {
+            chunkSize = IGNORE_CHECK_FALLBACK_CHUNK_SIZE;
+            continue;
+          }
           if (!result || (result.exitCode !== 0 && result.exitCode !== 1)) break;
           for (const ignoredPath of result.stdout.split("\0")) ignored.add(ignoredPath);
+          offset += paths.length;
         }
         return {
           entries: entries.map((entry) =>
