@@ -233,7 +233,7 @@ function ModelPickerProviderNotices({
       ) : (
         <ComboboxEmpty className="empty:h-0">{emptyLabel}</ComboboxEmpty>
       )}
-      <div className="max-h-32 shrink-0 overflow-y-auto">
+      <div className="max-h-[40%] shrink-0 overflow-y-auto">
         {modelNotices.map(({ key, notice, opensProviderSettings }) => (
           <p
             key={key}
@@ -740,7 +740,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     const shown = isSearching
       ? matchesLockedProvider(entry)
       : entry.instanceId === selectedEntry?.instanceId;
-    if (!entry.enabled || !shown) return [];
+    if (!shown || !isProviderInstancePickerVisible(entry)) return [];
     const updateRequired = formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery);
     const restricted = formatProviderRestrictedModelsNotice(entry.snapshot, searchQuery);
     const notices = [
