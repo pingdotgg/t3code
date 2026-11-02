@@ -189,12 +189,16 @@ const NO_GHOSTS: ReadonlyMap<string, ClosingTab> = new Map();
  * Pane edges land on whole pixels, so borders and text stay crisp at any split.
  * Both panes round the same boundary, so the gap between them stays exact.
  */
-function slotStyle(slot: LayoutPaneSlot): React.CSSProperties {
+function slotStyle(slot: LayoutPaneSlot, stripPx?: number): React.CSSProperties {
   const edge = (has: boolean) => (has ? HALF_PANE_GAP : "0px");
   const at = (fraction: number, offset: string) =>
     `round(calc(${fraction * 100}% + ${offset}), 1px)`;
-  const left = at(slot.rect.left, edge(slot.hasLeft));
-  const right = at(slot.rect.left + slot.rect.width, `-1 * ${edge(slot.hasRight)}`);
+  const across = (fraction: number, offset: string) =>
+    stripPx === undefined
+      ? at(fraction, offset)
+      : `round(calc(${fraction * stripPx}px + ${offset}), 1px)`;
+  const left = across(slot.rect.left, edge(slot.hasLeft));
+  const right = across(slot.rect.left + slot.rect.width, `-1 * ${edge(slot.hasRight)}`);
   const top = at(slot.rect.top, edge(slot.hasAbove));
   const bottom = at(slot.rect.top + slot.rect.height, `-1 * ${edge(slot.hasBelow)}`);
   return {
@@ -1060,6 +1064,7 @@ export function LayoutSurfaceHost({
     chats: chatTabsById,
     launchers: launcherTabsById,
     placed: slotByTabId,
+    stripPx,
     motionKey: paneMotionKey,
     framed: paneCount > 1 || maximizedTabId !== null,
   });
@@ -1072,6 +1077,7 @@ export function LayoutSurfaceHost({
       chats: chatTabsById,
       launchers: launcherTabsById,
       placed: slotByTabId,
+      stripPx,
       motionKey: paneMotionKey,
       framed: paneCount > 1 || maximizedTabId !== null,
     });
@@ -1084,8 +1090,9 @@ export function LayoutSurfaceHost({
       seen.motionKey === paneMotionKey
     ) {
       const closed: [string, ClosingTab][] = [];
-      for (const [tabId, placed] of seen.placed) {
+      for (const [tabId, was] of seen.placed) {
         if (presentTabIds.has(tabId) || ghosts.has(tabId)) continue;
+        const placed = { slot: was.slot, style: slotStyle(was.slot, seen.stripPx) };
         const chat = seen.chats.get(tabId);
         const launcher = seen.launchers.get(tabId);
         if (chat?.tab.content.kind === "chat") {
