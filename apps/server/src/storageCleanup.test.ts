@@ -22,6 +22,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "./config.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as Settings from "./serverSettings.ts";
@@ -315,6 +316,7 @@ const cleanupFixture = (
     worktreeAfterDays: 8,
     worktreeOnDelete: true,
   },
+  sessionSql?: SqlClient.SqlClient,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -420,39 +422,45 @@ const cleanupFixture = (
       Effect.provideService(Orchestrator.OrchestratorV2, {
         streamDomainEvents: Stream.suspend(() => events),
       } as unknown as Orchestrator.OrchestratorV2["Service"]),
-      Effect.provideService(SqlClient.SqlClient, ((strings: TemplateStringsArray) =>
-        Effect.sync(() =>
-          openSessionCwd !== null && strings.join("").includes("projection_provider_sessions")
-            ? [
-                {
-                  payload_json: JSON.stringify({
-                    id: "session-1",
-                    driver: "codex",
-                    providerInstanceId: "codex",
-                    status: "ready",
-                    cwd: openSessionCwd,
-                    model: null,
-                    capabilities: CodexProviderCapabilitiesV2,
-                    createdAt: "2026-06-01T12:00:00.000Z",
-                    updatedAt: "2026-06-01T12:00:00.000Z",
-                    lastError: null,
-                  }),
-                },
-              ]
-            : outboxStatus !== null && strings.join("").includes("orchestration_v2_effect_outbox")
-              ? [{ status: outboxStatus }]
-              : strings.join("").includes("deleted_at IS NOT NULL")
-                ? deletedThreads.map((thread) => ({
-                    payload_json: JSON.stringify(thread),
-                    workspaceRoot: repo,
-                  }))
-                : strings.join("").includes('AS "worktreePath"')
-                  ? [
-                      ...threads.flatMap((thread) => thread.worktreePath ?? []),
-                      ...storedWorktreePaths,
-                    ].map((worktreePath) => ({ worktreePath }))
-                  : [],
-        )) as unknown as SqlClient.SqlClient),
+      Effect.provideService(SqlClient.SqlClient, ((
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) =>
+        sessionSql !== undefined && strings.join("").includes("projection_provider_sessions")
+          ? sessionSql(strings, ...values)
+          : Effect.sync(() =>
+              openSessionCwd !== null && strings.join("").includes("projection_provider_sessions")
+                ? [
+                    {
+                      payload_json: JSON.stringify({
+                        id: "session-1",
+                        driver: "codex",
+                        providerInstanceId: "codex",
+                        status: "ready",
+                        cwd: openSessionCwd,
+                        model: null,
+                        capabilities: CodexProviderCapabilitiesV2,
+                        createdAt: "2026-06-01T12:00:00.000Z",
+                        updatedAt: "2026-06-01T12:00:00.000Z",
+                        lastError: null,
+                      }),
+                    },
+                  ]
+                : outboxStatus !== null &&
+                    strings.join("").includes("orchestration_v2_effect_outbox")
+                  ? [{ status: outboxStatus }]
+                  : strings.join("").includes("deleted_at IS NOT NULL")
+                    ? deletedThreads.map((thread) => ({
+                        payload_json: JSON.stringify(thread),
+                        workspaceRoot: repo,
+                      }))
+                    : strings.join("").includes('AS "worktreePath"')
+                      ? [
+                          ...threads.flatMap((thread) => thread.worktreePath ?? []),
+                          ...storedWorktreePaths,
+                        ].map((worktreePath) => ({ worktreePath }))
+                      : [],
+            )) as unknown as SqlClient.SqlClient),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
       } as unknown as GitManager.GitManager["Service"]),
@@ -1985,6 +1993,53 @@ describe("storage cleanup reports and local file policies", () => {
         expect(yield* fs.readFileString(`${worktree}/notes.txt`)).toBe("untracked\n");
       }),
     ),
+  );
+  it.live.each(["bindings", "legacy", "orphan"] as const)(
+    "protects a live provider cwd using %s session state",
+    (source) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const fixture = yield* cleanupFixture(undefined, sql);
+          const session = {
+            id: "session-1",
+            driver: "codex",
+            providerInstanceId: "codex",
+            status: "ready",
+            cwd: fixture.worktree,
+            model: null,
+            capabilities: CodexProviderCapabilitiesV2,
+            createdAt: "2026-06-01T12:00:00.000Z",
+            updatedAt: "2026-06-01T12:00:00.000Z",
+            lastError: null,
+          };
+          const shared = { ...session, status: source === "bindings" ? "stopped" : "ready" };
+          yield* sql`INSERT INTO orchestration_v2_projection_provider_sessions
+          (provider_session_id, thread_id, provider, status, updated_at, payload_json)
+          VALUES ('session-1', 'thread-2', 'codex', ${shared.status}, ${shared.updatedAt}, ${JSON.stringify(shared)})`;
+          if (source !== "orphan") {
+            yield* sql`INSERT INTO orchestration_v2_projection_provider_session_bindings
+            (provider_session_id, thread_id, payload_json)
+            VALUES ('session-1', 'thread-1', ${source === "legacy" ? null : JSON.stringify(session)})`;
+          }
+          if (source === "bindings") {
+            yield* sql`INSERT INTO orchestration_v2_projection_provider_session_bindings
+            (provider_session_id, thread_id, payload_json)
+            VALUES ('session-1', 'thread-2', ${JSON.stringify(shared)})`;
+          }
+          const kept = yield* fixture.service.runNow;
+          expect(kept.entries[0]).toMatchObject({
+            outcome: "kept",
+            reason: "Provider session is still open",
+            bytes: null,
+          });
+          expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+          fixture.setSessionLive(false);
+          const removed = yield* fixture.service.runNow;
+          expect(removed.entries[0]).toMatchObject({ outcome: "removed" });
+          expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
+        }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+      ),
   );
   it.live("does not measure a worktree kept for an open provider session", () =>
     runCleanupTest(

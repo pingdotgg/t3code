@@ -1827,7 +1827,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
   {
-    name: "stop_background_work_after_failed_turn",
+    name: "background_work_settles_after_failed_turn",
     buildInput: stopBackgroundWorkAfterFailedTurnInput,
     providers: [
       {
@@ -1836,13 +1836,14 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
           "./stop_background_work_after_failed_turn/registry_transcript.ndjson",
           import.meta.url,
         ),
+        recordedScenario: "stop_background_work_after_failed_turn",
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         assertOutput: assertStopBackgroundWorkAfterFailedTurnOutput,
       },
     ],
   },
   {
-    name: "stop_background_work_after_release",
+    name: "background_work_stays_settled_after_release",
     buildInput: stopBackgroundWorkAfterReleaseInput,
     providers: [
       {

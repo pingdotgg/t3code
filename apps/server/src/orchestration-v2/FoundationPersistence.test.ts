@@ -763,7 +763,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
-  it.effect("replays shared provider-session payloads across every bound thread", () =>
+  it.effect("replays provider-session payloads independently for each bound thread", () =>
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -819,12 +819,20 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ],
       });
 
-      assert.equal(
-        (yield* projectionStore.getThreadProjection(firstThreadId)).providerSessions[0]?.cwd,
-        secondSession.cwd,
-      );
+      const assertBindings = Effect.gen(function* () {
+        assert.deepEqual(
+          (yield* projectionStore.getThreadProjection(firstThreadId)).providerSessions,
+          [firstSession],
+        );
+        assert.deepEqual(
+          (yield* projectionStore.getThreadProjection(secondThreadId)).providerSessions,
+          [secondSession],
+        );
+      });
+      yield* assertBindings;
       assert.isTrue((yield* maintenance.verify).valid);
       assert.isTrue((yield* maintenance.rebuild).valid);
+      yield* assertBindings;
     }),
   );
 
@@ -3664,5 +3672,90 @@ it.effect.each(["cancel transaction", "fail transaction", "cancel publication"] 
           Layer.mergeAll(layerEventSink, layerStoresProvided, layerEffectOutboxProvided),
         ),
       );
+    }).pipe(Effect.provide(layerDatabase)),
+);
+
+it.effect.each(["cancel transaction", "fail transaction", "cancel publication"] as const)(
+  "hands off committed ownership only after a successful transaction during %s",
+  (scenario) =>
+    Effect.gen(function* () {
+      const paused = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const pause = Deferred.succeed(paused, undefined).pipe(
+        Effect.andThen(Deferred.await(resume)),
+      );
+      const committed = scenario === "cancel publication";
+      const stores = Layer.mergeAll(
+        layerStoresProvided,
+        Layer.effect(
+          EventStore.EventStoreV2,
+          Effect.gen(function* () {
+            const delegate = yield* EventStore.EventStoreV2;
+            return EventStore.EventStoreV2.of({
+              ...delegate,
+              publishCommitted: (events) =>
+                (committed ? pause : Effect.void).pipe(
+                  Effect.andThen(delegate.publishCommitted(events)),
+                ),
+            });
+          }),
+        ).pipe(Layer.provide(layerEventStoreProvided)),
+        Layer.effect(
+          EffectOutbox.EffectOutboxV2,
+          Effect.gen(function* () {
+            const delegate = yield* EffectOutbox.EffectOutboxV2;
+            return EffectOutbox.EffectOutboxV2.of({
+              ...delegate,
+              enqueue: (effects) =>
+                delegate
+                  .enqueue(effects)
+                  .pipe(
+                    Effect.andThen(committed ? Effect.void : pause),
+                    Effect.andThen(
+                      scenario === "fail transaction"
+                        ? Effect.die("Injected rollback")
+                        : Effect.void,
+                    ),
+                  ),
+            });
+          }),
+        ).pipe(Layer.provide(layerEffectOutboxProvided)),
+        layerCommandReceiptStoreProvided,
+        ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
+        TurnItemPositionStore.layer.pipe(Layer.provide(layerDatabase)),
+      );
+      yield* Effect.gen(function* () {
+        const sink = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const eventStore = yield* EventStore.EventStoreV2;
+        const now = yield* DateTime.now;
+        const thread = makeThread(ThreadId.make("thread:commit-handoff"), now);
+        const events = [threadCreatedEvent({ id: "event:commit-handoff", thread, now })];
+        const handedOff: Array<OrchestrationV2DomainEvent> = [];
+        const writer = yield* sink
+          .write({
+            events,
+            onCommitted: (stored) => {
+              handedOff.push(...stored.map((entry) => entry.event));
+            },
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(paused);
+        // The handoff precedes publication, and never sees transaction work that can roll back.
+        assert.deepEqual(handedOff, committed ? events : []);
+        if (scenario !== "fail transaction") writer.interruptUnsafe();
+        if (scenario !== "cancel transaction") yield* Deferred.succeed(resume, undefined);
+        assert.equal((yield* Fiber.await(writer))._tag, "Failure");
+        assert.deepEqual(handedOff, committed ? events : []);
+        assert.equal(
+          (yield* projections.getThreadShell(thread.id))?.id ?? null,
+          committed ? thread.id : null,
+        );
+        const stored = yield* eventStore.read({ threadId: thread.id }).pipe(Stream.runCollect);
+        assert.deepEqual(
+          Array.from(stored, (entry) => entry.event),
+          committed ? events : [],
+        );
+      }).pipe(Effect.provide(EventSink.layerFromStores.pipe(Layer.provideMerge(stores))));
     }).pipe(Effect.provide(layerDatabase)),
 );
