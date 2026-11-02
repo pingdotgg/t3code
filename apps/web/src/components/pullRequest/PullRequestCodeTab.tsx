@@ -1,8 +1,5 @@
 import { useChangeRequestTerms } from "~/hooks/useSettings";
-import {
-  capitalizeTerm,
-  currentChangeRequestTerms,
-} from "@t3tools/client-runtime/source-control-clients";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
 import type { CodeViewAnnotationArgs, CodeViewDiffItem } from "@pierre/diffs/react";
 import type {
@@ -1377,7 +1374,7 @@ function PullRequestCodeTab({
     </div>
   );
 
-  const term = currentChangeRequestTerms().singular;
+  const term = requestTerms.singular;
   if (diffQuery.isPending && loadedSlices.length === 0) {
     return withToolbar(<DiffPanelLoadingState label={`Loading ${term} diff...`} />);
   }

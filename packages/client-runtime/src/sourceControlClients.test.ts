@@ -398,10 +398,10 @@ describe("appSignInTargetForRemote", () => {
 describe("currentChangeRequestTerms", () => {
   it("formats shared labels without changing identifiers or URLs", () => {
     const text =
-      "Pull Request / Pull requests / pull request / pull requests / a PR / PRs / PR #42 / https://host/pull/42 / pullRequest";
+      "Pull Request / Pull requests / pull request / pull requests / a PR / PRs / PR #42 / https://host/pull/42 / https://host/PR/42?q=PR / pullRequest";
     expect(formatChangeRequestText(text, PULL_REQUEST_TERMINOLOGY)).toBe(text);
     expect(formatChangeRequestText(text, MERGE_REQUEST_TERMINOLOGY)).toBe(
-      "Merge Request / Merge requests / merge request / merge requests / an MR / MRs / MR #42 / https://host/pull/42 / pullRequest",
+      "Merge Request / Merge requests / merge request / merge requests / an MR / MRs / MR #42 / https://host/pull/42 / https://host/PR/42?q=PR / pullRequest",
     );
   });
 

@@ -136,7 +136,7 @@ export function pullRequestComposerContext(
       : `#${metadata.number}`,
     sectionId: `pull-request:${metadata.number}`,
     sectionTitle: `${shortLabel} #${metadata.number}`,
-    filePath: path || `${shortLabel} #${metadata.number}`,
+    filePath: path || `PR #${metadata.number}`,
     startIndex: 0,
     endIndex: 0,
     rangeLabel: path || metadata.title,

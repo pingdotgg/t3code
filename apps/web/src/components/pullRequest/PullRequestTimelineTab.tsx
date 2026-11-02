@@ -1,7 +1,5 @@
-import {
-  capitalizeTerm,
-  currentChangeRequestTerms,
-} from "@t3tools/client-runtime/source-control-clients";
+import { useChangeRequestTerms } from "~/hooks/useSettings";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
@@ -646,7 +644,7 @@ export function PullRequestTimelineTab({
   onRefresh: () => void;
 }) {
   const events = buildPullRequestTimeline(detail);
-  const term = currentChangeRequestTerms().singular;
+  const term = useChangeRequestTerms().singular;
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
     canReact: detail.capabilities.reactions === true,

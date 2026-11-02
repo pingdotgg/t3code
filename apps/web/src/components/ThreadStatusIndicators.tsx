@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 
 import { pullRequestDetailToVcsStatus } from "@t3tools/client-runtime/state/pull-requests";
 import {
@@ -39,7 +40,7 @@ import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
 import {
-  currentChangeRequestTerms,
+  type ChangeRequestTerminology,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import {
@@ -164,13 +165,14 @@ function resolveThreadPullRequestBadgePresentation({
   number,
   url,
   status,
+  terminology,
 }: {
   readonly badge: ThreadPullRequestBadge | null;
   readonly number?: number | undefined;
   readonly url?: string | undefined;
   readonly status: PrStatusIndicator | null;
+  readonly terminology: ChangeRequestTerminology;
 }): ThreadPullRequestBadgePresentation | null {
-  const terminology = currentChangeRequestTerms();
   if (badge?.kind === "stack") {
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
     return {
@@ -219,7 +221,14 @@ export function ThreadPullRequestBadgeControl({
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
 }) {
-  const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status });
+  const terminology = useChangeRequestTerms();
+  const presentation = resolveThreadPullRequestBadgePresentation({
+    badge,
+    number,
+    url,
+    status,
+    terminology,
+  });
   if (presentation === null) return null;
   return (
     <PullRequestBadge
@@ -409,9 +418,12 @@ function ThreadPullRequestMiniListItem({
   );
 }
 
-export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
+export function prStatusIndicator(
+  pr: ThreadPr,
+  terminology: ChangeRequestTerminology,
+): PrStatusIndicator | null {
   if (!pr) return null;
-  const { shortLabel } = currentChangeRequestTerms();
+  const { shortLabel } = terminology;
   const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true });
 
   const tooltipLead = `${shortLabel} #${pr.number} - ${state.label}`;
@@ -652,6 +664,7 @@ function ThreadStatusLabel({
 }
 
 export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
+  const terminology = useChangeRequestTerms();
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(false);
   // A new ref callback would detach and reattach the row, and each reattach sets lease state.
   const statusRef = useStableCallback((node: HTMLSpanElement | null) =>
@@ -694,7 +707,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     linkedPullRequestStatus: linkedPullRequest,
   };
   const pr = linkedPullRequest?.pr ?? resolveDisplayedThreadPr(displayedPrInput);
-  const prStatus = prStatusIndicator(pr);
+  const prStatus = prStatusIndicator(pr, terminology);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -735,7 +748,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
       {pendingLink ? (
         <PullRequestGlyph.pullRequest
           className="size-3 text-muted-foreground"
-          aria-label={`${currentChangeRequestTerms().shortLabel} #${pendingLink.number}, status pending`}
+          aria-label={`${terminology.shortLabel} #${pendingLink.number}, status pending`}
         />
       ) : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
@@ -828,6 +841,7 @@ export function ThreadSearchPullRequestNumber({
   enabled?: boolean;
   settled?: boolean;
 }) {
+  const terminology = useChangeRequestTerms();
   const matched = pullRequestMatchesSearchQuery(thread, query);
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
   const linked = useLinkedThreadPullRequest(
@@ -856,7 +870,8 @@ export function ThreadSearchPullRequestNumber({
     badge,
     number: pr?.number ?? stored?.number,
     url: pr?.url ?? stored?.url,
-    status: prStatusIndicator(pr),
+    status: prStatusIndicator(pr, terminology),
+    terminology,
   });
   if (presentation === null) return null;
   const aggregate = badge !== null && (badge.kind === "stack" || badge.others > 0);

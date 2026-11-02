@@ -1,8 +1,5 @@
 import { useChangeRequestTerms } from "~/hooks/useSettings";
-import {
-  currentChangeRequestTerms,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
@@ -67,6 +64,7 @@ function NumberLink({
   openOnHostText: string;
   focusable: boolean;
 }) {
+  const requestTerms = useChangeRequestTerms();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -83,7 +81,7 @@ function NumberLink({
               "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
               toneClassName,
             )}
-            aria-label={`Open ${currentChangeRequestTerms().singular} #${detail.number} on host`}
+            aria-label={`Open ${requestTerms.singular} #${detail.number} on host`}
           >
             #{detail.number}
             <ExternalLinkIcon aria-hidden className="size-2.5" />

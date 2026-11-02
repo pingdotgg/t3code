@@ -2,7 +2,6 @@ import { useChangeRequestTerms } from "~/hooks/useSettings";
 import type { ProjectId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
   capitalizeTerm,
-  currentChangeRequestTerms,
   sourceControlClients,
   UNKNOWN_SOURCE_CONTROL_CLIENT,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -103,6 +102,7 @@ function LinkRowImpl({
   onUnlink: (link: ThreadPullRequestLink) => void;
   onSetWatching: ((link: ThreadPullRequestLink, watching: boolean) => void) | null;
 }) {
+  const requestTerms = useChangeRequestTerms();
   const openPrLink = useOpenPrLink(threadRef);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
@@ -249,7 +249,7 @@ function LinkRowImpl({
                   <TooltipPopup>
                     {stack.kind === "native"
                       ? `${sourceControlClients.hostLabelForChangeRequestUrl(link.url)} stack of ${stack.size}: merging a layer lands the ones below it.`
-                      : `${stack.size} ${currentChangeRequestTerms().plural} chained by base branch.`}
+                      : `${stack.size} ${requestTerms.plural} chained by base branch.`}
                   </TooltipPopup>
                 </Tooltip>
               ) : null}
@@ -284,7 +284,7 @@ function LinkRowImpl({
         <PullRequestSpeedActions
           entry={actionEntry}
           hostActions={linkHostActions}
-          terminology={currentChangeRequestTerms()}
+          terminology={requestTerms}
         />
       ) : null}
       <span
@@ -379,6 +379,7 @@ export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
 }
 
 function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
+  const { plural, singular } = useChangeRequestTerms();
   const thread = useThreadShell(threadRef);
   const projects = useProjects();
   const environmentProjects = projects
@@ -430,7 +431,6 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   const rowInputs = { speedMode, environmentProjects, capabilities, supportsWatch, thread };
 
   if (linkCount === 0) {
-    const { plural, singular } = currentChangeRequestTerms();
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
         <PullRequestGlyph.link aria-hidden className="size-6 text-muted-foreground/60" />

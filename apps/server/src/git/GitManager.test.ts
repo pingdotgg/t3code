@@ -3959,6 +3959,16 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         Effect.map((error) => error.message),
       );
       expect(errorMessage).toContain("detached HEAD");
+      for (const mergeRequestTerminology of [false, true]) {
+        const error = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "create_pr",
+          mergeRequestTerminology,
+        }).pipe(Effect.flip);
+        expect(error.message).toContain(
+          `Cannot create a ${mergeRequestTerminology ? "merge" : "pull"} request from detached HEAD.`,
+        );
+      }
     }),
   );
 

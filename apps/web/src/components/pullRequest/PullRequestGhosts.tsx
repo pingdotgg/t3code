@@ -14,7 +14,6 @@ import type { ReactNode } from "react";
 import {
   capitalizeTerm,
   type ChangeRequestTerminology,
-  currentChangeRequestTerms,
 } from "@t3tools/client-runtime/source-control-clients";
 
 import { readLocalApi } from "~/localApi";
@@ -115,7 +114,7 @@ export function PullRequestDetailGhost({
         isDraft: summary.isDraft ?? entry?.isDraft,
       }
     : entry;
-  const terminology = currentChangeRequestTerms();
+  const terminology = requestTerms;
   const statePresentation = seed
     ? resolvePullRequestState({
         state: seed.state,

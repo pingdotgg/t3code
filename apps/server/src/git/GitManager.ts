@@ -2238,14 +2238,14 @@ export const make = Effect.gen(function* () {
       return yield* new GitManagerError({
         operation: "runPrStep",
         cwd,
-        detail: "Cannot create a pull request from detached HEAD.",
+        detail: `Cannot create a ${terms.singular} from detached HEAD.`,
       });
     }
     if (!details.hasUpstream) {
       return yield* new GitManagerError({
         operation: "runPrStep",
         cwd,
-        detail: "Current branch has not been pushed. Push before creating a PR.",
+        detail: `Current branch has not been pushed. Push before creating ${terms.shortLabelWithArticle}.`,
       });
     }
 
@@ -2311,7 +2311,7 @@ export const make = Effect.gen(function* () {
           new GitManagerError({
             operation: "runPrStep",
             cwd,
-            detail: "Failed to write pull request body temp file.",
+            detail: `Failed to write ${terms.singular} body temp file.`,
             cause,
           }),
       ),
@@ -3037,6 +3037,7 @@ export const make = Effect.gen(function* () {
         GitRunStackedActionResult,
         GitManagerServiceError
       > {
+        const terms = changeRequestTerms(input.mergeRequestTerminology === true);
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
         const wantsCommit = isCommitAction(input.action);
         const wantsPush =
@@ -3066,18 +3067,18 @@ export const make = Effect.gen(function* () {
           phases,
         });
 
+        if (!input.featureBranch && wantsPr && !initialStatus.branch) {
+          return yield* new GitManagerError({
+            operation: "runStackedAction",
+            cwd: input.cwd,
+            detail: `Cannot create a ${terms.singular} from detached HEAD.`,
+          });
+        }
         if (!input.featureBranch && wantsPush && !initialStatus.branch) {
           return yield* new GitManagerError({
             operation: "runStackedAction",
             cwd: input.cwd,
             detail: "Cannot push from detached HEAD.",
-          });
-        }
-        if (!input.featureBranch && wantsPr && !initialStatus.branch) {
-          return yield* new GitManagerError({
-            operation: "runStackedAction",
-            cwd: input.cwd,
-            detail: "Cannot create a pull request from detached HEAD.",
           });
         }
 
@@ -3137,7 +3138,6 @@ export const make = Effect.gen(function* () {
 
         const currentBranch = branchStep.name ?? initialStatus.branch;
         const commitAction = isCommitAction(input.action) ? input.action : null;
-        const terms = changeRequestTerms(input.mergeRequestTerminology === true);
 
         const commit = commitAction
           ? yield* Ref.set(currentPhase, Option.some("commit")).pipe(

@@ -49,16 +49,20 @@ export function currentChangeRequestTerms(): ChangeRequestTerminology {
 
 export function formatChangeRequestText(text: string, terms = currentChangeRequestTerms()): string {
   if (terms === PULL_REQUEST_TERMINOLOGY) return text;
-  return text.replace(/\ba PR\b|\bPRs?\b|\b[Pp]ull [Rr]equests?\b/gu, (match) => {
-    if (match === "a PR") return terms.shortLabelWithArticle;
-    if (match === "PR") return terms.shortLabel;
-    if (match === "PRs") return `${terms.shortLabel}s`;
-    const label = match.endsWith("s") ? terms.plural : terms.singular;
-    if (match.startsWith("pull")) return label;
-    return match.includes("Request")
-      ? label.split(" ").map(capitalizeTerm).join(" ")
-      : capitalizeTerm(label);
-  });
+  return text.replace(
+    /https?:\/\/[^\s<>"`]+|\ba PR\b|\bPRs?\b|\b[Pp]ull [Rr]equests?\b/gu,
+    (match) => {
+      if (match.startsWith("http")) return match;
+      if (match === "a PR") return terms.shortLabelWithArticle;
+      if (match === "PR") return terms.shortLabel;
+      if (match === "PRs") return `${terms.shortLabel}s`;
+      const label = match.endsWith("s") ? terms.plural : terms.singular;
+      if (match.startsWith("pull")) return label;
+      return match.includes("Request")
+        ? label.split(" ").map(capitalizeTerm).join(" ")
+        : capitalizeTerm(label);
+    },
+  );
 }
 
 /** The saved per-hostname accounts and tokens of a host whose definition has `credentials`. */
