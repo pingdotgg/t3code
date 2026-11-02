@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as EffectScheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
@@ -168,6 +169,7 @@ const withService = <A, E>(
       readonly started: Deferred.Deferred<void>;
       readonly release: Deferred.Deferred<void>;
     };
+    readonly getThreadRecords?: ThreadManagementService.ThreadManagementService["Service"]["getThreadRecords"];
     readonly completedLaunches?: Set<string>;
     readonly failLaunches?: { remaining: number };
     readonly gate?: Deferred.Deferred<void>;
@@ -238,7 +240,11 @@ const withService = <A, E>(
         namedProjectsRoot: "/projects",
         isScratchProject: () => Effect.succeed(false),
       }),
-      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        ...(options.getThreadRecords === undefined
+          ? {}
+          : { getThreadRecords: options.getThreadRecords }),
+      }),
       Layer.mock(SecretRequests.SecretRequests)({
         consume: ({ ref }) => {
           const value = secretsByRef.get(ref);
@@ -1413,32 +1419,77 @@ it.effect(
     }),
 );
 
-it.effect("keeps replay keys when dispatch succeeds but completion bookkeeping fails", () =>
-  withService(({ service, sql, launches }) =>
-    Effect.gen(function* () {
-      const { task } = yield* service.upsert(
-        yield* webhookTaskInput({
-          schedule: {
-            type: "webhook",
-            dedupe: { replayKey: "{{body}}" },
-          },
-        }),
-      );
-      yield* sql`CREATE TRIGGER fail_completion BEFORE UPDATE ON scheduled_tasks
+it.effect.each([false, true])(
+  "keeps replay keys and settles replayed runs after completion bookkeeping fails (coalesced: %s)",
+  (coalesced) => {
+    const workers = new Map<string, Effect.Effect<void>>();
+    const completedLaunches = new Set<string>();
+    let dispatched: LaunchInput | undefined;
+    return withService(
+      ({ service, sql, launches }) =>
+        Effect.gen(function* () {
+          const { task } = yield* service.upsert(
+            yield* webhookTaskInput({
+              schedule: {
+                type: "webhook",
+                dedupe: {
+                  replayKey: "{{body}}",
+                  ...(coalesced
+                    ? { coalesceKey: "{{body.pull_request.url}}", coalesceWindowSeconds: 10 }
+                    : {}),
+                },
+              },
+            }),
+          );
+          yield* sql`CREATE TRIGGER fail_completion BEFORE UPDATE ON scheduled_tasks
       WHEN OLD.last_run_status = 'running' AND NEW.last_run_status = 'running' BEGIN SELECT RAISE(FAIL, 'completion unavailable'); END`;
-      yield* waitForSpan(
-        service.triggerWebhook(requestFor(task)),
-        "ScheduledTaskService.runWebhookDelivery",
-      );
-      yield* Queue.take(launches);
-      assert.equal((yield* sql`SELECT 1 FROM scheduled_task_webhook_replay_keys`).length, 1);
-      yield* sql`DROP TRIGGER fail_completion`;
-      const retry = yield* service.triggerWebhook(requestFor(task));
-      assert.equal(retry._tag === "accepted" && retry.outcome, "duplicate");
-      assert.equal(yield* Queue.size(launches), 0);
-      assert.equal((yield* service.list()).tasks[0]!.runCount, 1);
-    }),
-  ),
+          if (coalesced) {
+            yield* service.triggerWebhook(requestFor(task));
+            yield* TestClock.adjust("10 seconds");
+            yield* drainPendingDispatch(workers);
+          } else {
+            yield* waitForSpan(
+              service.triggerWebhook(requestFor(task)),
+              "ScheduledTaskService.runWebhookDelivery",
+            );
+          }
+          dispatched = yield* Queue.take(launches);
+          assert.equal((yield* sql`SELECT 1 FROM scheduled_task_webhook_replay_keys`).length, 1);
+          yield* sql`DROP TRIGGER fail_completion`;
+          const retry = yield* service.triggerWebhook(requestFor(task));
+          assert.equal(retry._tag === "accepted" && retry.outcome, "duplicate");
+          if (coalesced) {
+            yield* drainPendingDispatch(workers);
+            yield* service.subscribeList().pipe(
+              Stream.filter(({ tasks }) => tasks[0]?.lastRunStatus === "succeeded"),
+              Stream.take(1),
+              Stream.runDrain,
+            );
+          }
+          assert.equal(yield* Queue.size(launches), 0);
+          assert.equal((yield* service.list()).tasks[0]!.runCount, 1);
+        }),
+      {
+        workers,
+        completedLaunches,
+        getThreadRecords: () =>
+          Effect.succeed({
+            thread: { deletedAt: null },
+            messages: [
+              { id: dispatched?.initialMessage?.messageId, runId: "run:webhook-replayed" },
+            ],
+            runs: [
+              {
+                id: "run:webhook-replayed",
+                userMessageId: dispatched?.initialMessage?.messageId,
+                threadId: "thread-1",
+                status: "completed",
+              },
+            ],
+          } as never),
+      },
+    );
+  },
 );
 
 it.effect.each([119_000, 120_000])(

@@ -959,12 +959,15 @@ export const layer = Layer.effect(
           }
           return { task, threadId: null, dispatchFailed: false };
         }
-        if (
-          webhook !== undefined &&
-          (yield* sql`SELECT 1 FROM scheduled_task_webhook_pending WHERE delivery_id = ${webhook.deliveryId} AND state = 'completed'`.pipe(
-            NodeSqliteClient.readOnly,
-          )).length > 0
-        )
+        const [pendingDelivery] =
+          webhook === undefined
+            ? []
+            : yield* sql<{
+                state: string;
+              }>`SELECT state FROM scheduled_task_webhook_pending WHERE delivery_id = ${webhook.deliveryId}`.pipe(
+                NodeSqliteClient.readOnly,
+              );
+        if (pendingDelivery?.state === "completed")
           return {
             task: { ...active, lastRunStatus: "succeeded" as const },
             threadId: null,
@@ -1173,8 +1176,8 @@ export const layer = Layer.effect(
           // landed since the dispatch returned is settled here.
           const ended = trackedRuns.dispatched(messageId, threadId);
           if (ended !== null) yield* settleOutcome(ended);
-          // Reconnect may have skipped this message before dispatch bookkeeping finished.
-          if (dispatchGeneration !== runEventGeneration) {
+          // Replayed webhook dispatches and reconnects can miss the original terminal event.
+          if (pendingDelivery?.state === "running" || dispatchGeneration !== runEventGeneration) {
             const pending = trackedRuns.pending().find((run) => run.messageId === messageId);
             if (pending !== undefined) yield* catchUpRun(pending).pipe(Effect.forkIn(serviceScope));
           }
