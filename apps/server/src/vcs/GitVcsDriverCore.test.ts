@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodeURL from "node:url";
@@ -4026,6 +4027,33 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(cwd, ["config", "branch.feature/taken-1.t3-merge-base"]),
           initialBranch,
         );
+
+        // Another launch takes the free name between the check and `git branch`.
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (
+            ChildProcess.isStandardCommand(command) &&
+            command.args.includes("--no-track") &&
+            command.args.includes("feature/taken-2")
+          ) {
+            NodeChildProcess.execFileSync("git", ["-C", cwd, "branch", "feature/taken-2"]);
+          }
+          return delegate.spawn(command);
+        });
+        const racingDriver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+        const raced = yield* racingDriver.createWorktree(
+          {
+            cwd,
+            path: path.join(yield* makeTmpDir("git-worktrees-"), "raced"),
+            refName: initialBranch,
+            newRefName: "feature/taken",
+          },
+          { renameBranchIfTaken: true },
+        );
+        assert.equal(raced.worktree.refName, "feature/taken-3");
       }),
     );
     it.effect.each(["commit", "short-commit", "tag", "revision"] as const)(

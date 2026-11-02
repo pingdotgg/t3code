@@ -4120,22 +4120,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   )(function* (input, options) {
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.refName);
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.newRefName);
-    const newRefName =
-      input.newRefName && options?.renameBranchIfTaken
-        ? yield* resolveAvailableBranchName(input.cwd, input.newRefName)
-        : input.newRefName;
-    const targetBranch = newRefName ?? input.refName;
-    // Resolve sub/.. before taking the basename.
-    const repoName = path.basename(path.resolve(input.cwd));
-    let worktreePath = input.path;
-    if (worktreePath == null) {
-      const parentDir = resolveWorktreesDirectory(
+    let parentDir = "";
+    if (input.path == null) {
+      const resolvedParentDir = resolveWorktreesDirectory(
         options?.worktreesDirectory ?? "",
         worktreesDir,
         path,
         yield* HostProcess.HomeDirectory,
       );
-      if (parentDir === null) {
+      if (resolvedParentDir === null) {
         return yield* new GitCommandError({
           operation: "GitVcsDriver.createWorktree",
           command: "git worktree add",
@@ -4143,6 +4136,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           detail: `The worktree location "${options?.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Worktrees.`,
         });
       }
+      parentDir = resolvedParentDir;
+    }
+    const createBranchNamed = (branch: string) =>
+      // Kept apart from the checkout so the shared-config lock only covers the tracking write.
+      createBranchAt(
+        "GitVcsDriver.createWorktree.createBranch",
+        { cwd: input.cwd, branch, startPoint: input.refName },
+        "git worktree add failed",
+      ).pipe(Effect.as(branch));
+    const newRefName = !input.newRefName
+      ? undefined
+      : options?.renameBranchIfTaken
+        ? yield* resolveAvailableBranchName(input.cwd, input.newRefName).pipe(
+            Effect.flatMap(createBranchNamed),
+            // A concurrent launch can take the free name between the check and `git branch`.
+            Effect.retry({ while: (error) => error.reason === "branch_already_exists", times: 5 }),
+          )
+        : yield* createBranchNamed(input.newRefName);
+    const targetBranch = newRefName ?? input.refName;
+    let worktreePath = input.path;
+    if (worktreePath == null) {
+      // Resolve sub/.. before taking the basename.
+      const repoName = path.basename(path.resolve(input.cwd));
       let directoryName = targetBranch.replace(/\//g, "-");
       // Leave room for files beneath the worktree on Windows, regardless of branch length.
       if (directoryName.length > 40) {
@@ -4154,14 +4170,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         directoryName = `${prefix}-${Hex.encode(digest).slice(0, 16)}`;
       }
       worktreePath = path.join(parentDir, repoName, directoryName);
-    }
-    if (newRefName) {
-      // Kept apart from the checkout so the shared-config lock only covers the tracking write.
-      yield* createBranchAt(
-        "GitVcsDriver.createWorktree.createBranch",
-        { cwd: input.cwd, branch: newRefName, startPoint: input.refName },
-        "git worktree add failed",
-      );
     }
     const args = ["worktree", "add", "--", worktreePath, targetBranch];
     const progress = options?.progress;
