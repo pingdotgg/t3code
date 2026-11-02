@@ -2648,26 +2648,36 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
       // Read after the late calls, so one write for all items would run out of tries first.
       const lastOpen = { ...seededToolCalls.cutOff, id: TurnItemId.make("turn-item:last-open") };
       yield* Effect.forEach([...lateCompleted, lastOpen], writeToolCall);
-      // The first hook also updates the cut-off call without ending it, so it needs a second
-      // try, and stores one more call that the dead session started before the release.
       const storedLate = {
         ...seededToolCalls.cutOff,
         id: TurnItemId.make("turn-item:stored-late"),
       };
+      const storedInCleanPass = {
+        ...seededToolCalls.cutOff,
+        id: TurnItemId.make("turn-item:stored-in-clean-pass"),
+      };
+      const complete = (item: OrchestrationV2TurnItem) =>
+        writeToolCall({ ...item, status: "completed" });
+      // One hook runs before each cleanup write. The first pass writes the cut-off call, the
+      // four late calls and the last open call; the second pass writes the cut-off call again
+      // and the call stored late.
       yield* Ref.set(
         beforeTurnItemsWrite,
-        lateCompleted.map((item, index) =>
-          writeToolCall({ ...item, status: "completed" }).pipe(
-            Effect.andThen(
-              index === 0
-                ? writeToolCall({ ...seededToolCalls.cutOff, title: "late output" }).pipe(
-                    Effect.andThen(writeToolCall(storedLate)),
-                  )
-                : Effect.void,
-            ),
-            Effect.orDie,
+        [
+          // The cut-off call gets an update that keeps it open, so it needs a second pass, and
+          // the dead session stores one more call.
+          complete(lateCompleted[0]!).pipe(
+            Effect.andThen(writeToolCall({ ...seededToolCalls.cutOff, title: "late output" })),
+            Effect.andThen(writeToolCall(storedLate)),
           ),
-        ),
+          complete(lateCompleted[1]!),
+          complete(lateCompleted[2]!),
+          complete(lateCompleted[3]!),
+          Effect.void,
+          Effect.void,
+          // The second pass has no conflict, but one more call lands during it.
+          writeToolCall(storedInCleanPass),
+        ].map(Effect.orDie),
       );
       const seeded = providerThreads[0]!;
       yield* Ref.set(
@@ -2684,21 +2694,19 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
       yield* manager.close(providerSessionId);
 
       assert.deepStrictEqual(yield* rosters, [["replacement-task"], ["dev-server"]]);
-      assert.deepStrictEqual(
+      const statuses = Object.fromEntries(
         yield* Effect.forEach(
-          [seededToolCalls.cutOff, ...lateCompleted, lastOpen, storedLate],
-          (item) => toolCallStatus(item.id),
+          [seededToolCalls.cutOff, ...lateCompleted, lastOpen, storedLate, storedInCleanPass],
+          (item) => toolCallStatus(item.id).pipe(Effect.map((status) => [item.id, status])),
         ),
-        [
-          "interrupted",
-          "completed",
-          "completed",
-          "completed",
-          "completed",
-          "interrupted",
-          "interrupted",
-        ],
       );
+      assert.deepStrictEqual(statuses, {
+        [seededToolCalls.cutOff.id]: "interrupted",
+        ...Object.fromEntries(lateCompleted.map((item) => [item.id, "completed"])),
+        [lastOpen.id]: "interrupted",
+        [storedLate.id]: "interrupted",
+        [storedInCleanPass.id]: "interrupted",
+      });
     });
 
     yield* effect.pipe(
