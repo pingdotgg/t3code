@@ -613,32 +613,35 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
 
     if (!options.serverRequestMethods.has(message.tag)) {
       return observeIncoming.pipe(
-        Effect.andThen(handleExtRequest(message)),
-        Effect.catchTags({
-          AcpProtocolParseError: (error) =>
-            Effect.logWarning(error).pipe(
-              Effect.annotateLogs({
-                method: message.tag,
-                requestId: message.id,
-                operation: error.operation,
-              }),
-              Effect.andThen(
-                respondWithError(
-                  message.id,
-                  AcpError.AcpRequestError.fromExtensionResponseEncodingError(
-                    message.tag,
-                    message.id,
-                    error,
+        Effect.andThen(
+          handleExtRequest(message).pipe(
+            Effect.catchTags({
+              AcpProtocolParseError: (error) =>
+                Effect.logWarning(error).pipe(
+                  Effect.annotateLogs({
+                    method: message.tag,
+                    requestId: message.id,
+                    operation: error.operation,
+                  }),
+                  Effect.andThen(
+                    respondWithError(
+                      message.id,
+                      AcpError.AcpRequestError.fromExtensionResponseEncodingError(
+                        message.tag,
+                        message.id,
+                        error,
+                      ),
+                    ),
                   ),
                 ),
-              ),
+            }),
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause) ? Effect.void : terminateWithCause(cause),
             ),
-        }),
-        Effect.catchCause((cause) =>
-          Cause.hasInterruptsOnly(cause) ? Effect.void : terminateWithCause(cause),
+            // Handlers can wait on the user (Grok's ask_user_question), so reading goes on.
+            Effect.forkIn(protocolScope, { startImmediately: true }),
+          ),
         ),
-        // Handlers can wait on the user (Grok's ask_user_question), so reading goes on.
-        Effect.forkIn(protocolScope, { startImmediately: true }),
         Effect.asVoid,
       );
     }
