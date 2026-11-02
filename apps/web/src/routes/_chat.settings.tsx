@@ -3,6 +3,7 @@ import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-
 import { useState, type ReactNode } from "react";
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
+import { useT } from "../hooks/useI18n";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
 
 import { AppRouteModal, AppRouteModalClose } from "../components/AppRouteModal";
@@ -29,6 +30,7 @@ import {
 
 function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
+  const t = useT();
   return (
     <Button
       size="xs"
@@ -37,7 +39,7 @@ function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void })
       onClick={() => void restoreDefaults()}
     >
       <RotateCcwIcon className="mx-1 size-3.5" />
-      <span className="max-sm:sr-only">Restore device defaults</span>
+      <span className="max-sm:sr-only">{t("settings.layout.restoreDeviceDefaults")}</span>
     </Button>
   );
 }
