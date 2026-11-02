@@ -1,7 +1,11 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { ClientSettings } from "@t3tools/contracts/settings";
 import { createBrowserHistory, createHashHistory } from "@tanstack/react-router";
+import * as Schema from "effect/Schema";
 
-import { startClientAppearance } from "./clientAppearance";
+import { applyAppearanceContrast } from "./appearanceContrast";
+import { applyAppearanceFontVariables, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "./appearanceFonts";
+import { applyGlassAppearance } from "./appearanceGlass";
 import { startElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { startBrowserProfileReporting } from "./browser/BrowserProfileReporter";
 import { startPreviewTitleRecording } from "./browserHistoryStore";
@@ -28,7 +32,12 @@ import {
 } from "./composerDraftStore";
 import { startDefaultThemeAdoption } from "./hooks/useDefaultTheme";
 import { startEnvironmentThemeRepaint } from "./hooks/useEnvironmentTheme";
-import { startModelPreferencesMigration } from "./hooks/useSettings";
+import { readLocalStorageValue, subscribeLocalStorageKey } from "./hooks/useLocalStorage";
+import {
+  getClientSettings,
+  startModelPreferencesMigration,
+  subscribeClientSettings,
+} from "./hooks/useSettings";
 import { syncBrowserChromeTheme } from "./hooks/useTheme";
 import { startThreadVisitedMigration } from "./hooks/useThreadVisitedMigration";
 import { installDesktopPasteAsText } from "./lib/desktopPasteAsText";
@@ -47,6 +56,61 @@ import { installCommandPaletteCommands } from "./shortcuts/commandPaletteCommand
 import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPickerShortcut";
 import { environmentThreadShells } from "./state/threads";
 import { resolveThreadRouteTarget } from "./threadRoutes";
+
+/** Writes appearance settings onto the document, touching only the groups that changed. */
+function startClientAppearance(): void {
+  const root = document.documentElement;
+  let applied: ClientSettings | null = null;
+  let appliedSeparateFonts: boolean | null = null;
+  const apply = () => {
+    const settings = getClientSettings();
+    const previous = applied;
+    applied = settings;
+    const separateFonts = readLocalStorageValue(
+      TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+      false,
+      Schema.Boolean,
+    );
+    const previousSeparateFonts = appliedSeparateFonts;
+    appliedSeparateFonts = separateFonts;
+    if (previous?.diffColorScheme !== settings.diffColorScheme) {
+      root.dataset.diffColorScheme = settings.diffColorScheme;
+    }
+    if (previous?.chatWidth !== settings.chatWidth) {
+      root.dataset.chatWidth = settings.chatWidth;
+    }
+    if (previous?.appearanceContrast !== settings.appearanceContrast) {
+      applyAppearanceContrast(root, settings.appearanceContrast);
+    }
+    if (previous?.glassOpacity !== settings.glassOpacity) {
+      applyGlassAppearance(root, settings.glassOpacity);
+    }
+    if (
+      previous?.fontFamilySans !== settings.fontFamilySans ||
+      previous.fontFamilyCode !== settings.fontFamilyCode ||
+      previous.fontFamilyComposer !== settings.fontFamilyComposer ||
+      previous.fontSizeInterface !== settings.fontSizeInterface ||
+      previous.fontSizePrompt !== settings.fontSizePrompt ||
+      previous.fontSizeCode !== settings.fontSizeCode ||
+      previous.fontSmoothing !== settings.fontSmoothing ||
+      previousSeparateFonts !== separateFonts
+    ) {
+      applyAppearanceFontVariables(root, {
+        sans: settings.fontFamilySans,
+        code: settings.fontFamilyCode,
+        composer: settings.fontFamilyComposer,
+        sizeInterface: settings.fontSizeInterface,
+        sizePrompt: settings.fontSizePrompt,
+        sizeCode: settings.fontSizeCode,
+        smoothing: settings.fontSmoothing,
+        separate: separateFonts,
+      });
+    }
+  };
+  subscribeClientSettings(apply);
+  subscribeLocalStorageKey(TYPOGRAPHY_ADVANCED_STORAGE_KEY, apply);
+  apply();
+}
 
 function startDocumentTitle(): void {
   appAtomRegistry.subscribe(
