@@ -30,6 +30,7 @@ import {
   markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
+  serializedMarkdownOffset,
   serializeSelection,
   skillChipReplacements,
   stepCaretAcrossStyledEdge,
@@ -629,6 +630,18 @@ describe("composer rich text document model", () => {
       expect(flatToMarkdown(map, "text".length + 1)).toBe("text\n\n---".length);
       expect(flatToPm(map, "text".length + 1)).toBe(doc.child(0).nodeSize + doc.child(1).nodeSize);
     });
+  });
+
+  it.each([
+    ["text\n---\nmore", "text\n---\nm".length, "text\n\n---\nm".length],
+    ["before\n> quoted\nafter", "before\n> quoted\na".length, "before\n> quoted\n\na".length],
+    ["a\n---\n", "a".length, "a".length],
+  ])("restores a caret in the glued draft %j on the same character", (value, caret, settled) => {
+    const map = roundTrip(value);
+    const restore = (offset: number) =>
+      markdownToFlat(map, serializedMarkdownOffset(value, map.value, offset));
+    expect(restore(value.length)).toBe(map.docLength);
+    expect(restore(caret)).toBe(markdownToFlat(map, settled));
   });
 
   it.each([

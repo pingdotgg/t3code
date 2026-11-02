@@ -1039,6 +1039,26 @@ function pushBlankLineRun(acc: RichAccumulator, pmPos: number): void {
   acc.md += 1;
 }
 
+// Moves an offset into a parsed `value` past the blank lines its serialization inserted.
+// Any other difference keeps the rest of the offset one-to-one, as if unmapped.
+export function serializedMarkdownOffset(
+  value: string,
+  serialized: string,
+  offset: number,
+): number {
+  let index = 0;
+  let mapped = 0;
+  while (index < offset && index < value.length) {
+    if (value[index] === serialized[mapped]) {
+      index += 1;
+    } else if (serialized[mapped] !== "\n") {
+      break;
+    }
+    mapped += 1;
+  }
+  return mapped + (offset - index);
+}
+
 function appendInlineRuns(
   container: ProseMirrorNode,
   contentStart: number,
