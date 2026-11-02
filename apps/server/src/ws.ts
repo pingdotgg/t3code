@@ -2377,12 +2377,12 @@ export const layerWsRpc = (
                 { concurrency: "unbounded", discard: true },
               );
             }
+            if (input.reloadSecrets === true && input.instanceId === undefined) {
+              yield* invalidateSettingsSecrets(secretResolver, serverSettings.getSettings);
+            }
             // Await refresh; RPC scope closure would interrupt a fork before the hub answered.
             if (input.instanceId === undefined) {
               yield* usageLimitSources.refresh;
-            }
-            if (input.reloadSecrets === true && input.instanceId === undefined) {
-              yield* invalidateSettingsSecrets(secretResolver, serverSettings.getSettings);
             }
             let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
               ? providerRegistry.refreshWorkspaceSnapshot({
