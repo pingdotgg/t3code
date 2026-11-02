@@ -448,7 +448,8 @@ function resolvePathEnvironmentVariable(env: NodeJS.ProcessEnv): string {
 }
 
 function resolveWindowsPathExtensions(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
-  const rawValue = env.PATHEXT;
+  const rawValue =
+    env.PATHEXT ?? Object.entries(env).find(([key]) => key.toUpperCase() === "PATHEXT")?.[1];
   const fallback = [".COM", ".EXE", ".BAT", ".CMD"];
   if (!rawValue) return fallback;
 
