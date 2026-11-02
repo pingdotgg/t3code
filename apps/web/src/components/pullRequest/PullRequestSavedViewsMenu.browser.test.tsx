@@ -154,10 +154,10 @@ describe("PullRequestSavedViewsMenu", () => {
     await using screen = await render(menu());
     await openMenu(screen);
     await choose("Save current view…");
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    using _setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("quota exceeded");
     });
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    using _error = vi.spyOn(console, "error").mockImplementation(() => {});
     await submit();
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     expect(storedViews()).toEqual([]);
