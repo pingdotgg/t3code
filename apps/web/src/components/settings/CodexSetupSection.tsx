@@ -553,7 +553,14 @@ function ManagedCodexSetup({
                   ? null
                   : settleSignIn(state.state, null),
             signal,
-          }).then(reportSignInEnd);
+          }).then((ended) => {
+            // Without an abort, `undefined` means the handoff query failed.
+            if (ended === undefined && !signal.aborted)
+              onSignInUnfinished?.(
+                "ChatGPT sign-in on the primary environment was interrupted. Try again.",
+              );
+            else reportSignInEnd(ended);
+          });
         },
         onSignInUnfinished,
       );

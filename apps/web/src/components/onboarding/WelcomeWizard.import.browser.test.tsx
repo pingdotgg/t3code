@@ -539,6 +539,19 @@ it("restores the Codex setup mode when ChatGPT sign-in from onboarding is cancel
 it("restores the Codex setup mode when ChatGPT sign-in from onboarding fails", async () => {
   using _now = setup();
   await using _screen = await mountCodexSignIn();
+  // Another client adds a provider while sign-in is pending.
+  const otherId = ProviderInstanceId.make("codex-work");
+  const config = appAtomRegistry.get(configAtom())!;
+  appAtomRegistry.set(configAtom(), {
+    ...config,
+    settings: {
+      ...config.settings,
+      providerInstances: {
+        ...config.settings.providerInstances,
+        [otherId]: { driver: ProviderDriverKind.make("codex"), config: {} },
+      },
+    },
+  });
 
   await act(async () =>
     appAtomRegistry.set(
@@ -551,7 +564,25 @@ it("restores the Codex setup mode when ChatGPT sign-in from onboarding fails", a
   await vi.waitFor(() =>
     expect(codexSetupMode(), "a failed sign-in must not leave Codex managed").toBeUndefined(),
   );
+  expect(appAtomRegistry.get(configAtom())?.settings.providerInstances[otherId]).toBeDefined();
   await vi.waitFor(() =>
     expect(pageText()).toContain("ChatGPT sign-in was declined. Sign in again when you are ready."),
   );
+});
+
+it("keeps the Codex setup mode managed when ChatGPT sign-in from onboarding succeeds", async () => {
+  using _now = setup();
+  await using _screen = await mountCodexSignIn();
+
+  await act(async () =>
+    appAtomRegistry.set(authStateAtom(), AsyncResult.success(authState("succeeded"))),
+  );
+  // The card asks for a provider refresh once it sees the flow succeed.
+  await vi.waitFor(() =>
+    expect(state.refreshProviders).toHaveBeenCalledWith(
+      expect.objectContaining({ input: { instanceId: codexId } }),
+    ),
+  );
+  expect(state.updateSettings).toHaveBeenCalledOnce();
+  expect(codexSetupMode()).toBe("managed");
 });

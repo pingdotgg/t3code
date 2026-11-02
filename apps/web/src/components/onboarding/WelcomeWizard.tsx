@@ -72,6 +72,7 @@ import {
 } from "../../onboarding/targetEnvironment.logic";
 import { useProjectScans } from "../../onboarding/useProjectScans";
 import { projectEnvironment } from "../../state/projects";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { serverEnvironment } from "../../state/server";
 import {
   readEnvironmentScope,
@@ -924,15 +925,20 @@ function OnboardingCodexSetup({
   // An attempt that ends without signing in puts back what was saved before it.
   const modeBeforeSignIn = useRef<{ readonly setupMode: unknown } | null>(null);
   const saveMode = (setupMode: unknown) => {
-    const { setupMode: _saved, ...rest } = config;
+    // A restore runs once sign-in ends, so it reads the settings as they are then.
+    const latest =
+      appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.settings ?? settings;
+    const current = latest.providerInstances[instanceId] ?? instance;
+    const { setupMode: _saved, ...rest }: Record<string, unknown> =
+      current.config !== null && typeof current.config === "object" ? { ...current.config } : {};
     void update({
       environmentId,
       input: {
         patch: buildProviderInstanceUpdatePatch({
-          settings,
+          settings: latest,
           instanceId,
           instance: {
-            ...instance,
+            ...current,
             enabled: true,
             config: { ...rest, enabled: true, ...(setupMode === undefined ? {} : { setupMode }) },
           },
