@@ -7577,7 +7577,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projectId: command.projectId ?? parentProjection.thread.projectId,
         ...(command.projectId !== undefined &&
         command.projectId !== parentProjection.thread.projectId
-          ? { branch: null, worktreePath: null }
+          ? { branch: null, worktreePath: null, branchPullRequest: null }
           : {}),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,

@@ -938,6 +938,19 @@ it.effect.each([undefined, "shared", "worktree"] as const)(
         threadId: parentThreadId,
         linkedPullRequest: parentPullRequest,
       });
+      const seededParent = (yield* projections.getThreadProjection(parentThreadId)).thread;
+      const sink = yield* EventSink.EventSinkV2;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:parent-branch-pr"),
+            type: "thread.metadata-updated",
+            threadId: parentThreadId,
+            occurredAt: yield* DateTime.now,
+            payload: { ...seededParent, branchPullRequest: parentPullRequest },
+          },
+        ],
+      });
       yield* orchestrator.dispatch({
         type: "message.dispatch",
         commandId: CommandId.make("start-parent-pr"),
@@ -981,6 +994,10 @@ it.effect.each([undefined, "shared", "worktree"] as const)(
       const updatedParent = yield* projections.getThreadProjection(parentThreadId);
       const childThreadId = updatedParent.subagents[0]!.childThreadId!;
       const child = yield* projections.getThreadProjection(childThreadId);
+      assert.deepEqual(
+        child.thread.branchPullRequest,
+        isolation === undefined ? parentPullRequest : null,
+      );
       assert.isNull(child.thread.linkedPullRequest);
       assert.deepEqual(child.thread.pullRequests, []);
       assert.equal(
