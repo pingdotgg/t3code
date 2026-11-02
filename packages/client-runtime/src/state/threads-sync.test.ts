@@ -79,8 +79,8 @@ const BASE_PROJECTION: OrchestrationV2ThreadProjection = {
   thread: { ...v2Projection.thread, title: "Cached thread" },
 };
 
-// The server's THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT.
-const BOUNDED_SNAPSHOT_ROW_LIMIT = 502;
+// threads.ts keeps threads with more rows than this out of the cache.
+const CACHED_THREAD_ROW_LIMIT = 1_000;
 
 const noticeItem = (index: number): OrchestrationV2TurnItem => ({
   id: TurnItemId.make(`streamed-item-${index}`),
@@ -514,9 +514,9 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("does not cache more rows than a bounded snapshot after events grow the thread", () =>
+  it.effect("does not cache a thread that events grew far past a bounded snapshot", () =>
     Effect.gen(function* () {
-      const appendedItems = 600;
+      const appendedItems = CACHED_THREAD_ROW_LIMIT + 100;
       const saved = yield* Effect.scoped(
         Effect.gen(function* () {
           const h = yield* makeHarness({
@@ -549,7 +549,7 @@ describe("EnvironmentThreads", () => {
       const savedRows = (yield* Ref.get(saved)).map(
         (snapshot) => snapshot.projection.turnItems.length,
       );
-      expect(Math.max(0, ...savedRows)).toBeLessThanOrEqual(BOUNDED_SNAPSHOT_ROW_LIMIT);
+      expect(Math.max(0, ...savedRows)).toBeLessThanOrEqual(CACHED_THREAD_ROW_LIMIT);
     }),
   );
 
@@ -558,7 +558,7 @@ describe("EnvironmentThreads", () => {
       const h = yield* makeHarness({
         cached: {
           ...BASE_PROJECTION,
-          turnItems: Array.from({ length: BOUNDED_SNAPSHOT_ROW_LIMIT + 1 }, (_, index) =>
+          turnItems: Array.from({ length: CACHED_THREAD_ROW_LIMIT + 1 }, (_, index) =>
             noticeItem(index),
           ),
         },

@@ -110,11 +110,12 @@ function snapshotToPersist(
   return { snapshotSequence, projection };
 }
 
-// Mirrors the server's THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT, the row window of a snapshot.
-const BOUNDED_SNAPSHOT_TURN_ITEM_LIMIT = 502;
+// About twice the server's THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT (502), so a snapshot's extra
+// rows and older servers' windows still fit; only streamed growth passes it.
+const CACHED_THREAD_TURN_ITEM_LIMIT = 1_000;
 
 function isBoundedProjection(thread: OrchestrationV2ThreadProjection): boolean {
-  return thread.turnItems.length <= BOUNDED_SNAPSHOT_TURN_ITEM_LIMIT;
+  return thread.turnItems.length <= CACHED_THREAD_TURN_ITEM_LIMIT;
 }
 
 function shouldPersistThread(
