@@ -37,7 +37,6 @@ import {
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadShell,
-  type ProviderDriverKind,
   type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -666,30 +665,6 @@ function lineageModelLabel(model: string, providerEntry: ProviderInstanceEntry |
     : formatModelSlugName(model);
 }
 
-function LineageProviderIcon(props: {
-  readonly driver: ProviderDriverKind;
-  readonly provider: ServerProvider | undefined;
-  readonly providerEntry: ProviderInstanceEntry | undefined;
-  readonly providerEntries: ReadonlyArray<ProviderInstanceEntry>;
-}) {
-  const { providerEntry } = props;
-  return (
-    <ProviderInstanceIcon
-      driverKind={props.driver}
-      displayName={providerEntry?.displayName ?? props.provider?.displayName ?? props.driver}
-      accentColor={providerEntry?.accentColor}
-      acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
-      acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl ?? props.provider?.iconUrl}
-      showBadge={
-        providerEntry !== undefined && shouldShowInstanceBadge(providerEntry, props.providerEntries)
-      }
-      size="compact"
-      iconClassName="size-4"
-      className="z-auto"
-    />
-  );
-}
-
 export function ThreadRelationshipsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -827,11 +802,18 @@ export function ThreadRelationshipsPanel(props: {
     const relationshipContent = (
       <>
         {providerDriver ? (
-          <LineageProviderIcon
-            driver={providerDriver}
-            provider={provider}
-            providerEntry={providerEntry}
-            providerEntries={providerEntries}
+          <ProviderInstanceIcon
+            driverKind={providerDriver}
+            displayName={providerEntry?.displayName ?? provider?.displayName ?? providerDriver}
+            accentColor={providerEntry?.accentColor}
+            acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
+            acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl ?? provider?.iconUrl}
+            showBadge={
+              providerEntry !== undefined && shouldShowInstanceBadge(providerEntry, providerEntries)
+            }
+            size="compact"
+            iconClassName="size-4"
+            className="z-auto"
           />
         ) : (
           <RelationshipIcon className="size-4 text-muted-foreground" />
@@ -1152,8 +1134,6 @@ export function ThreadLineageHeaderControl(props: {
   const {
     graph,
     projects,
-    providers,
-    providerEntries,
     providersByEnvironment,
     remoteSubagents,
     subagentsByThreadId,
@@ -1209,6 +1189,7 @@ export function ThreadLineageHeaderControl(props: {
     ]
       .filter((part) => part !== null)
       .join(" · ") || null;
+  const agentMeta = (threadId: ThreadId) => subagentsByThreadId.get(threadId)?.model ?? null;
   const currentTitle = graph.nodes.get(props.threadId)?.thread?.title ?? "This thread";
 
   const renderRow = (row: ThreadRelationshipWalkRow, meta: string | null) => {
@@ -1216,10 +1197,6 @@ export function ThreadLineageHeaderControl(props: {
     const isSubagent = row.edge.kind === "subagent";
     const isParent = isParentThreadRelationship(row.edge, props.threadId);
     const agent = isSubagent && !isParent ? subagentsByThreadId.get(row.threadId) : undefined;
-    const providerEntry = agent
-      ? providerEntries.find((entry) => entry.instanceId === agent.providerInstanceId)
-      : undefined;
-    const rowMeta = agent?.model ? lineageModelLabel(agent.model, providerEntry) : meta;
     const title = relationshipThreadTitle({
       title: node?.thread?.title ?? agent?.title ?? row.threadId,
       isSubagent,
@@ -1233,23 +1210,10 @@ export function ThreadLineageHeaderControl(props: {
         disabled={node?.missing === true}
         onClick={() => openThread(row.threadId)}
       >
-        {agent ? (
-          <LineageProviderIcon
-            driver={agent.driver}
-            provider={providers?.find((entry) => entry.instanceId === agent.providerInstanceId)}
-            providerEntry={providerEntry}
-            providerEntries={providerEntries}
-          />
-        ) : (
-          <Icon />
-        )}
+        <Icon />
         <MenuItemLabel>{title}</MenuItemLabel>
-        {rowMeta ? (
-          <span
-            className={`${agent ? "max-w-28 shrink-0" : "min-w-0"} truncate text-meta text-dim-foreground`}
-          >
-            {rowMeta}
-          </span>
+        {meta ? (
+          <span className="min-w-0 truncate text-meta text-dim-foreground">{meta}</span>
         ) : null}
         {status && badgeVariant ? (
           <Badge variant={badgeVariant} size="sm" className="ms-auto">
@@ -1317,13 +1281,13 @@ export function ThreadLineageHeaderControl(props: {
         {activeAgents.length > 0 ? (
           <MenuGroup>
             <MenuGroupLabel>Agents</MenuGroupLabel>
-            {activeAgents.map((row) => renderRow(row, null))}
+            {activeAgents.map((row) => renderRow(row, agentMeta(row.threadId)))}
           </MenuGroup>
         ) : null}
         {previousAgents.length > 0 ? (
           <MenuGroup>
             <MenuGroupLabel>Previous agents</MenuGroupLabel>
-            {previousAgents.map((row) => renderRow(row, null))}
+            {previousAgents.map((row) => renderRow(row, agentMeta(row.threadId)))}
           </MenuGroup>
         ) : null}
         {remoteSubagents.length > 0 ? (
