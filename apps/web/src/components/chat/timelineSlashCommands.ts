@@ -1,4 +1,5 @@
 import {
+  BoxIcon,
   ChartColumnIcon,
   CirclePauseIcon,
   EraserIcon,
@@ -9,7 +10,6 @@ import {
   ScanSearchIcon,
   SendIcon,
   ShieldCheckIcon,
-  SparklesIcon,
   TargetIcon,
   TerminalIcon,
   type LucideIcon,
@@ -98,7 +98,7 @@ const GOAL_CONTROLS = new Map<string, Presentation>([
   ["clear", present(TargetIcon, "Clearing the goal", "Goal cleared", "Couldn't clear the goal")],
 ]);
 
-const SKILL = present(SparklesIcon, "Using skill", "Used skill", "Couldn't use skill");
+const SKILL = present(BoxIcon, "Using skill", "Used skill", "Couldn't use skill");
 const FALLBACK = present(TerminalIcon, "Running", "Ran", "Couldn't run");
 
 // The name stops at `/`, so a path such as `/usr/bin/foo` never matches.
