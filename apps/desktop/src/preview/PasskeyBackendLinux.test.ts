@@ -129,24 +129,27 @@ describe("Linux phone passkeys", () => {
     },
   );
 
-  it.each(["abort", "close", "malformed", "error"])(
+  it.each(["abort", "close", "malformed", "error", "exit", "stdin-error"])(
     "stops native discovery on %s",
     async (ending) => {
       const { backend, context, send, child, prompt, controller } = setup();
       const pending = backend.get({ challenge: new Uint8Array([1]) }, context);
-      if (ending !== "error") send({ type: "qr", url: "FIDO:/12345678901234567890" });
+      const cannotStart = ["error", "exit", "stdin-error"].includes(ending);
+      if (!cannotStart) send({ type: "qr", url: "FIDO:/12345678901234567890" });
       if (ending === "abort") controller.abort();
       if (ending === "close") prompt.emit("closed");
       if (ending === "malformed") send({ type: "result", credential: {} });
       if (ending === "error") child.emit("error", new Error("missing helper"));
+      if (ending === "exit") child.emit("close", 127, null);
+      if (ending === "stdin-error") child.stdin.emit("error", new Error("EPIPE"));
       assert.deepStrictEqual(
         await pending,
-        ending === "error"
+        cannotStart
           ? { success: false, error: "NotSupportedError", fallbackToNative: true }
           : { success: false, error: "NotAllowedError" },
       );
       assert.strictEqual(child.kill.mock.calls.length, 1);
-      assert.strictEqual(prompt.destroy.mock.calls.length, ending === "error" ? 0 : 1);
+      assert.strictEqual(prompt.destroy.mock.calls.length, cannotStart ? 0 : 1);
       assert.strictEqual(child.stdout.listenerCount("data"), 0);
     },
   );

@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 
 const electron = vi.hoisted(() => ({
@@ -32,7 +33,7 @@ const layerFor = (
   packageJson: object,
   isPackaged = true,
   platform: NodeJS.Platform = "darwin",
-  helperAvailable = true,
+  helperAvailable: boolean | "unreadable" = true,
 ) =>
   PreviewPasskeys.layer.pipe(
     Layer.provide(
@@ -50,7 +51,16 @@ const layerFor = (
     ),
     Layer.provide(
       FileSystem.layerNoop({
-        exists: () => Effect.succeed(helperAvailable),
+        exists: () =>
+          helperAvailable === "unreadable"
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "access",
+                }),
+              )
+            : Effect.succeed(helperAvailable),
         readFileString: () => Effect.succeed(JSON.stringify(packageJson)),
       }),
     ),
@@ -342,6 +352,10 @@ describe("PreviewPasskeys", () => {
         Effect.provide(layerFor({}, false, "linux", false)),
       );
       assert.isFalse(noLinuxHelper.bridgeEnabled);
+      const unreadableLinuxHelper = yield* PreviewPasskeys.PreviewPasskeys.pipe(
+        Effect.provide(layerFor({}, false, "linux", "unreadable")),
+      );
+      assert.isFalse(unreadableLinuxHelper.bridgeEnabled);
     }),
   );
 

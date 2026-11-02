@@ -144,6 +144,7 @@ export const linuxPasskeyBackend = (executable: string): PasskeyBackend => {
       const lines = NodeReadline.createInterface({ input: child.stdout });
       let prompt: BrowserWindow | undefined;
       let settled = false;
+      let sawEvent = false;
       const finish = (result: PasskeyCeremonyResult) => {
         if (settled) return;
         settled = true;
@@ -158,12 +159,19 @@ export const linuxPasskeyBackend = (executable: string): PasskeyBackend => {
       child.once("error", () =>
         finish({ success: false, error: "NotSupportedError", fallbackToNative: true }),
       );
-      child.once("close", cancel);
-      child.stdin.on("error", cancel);
+      const onExit = () =>
+        finish(
+          sawEvent
+            ? notAllowed
+            : { success: false, error: "NotSupportedError", fallbackToNative: true },
+        );
+      child.once("close", onExit);
+      child.stdin.on("error", onExit);
       lines.on("line", (line) => {
         if (settled) return;
         try {
           const event = decodeEvent(line);
+          sawEvent = true;
           if (event.type === "result") {
             finish(credentialResult(event.credential));
             return;

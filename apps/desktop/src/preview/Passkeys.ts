@@ -143,7 +143,8 @@ const make = Effect.gen(function* () {
           )
       : undefined;
   const backend =
-    linuxHelper !== undefined && (yield* fileSystem.exists(linuxHelper))
+    linuxHelper !== undefined &&
+    (yield* fileSystem.exists(linuxHelper).pipe(Effect.orElseSucceed(() => false)))
       ? linuxPasskeyBackend(linuxHelper)
       : metadata?.browserPasskeys === true
         ? backendFor(environment.platform)

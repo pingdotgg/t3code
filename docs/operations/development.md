@@ -295,13 +295,15 @@ keeps the explicit flush needed when Windows force-kills the backend.
 ### Linux AppImage prerequisites
 
 Build on Linux because the browser-secret helper links against the host's libsecret. Install
-Rust, C/C++ build tools, libsecret and libudev development headers, pkg-config, and ImageMagick.
+Rust 1.88 or newer, C/C++ build tools, libsecret and libudev development headers, pkg-config,
+and ImageMagick. Install a current Rust toolchain with [rustup](https://rustup.rs/) if the
+distribution's Rust packages are older.
 
 Ubuntu and Debian:
 
 ```sh
 sudo apt-get update
-sudo apt-get install cargo rustc build-essential libsecret-1-dev libudev-dev pkg-config imagemagick
+sudo apt-get install build-essential libsecret-1-dev libudev-dev pkg-config imagemagick
 ```
 
 Fedora:
@@ -317,8 +319,8 @@ sudo pacman -S rust base-devel libsecret pkgconf imagemagick
 ```
 
 Linux desktop development needs the C toolchain, pkg-config, and libsecret headers. Phone passkeys
-additionally need Cargo and libudev development headers; without them, development uses Chromium's
-native WebAuthn support.
+additionally need Rust 1.88 or newer and libudev development headers. Helper build failures warn
+without stopping development; when no helper is available, Chromium handles WebAuthn.
 
 ### macOS DMG prerequisites
 

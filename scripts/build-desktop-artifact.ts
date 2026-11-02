@@ -2363,6 +2363,8 @@ export const stagePhonePasskeys = Effect.fn("stagePhonePasskeys")(function* (inp
     "--release",
     "--manifest-path",
     path.join(input.repoRoot, "native/phone-passkeys/Cargo.toml"),
+    "--target-dir",
+    path.join(input.repoRoot, "native/phone-passkeys/target"),
     "--target",
     rustTarget!,
   ]);

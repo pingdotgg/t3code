@@ -12,8 +12,22 @@ if (process.platform === "linux") {
     console.warn(
       "[phone-passkeys] Skipping native helper: install Cargo and libudev development headers to enable phone passkeys in desktop development.",
     );
-  } else
-    NodeChildProcess.execFileSync("cargo", ["build", "--locked", "--manifest-path", manifest], {
-      stdio: "inherit",
-    });
+  } else {
+    const result = NodeChildProcess.spawnSync(
+      "cargo",
+      [
+        "build",
+        "--locked",
+        "--manifest-path",
+        manifest,
+        "--target-dir",
+        NodeURL.fileURLToPath(new URL("../../../native/phone-passkeys/target", import.meta.url)),
+      ],
+      { stdio: "inherit" },
+    );
+    if (result.status !== 0)
+      console.warn(
+        "[phone-passkeys] Native helper build failed (Rust 1.88 or newer is required); desktop development will continue.",
+      );
+  }
 }

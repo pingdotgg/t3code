@@ -188,6 +188,8 @@ export default defineConfig({
       "apps/mobile/modules/t3-highlights/cpp/generated/**",
       "apps/mobile/modules/t3-highlights/nitrogen/generated/**",
       "*.icon/**",
+      // Plain-text Handlebars template; HTML formatting rewrites its output.
+      "native/phone-passkeys/about.hbs",
     ],
     sortPackageJson: {},
     overrides: [
