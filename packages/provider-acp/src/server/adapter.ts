@@ -5868,7 +5868,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ) {
             if (!acpSubagentStatusIsTerminal(update.status)) return false;
             if (acpSubagentStatusIsTerminal(subagent.task.status)) {
-              if (subagent.terminalStatusProjected || context.finalizedStatus !== "completed") {
+              if (
+                context.finalizedStatus !== "completed" ||
+                (subagent.terminalStatusProjected &&
+                  (update.result === null || update.result === subagent.task.result))
+              ) {
                 return true;
               }
             }
