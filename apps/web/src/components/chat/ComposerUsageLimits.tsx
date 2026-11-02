@@ -1,3 +1,6 @@
+import { getUiLocale } from "../../hooks/useI18n";
+import { createTranslator } from "@t3tools/client-runtime/i18n";
+import { useT } from "../../hooks/useI18n";
 import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { limitsNotice } from "@t3tools/shared/usageLimits";
@@ -24,6 +27,7 @@ function accountLabel(account: UsageLimitsReport["accounts"][number]): string {
 }
 
 function AccountSummary({ account }: { readonly account: UsageLimitsReport["accounts"][number] }) {
+  const t = useT();
   const label = accountLabel(account);
   return (
     <>
@@ -31,9 +35,9 @@ function AccountSummary({ account }: { readonly account: UsageLimitsReport["acco
         <RedactedSensitiveText
           key={label}
           value={label}
-          ariaLabel="Toggle account label visibility"
-          revealTooltip="Click to reveal account"
-          hideTooltip="Click to hide account"
+          ariaLabel={t("chat.usage.toggleAccount")}
+          revealTooltip={t("chat.usage.revealAccount")}
+          hideTooltip={t("chat.usage.hideAccount")}
           className="max-w-full truncate align-bottom font-sans text-xs leading-normal"
         />
       ) : (
@@ -50,20 +54,21 @@ export function usageLimitsBannerItem(
   environmentId: EnvironmentId,
   onDismiss: () => void,
 ): ComposerBannerStackItem {
+  const t = createTranslator(getUiLocale());
   const [first] = report.accounts;
   const single = report.accounts.length === 1 && first ? first : null;
   const summary = single ? (
     <AccountSummary account={single} />
   ) : (
-    `${report.accounts.length} accounts`
+    t("chat.usage.accounts", { count: report.accounts.length })
   );
   return {
     id,
     variant: "info",
     icon: <GaugeIcon />,
-    title: "Usage limits",
+    title: t("chat.usage.title"),
     description: summary,
-    dismissLabel: "Dismiss usage limits",
+    dismissLabel: t("chat.usage.dismiss"),
     onDismiss,
     children: <UsageLimitsBannerBody report={report} environmentId={environmentId} />,
   };
@@ -86,18 +91,24 @@ export function modelFallbackBannerItem({
   readonly onUseDefault: () => void;
   readonly onDismiss: () => void;
 }): ComposerBannerStackItem {
+  const t = createTranslator(getUiLocale());
   return {
     id: "fallback-model",
     variant: "info",
     icon: <GaugeIcon />,
-    title: `Using ${fallbackModelName}`,
-    description: `${defaultProviderName} is out of usage${resetsAt ? ` · resets ${formatUpcomingTimestamp(resetsAt, timestampFormat)}` : ""}`,
+    title: t("chat.usage.usingModel", { model: fallbackModelName }),
+    description: resetsAt
+      ? t("chat.usage.outOfUsageResets", {
+          provider: defaultProviderName,
+          time: formatUpcomingTimestamp(resetsAt, timestampFormat),
+        })
+      : t("chat.usage.outOfUsage", { provider: defaultProviderName }),
     actions: (
       <Button size="xs" variant="ghost" onClick={onUseDefault}>
-        Use {defaultModelName}
+        {t("chat.usage.useModel", { model: defaultModelName })}
       </Button>
     ),
-    dismissLabel: "Dismiss fallback model notice",
+    dismissLabel: t("chat.usage.dismissFallback"),
     onDismiss,
   };
 }
@@ -109,6 +120,7 @@ function UsageLimitsBannerBody({
   readonly report: UsageLimitsReport;
   readonly environmentId: EnvironmentId;
 }) {
+  const t = useT();
   const now = Date.parse(report.createdAt);
   return (
     <ComposerBanner.Scroll>
@@ -144,7 +156,7 @@ function UsageLimitsBannerBody({
                   className="self-start"
                   onClick={() => void ensureLocalApi().shell.openExternal(externalUsage.url)}
                 >
-                  Manage usage
+                  {t("chat.usage.manage")}
                 </Button>
               ) : null}
               {resetCreditInput && account.limits.resetCredits ? (

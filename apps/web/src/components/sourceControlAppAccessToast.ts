@@ -3,6 +3,8 @@ import { appSignInTargetForRemote } from "@t3tools/client-runtime/source-control
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { sourceControlEnvironment } from "../state/sourceControl";
+import { createTranslator } from "@t3tools/client-runtime/i18n";
+import { getUiLocale } from "../hooks/useI18n";
 import { toastManager } from "./ui/toast";
 
 /**
@@ -23,12 +25,13 @@ export async function suggestAppAccessForRemote(
   );
   if (result._tag !== "Success" || result.value.status !== "not-covered") return;
   const owner = target.input.repository.split("/")[0] ?? target.input.repository;
+  const t = createTranslator(getUiLocale());
   const id = toastManager.add({
     type: "info",
-    title: `Give ${target.appSignIn.appName} access to ${owner}`,
-    description: `It isn't installed there, so GitHub requests for ${target.input.repository} use your own login and its lower rate limit.`,
+    title: t("appB.appAccessToast.title", { appName: target.appSignIn.appName, owner }),
+    description: t("appB.appAccessToast.description", { repository: target.input.repository }),
     actionProps: {
-      children: "Install",
+      children: t("appB.appAccessToast.install"),
       onClick: () => {
         toastManager.close(id);
         window.open(target.appSignIn.installUrl, "_blank", "noopener,noreferrer");

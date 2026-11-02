@@ -7,6 +7,9 @@ import {
   type ServerConfig,
 } from "@t3tools/contracts";
 
+import { createTranslator, type TranslateFn } from "@t3tools/client-runtime/i18n";
+
+import { useT } from "../../hooks/useI18n";
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { useEnvironmentScope } from "../../state/session";
 import { ENVIRONMENT_MACHINE_KIND_LABELS, EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -20,15 +23,18 @@ import {
   MenuSubTrigger,
 } from "../ui/menu";
 
-export function resolveEnvironmentIconPickerLock(input: {
-  readonly serverConfig: Pick<ServerConfig, "environment"> | null;
-  readonly operateAccess: "granted" | "denied" | "pending";
-}): string | null {
+export function resolveEnvironmentIconPickerLock(
+  input: {
+    readonly serverConfig: Pick<ServerConfig, "environment"> | null;
+    readonly operateAccess: "granted" | "denied" | "pending";
+  },
+  t: TranslateFn = createTranslator("en"),
+): string | null {
   if (input.serverConfig === null) {
-    return "Connect to this environment to change its icon.";
+    return t("settings.system.envIcon.lockDisconnected");
   }
   if (input.operateAccess !== "granted") {
-    return "Your session on this environment cannot change its settings.";
+    return t("settings.system.envIcon.lockNoAccess");
   }
   return null;
 }
@@ -40,11 +46,12 @@ export function EnvironmentIconMenu({
   readonly environmentId: EnvironmentId;
   readonly serverConfig: Pick<ServerConfig, "environment"> | null;
 }) {
+  const t = useT();
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const operateAccess = useEnvironmentScope(environmentId, AuthSettingsWriteScope)
     ? "granted"
     : "denied";
-  const lock = resolveEnvironmentIconPickerLock({ serverConfig, operateAccess });
+  const lock = resolveEnvironmentIconPickerLock({ serverConfig, operateAccess }, t);
   const detected = serverConfig?.environment.platform.machine ?? "server";
   const resolved = resolveEnvironmentMachineKind(serverConfig);
 
@@ -52,7 +59,7 @@ export function EnvironmentIconMenu({
     <MenuSub>
       <MenuSubTrigger>
         <EnvironmentMachineIcon kind={resolved} />
-        Icon
+        {t("settings.system.envIcon.icon")}
       </MenuSubTrigger>
       <MenuSubPopup>
         {lock !== null ? (
@@ -79,7 +86,9 @@ export function EnvironmentIconMenu({
                 </span>
                 {kind === detected ? (
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    {serverConfig?.environment.platform.machine ? "detected" : "default"}
+                    {serverConfig?.environment.platform.machine
+                      ? t("settings.system.envIcon.detected")
+                      : t("settings.system.envIcon.default")}
                   </span>
                 ) : null}
               </span>

@@ -13,6 +13,7 @@ import { cn } from "~/lib/utils";
 import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useT } from "../../hooks/useI18n";
 import {
   composerDraftHasUserContent,
   DraftId,
@@ -32,6 +33,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onDiscard: (draftId: DraftId) => void;
   onContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
 }) {
+  const t = useT();
   const { composer, draftId, onContextMenu, onDiscard, onNavigate } = props;
   const promptPreview =
     replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label)
@@ -48,10 +50,12 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   const preview =
     promptPreview.length > 0
       ? promptPreview
-      : `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
+      : t(attachmentCount === 1 ? "misc.sidebar.attachment.one" : "misc.sidebar.attachment.other", {
+          count: attachmentCount,
+        });
   const accessibility = resolveSidebarRowAccessibility({
     title: preview,
-    statusLabel: "Unsent draft",
+    statusLabel: t("misc.sidebar.unsentDraft"),
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -112,7 +116,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
                   render={
                     <button
                       type="button"
-                      aria-label="Discard draft"
+                      aria-label={t("misc.sidebar.discardDraft")}
                       onClick={handleDiscard}
                       className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
                     >
@@ -120,7 +124,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
                     </button>
                   }
                 />
-                <TooltipPopup side="top">Discard draft</TooltipPopup>
+                <TooltipPopup side="top">{t("misc.sidebar.discardDraft")}</TooltipPopup>
               </Tooltip>
             </span>
           </div>

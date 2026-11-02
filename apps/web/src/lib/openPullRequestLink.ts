@@ -1,3 +1,4 @@
+import { translateNow } from "../lib/miscTranslateNow";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -202,9 +203,9 @@ export function useOpenChangeRequestLink(
             const toastId = toastManager.add(
               stackedThreadToast({
                 type: "info",
-                title: "This commit is not in the thread's workspace",
+                title: translateNow("misc.hooks.link.commitNotInWorkspace"),
                 actionProps: {
-                  children: "Open link",
+                  children: translateNow("misc.hooks.link.openLink"),
                   onClick: () => {
                     toastManager.close(toastId);
                     window.open(targetUrl, "_blank", "noopener,noreferrer");
@@ -249,8 +250,9 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to open pull request link",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: translateNow("misc.hooks.link.pullRequestFailed"),
+          description:
+            error instanceof Error ? error.message : translateNow("misc.hooks.anErrorOccurred"),
         }),
       );
     });

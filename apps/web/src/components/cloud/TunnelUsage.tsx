@@ -6,21 +6,26 @@ import type { ManagedTunnelUpgrade } from "../../cloud/managedRelayState";
 import { cn } from "../../lib/utils";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
+import { useT } from "../../hooks/useI18n";
+import type { TranslateFn } from "@t3tools/client-runtime/i18n";
 
 // Above this, one slot per tunnel is too thin to read, so the bar fills instead.
 const MAX_SEGMENTS = 10;
 
 export const T3CHAT_SUBSCRIPTION_URL = "https://t3.chat/settings/subscription";
 
-export function tunnelUpgradeCopy(upgrade: Exclude<ManagedTunnelUpgrade, null>): string {
+export function tunnelUpgradeCopy(
+  upgrade: Exclude<ManagedTunnelUpgrade, null>,
+  t: TranslateFn,
+): string {
   const { pro, premier } = T3CHAT_PLAN_TUNNEL_LIMITS;
   switch (upgrade) {
     case "link":
-      return `Link T3 Chat Pro for up to ${pro} tunnels, or Premier for up to ${premier}.`;
+      return t("misc.cloud.upgrade.link", { pro, premier });
     case "pro":
-      return `Upgrade to T3 Chat Pro for up to ${pro} tunnels, or Premier for up to ${premier}.`;
+      return t("misc.cloud.upgrade.pro", { pro, premier });
     case "premier":
-      return `Upgrade to T3 Chat Premier for up to ${premier} tunnels.`;
+      return t("misc.cloud.upgrade.premier", { premier });
   }
 }
 
@@ -36,19 +41,20 @@ export function TunnelUsageMeter({
   readonly action?: ReactNode;
   readonly className?: string;
 }) {
+  const t = useT();
   const full = used >= limit;
   const fill = full ? "bg-warning" : "bg-foreground/72";
   return (
     <div className={cn("flex max-w-sm flex-col gap-1.5", className)}>
       <div className="flex items-baseline justify-between gap-3 text-xs">
         <span className={cn("tabular-nums", full ? "text-warning-foreground" : "text-foreground")}>
-          {used} of {limit} tunnels in use
+          {t("misc.cloud.tunnels.inUse", { used, limit })}
         </span>
         {action}
       </div>
       <div
         role="meter"
-        aria-label="T3 Connect tunnels in use"
+        aria-label={t("misc.cloud.tunnels.meter")}
         aria-valuemin={0}
         aria-valuemax={limit}
         aria-valuenow={used}
@@ -84,33 +90,34 @@ export function TunnelLimitAlert({
   readonly onLinkT3Chat: (() => void) | null;
   readonly onManageTunnels: (() => void) | null;
 }) {
+  const t = useT();
   const action =
     upgrade === "link" && onLinkT3Chat ? (
       <Button size="sm" onClick={onLinkT3Chat}>
-        Link T3 Chat
+        {t("misc.cloud.tunnels.linkT3Chat")}
       </Button>
     ) : upgrade === "pro" || upgrade === "premier" ? (
       <Button
         size="sm"
         render={<a href={T3CHAT_SUBSCRIPTION_URL} target="_blank" rel="noopener noreferrer" />}
       >
-        Upgrade on T3 Chat
+        {t("misc.cloud.tunnels.upgradeOnT3Chat")}
       </Button>
     ) : onManageTunnels ? (
       <Button size="sm" variant="outline" onClick={onManageTunnels}>
-        Manage tunnels
+        {t("misc.cloud.tunnels.manage")}
       </Button>
     ) : null;
   return (
     <Alert variant="warning">
       <TriangleAlertIcon />
-      <AlertTitle>You&apos;re out of tunnels (they cost us money).</AlertTitle>
+      <AlertTitle>{t("misc.cloud.tunnels.outTitle")}</AlertTitle>
       <AlertDescription>
         {upgrade === "link"
-          ? "Switch to Tailscale or get more tunnels by linking your T3 Chat sub (sorry!)"
+          ? t("misc.cloud.tunnels.outLink")
           : upgrade
-            ? "Switch to Tailscale or get more tunnels by upgrading your T3 Chat sub (sorry!)"
-            : "Switch to Tailscale or deregister an environment you no longer use (sorry!)"}
+            ? t("misc.cloud.tunnels.outUpgrade")
+            : t("misc.cloud.tunnels.outDeregister")}
       </AlertDescription>
       {action ? <AlertAction>{action}</AlertAction> : null}
     </Alert>

@@ -5,10 +5,12 @@ import { Button } from "../ui/button";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { observeResize } from "~/lib/observeResize";
 
+import { useT } from "~/hooks/useI18n";
 export function PullRequestCommentBody({
   className,
   ...props
 }: ComponentProps<typeof PullRequestMarkdown>) {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
   const clip = useRef<HTMLDivElement>(null);
@@ -51,7 +53,7 @@ export function PullRequestCommentBody({
             setExpanded(!expanded);
           }}
         >
-          {expanded ? "Show less" : "Show full comment"}
+          {expanded ? t("review.extra.show.less") : t("review.extra.show.full.comment")}
         </Button>
       ) : null}
     </div>

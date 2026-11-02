@@ -2,6 +2,7 @@ import { Check, Copy } from "lucide";
 
 import { MorphIcon } from "~/components/MorphIcon";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { useT } from "~/hooks/useI18n";
 import { cn } from "~/lib/utils";
 
 import { Button } from "./ui/button";
@@ -15,6 +16,7 @@ export function CommandBlock({
   readonly className?: string;
   readonly prominent?: boolean;
 }) {
+  const t = useT();
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     timeout: 1500,
     target: "command",
@@ -34,7 +36,7 @@ export function CommandBlock({
       <Button
         size="icon-xs"
         variant="ghost"
-        aria-label="Copy command"
+        aria-label={t("app.commandBlock.copy")}
         onClick={() => copyToClipboard(command, undefined)}
       >
         <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />

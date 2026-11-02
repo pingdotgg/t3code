@@ -35,6 +35,8 @@ import {
   type ThreadNotificationKind,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
+import { createTranslator } from "@t3tools/client-runtime/i18n";
+import { getUiLocale } from "../hooks/useI18n";
 import { toastManager } from "./ui/toast";
 
 interface NotificationState extends ThreadNotificationObservation {
@@ -80,6 +82,7 @@ export function startThreadNotifications(
     kind: ThreadNotificationKind,
   ) => {
     const { thread, status } = state;
+    const t = createTranslator(getUiLocale());
     const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
     const active = (router.state.matches.at(-1)?.params ?? {}) as {
       environmentId?: string;
@@ -87,16 +90,16 @@ export function startThreadNotifications(
     };
     const title =
       kind === "completion"
-        ? "Thread completed"
+        ? t("appB.notify.completed")
         : status === "approval"
-          ? "Approval needed"
+          ? t("appB.notify.approval")
           : status === "limited"
-            ? "Usage limit reached"
+            ? t("appB.notify.limited")
             : status === "failed"
-              ? "Thread failed"
+              ? t("appB.notify.failed")
               : status === "request"
-                ? "Guest request"
-                : "Input needed";
+                ? t("appB.notify.guestRequest")
+                : t("appB.notify.input");
     if (hasNotificationSound(mode)) {
       void playNotificationSound(kind, () =>
         hasNotificationSound(getClientSettings().notificationMode),
@@ -128,7 +131,7 @@ export function startThreadNotifications(
             ),
         },
         actionProps: {
-          children: "Open thread",
+          children: t("appB.notify.openThread"),
           onClick: () => {
             toastManager.close(toastId);
             void router.navigate({

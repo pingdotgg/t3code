@@ -33,6 +33,8 @@ import {
 } from "./sheet-paint";
 import { externalUrl } from "./links";
 
+import { translateNow } from "~/components/media/translateNow";
+import { useT } from "~/hooks/useI18n";
 type Client = ReturnType<typeof createWorkerClient<SheetMethods>>;
 type Opened = {
   engine: Client;
@@ -45,6 +47,7 @@ export default function Spreadsheet(props: {
   onDetails: (text: string) => void;
   onError: (cause: unknown) => void;
 }) {
+  const t = useT();
   const { onError, bytes: source, onDetails } = props;
   const [opened, setOpened] = useState<Opened>();
   const [error, setError] = useState("");
@@ -65,7 +68,8 @@ export default function Spreadsheet(props: {
     void engine
       .call("open", { bytes }, { transfer: [bytes], signal: controller.signal })
       .then((value) => {
-        if (!value) throw new Error("This workbook has no visible sheets.");
+        const t = translateNow;
+        if (!value) throw new Error(t("review.extra.this.workbook.has.no.visible.sheets"));
         setOpened({ ...value, engine });
         onDetails(`${value.tabs.length} sheets`);
       })
@@ -89,7 +93,8 @@ export default function Spreadsheet(props: {
         setOpened({ ...opened, layout, target });
       })
       .catch(() => {
-        if (!controller.signal.aborted) setError("This sheet could not be opened.");
+        const t = translateNow;
+        if (!controller.signal.aborted) setError(t("review.extra.this.sheet.could.not.be.opened"));
       });
   };
   if (!opened) return <FileSurfaceLoading />;
@@ -108,7 +113,7 @@ export default function Spreadsheet(props: {
       />
       <div
         role="tablist"
-        aria-label="Sheets"
+        aria-label={t("review.extra.sheets")}
         className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-t border-border px-2"
         onKeyDown={(event) => {
           const current = opened.tabs.findIndex(
@@ -248,13 +253,14 @@ function SpreadsheetGrid(props: {
         void engine
           .call("frame", input, { key: "frame", signal: controller.signal })
           .then((reply) => {
+            const t = translateNow;
             if (order < received || controller.signal.aborted) {
               reply?.bitmap.close();
               return;
             }
             received = order;
             if (!reply) {
-              setNotice("These cells could not be drawn. Try scrolling to another area.");
+              setNotice(t("review.extra.these.cells.could.not.be.drawn.try.scrolling"));
               return;
             }
             setNotice("");
@@ -264,8 +270,9 @@ function SpreadsheetGrid(props: {
             schedule();
           })
           .catch((cause: unknown) => {
+            const t = translateNow;
             if (!(cause instanceof SupersededError) && !controller.signal.aborted)
-              setNotice("These cells could not be drawn.");
+              setNotice(t("review.extra.these.cells.could.not.be.drawn"));
           });
       }
       if (
@@ -453,6 +460,7 @@ function SpreadsheetGrid(props: {
       }
     };
     const copy = () => {
+      const t = translateNow;
       const used = layout.used;
       const selected = range();
       const clipped = {
@@ -461,17 +469,20 @@ function SpreadsheetGrid(props: {
         right: Math.min(selected.right, Math.max(selected.left, used?.right ?? 0)),
       };
       if ((clipped.bottom - clipped.top + 1) * (clipped.right - clipped.left + 1) > 200_000) {
-        setNotice("Select fewer than 200,000 cells to copy.");
+        setNotice(t("review.extra.select.fewer.than.200.000.cells.to.copy"));
         return;
       }
       void engine
         .call("copy", { sheet, range: clipped }, { signal: controller.signal })
         .then((text) => {
-          if (text === undefined) throw new Error("No cells");
+          const t = translateNow;
+          if (text === undefined) throw new Error(t("review.extra.no.cells"));
           return navigator.clipboard.writeText(text);
         })
         .catch(() => {
-          if (!controller.signal.aborted) setNotice("The selected cells could not be copied.");
+          const t = translateNow;
+          if (!controller.signal.aborted)
+            setNotice(t("review.extra.the.selected.cells.could.not.be.copied"));
         });
     };
     const key = (event: KeyboardEvent) => {

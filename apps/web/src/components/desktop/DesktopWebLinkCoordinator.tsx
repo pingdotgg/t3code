@@ -78,6 +78,8 @@ function threadShowingBrowser(
   return surface?.kind === "preview" ? threadRef : null;
 }
 
+import { translateNow } from "../../lib/miscTranslateNow";
+
 export function DesktopWebLinkCoordinator() {
   const router = useRouter();
   const primaryEnvironment = usePrimaryEnvironment();
@@ -107,15 +109,22 @@ export function DesktopWebLinkCoordinator() {
 
   const reportFailure = (url: string, description = url) =>
     toastManager.add(
-      stackedThreadToast({ type: "error", title: "Could not open the link", description }),
+      stackedThreadToast({
+        type: "error",
+        title: translateNow("misc.desktop.link.couldNotOpen"),
+        description,
+      }),
     );
 
   const reportPairingFailure = (error: unknown) =>
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Could not add backend",
-        description: error instanceof Error ? error.message : "Failed to add backend.",
+        title: translateNow("misc.desktop.link.couldNotAddBackend"),
+        description:
+          error instanceof Error
+            ? error.message
+            : translateNow("misc.desktop.link.failedToAddBackend"),
       }),
     );
 
@@ -131,7 +140,9 @@ export function DesktopWebLinkCoordinator() {
       reportPairingFailure(error);
       return;
     }
-    const confirmed = (await requestConfirmDialog(`Add the backend at ${origin}?`)) ?? false;
+    const confirmed =
+      (await requestConfirmDialog(translateNow("misc.desktop.link.confirmAdd", { origin }))) ??
+      false;
     if (!confirmed) return;
     const result = await connectPairingEnvironment({ pairingUrl });
     if (result._tag === "Failure") {
@@ -141,8 +152,8 @@ export function DesktopWebLinkCoordinator() {
     pairedUrlsRef.current.add(pairingUrl);
     toastManager.add({
       type: "success",
-      title: "Backend added",
-      description: "The environment is saved and will reconnect on app startup.",
+      title: translateNow("misc.desktop.link.backendAdded"),
+      description: translateNow("misc.desktop.link.backendAddedDescription"),
     });
   };
 
@@ -152,7 +163,10 @@ export function DesktopWebLinkCoordinator() {
       reportFailure(url);
       return null;
     }
-    const project = await openScratchProject(environmentId, "Could not open the link");
+    const project = await openScratchProject(
+      environmentId,
+      translateNow("misc.desktop.link.couldNotOpen"),
+    );
     if (!project) return null;
     const opened = await openThread(scopeProjectRef(project.environmentId, project.id));
     if (!opened) {

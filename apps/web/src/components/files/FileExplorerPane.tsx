@@ -5,6 +5,8 @@ import { RESIZABLE_WIDTH_PROPERTY, useResizableWidth } from "~/hooks/useResizabl
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 
+import { useT } from "~/hooks/useI18n";
+import { translateNow } from "~/components/media/translateNow";
 const MIN_WIDTH = 160;
 const MAX_WIDTH = 560;
 const FILE_CONTENT_MIN_WIDTH = 256;
@@ -20,7 +22,7 @@ export function FileExplorerPane({
   defaultWidth = 256,
   defaultWidthFraction,
   minWidth = MIN_WIDTH,
-  resizeLabel = "Resize file explorer",
+  resizeLabel = translateNow("review.extra.resize.file.explorer"),
 }: {
   resizable: boolean;
   children: ReactNode;
@@ -30,6 +32,7 @@ export function FileExplorerPane({
   minWidth?: number;
   resizeLabel?: string;
 }) {
+  const t = useT();
   const [maxWidth, setMaxWidth] = useState(MAX_WIDTH);
   const [responsiveDefaultWidth, setResponsiveDefaultWidth] = useState(defaultWidth);
   const { width, setWidth, handlers } = useResizableWidth({
@@ -61,7 +64,7 @@ export function FileExplorerPane({
         measure();
         return observeResize(row, measure);
       }}
-      aria-label="File explorer"
+      aria-label={t("review.extra.file.explorer")}
       className={cn(
         "relative flex min-h-0 min-w-0 shrink-0 bg-background",
         resizable ? "border-l border-border/60" : "flex-1",

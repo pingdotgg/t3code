@@ -1,5 +1,6 @@
 import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
 
+import { useT } from "../hooks/useI18n";
 import type { SidebarProjectSnapshot } from "../sidebarProjectGrouping";
 import type { Project } from "../types";
 import {
@@ -101,7 +102,11 @@ function ProjectLocationDescription(props: {
   readonly location: CommandPaletteProjectLocation | undefined;
   readonly workspaceRoot: string;
 }) {
-  const location = props.location ?? UNKNOWN_PROJECT_LOCATION;
+  const t = useT();
+  const location = props.location ?? {
+    ...UNKNOWN_PROJECT_LOCATION,
+    label: t("app.palette.remote"),
+  };
   return (
     <span className="flex min-w-0 items-center gap-1">
       <span className="inline-flex min-w-0 items-center gap-1">

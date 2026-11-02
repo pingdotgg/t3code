@@ -3,6 +3,7 @@ import { MessageSquareDashedIcon, PlusIcon } from "lucide-react";
 
 import { openCommandPalette } from "../commandPaletteBus";
 import { isElectron } from "../env";
+import { useT } from "../hooks/useI18n";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { Button } from "./ui/button";
@@ -11,7 +12,8 @@ import { SidebarInset } from "./ui/sidebar";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
 
 export function NoProjectsHero() {
-  const contentArea = workspaceAreaProps("home", 1, "Home");
+  const t = useT();
+  const contentArea = workspaceAreaProps("home", 1, t("app.noProjects.home"));
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { scratchEnvironmentId, startScratchThread } = useScratchProject();
   const scratchTargetEnvironmentId = scratchEnvironmentId(primaryEnvironmentId);
@@ -28,16 +30,16 @@ export function NoProjectsHero() {
         <Empty size="hero" className="flex-1">
           <div className="w-full max-w-lg px-8 py-12">
             <EmptyHeader className="max-w-none">
-              <EmptyTitle>What should we work on?</EmptyTitle>
+              <EmptyTitle>{t("app.noProjects.title")}</EmptyTitle>
               <EmptyDescription>
                 {scratchTargetEnvironmentId === null
-                  ? "Add a project to start your first thread."
-                  : "Add a project, or start without one."}
+                  ? t("app.noProjects.addToStart")
+                  : t("app.noProjects.addOrSkip")}
               </EmptyDescription>
               <div className="mt-6 flex justify-center gap-2">
                 <Button size="sm" onClick={() => openCommandPalette({ open: "add-project" })}>
                   <PlusIcon className="size-4" />
-                  Add project
+                  {t("app.noProjects.addProject")}
                 </Button>
                 {scratchTargetEnvironmentId === null ? null : (
                   <Button
@@ -46,7 +48,7 @@ export function NoProjectsHero() {
                     onClick={() => void startScratchThread(scratchTargetEnvironmentId)}
                   >
                     <MessageSquareDashedIcon className="size-4" />
-                    Start without a project
+                    {t("app.noProjects.startWithout")}
                   </Button>
                 )}
               </div>

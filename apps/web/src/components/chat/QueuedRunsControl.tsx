@@ -1,3 +1,4 @@
+import { useT } from "../../hooks/useI18n";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
@@ -93,6 +94,7 @@ export function QueuedRunsControl({
   readonly timestampFormat: TimestampFormat;
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
+  const t = useT();
   const projection = useThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
   )?.projection;
@@ -230,7 +232,11 @@ export function QueuedRunsControl({
 
   return (
     <section
-      aria-label={`${items.length} queued message${items.length === 1 ? "" : "s"}`}
+      aria-label={
+        items.length === 1
+          ? t("chat.queue.countOne")
+          : t("chat.queue.countMany", { count: items.length })
+      }
       data-thread-queue="true"
       // Anchors the sr-only live region; unanchored, it escapes the timeline scroller and makes the chat column scroll.
       className="relative mx-auto flex w-full max-w-(--chat-content-max-width) flex-col gap-2 pb-4"
@@ -251,7 +257,7 @@ export function QueuedRunsControl({
           return (
             <li
               key={item.key}
-              aria-label={`Queued message ${position + 1} of ${items.length}, not sent`}
+              aria-label={t("chat.queue.position", { position: position + 1, count: items.length })}
               aria-posinset={position + 1}
               aria-setsize={items.length}
               aria-current={isEditing ? "true" : undefined}
@@ -281,11 +287,11 @@ export function QueuedRunsControl({
                           }}
                         >
                           <ArrowUpIcon />
-                          Send now
+                          {t("chat.queue.sendNow")}
                         </Button>
                       </TooltipTrigger>
                       <TooltipPopup>
-                        {`${workflow?.canSendNow ? "Start a turn with this message" : workflow?.promoteSkipsCompaction ? "Skip compaction and send this message" : "Send into the current turn"}${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                        {`${workflow?.canSendNow ? t("chat.queue.startTurn") : workflow?.promoteSkipsCompaction ? t("chat.queue.skipCompaction") : t("chat.queue.sendIntoTurn")}${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
                       </TooltipPopup>
                     </Tooltip>
                   </>
@@ -293,19 +299,21 @@ export function QueuedRunsControl({
                 {item.pending ? (
                   <span className="flex items-center gap-1 px-1">
                     <Clock3Icon aria-hidden className="size-3" />
-                    Saving
+                    {t("chat.queue.saving")}
                   </span>
                 ) : null}
                 {isEditing ? (
                   <>
-                    <span className="px-1 text-foreground">Editing in the composer</span>
+                    <span className="px-1 text-foreground">
+                      {t("chat.queue.editingInComposer")}
+                    </span>
                     <Button
                       size="xs"
                       variant="ghost"
-                      aria-label="Cancel editing queued message"
+                      aria-label={t("chat.queue.cancelEditingAria")}
                       onClick={props.onCancelEdit}
                     >
-                      Cancel
+                      {t("chat.queue.cancel")}
                     </Button>
                   </>
                 ) : (
@@ -316,7 +324,7 @@ export function QueuedRunsControl({
                         <Button
                           size="icon-xs"
                           variant="ghost-muted"
-                          aria-label="Edit queued message"
+                          aria-label={t("chat.queue.editAria")}
                           disabled={
                             item.runId === null ||
                             !item.editable ||
@@ -339,7 +347,7 @@ export function QueuedRunsControl({
                       </TooltipTrigger>
                       <TooltipPopup>
                         {props.editBlockedReason ??
-                          `Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
+                          `${t("chat.queue.editInComposer")}${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
                       </TooltipPopup>
                     </Tooltip>
                     <Tooltip>
@@ -348,7 +356,7 @@ export function QueuedRunsControl({
                           <Button
                             size="icon-xs"
                             variant="ghost-muted"
-                            aria-label="Remove queued message"
+                            aria-label={t("chat.queue.removeAria")}
                             disabled={item.runId === null || busyRunId !== null}
                             onClick={() => {
                               if (item.runId !== null) void remove(item.runId);
@@ -358,7 +366,7 @@ export function QueuedRunsControl({
                       >
                         <XIcon />
                       </TooltipTrigger>
-                      <TooltipPopup>Remove from queue</TooltipPopup>
+                      <TooltipPopup>{t("chat.queue.removeFromQueue")}</TooltipPopup>
                     </Tooltip>
                   </>
                 )}
@@ -377,7 +385,7 @@ export function QueuedRunsControl({
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => setShowAll((value) => !value)}
           >
-            {showAll ? "Show fewer" : `Show all ${items.length} queued`}
+            {showAll ? t("chat.queue.showFewer") : t("chat.queue.showAll", { count: items.length })}
             <ChevronDownIcon
               aria-hidden
               className={cn(
@@ -405,6 +413,7 @@ function QueuedMessage(props: {
   readonly onOpenThread: (threadId: ThreadId) => void;
   readonly children: ReactNode;
 }) {
+  const t = useT();
   const presentation = props.message ? resolveUserMessagePresentation(props.message) : null;
   const attribution = presentation?.attribution ?? null;
   const scheduledTaskId = presentation?.scheduledTaskId;
@@ -420,13 +429,13 @@ function QueuedMessage(props: {
     attribution === "automation"
       ? {
           icon: CalendarClockIcon,
-          label: "Automation",
+          label: t("chat.user.automation"),
           summary: taskTitle ?? props.previewText.split(/\r?\n/, 1)[0] ?? "",
         }
       : attribution === "agent"
         ? {
             icon: MessagesSquareIcon,
-            label: senderShell?.title.trim() || "Agent",
+            label: senderShell?.title.trim() || t("chat.queue.agent"),
             summary: props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? "",
           }
         : null;
@@ -435,7 +444,7 @@ function QueuedMessage(props: {
   return (
     <>
       {attribution === "t3code" ? (
-        <p className="me-1 text-2xs text-muted-foreground/70">Sent by T3 Code</p>
+        <p className="me-1 text-2xs text-muted-foreground/70">{t("chat.queue.sentBy")}</p>
       ) : null}
       {presentation?.guestName === undefined ? null : (
         <GuestMessageName name={presentation.guestName} />
@@ -501,7 +510,7 @@ function QueuedMessage(props: {
           <span className="me-1 flex items-center gap-2 px-1 opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/queued:opacity-100">
             {attribution === "agent" && senderThreadId ? (
               <InlineButton tone="muted" onClick={() => props.onOpenThread(senderThreadId)}>
-                Open thread
+                {t("chat.user.openThread")}
               </InlineButton>
             ) : null}
             {scheduledTaskId ? (
@@ -514,7 +523,7 @@ function QueuedMessage(props: {
                   />
                 }
               >
-                Open automation
+                {t("chat.user.openAutomation")}
               </InlineButton>
             ) : null}
             <TimelineRowTimestamp

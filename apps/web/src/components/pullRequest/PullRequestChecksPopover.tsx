@@ -26,6 +26,7 @@ import {
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
 
+import { translateNow } from "~/components/media/translateNow";
 // Fetch only on open to avoid per-row requests.
 function LazyChecksBody({
   environmentId,
@@ -45,7 +46,9 @@ function LazyChecksBody({
   if (detailQuery.data === null) {
     return (
       <p className="text-muted-foreground text-xs">
-        {detailQuery.isPending ? "Loading checks…" : "No checks reported"}
+        {detailQuery.isPending
+          ? translateNow("review.extra.loading.checks")
+          : translateNow("review.extra.no.checks.reported")}
       </p>
     );
   }
@@ -66,7 +69,11 @@ function ChecksBody({
   const visibleChecks = [...attention, ...running, ...(showAll || !canCollapse ? completed : [])];
   const hasDetails = visibleChecks.some((check) => check.url !== null);
   if (checks.length === 0) {
-    return <p className="text-muted-foreground text-xs">No checks reported</p>;
+    return (
+      <p className="text-muted-foreground text-xs">
+        {translateNow("review.extra.no.checks.reported")}
+      </p>
+    );
   }
   return (
     <>
@@ -101,11 +108,14 @@ function ChecksBody({
                       if (!check.url) return;
                       void openLink(check.url).catch((error: unknown) => {
                         console.error(error);
-                        toastManager.add({ type: "error", title: "Unable to open check details" });
+                        toastManager.add({
+                          type: "error",
+                          title: translateNow("review.extra.unable.to.open.check.details"),
+                        });
                       });
                     }}
                   >
-                    Details
+                    {translateNow("review.extra.details")}
                   </button>
                 )}
               </li>
@@ -120,7 +130,7 @@ function ChecksBody({
           aria-expanded={showAll}
           onClick={() => setShowAll(!showAll)}
         >
-          {showAll ? "Show less" : "Show all"}
+          {showAll ? translateNow("review.extra.show.less") : translateNow("review.extra.show.all")}
         </Button>
       ) : null}
     </>
@@ -162,8 +172,8 @@ export function PullRequestChecksPopover({
         nativeButton={variant === "count"}
         aria-label={
           variant === "count"
-            ? `Open checks: ${summary ?? presentation.label}`
-            : `Checks: ${presentation.label}`
+            ? translateNow("review.pr.openChecks", { summary: summary ?? presentation.label })
+            : translateNow("review.pr.checksLabel", { summary: presentation.label })
         }
         render={
           variant === "count" ? (
@@ -196,7 +206,7 @@ export function PullRequestChecksPopover({
         {summary === null ? null : <p className="mb-2 text-muted-foreground text-xs">{summary}</p>}
         {stale ? (
           <p className="text-muted-foreground text-xs">
-            Check details are out of date. Refresh the pull request to update them.
+            {translateNow("review.extra.check.details.are.out.of.date.refresh.the")}
           </p>
         ) : checks !== undefined ? (
           <ChecksBody checks={checks} threadRef={threadRef} />

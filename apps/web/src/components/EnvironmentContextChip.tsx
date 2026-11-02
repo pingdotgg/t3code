@@ -1,5 +1,6 @@
 import { type EnvironmentContextRecord, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 
+import { useT } from "../hooks/useI18n";
 import { useEnvironment } from "~/state/environments";
 import { ContextChip, ContextChipLabel } from "./ContextChip";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -13,6 +14,7 @@ export function EnvironmentContextChip(props: {
   record: Pick<EnvironmentContextRecord, "environmentId" | "label">;
   copyMarkdown?: string;
 }) {
+  const t = useT();
   const environment = useEnvironment(props.record.environmentId);
   const label = environment?.label.trim() || props.record.label;
   return (
@@ -22,7 +24,7 @@ export function EnvironmentContextChip(props: {
           <ContextChip
             kind="environment"
             tabIndex={0}
-            aria-label={`Machine, ${label}`}
+            aria-label={t("app.envChip.machine", { label })}
             data-markdown-copy={props.copyMarkdown}
           >
             <EnvironmentMachineIcon
@@ -33,7 +35,7 @@ export function EnvironmentContextChip(props: {
         }
       />
       <TooltipPopup side="top">
-        {environment ? "T3 Code environment" : "Machine not in this app"}
+        {environment ? t("app.envChip.environment") : t("app.envChip.notInApp")}
       </TooltipPopup>
     </Tooltip>
   );

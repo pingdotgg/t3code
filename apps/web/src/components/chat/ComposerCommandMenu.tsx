@@ -1,3 +1,5 @@
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
+import { useT } from "../../hooks/useI18n";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 import {
@@ -101,6 +103,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   onHighlightedItemChange: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
+  const t = useT();
   const listRef = useRef<HTMLDivElement>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the highlighted menu item's DOM node into view
@@ -130,7 +133,9 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         {props.items.length > 0 ? (
           <CommandList
             id={props.listId}
-            aria-label={props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined}
+            aria-label={
+              props.triggerKind ? t(LISTBOX_LABEL_BY_TRIGGER[props.triggerKind]) : undefined
+            }
             className="max-h-72 min-h-0 scroll-pb-6"
           >
             <CommandGroup>
@@ -153,16 +158,16 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             <p className="text-secondary-label text-xs">
               {props.isLoading
                 ? props.triggerKind === "skill" || props.triggerKind === "slash-command"
-                  ? "Searching workspace skills..."
+                  ? t("chat.composer.searchingSkills")
                   : props.triggerKind === "pull-request"
-                    ? "Finding pull request..."
-                    : "Searching workspace files..."
+                    ? t("chat.composer.findingPullRequest")
+                    : t("chat.composer.searchingFiles")
                 : (props.emptyStateText ??
                   (props.triggerKind === "skill"
-                    ? "No skills found. Try / to browse provider commands."
+                    ? t("chat.menu.noSkills")
                     : props.triggerKind === "path"
-                      ? "No matching files or folders."
-                      : "No matching command."))}
+                      ? t("chat.menu.noFiles")
+                      : t("chat.menu.noCommand")))}
             </p>
           </div>
         )}
@@ -258,11 +263,11 @@ export function composerSuggestionOptionId(listId: string, itemId: string): stri
   return `${listId}-${encodeURIComponent(JSON.stringify(itemId))}`;
 }
 
-const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
-  path: "Files and folders",
-  "pull-request": "Pull requests",
-  "slash-command": "Commands",
-  skill: "Skills",
+const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, MessageKey> = {
+  path: "chat.menu.filesAndFolders",
+  "pull-request": "chat.menu.pullRequests",
+  "slash-command": "chat.menu.commands",
+  skill: "chat.menu.skills",
 };
 
 const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
@@ -274,22 +279,23 @@ const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
   other: PackageIcon,
 };
 
-const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
-  app: "App",
-  repo: "Repo",
-  project: "Project",
-  personal: "Personal",
-  system: "System",
-  other: "Provider",
+const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, MessageKey> = {
+  app: "chat.menu.sourceApp",
+  repo: "chat.menu.sourceRepo",
+  project: "chat.menu.sourceProject",
+  personal: "chat.menu.sourcePersonal",
+  system: "chat.menu.sourceSystem",
+  other: "chat.menu.sourceProvider",
 };
 
 function SkillSourceBadge(props: { kind: ProviderSkillSourceKind; showSkillSuffix: boolean }) {
+  const t = useT();
   const Icon = SKILL_SOURCE_ICON_BY_KIND[props.kind];
   return (
     <Badge className="ms-auto" variant="secondary">
       <Icon aria-hidden="true" className="text-current" />
-      {SKILL_SOURCE_LABEL_BY_KIND[props.kind]}
-      {props.showSkillSuffix ? " Skill" : null}
+      {t(SKILL_SOURCE_LABEL_BY_KIND[props.kind])}
+      {props.showSkillSuffix ? t("chat.menu.skillSuffix") : null}
     </Badge>
   );
 }

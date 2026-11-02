@@ -13,6 +13,8 @@ import { PullRequestGlyph } from "./pullRequestIcons";
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
+import { translateNow } from "~/components/media/translateNow";
+import { useT } from "~/hooks/useI18n";
 export function PullRequestCommentForm({
   environmentId,
   reference,
@@ -35,6 +37,7 @@ export function PullRequestCommentForm({
   onCommented: () => void;
   onClose: () => void;
 }) {
+  const t = useT();
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
   const postComment = useAtomCommand(pullRequestEnvironment.comment, {
@@ -53,6 +56,7 @@ export function PullRequestCommentForm({
         : null;
 
   const submit = async (action: "comment" | "close" | "reopen") => {
+    const t = translateNow;
     const trimmed = body.trim();
     if (trimmed.length === 0 || submitting !== null || actionPending) return;
     setSubmitting(action);
@@ -74,7 +78,10 @@ export function PullRequestCommentForm({
     });
     if (result._tag === "Failure") {
       setSubmitting(null);
-      toastManager.add({ type: "error", title: "Could not post the comment" });
+      toastManager.add({
+        type: "error",
+        title: t("review.extra.could.not.post.the.comment"),
+      });
       return;
     }
     setBody("");
@@ -91,8 +98,10 @@ export function PullRequestCommentForm({
         disabled={submitting !== null || actionPending}
         value={body}
         rows={3}
-        placeholder="Leave a comment"
-        aria-label={`Comment on this ${sourceControlClients.get(detail.provider).changeRequest.singular}`}
+        placeholder={t("review.extra.leave.a.comment")}
+        aria-label={translateNow("review.pr.commentOnThis", {
+          term: sourceControlClients.get(detail.provider).changeRequest.singular,
+        })}
         onChange={(event) => setBody(event.target.value)}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -127,20 +136,20 @@ export function PullRequestCommentForm({
               // The longest label holds the width, so the confirming click lands on the button.
               <span className="inline-grid">
                 <span aria-hidden className="invisible col-start-1 row-start-1">
-                  Close with comment
+                  {t("review.extra.close.with.comment")}
                 </span>
                 <span className="col-start-1 row-start-1">
                   {submitting === "close"
                     ? "Closing..."
                     : inlineConfirm.isArmed("close")
-                      ? "Confirm close?"
-                      : "Close with comment"}
+                      ? t("review.extra.confirm.close")
+                      : t("review.extra.close.with.comment")}
                 </span>
               </span>
             ) : submitting === "reopen" ? (
               "Reopening..."
             ) : (
-              "Reopen with comment"
+              t("review.extra.reopen.with.comment")
             )}
           </Button>
         )}
@@ -151,7 +160,7 @@ export function PullRequestCommentForm({
           onClick={() => void submit("comment")}
         >
           <SendIcon className="size-3.5" />
-          {submitting === "comment" ? "Posting..." : "Comment"}
+          {submitting === "comment" ? t("review.extra.posting") : t("review.extra.comment")}
         </Button>
       </div>
     </div>

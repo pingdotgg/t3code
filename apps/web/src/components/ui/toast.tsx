@@ -18,6 +18,7 @@ import { Button, buttonVariants } from "~/components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { useT } from "~/hooks/useI18n";
 import {
   buildVisibleToastLayout,
   hasVisibleToastAction,
@@ -135,8 +136,9 @@ function handleToastDismissClick(
 }
 
 function CopyErrorButton({ text }: { text: string }) {
+  const t = useT();
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "error-message" });
-  const label = isCopied ? "Copied error" : "Copy error";
+  const label = isCopied ? t("misc.ui.toast.copiedError") : t("misc.ui.toast.copyError");
 
   return (
     <Tooltip>
@@ -171,9 +173,10 @@ function ToastExpandableSection({
   children: ReactNode;
   labels: { expand?: string; collapse?: string };
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
-  const expandLabel = labels.expand ?? "Show details";
-  const collapseLabel = labels.collapse ?? "Hide details";
+  const expandLabel = labels.expand ?? t("misc.ui.toast.showDetails");
+  const collapseLabel = labels.collapse ?? t("misc.ui.toast.hideDetails");
 
   return (
     <div className="min-w-0">
@@ -204,6 +207,7 @@ function ToastDescriptionAndExpandable({
   toastDescription: unknown;
   toastType: unknown;
 }) {
+  const t = useT();
   const expandableContent = toastData?.expandableContent;
   const labels = toastData?.expandableLabels ?? {};
   const descriptionTrigger = toastData?.expandableDescriptionTrigger ?? false;
@@ -226,8 +230,8 @@ function ToastDescriptionAndExpandable({
     );
   }
 
-  const expandLabel = labels.expand ?? "Show details";
-  const collapseLabel = labels.collapse ?? "Hide details";
+  const expandLabel = labels.expand ?? t("misc.ui.toast.showDetails");
+  const collapseLabel = labels.collapse ?? t("misc.ui.toast.hideDetails");
 
   const toggle = () => setOpen((v) => !v);
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -551,6 +555,7 @@ function ToastProvider({ children, position = "top-right", ...props }: ToastProv
 }
 
 function Toasts({ position }: { position: ToastPosition }) {
+  const t = useT();
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
   const isTop = position.startsWith("top");
@@ -660,7 +665,7 @@ function Toasts({ position }: { position: ToastPosition }) {
               />
               <div className={toastCornerDismissClass}>
                 <button
-                  aria-label="Dismiss notification"
+                  aria-label={t("misc.ui.toast.dismiss")}
                   className={toastCornerOrbClass}
                   data-slot="toast-close"
                   onClick={() =>
@@ -709,6 +714,7 @@ function AnchoredToastProvider({ children, ...props }: Toast.Provider.Props) {
 }
 
 function AnchoredToasts() {
+  const t = useT();
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
 
@@ -751,7 +757,7 @@ function AnchoredToasts() {
                     <>
                       <div className={toastCornerDismissClass}>
                         <button
-                          aria-label="Dismiss notification"
+                          aria-label={t("misc.ui.toast.dismiss")}
                           className={toastCornerOrbClass}
                           data-slot="toast-close"
                           onClick={() =>

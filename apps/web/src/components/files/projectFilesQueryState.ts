@@ -18,6 +18,7 @@ import { useProjectPathSearch } from "~/state/queries";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { revisionedQuery } from "~/state/revisionedQuery";
 
+import { translateNow } from "../media/translateNow";
 const EMPTY_PROJECT_FILE_PATH = "";
 const EMPTY_PROJECT_ENTRIES_QUERY_ATOM = Atom.make(
   AsyncResult.initial<ProjectListEntriesResult, never>(false),
@@ -186,7 +187,9 @@ function failureCause<A>(result: AsyncResult.AsyncResult<A, unknown>): unknown {
 
 function errorMessage(cause: unknown): string | null {
   if (cause === null) return null;
-  return cause instanceof Error ? cause.message : "Workspace query failed.";
+  return cause instanceof Error
+    ? cause.message
+    : translateNow("review.extra.workspace.query.failed");
 }
 
 const isProjectReadFileError = Schema.is(ProjectReadFileError);
@@ -212,7 +215,7 @@ export function useProjectEntriesQuery(
       ? null
       : canReadFiles
         ? errorMessage(failureCause(result))
-        : (fileAccess.error ?? "This connection cannot read host files."),
+        : (fileAccess.error ?? translateNow("review.extra.this.connection.cannot.read.host.files")),
     isPending: fileAccess.isPending || result.waiting,
     refresh,
   };
@@ -281,9 +284,10 @@ export function useProjectFileQuery(
         ? null
         : canReadFiles
           ? isMissing && !optimisticFile
-            ? `'${relativePath}' does not exist.`
+            ? translateNow("review.files.doesNotExist", { path: relativePath ?? "" })
             : errorMessage(cause)
-          : (fileAccess.error ?? "This connection cannot read host files."),
+          : (fileAccess.error ??
+            translateNow("review.extra.this.connection.cannot.read.host.files")),
     isPending: isQueryEnabled && (fileAccess.isPending || result.waiting),
     readError,
     isNotFile,

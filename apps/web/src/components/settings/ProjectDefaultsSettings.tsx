@@ -362,7 +362,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     <SettingsSection
       id={category === "source-control" ? "source-control-defaults" : "project-defaults"}
       title={
-        category === "source-control" ? "Repositories" : t("settings.threads.newThreads.title")
+        category === "source-control"
+          ? t("settings.code.projectDefaults.repositories")
+          : t("settings.threads.newThreads.title")
       }
     >
       {category === "project" ? (
@@ -446,24 +448,24 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             settingKeys={["defaultAutoPull"]}
             mixed={mixedAutoPull}
             id="automatic-pull"
-            title="Automatically pull"
+            title={t("settings.code.projectDefaults.autoPull.title")}
             description={
               isProjectScope
-                ? "Keeps this project's default branch current when the checkout has no local changes or commits."
-                : "Keeps the default branch current when the checkout has no local changes or commits. Projects can override it."
+                ? t("settings.code.projectDefaults.autoPull.descriptionProject")
+                : t("settings.code.projectDefaults.autoPull.description")
             }
             resetAction={
               settings.defaultAutoPull ? (
                 <SettingResetButton
-                  label="default automatic pull"
-                  tooltip="Reset automatic pull to off"
+                  label={t("settings.code.projectDefaults.autoPull.resetLabel")}
+                  tooltip={t("settings.code.projectDefaults.autoPull.resetTooltip")}
                   onClick={() => updateSettings({ defaultAutoPull: false })}
                 />
               ) : null
             }
             control={
               <Switch
-                aria-label="Default automatic pull"
+                aria-label={t("settings.code.projectDefaults.autoPull.a11y")}
                 mixed={mixedAutoPull}
                 checked={mixedAutoPull ? false : settings.defaultAutoPull}
                 onCheckedChange={(enabled) => updateSettings({ defaultAutoPull: enabled })}
@@ -475,19 +477,20 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             settingKeys={["removeAgentCreditsOnMerge"]}
             mixed={mixedAgentCredits}
             {...searchableSetting("remove-agent-credits-on-merge")}
-            description="Remove recognized agent credit lines from merge and squash messages on hosts that support it, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits."
+            title={t("settings.code.projectDefaults.agentCredits.title")}
+            description={t("settings.code.projectDefaults.agentCredits.description")}
             resetAction={
               settings.removeAgentCreditsOnMerge ? (
                 <SettingResetButton
-                  label="agent credit removal"
-                  tooltip="Keep agent credits"
+                  label={t("settings.code.projectDefaults.agentCredits.resetLabel")}
+                  tooltip={t("settings.code.projectDefaults.agentCredits.resetTooltip")}
                   onClick={() => updateSettings({ removeAgentCreditsOnMerge: false })}
                 />
               ) : null
             }
             control={
               <Switch
-                aria-label="Remove agent credits when merging"
+                aria-label={t("settings.code.projectDefaults.agentCredits.title")}
                 mixed={mixedAgentCredits}
                 checked={mixedAgentCredits ? false : settings.removeAgentCreditsOnMerge}
                 onCheckedChange={(enabled) =>
@@ -501,16 +504,17 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             settingKeys={["pullRequestMergeMethod"]}
             mixed={mixedMergeMethod}
             {...searchableSetting("pull-request-merge-method")}
+            title={t("settings.code.projectDefaults.mergeMethod.title")}
             description={
               isProjectScope
-                ? "Pull requests in this project start with this method."
-                : "Pull requests start with this method. Last selected reuses whatever you chose most recently on this device."
+                ? t("settings.code.projectDefaults.mergeMethod.descriptionProject")
+                : t("settings.code.projectDefaults.mergeMethod.description")
             }
             resetAction={
               settings.pullRequestMergeMethod !== null ? (
                 <SettingResetButton
-                  label="default merge method"
-                  tooltip="Reset to last selected"
+                  label={t("settings.code.projectDefaults.mergeMethod.resetLabel")}
+                  tooltip={t("settings.code.projectDefaults.mergeMethod.resetTooltip")}
                   onClick={() => updateSettings({ pullRequestMergeMethod: null })}
                 />
               ) : null
@@ -524,19 +528,24 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                     updateSettings({ pullRequestMergeMethod: value });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Default pull request merge method">
+                <SelectTrigger
+                  size="sm"
+                  aria-label={t("settings.code.projectDefaults.mergeMethod.a11y")}
+                >
                   <SelectValue>
                     {(value: string | null) =>
                       value === "merge" || value === "squash" || value === "rebase"
                         ? PULL_REQUEST_MERGE_METHOD_LABELS[value]
                         : value === "last"
-                          ? "Last selected"
-                          : "Mixed"
+                          ? t("settings.code.projectDefaults.mergeMethod.last")
+                          : t("settings.layout.mixed")
                     }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="last">Last selected</SelectItem>
+                  <SelectItem value="last">
+                    {t("settings.code.projectDefaults.mergeMethod.last")}
+                  </SelectItem>
                   <SelectItem value="merge">{PULL_REQUEST_MERGE_METHOD_LABELS.merge}</SelectItem>
                   <SelectItem value="squash">{PULL_REQUEST_MERGE_METHOD_LABELS.squash}</SelectItem>
                   <SelectItem value="rebase">{PULL_REQUEST_MERGE_METHOD_LABELS.rebase}</SelectItem>
@@ -551,6 +560,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
 }
 
 export function WorktreeSubmodulesRow() {
+  const t = useT();
   const { scope, target, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -567,15 +577,16 @@ export function WorktreeSubmodulesRow() {
       settingKeys={["worktreeSubmodules"]}
       mixed={mixedSubmodules}
       {...searchableSetting("worktree-submodules")}
+      title={t("settings.code.projectDefaults.submodules.title")}
       description={
         isProjectScope
-          ? "How new worktrees in this project populate git submodules."
-          : "How new worktrees populate git submodules. Projects and their t3.json can override it."
+          ? t("settings.code.projectDefaults.submodules.descriptionProject")
+          : t("settings.code.projectDefaults.submodules.description")
       }
       resetAction={
         !isProjectScope && settings.worktreeSubmodules !== null ? (
           <SettingResetButton
-            label="worktree submodules"
+            label={t("settings.code.projectDefaults.submodules.resetLabel")}
             onClick={() => updateSettings({ worktreeSubmodules: null })}
           />
         ) : null
@@ -587,14 +598,14 @@ export function WorktreeSubmodulesRow() {
             if (isWorktreeSubmodules(value)) updateSettings({ worktreeSubmodules: value });
           }}
         >
-          <SelectTrigger size="sm" aria-label="Worktree submodules">
+          <SelectTrigger size="sm" aria-label={t("settings.code.projectDefaults.submodules.a11y")}>
             <SelectValue>
               {(value: string | null) =>
                 isWorktreeSubmodules(value)
                   ? WORKTREE_SUBMODULES_LABELS[value]
                   : unavailable
-                    ? "Unavailable"
-                    : "Mixed"
+                    ? t("settings.threads.workspace.unavailable")
+                    : t("settings.layout.mixed")
               }
             </SelectValue>
           </SelectTrigger>

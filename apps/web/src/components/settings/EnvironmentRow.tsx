@@ -4,10 +4,12 @@ import {
   connectionRouteLabel,
   connectionRoutes,
 } from "@t3tools/client-runtime/connection";
+import { createTranslator, type TranslateFn } from "@t3tools/client-runtime/i18n";
 import type { DesktopSshEnvironmentTarget, EnvironmentMachineKind } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import type { ReactNode } from "react";
 
+import { useT } from "~/hooks/useI18n";
 import { cn } from "~/lib/utils";
 import type { EnvironmentPresentation } from "~/state/environments";
 import { usePreparedConnection } from "~/state/session";
@@ -22,9 +24,11 @@ export function formatDesktopSshTarget(target: DesktopSshEnvironmentTarget): str
 export function environmentTransportLabel(
   environment: EnvironmentPresentation,
   activeTarget: ConnectionTarget | null = null,
+  t: TranslateFn = createTranslator("en"),
 ): string {
   const { entry } = environment;
-  if (entry.target._tag === "PrimaryConnectionTarget") return "This machine";
+  if (entry.target._tag === "PrimaryConnectionTarget")
+    return t("settings.system.envRow.thisMachine");
   const routes = connectionRoutes(entry);
   if (routes.length > 1) {
     const active =
@@ -35,7 +39,7 @@ export function environmentTransportLabel(
           );
     return active === undefined
       ? connectionRouteLabel(routes[0]!)
-      : `via ${connectionRouteLabel(active)}`;
+      : t("settings.system.envRow.via", { route: connectionRouteLabel(active) });
   }
   if (environment.relayManaged) return "T3 Connect";
   if (isDesktopLocalConnectionTarget(entry.target)) return "WSL";
@@ -46,16 +50,18 @@ export function environmentTransportLabel(
   ) {
     return `SSH ${formatDesktopSshTarget(entry.profile.value.target)}`;
   }
-  return environment.displayUrl ?? "Remote link";
+  return environment.displayUrl ?? t("settings.system.envRow.remoteLink");
 }
 
 export function useEnvironmentTransportLabel(environment: EnvironmentPresentation): string {
+  const t = useT();
   const prepared = usePreparedConnection(environment.environmentId);
   return environmentTransportLabel(
     environment,
     environment.connection.phase === "connected" && prepared._tag === "Some"
       ? prepared.value.target
       : null,
+    t,
   );
 }
 

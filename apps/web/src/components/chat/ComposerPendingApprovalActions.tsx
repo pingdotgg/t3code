@@ -1,3 +1,5 @@
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
+import { useT } from "../../hooks/useI18n";
 import {
   type ProviderApprovalDecision,
   type ProviderApprovalOption,
@@ -23,6 +25,13 @@ interface ComposerPendingApprovalActionsProps {
   ) => Promise<unknown>;
 }
 
+const DEFAULT_APPROVAL_LABEL_KEYS: Partial<Record<ProviderApprovalDecision, MessageKey>> = {
+  cancel: "chat.approval.cancel",
+  decline: "chat.approval.decline",
+  acceptForSession: "chat.approval.allowSession",
+  accept: "chat.approval.approve",
+};
+
 const DEFAULT_APPROVAL_OPTIONS = [
   { decision: "cancel", label: "Cancel" },
   { decision: "decline", label: "Decline" },
@@ -39,6 +48,11 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
   options = DEFAULT_APPROVAL_OPTIONS,
   onRespondToApproval,
 }: ComposerPendingApprovalActionsProps) {
+  const t = useT();
+  const optionLabel = (option: ProviderApprovalOption) =>
+    options === DEFAULT_APPROVAL_OPTIONS
+      ? t(DEFAULT_APPROVAL_LABEL_KEYS[option.decision] ?? "chat.approval.approve")
+      : option.label;
   const primaryOptions = options.filter(
     (option) => option.decision === "decline" || option.decision === "accept",
   );
@@ -62,7 +76,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
           <>
             {option.warning ? <TriangleAlertIcon className="size-3 shrink-0" /> : null}
             <span className={presentation === "inline" ? "whitespace-normal" : "max-w-40 truncate"}>
-              {option.label}
+              {optionLabel(option)}
             </span>
           </>
         );
@@ -100,13 +114,17 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
             disabled={disabled || isResponding || !canRespond}
             render={
               presentation === "inline" ? (
-                <InlineButton tone="muted" aria-label="More approval options" />
+                <InlineButton tone="muted" aria-label={t("chat.approval.moreOptions")} />
               ) : (
-                <Button size="icon-xs" variant="outline" aria-label="More approval options" />
+                <Button
+                  size="icon-xs"
+                  variant="outline"
+                  aria-label={t("chat.approval.moreOptions")}
+                />
               )
             }
           >
-            {presentation === "inline" ? "More" : <EllipsisIcon />}
+            {presentation === "inline" ? t("chat.approval.more") : <EllipsisIcon />}
           </MenuTrigger>
           <MenuPopup {...composerFloatingLayerProps} side="top" align="end" width="content">
             {moreOptions.map((option) => {
@@ -121,7 +139,9 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
                   }}
                 >
                   {option.warning ? <TriangleAlertIcon className="size-3 text-warning" /> : null}
-                  <span className="min-w-0 whitespace-normal wrap-break-word">{option.label}</span>
+                  <span className="min-w-0 whitespace-normal wrap-break-word">
+                    {optionLabel(option)}
+                  </span>
                 </MenuItem>
               );
               return option.warning ? (

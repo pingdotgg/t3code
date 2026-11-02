@@ -17,6 +17,8 @@ export function showAnchoredCopySuccessToast(ref: RefObject<HTMLButtonElement | 
   });
 }
 
+import { translateNow } from "../../lib/miscTranslateNow";
+
 export function showAnchoredCopyErrorToast(ref: RefObject<HTMLButtonElement | null>, error: Error) {
   if (!ref.current) return;
   anchoredToastManager.add({
@@ -24,7 +26,7 @@ export function showAnchoredCopyErrorToast(ref: RefObject<HTMLButtonElement | nu
     positionerProps: {
       anchor: ref.current,
     },
-    title: "Failed to copy",
+    title: translateNow("misc.ui.failedToCopy"),
     description: error.message,
   });
 }

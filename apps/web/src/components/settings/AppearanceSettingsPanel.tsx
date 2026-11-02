@@ -127,11 +127,11 @@ export function AppearanceSettingsPanel() {
     ) !== null;
   const environmentIdentificationDescription = themeHidesEnvironmentArtwork
     ? environmentStageVariant
-      ? "Only built-in themes show artwork, so this theme shows the version pill."
-      : "Only built-in themes show artwork."
+      ? t("settings.system.appearance.artworkOnlyBuiltInPill")
+      : t("settings.system.appearance.artworkOnlyBuiltIn")
     : environmentStageVariant
-      ? "Choose how Dev and Nightly environments are identified."
-      : "Show Dev or Nightly artwork in the sidebar header.";
+      ? t("settings.system.appearance.chooseHowIdentified")
+      : t("settings.system.appearance.showArtwork");
 
   const glassOpacityRatio =
     (settings.glassOpacity - MIN_GLASS_OPACITY) / (MAX_GLASS_OPACITY - MIN_GLASS_OPACITY);

@@ -1,11 +1,14 @@
 import { useSyncExternalStore } from "react";
 
+import type { TranslateFn } from "@t3tools/client-runtime/i18n";
+
 import {
   completeConfirmDialogClose,
   readConfirmDialogState,
   respondToConfirmDialog,
   subscribeConfirmDialogHost,
 } from "../confirmDialog";
+import { useT } from "../hooks/useI18n";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -22,7 +25,7 @@ type ConfirmationCopy = {
   readonly description: string | null;
 };
 
-function resolveConfirmDialogCopy(message: string): ConfirmationCopy {
+function resolveConfirmDialogCopy(message: string, t: TranslateFn): ConfirmationCopy {
   const normalizedMessage = message.trim();
   const lines = normalizedMessage.split("\n");
   const questionLineIndex = lines.findIndex((line) => line.trim().endsWith("?"));
@@ -45,19 +48,20 @@ function resolveConfirmDialogCopy(message: string): ConfirmationCopy {
   }
 
   return {
-    title: "Confirm action",
-    description: normalizedMessage || "This action requires your confirmation.",
+    title: t("app.confirmDialog.title"),
+    description: normalizedMessage || t("app.confirmDialog.description"),
   };
 }
 
 export function ConfirmDialogHost() {
+  const t = useT();
   const state = useSyncExternalStore(
     subscribeConfirmDialogHost,
     readConfirmDialogState,
     readConfirmDialogState,
   );
 
-  const copy = resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message);
+  const copy = resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message, t);
   const confirmVariant = state.status === "idle" ? "default" : state.variant;
   const onCancel = () => respondToConfirmDialog(false);
   const onConfirm = () => respondToConfirmDialog(true);
@@ -82,9 +86,11 @@ export function ConfirmDialogHost() {
           ) : null}
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="outline" />}>
+            {t("app.common.cancel")}
+          </AlertDialogClose>
           <Button variant={confirmVariant} onClick={onConfirm}>
-            Confirm
+            {t("app.confirmDialog.confirm")}
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>

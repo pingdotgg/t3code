@@ -91,6 +91,8 @@ import {
   stopBrowserRecording,
   useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
+import { useT } from "~/hooks/useI18n";
+import { translateNow } from "../media/translateNow";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { observeResize } from "~/lib/observeResize";
@@ -110,7 +112,10 @@ function previewProfileName(
   profiles: ReadonlyArray<{ readonly id: string; readonly name: string }>,
   profileId: string,
 ): string {
-  return profiles.find((profile) => profile.id === profileId)?.name ?? "Removed profile";
+  return (
+    profiles.find((profile) => profile.id === profileId)?.name ??
+    translateNow("review.preview.view.removedProfile")
+  );
 }
 
 const localApi = typeof window === "undefined" ? null : ensureLocalApi();
@@ -146,6 +151,7 @@ export function PreviewView({
   visible,
   onSendAnnotation,
 }: Props) {
+  const t = useT();
   const urlInputRef = useRef<HTMLInputElement | null>(null);
   const [pickActive, setPickActive] = useState(false);
   const canSendAnnotation =
@@ -166,7 +172,8 @@ export function PreviewView({
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
   const open = useAtomCommand(previewEnvironment.open);
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
-  const environmentLabel = useEnvironment(threadRef.environmentId)?.label ?? "the environment";
+  const environmentLabel =
+    useEnvironment(threadRef.environmentId)?.label ?? t("review.preview.view.theEnvironment");
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverBrowser = useEnvironmentSupportsServerBrowser(threadRef.environmentId);
   const adjust = useAtomCommand(previewEnvironment.adjust, "preview appearance or zoom");
@@ -246,7 +253,7 @@ export function PreviewView({
       if (error instanceof BrowserSettingsReadError) {
         toastManager.add({
           type: "error",
-          title: "Unable to open browser",
+          title: t("review.preview.view.unableOpenBrowser"),
           description: error.message,
         });
       }
@@ -263,12 +270,12 @@ export function PreviewView({
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Could not open this address",
+        title: t("review.preview.view.couldNotOpenAddress"),
         description: isPreviewUrlNormalizationError(error)
-          ? "Enter an http or https URL."
+          ? t("review.preview.view.enterHttpUrl")
           : error instanceof Error
             ? error.message
-            : "An error occurred.",
+            : t("review.preview.view.errorOccurred"),
       });
     }
   };
@@ -285,12 +292,12 @@ export function PreviewView({
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Could not open this address",
+        title: t("review.preview.view.couldNotOpenAddress"),
         description: isPreviewUrlNormalizationError(error)
-          ? "Enter an http or https URL."
+          ? t("review.preview.view.enterHttpUrl")
           : error instanceof Error
             ? error.message
-            : "An error occurred.",
+            : t("review.preview.view.errorOccurred"),
       });
     }
   };
@@ -310,8 +317,9 @@ export function PreviewView({
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: "Unable to change the browser tab",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: t("review.preview.view.unableChangeTab"),
+        description:
+          error instanceof Error ? error.message : t("review.preview.view.errorOccurred"),
       });
       return;
     }
@@ -388,7 +396,9 @@ export function PreviewView({
     snapshot,
   );
   const moveLabel =
-    moveTarget === "server" ? `Open in ${environmentLabel}'s browser` : "Open on this computer";
+    moveTarget === "server"
+      ? t("review.preview.view.openInEnvBrowser", { environment: environmentLabel })
+      : t("review.preview.view.openOnThisComputer");
   const handleMoveTab = async () => {
     if (!moveTarget || !tabId || !snapshot) return;
     const result = await openPreviewSession({
@@ -411,8 +421,9 @@ export function PreviewView({
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: "Unable to move the browser tab",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: t("review.preview.view.unableMoveTab"),
+        description:
+          error instanceof Error ? error.message : t("review.preview.view.errorOccurred"),
       });
       return;
     }
@@ -480,8 +491,9 @@ export function PreviewView({
     void operation(runtimeTabId).catch((error) => {
       toastManager.add({
         type: "error",
-        title: "Unable to update popped-out preview",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: t("review.preview.view.unableUpdatePopout"),
+        description:
+          error instanceof Error ? error.message : t("review.preview.view.errorOccurred"),
       });
     });
   };
@@ -502,8 +514,8 @@ export function PreviewView({
                 toastId,
                 stackedThreadToast({
                   type: "error",
-                  title: "Unable to copy recording path",
-                  description: "Clipboard API unavailable.",
+                  title: t("review.preview.view.unableCopyRecordingPath"),
+                  description: t("review.preview.view.clipboardUnavailable"),
                   actionProps: revealAction,
                 }),
               );
@@ -524,8 +536,11 @@ export function PreviewView({
                   toastId,
                   stackedThreadToast({
                     type: "error",
-                    title: "Unable to copy recording path",
-                    description: error instanceof Error ? error.message : "An error occurred.",
+                    title: t("review.preview.view.unableCopyRecordingPath"),
+                    description:
+                      error instanceof Error
+                        ? error.message
+                        : t("review.preview.view.errorOccurred"),
                     actionProps: revealAction,
                   }),
                 );
@@ -542,11 +557,13 @@ export function PreviewView({
               toastId,
               stackedThreadToast({
                 type: "success",
-                title: "Recording saved",
+                title: t("review.preview.view.recordingSaved"),
                 actionProps: revealAction,
                 data: {
                   secondaryActionProps: {
-                    children: pathCopied ? "Copied!" : "Copy path",
+                    children: pathCopied
+                      ? t("review.preview.view.copied")
+                      : t("review.preview.view.copyPath"),
                     disabled: pathCopied,
                     onClick: copyPath,
                   },
@@ -559,11 +576,11 @@ export function PreviewView({
           toastId = toastManager.add(
             stackedThreadToast({
               type: "success",
-              title: "Recording saved",
+              title: t("review.preview.view.recordingSaved"),
               actionProps: revealAction,
               data: {
                 secondaryActionProps: {
-                  children: "Copy path",
+                  children: t("review.preview.view.copyPath"),
                   onClick: copyPath,
                 },
                 secondaryActionVariant: "outline",
@@ -574,8 +591,9 @@ export function PreviewView({
         (error) => {
           toastManager.add({
             type: "error",
-            title: "Unable to stop recording",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: t("review.preview.view.unableStopRecording"),
+            description:
+              error instanceof Error ? error.message : t("review.preview.view.errorOccurred"),
           });
         },
       );
@@ -583,11 +601,12 @@ export function PreviewView({
     }
     if (record) {
       void startBrowserRecording(runtimeTabId, threadRef, tabId).catch((error) => {
-        const description = error instanceof Error ? error.message : "An error occurred.";
+        const description =
+          error instanceof Error ? error.message : t("review.preview.view.errorOccurred");
         if (isBrowserRecordingStartCancelledError(error)) return;
         toastManager.add({
           type: "error",
-          title: "Unable to start recording",
+          title: t("review.preview.view.unableStartRecording"),
           description,
         });
       });
@@ -605,7 +624,7 @@ export function PreviewView({
 
         const updateScreenshotToast = (
           type: "success" | "error" = "success",
-          title = "Screenshot saved",
+          title = t("review.preview.view.screenshotSaved"),
           description?: string,
         ) => {
           toastManager.update(
@@ -615,7 +634,9 @@ export function PreviewView({
               title,
               description,
               actionProps: {
-                children: imageCopied ? "Copied!" : "Copy image",
+                children: imageCopied
+                  ? t("review.preview.view.copied")
+                  : t("review.preview.view.copyImage"),
                 disabled: imageCopied,
                 onClick: copyImage,
               },
@@ -624,7 +645,9 @@ export function PreviewView({
                   {
                     id: "copy-path",
                     props: {
-                      children: pathCopied ? "Copied!" : "Copy path",
+                      children: pathCopied
+                        ? t("review.preview.view.copied")
+                        : t("review.preview.view.copyPath"),
                       disabled: pathCopied,
                       onClick: copyPath,
                     },
@@ -643,8 +666,8 @@ export function PreviewView({
           if (!navigator.clipboard?.writeText) {
             updateScreenshotToast(
               "error",
-              "Unable to copy screenshot path",
-              "Clipboard API unavailable.",
+              t("review.preview.view.unableCopyScreenshotPath"),
+              t("review.preview.view.clipboardUnavailable"),
             );
             return;
           }
@@ -661,8 +684,8 @@ export function PreviewView({
             (error) => {
               updateScreenshotToast(
                 "error",
-                "Unable to copy screenshot path",
-                error instanceof Error ? error.message : "An error occurred.",
+                t("review.preview.view.unableCopyScreenshotPath"),
+                error instanceof Error ? error.message : t("review.preview.view.errorOccurred"),
               );
             },
           );
@@ -681,8 +704,8 @@ export function PreviewView({
             (error) => {
               updateScreenshotToast(
                 "error",
-                "Unable to copy screenshot",
-                error instanceof Error ? error.message : "An error occurred.",
+                t("review.preview.view.unableCopyScreenshot"),
+                error instanceof Error ? error.message : t("review.preview.view.errorOccurred"),
               );
             },
           );
@@ -691,9 +714,9 @@ export function PreviewView({
         toastId = toastManager.add(
           stackedThreadToast({
             type: "success",
-            title: "Screenshot saved",
+            title: t("review.preview.view.screenshotSaved"),
             actionProps: {
-              children: "Copy image",
+              children: t("review.preview.view.copyImage"),
               onClick: copyImage,
             },
             data: {
@@ -701,7 +724,7 @@ export function PreviewView({
                 {
                   id: "copy-path",
                   props: {
-                    children: "Copy path",
+                    children: t("review.preview.view.copyPath"),
                     onClick: copyPath,
                   },
                 },
@@ -717,8 +740,9 @@ export function PreviewView({
       (error) => {
         toastManager.add({
           type: "error",
-          title: "Unable to capture screenshot",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: t("review.preview.view.unableCaptureScreenshot"),
+          description:
+            error instanceof Error ? error.message : t("review.preview.view.errorOccurred"),
         });
       },
     );
@@ -782,8 +806,8 @@ export function PreviewView({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not capture the picked element",
-            description: "The annotation was kept without the screenshot.",
+            title: t("review.preview.view.couldNotCapturePicked"),
+            description: t("review.preview.view.annotationKept"),
           }),
         );
       }
@@ -901,9 +925,7 @@ export function PreviewView({
         onPickElement={previewBridge && tabId && !isServerTab ? handlePickElement : undefined}
         pickActive={pickActive}
         pickDisabled={!tabId || isUnreachable}
-        pickDisabledReason={
-          isUnreachable ? "Page didn't load. Pick is unavailable until the page renders" : undefined
-        }
+        pickDisabledReason={isUnreachable ? t("review.preview.view.pickUnavailable") : undefined}
         leadingActions={
           activeProfileId !== browserDefaults.profileId ? (
             <Tooltip>

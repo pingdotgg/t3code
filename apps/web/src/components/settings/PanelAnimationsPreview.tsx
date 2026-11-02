@@ -1,8 +1,10 @@
 import { type CSSProperties, useState } from "react";
 
+import { useT } from "~/hooks/useI18n";
 import { cn } from "~/lib/utils";
 
 export function PanelAnimationsPreview({ durationMs }: { durationMs: number }) {
+  const t = useT();
   const [panelsOpen, setPanelsOpen] = useState(true);
   const transitionClass =
     "transition-[width,height,border-width] duration-(--preview-duration) ease-out motion-reduce:transition-none";
@@ -10,7 +12,7 @@ export function PanelAnimationsPreview({ durationMs }: { durationMs: number }) {
   return (
     <button
       type="button"
-      aria-label="Replay panel animation preview"
+      aria-label={t("settings.system.panelAnim.replayAria")}
       className="flex h-10 w-full cursor-pointer overflow-hidden rounded-lg border border-border bg-background p-1 shadow-xs/5 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
       onClick={() => setPanelsOpen((open) => !open)}
       style={{ "--preview-duration": `${durationMs}ms` } as CSSProperties}

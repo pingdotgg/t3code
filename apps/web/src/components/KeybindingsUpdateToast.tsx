@@ -1,3 +1,6 @@
+import { createTranslator } from "@t3tools/client-runtime/i18n";
+
+import { getUiLocale } from "../hooks/useI18n";
 import { appAtomRegistry, subscribeAtomChanges } from "../rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { primaryServerConfigAtom, primaryServerConfigEventAtom } from "../state/server";
@@ -11,12 +14,13 @@ export function startKeybindingsUpdateToasts(): () => void {
   return subscribeAtomChanges(primaryServerConfigEventAtom, (event) => {
     const decision = controller.handle(event);
     if (!decision) return;
+    const t = createTranslator(getUiLocale());
 
     if (decision._tag === "Success") {
       toastManager.add({
         type: "success",
-        title: "Keybindings updated",
-        description: "Keybindings configuration reloaded successfully.",
+        title: t("app.keybindings.updated"),
+        description: t("app.keybindings.reloaded"),
       });
       return;
     }
@@ -25,7 +29,7 @@ export function startKeybindingsUpdateToasts(): () => void {
     toastManager.add(
       stackedThreadToast({
         type: "warning",
-        title: "Invalid keybindings configuration",
+        title: t("app.keybindings.invalid"),
         description: (
           <KeybindingsConfigWarning
             message={decision.message}

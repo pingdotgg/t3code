@@ -26,6 +26,7 @@ import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
 import { APP_VERSION } from "~/branding";
 import { isConfirmDialogActive, requestConfirmDialog } from "~/confirmDialog";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
+import { useT } from "~/hooks/useI18n";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
 import { isElectron } from "~/env";
@@ -87,6 +88,7 @@ export function McpAppFrame(props: {
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
   const { app } = props;
+  const t = useT();
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -406,7 +408,7 @@ export function McpAppFrame(props: {
   if (closed) {
     return (
       <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-muted-foreground text-xs">
-        <span>The {app.server} app was closed</span>
+        <span>{t("chat.mcp.closed", { server: app.server })}</span>
         <Button
           size="xs"
           variant="ghost"
@@ -416,7 +418,7 @@ export function McpAppFrame(props: {
             setClosed(false);
           }}
         >
-          Show app
+          {t("chat.mcp.show")}
         </Button>
       </div>
     );
@@ -448,7 +450,7 @@ export function McpAppFrame(props: {
           >
             <span className="truncate">{app.server}</span>
             <Button
-              aria-label="Exit full screen"
+              aria-label={t("chat.mcp.exitFullscreen")}
               size="icon-sm"
               variant="ghost"
               onClick={() => setDisplayMode("inline")}
@@ -459,7 +461,7 @@ export function McpAppFrame(props: {
         ) : null}
         {navigatedAway ? (
           <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
-            The {app.server} app left its page and was stopped
+            {t("chat.mcp.leftPage", { server: app.server })}
           </p>
         ) : src !== null ? (
           <iframe

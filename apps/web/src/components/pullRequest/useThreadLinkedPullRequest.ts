@@ -17,6 +17,7 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { useLinkedThreadPullRequest } from "../ThreadStatusIndicators";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
+import { translateNow } from "../media/translateNow";
 /** Relink replaced closed/merged requests to the newer open request on the same branch, moving its panel. */
 export function useThreadLinkedPullRequest(input: {
   readonly serverThreadRef: ScopedThreadRef | null;
@@ -89,8 +90,9 @@ export function useThreadLinkedPullRequest(input: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to update the thread pull request",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: translateNow("review.extra.unable.to.update.the.thread.pull.request"),
+          description:
+            error instanceof Error ? error.message : translateNow("review.extra.an.error.occurred"),
         }),
       );
     });

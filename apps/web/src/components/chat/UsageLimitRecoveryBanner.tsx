@@ -1,3 +1,5 @@
+import { getUiLocale, useT } from "../../hooks/useI18n";
+import { createTranslator } from "@t3tools/client-runtime/i18n";
 import {
   type OrchestrationV2LimitRecovery,
   type OrchestrationV2LimitRecoveryUpdate,
@@ -24,21 +26,23 @@ type RecoveryProps = {
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
+  const t = createTranslator(getUiLocale());
   const { runId, resetAt, stoppedAt, timestampFormat } = props;
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
   return {
     id: `usage-limit-recovery:${runId}`,
     variant: "warning",
     icon: <GaugeIcon />,
-    title: "Usage limit reached",
+    title: t("chat.recovery.title"),
     description: resetAt
-      ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
-      : "Reset time unavailable; retry manually",
+      ? t("chat.recovery.resets", { time: formatUpcomingTimestamp(resetAt, timestampFormat) })
+      : t("chat.recovery.resetUnavailable"),
     actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
   };
 }
 
 function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: RecoveryProps) {
+  const t = useT();
   const [pending, setPending] = useState(false);
 
   const scheduled =
@@ -59,8 +63,8 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
     if (action === "snooze" && !snoozed && Date.parse(resetAt) <= Date.now()) {
       toastManager.add({
         type: "error",
-        title: "Could not snooze thread",
-        description: "The reset time has passed. Retry the thread manually.",
+        title: t("chat.recovery.couldNotSnooze"),
+        description: t("chat.recovery.resetPassed"),
       });
       // The deadline timer can lag after a throttled tab or sleep; disable now.
       deadlineStore(Date.parse(resetAt)).refresh();
@@ -76,8 +80,11 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
     } catch (cause) {
       toastManager.add({
         type: "error",
-        title: action === "resume" ? "Could not change auto-resume" : "Could not snooze thread",
-        description: cause instanceof Error ? cause.message : "An error occurred.",
+        title:
+          action === "resume"
+            ? t("chat.recovery.couldNotChangeAutoResume")
+            : t("chat.recovery.couldNotSnooze"),
+        description: cause instanceof Error ? cause.message : t("chat.feedback.errorOccurred"),
       });
     }
     setPending(false);
@@ -86,7 +93,11 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
   return (
     <>
       <Button size="xs" variant="ghost" disabled={pending} onClick={() => void toggle("resume")}>
-        {pending ? "Saving..." : scheduled ? "Cancel auto-resume" : "Resume at reset"}
+        {pending
+          ? t("chat.recovery.saving")
+          : scheduled
+            ? t("chat.recovery.cancelAutoResume")
+            : t("chat.recovery.resumeAtReset")}
       </Button>
       <Button
         size="xs"
@@ -94,7 +105,11 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
         disabled={pending || (!snoozed && resetPassed)}
         onClick={() => void toggle("snooze")}
       >
-        {pending ? "Saving..." : snoozed ? "Wake now" : "Snooze until reset"}
+        {pending
+          ? t("chat.recovery.saving")
+          : snoozed
+            ? t("chat.recovery.wakeNow")
+            : t("chat.recovery.snoozeUntilReset")}
       </Button>
     </>
   );

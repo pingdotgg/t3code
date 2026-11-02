@@ -3,6 +3,7 @@ import { MessageSquareIcon, ServerIcon, SmartphoneIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { useT } from "../../hooks/useI18n";
 import { MobileClientsUserProfilePage } from "./MobileClientsUserProfilePage";
 import { T3ChatUserProfilePage } from "./T3ChatUserProfilePage";
 import { T3ConnectUserProfilePage } from "./T3ConnectUserProfilePage";
@@ -10,18 +11,21 @@ import { T3ConnectUserProfilePage } from "./T3ConnectUserProfilePage";
 export const T3_CONNECT_ACCOUNT_PAGES = [
   {
     label: "Mobile clients",
+    labelKey: "misc.clerk.page.mobileClients",
     url: "mobile-clients",
     icon: <SmartphoneIcon className="size-4" />,
     content: <MobileClientsUserProfilePage />,
   },
   {
     label: "T3 Connect",
+    labelKey: "misc.clerk.page.t3Connect",
     url: "t3-connect",
     icon: <ServerIcon className="size-4" />,
     content: <T3ConnectUserProfilePage />,
   },
   {
     label: "T3 Chat",
+    labelKey: "misc.clerk.page.t3Chat",
     url: "t3-chat",
     icon: <MessageSquareIcon className="size-4" />,
     content: <T3ChatUserProfilePage />,
@@ -37,6 +41,7 @@ export function useT3ConnectAccountPage(): {
   readonly open: ((page?: T3ConnectAccountPageUrl) => void) | null;
   readonly portals: ReactNode;
 } {
+  const t = useT();
   const clerk = useClerk();
   const { isSignedIn } = useAuth();
   const [targets, setTargets] = useState<PortalTargets>({});
@@ -47,7 +52,7 @@ export function useT3ConnectAccountPage(): {
     clerk.openUserProfile({
       __experimental_startPath: `/${page}`,
       customPages: T3_CONNECT_ACCOUNT_PAGES.map((page) => ({
-        label: page.label,
+        label: t(page.labelKey),
         url: page.url,
         mount: (element: HTMLDivElement) => setTarget(`content:${page.url}`, element),
         unmount: () => setTarget(`content:${page.url}`, undefined),

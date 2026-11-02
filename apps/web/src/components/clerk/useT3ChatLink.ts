@@ -13,17 +13,19 @@ import {
 import { readLocalApi } from "../../localApi";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
+import { translateNow } from "../../lib/miscTranslateNow";
 
 function reportFailure(title: string, cause: unknown) {
   const traceId = findErrorTraceId(cause);
   toastManager.add({
     type: "error",
     title,
-    description: cause instanceof Error ? cause.message : "Try again.",
+    description:
+      cause instanceof Error ? cause.message : translateNow("misc.clerk.tryAgainFallback"),
     data: traceId
       ? {
           secondaryActionProps: {
-            children: "Copy trace ID",
+            children: translateNow("misc.clerk.copyTraceId"),
             onClick: () => void navigator.clipboard?.writeText(traceId),
           },
         }
@@ -53,7 +55,7 @@ export function useT3ChatLink() {
         ?.shell.openExternal(result.value)
         .catch(() => undefined);
     } else if (!isAtomCommandInterrupted(result)) {
-      reportFailure("Could not start linking", squashAtomCommandFailure(result));
+      reportFailure(translateNow("misc.clerk.linkStartFailed"), squashAtomCommandFailure(result));
     }
     setPending(null);
   };
@@ -67,7 +69,7 @@ export function useT3ChatLink() {
       setLinkUrl(null);
       linkState.refresh();
     } else if (!isAtomCommandInterrupted(result)) {
-      reportFailure("Could not unlink T3 Chat", squashAtomCommandFailure(result));
+      reportFailure(translateNow("misc.clerk.unlinkFailed"), squashAtomCommandFailure(result));
     }
     setPending(null);
   };

@@ -1,3 +1,4 @@
+import { useT } from "../../hooks/useI18n";
 import {
   buildTraitsTriggerDisplay,
   getDescriptorStringValue,
@@ -101,9 +102,10 @@ type TraitsPersistence =
     };
 
 function DefaultBadge() {
+  const t = useT();
   return (
     <Badge variant="outline" size="sm" className="min-w-0">
-      Default
+      {t("chat.traits.default")}
     </Badge>
   );
 }
@@ -373,6 +375,7 @@ export const ULTRATHINK_IN_BODY_NOTE =
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.';
 
 const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelectionInput) {
+  const t = useT();
   const traits = useTraitsSelection(props);
   const {
     descriptors,
@@ -467,7 +470,7 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
               {(["on", "off"] as const).map((value) => (
                 <MenuRadioItem key={value} value={value} hideIndicator closeOnClick>
                   <span className="flex w-full min-w-0 items-center justify-between gap-3">
-                    <span>{value === "on" ? "On" : "Off"}</span>
+                    <span>{value === "on" ? t("chat.effort.on") : t("chat.effort.off")}</span>
                   </span>
                 </MenuRadioItem>
               ))}

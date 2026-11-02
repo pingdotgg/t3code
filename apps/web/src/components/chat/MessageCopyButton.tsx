@@ -1,3 +1,4 @@
+import { useT } from "../../hooks/useI18n";
 import { memo, useRef } from "react";
 import { Check, Copy } from "lucide";
 import { Button } from "../ui/button";
@@ -13,7 +14,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export const MessageCopyButton = memo(function MessageCopyButton({
   text,
-  label = "Copy message",
+  label: labelProp,
   icon = Copy,
   extraFlavors,
   size = "xs",
@@ -28,6 +29,8 @@ export const MessageCopyButton = memo(function MessageCopyButton({
   variant?: "outline" | "ghost";
   className?: string;
 }) {
+  const t = useT();
+  const label = labelProp ?? t("chat.copy.message");
   const ref = useRef<HTMLButtonElement>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
     onCopy: () => showAnchoredCopySuccessToast(ref),

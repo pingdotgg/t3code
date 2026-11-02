@@ -10,6 +10,7 @@ import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { resolveScopedSettingsTargets, selectScopedSettingsEnvironments } from "./scopedSettings";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import { selectSingleEnvironmentScope } from "./settingsScopeAxis";
+import { useT } from "../../hooks/useI18n";
 
 type ProjectFileMember = readonly [
   environmentId: EnvironmentId,
@@ -56,18 +57,19 @@ function useMemberProjectFiles(scope: ReturnType<typeof resolveSettingsScope>) {
 }
 
 function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironment: boolean) {
+  const t = useT();
   const groups = useSettingsProjectGroups();
   const { environments: availableEnvironments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const search = singleEnvironment
     ? selectSingleEnvironmentScope(
         rawSearch,
-        resolveSettingsScope(rawSearch, groups, availableEnvironments),
+        resolveSettingsScope(rawSearch, groups, availableEnvironments, t),
         availableEnvironments,
         primaryEnvironmentId,
       )
     : rawSearch;
-  const scope = resolveSettingsScope(search, groups, availableEnvironments);
+  const scope = resolveSettingsScope(search, groups, availableEnvironments, t);
   const projectFiles = useMemberProjectFiles(scope);
   const selected = selectScopedSettingsEnvironments(
     scope,

@@ -9,6 +9,7 @@ import { Maximize2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
+import { useT } from "~/hooks/useI18n";
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
 
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
@@ -26,6 +27,7 @@ export function HtmlRenderFrame(props: {
   readonly threadRef: ScopedThreadRef | undefined;
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
+  const t = useT();
   const { attachmentId, title } = props.htmlRender;
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
   const observeBox = (box: HTMLDivElement) => {
@@ -83,7 +85,7 @@ export function HtmlRenderFrame(props: {
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="Open full screen"
+                    aria-label={t("chat.html.openFullscreen")}
                     size="icon-xs"
                     variant="glass"
                     onClick={async () => {
@@ -95,8 +97,8 @@ export function HtmlRenderFrame(props: {
                       else
                         toastManager.add({
                           type: "error",
-                          title: "Page unavailable",
-                          description: "Reconnect to the environment and try again.",
+                          title: t("chat.html.unavailable"),
+                          description: t("chat.html.reconnect"),
                         });
                     }}
                   />
@@ -104,7 +106,7 @@ export function HtmlRenderFrame(props: {
               >
                 <Maximize2Icon className="size-3.5" />
               </TooltipTrigger>
-              <TooltipPopup side="left">Open full screen</TooltipPopup>
+              <TooltipPopup side="left">{t("chat.html.openFullscreen")}</TooltipPopup>
             </Tooltip>
           </div>
           {expandedSrc !== null ? (

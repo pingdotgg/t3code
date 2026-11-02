@@ -1,5 +1,7 @@
 import { type SlowRpcAckRequest, subscribeSlowRpcAckRequests } from "../rpc/requestLatencyState";
 import { toastManager } from "./ui/toast";
+import { createTranslator } from "@t3tools/client-runtime/i18n";
+import { getUiLocale, useT } from "../hooks/useI18n";
 
 function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): string {
   const count = requests.length;
@@ -7,10 +9,15 @@ function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): strin
     Math.min(...requests.map((request) => request.thresholdMs)) / 1000,
   );
 
-  return `${count} request${count === 1 ? "" : "s"} waiting longer than ${thresholdSeconds}s.`;
+  const t = createTranslator(getUiLocale());
+  return t(count === 1 ? "appB.slowRpc.descriptionOne" : "appB.slowRpc.descriptionMany", {
+    count,
+    seconds: thresholdSeconds,
+  });
 }
 
 function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRequest> }) {
+  const t = useT();
   return (
     <ul className="space-y-2.5 text-xs text-muted-foreground">
       {requests.map((request) => (
@@ -20,7 +27,7 @@ function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRe
         >
           <div className="wrap-break-word font-medium text-foreground">{request.tag}</div>
           <div className="mt-0.5 text-3xs opacity-75">
-            Started {new Date(request.startedAt).toLocaleTimeString()}
+            {t("appB.slowRpc.started", { time: new Date(request.startedAt).toLocaleTimeString() })}
           </div>
         </li>
       ))}
@@ -41,15 +48,19 @@ export function startSlowRpcRequestToasts(): () => void {
       return;
     }
 
+    const t = createTranslator(getUiLocale());
     const nextToast = {
       data: {
         expandableContent: <SlowRequestDetails requests={slowRequests} />,
         expandableDescriptionTrigger: true,
-        expandableLabels: { collapse: "Hide requests", expand: "Show requests" },
+        expandableLabels: {
+          collapse: t("appB.slowRpc.hide"),
+          expand: t("appB.slowRpc.show"),
+        },
       },
       description: describeSlowRequests(slowRequests),
       timeout: 0,
-      title: "Some requests are slow",
+      title: t("appB.slowRpc.title"),
       type: "warning" as const,
     };
 

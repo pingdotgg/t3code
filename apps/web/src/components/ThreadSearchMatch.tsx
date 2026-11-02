@@ -5,6 +5,8 @@ import {
   type SearchRange,
 } from "@t3tools/shared/paletteSearch";
 
+import { useT } from "../hooks/useI18n";
+
 /** `text` with each range in semibold foreground. */
 function HighlightedSearchText(props: { text: string; ranges: ReadonlyArray<SearchRange> }) {
   if (props.ranges.length === 0) return props.text;
@@ -36,11 +38,12 @@ export function ThreadSearchMatchExcerpt(props: {
     readonly query: string;
   };
 }) {
+  const t = useT();
   const isUser = props.match.source === "user";
   return (
     <span className="truncate text-xs text-muted-foreground/85">
       <span className={isUser ? "text-info-foreground" : "text-success-foreground"}>
-        {isUser ? "You:" : "Agent:"}
+        {isUser ? t("appB.searchMatch.you") : t("appB.searchMatch.agent")}
       </span>{" "}
       <HighlightedSearchText
         text={props.match.snippet}

@@ -45,10 +45,15 @@ import {
 } from "./settingsSearch";
 
 function useFontDefaultFamilies() {
+  const t = useT();
   const settings = useScopedSettings();
   const [defaults] = useState(() => ({
-    sans: resolveDefaultFamilyLabel(DEFAULT_SANS_FONT_STACK) ?? "System default",
-    code: resolveDefaultFamilyLabel(DEFAULT_CODE_FONT_STACK) ?? "System monospace",
+    sans:
+      resolveDefaultFamilyLabel(DEFAULT_SANS_FONT_STACK) ??
+      t("settings.system.typography.systemDefault"),
+    code:
+      resolveDefaultFamilyLabel(DEFAULT_CODE_FONT_STACK) ??
+      t("settings.system.typography.systemMonospace"),
   }));
   return {
     sans: defaults.sans,

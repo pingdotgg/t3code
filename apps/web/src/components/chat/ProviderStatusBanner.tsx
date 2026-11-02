@@ -3,7 +3,30 @@ import { memo } from "react";
 import { InfoIcon, XIcon } from "lucide-react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button, InlineButton } from "../ui/button";
+import type { TranslateFn } from "@t3tools/client-runtime/i18n";
+import { useT } from "../../hooks/useI18n";
 import { formatProviderDriverKindLabel } from "../../providerModels";
+
+const providerStatusEnglish = {
+  "chat.provider.install": "Open provider setup to install {provider} on this environment.",
+  "chat.provider.signInGoogle": "Open provider setup to sign in with Google.",
+  "chat.provider.signIn": "Open provider setup to sign in.",
+  "chat.provider.signInCli": "Sign in via the CLI to authenticate again.",
+  "chat.provider.noModels": "No models are available for this provider.",
+  "chat.provider.unavailable": "{provider} provider is unavailable.",
+  "chat.provider.limited": "{provider} provider has limited availability.",
+} as const;
+
+function providerStatusText(
+  t: TranslateFn | undefined,
+  key: keyof typeof providerStatusEnglish,
+  values?: Record<string, string | number>,
+) {
+  if (t) return t(key, values);
+  return providerStatusEnglish[key].replace(/\{(\w+)\}/g, (_, name: string) =>
+    String(values?.[name] ?? ""),
+  );
+}
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 function getIncompatibleVersion(status: ServerProvider) {
@@ -57,7 +80,7 @@ export function hasProviderSetup(status: ServerProvider): boolean {
   );
 }
 
-export function getProviderStatusMessage(status: ServerProvider): string {
+export function getProviderStatusMessage(status: ServerProvider, t?: TranslateFn): string {
   if (
     status.auth.status !== "unauthenticated" &&
     status.compatibilityAdvisory?.status === "broken" &&
@@ -68,21 +91,23 @@ export function getProviderStatusMessage(status: ServerProvider): string {
   if (status.message) return status.message;
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   if (!status.installed && hasProviderSetup(status)) {
-    return `Open provider setup to install ${formatProviderDriverKindLabel(status.driver)} on this environment.`;
+    return providerStatusText(t, "chat.provider.install", {
+      provider: formatProviderDriverKindLabel(status.driver),
+    });
   }
   if (status.auth.status === "unauthenticated") {
     if (hasProviderSetup(status)) {
       return status.driver === "antigravity"
-        ? "Open provider setup to sign in with Google."
-        : "Open provider setup to sign in.";
+        ? providerStatusText(t, "chat.provider.signInGoogle")
+        : providerStatusText(t, "chat.provider.signIn");
     }
-    return "Sign in via the CLI to authenticate again.";
+    return providerStatusText(t, "chat.provider.signInCli");
   }
   return status.status === "ready"
-    ? "No models are available for this provider."
+    ? providerStatusText(t, "chat.provider.noModels")
     : status.status === "error"
-      ? `${providerName} provider is unavailable.`
-      : `${providerName} provider has limited availability.`;
+      ? providerStatusText(t, "chat.provider.unavailable", { provider: providerName })
+      : providerStatusText(t, "chat.provider.limited", { provider: providerName });
 }
 
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
@@ -94,6 +119,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   status: ServerProvider | null;
 }) {
+  const t = useT();
   if (!status || getProviderStatusBannerKey(status) === null) {
     return null;
   }
@@ -102,11 +128,14 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
   const incompatible = getIncompatibleVersion(status);
   const title = isUnauthenticated
-    ? `${providerName} is unauthenticated`
+    ? t("chat.provider.unauthenticated", { provider: providerName })
     : incompatible
-      ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
-      : `${providerName} provider status`;
-  const message = incompatible?.message ?? getProviderStatusMessage(status);
+      ? t(incompatible.status === "broken" ? "chat.provider.broken" : "chat.provider.unsupported", {
+          provider: providerName,
+          version: status.version ?? "",
+        })
+      : t("chat.provider.status", { provider: providerName });
+  const message = incompatible?.message ?? getProviderStatusMessage(status, t);
   const isWarning =
     incompatible?.status !== "broken" && (status.status === "warning" || incompatible !== null);
 
@@ -129,13 +158,16 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
           </Tooltip>
           {onOpenProviderSetup && hasProviderSetup(status) ? (
             <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>
-              Open provider setup
+              {t("chat.provider.openSetup")}
             </InlineButton>
           ) : null}
         </AlertDescription>
         <AlertAction>
           <Button
-            aria-label={`Dismiss ${providerName} provider ${status.status}`}
+            aria-label={t("chat.provider.dismiss", {
+              provider: providerName,
+              status: status.status,
+            })}
             onClick={onDismiss}
             size="icon-xs"
             variant="ghost-muted"

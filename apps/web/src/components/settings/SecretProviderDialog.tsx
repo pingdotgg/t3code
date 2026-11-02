@@ -2,6 +2,7 @@ import type { EnvironmentId, SecretProviderConfig, SecretProviderId } from "@t3t
 import * as Result from "effect/Result";
 import { useState } from "react";
 
+import { useT } from "../../hooks/useI18n";
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import {
@@ -35,6 +36,7 @@ export function SecretProviderDialog({
   readonly existingIds: ReadonlySet<string>;
   readonly existing?: { readonly id: SecretProviderId; readonly config: SecretProviderConfig };
 }) {
+  const t = useT();
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [draft, setDraft] = useState<SecretProviderDraft>(
     existing ? draftFromSecretProvider(existing.config) : { name: "", account: "" },
@@ -44,6 +46,7 @@ export function SecretProviderDialog({
     draft,
     existingIds,
     existing ? { mode: "edit", id: existing.id } : { mode: "add" },
+    t,
   );
   const issues = Result.isFailure(result) ? result.failure : {};
   const nameError = submitted ? issues.name : undefined;
@@ -67,11 +70,12 @@ export function SecretProviderDialog({
       <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {existing ? `Edit ${existing.config.label}` : "Add a 1Password provider"}
+            {existing
+              ? t("settings.system.secretDialog.edit", { label: existing.config.label })
+              : t("settings.system.secretDialog.add")}
           </DialogTitle>
           <DialogDescription>
-            Provider variables on {environmentLabel} can read values from it by name. Values are
-            read with the op CLI on that server when a provider starts.
+            {t("settings.system.secretDialog.description", { label: environmentLabel })}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -84,10 +88,10 @@ export function SecretProviderDialog({
             }}
           >
             <div className="grid gap-1.5">
-              <Label htmlFor="secret-provider-name">Name</Label>
+              <Label htmlFor="secret-provider-name">{t("settings.system.secretDialog.name")}</Label>
               <Input
                 id="secret-provider-name"
-                placeholder="Personal"
+                placeholder={t("settings.system.secretDialog.namePlaceholder")}
                 value={draft.name}
                 onChange={(event) => update({ name: event.target.value })}
                 maxLength={64}
@@ -108,7 +112,9 @@ export function SecretProviderDialog({
               ) : null}
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="secret-provider-account">Account</Label>
+              <Label htmlFor="secret-provider-account">
+                {t("settings.system.secretDialog.account")}
+              </Label>
               <Input
                 id="secret-provider-account"
                 placeholder="my.1password.com"
@@ -131,22 +137,23 @@ export function SecretProviderDialog({
                 </p>
               ) : null}
               <p className="text-xs text-muted-foreground">
-                The account shorthand, sign-in address without https://, or ID that op account list
-                shows.
+                {t("settings.system.secretDialog.accountHint")}
               </p>
             </div>
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            {t("settings.system.secretDialog.cancel")}
           </Button>
           <Button
             type="submit"
             form="secret-provider-form"
             disabled={submitted && Result.isFailure(result)}
           >
-            {existing ? "Save changes" : "Add provider"}
+            {existing
+              ? t("settings.system.secretDialog.saveChanges")
+              : t("settings.system.secretDialog.addProvider")}
           </Button>
         </DialogFooter>
       </DialogPopup>

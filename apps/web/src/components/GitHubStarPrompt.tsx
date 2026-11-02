@@ -1,8 +1,10 @@
+import { createTranslator } from "@t3tools/client-runtime/i18n";
 import { type EnvironmentId, SourceControlProviderKind } from "@t3tools/contracts";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 import { StarIcon } from "lucide-react";
 
+import { getUiLocale } from "../hooks/useI18n";
 import { getLocalStorageItem, setLocalStorageItem } from "../hooks/useLocalStorage";
 import { readLocalApi } from "../localApi";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -25,14 +27,15 @@ function dismiss() {
 
 // Every close path, including both buttons, runs `onClose`, which saves the dismissal.
 function showStarPrompt() {
+  const t = createTranslator(getUiLocale());
   const close = () => toastManager.close(id);
   const id = toastManager.add({
-    title: "Enjoying T3 Code?",
-    description: "Give us a star on GitHub to let us know!",
+    title: t("app.starPrompt.title"),
+    description: t("app.starPrompt.description"),
     timeout: 0,
     onClose: dismiss,
     actionProps: {
-      children: "Star on GitHub",
+      children: t("app.starPrompt.star"),
       onClick: () => {
         close();
         void readLocalApi()
@@ -43,7 +46,7 @@ function showStarPrompt() {
     data: {
       actionLayout: "stacked-end",
       leadingIcon: <StarIcon aria-hidden className="size-4 text-warning-foreground" />,
-      secondaryActionProps: { children: "Dismiss", onClick: close },
+      secondaryActionProps: { children: t("app.starPrompt.dismiss"), onClick: close },
       secondaryActionVariant: "ghost",
     },
   });

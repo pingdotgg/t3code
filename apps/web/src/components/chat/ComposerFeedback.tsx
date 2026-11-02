@@ -1,3 +1,5 @@
+import { getUiLocale } from "../../hooks/useI18n";
+import { createTranslator } from "@t3tools/client-runtime/i18n";
 import {
   codexFeedbackNotice,
   type CodexFeedbackSubmission,
@@ -13,6 +15,7 @@ export function feedbackBannerItem(
   submission: CodexFeedbackSubmission,
   onDismiss: () => void,
 ): ComposerBannerStackItem | null {
+  const t = createTranslator(getUiLocale());
   const notice = codexFeedbackNotice(submission);
   if (!notice) return null;
   return {
@@ -31,18 +34,19 @@ export function feedbackBannerItem(
               (error: unknown) => {
                 toastManager.add({
                   type: "error",
-                  title: "Could not copy thread ID",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  title: t("chat.feedback.couldNotCopyId"),
+                  description:
+                    error instanceof Error ? error.message : t("chat.feedback.errorOccurred"),
                 });
               },
             );
           }}
         >
-          Copy ID
+          {t("chat.feedback.copyId")}
         </Button>
       ) : undefined,
     ...(submission.status !== "uploading"
-      ? { dismissLabel: "Dismiss feedback notice", onDismiss }
+      ? { dismissLabel: t("chat.feedback.dismiss"), onDismiss }
       : {}),
   };
 }

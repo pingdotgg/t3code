@@ -14,6 +14,7 @@ import {
 } from "../ui/alert-dialog";
 import { Button, InlineButton } from "../ui/button";
 import { useT3ConnectAccountPage } from "./T3ConnectAccountPages";
+import { useT } from "../../hooks/useI18n";
 
 export function RemoveT3ConnectEnvironmentDialog({
   environmentLabel,
@@ -26,6 +27,7 @@ export function RemoveT3ConnectEnvironmentDialog({
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
 }) {
+  const t = useT();
   const accountPage = useT3ConnectAccountPage();
   const discovery = useRelayEnvironmentDiscovery();
   const registration = environmentId
@@ -46,10 +48,10 @@ export function RemoveT3ConnectEnvironmentDialog({
         openAccountPage();
       }}
     >
-      T3 Connect settings
+      {t("misc.clerk.remove.settingsLink")}
     </InlineButton>
   ) : (
-    "T3 Connect settings"
+    t("misc.clerk.remove.settingsLink")
   );
 
   return (
@@ -62,30 +64,34 @@ export function RemoveT3ConnectEnvironmentDialog({
       >
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {shown.label} from this device?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This forgets its pairing, credentials, and cached threads here.
-            </AlertDialogDescription>
+            <AlertDialogTitle>
+              {t("misc.clerk.remove.title", { label: shown.label ?? "" })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("misc.clerk.remove.forgets")}</AlertDialogDescription>
             <AlertDialogDescription>
               {shown.registration === "registered" ? (
                 <>
-                  It stays on your T3 Connect account and keeps its host space. Deregister it in{" "}
-                  {accountPageLink} to free it.
+                  {t("misc.clerk.remove.registeredBefore")}
+                  {accountPageLink}
+                  {t("misc.clerk.remove.registeredAfter")}
                 </>
               ) : shown.registration === "unregistered" ? (
-                "It's no longer on your T3 Connect account."
+                t("misc.clerk.remove.unregistered")
               ) : (
                 <>
-                  This doesn't change your T3 Connect account. To deregister it there, use{" "}
-                  {accountPageLink}.
+                  {t("misc.clerk.remove.unknownBefore")}
+                  {accountPageLink}
+                  {t("misc.clerk.remove.unknownAfter")}
                 </>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {t("misc.common.cancel")}
+            </AlertDialogClose>
             <Button variant="destructive" onClick={onConfirm}>
-              Remove from this device
+              {t("misc.clerk.remove.confirm")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

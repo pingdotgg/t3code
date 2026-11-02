@@ -45,6 +45,7 @@ function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void })
 }
 
 function SettingsScopeBoundary({ pathname, children }: { pathname: string; children: ReactNode }) {
+  const t = useT();
   const { scope, connectedEnvironments } = useSettingsScope();
   const { environments } = useEnvironments();
   const hash = useLocation({ select: (location) => location.hash });
@@ -65,8 +66,8 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
         eligibleEnvironmentIds={autoSettlementAvailability.eligibleEnvironmentIds}
       >
         {autoSettlementAvailability.eligibleEnvironmentIds.length > 0
-          ? `${searchTarget.title} requires a supporting environment. Choose one to continue.`
-          : `${searchTarget.title} requires a supporting environment. Connect or update an environment to continue.`}
+          ? t("misc.routes.settings.needsSupportChoose", { title: searchTarget.title })
+          : t("misc.routes.settings.needsSupportConnect", { title: searchTarget.title })}
       </SettingsScopeNotice>
     );
   }
@@ -83,7 +84,7 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
         : "all";
     return (
       <SettingsScopeNotice target={target} targetId={hash}>
-        {`${searchTarget.title} is not available for the selected target. Choose its owning scope to continue.`}
+        {t("misc.routes.settings.notAvailable", { title: searchTarget.title })}
       </SettingsScopeNotice>
     );
   }
@@ -100,7 +101,7 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
     return (
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
-          Reconnect {scope.label} to change its settings.
+          {t("misc.routes.settings.reconnect", { label: scope.label })}
         </p>
       </SettingsPageContainer>
     );
@@ -109,7 +110,8 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
 }
 
 function SettingsContentLayout() {
-  const contentArea = workspaceAreaProps("settings", 1, "Settings content");
+  const t = useT();
+  const contentArea = workspaceAreaProps("settings", 1, t("misc.routes.settings.contentArea"));
   const location = useLocation();
   const { search, environment } = useSettingsScope();
   const contentScopeKey =
@@ -119,7 +121,7 @@ function SettingsContentLayout() {
   const [restoreSignal, setRestoreSignal] = useState(0);
 
   return (
-    <AppRouteModal label="Settings">
+    <AppRouteModal label={t("misc.routes.settings.title")}>
       <div className="relative flex min-h-0 flex-1">
         <SettingsSidebarNav pathname={location.pathname} />
         <div {...contentArea} className="flex min-h-0 min-w-0 flex-1 flex-col">

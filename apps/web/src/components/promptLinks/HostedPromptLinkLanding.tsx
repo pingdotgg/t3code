@@ -18,6 +18,8 @@ import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
+import { useT } from "~/hooks/useI18n";
+import { translateNow } from "~/lib/miscTranslateNow";
 
 const OPENER_STORAGE_KEY = "t3code:prompt-link-opener";
 const Opener = Schema.NullOr(Schema.Literals(["app", "browser"]));
@@ -34,7 +36,10 @@ function summarize(
   if (url.pathname !== "/new") {
     const prompt = parseThreadLinkPrompt(url.search);
     return prompt.ok
-      ? { ok: true, value: { prompt: prompt.value, details: ["Opens one of your threads."] } }
+      ? {
+          ok: true,
+          value: { prompt: prompt.value, details: [translateNow("misc.promptLinks.opensThread")] },
+        }
       : prompt;
   }
   const link = parseNewThreadLink(url.search);
@@ -43,7 +48,10 @@ function summarize(
     const { owner, name, number } = link.value.pullRequest;
     return {
       ok: true,
-      value: { prompt: link.value.prompt, details: [`Pull request ${owner}/${name}#${number}`] },
+      value: {
+        prompt: link.value.prompt,
+        details: [translateNow("misc.promptLinks.pullRequest", { owner, name, number })],
+      },
     };
   }
   const { repository, provider, model } = link.value;
@@ -52,8 +60,19 @@ function summarize(
     value: {
       prompt: link.value.prompt,
       details: [
-        repository ? `Repository ${repository.owner}/${repository.name}` : "No project",
-        ...(provider ? [`Model ${model ? `${provider} ${model}` : provider}`] : []),
+        repository
+          ? translateNow("misc.promptLinks.repository", {
+              owner: repository.owner,
+              name: repository.name,
+            })
+          : translateNow("misc.promptLinks.noProject"),
+        ...(provider
+          ? [
+              translateNow("misc.promptLinks.model", {
+                value: model ? `${provider} ${model}` : provider,
+              }),
+            ]
+          : []),
       ],
     },
   };
@@ -98,6 +117,7 @@ function HostedPromptLinkLanding({
   readonly openInAppRemembered: boolean;
   readonly onChoose: (choice: "app" | "browser", remember: boolean) => void;
 }) {
+  const t = useT();
   const summary = summarize(appPath);
   const [remember, setRemember] = useState(false);
   const deepLink = promptLinkDeepLink(appPath);
@@ -114,7 +134,10 @@ function HostedPromptLinkLanding({
   if (!summary.ok) {
     return (
       <StandalonePage>
-        <StandalonePageHeader title="Could not open the link" description={summary.error} />
+        <StandalonePageHeader
+          title={t("misc.promptLinks.couldNotOpen")}
+          description={summary.error}
+        />
       </StandalonePage>
     );
   }
@@ -123,15 +146,19 @@ function HostedPromptLinkLanding({
   return (
     <StandalonePage>
       <StandalonePageHeader
-        title="Open this prompt"
-        description="It opens as a draft. Nothing runs until you press Send."
+        title={t("misc.promptLinks.landing.title")}
+        description={t("misc.promptLinks.landing.description")}
       />
       {prompt !== null && prompt.hiddenCharacters > 0 ? (
         <Alert className="mt-5" variant="error">
-          <AlertTitle>This prompt had hidden characters, it may be malicious</AlertTitle>
+          <AlertTitle>{t("misc.promptLinks.hiddenTitle")}</AlertTitle>
           <AlertDescription>
-            T3 Code removed {prompt.hiddenCharacters} hidden character
-            {prompt.hiddenCharacters === 1 ? "" : "s"}. Read the prompt before you send it.
+            {t(
+              prompt.hiddenCharacters === 1
+                ? "misc.promptLinks.hiddenDescription.one"
+                : "misc.promptLinks.hiddenDescription.other",
+              { count: prompt.hiddenCharacters },
+            )}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -143,20 +170,22 @@ function HostedPromptLinkLanding({
       <p className="mt-3 text-xs text-muted-foreground">{details.join(" · ")}</p>
       <div className="mt-6 flex flex-wrap gap-2">
         <Button render={<a href={deepLink} />} onClick={() => onChoose("app", remember)}>
-          {onPhone ? "Open in app" : "Open in desktop app"}
+          {onPhone
+            ? t("misc.promptLinks.landing.openInApp")
+            : t("misc.promptLinks.landing.openInDesktop")}
         </Button>
         {canContinue ? (
           <Button variant="outline" onClick={() => onChoose("browser", remember)}>
-            Continue here
+            {t("misc.promptLinks.landing.continueHere")}
           </Button>
         ) : null}
         <Button variant="ghost" render={<a href={DESKTOP_DOWNLOAD_URL} />}>
-          Get T3 Code
+          {t("misc.promptLinks.landing.getT3")}
         </Button>
       </div>
       <label className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
         <Checkbox checked={remember} onCheckedChange={(checked) => setRemember(checked === true)} />
-        Remember my choice
+        {t("misc.promptLinks.landing.remember")}
       </label>
     </StandalonePage>
   );

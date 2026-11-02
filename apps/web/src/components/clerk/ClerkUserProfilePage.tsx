@@ -3,6 +3,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
+import { useT } from "../../hooks/useI18n";
 import { Button } from "../ui/button";
 
 export function ClerkUserProfilePage({
@@ -48,6 +49,7 @@ export function ClerkUserProfileRefreshButton({
   readonly isPending: boolean;
   readonly onClick: () => void;
 }) {
+  const t = useT();
   return (
     <Button
       size="sm"
@@ -57,7 +59,7 @@ export function ClerkUserProfileRefreshButton({
       onClick={onClick}
     >
       <RefreshIcon aria-hidden="true" size="sm" refreshing={isPending} />
-      Refresh
+      {t("misc.common.refresh")}
     </Button>
   );
 }

@@ -5,8 +5,10 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
+import { useT } from "~/hooks/useI18n";
+import { translateNow } from "~/components/media/translateNow";
 export function PullRequestsUnavailableState({
-  title = "Could not load pull requests",
+  title = translateNow("review.extra.could.not.load.pull.requests"),
   error,
   onRetry,
   refreshing = false,
@@ -18,6 +20,7 @@ export function PullRequestsUnavailableState({
   refreshing?: boolean;
   host?: { readonly url: string; readonly openLabel: string };
 }) {
+  const t = useT();
   return (
     <Empty className="scrollbar-gutter-both min-h-0 justify-center-safe overflow-y-auto [&>*]:shrink-0">
       <EmptyMedia variant="icon">
@@ -38,7 +41,7 @@ export function PullRequestsUnavailableState({
               aria-busy={refreshing}
             >
               <RefreshIcon size="sm" refreshing={refreshing} />
-              Retry
+              {t("review.extra.retry")}
             </Button>
           ) : null}
           {host ? (

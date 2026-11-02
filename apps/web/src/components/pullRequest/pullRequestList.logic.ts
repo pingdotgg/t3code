@@ -22,6 +22,7 @@ import type {
 import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { PullRequestListSort } from "./pullRequestListPreferences";
 
+import { translateNow } from "../media/translateNow";
 export interface EnvironmentPullRequestEntry extends PullRequestListEntry {
   readonly environmentId: EnvironmentId;
 }
@@ -60,8 +61,12 @@ const pullRequestViewerKey = (entry: ScopedEntry): string =>
   `${entry.environmentId ?? ""} ${entry.host}`;
 
 const GROUP_LABELS: Record<PullRequestGroupKey, string> = {
-  reviewRequested: "Review requested",
-  authored: "Authored",
+  get reviewRequested() {
+    return translateNow("review.extra.review.requested");
+  },
+  get authored() {
+    return translateNow("review.extra.authored");
+  },
   others: "Others",
 };
 
