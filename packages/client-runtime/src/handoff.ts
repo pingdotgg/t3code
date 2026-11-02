@@ -8,14 +8,13 @@ import type {
   ServerProvider,
   ServerProviderModel,
 } from "@t3tools/contracts";
-
 import {
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentValue,
 } from "@t3tools/shared/model";
 
-import type { ThreadStructure } from "./state/models.ts";
 import { isReasoningSelect } from "./modelTraits.ts";
+import type { ThreadStructure } from "./state/models.ts";
 import { REASONING_EFFORT_OPTION_IDS } from "./state/threadExecution.ts";
 
 export type HandoffTimelineRun = Pick<
@@ -23,17 +22,7 @@ export type HandoffTimelineRun = Pick<
   "id" | "ordinal" | "providerInstanceId" | "modelSelection"
 >;
 
-/** Options are set only for model switches, which can show effort. */
-export interface HandoffEndpointValue {
-  readonly instanceId: ProviderInstanceId;
-  readonly model?: string | undefined;
-  readonly options?: ModelSelection["options"];
-}
-
-export interface HandoffEndpoints {
-  readonly from: ReadonlyArray<HandoffEndpointValue>;
-  readonly to: HandoffEndpointValue;
-}
+export type HandoffEndpoints = ReturnType<typeof resolveHandoffEndpoints>;
 
 export function resolvePendingHandoff(
   projection: ThreadStructure | null | undefined,
@@ -67,14 +56,17 @@ export function resolveHandoffEndpoints(
     "runId" | "fromModelSelections" | "fromProviderInstanceIds" | "toModel" | "toProviderInstanceId"
   >,
   runs: ReadonlyArray<HandoffTimelineRun>,
-): HandoffEndpoints {
+) {
   const handoffRun = item.runId === null ? undefined : runs.find((run) => run.id === item.runId);
   const toModel =
     item.toModel ??
     (handoffRun !== undefined && handoffRun.providerInstanceId === item.toProviderInstanceId
       ? handoffRun.modelSelection.model
       : undefined);
-  const fromEndpoints: ReadonlyArray<HandoffEndpointValue> =
+  const fromEndpoints: ReadonlyArray<{
+    readonly instanceId: ProviderInstanceId;
+    readonly model?: string | undefined;
+  }> =
     item.fromModelSelections !== undefined && item.fromModelSelections.length > 0
       ? item.fromModelSelections
       : item.fromProviderInstanceIds.map((instanceId) => ({
@@ -111,63 +103,45 @@ export type ModelSwitchRun = Pick<
 
 export type ModelSwitchAttempt = Pick<
   OrchestrationV2RunAttempt,
-  "runId" | "attemptOrdinal" | "restartedFrom"
+  "runId" | "attemptOrdinal" | "status" | "startedAt" | "restartedFrom"
 >;
 
 export interface ModelSwitch {
-  readonly label: "Model changed" | "Effort changed";
   readonly from: ModelSelection;
   readonly to: ModelSelection;
-  /** Set when the effort differs; each side then states its effort, defaults included. */
+  readonly modelChanged: boolean;
+  /** When set, each side states its effort, defaults included. */
   readonly effortChanged: boolean;
 }
 
 /**
  * Model or effort changes, keyed by the message that started each run or steering restart.
- * Context handoffs are skipped; their handoff row already shows the swap. `providers` resolves an
- * unset effort to the model's default.
+ * Starts that brought a context handoff are skipped; the handoff row already shows them.
+ * `providers` resolves an unset effort to the model's default.
  */
 export function resolveModelSwitches(
   runs: ReadonlyArray<ModelSwitchRun>,
   attempts: ReadonlyArray<ModelSwitchAttempt> = [],
   providers: ReadonlyArray<ServerProvider> = [],
 ): ReadonlyMap<MessageId, ModelSwitch> {
-  const restarts = attempts
-    .filter((attempt) => attempt.restartedFrom !== undefined)
-    .sort((left, right) => left.attemptOrdinal - right.attemptOrdinal);
   const switches = new Map<MessageId, ModelSwitch>();
   let previous: ModelSelection | undefined;
   for (const run of [...runs].sort((left, right) => left.ordinal - right.ordinal)) {
-    // Runs that never ran do not change what the agent used.
-    if (
-      run.status === "rolled_back" ||
-      (run.startedAt === null && run.status !== "preparing" && run.status !== "starting")
-    ) {
-      continue;
-    }
-    // A restart rewrites its run, so the run holds only the latest message and selection.
-    const starts = [
-      ...restarts.flatMap((attempt) =>
-        attempt.runId === run.id && attempt.restartedFrom ? [attempt.restartedFrom] : [],
-      ),
-      { userMessageId: run.userMessageId, modelSelection: run.modelSelection },
-    ];
-    for (const [index, { userMessageId, modelSelection: to }] of starts.entries()) {
+    for (const start of runStarts(run, attempts)) {
       const from = previous;
+      const to = start.modelSelection;
       previous = to;
-      if (from === undefined) continue;
-      const handedOff =
-        index === 0 ? run.contextHandoffId !== null : from.instanceId !== to.instanceId;
-      if (handedOff) continue;
+      if (from === undefined || start.handedOff) continue;
       const fromEffort = resolveEffort(from, modelsFor(providers, from));
       const toEffort = resolveEffort(to, modelsFor(providers, to));
+      const modelChanged = from.model !== to.model;
       const effortChanged =
         fromEffort !== undefined && toEffort !== undefined && fromEffort.value !== toEffort.value;
-      if (from.model === to.model && !effortChanged) continue;
-      switches.set(userMessageId, {
-        label: from.model === to.model ? "Effort changed" : "Model changed",
+      if (!modelChanged && !effortChanged) continue;
+      switches.set(start.userMessageId, {
         from: effortChanged ? withEffort(from, fromEffort) : from,
         to: effortChanged ? withEffort(to, toEffort) : to,
+        modelChanged,
         effortChanged,
       });
     }
@@ -175,17 +149,46 @@ export function resolveModelSwitches(
   return switches;
 }
 
-/** Effort label for an endpoint; the stored value stands in when the catalog lacks the model. */
-export function formatHandoffEndpointEffort(
-  { instanceId, model, options }: HandoffEndpointValue,
+/** Effort label for a switch endpoint; the stored value stands in when the catalog lacks it. */
+export function formatModelSwitchEffort(
+  selection: ModelSelection,
   models: ReadonlyArray<ServerProviderModel> | undefined,
 ): string | null {
-  if (!model) return null;
-  const effort = resolveEffort(
-    { instanceId, model, ...(options === undefined ? {} : { options }) },
-    models,
-  );
+  const effort = resolveEffort(selection, models);
   return effort?.label ?? effort?.value ?? null;
+}
+
+/**
+ * The message and selection of each start that ran. A steering restart rewrites its run, so
+ * earlier starts come from the restart attempts that replaced them.
+ */
+function runStarts(run: ModelSwitchRun, attempts: ReadonlyArray<ModelSwitchAttempt>) {
+  // Runs that never ran do not change what the agent used.
+  if (
+    run.status === "rolled_back" ||
+    (run.startedAt === null && run.status !== "preparing" && run.status !== "starting")
+  ) {
+    return [];
+  }
+  const restarts = attempts
+    .filter((attempt) => attempt.runId === run.id && attempt.restartedFrom !== undefined)
+    .sort((left, right) => left.attemptOrdinal - right.attemptOrdinal);
+  const current = {
+    userMessageId: run.userMessageId,
+    modelSelection: run.modelSelection,
+    contextHandoffId: run.contextHandoffId,
+  };
+  return [...restarts.flatMap((attempt) => attempt.restartedFrom ?? []), current].flatMap(
+    (start, index, all) => {
+      // Each later start belongs to the restart that launched it; one stopped first never ran.
+      const launcher = index === 0 ? undefined : restarts[index - 1];
+      if (launcher && launcher.startedAt === null && launcher.status !== "pending") return [];
+      const handedOff =
+        start.contextHandoffId !== null &&
+        start.contextHandoffId !== all[index - 1]?.contextHandoffId;
+      return [{ ...start, handedOff }];
+    },
+  );
 }
 
 function modelsFor(providers: ReadonlyArray<ServerProvider>, selection: ModelSelection) {

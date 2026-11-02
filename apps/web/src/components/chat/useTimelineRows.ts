@@ -50,13 +50,13 @@ export function useStableModelSwitches(
   attempts: ReadonlyArray<ModelSwitchAttempt>,
   providers: ReadonlyArray<ServerProvider>,
 ): ReadonlyMap<MessageId, ModelSwitch> {
-  const [state, setState] = useState({
-    runs: null as ReadonlyArray<ModelSwitchRun> | null,
-    attempts,
-    providers,
-    signature: "[]",
-    value: EMPTY_MODEL_SWITCHES,
-  });
+  const [state, setState] = useState<{
+    readonly runs: ReadonlyArray<ModelSwitchRun> | null;
+    readonly attempts: ReadonlyArray<ModelSwitchAttempt>;
+    readonly providers: ReadonlyArray<ServerProvider>;
+    readonly signature: string;
+    readonly value: ReadonlyMap<MessageId, ModelSwitch>;
+  }>({ runs: null, attempts, providers, signature: "[]", value: EMPTY_MODEL_SWITCHES });
   if (state.runs === runs && state.attempts === attempts && state.providers === providers) {
     return state.value;
   }

@@ -5186,6 +5186,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       restartedFrom: {
         userMessageId: targetRun.userMessageId,
         modelSelection: targetRun.modelSelection,
+        contextHandoffId: targetRun.contextHandoffId,
       },
     };
     const nextRootNode: OrchestrationV2ExecutionNode = {

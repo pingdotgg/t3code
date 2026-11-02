@@ -410,6 +410,7 @@ it.live("retries a failed selection restart session open before completing", () 
       assert.deepEqual(projection.attempts[1]?.restartedFrom, {
         userMessageId: MessageId.make("message:selection-restart:first"),
         modelSelection: initialSelection,
+        contextHandoffId: null,
       });
       assert.equal(projection.runs.at(-1)?.status, "completed");
       assert.isTrue(captured.failedReplacementOpen);

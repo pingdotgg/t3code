@@ -9,11 +9,13 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 import {
-  formatHandoffEndpointEffort,
+  formatModelSwitchEffort,
   resolveHandoffEndpoints,
   resolveModelSwitches,
   resolvePendingHandoff,
   type HandoffTimelineRun,
+  type ModelSwitch,
+  type ModelSwitchAttempt,
   type ModelSwitchRun,
 } from "./handoff.ts";
 
@@ -213,39 +215,71 @@ describe("model switches", () => {
     ]);
     expect(keys(switches)).toEqual(["e"]);
     expect(switches.get(MessageId.make("message-e"))).toMatchObject({
-      label: "Model changed",
       from: { model: "gpt" },
       to: { model: "mini" },
+      modelChanged: true,
       effortChanged: false,
     });
     expect(
       resolveModelSwitches([switchRun("a", 1, "gpt", "high"), switchRun("b", 2, "gpt", "low")]).get(
         MessageId.make("message-b"),
       ),
-    ).toMatchObject({ label: "Effort changed", effortChanged: true });
+    ).toMatchObject({ modelChanged: false, effortChanged: true });
   });
 
   it("marks each steering restart against what it replaced", () => {
-    const restart = (attemptOrdinal: number, message: string, model: string) => ({
+    const restart = (
+      attemptOrdinal: number,
+      replaced: { message: string; model: string; handoff?: string },
+      overrides: Partial<ModelSwitchAttempt> = {},
+    ): ModelSwitchAttempt => ({
       runId: RunId.make("run-b"),
       attemptOrdinal,
+      status: "superseded",
+      startedAt: DateTime.makeUnsafe("2026-10-11T00:00:00Z"),
       restartedFrom: {
-        userMessageId: MessageId.make(`message-${message}`),
-        modelSelection: { instanceId: from, model },
+        userMessageId: MessageId.make(`message-${replaced.message}`),
+        modelSelection: { instanceId: from, model: replaced.model },
+        contextHandoffId:
+          replaced.handoff === undefined ? null : ContextHandoffId.make(replaced.handoff),
       },
+      ...overrides,
     });
-    const switches = resolveModelSwitches(
-      [
-        switchRun("a", 1, "gpt", undefined, { id: RunId.make("run-a") }),
-        switchRun("s2", 2, "gpt", undefined, { id: RunId.make("run-b") }),
-      ],
-      [restart(3, "s1", "max"), restart(2, "b", "mini")],
-    );
-    expect([...switches].map(([id, change]) => [id, change.from.model, change.to.model])).toEqual([
+    const runs = (current: Partial<ModelSwitchRun> = {}) => [
+      switchRun("a", 1, "gpt"),
+      switchRun("s2", 2, "gpt", undefined, { id: RunId.make("run-b"), ...current }),
+    ];
+    const summary = (switches: ReadonlyMap<MessageId, ModelSwitch>) =>
+      [...switches].map(([id, change]) => [id, change.from.model, change.to.model]);
+
+    expect(
+      summary(
+        resolveModelSwitches(runs(), [
+          restart(3, { message: "s1", model: "max" }),
+          restart(2, { message: "b", model: "mini" }),
+        ]),
+      ),
+    ).toEqual([
       ["message-b", "gpt", "mini"],
       ["message-s1", "mini", "max"],
       ["message-s2", "max", "gpt"],
     ]);
+    // A later restart into another harness hands off; the first switch keeps its divider.
+    expect(
+      summary(
+        resolveModelSwitches(runs({ contextHandoffId: ContextHandoffId.make("restart-handoff") }), [
+          restart(2, { message: "b", model: "mini" }),
+        ]),
+      ),
+    ).toEqual([["message-b", "gpt", "mini"]]);
+    // A restart stopped before it ran changed nothing.
+    expect(
+      summary(
+        resolveModelSwitches(runs(), [
+          restart(2, { message: "b", model: "mini" }, { status: "cancelled", startedAt: null }),
+        ]),
+      ),
+    ).toEqual([["message-b", "gpt", "mini"]]);
   });
 
   it("reads an unset effort as the model's default", () => {
@@ -321,10 +355,10 @@ describe("model switches", () => {
       [],
       providers,
     ).get(MessageId.make("message-b"));
-    expect(effortSwitch?.label).toBe("Effort changed");
+    expect(effortSwitch).toMatchObject({ modelChanged: false, effortChanged: true });
     expect(
       [effortSwitch!.from, effortSwitch!.to].map((endpoint) =>
-        formatHandoffEndpointEffort(endpoint, providers[0]!.models),
+        formatModelSwitchEffort(endpoint, providers[0]!.models),
       ),
     ).toEqual(["Low", "Deep"]);
   });

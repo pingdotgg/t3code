@@ -16,15 +16,15 @@ import * as DateTime from "effect/DateTime";
 import { WorkLogRow } from "./WorkLog";
 import {
   resolveHandoffEndpoints,
-  type HandoffEndpointValue,
   type HandoffEndpoints,
   type HandoffTimelineRun,
   type ModelSwitch,
-  formatHandoffEndpointEffort,
+  formatModelSwitchEffort,
 } from "@t3tools/client-runtime/handoff";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   ProviderDriverKind,
+  type ModelSelection,
   type OrchestrationV2Notification,
   type OrchestrationV2TurnItem,
   type OrchestrationV2RemoteTaskChild,
@@ -597,7 +597,7 @@ function EnvironmentHandoffRow({
   return <HandoffRow {...props} environmentId={environmentId} providers={providers} />;
 }
 
-/** Same-harness model or effort change, shown above the message that started the run. */
+/** A same-harness model or effort change. Shows only what changed. */
 export function ModelSwitchRow(props: {
   readonly environmentId: EnvironmentId;
   readonly modelSwitch: ModelSwitch;
@@ -605,16 +605,15 @@ export function ModelSwitchRow(props: {
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(props.environmentId)) ??
     EMPTY_SERVER_PROVIDERS;
-  const { from, to, label, effortChanged } = props.modelSwitch;
-  return (
-    <HandoffRow
-      environmentId={props.environmentId}
-      endpoints={{ from: [from], to }}
-      providers={providers}
-      label={label}
-      showEffort={effortChanged}
-    />
-  );
+  const { from, to, modelChanged, effortChanged } = props.modelSwitch;
+  const describe = (selection: ModelSelection) => {
+    const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+    const model = provider?.models.find((candidate) => candidate.slug === selection.model);
+    const modelName = model ? getTriggerDisplayModelName(model, provider?.driver) : selection.model;
+    const effort = effortChanged ? formatModelSwitchEffort(selection, provider?.models) : null;
+    return [modelChanged ? modelName : null, effort].filter(Boolean).join(" ");
+  };
+  return <TimelineSystemDivider label={`${describe(from)} → ${describe(to)}`} />;
 }
 
 export function HandoffRow(props: {
@@ -623,8 +622,6 @@ export function HandoffRow(props: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly pending?: boolean;
   readonly failed?: boolean;
-  readonly label?: string;
-  readonly showEffort?: boolean;
 }) {
   const { from: fromEndpoints, to } = props.endpoints;
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
@@ -632,7 +629,7 @@ export function HandoffRow(props: {
   const entries = settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
   return (
     <TimelineSystemDivider
-      label={props.label ?? (props.pending ? "Context handoff pending" : "Context handoff")}
+      label={props.pending ? "Context handoff pending" : "Context handoff"}
       icon={ArrowRightLeftIcon}
       showDetailSeparator={false}
       tone={props.failed ? "danger" : "neutral"}
@@ -645,8 +642,8 @@ export function HandoffRow(props: {
             >
               <HandoffEndpoint
                 entries={entries}
-                endpoint={endpoint}
-                showEffort={props.showEffort}
+                instanceId={endpoint.instanceId}
+                model={endpoint.model}
               />
               {index < fromEndpoints.length - 1 ? (
                 <span aria-hidden="true" className="ml-0.5">
@@ -658,7 +655,7 @@ export function HandoffRow(props: {
           {fromEndpoints.length > 0 ? (
             <ArrowRightIcon aria-hidden="true" className="size-3 shrink-0" />
           ) : null}
-          <HandoffEndpoint entries={entries} endpoint={to} showEffort={props.showEffort} />
+          <HandoffEndpoint entries={entries} instanceId={to.instanceId} model={to.model} />
         </span>
       }
     />
@@ -667,16 +664,12 @@ export function HandoffRow(props: {
 
 function HandoffEndpoint(props: {
   readonly entries: ReadonlyArray<ProviderInstanceEntry>;
-  readonly endpoint: HandoffEndpointValue;
-  readonly showEffort?: boolean | undefined;
+  readonly instanceId: ProviderInstanceId;
+  readonly model?: string | undefined;
 }) {
-  const { instanceId } = props.endpoint;
-  const entry = props.entries.find((candidate) => candidate.instanceId === instanceId);
+  const entry = props.entries.find((candidate) => candidate.instanceId === props.instanceId);
   const showBadge = entry !== undefined && shouldShowInstanceBadge(entry, props.entries);
-  const model = props.endpoint.model?.trim();
-  const effort = props.showEffort
-    ? formatHandoffEndpointEffort({ ...props.endpoint, model }, entry?.models)
-    : null;
+  const model = props.model?.trim();
   const providerModel =
     model === undefined || model.length === 0
       ? undefined
@@ -686,8 +679,10 @@ function HandoffEndpoint(props: {
       ? getTriggerDisplayModelName(providerModel, entry?.driverKind)
       : model !== undefined && model.length > 0
         ? model
-        : (entry?.displayName ?? instanceId);
-  const labelColor = providerTextColor(entry?.driverKind ?? ProviderDriverKind.make(instanceId));
+        : (entry?.displayName ?? props.instanceId);
+  const labelColor = providerTextColor(
+    entry?.driverKind ?? ProviderDriverKind.make(props.instanceId),
+  );
   return (
     <Tooltip>
       <TooltipTrigger
@@ -697,8 +692,8 @@ function HandoffEndpoint(props: {
             className="inline-flex min-w-0 items-center gap-1.5 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             <ProviderInstanceIcon
-              driverKind={entry?.driverKind ?? ProviderDriverKind.make(instanceId)}
-              displayName={entry?.displayName ?? instanceId}
+              driverKind={entry?.driverKind ?? ProviderDriverKind.make(props.instanceId)}
+              displayName={entry?.displayName ?? props.instanceId}
               accentColor={entry?.accentColor}
               acpRegistryAgentId={entry?.acpRegistryAgentId}
               acpRegistryIconUrl={entry?.acpRegistryIconUrl}
@@ -713,13 +708,11 @@ function HandoffEndpoint(props: {
             >
               {label}
             </span>
-            {effort === null ? null : <span className="shrink-0">{effort}</span>}
           </span>
         }
       />
       <TooltipPopup>
-        {entry?.displayName ?? instanceId} · {label}
-        {effort === null ? null : ` · ${effort}`}
+        {entry?.displayName ?? props.instanceId} · {label}
       </TooltipPopup>
     </Tooltip>
   );
