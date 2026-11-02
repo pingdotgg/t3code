@@ -151,11 +151,11 @@ describe("downloadAndShareAttachment", () => {
   it("downloads to a filename Android's file URI parser accepts", async () => {
     await downloadAndShareAttachment({
       ...input,
-      attachment: { ...input.attachment, name: "Report [draft] a|b.pdf" },
+      attachment: { ...input.attachment, name: "Report [draft] {v2} a|b.pdf" },
       signal: new AbortController().signal,
     });
     const file = mocks.download.mock.calls[0]![1] as { uri: string };
-    expect(decodeURIComponent(file.uri.split("/").at(-1)!)).not.toMatch(/[[\]|]/);
+    expect(decodeURIComponent(file.uri.split("/").at(-1)!)).toBe("Report _draft_ {v2} a_b.pdf");
   });
 
   it("bounds the UTF-8 filename length while preserving its extension", async () => {
