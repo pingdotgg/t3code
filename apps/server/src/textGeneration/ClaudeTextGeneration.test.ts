@@ -65,6 +65,7 @@ function withFakeClaudeEnv<A, E, R>(
     argsMustNotContain?: string;
     stdinMustContain?: string;
     configDirMustBe?: string;
+    entrypointMustBe?: string;
     cwdMustNotBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
   },
@@ -85,6 +86,7 @@ function withFakeClaudeEnv<A, E, R>(
     const previousArgsMustNotContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
     const previousStdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
     const previousConfigDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
+    const previousEntrypointMustBe = process.env.T3_FAKE_CLAUDE_ENTRYPOINT_MUST_BE;
     const previousCwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
 
     yield* Effect.acquireRelease(
@@ -138,6 +140,12 @@ function withFakeClaudeEnv<A, E, R>(
           process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = input.configDirMustBe;
         } else {
           delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
+        }
+
+        if (input.entrypointMustBe !== undefined) {
+          process.env.T3_FAKE_CLAUDE_ENTRYPOINT_MUST_BE = input.entrypointMustBe;
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_ENTRYPOINT_MUST_BE;
         }
       }),
       () =>
@@ -197,6 +205,12 @@ function withFakeClaudeEnv<A, E, R>(
             delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
           } else {
             process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = previousConfigDirMustBe;
+          }
+
+          if (previousEntrypointMustBe === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_ENTRYPOINT_MUST_BE;
+          } else {
+            process.env.T3_FAKE_CLAUDE_ENTRYPOINT_MUST_BE = previousEntrypointMustBe;
           }
         }),
     );
@@ -333,6 +347,39 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             expect(generated.title).toBe(sanitizeThreadTitle("Use Claude home"));
           }),
       );
+    }),
+  );
+
+  it.effect("labels a command from the Claude settings of its working directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-home-" });
+      const project = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-project-" });
+      yield* fs.makeDirectory(path.join(project, ".claude"));
+      const generate = (entrypointMustBe: string) =>
+        withFakeClaudeEnv(
+          {
+            output: JSON.stringify({ structured_output: { branch: "fix-it" } }),
+            entrypointMustBe,
+            claudeConfig: { homePath: home },
+          },
+          (textGeneration) =>
+            textGeneration.generateBranchName({
+              cwd: project,
+              message: "Fix it",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            }),
+        );
+      yield* generate("t3-code");
+      yield* fs.writeFileString(
+        path.join(project, ".claude", "settings.json"),
+        '{"env":{"ANTHROPIC_API_KEY":"key"}}',
+      );
+      yield* generate("unset");
     }),
   );
 

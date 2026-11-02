@@ -70,6 +70,11 @@ if (configDirMustBe && process.env.CLAUDE_CONFIG_DIR !== configDirMustBe) {
   fail("CLAUDE_CONFIG_DIR was " + (process.env.CLAUDE_CONFIG_DIR ?? ""), 5);
 }
 
+const entrypointMustBe = process.env.T3_FAKE_CLAUDE_ENTRYPOINT_MUST_BE;
+if (entrypointMustBe && (process.env.CLAUDE_CODE_ENTRYPOINT ?? "unset") !== entrypointMustBe) {
+  fail("CLAUDE_CODE_ENTRYPOINT was " + (process.env.CLAUDE_CODE_ENTRYPOINT ?? "unset"), 6);
+}
+
 const stderrText = process.env.T3_FAKE_CLAUDE_STDERR;
 if (stderrText) {
   process.stderr.write(stderrText + "\n");
