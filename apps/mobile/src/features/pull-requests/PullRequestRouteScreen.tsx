@@ -320,6 +320,8 @@ function PullRequestOverview(props: {
   // the tick.
   const [taskEdit, setTaskEdit] = useState<TaskListEdit | null>(null);
   const nextTaskBody = useRef<string | null>(null);
+  // Not `taskEdit.saving`: a tap can land after the loop ends but before that shows.
+  const taskSaveRunning = useRef(false);
   const [taskReset, setTaskReset] = useState(0);
   if (taskListEditEnded(taskEdit, pr.body)) setTaskEdit(null);
   const shownBody = shownTaskListBody(taskEdit, pr.body);
@@ -330,6 +332,7 @@ function PullRequestOverview(props: {
       const result = await update({ ...target, input: { ...target.input, body } });
       if (AsyncResult.isFailure(result)) {
         nextTaskBody.current = null;
+        taskSaveRunning.current = false;
         setTaskEdit(null);
         finish();
         // An earlier save in the run may have landed.
@@ -337,6 +340,7 @@ function PullRequestOverview(props: {
         return;
       }
     }
+    taskSaveRunning.current = false;
     setTaskEdit((edit) => edit && { ...edit, saving: false });
     finish();
     refreshDetail();
@@ -350,10 +354,10 @@ function PullRequestOverview(props: {
       setTaskReset((count) => count + 1);
       return;
     }
-    const saving = taskEdit?.saving === true;
     setTaskEdit(tickTaskListEdit(taskEdit, pr.body, body));
     nextTaskBody.current = body;
-    if (saving) return;
+    if (taskSaveRunning.current) return;
+    taskSaveRunning.current = true;
     void saveTasks(props.onTaskSaveStart());
   };
   return (

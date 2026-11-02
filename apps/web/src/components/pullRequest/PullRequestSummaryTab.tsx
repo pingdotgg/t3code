@@ -524,6 +524,8 @@ export function PullRequestSummaryTab({
   // body, so quick ticks can't land out of order.
   const [taskEdit, setTaskEdit] = useState<TaskListEdit | null>(null);
   const nextTaskBody = useRef<string | null>(null);
+  // Not `taskEdit.saving`: a tick can land after the loop ends but before that shows.
+  const taskSaveRunning = useRef(false);
   if (taskListEditEnded(taskEdit, detail.body)) setTaskEdit(null);
   const shownBody = shownTaskListBody(taskEdit, detail.body);
   const saveTasks = async () => {
@@ -532,6 +534,7 @@ export function PullRequestSummaryTab({
       const result = await update({ environmentId, input: { ...reference, body } });
       if (result._tag === "Failure") {
         nextTaskBody.current = null;
+        taskSaveRunning.current = false;
         setTaskEdit(null);
         toastManager.add({ type: "error", title: "Could not save the description" });
         // An earlier save in the run may have landed.
@@ -539,16 +542,18 @@ export function PullRequestSummaryTab({
         return;
       }
     }
+    taskSaveRunning.current = false;
     setTaskEdit((edit) => edit && { ...edit, saving: false });
     onRefresh();
   };
   const toggleTask = ({ markerOffset, checked }: { markerOffset: number; checked: boolean }) => {
     const body = setMarkdownTaskChecked(shownBody, markerOffset, checked);
     if (body === shownBody) return;
-    const saving = taskEdit?.saving === true;
     setTaskEdit(tickTaskListEdit(taskEdit, detail.body, body));
     nextTaskBody.current = body;
-    if (!saving) void saveTasks();
+    if (taskSaveRunning.current) return;
+    taskSaveRunning.current = true;
+    void saveTasks();
   };
 
   const commentEditing: CommentEditing = {
