@@ -45,12 +45,17 @@ const makeHarness = Effect.fn(function* (options: {
   const listeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const writes = yield* Queue.unbounded<string>();
   const outputLines = yield* Queue.unbounded<string>();
+  const openedEnvs: Array<Record<string, string> | undefined> = [];
   const terminals = Layer.mock(TerminalManager.TerminalManager)({
-    open: () =>
-      (options.opening
-        ? Deferred.succeed(options.opening, undefined).pipe(Effect.andThen(Effect.never))
-        : Effect.void
-      ).pipe(Effect.as(openSnapshot(options.history ?? ""))),
+    open: (input) =>
+      Effect.sync(() => openedEnvs.push(input.env)).pipe(
+        Effect.andThen(
+          options.opening
+            ? Deferred.succeed(options.opening, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+        ),
+        Effect.as(openSnapshot(options.history ?? "")),
+      ),
     getShell: () =>
       options.shell === null
         ? Effect.fail(new TerminalNotRunningError({ threadId, terminalId }))
@@ -96,7 +101,7 @@ const makeHarness = Effect.fn(function* (options: {
   });
   const emit = (terminalEvent: TerminalEvent) =>
     Effect.forEach([...listeners], (listener) => listener(terminalEvent), { discard: true });
-  return { start, listeners, writes, outputLines, emit };
+  return { start, listeners, writes, outputLines, openedEnvs, emit };
 });
 
 const setup = Effect.fn(function* (
@@ -122,6 +127,31 @@ describe("ProjectSetupScriptRunner", () => {
     }),
   );
 
+  it.effect.each([
+    { shell: "/bin/zsh", scopedScript: "( export NO_COLOR=1 FORCE_COLOR=0 COLORTERM=\rvp i\r)" },
+    {
+      shell: "/opt/homebrew/bin/fish",
+      scopedScript:
+        "begin\rset -lx NO_COLOR 1; set -lx FORCE_COLOR 0; set -lx COLORTERM ''\rvp i\rend",
+    },
+    {
+      shell: "pwsh",
+      scopedScript: "$env:NO_COLOR = '1'; $env:FORCE_COLOR = '0'; $env:COLORTERM = $null;",
+    },
+  ])(
+    "disables color for the script but not the shell it leaves ($shell)",
+    ({ shell, scopedScript }) =>
+      Effect.gen(function* () {
+        const { writes, openedEnvs } = yield* setup({ shell });
+        yield* TestClock.adjust("3 seconds");
+        expect(yield* Queue.take(writes)).toContain(scopedScript);
+        expect(openedEnvs).toHaveLength(1);
+        expect(openedEnvs[0]).not.toHaveProperty("NO_COLOR");
+        expect(openedEnvs[0]).not.toHaveProperty("FORCE_COLOR");
+        expect(openedEnvs[0]).not.toHaveProperty("COLORTERM");
+      }),
+  );
+
   it.effect("shows a startup prompt and types only once the line editor starts", () =>
     Effect.gen(function* () {
       const { result, writes, outputLines, emit } = yield* setup();
@@ -135,7 +165,9 @@ describe("ProjectSetupScriptRunner", () => {
 
       yield* emit({ ...event, type: "activity", hasRunningSubprocess: false, label: "zsh" });
       yield* emit({ ...event, type: "output", data: "\r\n% \x1b[?2004h" });
-      expect(yield* Queue.take(writes)).toMatch(/^ \( vp i\r\);/);
+      expect(yield* Queue.take(writes)).toMatch(
+        /^ \( export NO_COLOR=1 FORCE_COLOR=0 COLORTERM=\rvp i\r\);/,
+      );
     }),
   );
 
@@ -143,7 +175,9 @@ describe("ProjectSetupScriptRunner", () => {
     Effect.gen(function* () {
       const { writes } = yield* setup();
       yield* TestClock.adjust("3 seconds");
-      expect(yield* Queue.take(writes)).toMatch(/^ \( vp i\r\);/);
+      expect(yield* Queue.take(writes)).toMatch(
+        /^ \( export NO_COLOR=1 FORCE_COLOR=0 COLORTERM=\rvp i\r\);/,
+      );
     }),
   );
 
@@ -165,7 +199,9 @@ describe("ProjectSetupScriptRunner", () => {
       yield* emit({ ...event, type: "restarted", snapshot: openSnapshot("") });
       // The restart lands inside a quiet window, so the next full window decides.
       yield* TestClock.adjust("6 seconds");
-      expect(yield* Queue.take(writes)).toMatch(/^ \( vp i\r\);/);
+      expect(yield* Queue.take(writes)).toMatch(
+        /^ \( export NO_COLOR=1 FORCE_COLOR=0 COLORTERM=\rvp i\r\);/,
+      );
     }),
   );
 
