@@ -38,7 +38,7 @@ import {
 import { isValidSearchUrlTemplate } from "@t3tools/shared/preview";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { previewBridge } from "~/components/preview/previewBridge";
@@ -1099,7 +1099,6 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
 }
 
 function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
-  const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
   const settingsHydrated = useClientSettingsHydrated();
   const updateSettings = useUpdatePrimarySettings();
@@ -1231,8 +1230,6 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     setProfileRemovalInFlight(false);
     setProfilePendingRemoval(null);
   };
-
-
 
   return (
     <SettingsRow
