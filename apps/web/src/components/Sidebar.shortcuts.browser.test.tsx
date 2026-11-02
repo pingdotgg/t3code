@@ -40,11 +40,12 @@ vi.mock(import("~/state/server"), async (original) => {
   const { compileResolvedKeybindingsConfig } = await import("@t3tools/shared/keybindings");
   const keybindings = compileResolvedKeybindingsConfig([
     { key: "mod+shift+]", command: "thread.next", when: "!previewFocus && !previewOpen" },
+    { key: "mod+1", command: "thread.jump.1", when: "!previewFocus" },
   ]);
   return { ...actual, primaryServerKeybindingsAtom: Atom.make(keybindings) };
 });
 
-it("leaves thread.next to the preview when its rule excludes previewFocus and previewOpen", async () => {
+it("leaves thread shortcuts and their hints to the preview when their rules exclude it", async () => {
   const [first, second] = [threadWithHistory("thread-a", 1), threadWithHistory("thread-b", 1)];
   using _environment = installFakeEnvironment([first, second]);
   using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
@@ -70,11 +71,22 @@ it("leaves thread.next to the preview when its rule excludes previewFocus and pr
   using _chrome = { [Symbol.dispose]: () => previewChrome.remove() };
 
   const press = () => userEvent.keyboard("{Control>}{Shift>}]{/Shift}{/Control}");
+  const jumpHintsShownOnHold = async () => {
+    // Every deadline reads as due on subscribe, so hints skip the hold delay.
+    let now = Date.parse("2026-01-01T00:00:00.000Z");
+    using _clock = vi.spyOn(Date, "now").mockImplementation(() => (now += 1000));
+    await userEvent.keyboard("{Control>}");
+    await act(() => {});
+    const shown = document.querySelector("[data-jump-hint]") !== null;
+    await userEvent.keyboard("{/Control}");
+    return shown;
+  };
   const firstPath = `/${ENVIRONMENT_ID}/${first.id}`;
 
   await userEvent.click(page.getByRole("button", { name: "Reload" }));
   await press();
   expect(router.history.location.pathname).toBe(firstPath);
+  expect(await jumpHintsShownOnHold()).toBe(false);
 
   const firstRef = scopeThreadRef(ENVIRONMENT_ID, first.id);
   await act(() => useRightPanelStore.getState().openBrowser(firstRef, null));
@@ -87,4 +99,5 @@ it("leaves thread.next to the preview when its rule excludes previewFocus and pr
   await vi.waitFor(() =>
     expect(router.history.location.pathname).toBe(`/${ENVIRONMENT_ID}/${second.id}`),
   );
+  expect(await jumpHintsShownOnHold()).toBe(true);
 });
