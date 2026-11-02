@@ -1,6 +1,7 @@
 import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
 import { ServerIcon } from "lucide-react";
 
+import { useEnvironmentConnectionSummaries } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
@@ -16,6 +17,20 @@ export function SidebarEnvironmentScopeMenu(props: {
   readonly machineByEnvironmentId: ReadonlyMap<EnvironmentId, EnvironmentMachineKind>;
   readonly onChange: (environmentId: EnvironmentId | null) => void;
 }) {
+  const displayUrlById = new Map(
+    useEnvironmentConnectionSummaries().map(
+      (summary) => [summary.environmentId, summary.displayUrl] as const,
+    ),
+  );
+  // Machines often share a name, so a shared label also shows the address.
+  const labelFor = (environment: (typeof props.environments)[number]) => {
+    const shared = props.environments.some(
+      (other) =>
+        other.environmentId !== environment.environmentId && other.label === environment.label,
+    );
+    const displayUrl = displayUrlById.get(environment.environmentId);
+    return shared && displayUrl ? `${environment.label} · ${displayUrl}` : environment.label;
+  };
   const selected = props.environments.find(
     (environment) => environment.environmentId === props.selectedEnvironmentId,
   );
@@ -26,7 +41,7 @@ export function SidebarEnvironmentScopeMenu(props: {
           <SidebarHeaderIconButton
             label={
               selected
-                ? `Filter threads by environment: ${selected.label}`
+                ? `Filter threads by environment: ${labelFor(selected)}`
                 : "Filter threads by environment"
             }
           />
@@ -60,7 +75,7 @@ export function SidebarEnvironmentScopeMenu(props: {
               value={environment.environmentId}
               closeOnClick
             >
-              {environment.label}
+              {labelFor(environment)}
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>
