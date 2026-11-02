@@ -628,6 +628,39 @@ describe("getFallbackThreadIdAfterDelete", () => {
 
     expect(fallbackThreadId).toBe(ThreadId.make("thread-next"));
   });
+
+  it.each([
+    [
+      "snoozed",
+      { snoozedUntil: "2099-01-01T00:00:00.000Z", snoozedAt: "2026-03-09T10:06:00.000Z" },
+    ],
+    ["settled", { settledOverride: "settled", settledAt: "2026-03-09T10:06:00.000Z" }],
+  ] as const)("skips a %s thread parked on its shelf", (_state, parked) => {
+    const fallbackThreadId = getFallbackThreadIdAfterDelete({
+      threads: [
+        makeThread({
+          id: ThreadId.make("thread-visible"),
+          createdAt: "2026-03-09T10:01:00.000Z",
+          updatedAt: "2026-03-09T10:01:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("thread-parked"),
+          createdAt: "2026-03-09T10:02:00.000Z",
+          updatedAt: "2026-03-09T10:06:00.000Z",
+          ...parked,
+        }),
+        makeThread({
+          id: ThreadId.make("thread-active"),
+          createdAt: "2026-03-09T10:03:00.000Z",
+          updatedAt: "2026-03-09T10:03:00.000Z",
+        }),
+      ],
+      deletedThreadId: ThreadId.make("thread-active"),
+      sortOrder: "created_at",
+    });
+
+    expect(fallbackThreadId).toBe(ThreadId.make("thread-visible"));
+  });
 });
 
 describe("sortScopedProjectsForSidebar", () => {
