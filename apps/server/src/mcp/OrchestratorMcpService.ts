@@ -1521,10 +1521,10 @@ const make = Effect.gen(function* () {
     clientRequestId === undefined ? random.uuidV4() : Effect.succeed(clientRequestId);
 
   /**
-   * A task on a provider, model or options other than this thread's starts
-   * only after the user approves that exact target on a card in this run. The
-   * card is keyed by run, request key, destination and target, so an answer
-   * never covers another target, and it closes with this call.
+   * A task on another provider, model or options than this run started on waits
+   * for the user to approve that exact target on a card in this run, keyed by
+   * run, request key, destination and target. The thread's selection can change
+   * mid-run, so it is no baseline.
    */
   const awaitDelegationApproval = Effect.fn("OrchestratorMcpService.awaitDelegationApproval")(
     function* (input: {
@@ -1536,6 +1536,8 @@ const make = Effect.gen(function* () {
       readonly environmentId?: EnvironmentId | undefined;
       readonly title: string | undefined;
       readonly task: string;
+      /** Whether a task with no target would run on what this run started on. */
+      readonly inheritsRun: boolean;
     }) {
       if (sameSelection(input.current, input.proposed)) return;
       const { scope, parentRun, proposed } = input;
@@ -1661,9 +1663,17 @@ const make = Effect.gen(function* () {
       if (status === "cancelled") yield* closeCard;
       return yield* failure(
         "delegation_not_approved",
-        status === "declined"
-          ? `The user declined running this task on ${describeSelection(proposed)}, so it did not start. Delegate it without a target to use your own provider and model, or do it yourself.`
-          : `The user did not approve running this task on ${describeSelection(proposed)}, so it did not start. Delegate it without a target to use your own provider and model, or ask the user and delegate again with a new clientRequestId.`,
+        `The user ${status === "declined" ? "declined" : "did not approve"} running this task on ${describeSelection(proposed)}, so it did not start. ${
+          input.inheritsRun
+            ? "Delegate it without a target to use your own provider and model, or "
+            : ""
+        }${
+          status === "declined"
+            ? input.inheritsRun
+              ? "do it yourself."
+              : "Do it yourself, or ask the user which provider and model to use."
+            : `${input.inheritsRun ? "ask" : "Ask"} the user and delegate again with a new clientRequestId.`
+        }`,
       );
     },
   );
@@ -2600,16 +2610,25 @@ const make = Effect.gen(function* () {
           parent.thread.modelSelection,
           input.target,
         );
-        if (
-          parentRun !== undefined &&
-          proposed !== undefined &&
-          !(yield* threadManagement.hasReceipt(RemoteDelegation.recordCommandId(scope, key)))
-        ) {
+        if (proposed === undefined) {
+          return yield* failure(
+            "target_required",
+            "Pass target.model from orchestrator_capabilities with this environmentId.",
+          );
+        }
+        const recorded = RemoteDelegation.recordCommandId(
+          scope,
+          yield* RemoteDelegation.remoteRequestKey(key, environmentId, proposed).pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
+          ),
+        );
+        if (parentRun !== undefined && !(yield* threadManagement.hasReceipt(recorded))) {
           yield* awaitDelegationApproval({
             scope,
             parentRun,
             requestKey: key,
-            current: parent.thread.modelSelection,
+            current: parentRun.modelSelection,
+            inheritsRun: sameSelection(parentRun.modelSelection, parent.thread.modelSelection),
             proposed,
             environmentId,
             title: input.title,
@@ -2620,6 +2639,7 @@ const make = Effect.gen(function* () {
         const { taskId } = yield* remoteDelegation.delegate(scope, {
           ...input,
           clientRequestId: key,
+          modelSelection: proposed,
           target: { ...input.target, environmentId },
         });
         return yield* input.mode === "wait"
@@ -2667,16 +2687,21 @@ const make = Effect.gen(function* () {
         input.interactionMode,
       );
       // A replayed receipt starts nothing new, so it needs no second answer.
-      if (input.target !== undefined && !isRetryOfAcceptedDelegation) {
-        const inherited = yield* resolveTarget({ parent, target: undefined, providers }).pipe(
+      if (!isRetryOfAcceptedDelegation) {
+        const authorized = yield* resolveTarget({
+          parent: { thread: { ...parent.thread, modelSelection: parentRun.modelSelection } },
+          target: undefined,
+          providers,
+        }).pipe(
           Effect.map((resolved) => resolved.modelSelection),
-          Effect.orElseSucceed(() => parent.thread.modelSelection),
+          Effect.orElseSucceed(() => parentRun.modelSelection),
         );
         yield* awaitDelegationApproval({
           scope,
           parentRun,
           requestKey: key,
-          current: inherited,
+          current: authorized,
+          inheritsRun: sameSelection(parentRun.modelSelection, parent.thread.modelSelection),
           proposed: target.modelSelection,
           title: input.title,
           task: taskPrompt(input),
