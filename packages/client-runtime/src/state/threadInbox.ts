@@ -112,7 +112,7 @@ type ThreadKeyInput = Pick<EnvironmentThreadShell, "environmentId" | "id">;
  * run can end moments before its continuation starts, so clients wait this long
  * before treating the thread as done.
  */
-export const WORKING_EXIT_GRACE_MS = 2_000;
+const WORKING_EXIT_GRACE_MS = 2_000;
 
 /**
  * Keep one at module scope so placement survives routes that unmount the list. Call
