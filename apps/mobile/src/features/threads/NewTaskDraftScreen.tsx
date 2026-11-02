@@ -586,14 +586,19 @@ export function NewTaskDraftScreen(props: {
     }
     const draft = getComposerDraftSnapshot(draftKey);
     if (appAtomRegistry.get(composerContextImportsAtom)[draftKey]) return null;
+    const workspaceSelection = flow.resolveWorkspaceSelection(draft.workspaceSelection);
+    const workspaceMode = workspaceSelection.mode;
+    const cwd =
+      workspaceMode === "worktree"
+        ? selectedProject.workspaceRoot
+        : (workspaceSelection.worktreePath ?? selectedProject.workspaceRoot);
     const modelSelection =
       resolveSelectableModelSelection(
         selectedEnvironmentServerConfig,
         draft.modelSelection ?? null,
         selectedProject.id,
+        cwd,
       ) ?? flow.selectedModel;
-    const workspaceSelection = flow.resolveWorkspaceSelection(draft.workspaceSelection);
-    const workspaceMode = workspaceSelection.mode;
     const selectedBranchName = workspaceSelection.branch;
     const initialMessageText = draft.text.trim();
 

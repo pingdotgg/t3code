@@ -119,6 +119,30 @@ function hasCurrentProviderWorkspaceSnapshot(
   );
 }
 
+export function resolveProviderForCwd(
+  provider: ServerProvider,
+  cwd: string | null | undefined,
+): ServerProvider {
+  const descriptors = resolveProviderWorkspaceSnapshot(provider, cwd)?.optionDescriptors;
+  if (descriptors === undefined) return provider;
+  const overriddenIds = new Set(descriptors.map((descriptor) => descriptor.id));
+  return {
+    ...provider,
+    models: provider.models.map((model) => ({
+      ...model,
+      capabilities: {
+        ...model.capabilities,
+        optionDescriptors: [
+          ...(model.capabilities?.optionDescriptors ?? []).filter(
+            (descriptor) => !overriddenIds.has(descriptor.id),
+          ),
+          ...descriptors,
+        ],
+      },
+    })),
+  };
+}
+
 export function resolveProviderSkillsForCwd(
   provider: ServerProvider,
   cwd: string | null | undefined,

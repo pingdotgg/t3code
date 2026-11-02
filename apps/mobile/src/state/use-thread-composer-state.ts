@@ -52,6 +52,7 @@ import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {
   describeUnavailableModelSelection,
   isModelSelectionUnavailable,
+  resolveSelectableModelSelection,
 } from "../lib/modelOptions";
 
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
@@ -118,6 +119,7 @@ import {
   useSelectedThreadVisibleTurnItems,
 } from "./use-thread-detail";
 import { useThreadSelection } from "./use-thread-selection";
+import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
@@ -210,6 +212,7 @@ export function useThreadComposerState(input: {
     selectedThreadDetailRef,
     selectedEnvironmentRuntime,
   } = useThreadSelection();
+  const { selectedThreadCwd } = useSelectedThreadWorktree();
   const selectedThreadProjection = useSelectedThreadProjection();
   const selectedThreadVisibleTurnItems = useSelectedThreadVisibleTurnItems();
   const acknowledgedMessages = useAtomValue(acknowledgedThreadMessagesAtom);
@@ -318,7 +321,15 @@ export function useThreadComposerState(input: {
   const selectedDraft = useComposerDraftSettings(selectedThreadKey);
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadShell;
-  const modelSelection = selectedDraft.modelSelection ?? selectedThread?.modelSelection ?? null;
+  const rawModelSelection = selectedDraft.modelSelection ?? selectedThread?.modelSelection ?? null;
+  const selectedThreadProjectId = selectedThread?.projectId ?? null;
+  const modelSelection =
+    resolveSelectableModelSelection(
+      selectedEnvironmentRuntime?.serverConfig,
+      rawModelSelection,
+      selectedThreadProjectId,
+      selectedThreadCwd,
+    ) ?? rawModelSelection;
   const serverConfig = selectedEnvironmentRuntime?.serverConfig;
   const pendingHandoff = resolvePendingHandoff(
     selectedThreadProjection?.projection,
@@ -606,8 +617,15 @@ export function useThreadComposerState(input: {
     if (text.length === 0 && attachments.length === 0) {
       return null;
     }
-    const modelSelection = draft.modelSelection ?? thread.modelSelection;
+    const rawModelSelection = draft.modelSelection ?? thread.modelSelection;
     const serverConfig = selectedEnvironmentRuntime?.serverConfig;
+    const modelSelection =
+      resolveSelectableModelSelection(
+        serverConfig,
+        rawModelSelection,
+        thread.projectId,
+        selectedThreadCwd,
+      ) ?? rawModelSelection;
     const modelUnavailable =
       selectedEnvironmentRuntime?.connectionState === "connected" &&
       isModelSelectionUnavailable(serverConfig, modelSelection, thread.projectId);

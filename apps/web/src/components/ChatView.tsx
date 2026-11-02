@@ -243,6 +243,7 @@ import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server
 import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { threadEnvironment } from "../state/threads";
 import {
+  resolveProviderForCwd,
   resolveProviderSkillsForCwd,
   resolveProvidersForCwd,
 } from "@t3tools/client-runtime/providerSkills";
@@ -1310,8 +1311,14 @@ export default function ChatView(props: ChatViewProps) {
     automaticEnvironment,
     autoUpdateEnvironments,
   });
+  const gitCwd = activeProject
+    ? projectScriptCwd({
+        project: { cwd: activeProject.workspaceRoot },
+        worktreePath: activeThread?.worktreePath ?? null,
+      })
+    : null;
   const providerInstanceEntries = providerInstanceEntriesFor(
-    providerStatuses,
+    providerStatuses.map((provider) => resolveProviderForCwd(provider, gitCwd)),
     settings,
     activeProject?.id ?? null,
   );

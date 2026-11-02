@@ -135,6 +135,7 @@ type NewTaskFlowContextValue = {
   readonly workspaceMode: WorkspaceMode;
   readonly isGitRepo: boolean;
   readonly isGitRepoKnown: boolean;
+  readonly modelCwd: string | null;
   readonly canChooseWorkspace: boolean;
   readonly selectedBranchName: string | null;
   readonly selectedWorktreePath: string | null;
@@ -429,12 +430,18 @@ export function NewTaskFlowProvider(
     managedPolicy,
   );
 
+  const modelCwd =
+    (workspaceMode === "worktree"
+      ? selectedProject?.workspaceRoot
+      : ((canChooseWorkspace ? selectedWorktreePath : null) ?? selectedProject?.workspaceRoot)) ||
+    null;
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model.
   const draftModelSelection = resolveSelectableModelSelection(
     selectedEnvironmentServerConfig,
     selectedProjectDraft.modelSelection ?? null,
     selectedProject?.id ?? null,
+    modelCwd,
   );
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
@@ -451,6 +458,8 @@ export function NewTaskFlowProvider(
     draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
     undefined,
     selectedProject?.id ?? null,
+    false,
+    modelCwd,
   );
 
   const selectedDefaultModel = resolveNewTaskModelSelection({
@@ -710,11 +719,18 @@ export function NewTaskFlowProvider(
     }
     const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
     const text = draft.text.trim();
+    const workspaceSelection = resolveWorkspaceSelection(draft.workspaceSelection);
+    const mode = workspaceSelection.mode;
+    const cwd =
+      mode === "worktree"
+        ? selectedProject.workspaceRoot
+        : (workspaceSelection.worktreePath ?? selectedProject.workspaceRoot);
     const draftModelSelection =
       resolveSelectableModelSelection(
         selectedEnvironmentServerConfig,
         draft.modelSelection ?? null,
         selectedProject.id,
+        cwd,
       ) ?? selectedModel;
     if ((text.length === 0 && draft.attachments.length === 0) || !draftModelSelection) {
       return null;
@@ -729,8 +745,6 @@ export function NewTaskFlowProvider(
     ) {
       return null;
     }
-    const workspaceSelection = resolveWorkspaceSelection(draft.workspaceSelection);
-    const mode = workspaceSelection.mode;
     return {
       environmentId: selectedProject.environmentId,
       threadId: ThreadId.make(metadata.threadId),
@@ -839,6 +853,7 @@ export function NewTaskFlowProvider(
     workspaceMode,
     isGitRepo,
     isGitRepoKnown: knownIsGitRepo !== null,
+    modelCwd,
     canChooseWorkspace,
     selectedBranchName,
     selectedWorktreePath,

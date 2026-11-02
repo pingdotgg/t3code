@@ -348,6 +348,7 @@ function ThreadSettingsSessionProvider(
             props.lockedProviderInstanceId,
             props.projectId,
             true,
+            props.cwd,
           ),
         )
       : props.providerGroups;

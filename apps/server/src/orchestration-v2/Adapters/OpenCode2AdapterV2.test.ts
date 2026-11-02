@@ -467,6 +467,59 @@ const nativeGoal = (status: "active" | "paused" | "complete") => ({
 });
 
 it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
+  it.effect.each([
+    ["selected", "reviewer", "default", "reviewer", false],
+    ["default", undefined, "default", "build", false],
+    ["plan override", "reviewer", "plan", "plan", false],
+    ["selected native command", "reviewer", "default", "reviewer", true],
+    ["plan native command", "reviewer", "plan", "plan", true],
+  ] as const)(
+    "uses the %s agent at the native turn boundary",
+    ([, selectedAgent, interactionMode, expectedAgent, nativeCommand]) =>
+      Effect.gen(function* () {
+        const { runtime, thread } = yield* resumed([
+          ...(expectedAgent === "build"
+            ? []
+            : [
+                out("session.switchAgent", { sessionID: SESSION, agent: expectedAgent }),
+                reply("session.switchAgent", null),
+              ]),
+          ...(interactionMode === "plan"
+            ? [
+                out("agent.list", { "location[directory]": WORK }),
+                reply("agent.list", agentList),
+                out("session.update", { sessionID: SESSION, permissions: "<any>" }),
+                reply("session.update", null),
+              ]
+            : []),
+          ...(nativeCommand
+            ? [
+                out("command.list", { "location[directory]": WORK }),
+                reply("command.list", { location: { directory: WORK }, data: [{ name: "hello" }] }),
+                out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+                reply("message.list", { data: [], cursor: {} }),
+                out("session.command", { sessionID: SESSION, name: "hello", text: "WORLD" }),
+                reply("session.command", null),
+              ]
+            : [out("session.prompt", { sessionID: SESSION, text: "<any>" }), promptAccepted]),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ]);
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        const input = turnInput(thread, {
+          ...bigPickle,
+          ...(selectedAgent === undefined
+            ? {}
+            : { options: [{ id: "agent", value: selectedAgent }] }),
+        });
+        yield* runtime.startTurn({
+          ...input,
+          message: { ...input.message, text: nativeCommand ? "/hello WORLD" : "hi" },
+          runtimePolicy: { ...input.runtimePolicy, interactionMode },
+        });
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("switches the session's model and variant before a turn that changed them", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([

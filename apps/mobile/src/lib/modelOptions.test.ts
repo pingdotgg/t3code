@@ -535,6 +535,105 @@ describe("mobile model options", () => {
     expect(resolveDefaultableModelSelection(null, legacy, null)).toBe(legacy);
   });
 
+  it("normalizes a draft for its destination workspace without losing reasoning or project visibility", () => {
+    const instanceId = ProviderInstanceId.make("opencode_work");
+    const projectId = ProjectId.make("project-a");
+    const agent = (name: string) => ({
+      id: "agent",
+      label: "Agent",
+      type: "select" as const,
+      options: [
+        { id: "build", label: "Build", isDefault: true },
+        { id: name, label: name },
+      ],
+      currentValue: "build",
+    });
+    const reasoning = {
+      id: "variant",
+      label: "Reasoning",
+      type: "select" as const,
+      options: [{ id: "high", label: "High" }],
+    };
+    const config = {
+      providers: [
+        {
+          instanceId,
+          driver: "opencode",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: ["model", "hidden"].map((slug) => ({
+            slug,
+            name: slug,
+            isCustom: false,
+            capabilities: { optionDescriptors: [reasoning, agent("global")] },
+          })),
+          workspaceSnapshots: ["reviewer", "writer"].map((name, index) => ({
+            cwd: `/work/${index}`,
+            checkedAt: "2026-01-01T00:00:00.000Z",
+            skills: [],
+            slashCommands: [],
+            optionDescriptors: [agent(name)],
+          })),
+        },
+      ],
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [instanceId]: { driver: ProviderDriverKind.make("opencode"), enabled: false },
+        },
+        projectSettingsOverrides: {
+          [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+        },
+        providerModelPreferences: { [instanceId]: { hiddenModels: ["hidden"], modelOrder: [] } },
+      },
+    } as unknown as ServerConfig;
+    const original = structuredClone(config);
+    const draft = {
+      instanceId,
+      model: "model",
+      options: [
+        { id: "variant", value: "high" },
+        { id: "agent", value: "reviewer" },
+      ],
+    };
+    for (const cwd of ["/work/0", "/work/1", "/work/0"]) {
+      const options = buildModelOptions(config, draft, instanceId, projectId, false, cwd);
+      expect(options.map((option) => option.selection.model)).toEqual(["model"]);
+      expect
+        .soft(options[0]?.capabilities?.optionDescriptors)
+        .toEqual([reasoning, agent(cwd === "/work/0" ? "reviewer" : "writer")]);
+      const expectedSelection = {
+        ...draft,
+        options:
+          cwd === "/work/0"
+            ? draft.options
+            : [
+                { id: "variant", value: "high" },
+                { id: "agent", value: "build" },
+              ],
+      };
+      expect.soft(options[0]?.selection).toEqual(expectedSelection);
+      expect
+        .soft(
+          resolveNewTaskModelSelection({
+            draftSelection: draft,
+            projectDefaultSelection: null,
+            stickySelection: null,
+            modelOptions: options,
+          }),
+        )
+        .toEqual(expectedSelection);
+    }
+    expect(
+      buildModelOptions(config, null, instanceId, projectId, true, "/work/1").map(
+        (option) => option.selection.model,
+      ),
+    ).toEqual(["model", "hidden"]);
+    expect(buildModelOptions(config, null, instanceId, null, true, "/work/1")).toEqual([]);
+    expect(config).toEqual(original);
+  });
+
   it("resolves new tasks from draft, project, sticky, then provider defaults", () => {
     const draft = { instanceId: ProviderInstanceId.make("codex"), model: "draft" };
     const project = { instanceId: ProviderInstanceId.make("codex"), model: "project" };

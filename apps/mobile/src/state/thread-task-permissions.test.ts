@@ -119,6 +119,7 @@ vi.mock("./use-thread-selection", () => ({
 vi.mock("./use-thread-detail", () => ({
   useSelectedThreadProjection: () =>
     state.projection === null ? null : { projection: state.projection },
+  useSelectedThreadWorktreePath: () => null,
   useSelectedThreadVisibleTurnItems: () => [],
   useSelectedThreadPendingRequests: () => state.pendingRequests,
 }));
