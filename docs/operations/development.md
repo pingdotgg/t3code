@@ -295,6 +295,10 @@ keeps the explicit flush needed when Windows force-kills the backend.
 
 Build on Linux because the browser-secret helper links against the host's libsecret. Install
 Rust, C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
+Matching-architecture builds also execute packaged Electron in Node mode to prepare the server
+bytecode cache. Headless builders still need Electron's shared libraries, including GTK, NSS, GBM,
+and ALSA; install the distribution equivalents of the Linux DEB runtime dependencies in
+[`build-desktop-artifact.ts`](../../scripts/build-desktop-artifact.ts).
 
 Ubuntu and Debian:
 
