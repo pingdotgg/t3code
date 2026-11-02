@@ -418,7 +418,7 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("recovery closes a secret card's form but leaves a link card open", () => {
+it.effect("recovery closes secret and delegation cards but leaves a link card open", () => {
   const threadId = ThreadId.make("thread_secret_recovery");
   const runId = RunId.make("run_secret_recovery");
   let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
@@ -445,6 +445,16 @@ it.effect("recovery closes a secret card's form but leaves a link card open", ()
         secretStatus: "pending",
         label: "GitHub token",
         reason: "Used as GH_TOKEN.",
+      },
+      {
+        id: "turn-item:delegation-approval:recovery",
+        threadId,
+        runId,
+        nodeId: null,
+        type: "delegation_approval",
+        status: "waiting",
+        approvalStatus: "pending",
+        task: "Review the change.",
       },
       {
         id: "turn-item:link-request:recovery",
@@ -493,6 +503,12 @@ it.effect("recovery closes a secret card's form but leaves a link card open", ()
     const secret = cards.find((card) => card.type === "secret_request");
     assert.equal(secret?.status, "cancelled");
     assert.equal(secret?.type === "secret_request" ? secret.secretStatus : null, "cancelled");
+    // The call that waited on it is gone, so no later answer can start its task.
+    const approval = cards.find((card) => card.type === "delegation_approval");
+    assert.equal(
+      approval?.type === "delegation_approval" ? approval.approvalStatus : null,
+      "cancelled",
+    );
     // Nothing in memory waits on a link card; the user can still answer it.
     assert.equal(
       cards.some((card) => card.type === "link_request"),
