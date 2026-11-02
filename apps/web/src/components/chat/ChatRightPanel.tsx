@@ -5,7 +5,11 @@ import { RightPanelSheet } from "../RightPanelSheet";
 import { RightPanelTabs, type RightPanelTabsProps } from "../RightPanelTabs";
 import type { ChatCanvasStore } from "./canvasStore";
 import { DETAILS_CARD_CLEARANCE } from "./chatCanvasLayout";
-import { THREAD_DETAILS_CARD_GAP, THREAD_DETAILS_CARD_WIDTH } from "./threadDetailsCardLayout";
+import {
+  resolveThreadDetailsCardLayout,
+  THREAD_DETAILS_CARD_GAP,
+  THREAD_DETAILS_CARD_WIDTH,
+} from "./threadDetailsCardLayout";
 
 type ChatRightPanelProps = Omit<RightPanelTabsProps, "mode" | "inlineSize" | "maximized"> & {
   readonly sheet: boolean;
@@ -38,17 +42,23 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
   } = props;
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
   const autoSize = !sheet && !maximized && !hasFloatingPreview && chatWidth !== "full";
-  // Keep the card's slot when closed so reopening it does not switch to a popover.
+  // Size for the card even when closed; current presentation depends on the panel's width.
   const preferredSiblingWidth = useStore(canvasStore, ({ measurements }) => {
     if (!autoSize) return undefined;
-    const { padding, maxChatWidth } = measurements;
-    return (
+    const { padding, maxChatWidth, height, findBar } = measurements;
+    const widthWithCard =
       maxChatWidth +
       padding +
       DETAILS_CARD_CLEARANCE +
       THREAD_DETAILS_CARD_WIDTH +
-      THREAD_DETAILS_CARD_GAP
-    );
+      THREAD_DETAILS_CARD_GAP;
+    const card = resolveThreadDetailsCardLayout({
+      container: { width: widthWithCard, height },
+      lane: { padding, minChatWidth: maxChatWidth },
+      frame: null,
+      topInset: findBar?.bottom ?? 0,
+    });
+    return card ? widthWithCard : maxChatWidth + padding * 2;
   });
   const inlineSize = usePreviewPanelInlineSize({
     container: workspaceLayoutElement,
