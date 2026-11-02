@@ -30,8 +30,15 @@ vi.mock("@react-navigation/native", async () => {
     nativeRequire("@react-navigation/core");
   return { NavigationContext, useFocusEffect };
 });
+const appState = vi.hoisted(() => ({ listeners: new Set<(state: string) => void>() }));
+
 vi.mock("react-native", () => ({
-  AppState: { addEventListener: () => ({ remove: () => {} }) },
+  AppState: {
+    addEventListener: (_event: "change", listener: (state: string) => void) => {
+      appState.listeners.add(listener);
+      return { remove: () => appState.listeners.delete(listener) };
+    },
+  },
   View: ({ children }: { children?: ReactNode }) => children,
 }));
 vi.mock("../../components/ui/AppText", () => ({
@@ -113,6 +120,10 @@ function setup() {
   );
   return {
     focus: navigation.focus,
+    moveApp: (state: "active" | "background") =>
+      act(() => {
+        for (const listener of appState.listeners) listener(state);
+      }),
     settle: () =>
       act(async () => {
         fetches.open();
@@ -136,5 +147,23 @@ it("asks again on focus only once the list it is waiting for has answered", asyn
   await screen.settle();
   screen.focus(false);
   screen.focus(true);
+  expect(fetches).toMatchObject({ started: 2, interrupted: 0 });
+});
+
+it("asks again when the app comes back to the front on this screen", async () => {
+  using screen = setup();
+  await screen.settle();
+  expect(fetches).toMatchObject({ started: 1, interrupted: 0 });
+  fetches.gate = new Promise((resolve) => {
+    fetches.open = resolve;
+  });
+
+  screen.moveApp("background");
+  screen.moveApp("active");
+  expect(fetches).toMatchObject({ started: 2, interrupted: 0 });
+
+  // Coming back while that answer is still out must not cut it and start again.
+  screen.moveApp("background");
+  screen.moveApp("active");
   expect(fetches).toMatchObject({ started: 2, interrupted: 0 });
 });

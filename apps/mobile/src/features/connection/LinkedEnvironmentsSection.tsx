@@ -26,10 +26,19 @@ export function LinkedEnvironmentsSection(props: {
     : null;
   const links = useEnvironmentQuery(listAtom);
   const registry = useContext(RegistryContext);
-  // Links change outside this client, and the shared list only revalidates when built.
+  // Links change outside this client, and the shared list only revalidates when built, so
+  // showing the screen and bringing the app back ask again.
   useFocusEffect(
     useCallback(() => {
-      if (listAtom !== null && !registry.get(listAtom).waiting) registry.refresh(listAtom);
+      if (listAtom === null) return;
+      const askAgain = () => {
+        if (!registry.get(listAtom).waiting) registry.refresh(listAtom);
+      };
+      askAgain();
+      const subscription = AppState.addEventListener("change", (state) => {
+        if (state === "active") askAgain();
+      });
+      return () => subscription.remove();
     }, [listAtom, registry]),
   );
   const [nowMs, setNowMs] = useState(Date.now);
