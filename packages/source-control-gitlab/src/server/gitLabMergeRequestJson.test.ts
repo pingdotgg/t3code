@@ -240,7 +240,7 @@ describe("decodeMergeRequestDetailJson", () => {
 
 describe("decodePipelineStageChecksJson", () => {
   function stagesJson(
-    stages: ReadonlyArray<Record<string, unknown>> | null,
+    stages: ReadonlyArray<Record<string, unknown> | null> | null,
     hasNextPage = false,
   ): string {
     return JSON.stringify({
@@ -379,6 +379,26 @@ describe("decodePipelineStageChecksJson", () => {
       expectSuccess(
         decodePipelineStageChecksJson(
           stagesJson([{ name: "build", status: "success" }], true),
+          "https://gitlab.com",
+        ),
+      ),
+    ).toBe(null);
+    // A stage GitLab failed to resolve comes back null beside an error, and could be the failed one.
+    expect(
+      expectSuccess(
+        decodePipelineStageChecksJson(
+          stagesJson([{ name: "build", status: "success" }, null]),
+          "https://gitlab.com",
+        ),
+      ),
+    ).toBe(null);
+    expect(
+      expectSuccess(
+        decodePipelineStageChecksJson(
+          JSON.stringify({
+            ...JSON.parse(stagesJson([{ name: "build", status: "success" }])),
+            errors: [{ message: "boom" }],
+          }),
           "https://gitlab.com",
         ),
       ),

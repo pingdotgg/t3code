@@ -329,6 +329,7 @@ const RawStageSchema = Schema.Struct({
 });
 
 const RawPipelineStagesSchema = Schema.Struct({
+  errors: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
   data: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
@@ -369,7 +370,7 @@ const decodePipelineStages = decodeJsonResult(RawPipelineStagesSchema);
 /**
  * The head pipeline as one check per stage, GitLab's own stage status included, except that a
  * failed stage is shown as the jobs that failed it. Null where there are no stages to show, or
- * more than one page of them, so the caller keeps the single pipeline check. `origin` turns GitLab's relative paths into links.
+ * GitLab returned only some of them, so the caller keeps the single pipeline check. `origin` turns GitLab's relative paths into links.
  */
 export function decodePipelineStageChecksJson(
   raw: string,
@@ -380,7 +381,12 @@ export function decodePipelineStageChecksJson(
     return Result.fail(decoded.failure);
   }
   const pipeline = decoded.success.data?.project?.mergeRequest?.headPipeline;
-  if (pipeline?.stages?.pageInfo?.hasNextPage === true) {
+  // Any stage left out could be the failed one, so a partial list is no list.
+  if (
+    (decoded.success.errors?.length ?? 0) > 0 ||
+    pipeline?.stages?.pageInfo?.hasNextPage === true ||
+    pipeline?.stages?.nodes.includes(null) === true
+  ) {
     return Result.succeed(null);
   }
   const link = (path: string | null) => (path?.startsWith("/") ? `${origin}${path}` : null);
