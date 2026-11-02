@@ -43,6 +43,7 @@ export const enMessages = {
   "settings.layout.resetToDefaultShort": "Reset to default",
   "settings.layout.restoreDeviceDefaults": "Restore device defaults",
   "settings.layout.advanced": "Advanced",
+  "settings.layout.mixed": "Mixed",
 } as const;
 
 export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = {
@@ -85,4 +86,5 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.layout.resetToDefaultShort": "恢复默认",
   "settings.layout.restoreDeviceDefaults": "恢复本设备默认设置",
   "settings.layout.advanced": "高级",
+  "settings.layout.mixed": "不一致",
 };
