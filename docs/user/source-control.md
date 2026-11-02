@@ -22,10 +22,11 @@ setting in **Settings → Diffs**.
 
 To hide stories, benchmarks, or other project-specific files alongside tests, add patterns under
 **Settings → Diffs → Additional hidden file patterns**, then enable **Hide matching files** in the
-diff or pull request Code toolbar. Enter one case-sensitive JavaScript regular expression per line,
-without surrounding `/` or flags: for example, `\.stories\.tsx$` or `\.(perf|bench)\.[^/]+$`.
-Patterns match full paths with `/` separators. Invalid expressions are shown without replacing the
-saved patterns. Clear the field or use its reset button to keep only the built-in test rules.
+diff or pull request Code toolbar. Enter one [RE2 regular expression](https://github.com/google/re2/wiki/Syntax)
+per line, without surrounding `/`: for example, `\.stories\.tsx$` or `\.(perf|bench)\.[^/]+$`.
+Patterns search full paths with `/` separators and are case-sensitive by default. Lookaround and
+backreferences are unsupported. Invalid expressions are shown without replacing the saved patterns.
+Clear the field or use its reset button to keep only the built-in test rules.
 
 ## Connect an account
 

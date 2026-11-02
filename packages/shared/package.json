@@ -540,6 +540,7 @@
     "micromark-extension-directive": "catalog:",
     "micromark-util-character": "catalog:",
     "property-information": "^7.2.0",
+    "re2js": "2.9.1",
     "rehype-raw": "catalog:",
     "rehype-sanitize": "catalog:",
     "remark-breaks": "catalog:",

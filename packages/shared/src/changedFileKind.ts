@@ -1,4 +1,5 @@
 import type { PullRequestChangeBreakdown } from "@t3tools/contracts";
+import { RE2JS } from "re2js";
 
 export type ChangedFileKind = keyof NonNullable<PullRequestChangeBreakdown>;
 
@@ -74,13 +75,14 @@ export function isTestChangedFile(path: string): boolean {
 }
 
 export function compileDiffHideFilePatterns(input: string) {
-  const patterns: RegExp[] = [];
+  const patterns: RE2JS[] = [];
   const errors: { line: number; message: string }[] = [];
   for (const [index, line] of input.split("\n").entries()) {
     const source = line.trim();
     if (!source) continue;
     try {
-      patterns.push(new RegExp(source));
+      // User patterns must not trigger exponential backtracking on the UI thread.
+      patterns.push(RE2JS.compile(source));
     } catch (error) {
       errors.push({
         line: index + 1,
@@ -91,7 +93,7 @@ export function compileDiffHideFilePatterns(input: string) {
   return { patterns, errors };
 }
 
-export function matchesDiffHideFile(path: string, patterns: ReadonlyArray<RegExp>): boolean {
+export function matchesDiffHideFile(path: string, patterns: ReadonlyArray<RE2JS>): boolean {
   if (isTestChangedFile(path)) return true;
   const normalizedPath = path.replaceAll("\\", "/");
   return patterns.some((pattern) => pattern.test(normalizedPath));
