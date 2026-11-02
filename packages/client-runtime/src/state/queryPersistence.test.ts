@@ -89,5 +89,17 @@ it.effect("restores line counts when visible PR batches change", () =>
     expect(yield* cache.load(env, JSON.stringify(["stats", { refs: [legacyRefs[0]] }]))).toEqual(
       Option.some({ stats: [{ ...legacy, host: "github.com" }] }),
     );
+    const mixedRef = { ...github, number: 4 };
+    const mixedStat = { ...mixedRef, additions: 17, deletions: 2 };
+    yield* cache.save(
+      env,
+      JSON.stringify(["stats", { refs: [{ ...first, number: 4 }, mixedRef] }]),
+      {
+        stats: [mixedStat],
+      },
+    );
+    expect(yield* cache.load(env, JSON.stringify(["stats", { refs: [mixedRef] }]))).toEqual(
+      Option.some({ stats: [mixedStat] }),
+    );
   }).pipe(Effect.provideService(EnvironmentQueryStore, store())),
 );

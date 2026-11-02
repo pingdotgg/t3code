@@ -41,13 +41,15 @@ export function persistPullRequestStats(): QueryPersistence<PullRequestListStats
       function* (environmentId, key, result) {
         const [, input] = yield* Schema.decodeEffect(requestKey)(key);
         yield* Effect.forEach(resolvePullRequestStats(input.refs, result.stats), (stat) => {
-          const ref = input.refs.find(
+          const matches = input.refs.filter(
             (ref) =>
               ref.projectId === stat.projectId &&
-              (ref.host === undefined || ref.host.toLowerCase() === stat.host?.toLowerCase()) &&
               ref.repository === stat.repository &&
               ref.number === stat.number,
           );
+          const ref =
+            matches.find((ref) => ref.host?.toLowerCase() === stat.host?.toLowerCase()) ??
+            matches.find((ref) => ref.host === undefined);
           return ref ? row.save(environmentId, statKey(ref), stat) : Effect.void;
         });
       },
