@@ -440,6 +440,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
             : [
                 "launchctl bootout --wait gui/501/com.t3tools.t3code.service",
                 `launchctl bootstrap gui/501 ${plan.unitPath}`,
+                "launchctl kickstart gui/501/com.t3tools.t3code.service",
               ],
         );
       }),
