@@ -63,7 +63,7 @@ import {
   ThreadId,
   isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
-import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
+import { getProviderOptionCurrentValue, withoutSessionScopedOptions } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
@@ -1430,7 +1430,12 @@ const make = Effect.gen(function* () {
     const inheritsOptions =
       instanceId === inheritedSelection.instanceId && model === inheritedSelection.model;
     let options = inheritsOptions
-      ? knownOptions(inheritedSelection.options, descriptors)
+      ? knownOptions(
+          inheritedSelection.options === undefined
+            ? undefined
+            : withoutSessionScopedOptions(inheritedSelection.options),
+          descriptors,
+        )
       : undefined;
     if (requestedOptions !== undefined) {
       const selections = new Map(
@@ -2251,7 +2256,7 @@ const make = Effect.gen(function* () {
         inheritedModel: inherited?.model ?? null,
         inheritedOptions:
           knownOptions(
-            inherited?.options,
+            withoutSessionScopedOptions(inherited?.options ?? []),
             providers
               .find((provider) => provider.instanceId === inherited?.instanceId)
               ?.models.find((model) => model.slug === inherited?.model)?.capabilities

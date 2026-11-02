@@ -14,6 +14,7 @@ import {
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
+import { withoutSessionScopedOptions } from "@t3tools/shared/model";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -233,8 +234,8 @@ const make = Effect.gen(function* () {
       }
       const options =
         target.options ??
-        (instanceId === inherited.instanceId && model === inherited.model
-          ? inherited.options
+        (instanceId === inherited.instanceId && model === inherited.model && inherited.options
+          ? withoutSessionScopedOptions(inherited.options)
           : undefined);
       // Modes asked for are checked against this thread. Omitted ones are left
       // to the other side, which inherits this thread's modes capped by the

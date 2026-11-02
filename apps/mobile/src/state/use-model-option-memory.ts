@@ -1,4 +1,5 @@
 import type { ProviderOptionSelection } from "@t3tools/contracts";
+import { withoutSessionScopedOptions } from "@t3tools/shared/model";
 import { appAtomRegistry } from "./atom-registry";
 import {
   modelOptionMemoryAtom,
@@ -19,7 +20,7 @@ function recordModelOptionsInState(
     ...state,
     [instanceId]: {
       ...state[instanceId],
-      [model]: options,
+      [model]: withoutSessionScopedOptions(options),
     },
   };
 }

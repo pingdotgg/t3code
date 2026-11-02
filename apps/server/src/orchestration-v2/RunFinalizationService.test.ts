@@ -5,6 +5,7 @@ import {
   ThreadId,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -15,11 +16,13 @@ import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
 
-it.effect("completes finalization when the post-checkpoint workspace refresh fails", () => {
+it.effect("runs refreshes per checkout one at a time, without blocking finalize", () => {
   const threadId = ThreadId.make("thread_refresh_failure");
   const runId = RunId.make("run_refresh_failure");
   const scopeId = CheckpointScopeId.make("scope_refresh_failure");
   const captured: string[] = [];
+  const releaseFirst = Deferred.makeUnsafe<void>();
+  const secondRan = Deferred.makeUnsafe<void>();
   const layer = RunFinalization.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -39,12 +42,11 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
         }),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
           refresh: () =>
-            Effect.gen(function* () {
+            Effect.suspend(() => {
               captured.push("refresh");
-              return yield* new RunFinalization.RunFinalizationRefreshError({
-                cwd: "/repo",
-                cause: new Error("Git command timed out"),
-              });
+              return captured.filter((step) => step === "refresh").length === 1
+                ? Deferred.await(releaseFirst)
+                : Deferred.succeed(secondRan, undefined);
             }),
           refreshAfterTurn: () => Effect.void,
         }),
@@ -54,7 +56,11 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
   return Effect.gen(function* () {
     const service = yield* RunFinalization.RunFinalizationService;
     yield* service.finalize({ threadId, runId, scopeId });
-    assert.deepEqual(captured, ["checkpoint", "refresh"]);
+    yield* service.finalize({ threadId, runId, scopeId });
+    assert.deepEqual(captured, ["checkpoint", "refresh", "checkpoint"]);
+    yield* Deferred.succeed(releaseFirst, undefined);
+    yield* Deferred.await(secondRan);
+    assert.deepEqual(captured, ["checkpoint", "refresh", "checkpoint", "refresh"]);
   }).pipe(Effect.provide(layer));
 });
 

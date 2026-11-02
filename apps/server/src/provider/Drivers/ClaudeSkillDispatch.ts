@@ -19,6 +19,10 @@ export interface ClaudeSkillDispatch {
   readonly commandText: string;
 }
 
+export function hasClaudeSkillMention(prompt: string): boolean {
+  return prompt.match(SKILL_MENTION_PATTERN) !== null;
+}
+
 export function planClaudeSkillDispatch(
   prompt: string,
   skills: ReadonlyMap<string, ClaudeSkillTarget>,

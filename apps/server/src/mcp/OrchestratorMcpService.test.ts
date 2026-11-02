@@ -2877,6 +2877,10 @@ describe("OrchestratorMcpService provider resolution", () => {
           ],
         } as const;
         const override = [{ id: "reasoningEffort", value: "max" }] as const;
+        const ultracode = {
+          ...inherited,
+          options: [{ id: "effort", value: "ultracode" }],
+        } as const;
         const cases = [
           {
             name: "partial override",
@@ -2903,8 +2907,15 @@ describe("OrchestratorMcpService provider resolution", () => {
             target: { providerInstanceId: peerId, options: { reasoningEffort: "max" } },
             expected: { instanceId: peerId, model: inherited.model, options: override },
           },
+          {
+            name: "session-scoped ultracode",
+            inherited: ultracode,
+            target: {},
+            expected: { ...ultracode, options: [{ id: "effort", value: "xhigh" }] },
+          },
         ] as const;
         for (const testCase of cases) {
+          const parent = "inherited" in testCase ? testCase.inherited : inherited;
           const commands: Array<unknown> = [];
           const task = {
             id: taskId,
@@ -2924,7 +2935,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               getThreadRecords: (threadId) =>
                 Effect.succeed(
                   threadId === parentThreadId
-                    ? parentProjection(commands.length > 0 ? [task] : [], inherited)
+                    ? parentProjection(commands.length > 0 ? [task] : [], parent)
                     : childProjection,
                 ),
               dispatch: (command) =>
@@ -2962,7 +2973,10 @@ describe("OrchestratorMcpService provider resolution", () => {
           yield* Effect.gen(function* () {
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
             const capabilities = yield* service.capabilities(scope);
-            assert.deepEqual(capabilities.inheritedOptions, inherited.options);
+            assert.deepEqual(
+              capabilities.inheritedOptions,
+              "inherited" in testCase ? testCase.expected.options : parent.options,
+            );
             yield* service.delegateTask(scope, {
               task: "Review the change.",
               target: yield* decodeTarget(testCase.target),

@@ -6,6 +6,7 @@ import {
   CommandId,
   EventId,
   MessageId,
+  type ModelSelection,
   NodeId,
   type OrchestrationV2Run,
   ProjectId,
@@ -642,7 +643,10 @@ const parentScope: McpInvocationContext.McpInvocationScope = {
 };
 
 /** The laptop's parent thread, mid-turn when its agent delegates. */
-const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
+const seedParent = (
+  laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
+  selection: ModelSelection = modelSelection,
+) =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
     const providerThreadId = ProviderThreadId.make("provider-thread:laptop-parent");
@@ -654,7 +658,7 @@ const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
       threadId: parentThreadId,
       projectId: ProjectId.make("project:laptop"),
       title: "Laptop parent",
-      modelSelection,
+      modelSelection: selection,
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
@@ -728,7 +732,7 @@ const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
             threadId: parentThreadId,
             ordinal: 1,
             providerInstanceId: instanceId,
-            modelSelection,
+            modelSelection: selection,
             providerThreadId,
             userMessageId: MessageId.make("message:seed-user:laptop-parent"),
             rootNodeId: parentRootNode,
@@ -1053,7 +1057,8 @@ it.effect("a task named only by environment inherits the parent's model, within 
       const a = yield* makeLaptop(database, offers);
       // The parent runs with full access; the link allows less.
       yield* linkTo(a.links, b, "auto-accept-edits");
-      yield* seedParent(a);
+      const ultracode = { ...modelSelection, options: [{ id: "effort", value: "ultracode" }] };
+      yield* seedParent(a, ultracode);
 
       const result = yield* a.call("delegate_task", {
         task: "Run the suite on the box.",
@@ -1062,10 +1067,18 @@ it.effect("a task named only by environment inherits the parent's model, within 
       expect(result.isError, JSON.stringify(result.content)).toBe(false);
       // The parent's model, and the link's modes rather than the parent's.
       expect(yield* Ref.get(thread.launchedWith)).toEqual({
-        modelSelection,
+        modelSelection: { ...modelSelection, options: [{ id: "effort", value: "xhigh" }] },
         runtimeMode: "auto-accept-edits",
         interactionMode: "default",
       });
+
+      const explicit = yield* a.call("delegate_task", {
+        task: "Run with Ultracode explicitly.",
+        target: { environmentId: box.environmentId, options: ultracode.options },
+        clientRequestId: "explicit-ultracode",
+      });
+      expect(explicit.isError, JSON.stringify(explicit.content)).toBe(false);
+      expect((yield* Ref.get(thread.launchedWith))?.modelSelection).toEqual(ultracode);
 
       // Asking for more than the link allows is still refused there.
       const broader = yield* a.call("delegate_task", {

@@ -29,7 +29,7 @@ import type {
   EnvironmentShellState,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { draftModelPickMatchesThread } from "@t3tools/shared/model";
+import { draftModelPickMatchesThread, withoutSessionScopedOptions } from "@t3tools/shared/model";
 
 import { writeFileAtomically } from "../lib/atomic-file";
 import { createComposerContextHistory, referencedComposerContext } from "../lib/composerContext";
@@ -687,8 +687,21 @@ export function decodePersistedComposerState(value: unknown): {
         // Queued-edit sessions are memory-only; persisted drafts would outlive their run association and become unreachable.
         .filter(([key]) => !isQueuedEditDraftKey(key)),
     ),
-    stickyModelSelection: parsed.stickyModelSelection ?? null,
-    modelOptionMemory: parsed.modelOptionMemory ?? {},
+    stickyModelSelection:
+      parsed.stickyModelSelection === undefined
+        ? null
+        : withoutStickySessionOptions(parsed.stickyModelSelection),
+    modelOptionMemory: Object.fromEntries(
+      Object.entries(parsed.modelOptionMemory ?? {}).map(([instanceId, byModel]) => [
+        instanceId,
+        Object.fromEntries(
+          Object.entries(byModel).map(([model, options]) => [
+            model,
+            withoutSessionScopedOptions(options),
+          ]),
+        ),
+      ]),
+    ),
     cloudDrafts: {
       accountId: parsed.cloudAccountId ?? null,
       signedOut: Object.fromEntries(
@@ -1276,8 +1289,17 @@ function updateComposerDrafts(
   schedulePersistComposerState();
 }
 
+function withoutStickySessionOptions(selection: ModelSelection): ModelSelection {
+  return selection.options === undefined
+    ? selection
+    : { ...selection, options: withoutSessionScopedOptions(selection.options) };
+}
+
 export function setStickyComposerModelSelection(modelSelection: ModelSelection): void {
-  appAtomRegistry.set(stickyComposerModelSelectionAtom, modelSelection);
+  appAtomRegistry.set(
+    stickyComposerModelSelectionAtom,
+    withoutStickySessionOptions(modelSelection),
+  );
   schedulePersistComposerState();
 }
 
