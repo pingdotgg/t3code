@@ -2926,7 +2926,7 @@ describe("AcpAdapterV2", () => {
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
-      const runTurn = Effect.fnUntraced(function* (
+      const runTurn = Effect.fn("AcpAdapterV2.testProtocolLoggingTurn")(function* (
         name: string,
         nativeLogging?: NonNullable<Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"]>,
       ) {
