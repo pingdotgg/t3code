@@ -88,6 +88,7 @@ const claudeSystemAppend = () => {
       model: "claude-opus-5-5",
     },
     nativeThreadId: "context-budget",
+    browserToolsAvailable: true,
     resume: false,
     cwd: null,
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
