@@ -3200,6 +3200,7 @@ export const layerWsRpc = (
                   },
                 })),
               );
+              const pendingCheckStampPush = yield* Ref.make(false);
               const providerStatuses = Stream.zipLatestWith(
                 // Seed the changes-only stream so early source refreshes pair with current providers.
                 Stream.concat(
@@ -3236,6 +3237,18 @@ export const layerWsRpc = (
                   };
                 },
               ).pipe(
+                Stream.tap(({ sendChecks }) =>
+                  sendChecks ? Ref.set(pendingCheckStampPush, true) : Effect.void,
+                ),
+                Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
+                Stream.mapEffect((update) =>
+                  Ref.getAndSet(pendingCheckStampPush, false).pipe(
+                    Effect.map((sendChecks) => ({
+                      ...update,
+                      sendChecks: update.sendChecks || sendChecks,
+                    })),
+                  ),
+                ),
                 // Compare initial paired values with the snapshot; blindly dropping them loses changes between snapshot and subscription.
                 (updates) =>
                   Stream.concat(
@@ -3254,7 +3267,6 @@ export const layerWsRpc = (
                   type: "providerStatuses" as const,
                   payload: { providers },
                 })),
-                Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
               );
               // Gate capability-specific events; older clients reject them and lose their config subscription.
               const environmentThemeUpdates =

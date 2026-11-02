@@ -974,6 +974,16 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     assert.isUndefined(update.payload.providers[0]?.workspaceSnapshots);
 
     yield* server.write(0, { _tag: "Ack", requestId: configRequest });
+    yield* Queue.offer(providerChanges, [{ ...provider, status: "ready" }]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("100 millis");
+    yield* Queue.offer(providerChanges, [
+      { ...provider, status: "warning", checkedAt: "2026-10-25T00:05:00.000Z" },
+    ]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    assert.equal(yield* Queue.size(responses), 0);
+
     const nextStampPush = Effect.gen(function* () {
       const event = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
       if (event.type !== "providerStatuses") return yield* Effect.die("Expected stamp push");
@@ -1005,7 +1015,11 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     });
     yield* Queue.take(responses);
     yield* Queue.take(providersRead);
+    yield* TestClock.adjust("100 millis");
+    yield* Queue.offer(providerChanges, [{ ...restamped, checkedAt: "2026-10-25T00:40:00.000Z" }]);
+    yield* Queue.take(pulled);
     yield* TestClock.adjust("1 second");
+    assert.equal(yield* Queue.size(responses), 1);
     assert.equal(yield* nextStampPush, "2026-10-25T00:40:00.000Z");
 
     yield* server.write(0, {
