@@ -792,8 +792,17 @@ it.effect("bounds runtime provider-thread reads by ownership and preserves recov
       plan.some((row) => /^SCAN provider_thread(?:$| )/.test(row.detail)),
       JSON.stringify(plan),
     );
+    // Owners are probed per node of this thread, never by walking every owned provider thread.
     assert.isTrue(
-      plan.some((row) => row.detail.includes("provider_threads_owner_idx")),
+      plan.some((row) =>
+        /SEARCH owned USING INDEX .*provider_threads_owner_idx \(owner_node_id=\?\)/.test(
+          row.detail,
+        ),
+      ),
+      JSON.stringify(plan),
+    );
+    assert.isTrue(
+      plan.some((row) => /SEARCH owner USING COVERING INDEX .*\(thread_id=\?\)/.test(row.detail)),
       JSON.stringify(plan),
     );
     assert.isFalse(

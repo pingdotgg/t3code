@@ -9,6 +9,11 @@ export default Effect.gen(function* () {
     CREATE INDEX orchestration_v2_projection_turn_items_thread_type_idx
     ON orchestration_v2_projection_turn_items(thread_id, type, ordinal, turn_item_id)
   `;
+  // Lets provider-thread ownership start from one thread's node ids without reading node rows.
+  yield* sql`
+    CREATE INDEX orchestration_v2_projection_nodes_thread_node_idx
+    ON orchestration_v2_projection_nodes(thread_id, node_id)
+  `;
   // Keep these expressions aligned with ProjectionStore's message ordering and
   // omitSettledLeafNodes reads.
   yield* sql`

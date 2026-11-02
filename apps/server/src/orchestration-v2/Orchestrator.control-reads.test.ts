@@ -1775,10 +1775,12 @@ it.effect("queued-message commands read a long thread's history without walking 
         const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
         for (const { detail } of plan) {
           // A history-sized read: an ordering pass over every message item, or a
-          // node/turn-item search bounded by nothing but the thread.
+          // node/turn-item row search bounded by nothing but the thread. Walking only
+          // a covering index's ids reads no payloads.
           if (
             detail.includes("TEMP B-TREE FOR GROUP BY") ||
-            /^SEARCH .*(node|turn_item).* \(thread_id=\?\)$/.test(detail)
+            (/^SEARCH .*(node|turn_item).* \(thread_id=\?\)$/.test(detail) &&
+              !detail.includes("USING COVERING INDEX"))
           ) {
             walks.push(`${commandType}: ${detail}\n  in: ${query.replace(/\s+/g, " ").trim()}`);
           }

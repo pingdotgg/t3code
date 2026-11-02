@@ -3044,13 +3044,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       SELECT provider_thread_id FROM orchestration_v2_projection_provider_threads
       WHERE thread_id = ${threadId}
       UNION
-      -- Start with non-null owners; a thread can have a large settled node history.
+      -- Walk this thread's node ids in the covering index, never node rows or other
+      -- threads' owned provider threads; both grow without bound.
       SELECT owned.provider_thread_id
-      FROM orchestration_v2_projection_provider_threads AS owned
+      FROM orchestration_v2_projection_nodes AS owner
+        INDEXED BY orchestration_v2_projection_nodes_thread_node_idx
+      CROSS JOIN orchestration_v2_projection_provider_threads AS owned
         INDEXED BY orchestration_v2_projection_provider_threads_owner_idx
-      CROSS JOIN orchestration_v2_projection_nodes AS owner
-        ON owner.node_id = owned.owner_node_id
-      WHERE owned.owner_node_id IS NOT NULL AND owner.thread_id = ${threadId}
+        ON owned.owner_node_id = owner.node_id
+      WHERE owner.thread_id = ${threadId}
       UNION
       SELECT provider_thread_id FROM orchestration_v2_projection_subagents
       WHERE thread_id = ${threadId} AND provider_thread_id IS NOT NULL
