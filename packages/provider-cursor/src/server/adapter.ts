@@ -2388,7 +2388,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const delivered =
               known?.agent === agent.nativeThreadId
                 ? known
-                : { orchestration: turnInput.runOrdinal > 1, browser: false, device: false };
+                : {
+                    orchestration: turnInput.runOrdinal > 1,
+                    browser: turnInput.runOrdinal > 1 && !hasBrowserTools,
+                    device: false,
+                  };
             const message = yield* resolveUserMessage(
               turnInput,
               mcpServers,

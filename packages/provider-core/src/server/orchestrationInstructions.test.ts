@@ -22,50 +22,57 @@ describe("T3 browser routing instructions", () => {
     assert.isUndefined(t3OrchestrationSystemPrompt(false, true, false));
   });
 
-  it("reaches prompt-injected providers when browser access changes", () => {
-    const state = {
-      interactionMode: "default",
-      hasT3Mcp: true,
-      hasBrowserTools: false,
-      hasDeviceTools: false,
-    } as const;
-    const enabled = { ...state, hasBrowserTools: true };
-
-    const acp = t3AcpPromptWithInstructions({
-      prompt: "Open the page.",
-      state: enabled,
-      previousState: state,
-    });
-    assert.include(acp, T3_CODE_BROWSER_TOOL_INSTRUCTIONS);
-    assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Again.", state }), "`preview_*`");
-    assert.include(
-      t3AcpPromptWithInstructions({ prompt: "Use the page again.", state, previousState: enabled }),
-      "T3 Code browser access is unavailable.",
-    );
-
-    const cursor = t3OrchestrationPrompt({
-      prompt: "Open the page.",
-      hasT3Mcp: true,
-      hasBrowserTools: true,
-      hasDeviceTools: false,
-      orchestrationDelivered: true,
-      browserInstructionsDelivered: false,
-      deviceInstructionsDelivered: false,
-    });
-    assert.include(cursor, "Honor the browser the user selected.");
-    assert.include(
-      t3OrchestrationPrompt({
-        prompt: "Use the page again.",
+  it.each([true, false])(
+    "reaches prompt-injected providers when browser access changes (MCP: %s)",
+    (hasT3Mcp) => {
+      const state = {
+        interactionMode: "default",
         hasT3Mcp: true,
         hasBrowserTools: false,
         hasDeviceTools: false,
+      } as const;
+      const enabled = { ...state, hasBrowserTools: true };
+
+      const acp = t3AcpPromptWithInstructions({
+        prompt: "Open the page.",
+        state: enabled,
+        previousState: state,
+      });
+      assert.include(acp, T3_CODE_BROWSER_TOOL_INSTRUCTIONS);
+      assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Again.", state }), "`preview_*`");
+      assert.include(
+        t3AcpPromptWithInstructions({
+          prompt: "Use the page again.",
+          state: { ...state, hasT3Mcp },
+          previousState: enabled,
+        }),
+        "T3 Code browser access is unavailable.",
+      );
+
+      const cursor = t3OrchestrationPrompt({
+        prompt: "Open the page.",
+        hasT3Mcp: true,
+        hasBrowserTools: true,
+        hasDeviceTools: false,
         orchestrationDelivered: true,
-        browserInstructionsDelivered: true,
+        browserInstructionsDelivered: false,
         deviceInstructionsDelivered: false,
-      }),
-      "T3 Code browser access is unavailable.",
-    );
-  });
+      });
+      assert.include(cursor, "Honor the browser the user selected.");
+      assert.include(
+        t3OrchestrationPrompt({
+          prompt: "Use the page again.",
+          hasT3Mcp,
+          hasBrowserTools: false,
+          hasDeviceTools: false,
+          orchestrationDelivered: true,
+          browserInstructionsDelivered: true,
+          deviceInstructionsDelivered: false,
+        }),
+        "T3 Code browser access is unavailable.",
+      );
+    },
+  );
 });
 
 describe("T3 device instructions", () => {

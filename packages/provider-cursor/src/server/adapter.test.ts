@@ -667,7 +667,7 @@ describe("CursorAdapterV2", () => {
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-device-thread");
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      const setDeviceAccess = (device: boolean) =>
+      const setToolAccess = (browser: boolean, device: boolean) =>
         mcpSessions.set({
           environmentId: EnvironmentId.make("cursor-device-environment"),
           threadId,
@@ -675,7 +675,7 @@ describe("CursorAdapterV2", () => {
           providerInstanceId: instanceId,
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer synthetic-cursor-token",
-          browserToolsAvailable: true,
+          browserToolsAvailable: browser,
           capabilities: new Set(device ? ["device"] : []),
         });
       const modelSelection = { instanceId, model: "composer-2.5" };
@@ -753,7 +753,7 @@ describe("CursorAdapterV2", () => {
         lastVisitedAt: null,
         deletedAt: null,
       };
-      // Starts at run 5: a conversation from before device instructions existed, now resumed.
+      // Starts at run 5: a conversation from before browser/device delivery tracking, now resumed.
       let runOrdinal = 4;
       const send = Effect.fnUntraced(function* (compact = false) {
         runOrdinal += 1;
@@ -784,25 +784,42 @@ describe("CursorAdapterV2", () => {
         const sent = sentMessages.at(-1)!;
         return {
           orchestration: sent.includes("## T3 Code orchestration"),
+          browser: sent.includes("## T3 Code browser"),
+          browserUnavailable: sent.includes("T3 Code browser access is unavailable."),
           devices: sent.includes("## T3 Code devices"),
         };
       });
-      const told = (orchestration: boolean, devices: boolean) => ({ orchestration, devices });
+      const told = (
+        orchestration: boolean,
+        browser: boolean,
+        browserUnavailable: boolean,
+        devices: boolean,
+      ) => ({ orchestration, browser, browserUnavailable, devices });
 
-      yield* setDeviceAccess(true);
-      assert.deepEqual(yield* send(), told(false, true));
-      assert.deepEqual(yield* send(), told(false, false));
+      yield* setToolAccess(false, true);
+      assert.deepEqual(
+        yield* send(),
+        told(false, false, true, true),
+        "a resumed conversation with unknown delivery state withdraws browser guidance",
+      );
+      assert.deepEqual(yield* send(), told(false, false, false, false));
+      yield* setToolAccess(true, true);
+      assert.deepEqual(yield* send(), told(false, true, false, false));
       yield* send(true);
       assert.deepEqual(
         yield* send(),
-        told(true, true),
+        told(true, true, false, true),
         "compaction drops what the conversation was told",
       );
-      yield* setDeviceAccess(false);
-      assert.deepEqual(yield* send(), told(false, false));
-      yield* setDeviceAccess(true);
-      assert.deepEqual(yield* send(), told(false, true), "device access turned on later");
-      assert.deepEqual(yield* send(), told(false, false));
+      yield* setToolAccess(false, false);
+      assert.deepEqual(yield* send(), told(false, false, true, false));
+      yield* setToolAccess(true, true);
+      assert.deepEqual(
+        yield* send(),
+        told(false, true, false, true),
+        "tool access turned on later",
+      );
+      assert.deepEqual(yield* send(), told(false, false, false, false));
     }).pipe(
       Effect.scoped,
       Effect.provide(

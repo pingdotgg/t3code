@@ -367,6 +367,10 @@ export const normalizeToolName = (name: string) => {
 export const normalizeToolInput = (name: string, input: unknown) => {
   const decode = t3InputDecoders.get(normalizeToolName(name));
   if (decode !== undefined) return Option.getOrElse(decode(input), () => input);
+  if (name.slice(name.lastIndexOf(".") + 1) === "web__run" && isRecord(input)) {
+    const open = Array.isArray(input.open) ? input.open[0] : undefined;
+    if (isRecord(open)) return { url: open.ref_id, prompt: "Return the page content." };
+  }
   return normalizeToolName(name) === "Bash" && isRecord(input)
     ? { ...input, command: input.command ?? input.cmd }
     : typeof input === "string" && normalizeToolName(name) === "Edit"

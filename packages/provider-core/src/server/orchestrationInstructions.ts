@@ -96,12 +96,12 @@ export function t3AcpPromptWithInstructions(input: {
     input.state.interactionMode === "plan"
       ? T3_CODE_ACP_PLAN_MODE_INSTRUCTIONS
       : T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS,
+    ...(input.previousState?.hasBrowserTools === true && !input.state.hasBrowserTools
+      ? [T3_CODE_BROWSER_UNAVAILABLE_INSTRUCTIONS]
+      : []),
     ...(input.state.hasT3Mcp
       ? [
           ...(input.state.hasBrowserTools ? [T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()] : []),
-          ...(input.previousState?.hasBrowserTools === true && !input.state.hasBrowserTools
-            ? [T3_CODE_BROWSER_UNAVAILABLE_INSTRUCTIONS]
-            : []),
           ...(input.state.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
           T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
           T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS,
@@ -132,7 +132,11 @@ export function t3OrchestrationPrompt(input: {
   readonly browserInstructionsDelivered: boolean;
   readonly deviceInstructionsDelivered: boolean;
 }): string {
-  if (!input.hasT3Mcp) return input.prompt;
+  if (!input.hasT3Mcp) {
+    return input.browserInstructionsDelivered
+      ? prependT3OrchestrationInstructions(input.prompt, T3_CODE_BROWSER_UNAVAILABLE_INSTRUCTIONS)
+      : input.prompt;
+  }
   if (!input.orchestrationDelivered) {
     return prependT3OrchestrationInstructions(
       input.prompt,

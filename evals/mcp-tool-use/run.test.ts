@@ -57,6 +57,18 @@ it("grades Codex shell and subagent calls with the shared rules", () => {
   );
 });
 
+it("normalizes recorded Codex web opens before grading", () => {
+  assert.deepEqual(
+    normalizeToolInput("web__run", {
+      open: [{ ref_id: "https://docs.acme.test/releases/2.4" }],
+    }),
+    {
+      url: "https://docs.acme.test/releases/2.4",
+      prompt: "Return the page content.",
+    },
+  );
+});
+
 it("accepts any tool listed as an alternative", () => {
   const expect = { calls: [{ tool: "link_pull_request|watch_pull_request" }] };
   const run = (tool: string): SampleRun => ({

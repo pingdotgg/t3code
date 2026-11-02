@@ -542,7 +542,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.isFalse(overrides.allowedTools?.includes(ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD));
   });
 
-  it("invalidates live-query reuse when MCP credentials rotate", () => {
+  it("invalidates live-query reuse when MCP credentials or browser access change", () => {
     const threadId = ThreadId.make("thread-claude-mcp-credential-rotation");
     const mcpSession = mcpSessionFor(threadId);
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
@@ -565,6 +565,20 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       }),
     );
     assert.notEqual(rotatedKey, initialKey);
+    const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession,
+      readOnlySandbox: false,
+    });
+    const disabledKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(queryPolicy, {
+      ...overrides,
+      browserToolsAvailable: false,
+    });
+    const enabledKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(queryPolicy, {
+      ...overrides,
+      browserToolsAvailable: true,
+    });
+    assert.notEqual(enabledKey, disabledKey);
+    assert.equal(disabledKey, initialKey);
   });
 
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
