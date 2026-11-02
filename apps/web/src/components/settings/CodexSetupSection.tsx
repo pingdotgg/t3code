@@ -438,6 +438,7 @@ function ManagedCodexSetup({
     if (succeeded) {
       setAwaitingProvider("handoff");
       setHandoff(null);
+      onSignInFinished?.();
     }
     setTransferFailed(!succeeded);
   };
@@ -562,8 +563,8 @@ function ManagedCodexSetup({
               onSignInUnfinished?.(
                 "ChatGPT sign-in on the primary environment was interrupted. Try again.",
               );
-            else if (ended === null) onSignInFinished?.();
-            else reportSignInEnd(ended);
+            // Success counts once this environment has imported the profile.
+            else if (ended?.phase !== "succeeded") reportSignInEnd(ended);
           });
         },
         onSignInUnfinished,
