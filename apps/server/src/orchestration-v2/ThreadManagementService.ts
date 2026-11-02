@@ -85,6 +85,14 @@ export function withCreationProvenance(
       return { ...rest, ...provenance };
     }
     case "runtime-request.respond":
+      return {
+        ...command,
+        ...provenance,
+        creationSource:
+          provenance.createdBy === "user" && provenance.creationSource !== "mobile"
+            ? "web"
+            : provenance.creationSource,
+      };
     case "message.dispatch":
     case "thread.fork":
     case "thread.merge_back":

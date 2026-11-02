@@ -99,6 +99,14 @@ it("stamps question responses from the server instead of trusting supplied actor
       creationSource: "mobile",
     }),
   ).toMatchObject({ createdBy: "user", creationSource: "mobile" });
+  for (const creationSource of ["mcp", "provider", "server"] as const) {
+    expect(
+      ThreadManagementService.withCreationProvenance(command, {
+        createdBy: "user",
+        creationSource,
+      }),
+    ).toMatchObject({ createdBy: "user", creationSource: "web" });
+  }
 });
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(
