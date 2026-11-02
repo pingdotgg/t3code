@@ -47,6 +47,10 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, commandSpawner),
       );
 
+      yield* runtime.handleRequestPermission(() =>
+        Effect.succeed({ outcome: { outcome: "cancelled" as const } }),
+      );
+
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;
         if (update.sessionUpdate !== "agent_message_chunk") {
