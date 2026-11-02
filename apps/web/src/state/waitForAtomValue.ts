@@ -54,3 +54,29 @@ export async function waitForAtomValue<A>(input: {
     }, input.timeoutMs);
   });
 }
+
+/**
+ * Reports the first value satisfying `predicate`, then unsubscribes; an already-satisfying
+ * current value reports immediately. Returns the subscription's unsubscribe, a no-op once a
+ * value has arrived.
+ */
+export function untilAtomValue<A>(input: {
+  readonly registry: AtomRegistry.AtomRegistry;
+  readonly atom: Atom.Atom<A>;
+  readonly predicate: (value: A) => boolean;
+  readonly onArrival: (value: A) => void;
+}): () => void {
+  const current = input.registry.get(input.atom);
+  if (input.predicate(current)) {
+    input.onArrival(current);
+    return () => {};
+  }
+  let settled = false;
+  const unsubscribe = input.registry.subscribe(input.atom, (value) => {
+    if (settled || !input.predicate(value)) return;
+    settled = true;
+    unsubscribe();
+    input.onArrival(value);
+  });
+  return unsubscribe;
+}
