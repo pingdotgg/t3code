@@ -1,5 +1,5 @@
 import { splitPullRequestBody } from "@t3tools/client-runtime/pull-request-markdown";
-import { markdownTaskListItems } from "@t3tools/shared/markdownTaskList";
+import { markdownTaskMarkerOffset } from "@t3tools/shared/markdownTaskList";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 import { useProject } from "../../state/entities";
@@ -95,8 +95,6 @@ function MarkdownImage(props: {
   );
 }
 
-const letters = (text: string) => text.replace(/[^\p{L}\p{N}]/gu, "");
-
 export function PullRequestMarkdown(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
@@ -121,14 +119,9 @@ export function PullRequestMarkdown(props: {
             onTaskListItemPress={
               onTaskListChange
                 ? (event) => {
-                    // The native renderer counts checkboxes itself; its item text confirms the
-                    // count agrees with the source before the source is rewritten.
-                    const item = markdownTaskListItems(segment.text)[event.index];
-                    const matches =
-                      item?.markerOffset != null &&
-                      letters(event.text).startsWith(letters(item.text));
+                    const offset = markdownTaskMarkerOffset(segment.text, event.index, event.text);
                     onTaskListChange({
-                      markerOffset: matches ? segment.sourceOffset + item.markerOffset! : null,
+                      markerOffset: offset === null ? null : segment.sourceOffset + offset,
                       checked: event.checked,
                     });
                   }

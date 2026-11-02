@@ -61,3 +61,21 @@ export function markdownTaskListItems(
   visit(parser.parse(markdown));
   return items;
 }
+
+const letters = (text: string) => text.replace(/[^\p{L}\p{N}]/gu, "");
+
+/**
+ * Offset of the `index`th task marker, or null when a renderer's item text shows it counted
+ * another item. Android cuts that text at the first line break; iOS sends the whole paragraph.
+ */
+export function markdownTaskMarkerOffset(
+  markdown: string,
+  index: number,
+  renderedText: string,
+): number | null {
+  const item = markdownTaskListItems(markdown)[index];
+  if (item?.markerOffset == null) return null;
+  const rendered = letters(renderedText);
+  const source = letters(item.text);
+  return rendered.startsWith(source) || source.startsWith(rendered) ? item.markerOffset : null;
+}

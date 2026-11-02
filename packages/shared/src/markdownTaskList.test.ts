@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { markdownTaskListItems, setMarkdownTaskChecked } from "./markdownTaskList.ts";
+import {
+  markdownTaskListItems,
+  markdownTaskMarkerOffset,
+  setMarkdownTaskChecked,
+} from "./markdownTaskList.ts";
 
 describe("setMarkdownTaskChecked", () => {
   const markdown = "- [ ] First\n- [x] Second\n";
@@ -40,5 +44,15 @@ describe("markdownTaskListItems", () => {
     expect(items.map((item) => markdown.slice(item.markerOffset!, item.markerOffset! + 3))).toEqual(
       ["[ ]", "[x]", "[X]"],
     );
+  });
+});
+
+describe("markdownTaskMarkerOffset", () => {
+  it("matches a renderer's item text cut at a line break, and rejects another item's", () => {
+    const markdown = "- [ ] Wrapped\n  item\n- [ ] Hard  \n  break\n";
+    expect(markdownTaskMarkerOffset(markdown, 0, "Wrapped")).toBe(2);
+    expect(markdownTaskMarkerOffset(markdown, 0, "Wrapped item")).toBe(2);
+    expect(markdownTaskMarkerOffset(markdown, 1, "Hard")).toBe(23);
+    expect(markdownTaskMarkerOffset(markdown, 1, "Wrapped")).toBeNull();
   });
 });
