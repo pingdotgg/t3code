@@ -1259,26 +1259,18 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     });
     feedRef.current?.resetEndFollow();
     setAnchorMessageId(nextAnchorMessageId);
-    if (dismissingKeyboard) {
-      // Give the optimistic row a committed layout before UIKit chooses the closing scroll offset.
-      requestAnimationFrame(() => {
-        if (!scope.aborted) void KeyboardController.dismiss();
-      });
-    } else {
-      composerEditorRef.current?.blur();
-    }
-    // The send enqueued the message optimistically, so it is in the feed or
-    // the queue by the next frame, once the new anchor has rendered.
-    if (nextAnchorMessageId === messageId && contentPresentationKind === "ready") {
+    if (!dismissingKeyboard) composerEditorRef.current?.blur();
+    const followSubmission =
+      contentPresentationKind === "ready" &&
+      (dismissingKeyboard || nextAnchorMessageId === messageId);
+    if (dismissingKeyboard || followSubmission) {
+      // Commit the optimistic row before UIKit chooses the closing scroll offset.
       requestAnimationFrame(() => {
         if (scope.aborted) return;
-        // Wait for the keyboard to finish dismissing: scrollMessageToEnd freezes
-        // keyboard-driven inset updates, and a close event swallowed by that
-        // freeze leaves a phantom bottom inset.
+        // Scrolling freezes the keyboard inset, so wait until dismissal has removed it.
         void KeyboardController.dismiss()
           .then(() => {
-            // A scroll during the dismissal turns end-follow off; leave the reader where they are.
-            if (scope.aborted || !endFollowEnabledRef.current) return;
+            if (!followSubmission || scope.aborted || !endFollowEnabledRef.current) return;
             return scrollMessageToEnd({ animated: !reduceMotion, closeKeyboard: false });
           })
           .catch(() => {
