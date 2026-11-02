@@ -61,4 +61,5 @@ export function isDefaultThreadDetailsVisibility(visibility: ThreadDetailsVisibi
 export const RESET_THREAD_DETAILS_ITEMS = {
   threadDetailsItems: {},
   threadDetailsUsageEnabled: false,
+  threadDetailsOpenByDefault: true,
 } satisfies Partial<ClientSettings>;
