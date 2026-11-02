@@ -181,9 +181,7 @@ export const layer: Layer.Layer<
     }).pipe(
       Layer.provide(ProviderOrchestrationAdapterInfrastructure.layer),
       Layer.provide(AcpRegistrySupport.layerFromHost),
-      // Fresh: the ACP registry builds this host first, without projections, and memoization
-      // would otherwise hand that copy, without readable attachments, to every provider.
-      Layer.provide(Layer.fresh(ProviderHostLive.layer)),
+      Layer.provide(ProviderHostLive.layer),
       Layer.provide(Layer.succeed(HostProcess.Environment, hostEnvironment)),
       Layer.provide(SecretResolver.layer),
     );

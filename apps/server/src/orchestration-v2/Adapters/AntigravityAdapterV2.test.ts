@@ -39,7 +39,6 @@ import {
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
 } from "./AntigravityAdapterV2.ts";
-import { antigravityThreadUploadsRoot } from "../../provider/acp/AntigravityThreadUploads.ts";
 
 const flavor = makeAntigravityAcpAdapterFlavor({
   instanceId: ProviderInstanceId.make("antigravity-test"),
@@ -140,9 +139,7 @@ const layerSession = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
-  TestProviderHost.layer({
-    readableAttachments: { "thread-antigravity-containment": ["pasted.txt"] },
-  }).pipe(Layer.provide(NodeServices.layer)),
+  TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
 );
 
 describe("AntigravityAdapterV2 compaction", () => {
@@ -241,55 +238,6 @@ describe("AntigravityAdapterV2 session open", () => {
         error._tag === "ProviderAdapterOpenSessionError" && error.requiresSignIn,
         requiresSignIn,
       );
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
-  );
-});
-
-describe("AntigravityAdapterV2 thread uploads", () => {
-  it.effect("copies only uploads this thread owns or inherited, not another thread's by ID", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const host = yield* ProviderHost.ProviderHost;
-      const threadId = ThreadId.make("thread-antigravity-containment");
-      const upload = (id: string) => {
-        const attachment = {
-          type: "file",
-          id,
-          name: `${id}.txt`,
-          mimeType: "text/plain",
-          sizeBytes: 4,
-        } as const;
-        return fileSystem
-          .writeFileString(path.join(host.paths.attachmentsDir, id), "data")
-          .pipe(Effect.as(attachment));
-      };
-      const own = yield* upload(
-        "thread-antigravity-containment-00000000-0000-4000-8000-000000000001",
-      );
-      const foreign = yield* upload("thread-other-00000000-0000-4000-8000-000000000002");
-      const inherited = yield* upload("pasted.txt");
-      const uploadsFlavor = makeAntigravityAcpAdapterFlavor({
-        instanceId: ProviderInstanceId.make("antigravity-uploads-test"),
-        crypto: yield* Crypto.Crypto,
-        fileSystem,
-        path,
-        host,
-        selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: () => Effect.die("not spawned in this test"),
-        withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
-      });
-      const resolve = yield* uploadsFlavor.prepareAttachments!({
-        threadId,
-        attachments: [own, foreign, inherited],
-      });
-      assert.isString(resolve(own));
-      assert.isString(resolve(inherited));
-      assert.isNull(resolve(foreign));
-      const root = antigravityThreadUploadsRoot(host.paths.stateDir, threadId);
-      assert.isFalse(yield* fileSystem.exists(path.join(root, foreign.id)));
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
@@ -393,27 +341,11 @@ describe("AntigravityAdapterV2 client file system", () => {
       const insidePath = path.join(workspace, "src", "inside.ts");
       yield* fileSystem.makeDirectory(path.dirname(insidePath), { recursive: true });
       yield* fileSystem.writeFileString(insidePath, "inside");
-      // The agent gets only this thread's copies; the shared store stays out of reach.
-      // The copies live under the canonical root (macOS temp paths resolve through /private).
-      const threadUploads = yield* fileSystem.realPath(
-        antigravityThreadUploadsRoot(host.paths.stateDir, threadId),
-      );
-      const sessionNew = (yield* fileSystem.readFileString(requestLog))
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as { method?: string; params?: unknown })
-        .find((request) => request.method === "session/new");
-      assert.deepNestedPropertyVal(sessionNew, "params.additionalDirectories", [threadUploads]);
       const pasted = yield* readTextFile(
-        { sessionId: "mock-session-1", path: path.join(threadUploads, "pasted.txt") },
+        { sessionId: "mock-session-1", path: attachment },
         context("fs/read_text_file"),
       );
       assert.equal(pasted.content, "pasted");
-      const shared = yield* readTextFile(
-        { sessionId: "mock-session-1", path: attachment },
-        context("fs/read_text_file"),
-      ).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(shared), "the shared attachment store is not a read root");
       yield* fileSystem.writeFileString(insidePath, "\uFEFFfirst\né中🙂\nlast");
       const sliced = yield* readTextFile(
         { sessionId: "mock-session-1", path: insidePath, line: 2, limit: 1 },
@@ -472,19 +404,13 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       const host = yield* ProviderHost.ProviderHost;
       const document = ChatFileAttachment.make({
         type: "file",
-        id: "thread-antigravity-workspace-change-00000000-0000-4000-8000-000000000003",
+        id: "native-pdf",
         name: "diagram.pdf",
         mimeType: "application/pdf",
         sizeBytes: 9,
       });
-      yield* fileSystem.writeFileString(host.resolveAttachmentPath(document)!, "%PDF-1.7");
-      const documentPath = path.join(
-        antigravityThreadUploadsRoot(
-          host.paths.stateDir,
-          ThreadId.make("thread-antigravity-workspace-change"),
-        ),
-        "thread-antigravity-workspace-change-00000000-0000-4000-8000-000000000003",
-      );
+      const documentPath = host.resolveAttachmentPath(document)!;
+      yield* fileSystem.writeFileString(documentPath, "%PDF-1.7");
       let readTextFile: Parameters<RuntimeService["handleReadTextFile"]>[0] | undefined;
       const instanceId = ProviderInstanceId.make("antigravity-workspace-change-test");
       const adapter = yield* makeAntigravityAdapterV2({
@@ -603,26 +529,19 @@ describe("AntigravityAdapterV2 workspace changes", () => {
         Stream.runHead,
       );
       const sent = yield* Deferred.await(promptReceived);
-      // Staged copies live under the canonical root (macOS temp paths resolve through /private).
-      const stagedDocument = yield* fileSystem.realPath(documentPath);
       assert.deepEqual(
         sent.prompt.filter((block) => block.type === "resource_link"),
         [
           {
             type: "resource_link",
-            uri: (yield* path.toFileUrl(stagedDocument)).href,
+            uri: (yield* path.toFileUrl(documentPath)).href,
             name: "diagram.pdf",
             mimeType: "application/pdf",
             size: 8,
           },
         ],
       );
-      // The prompt names this thread's private copy, never the shared store.
-      assert.include(JSON.stringify(sent.prompt), stagedDocument);
-      assert.notInclude(
-        JSON.stringify(sent.prompt),
-        yield* fileSystem.realPath(host.paths.attachmentsDir),
-      );
+      assert.include(JSON.stringify(sent.prompt), documentPath);
       if (readTextFile === undefined) {
         return yield* Effect.die("Antigravity sessions must serve client file requests");
       }

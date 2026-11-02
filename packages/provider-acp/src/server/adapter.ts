@@ -269,16 +269,7 @@ export function acpPerTurnPromptUsage(
 }
 
 export interface AcpAdapterV2Flavor {
-  /**
-   * Places the turn's uploads where the agent may read them. The returned resolver replaces the
-   * host's stored paths in prompt text and in `buildPrompt`.
-   */
-  readonly prepareAttachments?: (input: {
-    readonly threadId: ThreadId;
-    readonly attachments: ReadonlyArray<ChatAttachment>;
-  }) => Effect.Effect<(attachment: ChatAttachment) => string | null, EffectAcpErrors.AcpError>;
   readonly buildPrompt?: (input: {
-    readonly threadId: ThreadId;
     readonly text: string;
     readonly attachments: ReadonlyArray<ChatAttachment>;
     readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
@@ -370,7 +361,6 @@ export interface AcpAdapterV2Flavor {
     readonly readTextFile: (
       request: EffectAcpSchema.ReadTextFileRequest,
       cwd: string | null,
-      threadId: ThreadId,
     ) => Effect.Effect<EffectAcpSchema.ReadTextFileResponse, EffectAcpErrors.AcpError>;
     readonly writeTextFile?: (
       request: EffectAcpSchema.WriteTextFileRequest,
@@ -6149,9 +6139,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (clientFileSystem !== undefined) {
             yield* targetRuntime.handleReadTextFile((request) =>
               clientPolicyContext.pipe(
-                Effect.flatMap(({ policy }) =>
-                  clientFileSystem.readTextFile(request, policy.cwd, input.threadId),
-                ),
+                Effect.flatMap(({ policy }) => clientFileSystem.readTextFile(request, policy.cwd)),
               ),
             );
             const writeTextFile = clientFileSystem.writeTextFile;
@@ -7459,29 +7447,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       childProcessSpawner,
                     ),
                   );
-          const resolveAttachmentPath =
-            flavor.prepareAttachments === undefined
-              ? host.resolveAttachmentPath
-              : yield* flavor
-                  .prepareAttachments({
-                    threadId: turnInput.threadId,
-                    attachments: turnInput.message.attachments,
-                  })
-                  .pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new ProviderAdapter.ProviderAdapterProtocolError({
-                          driver,
-                          detail: "Failed to prepare ACP attachments",
-                          reason: "attachment_unreadable",
-                          payload: cause,
-                        }),
-                    ),
-                  );
           const messageText = yield* providerMessageTextWithAttachmentPaths({
             text: userText,
             attachments: turnInput.message.attachments,
-            resolveAttachmentPath,
+            resolveAttachmentPath: host.resolveAttachmentPath,
             resolveExtractedTextPath: host.resolveExtractedTextPath,
           });
           const isNativeSlashCommand = userText.trimStart().startsWith("/");
@@ -7510,10 +7479,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const currentModelId = modelOption?.currentValue;
             const blocks = yield* flavor
               .buildPrompt({
-                threadId: turnInput.threadId,
                 text,
                 attachments: turnInput.message.attachments,
-                resolveAttachmentPath,
+                resolveAttachmentPath: host.resolveAttachmentPath,
                 promptCapabilities: setup?.initializeResult.agentCapabilities?.promptCapabilities,
                 agentVersion: setup?.initializeResult.agentInfo?.version,
                 currentModel:

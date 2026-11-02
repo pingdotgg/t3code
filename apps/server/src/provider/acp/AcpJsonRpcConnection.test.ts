@@ -972,7 +972,7 @@ describe("AcpSessionRuntime", () => {
           requestEvents.find((event) => event.method === method && event.status === "started")
             ?.payload,
         ).toMatchObject({
-          additionalDirectories: ["/tmp/t3-thread-uploads"],
+          additionalDirectories: ["/tmp/t3-attachments"],
           _meta: { negotiated: "0.0.0" },
         });
       }
@@ -987,7 +987,7 @@ describe("AcpSessionRuntime", () => {
               T3_ACP_SESSION_LIFECYCLE: "1",
             },
           },
-          additionalDirectories: ["/tmp/t3-thread-uploads"],
+          additionalDirectories: ["/tmp/t3-attachments"],
           sessionMeta: (initializeResult) => ({
             negotiated: initializeResult.agentInfo?.version ?? "none",
           }),

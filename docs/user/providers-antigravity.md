@@ -106,9 +106,6 @@ documents. With the managed runtime on macOS and Linux, an MP4 video up to 20 Mi
 is sent as video to Gemini models. Other attachments, and videos for other models, are passed as a
 saved file path for the agent to inspect with its tools.
 
-The agent can read only the files attached in its own thread, plus those in the
-history a fork started from. Side chats do not inherit their parent's files.
-
 ### Subagents
 
 Antigravity groups subagent activity into batches. Open a batch and select

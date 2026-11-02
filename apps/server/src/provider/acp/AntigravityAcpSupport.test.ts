@@ -16,7 +16,6 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   applyAntigravityAcpModelSelection,
-  antigravityMovedUploadsNotice,
   antigravitySessionMeta,
   buildAntigravityPrompt,
   isQualifiedAntigravityRelease,
@@ -57,27 +56,6 @@ function makeModelRuntime(
     selections,
   };
 }
-
-describe("antigravityMovedUploadsNotice", () => {
-  it("gives exact new paths and the rule for files it does not list", () => {
-    expect(
-      antigravityMovedUploadsNotice("Check the receipt again.", {
-        root: "/home/user/.t3/userdata/antigravity/thread-uploads/abc",
-        files: ["/home/user/.t3/userdata/antigravity/thread-uploads/abc/thread-1-uuid.csv"],
-        more: 2,
-      }),
-    ).toBe(
-      [
-        "Check the receipt again.",
-        "",
-        "[Files attached earlier in this conversation have moved to /home/user/.t3/userdata/antigravity/thread-uploads/abc. Their old saved paths no longer work.",
-        "Read them at:",
-        "- /home/user/.t3/userdata/antigravity/thread-uploads/abc/thread-1-uuid.csv",
-        "Any other earlier file keeps the file name from its old saved path, in that folder.]",
-      ].join("\n"),
-    );
-  });
-});
 
 describe("Antigravity release gates", () => {
   it.each([

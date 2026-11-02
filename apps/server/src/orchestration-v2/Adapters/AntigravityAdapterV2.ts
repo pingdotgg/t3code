@@ -1,9 +1,7 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
-  type ChatAttachment,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ThreadId,
   type OrchestrationV2ProviderCapabilities,
   type ProviderSetupError,
 } from "@t3tools/contracts";
@@ -23,7 +21,6 @@ import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityAppendsSystemPrompt,
-  antigravityMovedUploadsNotice,
   antigravityPermissionMode,
   antigravityRuntimeModeForSessionMode,
   applyAntigravityAcpModelSelection,
@@ -31,22 +28,11 @@ import {
   type AntigravityAcpRuntimeInput,
 } from "../../provider/acp/AntigravityAcpSupport.ts";
 import {
-  parseThreadSegmentFromAttachmentId,
-  toSafeThreadAttachmentSegment,
-} from "../../attachmentStore.ts";
-import {
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
-import {
-  antigravityThreadUploadPath,
-  antigravityThreadUploadsRoot,
-  markAntigravityMovedUploads,
-  syncAntigravityThreadUploads,
-  takeAntigravityMovedUploads,
-} from "../../provider/acp/AntigravityThreadUploads.ts";
 import {
   antigravityApprovalOptions,
   antigravitySubagentOutput,
@@ -147,29 +133,10 @@ export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
   const { profileDirectory } = options;
-  const uploadsRoot = (threadId: ThreadId) =>
-    antigravityThreadUploadsRoot(options.host.paths.stateDir, threadId);
+  const antigravityClientFileRoots = (cwd: string | null) =>
+    cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
-      const storedPaths =
-        options.host.readableAttachmentPaths === undefined
-          ? []
-          : yield* options.host.readableAttachmentPaths(input.threadId);
-      // Every start, load and resume rebuilds the copies, so a cold resume can read older uploads.
-      const synced = yield* syncAntigravityThreadUploads({
-        stateDir: options.host.paths.stateDir,
-        threadId: input.threadId,
-        attachmentsDir: options.host.paths.attachmentsDir,
-        storedPaths,
-        prune: true,
-      }).pipe(
-        Effect.mapError(
-          (cause) => new EffectAcpErrors.AcpTransportError({ detail: cause.detail, cause }),
-        ),
-      );
-      if (synced.created && input.resumeSessionId !== undefined && storedPaths.length > 0) {
-        yield* markAntigravityMovedUploads(synced.root, storedPaths);
-      }
       const scope = yield* Scope.fork(yield* Effect.scope);
       const runtime = yield* options
         .withProcess(
@@ -178,7 +145,7 @@ export function makeAntigravityAcpAdapterFlavor(
             ...input,
             clientFileReads: true,
             sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
-            additionalDirectories: [synced.root],
+            additionalDirectories: [options.host.paths.attachmentsDir],
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
@@ -244,44 +211,7 @@ export function makeAntigravityAcpAdapterFlavor(
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
-    prepareAttachments: Effect.fn("AntigravityAdapterV2.prepareAttachments")(function* ({
-      threadId,
-      attachments,
-    }) {
-      if (attachments.length === 0) return () => null;
-      // A message may name another thread's stored upload; copy only this lineage's uploads.
-      const owner = toSafeThreadAttachmentSegment(threadId);
-      const ownsAll = attachments.every(
-        (attachment) => parseThreadSegmentFromAttachmentId(attachment.id) === owner,
-      );
-      const inherited = new Set(
-        ownsAll || options.host.readableAttachmentPaths === undefined
-          ? []
-          : yield* options.host.readableAttachmentPaths(threadId),
-      );
-      const readable = (attachment: ChatAttachment) => {
-        const stored = options.host.resolveAttachmentPath(attachment);
-        return stored !== null &&
-          (parseThreadSegmentFromAttachmentId(attachment.id) === owner || inherited.has(stored))
-          ? stored
-          : null;
-      };
-      const { root } = yield* syncAntigravityThreadUploads({
-        stateDir: options.host.paths.stateDir,
-        threadId,
-        attachmentsDir: options.host.paths.attachmentsDir,
-        storedPaths: attachments.flatMap((attachment) => readable(attachment) ?? []),
-        prune: false,
-      }).pipe(
-        Effect.mapError((cause) => EffectAcpErrors.AcpRequestError.internalError(cause.detail)),
-      );
-      return (attachment: ChatAttachment) => {
-        const stored = readable(attachment);
-        return stored === null ? null : antigravityThreadUploadPath(root, stored);
-      };
-    }),
     buildPrompt: ({
-      threadId,
       text,
       attachments,
       resolveAttachmentPath,
@@ -289,17 +219,14 @@ export function makeAntigravityAcpAdapterFlavor(
       agentVersion,
       currentModel,
     }) =>
-      takeAntigravityMovedUploads(uploadsRoot(threadId)).pipe(
-        Effect.flatMap((moved) =>
-          buildAntigravityPrompt({
-            input: moved === undefined ? text : antigravityMovedUploadsNotice(text, moved),
-            attachments,
-            resolveAttachmentPath,
-            promptCapabilities,
-            agentVersion,
-            currentModel,
-          }),
-        ),
+      buildAntigravityPrompt({
+        input: text,
+        attachments,
+        resolveAttachmentPath,
+        promptCapabilities,
+        agentVersion,
+        currentModel,
+      }).pipe(
         Effect.provideService(FileSystem.FileSystem, options.fileSystem),
         Effect.provideService(Path.Path, options.path),
       ),
@@ -322,11 +249,11 @@ export function makeAntigravityAcpAdapterFlavor(
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
     runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
     clientFileSystem: {
-      readTextFile: (request, cwd, threadId) =>
+      readTextFile: (request, cwd) =>
         readAntigravityClientTextFile({
           fileSystem: options.fileSystem,
           path: options.path,
-          allowedRoots: cwd === null ? [uploadsRoot(threadId)] : [cwd, uploadsRoot(threadId)],
+          allowedRoots: antigravityClientFileRoots(cwd),
           request,
         }),
     },

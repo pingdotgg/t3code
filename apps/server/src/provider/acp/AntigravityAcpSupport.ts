@@ -149,24 +149,6 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
   return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
 });
 
-/**
- * Model-facing, once per migration: earlier native history names uploads at stored paths the
- * agent now refuses, so give their new paths and the rule for any file not listed.
- */
-export function antigravityMovedUploadsNotice(
-  text: string,
-  moved: { readonly root: string; readonly files: ReadonlyArray<string>; readonly more: number },
-): string {
-  const notice = [
-    `[Files attached earlier in this conversation have moved to ${moved.root}. Their old saved paths no longer work.`,
-    ...(moved.files.length === 0
-      ? []
-      : ["Read them at:", ...moved.files.map((file) => `- ${file}`)]),
-    "Any other earlier file keeps the file name from its old saved path, in that folder.]",
-  ].join("\n");
-  return text ? `${text}\n\n${notice}` : notice;
-}
-
 export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   switch (runtimeMode) {
     case "full-access":
