@@ -1228,7 +1228,8 @@ function renumberFollowingItems(
   });
 }
 
-export function splitOrLiftListItem(editor: Editor): boolean {
+/** `prepare` runs first in the same transaction, which the split then reads. */
+export function splitOrLiftListItem(editor: Editor, prepare: Command): boolean {
   const $from = editor.state.selection.$from;
   const itemType = listItemTypeAt($from);
   if (!itemType) return false;
@@ -1243,7 +1244,7 @@ export function splitOrLiftListItem(editor: Editor): boolean {
     if (moved) alignListItemWithSiblings(tr, itemType);
     return moved;
   };
-  return editor.can().command(move) && editor.chain().command(move).run();
+  return editor.can().command(move) && editor.chain().command(prepare).command(move).run();
 }
 
 export function convertBulletItemToTask(

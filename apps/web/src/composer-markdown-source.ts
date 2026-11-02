@@ -1,5 +1,5 @@
-import { Mark as TiptapMark } from "@tiptap/core";
-import { redoDepth, undoDepth } from "@tiptap/pm/history";
+import { type Command, Mark as TiptapMark } from "@tiptap/core";
+import { isHistoryTransaction, undoDepth } from "@tiptap/pm/history";
 import type { MarkType, Node as ProseMirrorNode } from "@tiptap/pm/model";
 import {
   AllSelection,
@@ -20,10 +20,10 @@ import {
 } from "~/composer-rich-text";
 import { caretTakesMarksBefore, serializeEditorDoc } from "~/composer-rich-text-doc";
 
-// Styled text the selection touches becomes source text carrying the source
-// mark, parsed back into marks once the selection leaves. The history records
-// both rewrites (appended to the moving transaction), so undo lands on states
-// already in this shape. Without history yet, recording them only adds no-op undos.
+// Styled text the selection touches becomes source text with the source mark,
+// parsed back once the selection leaves. History steps only replay on the shape
+// they were recorded in, so the history records both rewrites; that clears redo,
+// so after undo or redo they wait for the next recorded edit.
 
 const STYLE_MARKS: RichTextMark[] = ["bold", "italic", "strike", "code"];
 const PREVIEW_TAGS: Record<Exclude<RichTextMark, "code">, string> = {
@@ -192,6 +192,12 @@ function mapSelection(tr: Transaction, selection: Selection, map: (pos: number) 
   return TextSelection.create(tr.doc, map(selection.anchor), map(selection.head));
 }
 
+/** Parses all shown source first, so a command that splits it keeps its styles. */
+export const collapseShownMarkdownSource: Command = ({ tr }) => {
+  collapseMarkdownSource(tr);
+  return true;
+};
+
 /** Shows styled text the selection touches as Markdown, and parses source it left. */
 function normalizeMarkdownSource(state: EditorState, typed: boolean): Transaction | null {
   const type = state.schema.marks[MARKDOWN_SOURCE_MARK];
@@ -276,11 +282,13 @@ function previewDecorations(doc: ProseMirrorNode, type: MarkType): DecorationSet
   return DecorationSet.create(doc, decorations);
 }
 
-const markdownSourceKey = new PluginKey<DecorationSet>("composer-markdown-source");
+type MarkdownSourceState = { decorations: DecorationSet; afterHistory: boolean };
 
-function markdownSourcePlugin(type: MarkType): Plugin<DecorationSet> {
+const markdownSourceKey = new PluginKey<MarkdownSourceState>("composer-markdown-source");
+
+function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
   let view: EditorView | null = null;
-  return new Plugin<DecorationSet>({
+  return new Plugin<MarkdownSourceState>({
     key: markdownSourceKey,
     view(editorView) {
       view = editorView;
@@ -291,21 +299,32 @@ function markdownSourcePlugin(type: MarkType): Plugin<DecorationSet> {
       };
     },
     state: {
-      init: (_, state) => previewDecorations(state.doc, type),
-      apply: (tr, old, _, state) => (tr.docChanged ? previewDecorations(state.doc, type) : old),
+      init: (_, state) => ({
+        decorations: previewDecorations(state.doc, type),
+        afterHistory: false,
+      }),
+      apply: (tr, old, _, state) => ({
+        decorations: tr.docChanged ? previewDecorations(state.doc, type) : old.decorations,
+        afterHistory: isHistoryTransaction(tr)
+          ? true
+          : tr.docChanged && tr.getMeta("addToHistory") !== false
+            ? false
+            : old.afterHistory,
+      }),
     },
     props: {
-      decorations: (state) => markdownSourceKey.getState(state),
+      decorations: (state) => markdownSourceKey.getState(state)?.decorations,
     },
     appendTransaction(transactions, _, state) {
       // Rewriting text mid-composition would break the IME's preedit.
-      if (view?.composing) return null;
+      if (view?.composing || markdownSourceKey.getState(state)?.afterHistory) return null;
       if (!transactions.some((tr) => tr.docChanged || tr.selectionSet)) return null;
       const tr = normalizeMarkdownSource(
         state,
         transactions.some((item) => item.docChanged),
       );
-      if (tr && undoDepth(state) === 0 && redoDepth(state) === 0) tr.setMeta("addToHistory", false);
+      // With nothing to undo, a recorded rewrite would only add a no-op undo.
+      if (tr && undoDepth(state) === 0) tr.setMeta("addToHistory", false);
       return tr;
     },
   });
@@ -332,14 +351,7 @@ export const ComposerMarkdownSourceExtension = TiptapMark.create({
         touches(state.selection, region),
       );
       if (!touched) return false;
-      return this.editor
-        .chain()
-        .command(({ tr }) => {
-          collapseMarkdownSource(tr);
-          return true;
-        })
-        .toggleMark(name)
-        .run();
+      return this.editor.chain().command(collapseShownMarkdownSource).toggleMark(name).run();
     };
     return {
       "Mod-b": toggle("bold"),

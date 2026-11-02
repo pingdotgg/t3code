@@ -58,7 +58,10 @@ import {
 } from "~/composer-logic";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { caretLineDirection, ComposerTextDirectionExtension } from "~/composer-text-direction";
-import { ComposerMarkdownSourceExtension } from "~/composer-markdown-source";
+import {
+  collapseShownMarkdownSource,
+  ComposerMarkdownSourceExtension,
+} from "~/composer-markdown-source";
 import { MARKDOWN_SOURCE_MARK } from "~/composer-rich-text";
 import {
   collectComposerPromptInlineTokens,
@@ -1218,7 +1221,11 @@ function ComposerPromptEditorTiptapInner(
               return true;
             }
             event.preventDefault();
-            if ((isTaskItem || isListItem) && instance && splitOrLiftListItem(instance)) {
+            if (
+              (isTaskItem || isListItem) &&
+              instance &&
+              splitOrLiftListItem(instance, collapseShownMarkdownSource)
+            ) {
               return true;
             }
             if (
@@ -1229,6 +1236,15 @@ function ComposerPromptEditorTiptapInner(
               instance.commands.lift("blockquote")
             ) {
               return true;
+            }
+            // Parse shown Markdown first, or the split leaves each half with one delimiter.
+            if (instance) {
+              return instance
+                .chain()
+                .command(collapseShownMarkdownSource)
+                .command(({ state, dispatch }) => splitBlockKeepMarks(state, dispatch))
+                .scrollIntoView()
+                .run();
             }
             return splitBlockKeepMarks(view.state, (tr) => {
               view.dispatch(tr.scrollIntoView());
@@ -1302,7 +1318,7 @@ function ComposerPromptEditorTiptapInner(
           if (
             sourceType?.isInSet($pasteFrom.marks()) &&
             !pastedText.includes("\n") &&
-            collectComposerPromptInlineTokens(pastedText).length === 0
+            collectComposerPromptInlineTokens(`${pastedText}\n`).length === 0
           ) {
             view.dispatch(
               markAsClipboardEdit(
@@ -1352,6 +1368,8 @@ function ComposerPromptEditorTiptapInner(
                     markAsClipboardEdit(tr, "paste");
                     return true;
                   })
+                  // Pasted chips and lines would split shown Markdown, so parse it first.
+                  .command(collapseShownMarkdownSource)
                   .insertContent(content)
                   .command(({ tr }) => {
                     // Move after a pasted rule so the next keystroke cannot replace it; add a trailing line

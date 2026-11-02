@@ -288,10 +288,26 @@ describe("Markdown markers around styled text", () => {
       expected: "code` after",
       marks: {},
     },
+    {
+      name: "a line break inside bold keeps both halves bold",
+      value: "**bold** after",
+      caret: 3,
+      keys: "{Shift>}{Enter}{/Shift}",
+      expected: "**bo**\n**ld** after",
+      marks: { bold: ["bo", "ld"] },
+    },
+    {
+      name: "splitting a list item inside bold keeps both halves bold",
+      value: "- **bold** after",
+      caret: 5,
+      keys: "{Enter}",
+      expected: "- **bo**\n- **ld** after",
+      marks: { bold: ["bo", "ld"] },
+    },
   ])("edits the markers as text: $name", async ({ value, caret, keys, expected, marks }) => {
     await using screen = await mountEditor(value);
     const { editor } = screen;
-    // Position 1 is the start of the styled word; 3 is two characters into it.
+    // Position 1 is the start of the styled word; 3 is two characters into it (5 in a list item).
     await focusAt(editor, caret);
     await userEvent.keyboard(`${keys}{End}`);
     await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(expected));
@@ -329,16 +345,60 @@ describe("Markdown markers around styled text", () => {
       editor.commands.undo();
     });
     expect(value()).toBe("**bold** after!");
+    expect(textWithMark(editor, "markdownSource")).toEqual(["**bold**"]);
     await act(async () => {
       editor.commands.undo();
     });
     expect(value()).toBe("**bold** after");
+    // Moving the caret into styled text keeps redo, and adds no undo step after it.
+    await act(async () => {
+      editor.commands.setTextSelection(3);
+    });
     await act(async () => {
       editor.commands.redo();
+    });
+    expect(value()).toBe("**bold** after!");
+    await act(async () => {
+      editor.commands.setTextSelection(1);
+    });
+    await act(async () => {
       editor.commands.redo();
     });
     expect(value()).toBe("bold** after!");
     expect(textWithMark(editor, "bold")).toEqual([]);
+    await act(async () => {
+      editor.commands.undo();
+      editor.commands.undo();
+    });
+    await act(async () => {
+      editor.commands.redo();
+    });
+    await act(async () => {
+      editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    });
+    await act(async () => {
+      editor.commands.undo();
+    });
+    expect(value()).toBe("**bold** after");
+    expect(textWithMark(editor, "bold")).toEqual(["bold"]);
+  });
+
+  it("keeps bold around a skill pasted inside it", async () => {
+    await using screen = await mountEditor("**helloworld** after", true, [babysit]);
+    const { editor } = screen;
+    await focusAt(editor, "hello".length + 1);
+    await act(async () => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", "$babysit");
+      editor.view.dom.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, cancelable: true }),
+      );
+    });
+    await userEvent.keyboard("{End}");
+    await vi.waitFor(() =>
+      expect(serializeEditorDoc(editor.state.doc).value).toBe("**hello** $babysit **world** after"),
+    );
+    expect(textWithMark(editor, "bold")).toEqual(["hello", "world"]);
   });
 });
 
