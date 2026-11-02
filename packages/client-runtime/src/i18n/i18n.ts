@@ -1,5 +1,6 @@
 import type { UiLanguage } from "@t3tools/contracts";
 
+import { enMessages as generalEn, zhHansMessages as generalZh } from "./messagesGeneral.ts";
 import { enMessages as interfaceEn, zhHansMessages as interfaceZh } from "./messages.ts";
 import { enMessages as navEn, zhHansMessages as navZh } from "./messagesSettingsNav.ts";
 import {
@@ -14,6 +15,7 @@ export type UiLocale = Exclude<UiLanguage, "system">;
 // extraction work on separate panels never edits the same dictionary.
 const enCatalog = {
   ...interfaceEn,
+  ...generalEn,
   ...navEn,
   ...typographyEn,
 };
@@ -22,6 +24,7 @@ export type MessageKey = keyof typeof enCatalog;
 
 const zhCatalog: Partial<Record<MessageKey, string>> = {
   ...interfaceZh,
+  ...generalZh,
   ...navZh,
   ...typographyZh,
 };
