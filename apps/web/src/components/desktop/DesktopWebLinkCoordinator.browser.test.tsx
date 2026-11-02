@@ -42,6 +42,7 @@ vi.mock(import("../../state/environments"), async (original) => ({
 }));
 vi.mock(import("../../localEnvironment"), () => ({
   isLocalEnvironmentDisabled: () => state.localEnvironmentDisabled,
+  readDesktopHomeEnvironmentId: () => null,
 }));
 vi.mock(import("../../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");

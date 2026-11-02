@@ -148,6 +148,7 @@ import {
 import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
+import { readDesktopHomeEnvironmentId } from "../localEnvironment";
 import { cn } from "../lib/utils";
 import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -611,6 +612,7 @@ function useChatMarkdownState({
               sshTarget: null,
               remoteOpenTargets: undefined,
               isDesktopRenderer: window.desktopBridge !== undefined,
+              desktopHomeEnvironmentId: readDesktopHomeEnvironmentId(),
             }).mode !== "local-exec"
           ) {
             description = `The file was not found on ${target.label} at ${error.checkedPath ?? error.resource.path}.`;

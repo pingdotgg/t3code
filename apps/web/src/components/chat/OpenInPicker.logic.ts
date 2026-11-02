@@ -6,12 +6,13 @@ export function shouldShowOpenInPicker(input: {
   readonly activeProjectName: string | undefined;
   readonly activeThreadEnvironmentId: EnvironmentId;
   readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly desktopHomeEnvironmentId: EnvironmentId | null;
   readonly remoteOpenMode: RemoteOpenMode;
 }): boolean {
   if (!input.activeProjectName) return false;
   if (
-    input.primaryEnvironmentId !== null &&
-    input.activeThreadEnvironmentId === input.primaryEnvironmentId
+    input.activeThreadEnvironmentId === input.primaryEnvironmentId ||
+    input.activeThreadEnvironmentId === input.desktopHomeEnvironmentId
   ) {
     return true;
   }
