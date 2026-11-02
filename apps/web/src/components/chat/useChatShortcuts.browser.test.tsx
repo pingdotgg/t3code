@@ -1,12 +1,13 @@
-import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { compileResolvedKeybindingsConfig, isMacPlatform } from "@t3tools/shared/keybindings";
+import { useEffect, useState, type ReactNode } from "react";
 import { expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { render } from "../../../test/render";
 import type { ChatComposerHandle } from "./ChatComposer";
-import { useChatShortcuts } from "./useChatShortcuts";
+import { useChatShortcuts, type ChatShortcutCommands } from "./useChatShortcuts";
 
 const shortcutContext = {
   terminalFocus: false,
@@ -47,10 +48,16 @@ function Launcher(props: { keys: string; received: string[] }) {
 
 // The chat's shortcut listener registers when the chat mounts, so a launcher that opens
 // later registers after it. Tests mount the chat first and add the launcher by rerendering.
-function Chat(props: { composerKeys: string[]; launcher?: { keys: string; received: string[] } }) {
+function Chat(props: {
+  composerKeys: string[];
+  launcher?: { keys: string; received: string[] };
+  keybindings?: ResolvedKeybindingsConfig;
+  commands?: ChatShortcutCommands;
+  children?: ReactNode;
+}) {
   useChatShortcuts({
     enabled: true,
-    keybindings: [],
+    keybindings: props.keybindings ?? [],
     scriptKeybindings: [],
     getShortcutContext: () => shortcutContext,
     threadFindActive: false,
@@ -65,10 +72,15 @@ function Chat(props: { composerKeys: string[]; launcher?: { keys: string; receiv
     },
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
-    commands: {},
+    commands: props.commands ?? {},
     fallback: () => undefined,
   });
-  return props.launcher ? <Launcher {...props.launcher} /> : null;
+  return (
+    <>
+      {props.launcher ? <Launcher {...props.launcher} /> : null}
+      {props.children}
+    </>
+  );
 }
 
 // router: false because the chat shortcuts and the launcher stand-in never navigate.
@@ -134,14 +146,11 @@ it.each([
   expect(received).toEqual(launcher);
 });
 
-const ctrlShift = (key: string, command: KeybindingCommand) => ({
-  command,
-  shortcut: { key, metaKey: false, ctrlKey: true, shiftKey: true, altKey: false, modKey: false },
-});
-const sideChatKeybindings: ResolvedKeybindingsConfig = [
-  ctrlShift("m", "modelPicker.toggle"),
-  ctrlShift("x", "thread.stop"),
-];
+const sideChatKeybindings = compileResolvedKeybindingsConfig([
+  { key: "ctrl+shift+m", command: "modelPicker.toggle" },
+  { key: "ctrl+shift+x", command: "thread.stop" },
+  { key: "mod+w", command: "rightPanel.close", when: "!terminalFocus" },
+]);
 
 // A side chat in the main chat's panel: no window listeners, only its composer's own chords.
 function SideChat(props: { toggles: string[]; stops: string[] }) {
@@ -166,8 +175,13 @@ function SideChat(props: { toggles: string[]; stops: string[] }) {
   });
   return (
     <>
-      <div ref={setComposerElement}>
-        <textarea aria-label="Side chat composer" />
+      <div data-side-chat-pane>
+        <div role="region" tabIndex={0} aria-label="Side chat message">
+          Side chat message
+        </div>
+        <div ref={setComposerElement}>
+          <textarea aria-label="Side chat composer" />
+        </div>
       </div>
       <textarea aria-label="Main composer" />
     </>
@@ -187,3 +201,44 @@ it("runs a side chat's composer chords only from its composer, and never thread 
   expect(toggles).toEqual(["model"]);
   expect(stops).toEqual([]);
 });
+
+it.each(["Side chat composer", "Side chat message"])(
+  "lets the parent close its side-chat tab from %s without handling other side-chat keys",
+  async (target) => {
+    const composerKeys: string[] = [];
+    const parentCommands: string[] = [];
+    const stops: string[] = [];
+    await using screen = await render(
+      <Chat
+        composerKeys={composerKeys}
+        keybindings={sideChatKeybindings}
+        commands={{
+          "rightPanel.close": () => void parentCommands.push("close"),
+          "thread.stop": () => void parentCommands.push("stop"),
+        }}
+      >
+        <SideChat toggles={[]} stops={stops} />
+      </Chat>,
+      options,
+    );
+
+    await userEvent.click(screen.getByLabelText(target));
+    await userEvent.keyboard("a{Control>}{Shift>}X{/Shift}{/Control}");
+    const mac = isMacPlatform(navigator.platform);
+    // Browsers reserve Mod+W, so dispatch the key event without closing the test tab.
+    const close = new KeyboardEvent("keydown", {
+      key: "w",
+      code: "KeyW",
+      metaKey: mac,
+      ctrlKey: !mac,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.activeElement?.dispatchEvent(close);
+
+    expect(parentCommands).toEqual(["close"]);
+    expect(close.defaultPrevented).toBe(true);
+    expect(composerKeys).toEqual([]);
+    expect(stops).toEqual([]);
+  },
+);
