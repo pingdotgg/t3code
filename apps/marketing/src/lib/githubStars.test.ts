@@ -7,10 +7,19 @@ const FALLBACK = "38.9k";
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("fetchGitHubStars", () => {
+  it("rejects a failed production lookup instead of publishing a fallback", async () => {
+    vi.stubEnv("PROD", true);
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 403 }));
+
+    await expect(fetchGitHubStars()).rejects.toThrow("Could not fetch GitHub stars");
+  });
+
   it.each([
+    [999, "999"],
     [38_947, "38.9k"],
     [40_199, "40.1k"],
     [39_000, "39k"],
