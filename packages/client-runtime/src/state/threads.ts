@@ -110,13 +110,16 @@ function snapshotToPersist(
   return { snapshotSequence, projection };
 }
 
+// Mirrors the server's THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT: the most local rows a snapshot holds.
+const BOUNDED_SNAPSHOT_TURN_ITEM_LIMIT = 502;
+
 function shouldPersistThread(
   thread: OrchestrationV2ThreadProjection,
   history: ThreadHistoryMeta,
 ): boolean {
-  // After the user loads older pages the in-memory timeline can grow large.
-  // Keep those expanded projections out of the monolithic cache.
-  if (history.expanded) {
+  // Older pages and streamed events grow the in-memory timeline past a bounded
+  // snapshot. Keep those projections out of the monolithic cache.
+  if (history.expanded || thread.turnItems.length > BOUNDED_SNAPSHOT_TURN_ITEM_LIMIT) {
     return false;
   }
   return !thread.runs.some(
@@ -345,7 +348,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                   committed.acceptsBoundedSnapshots === true,
                 ),
               )
-            : // The consumer may still be waiting out its delay; an expanded thread queues
+            : // The consumer may still be waiting out its delay; an unsaved thread queues
               // only cache repairs, which must survive leaving the thread.
               queuedSnapshot !== undefined && queuedSnapshot !== savedSnapshot
               ? persist(queuedSnapshot)
@@ -853,12 +856,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             yield* setThread(thread);
             yield* remember;
           }
-          // An expanded timeline is never saved, so reload would bring the stale row back.
+          // An unsaved timeline would reload the stale row from the cache.
           // Repair the snapshot last handed to the cache instead, keeping its window and cursor.
           // A resumed state skipped the cache load, so read the saved snapshot then.
           if (shouldPersistThread(thread, latest.history)) return;
           // A terminal event that landed during the lookup is newer than any reply, and the
-          // expanded live state never saves it, whatever the lookup returned.
+          // unsaved live state never saves it, whatever the lookup returned.
           const latestItems = new Map(settled);
           for (const item of thread.turnItems) {
             if (queried.has(item.id) && !isOrchestrationV2WorkActive(item.status)) {
