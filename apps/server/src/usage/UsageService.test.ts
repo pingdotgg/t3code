@@ -2125,20 +2125,22 @@ describe("UsageService", () => {
       yield* Effect.gen(function* () {
         const service = yield* UsageService.make;
         // Same service, concurrent reads: the in-flight key must keep these scans apart.
-        const [unfiltered, noOp, included, reordered, excluded, hourly] = yield* Effect.all(
-          [
-            service.readSummary(WINDOW),
-            service.readSummary({ ...WINDOW, modelFilter: { exclude: [] } }),
-            service.readSummary({ ...WINDOW, modelFilter: include }),
-            service.readSummary({
-              ...WINDOW,
-              modelFilter: { include: [...include.include].reverse() },
-            }),
-            service.readSummary({ ...WINDOW, modelFilter: exclude }),
-            service.readSummary({ ...HOURLY, modelFilter: include }),
-          ],
-          { concurrency: "unbounded" },
-        );
+        const [unfiltered, noOp, keepNothing, included, reordered, excluded, hourly] =
+          yield* Effect.all(
+            [
+              service.readSummary(WINDOW),
+              service.readSummary({ ...WINDOW, modelFilter: { exclude: [] } }),
+              service.readSummary({ ...WINDOW, modelFilter: { include: [] } }),
+              service.readSummary({ ...WINDOW, modelFilter: include }),
+              service.readSummary({
+                ...WINDOW,
+                modelFilter: { include: [...include.include].reverse() },
+              }),
+              service.readSummary({ ...WINDOW, modelFilter: exclude }),
+              service.readSummary({ ...HOURLY, modelFilter: include }),
+            ],
+            { concurrency: "unbounded" },
+          );
 
         // Unfiltered keeps today's behavior: the alias folds drift-9 into orbit-1.
         assert.deepStrictEqual(cells(unfiltered), [
@@ -2148,6 +2150,8 @@ describe("UsageService", () => {
         assert.strictEqual(unfiltered.sources[0]?.distinctSessions, 2);
         assert.strictEqual(unfiltered.modelFilter, undefined);
         assert.strictEqual(noOp, unfiltered);
+        assert.deepStrictEqual(keepNothing.buckets, []);
+        assert.strictEqual(keepNothing.sources[0]?.distinctSessions, 0);
 
         const kept = [
           { model: "orbit-1", outputTokens: 3, costUsd: 40, records: 1, sessions: 1 },

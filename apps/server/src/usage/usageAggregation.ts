@@ -91,14 +91,13 @@ export function resolveModelAliases(
   return resolved;
 }
 
-const matchesSelector = (record: UsageRecord) => (selector: UsageModelSelector) =>
-  selector.model === record.model.trim() &&
-  (selector.provider === undefined || selector.provider === record.provider);
-
 /** Matches original IDs, so an alias cannot pull excluded usage into a kept model. */
 function keepsUsageRecord(filter: UsageModelFilter | undefined, record: UsageRecord): boolean {
   if (filter === undefined) return true;
-  const matches = matchesSelector(record);
+  const model = record.model.trim();
+  const matches = (selector: UsageModelSelector) =>
+    selector.model === model &&
+    (selector.provider === undefined || selector.provider === record.provider);
   return (filter.include?.some(matches) ?? true) && !(filter.exclude?.some(matches) ?? false);
 }
 
