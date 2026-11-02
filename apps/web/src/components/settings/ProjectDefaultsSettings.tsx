@@ -2,6 +2,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
   type WorktreeSubmodules,
+  managedRuntimeModeDenial,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -19,6 +20,7 @@ import {
   resolveProjectDefaultProviderModelSelection,
 } from "../../providerInstances";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
+import { firstManagedDenial } from "../../state/managedPolicy";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -380,15 +382,26 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                   {runtimeModeOptions.map((mode) => {
                     const option = runtimeModeConfig[mode];
                     const Icon = option.icon;
+                    const managedReason = firstManagedDenial(
+                      connectedEnvironments.map(
+                        (environment) => environment.serverConfig?.managedPolicy,
+                      ),
+                      (policy) => managedRuntimeModeDenial(policy, mode),
+                    );
                     return (
-                      <SelectItem key={mode} value={mode} className="min-w-64">
+                      <SelectItem
+                        key={mode}
+                        value={mode}
+                        disabled={managedReason !== undefined}
+                        className="min-w-64"
+                      >
                         <div className="grid gap-0.5">
                           <span className="inline-flex items-center gap-1.5 font-medium">
                             <Icon className="size-3.5 shrink-0 text-muted-foreground" />
                             {option.label}
                           </span>
                           <span className="text-xs leading-4 text-muted-foreground">
-                            {option.description}
+                            {managedReason ?? option.description}
                           </span>
                         </div>
                       </SelectItem>

@@ -16,15 +16,24 @@ import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
+  antigravityAppendsSystemPrompt,
   antigravityPermissionMode,
+  antigravityRuntimeModeForSessionMode,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
 } from "../../provider/acp/AntigravityAcpSupport.ts";
+import {
+  ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
+  antigravitySubagentLaunches,
+  describeAntigravitySubagentLaunches,
+} from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
+import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
   antigravitySubagentOutput,
@@ -80,9 +89,14 @@ export interface AntigravityAdapterV2Options {
   readonly onSessionEvent?: AcpAdapterV2Flavor["onSessionEvent"];
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
+  /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
+  readonly profileDirectory?: string;
 }
 
-/** Native subagent tools report no child session ids. */
+/**
+ * Native subagent tools report no child session ids, so children stay read-only.
+ * Only permission prompts carry the launch; NativeChildWorkQuery matches their ids by this text.
+ */
 const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractSubagentUpdate"]> = (
   toolCall,
 ) => {
@@ -91,14 +105,17 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
   }
   const status =
     toolCall.status === "failed" ? "failed" : toolCall.status === "pending" ? "pending" : "running";
+  const launches = antigravitySubagentLaunches(toolCall.data.rawInput);
+  const launch = launches === undefined ? undefined : describeAntigravitySubagentLaunches(launches);
   return {
     nativeTaskId: toolCall.toolCallId,
     prompt:
+      launch?.prompt ??
       antigravitySubagentOutput(toolCall) ??
       toolCall.detail ??
       toolCall.title ??
-      "Antigravity subagent batch",
-    title: "Antigravity subagent batch",
+      ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
+    title: launch?.title ?? ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
     model: null,
     status,
     childSessionId: null,
@@ -116,6 +133,7 @@ interface AntigravityFlavorServices {
 export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
+  const { profileDirectory } = options;
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
@@ -127,6 +145,7 @@ export function makeAntigravityAcpAdapterFlavor(
           options.makeRuntime({
             ...input,
             clientFileReads: true,
+            sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
             additionalDirectories: [options.host.paths.attachmentsDir],
           }),
         )
@@ -189,13 +208,25 @@ export function makeAntigravityAcpAdapterFlavor(
     driver: ANTIGRAVITY_PROVIDER,
     runtimeHarness: "Antigravity",
     capabilities: AntigravityProviderCapabilitiesV2,
+    // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
+    mcpOverHttp: true,
+    sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
-    buildPrompt: ({ text, attachments, promptCapabilities }) =>
+    buildPrompt: ({
+      text,
+      attachments,
+      resolveAttachmentPath,
+      promptCapabilities,
+      agentVersion,
+      currentModel,
+    }) =>
       buildAntigravityPrompt({
         input: text,
         attachments,
-        attachmentsDir: options.host.paths.attachmentsDir,
+        resolveAttachmentPath,
         promptCapabilities,
+        agentVersion,
+        currentModel,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, options.fileSystem),
         Effect.provideService(Path.Path, options.path),
@@ -217,6 +248,7 @@ export function makeAntigravityAcpAdapterFlavor(
       });
     }),
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
+    runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
     clientFileSystem: {
       readTextFile: (request, cwd) =>
         readAntigravityClientTextFile({
@@ -241,6 +273,15 @@ export function makeAntigravityAcpAdapterFlavor(
     // ACP 1.3.0 treats /compact as ordinary model input.
     supportsCompaction: false,
     requiresSignIn: isAntigravitySignInRequiredError,
+    // 1.4.5 returns the root trajectory's Gemini usageMetadata delta; 1.4.1 returns none.
+    reportsPerTurnPromptUsage: true,
+    geminiPromptUsage: true,
+    ...(profileDirectory === undefined
+      ? {}
+      : {
+          watchPromptOutcome: (sessionId: string) =>
+            watchAntigravityPromptOutcome(profileDirectory, sessionId),
+        }),
   };
 }
 
