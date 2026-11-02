@@ -23,16 +23,13 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
       projectId: string;
       title: string;
       archivedAt: string | null;
-      // json_quote always yields valid JSON (`null` when absent); the lenient schema checks the shape.
-      tags: string;
       host: string;
       repository: string;
       number: number;
       url: string;
     }>`
       SELECT t.thread_id AS id, t.project_id AS "projectId", t.title,
-        t.archived_at AS "archivedAt", json_quote(json_extract(t.payload_json, '$.tags')) AS tags,
-        json_extract(link.value, '$.host') AS host,
+        t.archived_at AS "archivedAt", json_extract(link.value, '$.host') AS host,
         json_extract(link.value, '$.repository') AS repository,
         json_extract(link.value, '$.number') AS number,
         json_extract(link.value, '$.url') AS url,
@@ -47,13 +44,7 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
     `.pipe(NodeSqliteClient.readOnly);
     const threads = rows
       .filter((row) => threadPullRequestKeysEqual(row, key))
-      .map(({ id, projectId, title, archivedAt, tags }) => ({
-        id,
-        projectId,
-        title,
-        archivedAt,
-        tags: JSON.parse(tags),
-      }));
+      .map(({ id, projectId, title, archivedAt }) => ({ id, projectId, title, archivedAt }));
     return yield* decodeLinkedThreads({ threads });
   },
   Effect.mapError(

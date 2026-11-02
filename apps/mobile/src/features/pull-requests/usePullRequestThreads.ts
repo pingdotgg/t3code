@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Dialog from "../../components/ui/Dialog";
 import {
@@ -50,8 +50,6 @@ import {
 
 type LinkedThread = PullRequestLinkedThreadsResult["threads"][number];
 
-const NO_LOADED_THREADS_ATOM = Atom.make((): ReadonlyMap<ThreadId, unknown> => new Map());
-
 export function usePullRequestThreads(
   params: PullRequestParams,
   pr: PullRequestDetail | null,
@@ -77,18 +75,15 @@ export function usePullRequestThreads(
     setLastRelations({ key, data: relations.data });
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
   const hiddenTags = useAtomValue(serverEnvironment.hiddenThreadTagsAtom(target.environmentId));
-  // The index changes on every streaming tick; read it only while this filter is on.
-  const loadedThreadIds = useAtomValue(
-    hiddenKeys.size === 0 && hiddenTags === null
-      ? NO_LOADED_THREADS_ATOM
-      : environmentThreadShells.environmentThreadIndexAtom(target.environmentId),
+  const loadedThreadRefs = useAtomValue(
+    environmentThreadShells.environmentThreadRefsAtom(target.environmentId),
   );
   const threads = visibleLinkedThreads(
     (relations.data ?? (lastRelations.key === key ? lastRelations.data : null))?.threads ?? [],
     target.environmentId,
-    loadedThreadIds,
+    loadedThreadRefs,
     hiddenKeys,
-    hiddenTags,
+    hiddenTags !== null,
   );
   const connected = usePullRequestConnected(params.environmentId);
   const canOperate = useEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope);

@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   isListedThreadLineage,
   type OrchestrationV2ThreadShell,
+  type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
 
@@ -35,22 +36,22 @@ export function visibilityParentKey(
 
 /**
  * Pull request linked-thread rows the tag filter leaves visible. Loaded threads use the
- * parent-aware hidden set; rows the shell leaves out fall back to their own tags.
+ * parent-aware hidden set. Rows the shell leaves out (older, archived) carry no lineage,
+ * so while their environment hides tags they stay out.
  */
-export function visibleLinkedThreads<
-  Row extends { readonly id: ThreadId; readonly tags?: ReadonlyArray<string> | undefined },
->(
+export function visibleLinkedThreads<Row extends { readonly id: ThreadId }>(
   rows: ReadonlyArray<Row>,
   environmentId: EnvironmentId,
-  loadedThreadIds: ReadonlyMap<ThreadId, unknown>,
+  loadedThreadRefs: ReadonlyArray<ScopedThreadRef>,
   hiddenKeys: ReadonlySet<string>,
-  hiddenTags: ReadonlyArray<string> | null,
+  hidingHere: boolean,
 ): ReadonlyArray<Row> {
-  if (hiddenKeys.size === 0 && hiddenTags === null) return rows;
+  if (!hidingHere && hiddenKeys.size === 0) return rows;
+  const loaded = new Set(loadedThreadRefs.map((ref) => ref.threadId));
   return rows.filter((row) =>
-    loadedThreadIds.has(row.id)
+    loaded.has(row.id)
       ? !hiddenKeys.has(threadKey({ environmentId, threadId: row.id }))
-      : !hasHiddenTag(row.tags, hiddenTags),
+      : !hidingHere,
   );
 }
 

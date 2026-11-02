@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   createArchivedThreadSnapshotsAtomFamily,
@@ -39,7 +39,7 @@ it("does not expose an archived snapshot failure message", () => {
   registry.dispose();
 });
 
-it("hides an archived task whose archived parent on another machine is tagged", () => {
+describe("archived delegated tasks follow their parent on another machine", () => {
   const parentEnvironmentId = EnvironmentId.make("env-parent");
   const taskEnvironmentId = EnvironmentId.make("env-task");
   const parentId = ThreadId.make("thread-parent");
@@ -51,74 +51,43 @@ it("hides an archived task whose archived parent on another machine is tagged", 
     projects: [v2Project],
     threads,
   });
-  const pages = new Map([
-    [parentEnvironmentId, page([{ ...v2ThreadShell, id: parentId, tags: ["private"] }])],
-    [
-      taskEnvironmentId,
-      page([
-        {
-          ...v2ThreadShell,
-          id: ThreadId.make("thread-task"),
-          delegatedFrom: { environmentId: parentEnvironmentId, threadId: parentId, title: "p" },
-        },
-      ]),
-    ],
+  const taskPage = page([
+    {
+      ...v2ThreadShell,
+      id: ThreadId.make("thread-task"),
+      delegatedFrom: { environmentId: parentEnvironmentId, threadId: parentId, title: "p" },
+    },
   ]);
-  const snapshotsAtom = createArchivedThreadSnapshotsAtomFamily<Error>({
-    getSnapshotAtom: (environmentId) => Atom.make(AsyncResult.success(pages.get(environmentId)!)),
-    hiddenThreadTagsAtom: (environmentId) =>
-      Atom.make(environmentId === parentEnvironmentId ? ["private"] : null),
-    hiddenThreadKeysAtom: Atom.make((): ReadonlySet<string> => new Set()),
-    liveThreadRefsAtom: Atom.make((): ReadonlyArray<ScopedThreadRef> => []),
-    labelPrefix: "test:archived-thread-snapshots",
-  });
-  const registry = AtomRegistry.make();
-  const { snapshots } = registry.get(
-    snapshotsAtom(makeArchivedThreadsEnvironmentKey([parentEnvironmentId, taskEnvironmentId])),
-  );
-  expect(snapshots.map(({ snapshot }) => snapshot.threads.length)).toEqual([0, 0]);
-  registry.dispose();
-});
+  const archivedTaggedParent = page([{ ...v2ThreadShell, id: parentId, tags: ["private"] }]);
 
-it("keeps an archived task visible while its live parent on another machine is visible", () => {
-  const parentEnvironmentId = EnvironmentId.make("env-parent");
-  const taskEnvironmentId = EnvironmentId.make("env-task");
-  const parentId = ThreadId.make("thread-live-parent");
-  const page = (
-    threads: OrchestrationV2ArchivedShellSnapshot["threads"],
-  ): OrchestrationV2ArchivedShellSnapshot => ({
-    schemaVersion: 1,
-    snapshotSequence: 1,
-    projects: [v2Project],
-    threads,
+  it.each([
+    { name: "archived tagged parent", parentPage: archivedTaggedParent, live: false, tasks: 0 },
+    { name: "live visible parent", parentPage: page([]), live: true, tasks: 1 },
+    { name: "parent page not loaded yet", parentPage: null, live: false, tasks: 0 },
+  ])("$name", ({ parentPage, live, tasks }) => {
+    const snapshotsAtom = createArchivedThreadSnapshotsAtomFamily<Error>({
+      getSnapshotAtom: (environmentId) =>
+        Atom.make(
+          environmentId === taskEnvironmentId
+            ? AsyncResult.success(taskPage)
+            : parentPage === null
+              ? AsyncResult.initial<OrchestrationV2ArchivedShellSnapshot, Error>(true)
+              : AsyncResult.success(parentPage),
+        ),
+      hiddenThreadTagsAtom: (environmentId) =>
+        Atom.make(environmentId === parentEnvironmentId ? ["private"] : null),
+      hiddenThreadKeysAtom: Atom.make((): ReadonlySet<string> => new Set()),
+      liveThreadRefsAtom: Atom.make((): ReadonlyArray<ScopedThreadRef> =>
+        live ? [{ environmentId: parentEnvironmentId, threadId: parentId }] : [],
+      ),
+      labelPrefix: "test:archived-thread-snapshots",
+    });
+    const registry = AtomRegistry.make();
+    const { snapshots } = registry.get(
+      snapshotsAtom(makeArchivedThreadsEnvironmentKey([parentEnvironmentId, taskEnvironmentId])),
+    );
+    const taskSnapshot = snapshots.find((entry) => entry.environmentId === taskEnvironmentId);
+    expect(taskSnapshot?.snapshot.threads.length).toBe(tasks);
+    registry.dispose();
   });
-  const pages = new Map([
-    [parentEnvironmentId, page([])],
-    [
-      taskEnvironmentId,
-      page([
-        {
-          ...v2ThreadShell,
-          id: ThreadId.make("thread-task"),
-          delegatedFrom: { environmentId: parentEnvironmentId, threadId: parentId, title: "p" },
-        },
-      ]),
-    ],
-  ]);
-  const snapshotsAtom = createArchivedThreadSnapshotsAtomFamily<Error>({
-    getSnapshotAtom: (environmentId) => Atom.make(AsyncResult.success(pages.get(environmentId)!)),
-    hiddenThreadTagsAtom: (environmentId) =>
-      Atom.make(environmentId === parentEnvironmentId ? ["private"] : null),
-    hiddenThreadKeysAtom: Atom.make((): ReadonlySet<string> => new Set()),
-    liveThreadRefsAtom: Atom.make((): ReadonlyArray<ScopedThreadRef> => [
-      { environmentId: parentEnvironmentId, threadId: parentId },
-    ]),
-    labelPrefix: "test:archived-thread-snapshots",
-  });
-  const registry = AtomRegistry.make();
-  const { snapshots } = registry.get(
-    snapshotsAtom(makeArchivedThreadsEnvironmentKey([parentEnvironmentId, taskEnvironmentId])),
-  );
-  expect(snapshots.map(({ snapshot }) => snapshot.threads.length)).toEqual([0, 1]);
-  registry.dispose();
 });

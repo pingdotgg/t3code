@@ -13,7 +13,6 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { SourceControlProviderKind } from "./sourceControl.ts";
-import { StoredThreadTags } from "./threadTags.ts";
 
 export const PullRequestInvolvement = Schema.Literals(["all", "reviewing", "authored"]);
 export type PullRequestInvolvement = typeof PullRequestInvolvement.Type;
@@ -434,7 +433,6 @@ export const PullRequestLinkedThreadsResult = Schema.Struct({
       projectId: ProjectId,
       title: Schema.String,
       archivedAt: Schema.NullOr(IsoDateTime),
-      tags: Schema.optional(StoredThreadTags),
     }),
   ),
 });

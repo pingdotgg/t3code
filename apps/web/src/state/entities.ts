@@ -120,20 +120,6 @@ export function useHiddenThreadTags(
   );
 }
 
-const NO_LOADED_THREADS_ATOM = Atom.make((): ReadonlyMap<ThreadId, unknown> => new Map());
-
-/** An environment's loaded thread ids, read only while `hiding`: the index changes on every streaming tick. */
-export function useLoadedThreadIdsWhileHiding(
-  environmentId: EnvironmentId | null,
-  hiding: boolean,
-): ReadonlyMap<ThreadId, unknown> {
-  return useAtomValue(
-    environmentId === null || !hiding
-      ? NO_LOADED_THREADS_ATOM
-      : environmentThreadShells.environmentThreadIndexAtom(environmentId),
-  );
-}
-
 /** Keys of threads the tag filter hides from display, by `threadKey`. */
 export function useHiddenThreadKeys(): ReadonlySet<string> {
   return useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);

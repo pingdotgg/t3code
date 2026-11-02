@@ -12,7 +12,7 @@ import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import {
-  useLoadedThreadIdsWhileHiding,
+  useEnvironmentThreadRefs,
   useProjects,
   useServerConfigs,
   useThreadShell,
@@ -70,10 +70,7 @@ function EnabledPullRequestThreadLinks({
   const linkedHere = linking.isLinked(thread, url);
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
   const hiddenTags = useAtomValue(serverEnvironment.hiddenThreadTagsAtom(environmentId));
-  const loadedThreadIds = useLoadedThreadIdsWhileHiding(
-    environmentId,
-    hiddenKeys.size > 0 || hiddenTags !== null,
-  );
+  const loadedThreadRefs = useEnvironmentThreadRefs(environmentId);
   const relations = useEnvironmentQuery(
     linking.mode === "multiple" && display !== "menu-item"
       ? pullRequestEnvironment.linkedThreads({
@@ -123,9 +120,9 @@ function EnabledPullRequestThreadLinks({
   const linkedThreads = visibleLinkedThreads(
     linking.mode === "multiple" ? ((relations.data ?? lastRelations)?.threads ?? []) : [],
     environmentId,
-    loadedThreadIds,
+    loadedThreadRefs,
     hiddenKeys,
-    hiddenTags,
+    hiddenTags !== null,
   );
   const linkedThreadsLabel =
     linkedThreads.length > 0

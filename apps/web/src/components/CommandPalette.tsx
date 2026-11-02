@@ -133,7 +133,7 @@ import {
 import {
   useHiddenThreadKeys,
   useHiddenThreadTags,
-  useLoadedThreadIdsWhileHiding,
+  useEnvironmentThreadRefs,
   useProjects,
   useServerConfigs,
   useVisibleThreadShells,
@@ -413,10 +413,7 @@ function OpenCommandPaletteDialog(props: {
   const hiddenKeys = useHiddenThreadKeys();
   const linkedEnvironmentId = linkedThreadSearch?.linkedThreads?.environmentId ?? null;
   const linkedHiddenTags = useHiddenThreadTags(linkedEnvironmentId);
-  const linkedLoadedThreadIds = useLoadedThreadIdsWhileHiding(
-    linkedEnvironmentId,
-    hiddenKeys.size > 0 || linkedHiddenTags !== null,
-  );
+  const linkedThreadRefs = useEnvironmentThreadRefs(linkedEnvironmentId);
   const [searchState, dispatchSearch] = useReducer(reduceCommandPaletteSearchState, null, () => {
     const view = props.initialContext ? null : openIntentView(props.openIntent);
     return view
@@ -1761,9 +1758,9 @@ function OpenCommandPaletteDialog(props: {
             threads: visibleLinkedThreads(
               linkedThreadSearch.linkedThreads.threads,
               linkedThreadSearch.linkedThreads.environmentId,
-              linkedLoadedThreadIds,
+              linkedThreadRefs,
               hiddenKeys,
-              linkedHiddenTags,
+              linkedHiddenTags !== null,
             ),
             query: linkedThreadSearch.query,
             icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,

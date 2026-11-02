@@ -9,7 +9,7 @@ import * as Order from "effect/Order";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { threadKey } from "./entities.ts";
-import { hiddenThreadKeys } from "./threadTagFilter.ts";
+import { hiddenThreadKeys, type TagFilteredEnvironment } from "./threadTagFilter.ts";
 
 export interface ArchivedSnapshotEntry {
   readonly environmentId: EnvironmentId;
@@ -59,6 +59,7 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
   return Atom.family((environmentKey: string) =>
     Atom.make((get): ArchivedThreadSnapshotsState => {
       const snapshots: ArchivedSnapshotEntry[] = [];
+      const environments: TagFilteredEnvironment[] = [];
       let error: string | null = null;
       let isLoading = false;
 
@@ -70,6 +71,12 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
         if (snapshot !== null) {
           snapshots.push({ environmentId, snapshot });
         }
+        // A page that has not arrived still counts, so its tags apply to children elsewhere.
+        environments.push({
+          environmentId,
+          threads: snapshot?.threads ?? [],
+          hiddenTags: get(options.hiddenThreadTagsAtom(environmentId)),
+        });
 
         if (error === null && result._tag === "Failure") {
           error = "Failed to load archived threads.";
@@ -78,13 +85,9 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
 
       // One pass over every environment's page, so archived tasks follow parents archived elsewhere.
       const hidden = hiddenThreadKeys(
-        snapshots.map(({ environmentId, snapshot }) => ({
-          environmentId,
-          threads: snapshot.threads,
-          hiddenTags: get(options.hiddenThreadTagsAtom(environmentId)),
-        })),
+        environments,
         get(options.hiddenThreadKeysAtom),
-        snapshots.some(({ environmentId }) => get(options.hiddenThreadTagsAtom(environmentId)))
+        environments.some((environment) => environment.hiddenTags !== null)
           ? new Set(get(options.liveThreadRefsAtom).map(threadKey))
           : undefined,
       );

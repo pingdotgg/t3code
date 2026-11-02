@@ -94,19 +94,29 @@ describe("hiddenThreadKeys", () => {
     expect(hiddenIds(null, ["client", "private"])).toEqual([key(linked, "linked-client")]);
   });
 
-  it("judges loaded PR rows by visibility and unloaded rows by their own tags", () => {
+  it("judges loaded PR rows by visibility and leaves out unloaded rows while hiding", () => {
     const hidden = hiddenThreadKeys([
       { environmentId: local, threads: localThreads, hiddenTags: ["private"] },
     ]);
     const rows = [
       { id: ThreadId.make("private-subagent") },
-      { id: ThreadId.make("plain-private-side-chat"), tags: ["private"] },
-      { id: ThreadId.make("off-shell"), tags: ["private"] },
-      { id: ThreadId.make("off-shell-plain") },
+      { id: ThreadId.make("plain-private-side-chat") },
+      { id: ThreadId.make("off-shell") },
     ];
-    const loaded = new Map(localThreads.map((entry) => [entry.id, entry] as const));
-    expect(
-      visibleLinkedThreads(rows, local, loaded, hidden, ["private"]).map((row) => row.id),
-    ).toEqual(["plain-private-side-chat", "off-shell-plain"]);
+    const loaded = localThreads.map((entry) => ({ environmentId: local, threadId: entry.id }));
+    const visible = (hiding: boolean) =>
+      visibleLinkedThreads(rows, local, loaded, hidden, hiding).map((row) => row.id);
+    expect(visible(true)).toEqual(["plain-private-side-chat"]);
+    expect(visibleLinkedThreads(rows, local, loaded, NO_HIDDEN_THREADS, false)).toBe(rows);
+  });
+
+  it("lets a live hidden parent win over the same parent being loaded elsewhere", () => {
+    const parentKey = key(local, "private");
+    const archived = hiddenThreadKeys(
+      [{ environmentId: linked, threads: [linkedThreads[0]!], hiddenTags: null }],
+      new Set([parentKey]),
+      new Set([parentKey]),
+    );
+    expect([...archived]).toEqual([key(linked, "delegated-from-private")]);
   });
 });
