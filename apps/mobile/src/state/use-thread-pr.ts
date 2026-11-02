@@ -64,13 +64,8 @@ export { type ThreadPr, type ThreadPrPresentation } from "./thread-pr-presentati
 
 /** Seeds a pull request page with a summary already in memory, never another pull request's. */
 export function withKnownPullRequestSummary<
-  Params extends {
-    readonly host?: string | undefined;
-    readonly repository: string;
-    readonly number: number;
-    readonly initialSummary?: unknown;
-  },
->({ initialSummary: _stale, ...params }: Params) {
+  Params extends { readonly host?: string; readonly repository: string; readonly number: number },
+>(params: Params) {
   const initialSummary =
     params.host === undefined
       ? undefined

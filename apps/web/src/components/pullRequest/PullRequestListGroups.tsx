@@ -29,10 +29,10 @@ function firstPaintGroups<Group extends { entries: ReadonlyArray<unknown> }>(
   groups: ReadonlyArray<Group>,
 ): ReadonlyArray<Group> {
   let left = FIRST_PAINT_ROWS;
-  return groups.map((group) => {
+  return groups.flatMap((group) => {
     const entries = group.entries.slice(0, left);
     left -= entries.length;
-    return { ...group, entries };
+    return entries.length === 0 ? [] : [{ ...group, entries }];
   });
 }
 

@@ -65,15 +65,6 @@ export function PullRequestLinkPreview({
     reportFailure: false,
     reportDefect: false,
   });
-  const preview = previewQuery.data;
-  const settledPreview = previewQuery.isSuccess && !previewQuery.isPending ? preview : null;
-  const openResolved = async (url: string | null) => {
-    if (url !== null && onOpenPullRequest?.(url)) return;
-    await onOpenFallback?.(originalUrl);
-  };
-  const logOpenFailure = (error: unknown) => {
-    console.error("[pull-request-link-preview] failed to open link", error);
-  };
   const trigger =
     confirmBeforeOpen === true
       ? cloneElement(link, {
@@ -83,21 +74,21 @@ export function PullRequestLinkPreview({
             event.stopPropagation();
             if (resolvingClick) return;
             setOpen(false);
-            if (settledPreview !== null) {
-              void openResolved(settledPreview.url).catch(logOpenFailure);
-              return;
-            }
             setResolvingClick(true);
             void readPreview(target)
               .then(async (result) => {
                 if (isAtomCommandInterrupted(result)) return;
-                await openResolved(result._tag === "Success" ? result.value.url : null);
+                if (result._tag === "Success" && onOpenPullRequest?.(result.value.url)) return;
+                await onOpenFallback?.(originalUrl);
               })
-              .catch(logOpenFailure)
+              .catch((error: unknown) => {
+                console.error("[pull-request-link-preview] failed to open link", error);
+              })
               .finally(() => setResolvingClick(false));
           },
         })
       : link;
+  const preview = previewQuery.data;
   const card = preview ?? summary;
   const showCard = card !== null || (previewQuery.error !== null && fallback !== undefined);
   const showUrlTooltip = open && previewQuery.error !== null && !showCard;
