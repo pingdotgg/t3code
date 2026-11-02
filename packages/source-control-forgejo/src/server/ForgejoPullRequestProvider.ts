@@ -258,7 +258,7 @@ export const make = Effect.gen(function* () {
             isForgejoCliError(error.cause) &&
             (error.cause.reason === "forbidden" || error.cause.reason === "not-found")
           ) {
-            return Effect.succeed({});
+            return Effect.void;
           }
           return Effect.fail(error);
         },
@@ -280,13 +280,17 @@ export const make = Effect.gen(function* () {
       [readStatuses(input, pr.head.sha), readCheckPolicy(input, pr.base.ref)],
       { concurrency: 2 },
     );
-    return markRequiredForgejoChecks(forgejoChecks(statuses, pr.html_url), policy);
+    return {
+      checks: markRequiredForgejoChecks(forgejoChecks(statuses, pr.html_url), policy ?? {}),
+      policyAvailable: policy !== undefined,
+    };
   });
   const readSummary = Effect.fn("ForgejoPullRequestProvider.readSummary")(function* (
     input: ProviderRepositoryRef & { readonly number: number },
   ) {
     const pr = yield* getPull(input);
-    return forgejoChangeRequest(pr, yield* readChecks(input, pr));
+    const { checks, policyAvailable } = yield* readChecks(input, pr);
+    return forgejoChangeRequest(pr, policyAvailable ? checks : undefined);
   });
   const unsupported = (operation: string) =>
     Effect.fail(failure(operation, `Forgejo does not expose ${operation} through its API.`));
@@ -358,26 +362,34 @@ export const make = Effect.gen(function* () {
           yield* Effect.forEach(
             new Set(pulls.map((pr) => pr.base.ref)),
             (base) =>
-              readCheckPolicy(input, base).pipe(Effect.map((policy) => [base, policy] as const)),
+              readCheckPolicy(input, base).pipe(
+                Effect.map((policy) => [base, policy] as const),
+                Effect.orElseSucceed(() => [base, undefined] as const),
+              ),
             { concurrency: 4 },
           ),
         );
         const statuses = new Map(
           yield* Effect.forEach(
             new Set(pulls.map((pr) => pr.head.sha)),
-            (sha) => readStatuses(input, sha).pipe(Effect.map((checks) => [sha, checks] as const)),
+            (sha) =>
+              readStatuses(input, sha).pipe(
+                Effect.map((checks) => [sha, checks] as const),
+                Effect.orElseSucceed(() => [sha, undefined] as const),
+              ),
             { concurrency: 4 },
           ),
         );
-        const items = pulls.map((pr) =>
-          forgejoChangeRequest(
+        const items = pulls.map((pr) => {
+          const checks = statuses.get(pr.head.sha);
+          const policy = policies.get(pr.base.ref);
+          return forgejoChangeRequest(
             pr,
-            markRequiredForgejoChecks(
-              forgejoChecks(statuses.get(pr.head.sha)!, pr.html_url),
-              policies.get(pr.base.ref)!,
-            ),
-          ),
-        );
+            checks === undefined || policy === undefined
+              ? undefined
+              : markRequiredForgejoChecks(forgejoChecks(checks, pr.html_url), policy),
+          );
+        });
         return { items, truncated: more, continues: true, cursorAdvance: consumed };
       },
     ),
@@ -386,7 +398,10 @@ export const make = Effect.gen(function* () {
     getChangeRequestChecks: Effect.fn("ForgejoPullRequestProvider.getChangeRequestChecks")(
       function* (input) {
         const pr = yield* getPull(input);
-        return { state: forgejoChangeRequest(pr).state, checks: yield* readChecks(input, pr) };
+        return {
+          state: forgejoChangeRequest(pr).state,
+          checks: (yield* readChecks(input, pr)).checks,
+        };
       },
     ),
     getChangeRequest: Effect.fn("ForgejoPullRequestProvider.getChangeRequest")(function* (input) {
@@ -394,9 +409,9 @@ export const make = Effect.gen(function* () {
         [getPull(input), getRepo(input), getViewer(input)],
         { concurrency: 3 },
       );
-      const checks = yield* readChecks(input, pr);
+      const { checks, policyAvailable } = yield* readChecks(input, pr);
       return {
-        ...forgejoChangeRequest(pr, checks),
+        ...forgejoChangeRequest(pr, policyAvailable ? checks : undefined),
         headSha: pr.head.sha,
         body: pr.body ?? "",
         changedFiles: pr.changed_files ?? 0,
