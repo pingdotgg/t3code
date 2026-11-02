@@ -39,12 +39,32 @@ it("reads Command Code history for Usage cost, token and cache breakdown", async
           costUsd: 0.000139086,
         },
       },
+      {
+        type: "message",
+        id: "reply-2",
+        timestamp: "2026-10-31T19:06:43.707000Z",
+        model: "deepseek/deepseek-v4-flash",
+        usage: {
+          inputTokens: 23353,
+          outputTokens: 7,
+          cacheReadTokens: 22912,
+          cacheWriteTokens: 0,
+          costUsd: 0.000139086,
+        },
+      },
+      {
+        type: "message",
+        id: "free-reply",
+        timestamp: "2026-10-31T19:06:44.000Z",
+        model: "free-model",
+        usage: { inputTokens: 1, outputTokens: 2, costUsd: 0 },
+      },
       { type: "message", id: "assistant-without-usage", message: { role: "assistant" } },
     ];
     await NodeFSP.writeFile(file, lines.map((value) => JSON.stringify(value)).join("\n") + "\n");
     const scanned = await readTranscriptRecords(file, commandCodeUsageFormat);
     assert.isNotNull(scanned);
-    assert.lengthOf(scanned.records, 2);
+    assert.lengthOf(scanned.records, 4);
     assert.equal(scanned.records[0]?.totals.uncachedInputTokens, 16862);
     assert.equal(scanned.records[0]?.totals.cachedInputTokens, 6144);
     assert.equal(scanned.records[1]?.totals.uncachedInputTokens, 441);
@@ -52,6 +72,9 @@ it("reads Command Code history for Usage cost, token and cache breakdown", async
     assert.equal(scanned.records[1]?.reportedCostUsd, 0.000139086);
     assert.equal(scanned.records[1]?.model, "deepseek/deepseek-v4-flash");
     assert.equal(scanned.records[1]?.sessionId, "thread-1");
+    assert.equal(scanned.records[2]?.dedupeKey, scanned.records[1]?.dedupeKey);
+    assert.equal(scanned.records[3]?.reportedCostUsd, 0);
+    assert.notEqual(scanned.records[3]?.dedupeKey, scanned.records[1]?.dedupeKey);
     const repeated = await readTranscriptRecords(file, commandCodeUsageFormat, scanned.position);
     assert.isNotNull(repeated);
     assert.lengthOf(repeated.records, 0);

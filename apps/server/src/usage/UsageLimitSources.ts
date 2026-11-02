@@ -48,6 +48,23 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   }
 }
 
+/** Match the configured driver/ACP agent, not a user-editable instance ID. */
+export function hasConfiguredCommandCodeProvider(
+  instances: ServerSettings["providerInstances"],
+): boolean {
+  return Object.values(instances).some((instance) => {
+    if (instance.driver === "command-code") return true;
+    if (
+      instance.driver !== "acpRegistry" ||
+      !instance.config ||
+      typeof instance.config !== "object"
+    )
+      return false;
+    const agentId = "agentId" in instance.config ? instance.config.agentId : null;
+    return agentId === "command-code" || agentId === "command-code-omarchy";
+  });
+}
+
 /** @public */
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
@@ -100,8 +117,8 @@ export const make = Effect.gen(function* () {
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
       { concurrency: 4 },
     );
-    const commandCodeConfigured = Object.keys(settings?.providerInstances ?? {}).some((id) =>
-      id.toLowerCase().includes("command-code"),
+    const commandCodeConfigured = hasConfiguredCommandCodeProvider(
+      settings?.providerInstances ?? {},
     );
     const commandCode = commandCodeConfigured
       ? yield* readCommandCodeLimitSource().pipe(

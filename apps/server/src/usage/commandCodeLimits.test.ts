@@ -120,28 +120,6 @@ describe("Command Code rolling quota windows", () => {
     assert.lengthOf(snapshot.accounts, 1);
   });
 
-  it("keeps the source readable by clients that know only the original cliproxy kind", () => {
-    const legacyEnvelope = Schema.Struct({
-      id: Schema.String,
-      kind: Schema.Literal("cliproxy"),
-      label: Schema.String,
-      accounts: Schema.Array(
-        Schema.Struct({
-          id: Schema.String,
-          driver: Schema.String,
-        }),
-      ),
-    });
-    const oldClient = Schema.decodeSync(legacyEnvelope)({
-      id: "command-code-local",
-      kind: "cliproxy",
-      label: "Command Code",
-      accounts: [{ id: "Command Code", driver: "command-code" }],
-    });
-    assert.strictEqual(oldClient.accounts[0]?.driver, "command-code");
-    assert.strictEqual(oldClient.kind, "cliproxy");
-  });
-
   it.effect("reads true windows using the expected CLI API origin and organization", () =>
     Effect.gen(function* () {
       const dir = yield* Effect.promise(() =>
@@ -190,6 +168,8 @@ describe("Command Code rolling quota windows", () => {
           Effect.provideService(HttpClient.HttpClient, client),
         );
         assert.isNotNull(source);
+        assert.strictEqual(source.kind, "cliproxy");
+        assert.strictEqual(source.accounts[0]?.driver, "command-code");
         assert.isFalse("error" in source);
         assert.deepStrictEqual(
           source.accounts[0]?.usageLimits.windows.map((w) => w.usedPercent),

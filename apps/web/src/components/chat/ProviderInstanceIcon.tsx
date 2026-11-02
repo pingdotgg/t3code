@@ -83,6 +83,8 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   size?: "default" | "compact";
   className?: string;
   iconClassName?: string;
+  /** Hide a redundant logo name when a visible provider label follows it. */
+  decorative?: boolean;
   badgeClassName?: string;
   indicatorBackground?: string;
 }) {
@@ -123,7 +125,8 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
         <>
           <img
             src="/assets/command-code-symbol-dark.svg"
-            alt={props.displayName}
+            alt={props.decorative ? "" : props.displayName}
+            aria-hidden={props.decorative || undefined}
             className={cn("size-5 shrink-0 object-contain dark:hidden", iconClassName)}
           />
           <img

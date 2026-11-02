@@ -100,7 +100,12 @@ import {
   resolveUsageShortcut,
   type UsageMetric,
 } from "./usageShortcuts";
-import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import {
+  compatibleUsageSources,
+  PROVIDER_ORDER,
+  PROVIDER_PRESENTATION,
+  providersWithUsage,
+} from "./usageProviders";
 import {
   readUsagePagePreferences,
   saveUsagePagePreferences,
@@ -645,16 +650,14 @@ function UsageOverview({
   const providersWithData = new Set(providersWithUsage(merged.providers));
   // The usage summaries include sources even when the installed provider has
   // no completed sessions. Show a zero-usage row instead of making it disappear.
+  const compatibleSources = compatibleUsageSources(selectedEnvironments);
   const providersWithSources = new Set<UsageProviderKind>(
-    selectedEnvironments.flatMap(
-      (environment) =>
-        environment.summary?.sources.flatMap((source) =>
-          source.fingerprint.provider === "command-code" &&
-          (source.status === "ok" || source.status === "partial") &&
-          !hiddenProviders.has(source.fingerprint.provider)
-            ? [source.fingerprint.provider]
-            : [],
-        ) ?? [],
+    compatibleSources.flatMap((source) =>
+      source.fingerprint.provider === "command-code" &&
+      (source.status === "ok" || source.status === "partial") &&
+      !hiddenProviders.has(source.fingerprint.provider)
+        ? [source.fingerprint.provider]
+        : [],
     ),
   );
   // Only loading.providers excludes hidden providers without data. Filter a fresh array so the compiler can
@@ -669,12 +672,7 @@ function UsageOverview({
     activeProviders.filter((provider) => loadingProviders.has(provider)),
   );
   const sourceMessages = usageSourceMessages(
-    selectedEnvironments.flatMap(
-      (environment) =>
-        environment.summary?.sources.filter(
-          (source) => !hiddenProviders.has(source.fingerprint.provider),
-        ) ?? [],
-    ),
+    compatibleSources.filter((source) => !hiddenProviders.has(source.fingerprint.provider)),
   );
   const breakdownPeriods: readonly (DailyTotals | HourlyTotals)[] = (
     shownHourly ? merged.hourly : merged.daily
@@ -784,7 +782,7 @@ function UsageOverview({
                         backgroundColor: PROVIDER_PRESENTATION[provider].color,
                       }}
                     />
-                    <ProviderMark provider={provider} className="size-4" />
+                    <ProviderMark provider={provider} className="size-4" decorative />
                     <span className="flex min-w-0 items-baseline gap-1.5">
                       <span className="truncate">{PROVIDER_PRESENTATION[provider].label}</span>
                       <span
@@ -1167,7 +1165,7 @@ function CursorEnableRow({
           className="size-2 shrink-0 rounded-full"
           style={{ backgroundColor: PROVIDER_PRESENTATION.cursor.color }}
         />
-        <ProviderMark provider="cursor" className="size-4" />
+        <ProviderMark provider="cursor" className="size-4" decorative />
         <span className="truncate">Cursor{showEnvironment ? ` · ${label}` : ""}</span>
       </span>
       <CursorEnableButton
@@ -1193,6 +1191,7 @@ function CursorEnableLimits({
         <ProviderInstanceIcon
           driverKind={ProviderDriverKind.make("cursor")}
           displayName="Cursor"
+          decorative
           indicatorBackground="var(--background)"
           className="size-5"
           iconClassName="size-4 text-foreground/80"
@@ -1221,15 +1220,18 @@ function CursorEnableLimits({
 function ProviderMark({
   provider,
   className,
+  decorative,
 }: {
   readonly provider: UsageProviderKind;
   readonly className: string;
+  readonly decorative?: boolean;
 }) {
   const presentation = PROVIDER_PRESENTATION[provider];
   return (
     <ProviderInstanceIcon
       driverKind={presentation.driverKind}
       displayName={presentation.label}
+      decorative={decorative === true}
       iconClassName={className}
     />
   );
@@ -1488,7 +1490,7 @@ function UsageProviderFilter({
             }
           >
             <span className="flex min-w-0 items-center gap-2">
-              <ProviderMark provider={provider} className="size-3.5" />
+              <ProviderMark provider={provider} className="size-3.5" decorative />
               <span className="truncate">{PROVIDER_PRESENTATION[provider].label}</span>
             </span>
           </MenuCheckboxItem>

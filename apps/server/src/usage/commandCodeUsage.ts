@@ -56,7 +56,7 @@ function parseRecord(value: unknown, state: typeof ScanState.Type): readonly Usa
   const reportedCostUsd =
     entry.usage.costUsd !== undefined &&
     Number.isFinite(entry.usage.costUsd) &&
-    entry.usage.costUsd > 0
+    entry.usage.costUsd >= 0
       ? entry.usage.costUsd
       : null;
   if (totalTokens(totals) === 0 && reportedCostUsd === null) return [];
@@ -69,7 +69,7 @@ function parseRecord(value: unknown, state: typeof ScanState.Type): readonly Usa
       totals,
       reportedCostUsd,
       speed: "standard",
-      dedupeKey: JSON.stringify(["command-code", state.sessionId, entry.id, entry.timestamp]),
+      dedupeKey: JSON.stringify(["command-code", state.sessionId, entry.id]),
     },
   ];
 }

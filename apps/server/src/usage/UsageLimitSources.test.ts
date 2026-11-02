@@ -1,6 +1,11 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
-import { ServerConfigStreamEvent, UsageLimitSourceId } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ServerConfigStreamEvent,
+  UsageLimitSourceId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -11,6 +16,36 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as UsageLimitSources from "./UsageLimitSources.ts";
 
 const encodeConfigEvent = Schema.encodeSync(ServerConfigStreamEvent);
+
+it("recognizes Command Code by provider driver or ACP agent, never by instance key", () => {
+  const providerInstances = {
+    [ProviderInstanceId.make("cc")]: {
+      driver: ProviderDriverKind.make("acpRegistry"),
+      config: { agentId: "command-code-omarchy" },
+    },
+  };
+  expect(UsageLimitSources.hasConfiguredCommandCodeProvider(providerInstances)).toBe(true);
+  expect(
+    UsageLimitSources.hasConfiguredCommandCodeProvider({
+      [ProviderInstanceId.make("command-code-pretender")]: {
+        driver: ProviderDriverKind.make("opencode"),
+      },
+    }),
+  ).toBe(false);
+  expect(
+    UsageLimitSources.hasConfiguredCommandCodeProvider({
+      [ProviderInstanceId.make("direct")]: { driver: ProviderDriverKind.make("command-code") },
+    }),
+  ).toBe(true);
+  expect(
+    UsageLimitSources.hasConfiguredCommandCodeProvider({
+      [ProviderInstanceId.make("unrelated")]: {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        config: { agentId: "other-agent" },
+      },
+    }),
+  ).toBe(false);
+});
 
 it.effect("keeps malformed source URLs encodable for config subscribers", () =>
   Effect.gen(function* () {
