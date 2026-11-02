@@ -103,7 +103,6 @@ class T3NativeControlsModule : Module() {
 
 // Android 10+ lets apps add their own media without a storage permission.
 @RequiresApi(Build.VERSION_CODES.Q)
-@Suppress("TooGenericExceptionCaught") // Remove the pending entry before rethrowing.
 private fun saveImageToPictures(context: Context, source: Uri, mimeType: String, name: String) {
   val resolver = context.contentResolver
   val values = ContentValues().apply {
@@ -116,7 +115,7 @@ private fun saveImageToPictures(context: Context, source: Uri, mimeType: String,
     MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
     values
   ) ?: error("Could not create the image in Pictures.")
-  try {
+  runCatching {
     val input = resolver.openInputStream(source) ?: error("The image is no longer available.")
     input.use { from ->
       val output = resolver.openOutputStream(target) ?: error("Could not write the image.")
@@ -128,8 +127,5 @@ private fun saveImageToPictures(context: Context, source: Uri, mimeType: String,
       null,
       null
     )
-  } catch (error: Exception) {
-    resolver.delete(target, null, null)
-    throw error
-  }
+  }.onFailure { resolver.delete(target, null, null) }.getOrThrow()
 }
