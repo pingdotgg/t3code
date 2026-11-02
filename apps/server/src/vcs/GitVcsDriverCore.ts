@@ -3050,7 +3050,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return stdout.trim();
   });
 
-  const prepareUntrackedReviewIndex = Effect.fn("prepareUntrackedReviewIndex")(function* (
+  const readUntrackedReviewPaths = Effect.fn("readUntrackedReviewPaths")(function* (
     cwd: string,
     pathArgs: ReadonlyArray<string>,
     onlyPath?: string,
@@ -3070,8 +3070,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const paths = splitNullSeparatedGitStdoutPaths(untracked).filter(
       (candidate) => onlyPath === undefined || candidate === onlyPath,
     );
+    return paths.length > REVIEW_UNTRACKED_MAX_FILES ? null : paths;
+  });
+
+  const prepareUntrackedReviewIndex = Effect.fn("prepareUntrackedReviewIndex")(function* (
+    cwd: string,
+    paths: ReadonlyArray<string> | null,
+  ) {
+    if (paths === null) return null;
     if (paths.length === 0) return { env: undefined };
-    if (paths.length > REVIEW_UNTRACKED_MAX_FILES) return null;
     const env = yield* prepareReviewIndex(cwd, paths).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
@@ -3150,14 +3157,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       roots.length <= 128 && roots.reduce((length, root) => length + root.length + 16, 0) < 8_000
         ? roots.map((root) => `:(top,literal)${root}`)
         : [];
-    const [{ baseRef, mergeBase }, untracked] = yield* Effect.all(
+    const [{ baseRef, mergeBase }, untrackedPaths] = yield* Effect.all(
       [
         resolveReviewMergeBase(cwd, branch, undefined, options?.knownOriginDefaultBranch ?? null),
         // Empty status can mean untracked files are hidden; retain the full scan.
-        prepareUntrackedReviewIndex(cwd, pathspecs),
+        readUntrackedReviewPaths(cwd, pathspecs),
       ],
       { concurrency: 2 },
     );
+    // Index preparation waits for a valid base to avoid speculative copies and subprocesses.
+    const untracked = yield* prepareUntrackedReviewIndex(cwd, untrackedPaths);
     if (untracked === null) {
       return yield* new GitCommandError({
         operation: "GitVcsDriver.readBranchChangeTotals",
@@ -3475,7 +3484,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { ...patch, files: stat.files };
     });
     const [dirtyTrackedResult, baseResult] = yield* Effect.gen(function* () {
-      const untracked = yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path);
+      const untrackedPaths = yield* readUntrackedReviewPaths(cwd, pathArgs, input.file?.path);
+      const untracked = yield* prepareUntrackedReviewIndex(cwd, untrackedPaths);
       const [dirty, base] =
         review.mergeBase === dirtyRef
           ? yield* readTrackedDiff(dirtyRef, untracked?.env).pipe(

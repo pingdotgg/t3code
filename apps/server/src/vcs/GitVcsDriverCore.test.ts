@@ -3178,29 +3178,48 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, "nested/untracked.txt", "one\ntwo\n");
         yield* writeTextFile(cwd, "new [1].txt", "literal\n");
 
-        const prepared = yield* Deferred.make<string>();
+        const discovered = yield* Deferred.make<void>();
+        const temporaryIndexes: string[] = [];
+        let baseVerified = false;
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const fileSystem = yield* FileSystem.FileSystem;
         const indexPath = pathService.join(cwd, ".git/index");
         const indexBefore = yield* fileSystem.readFile(indexPath);
         const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            copyFile: (source, destination) =>
+              Effect.gen(function* () {
+                assert.isTrue(baseVerified, "index copying must wait for a valid base");
+                temporaryIndexes.push(destination);
+                return yield* fileSystem.copyFile(source, destination);
+              }),
+          }),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             ChildProcessSpawner.make((command) =>
               Effect.gen(function* () {
                 if (!ChildProcess.isStandardCommand(command)) return yield* delegate.spawn(command);
-                // Base resolution must allow index preparation to finish before it returns.
-                if (command.args[0] === "merge-base") yield* Deferred.await(prepared);
+                // Discovery must progress while base verification is pending.
+                if (command.args[0] === "merge-base") yield* Deferred.await(discovered);
                 const handle = yield* delegate.spawn(command);
-                if (!command.args.includes("--intent-to-add")) return handle;
-                const index = command.options.env?.GIT_INDEX_FILE;
-                if (index === undefined) return yield* Effect.die("missing review index");
-                return ChildProcessSpawner.makeHandle({
-                  ...handle,
-                  exitCode: handle.exitCode.pipe(
-                    Effect.tap(() => Deferred.succeed(prepared, index)),
-                  ),
-                });
+                if (command.args[0] === "merge-base") {
+                  return ChildProcessSpawner.makeHandle({
+                    ...handle,
+                    exitCode: handle.exitCode.pipe(
+                      Effect.tap(() => Effect.sync(() => void (baseVerified = true))),
+                    ),
+                  });
+                }
+                if (command.args[0] === "ls-files" && command.args.includes("--others")) {
+                  return ChildProcessSpawner.makeHandle({
+                    ...handle,
+                    exitCode: handle.exitCode.pipe(
+                      Effect.tap(() => Deferred.succeed(discovered, undefined)),
+                    ),
+                  });
+                }
+                return handle;
               }),
             ),
           ),
@@ -3214,8 +3233,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           insertions: 4,
           deletions: 0,
         });
-        const temporaryIndex = yield* Deferred.await(prepared);
-        assert.isFalse(yield* fileSystem.exists(temporaryIndex));
+        for (const index of temporaryIndexes) assert.isFalse(yield* fileSystem.exists(index));
         assert.deepStrictEqual(yield* fileSystem.readFile(indexPath), indexBefore);
         assert.isUndefined((yield* driver.statusDetailsLocal(cwd)).branchChanges);
       }),
@@ -3235,7 +3253,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const indexPath = path.join(cwd, ".git/index");
           const indexBefore = yield* fs.readFile(indexPath);
           const mergeStarted = yield* Deferred.make<void>();
-          const indexStarted = yield* Deferred.make<string>();
+          const preparationStarted = yield* Deferred.make<string | null>();
           const fail = yield* Deferred.make<void>();
           const stopped: string[] = [];
           const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -3245,20 +3263,26 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               ChildProcessSpawner.make((command) => {
                 if (!ChildProcess.isStandardCommand(command)) return delegate.spawn(command);
                 const stage =
-                  command.args[0] === "merge-base"
+                  command.args[0] === "merge-base" && scenario !== "index failure"
                     ? "merge-base"
-                    : command.args.includes("--intent-to-add")
+                    : command.args.includes("--intent-to-add") && scenario === "index failure"
                       ? "index"
-                      : null;
+                      : command.args[0] === "ls-files" &&
+                          command.args.includes("--others") &&
+                          scenario !== "index failure"
+                        ? "discovery"
+                        : null;
                 if (stage === null) return delegate.spawn(command);
                 return Effect.acquireRelease(
                   Effect.gen(function* () {
                     if (stage === "merge-base") yield* Deferred.succeed(mergeStarted, undefined);
-                    else {
+                    else if (stage === "discovery") {
+                      yield* Deferred.succeed(preparationStarted, null);
+                    } else {
                       const index = command.options.env?.GIT_INDEX_FILE;
                       if (index === undefined) return yield* Effect.die("missing review index");
                       yield* fs.writeFileString(`${index}.lock`, "held");
-                      yield* Deferred.succeed(indexStarted, index);
+                      yield* Deferred.succeed(preparationStarted, index);
                     }
                     return ChildProcessSpawner.makeHandle({
                       ...makeFailedHandle("fatal: preparation failed"),
@@ -3276,9 +3300,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const reading = yield* driver
             .statusDetailsLocal(cwd, { includeDivergence: false, includeBranchChanges: true })
             .pipe(Effect.forkChild);
-          yield* Deferred.await(mergeStarted);
-          const temporaryIndex = yield* Deferred.await(indexStarted);
-          assert.isTrue(yield* fs.exists(temporaryIndex));
+          if (scenario !== "index failure") yield* Deferred.await(mergeStarted);
+          const temporaryIndex = yield* Deferred.await(preparationStarted);
+          if (temporaryIndex !== null) assert.isTrue(yield* fs.exists(temporaryIndex));
           if (scenario === "interruption") {
             yield* Fiber.interrupt(reading);
             const exit = yield* Fiber.await(reading);
@@ -3289,9 +3313,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             assert.isTrue(status.isRepo);
             assert.isUndefined(status.branchChanges);
           }
-          assert.sameMembers(stopped, ["merge-base", "index"]);
-          assert.isFalse(yield* fs.exists(temporaryIndex));
-          assert.isFalse(yield* fs.exists(`${temporaryIndex}.lock`));
+          assert.sameMembers(
+            stopped,
+            scenario === "index failure" ? ["index"] : ["merge-base", "discovery"],
+          );
+          if (temporaryIndex !== null) {
+            assert.isFalse(yield* fs.exists(temporaryIndex));
+            assert.isFalse(yield* fs.exists(`${temporaryIndex}.lock`));
+          }
           assert.deepStrictEqual(yield* fs.readFile(indexPath), indexBefore);
         }),
     );
