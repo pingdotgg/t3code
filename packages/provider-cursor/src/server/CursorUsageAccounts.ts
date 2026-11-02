@@ -5,8 +5,10 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -58,6 +60,7 @@ const make = Effect.gen(function* () {
   const accountReader = yield* CursorAccountReader.CursorAccountReader;
   const hostEnvironment = yield* HostProcess.Environment;
   const platform = yield* HostProcess.Platform;
+  const crypto = yield* Crypto.Crypto;
 
   const cachePath = path.join(host.paths.stateDir, CURSOR_ACCOUNT_CACHE_FILE_NAME);
   const caches = new Map<string, CursorAccountCache>();
@@ -210,7 +213,12 @@ const make = Effect.gen(function* () {
       typeof credential === "string"
         ? credential
         : credential.kind === "apiKey"
-          ? `api-key:${credential.instanceId}`
+          ? // A fingerprint, so a replaced key never reads the previous account's cache.
+            `api-key:${Hex.encode(
+              yield* crypto
+                .digest("SHA-256", new TextEncoder().encode(credential.apiKey))
+                .pipe(Effect.orDie),
+            )}`
           : "keychain";
     const nowMs = yield* Clock.currentTimeMillis;
     const recentFailure = failures.get(credentialKey);
@@ -281,20 +289,24 @@ const make = Effect.gen(function* () {
           ? path.join(userHome, ".cursor", "auth.json")
           : path.join(cursorHome, platform === "win32" ? "Cursor" : "cursor", "auth.json");
       // T3's Cursor sign-in and CURSOR_API_KEY name the account the agent uses, so they win.
-      const apiKeySources = (yield* Effect.forEach(instances, ({ instanceId, environment }) =>
-        Effect.map(
-          environment.CURSOR_API_KEY?.trim()
-            ? Effect.succeed(environment.CURSOR_API_KEY.trim())
-            : readStoredCursorApiKey(instanceId).pipe(
-                Effect.provideService(ProviderHost.ProviderHost, host),
-                Effect.orElseSucceed(() => undefined),
-              ),
-          (apiKey) => (apiKey ? { kind: "apiKey" as const, apiKey, instanceId } : null),
-        ),
-      )).filter((source) => source !== null);
-      if (apiKeySources.length > 0) {
-        const sources = yield* Effect.forEach(apiKeySources, (credential) =>
-          accountSource(credential, authPath, windowStartMs, retentionCutoffMs, awaitRefresh),
+      const apiKeys = yield* Effect.forEach(instances, ({ instanceId, environment }) =>
+        environment.CURSOR_API_KEY?.trim()
+          ? Effect.succeed(environment.CURSOR_API_KEY.trim())
+          : readStoredCursorApiKey(instanceId).pipe(
+              Effect.provideService(ProviderHost.ProviderHost, host),
+              Effect.orElseSucceed(() => undefined),
+            ),
+      );
+      const uniqueApiKeys = [...new Set(apiKeys.filter((apiKey) => apiKey !== undefined))];
+      if (uniqueApiKeys.length > 0) {
+        const sources = yield* Effect.forEach(uniqueApiKeys, (apiKey) =>
+          accountSource(
+            { kind: "apiKey", apiKey },
+            authPath,
+            windowStartMs,
+            retentionCutoffMs,
+            awaitRefresh,
+          ),
         );
         return sources.filter((source) => source !== null);
       }

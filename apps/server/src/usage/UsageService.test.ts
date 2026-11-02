@@ -1582,11 +1582,7 @@ describe("UsageService", () => {
           ),
         );
         assert.deepStrictEqual(cursor.state.credentials, [
-          {
-            kind: "apiKey",
-            apiKey: index === 0 ? "environment-key" : "signed-in-key",
-            instanceId: "cursor",
-          },
+          { kind: "apiKey", apiKey: index === 0 ? "environment-key" : "signed-in-key" },
         ]);
         assert.strictEqual(cursorSource(summary)?.status, "ok");
       }
