@@ -688,9 +688,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
   );
 
   it.effect("publishes a provider key that another program rotates in settings.json", () =>
-    Effect.forEach(["watcher", "mutation", "missing", "interrupted"] as const, (scenario) =>
+    Effect.forEach(["watcher", "mutation", "missing", "cancel", "endpoint"] as const, (scenario) =>
       Effect.gen(function* () {
-        const reloadBeforeWatcher = scenario !== "watcher" && scenario !== "interrupted";
+        const interrupted = scenario === "cancel" || scenario === "endpoint";
+        const reloadBeforeWatcher = scenario !== "watcher" && !interrupted;
+        const opencode = ProviderInstanceId.make("opencode");
         const replacing = yield* Queue.unbounded<void>();
         const replaces = yield* Latch.make(true);
         const reads = yield* Queue.unbounded<void>();
@@ -712,11 +714,22 @@ it.layer(NodeServices.layer)("server settings", (it) => {
               yield* awaitWatcher(config.settingsPath, reads);
               yield* service.withSettingsSnapshot(() => Effect.void);
             }
-            if (scenario === "interrupted") yield* service.updateSettings({});
+            if (interrupted)
+              yield* service.updateSettings({
+                providerInstances: {
+                  [opencode]: {
+                    driver: ProviderDriverKind.make("opencode"),
+                    config: {
+                      serverUrl: "http://127.0.0.1:4096",
+                      serverPassword: "old-password",
+                    },
+                  },
+                },
+              });
             const changes = yield* service.subscribeChanges;
             const savedContents = yield* fs.readFileString(config.settingsPath);
 
-            if (scenario === "interrupted") {
+            if (interrupted) {
               yield* Queue.clear(replacing);
               yield* replaces.close;
               const saving = yield* Effect.forkChild(
@@ -726,6 +739,17 @@ it.layer(NodeServices.layer)("server settings", (it) => {
                       driver: ProviderDriverKind.make("antigravity"),
                       config: { apiKey: "second-key" },
                     },
+                    ...(scenario === "endpoint"
+                      ? {
+                          [opencode]: {
+                            driver: ProviderDriverKind.make("opencode"),
+                            config: {
+                              serverUrl: "http://127.0.0.1:4097",
+                              serverPassword: "new-password",
+                            },
+                          },
+                        }
+                      : {}),
                   },
                 }),
                 { startImmediately: true },
@@ -741,6 +765,19 @@ it.layer(NodeServices.layer)("server settings", (it) => {
               });
               yield* replaces.open;
               yield* Fiber.join(canceled);
+              if (scenario === "endpoint") {
+                const committed = yield* fs.readFileString(config.settingsPath);
+                yield* fs.writeFileString(config.settingsPath, "{");
+                assert.equal(
+                  (yield* service.updateSettings({}).pipe(Effect.result))._tag,
+                  "Failure",
+                );
+                assert.deepInclude(
+                  (yield* service.getSettings).providerInstances[opencode]?.config,
+                  { serverUrl: "http://127.0.0.1:4097", serverPassword: "new-password" },
+                );
+                yield* fs.writeFileString(config.settingsPath, committed);
+              }
             } else if (scenario === "missing") {
               yield* fs.remove(config.settingsPath);
               const failure = yield* service

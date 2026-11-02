@@ -1232,6 +1232,7 @@ const make = Effect.gen(function* () {
               yield* rollbackSecretChanges;
               return yield* Effect.failCause(writeExit.cause);
             }
+            yield* Ref.set(lastGoodSettingsRef, Option.some(next));
             return { materializedNext: materializedExit.value, written: writeExit.value };
           }).pipe(Effect.ensuring(invalidateMaterialized)),
         );
@@ -1240,7 +1241,6 @@ const make = Effect.gen(function* () {
           parseFailure: Option.none(),
           fromPublishedSave: true,
         });
-        yield* Ref.set(lastGoodSettingsRef, Option.some(next));
         const resolved = toEffective(materializedNext);
         materialized = { source: next, value: resolved };
         yield* emitChange(next);
