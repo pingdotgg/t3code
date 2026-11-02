@@ -9,6 +9,7 @@ import {
   WorktreeMcpStatusResult,
   ThreadId,
 } from "@t3tools/contracts";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -79,6 +80,7 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
     ThreadManagementService.ThreadManagementService,
     ProjectService.ProjectService,
     GitWorkflowService.GitWorkflowService,
+    FileSystem.FileSystem,
   ],
 })
   .annotate(Tool.Readonly, true)
