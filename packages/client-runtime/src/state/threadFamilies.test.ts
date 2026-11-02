@@ -205,7 +205,10 @@ describe("createThreadFamilyAtoms", () => {
           Effect.tap(() => Effect.yieldNow),
         );
         registry.mount(families.snapshotAtom(TARGET.environmentId));
+        const mounted = families.mountedAtom(TARGET.environmentId, parent.id);
+        expect(registry.get(mounted)).toBe(false);
         const release = families.mount(registry, TARGET.environmentId, parent.id);
+        expect(registry.get(mounted)).toBe(true);
 
         // A cached shell from before this session's first snapshot reads nothing.
         expect(threadFamilyRead(registry.get(family))).toBe("pending");
@@ -239,6 +242,7 @@ describe("createThreadFamilyAtoms", () => {
 
         // A child that woke after the shell left out its idle parent reads its family unmounted.
         release();
+        expect(registry.get(mounted)).toBe(false);
         const woken = row("woken", "woken", child.id, parent.id);
         registry.set(shellState, AsyncResult.success(shellAt(3, [parent, woken])));
         yield* Queue.offer(

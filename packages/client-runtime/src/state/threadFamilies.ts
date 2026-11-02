@@ -162,6 +162,10 @@ export function createThreadFamilyAtoms<R, ER, E>(
       Atom.withLabel(`environment-thread-family-mounts:${environmentId}`),
     ),
   );
+  const mountedAtom = Atom.family((key: string) => {
+    const [environmentId] = JSON.parse(key) as [EnvironmentId, ThreadId];
+    return Atom.make((get) => get(mountsAtom(environmentId)).has(`family:${key}`));
+  });
 
   const familyRowsAtom = Atom.family((key: string) =>
     Atom.make((get): ReadonlyArray<OrchestrationV2ThreadFamily> => {
@@ -282,6 +286,8 @@ export function createThreadFamilyAtoms<R, ER, E>(
     /** The current generation's family read, for decisions that need a settled answer. */
     familyAtom: (environmentId: EnvironmentId, threadId: ThreadId) =>
       familyAtom(familyKey(environmentId, threadId)),
+    mountedAtom: (environmentId: EnvironmentId, threadId: ThreadId) =>
+      mountedAtom(familyKey(environmentId, threadId)),
     mount,
     mountRows,
     refresh,
