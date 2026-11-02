@@ -76,6 +76,7 @@ import {
   UserPlusIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
+import { pinMessageSelection } from "../pinnedSelectionReveal";
 import {
   useDeferredValue,
   useEffect,
@@ -1286,6 +1287,36 @@ function OpenCommandPaletteDialog(props: {
       shortcutCommand: "chat.find",
       run: async () => {
         openThreadFind(activeThreadKey);
+      },
+    });
+  }
+
+  if (activeThread !== null) {
+    const pinThreadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:pin-selected-text",
+      searchTerms: ["pin", "selection", "highlight", "text", "bookmark"],
+      title: "Pin selected text",
+      icon: <PinIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "thread.pinSelection",
+      run: async () => {
+        if (pinMessageSelection(pinThreadRef)) return;
+        toastManager.add({
+          id: "pin-selection-missing",
+          title: "Select text in the thread first",
+          timeout: 2000,
+        });
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:show-pins",
+      searchTerms: ["pins", "pinned", "sidebar", "panel", "highlights"],
+      title: "Show pins",
+      icon: <PinIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useRightPanelStore.getState().open(pinThreadRef, "pins");
       },
     });
   }

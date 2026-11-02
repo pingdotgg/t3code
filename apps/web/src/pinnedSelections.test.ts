@@ -1,5 +1,7 @@
-import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { DEFAULT_KEYBINDINGS, DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { describe, expect, it } from "vite-plus/test";
+
+import { resolveShortcutCommand } from "./keybindings";
 
 import {
   insertPinnedSelection,
@@ -78,14 +80,25 @@ describe("pinned selections", () => {
     expect(settledPinsToastTitle(3)).toBe("This thread still has 3 pins");
   });
 
-  it("does not reuse the thread pin shortcut", () => {
+  it("uses Cmd+P for a text selection and leaves the file picker otherwise", () => {
     expect(DEFAULT_KEYBINDINGS.find((binding) => binding.command === "thread.pin")?.key).toBe(
       "mod+shift+p",
     );
     expect(
-      DEFAULT_KEYBINDINGS.filter((binding) => binding.key === "mod+alt+p").map(
-        (binding) => binding.command,
-      ),
-    ).toEqual(["thread.pinSelection"]);
+      DEFAULT_KEYBINDINGS.find((binding) => binding.command === "filePicker.toggle")?.key,
+    ).toBe("mod+p");
+    expect(
+      DEFAULT_KEYBINDINGS.find((binding) => binding.command === "thread.pinSelection")?.key,
+    ).toBe("mod+p");
+    const event = { key: "p", metaKey: true, ctrlKey: false, shiftKey: false, altKey: false };
+    expect(
+      resolveShortcutCommand(event, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { textSelected: true },
+      }),
+    ).toBe("thread.pinSelection");
+    expect(
+      resolveShortcutCommand(event, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "MacIntel" }),
+    ).toBe("filePicker.toggle");
   });
 });

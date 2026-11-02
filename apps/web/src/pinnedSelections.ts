@@ -248,6 +248,14 @@ export function resolvePinnedSelectionRange(
   );
 }
 
+export function hasPinnableTextSelection(): boolean {
+  if (typeof window === "undefined") return false;
+  const selection = window.getSelection();
+  const viewport = selectionViewport(selection);
+  if (!viewport) return false;
+  return capturePinnedMessageSelection(viewport, selection) !== null;
+}
+
 export function selectionViewport(selection: Selection | null): HTMLElement | null {
   const anchor = selection?.anchorNode;
   const element = anchor instanceof Element ? anchor : anchor?.parentElement;

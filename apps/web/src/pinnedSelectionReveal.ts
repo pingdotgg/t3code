@@ -1,6 +1,8 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { create } from "zustand";
+
+import { registerMenuAction } from "./shortcuts/dispatcher";
 
 import {
   capturePinnedMessageSelection,
@@ -51,11 +53,61 @@ export function commitPinnedSelection(
   const threadKey = scopedThreadKey(threadRef);
   const pin = useUiStateStore.getState().addPinnedSelection(threadKey, draft);
   const panels = useRightPanelStore.getState();
-  if (selectActiveRightPanel(panels.byThreadKey, threadRef) !== "diff") {
-    panels.open(threadRef, "diff");
+  if (selectActiveRightPanel(panels.byThreadKey, threadRef) !== "pins") {
+    panels.open(threadRef, "pins");
   }
   requestPinnedSelectionReveal({ threadKey, pinId: pin.id, messageId: pin.messageId });
   return pin;
+}
+
+let pendingPin: { readonly threadKey: string; readonly draft: PinnedSelectionDraft } | null = null;
+let pinMenuInstalled = false;
+
+function rememberPinnedSelectionFromContextMenu(preserveOnMiss = false): void {
+  const selection = typeof window === "undefined" ? null : window.getSelection();
+  const viewport = selectionViewport(selection);
+  const threadKey = viewport?.dataset.pinnedSelectionThread;
+  const draft = viewport && threadKey ? capturePinnedMessageSelection(viewport, selection) : null;
+  if (draft && threadKey) {
+    pendingPin = { threadKey, draft };
+    return;
+  }
+  if (!preserveOnMiss) pendingPin = null;
+}
+
+function commitContextMenuPin(): boolean {
+  const pending = pendingPin;
+  pendingPin = null;
+  if (pending) {
+    const threadRef = parseScopedThreadKey(pending.threadKey);
+    if (!threadRef) return false;
+    commitPinnedSelection(threadRef, pending.draft);
+    return true;
+  }
+  const selection = window.getSelection();
+  const viewport = selectionViewport(selection);
+  const threadKey = viewport?.dataset.pinnedSelectionThread;
+  const threadRef = threadKey ? parseScopedThreadKey(threadKey) : null;
+  if (!threadRef) return false;
+  return pinMessageSelection(threadRef);
+}
+
+export function installPinnedSelectionContextMenu(): void {
+  if (pinMenuInstalled || typeof window === "undefined") return;
+  pinMenuInstalled = true;
+  window.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (event.button === 2) rememberPinnedSelectionFromContextMenu();
+    },
+    true,
+  );
+  window.addEventListener("contextmenu", () => rememberPinnedSelectionFromContextMenu(true), true);
+  if (typeof window.desktopBridge?.onMenuAction === "function") {
+    registerMenuAction("thread.pinSelection", () => {
+      commitContextMenuPin();
+    });
+  }
 }
 
 export function pinMessageSelection(threadRef: ScopedThreadRef): boolean {

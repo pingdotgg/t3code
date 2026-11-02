@@ -229,7 +229,13 @@ function CommandPaletteResultRow(props: {
   onExecuteItem: (item: CommandPaletteActionItem | CommandPaletteSubmenuItem) => void;
 }) {
   const shortcutLabel = props.item.shortcutCommand
-    ? shortcutLabelForCommand(props.keybindings, props.item.shortcutCommand)
+    ? shortcutLabelForCommand(
+        props.keybindings,
+        props.item.shortcutCommand,
+        props.item.shortcutCommand === "thread.pinSelection"
+          ? { context: { textSelected: true } }
+          : undefined,
+      )
     : null;
 
   return (

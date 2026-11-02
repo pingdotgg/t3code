@@ -3,7 +3,10 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 
 import { readLocalApi } from "../../localApi";
-import { commitPinnedSelection } from "../../pinnedSelectionReveal";
+import {
+  commitPinnedSelection,
+  installPinnedSelectionContextMenu,
+} from "../../pinnedSelectionReveal";
 import type { PinnedSelectionReveal } from "../../pinnedSelectionReveal";
 import {
   capturePinnedMessageSelection,
@@ -125,11 +128,16 @@ export function usePinnedSelectionTimeline(input: {
     };
   }, [input.pin, input.viewport]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for a message selection context menu while the timeline is mounted
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- captures the selection before the native menu replaces it
+  useEffect(() => {
+    installPinnedSelectionContextMenu();
+  }, []);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- web has no native Pin item, so the page menu handles it
   useEffect(() => {
     const viewport = input.viewport;
     const threadRef = input.threadRef;
-    if (!viewport || !threadRef) return;
+    if (!viewport || !threadRef || window.desktopBridge) return;
     const onContextMenu = (event: MouseEvent) => {
       if (event.defaultPrevented) return;
       const target = event.target;

@@ -32,6 +32,7 @@ export interface ShortcutMatchContext {
   isWeb: boolean;
   isDesktop: boolean;
   editableFocus?: boolean;
+  textSelected?: boolean;
   [key: string]: boolean;
 }
 
@@ -62,6 +63,7 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
     isWeb: !isElectron,
     isDesktop: isElectron,
     editableFocus: false,
+    textSelected: false,
     ...options?.context,
   };
 }

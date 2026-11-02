@@ -1,10 +1,13 @@
+import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ChevronDownIcon, ChevronRightIcon, PinIcon, PinOffIcon } from "lucide-react";
 import { useState } from "react";
 
+import { shortcutLabelForCommand } from "../../keybindings";
 import { requestPinnedSelectionReveal, unpinSelection } from "../../pinnedSelectionReveal";
 import { pinnedSelectionPreview, type PinnedSelection } from "../../pinnedSelections";
+import { primaryServerKeybindingsAtom } from "../../state/server";
 import { useUiStateStore } from "../../uiStateStore";
 
 const EMPTY_PINS: readonly PinnedSelection[] = [];
@@ -14,29 +17,26 @@ export function PinnedSelectionsSection(props: { readonly threadRef: ScopedThrea
   const pins = useUiStateStore(
     (state) => state.threadPinnedSelectionsById[threadKey] ?? EMPTY_PINS,
   );
-  const [collapsed, setCollapsed] = useState(false);
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const shortcut = shortcutLabelForCommand(keybindings, "thread.pinSelection", {
+    context: { textSelected: true },
+  });
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  if (pins.length === 0) return null;
 
   return (
-    <section className="shrink-0 border-b border-border/70" aria-label="Pinned">
-      <button
-        type="button"
-        className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-xs text-muted-foreground hover:text-foreground"
-        aria-expanded={!collapsed}
-        onClick={() => setCollapsed((current) => !current)}
-      >
-        {collapsed ? (
-          <ChevronRightIcon className="size-3.5" />
-        ) : (
-          <ChevronDownIcon className="size-3.5" />
-        )}
+    <section className="flex min-h-0 flex-1 flex-col" aria-label="Pinned">
+      <div className="flex shrink-0 items-center gap-1.5 border-b border-border/70 px-3 py-2 text-xs text-muted-foreground">
         <PinIcon className="pinned-selection-badge size-3.5" />
         <span className="font-medium text-foreground">Pinned</span>
         <span className="tabular-nums">{pins.length}</span>
-      </button>
-      {collapsed ? null : (
-        <ul className="flex flex-col pb-1">
+      </div>
+      {pins.length === 0 ? (
+        <p className="px-3 py-6 text-xs text-muted-foreground">
+          Select text in the thread, then right-click and choose Pin
+          {shortcut ? `, or press ${shortcut}` : ""}.
+        </p>
+      ) : (
+        <ul className="flex min-h-0 flex-1 flex-col overflow-auto py-1">
           {pins.map((pin) => {
             const expanded = expandedId === pin.id;
             return (

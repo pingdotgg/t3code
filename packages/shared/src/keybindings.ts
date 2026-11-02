@@ -218,8 +218,12 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+c", command: "thread.copyReference", when: "!terminalFocus" },
   { key: "mod+shift+s", command: "thread.settle", when: "!terminalFocus" },
   { key: "mod+shift+p", command: "thread.pin", when: "!terminalFocus" },
-  // mod+shift+p pins the thread. This chord pins highlighted message text.
-  { key: "mod+alt+p", command: "thread.pinSelection", when: "!terminalFocus && !editableFocus" },
+  // Same chord as the file picker. This one wins only while message text is selected.
+  {
+    key: "mod+p",
+    command: "thread.pinSelection",
+    when: "!terminalFocus && !editableFocus && textSelected",
+  },
   { key: "mod+z", command: "thread.undo", when: "!terminalFocus && !editableFocus" },
   ...THREAD_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
     key: `mod+${index + 1}`,
