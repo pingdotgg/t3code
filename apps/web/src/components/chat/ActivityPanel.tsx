@@ -1,3 +1,5 @@
+import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import { deriveThreadStructureRuntime } from "@t3tools/client-runtime/state/thread-execution";
 import type { RuntimeRequestId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   CheckIcon,
@@ -14,7 +16,7 @@ import { useState, type ComponentProps, type ReactNode } from "react";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import type { PendingApproval } from "~/session-logic";
-import { useQuietThreadVisibleTurnItems } from "~/state/entities";
+import { useQuietThreadProjection, useQuietThreadVisibleTurnItems } from "~/state/entities";
 import { RelativeTime } from "../RelativeTime";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
@@ -122,7 +124,7 @@ function StatusBanner(props: { summary: ActivitySummary; approvals: ActivityPane
       <Icon aria-hidden className={cn("mt-0.5 size-4 shrink-0", iconClass)} />
       <div className="flex min-w-0 flex-col gap-0.5">
         <span className="line-clamp-2 break-words text-sm font-medium">{title}</span>
-        <span className="text-xs text-muted-foreground">
+        <span className="text-xs text-foreground/70">
           {details.join(" · ")}
           {summary.lastActivityAt ? (
             <>
@@ -149,7 +151,7 @@ function ApprovalRequest(props: { approval: PendingApproval; approvals: Activity
         </code>
       ) : null}
       {approval.reason ? (
-        <span className="text-xs text-muted-foreground wrap-anywhere">{approval.reason}</span>
+        <span className="text-xs text-foreground/70 wrap-anywhere">{approval.reason}</span>
       ) : null}
       {canRespond ? (
         <div className="flex flex-wrap items-center gap-2">
@@ -179,6 +181,8 @@ function PlanSection(props: { plan: ActivityPlan }) {
   const complete = steps.length > 0 && completed === steps.length;
   return (
     <Section
+      // Remounts when the plan completes, so a finished plan folds the same live as on reopen.
+      key={complete ? "complete" : "open"}
       title="Plan"
       count={`${completed} of ${steps.length}`}
       // A finished plan is already summarised by the banner; keep its steps one click away.
@@ -343,12 +347,17 @@ export function ActivityPanel(props: {
   approvals: ActivityPanelApprovals;
 }) {
   const visibleItems = useQuietThreadVisibleTurnItems(props.threadRef);
+  const structure = useQuietThreadProjection(props.threadRef);
+  const runActive =
+    structure !== null && threadRuntimeIsActive(deriveThreadStructureRuntime(structure.projection));
   const summary = deriveActivitySummary(
     visibleItems.map((visible) => visible.item).filter(isActivityItem),
     props.workspaceRoot ?? null,
+    runActive,
   );
 
   const isEmpty =
+    summary.phase === "idle" &&
     summary.now === null &&
     summary.done.length === 0 &&
     summary.touched.length === 0 &&

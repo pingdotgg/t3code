@@ -35,8 +35,11 @@ const edit = (
   ...(deletions === undefined ? {} : { deletions }),
 });
 
-const summarize = (items: ReadonlyArray<ActivityItem>, workspaceRoot: string | null = null) =>
-  deriveActivitySummary(items, workspaceRoot);
+const summarize = (
+  items: ReadonlyArray<ActivityItem>,
+  workspaceRoot: string | null = null,
+  runActive = false,
+) => deriveActivitySummary(items, workspaceRoot, runActive);
 
 describe("deriveActivitySummary", () => {
   it("reports the running item as now and finished work as done, in order", () => {
@@ -67,6 +70,16 @@ describe("deriveActivitySummary", () => {
     );
 
     expect(summary.done.map((step) => step.label)).toEqual(["cat src/a.ts && ls docs"]);
+  });
+
+  it("stays running between steps while the run is active, and never reports an outcome", () => {
+    const between = summarize([command("bun test", "completed")], null, true);
+
+    expect(between.phase).toBe("running");
+    expect(between.now).toBeNull();
+    expect(between.outcome).toBeNull();
+    expect(summarize([command("bun test", "completed")]).phase).toBe("idle");
+    expect(summarize([], null, true).phase).toBe("running");
   });
 
   it("is waiting, not running, when the agent needs the user", () => {

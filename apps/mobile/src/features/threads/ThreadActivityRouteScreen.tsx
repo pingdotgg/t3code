@@ -3,6 +3,9 @@ import {
   isActivityItem,
   type ActivitySummary,
 } from "@t3tools/client-runtime/work-log/activity-summary";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import { deriveThreadStructureRuntime } from "@t3tools/client-runtime/state/thread-execution";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { Platform, View } from "react-native";
@@ -17,7 +20,7 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { cn } from "../../lib/cn";
-import { useThreadVisibleTurnItems } from "../../state/use-thread-detail";
+import { useQuietThreadStructure, useThreadVisibleTurnItems } from "../../state/use-thread-detail";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadSelection } from "../../state/use-thread-selection";
 
@@ -160,9 +163,15 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
     environmentId: EnvironmentId.make(params.environmentId),
     threadId: ThreadId.make(params.threadId),
   });
+  const structure = useQuietThreadStructure(
+    scopeThreadRef(EnvironmentId.make(params.environmentId), ThreadId.make(params.threadId)),
+  );
+  const runActive =
+    structure !== null && threadRuntimeIsActive(deriveThreadStructureRuntime(structure.projection));
   const summary = deriveActivitySummary(
     visibleItems.map((visible) => visible.item).filter(isActivityItem),
     selectedThreadCwd ?? selectedThreadProject?.workspaceRoot ?? null,
+    runActive,
   );
 
   const handleBack = () => {
@@ -186,6 +195,7 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
   };
 
   const isEmpty =
+    summary.phase === "idle" &&
     summary.now === null &&
     summary.done.length === 0 &&
     summary.touched.length === 0 &&

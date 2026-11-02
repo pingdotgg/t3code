@@ -163,6 +163,8 @@ function workspacePath(fileName: string, workspaceRoot: string | null) {
 export function deriveActivitySummary(
   items: ReadonlyArray<ActivityItem>,
   workspaceRoot: string | null,
+  /** The run has not ended, even when no item is running: the agent may be thinking or replying. */
+  runActive: boolean,
 ): ActivitySummary {
   const latestRunId = items.findLast((item) => item.runId !== null)?.runId ?? null;
   const runItems = latestRunId === null ? [] : items.filter((item) => item.runId === latestRunId);
@@ -222,7 +224,7 @@ export function deriveActivitySummary(
 
   // What needs the user wins over what is running.
   const phase: ActivitySummary["phase"] =
-    waitingLabel !== null ? "waiting" : runningLabel !== null ? "running" : "idle";
+    waitingLabel !== null ? "waiting" : runningLabel !== null || runActive ? "running" : "idle";
 
   const plan =
     latestTodo === null
