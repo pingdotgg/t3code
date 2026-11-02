@@ -9,15 +9,6 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 
-export class ResourceMonitorBinaryDisabled extends Schema.TaggedError<ResourceMonitorBinaryDisabled>()(
-  "ResourceMonitorBinaryDisabled",
-  {},
-) {
-  override get message(): string {
-    return "Native resource monitoring is disabled by server configuration.";
-  }
-}
-
 export class ResourceMonitorBinaryUnsupported extends Schema.TaggedError<ResourceMonitorBinaryUnsupported>()(
   "ResourceMonitorBinaryUnsupported",
   {
@@ -56,7 +47,6 @@ export class ResourceMonitorBinaryNotExecutable extends Schema.TaggedError<Resou
 }
 
 export type ResourceMonitorBinaryError =
-  | ResourceMonitorBinaryDisabled
   | ResourceMonitorBinaryUnsupported
   | ResourceMonitorBinaryNotFound
   | ResourceMonitorBinaryNotExecutable;
@@ -143,12 +133,6 @@ function resourceMonitorRustTarget(
 
 export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  // Terminal process discovery keeps its existing fallback (PowerShell on Windows).
-  if (config.resourceMonitorEnabled === false) {
-    return ResourceMonitorBinary.of({
-      resolve: Effect.fail(new ResourceMonitorBinaryDisabled()),
-    });
-  }
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;

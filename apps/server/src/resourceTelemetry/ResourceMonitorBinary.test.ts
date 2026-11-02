@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { afterEach, assert, describe, it, vi, expect } from "@effect/vitest";
+import { afterEach, assert, describe, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -15,35 +15,6 @@ describe("ResourceMonitorBinary", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
-
-  it.effect("does not inspect binary paths when native monitoring is disabled", () =>
-    Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const exists = vi.fn(() => Effect.succeed(true));
-      const getReport = vi.spyOn(process.report, "getReport");
-      const service = yield* ResourceMonitorBinary.make().pipe(
-        Effect.provideService(ServerConfig.ServerConfig, {
-          ...config,
-          resourceMonitorEnabled: false,
-          resourceMonitorPath: "/custom/monitor",
-        }),
-        Effect.provideService(FileSystem.FileSystem, { ...fileSystem, exists }),
-        Effect.provideService(HostProcess.Platform, "linux"),
-        Effect.provideService(HostProcess.Environment, {
-          T3CODE_RESOURCE_MONITOR_PATH: "/override/monitor",
-        }),
-      );
-      const error = yield* Effect.flip(service.resolve);
-      expect(error._tag).toBe("ResourceMonitorBinaryDisabled");
-      expect(exists).not.toHaveBeenCalled();
-      expect(getReport).not.toHaveBeenCalled();
-    }).pipe(
-      Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-monitor-disabled-" })),
-      Effect.scoped,
-      Effect.provide(NodeServices.layer),
-    ),
-  );
 
   it.effect.skipIf(windowsHost)("resolves an executable override on an unsupported platform", () =>
     Effect.gen(function* () {
