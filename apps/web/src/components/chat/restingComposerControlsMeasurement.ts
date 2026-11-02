@@ -86,14 +86,13 @@ function controlBlockWidths(
   block: HTMLElement,
   scale: number,
 ): { natural: number; iconOnly: number } {
-  const compact = block.dataset.composerBlockIconOnly === "true";
   let natural = elementOuterWidth(block, scale);
   let iconOnly = natural;
   for (const label of block.querySelectorAll<HTMLElement>("[data-composer-control-label]")) {
     const labelStyle = getComputedStyle(label);
     const inFlow = labelStyle.position !== "absolute";
     // Phone sr-only clipping survives compact styles overriding the label width.
-    if (!inFlow && (!compact || labelStyle.clip !== "auto")) continue;
+    if (!inFlow && labelStyle.clip !== "auto") continue;
     const labelWidth = label.scrollWidth;
     const renderedWidth = inFlow ? label.getBoundingClientRect().width / scale : 0;
     const gap = Number.parseFloat(getComputedStyle(label.parentElement!).columnGap) || 0;
