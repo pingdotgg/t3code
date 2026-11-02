@@ -223,6 +223,8 @@ export const getLocalEnvironmentBearerToken = DesktopIpc.makeIpcMethod({
       Stream.filter((startup) => startup._tag === "Ready"),
       Stream.take(1),
       Stream.runDrain,
+      // A backend stuck failing falls through to the bounded exchange so callers can retry.
+      Effect.timeoutOption("15 seconds"),
     );
     return yield* localAuth.getBearerToken;
   }),

@@ -992,7 +992,6 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!**/node_modules/@cursor/sdk/dist/{esm,bundled}/**/*",
   "!**/node_modules/@bufbuild/protobuf/dist/esm/**/*",
   "!**/node_modules/@connectrpc/*/dist/esm/**/*",
-  "!**/node_modules/zod/**/*.js",
   // Only Playwright's standalone test tooling serves these UI assets.
   "!**/node_modules/playwright-core/lib/vite/**/*",
   "!apps/desktop/prod-resources/cursor-sdk",

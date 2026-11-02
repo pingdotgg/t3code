@@ -134,7 +134,7 @@ function mountLinks(block: LiveBlock) {
     for (const anchor of anchors) {
       if (linkIslands.has(anchor)) continue;
       const href = anchor.getAttribute("href") ?? "";
-      if (!/^https?:/.test(href)) {
+      if (!/^https?:/.test(href) || !URL.canParse(href)) {
         anchor.className ||= "";
         if (!href.startsWith("#")) {
           anchor.setAttribute("target", "_blank");

@@ -81,19 +81,28 @@ const make = Effect.gen(function* () {
   const filesDir = store.directory === undefined ? undefined : path.join(store.directory, "files");
 
   const mac = yield* Mac.Mac;
-  // Keyed by the salt's hex text, as refs saved by earlier versions were.
-  const getRefKey = yield* Effect.cached(
-    store.getOrCreateRandom("secret-request-salt", 32).pipe(
-      Effect.flatMap((salt) =>
-        Mac.key(Mac.hmacSha256, new TextEncoder().encode(Hex.encode(salt))),
-      ),
-      Effect.orDie,
-    ),
+  // Cache only success so a transient store failure does not disable requests until restart.
+  let refKey: Mac.Key | undefined;
+  const getRefKey = Effect.suspend(() =>
+    refKey !== undefined
+      ? Effect.succeed(refKey)
+      : store.getOrCreateRandom("secret-request-salt", 32).pipe(
+          // Keyed by the salt's hex text, as refs saved by earlier versions were.
+          Effect.flatMap((salt) =>
+            Mac.key(Mac.hmacSha256, new TextEncoder().encode(Hex.encode(salt))),
+          ),
+          Effect.tap((key) =>
+            Effect.sync(() => {
+              refKey = key;
+            }),
+          ),
+          Effect.orDie,
+        ),
   );
   const refFor = (threadId: ThreadId, turnItemId: string) =>
     getRefKey.pipe(
-      Effect.flatMap((refKey) =>
-        mac.sign(refKey, new TextEncoder().encode(`${threadId}\u0000${turnItemId}`)),
+      Effect.flatMap((key) =>
+        mac.sign(key, new TextEncoder().encode(`${threadId}\u0000${turnItemId}`)),
       ),
       Effect.orDie,
       Effect.map((tag) => SecretRef.make(`${SECRET_REF_PREFIX}${Hex.encode(tag).slice(0, 32)}`)),
