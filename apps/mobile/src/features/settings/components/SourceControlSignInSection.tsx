@@ -87,6 +87,7 @@ function OfferedAppSignIn(props: {
         definition={props.definition}
         appSignIn={props.appSignIn}
         disabled={props.disabled}
+        onChanged={discovery.refresh}
       />
     </SettingsSection>
   );
@@ -98,6 +99,7 @@ function AppSignInRow(props: {
   readonly definition: SourceControlDefinition;
   readonly appSignIn: SourceControlAppSignIn;
   readonly disabled: boolean;
+  readonly onChanged: () => void;
 }) {
   const { environment, definition, appSignIn } = props;
   const environmentId = environment.environmentId;
@@ -156,11 +158,13 @@ function AppSignInRow(props: {
     setPending(null);
     if (finished._tag !== "Success") {
       Dialog.alert("Sign-in did not finish", failureMessage(finished.cause));
+    } else {
+      props.onChanged();
     }
   };
 
-  const signOut = () =>
-    void updateSettings({
+  const signOut = async () => {
+    const result = await updateSettings({
       environmentId,
       // Send the whole map; other hosts' redaction markers preserve their sessions.
       input: {
@@ -169,6 +173,8 @@ function AppSignInRow(props: {
         },
       },
     });
+    if (result._tag === "Success") props.onChanged();
+  };
 
   const onPress = () => {
     if (signedIn) {
