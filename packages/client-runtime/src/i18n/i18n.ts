@@ -4,6 +4,7 @@ import { enMessages as chatEn, zhHansMessages as chatZh } from "./messagesChat.t
 import { enMessages as diffsEn, zhHansMessages as diffsZh } from "./messagesDiffs.ts";
 import { enMessages as generalEn, zhHansMessages as generalZh } from "./messagesGeneral.ts";
 import { enMessages as threadsEn, zhHansMessages as threadsZh } from "./messagesThreads.ts";
+import { enMessages as runtimeEn, zhHansMessages as runtimeZh } from "./messagesRuntime.ts";
 import { enMessages as interfaceEn, zhHansMessages as interfaceZh } from "./messages.ts";
 import { enMessages as navEn, zhHansMessages as navZh } from "./messagesSettingsNav.ts";
 import {
@@ -22,6 +23,7 @@ const enCatalog = {
   ...chatEn,
   ...diffsEn,
   ...threadsEn,
+  ...runtimeEn,
   ...navEn,
   ...typographyEn,
 };
@@ -34,6 +36,7 @@ const zhCatalog: Partial<Record<MessageKey, string>> = {
   ...chatZh,
   ...diffsZh,
   ...threadsZh,
+  ...runtimeZh,
   ...navZh,
   ...typographyZh,
 };

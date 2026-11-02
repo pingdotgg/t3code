@@ -1,6 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
+  type RuntimeMode,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -21,9 +22,10 @@ import {
 } from "../../providerInstances";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
-import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
+import { WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -50,6 +52,24 @@ const WORKTREE_SUBMODULES_OPTIONS = ["recursive", "top-level", "none"] as const;
 function isWorktreeSubmodules(value: string | null): value is WorktreeSubmodules {
   return value !== null && (WORKTREE_SUBMODULES_OPTIONS as readonly string[]).includes(value);
 }
+
+const RUNTIME_MODE_KEYS: Record<RuntimeMode, { label: MessageKey; description: MessageKey }> = {
+  "approval-required": {
+    label: "runtimeMode.approvalRequired.label",
+    description: "runtimeMode.approvalRequired.description",
+  },
+  "auto-accept-edits": {
+    label: "runtimeMode.autoAcceptEdits.label",
+    description: "runtimeMode.autoAcceptEdits.description",
+  },
+  auto: { label: "runtimeMode.auto.label", description: "runtimeMode.auto.description" },
+  "full-access": {
+    label: "runtimeMode.fullAccess.label",
+    description: "runtimeMode.fullAccess.description",
+  },
+};
+
+const ENV_MODE_KEYS = { local: "envMode.local", worktree: "envMode.worktree" } as const;
 
 export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
   const t = useT();
@@ -247,7 +267,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             <SelectValue>
               {(value: string | null) =>
                 value === "local" || value === "worktree"
-                  ? resolveEnvModeLabel(value)
+                  ? t(ENV_MODE_KEYS[value])
                   : unavailable
                     ? t("settings.threads.workspace.unavailable")
                     : t("settings.layout.mixed")
@@ -255,8 +275,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
-            <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
-            <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
+            <SelectItem value="local">{t(ENV_MODE_KEYS.local)}</SelectItem>
+            <SelectItem value="worktree">{t(ENV_MODE_KEYS.worktree)}</SelectItem>
           </SelectPopup>
         </Select>
       }
@@ -392,7 +412,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                   <SelectValue>
                     {mixedPermissions
                       ? t("settings.layout.mixed")
-                      : runtimeModeConfig[settings.defaultRuntimeMode].label}
+                      : t(RUNTIME_MODE_KEYS[settings.defaultRuntimeMode].label)}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -404,10 +424,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                         <div className="grid gap-0.5">
                           <span className="inline-flex items-center gap-1.5 font-medium">
                             <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-                            {option.label}
+                            {t(RUNTIME_MODE_KEYS[mode].label)}
                           </span>
                           <span className="text-xs leading-4 text-muted-foreground">
-                            {option.description}
+                            {t(RUNTIME_MODE_KEYS[mode].description)}
                           </span>
                         </div>
                       </SelectItem>
