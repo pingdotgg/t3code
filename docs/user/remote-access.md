@@ -280,7 +280,8 @@ the same on the host.
 
 To use the same ports from Chrome or a Playwright script, choose **Copy proxy
 for another browser**. It copies a proxy address, a user name and a password,
-valid for 8 hours or until **Stop other browser access**. Copying it again
+valid for 8 hours, until **Stop other browser access** or until **Turn off
+remote access**. Copying it again
 replaces the credential and disconnects the browser using the previous one. Start Chrome with a
 new profile, `--proxy-server` set to that address and
 `--proxy-bypass-list="<-loopback>"`, and enter the user name and password when
