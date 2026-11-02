@@ -35,7 +35,7 @@ import { canShareWithGuestAtom } from "./guestShareAvailability";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { PANE_TAB_CLASS, PaneNotch, PaneTabButton } from "../PaneNotch";
+import { PANE_TAB_CLASS, PANE_TAB_TITLE_CLASS, PaneNotch, PaneTabButton } from "../PaneNotch";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
 import { surfaceShortcutActionForKey } from "../RightPanelTabs";
@@ -416,7 +416,10 @@ export const ChatHeader = memo(function ChatHeader({
                   }
                 >
                   <span className={LAYOUT_TAB_ICON_CLASS}>{tabIcon}</span>
-                  <h2 className="min-w-0 truncate" dir={textDirection(activeThreadTitle)}>
+                  <h2
+                    className={cn("min-w-0", PANE_TAB_TITLE_CLASS)}
+                    dir={textDirection(activeThreadTitle)}
+                  >
                     {activeThreadTitle}
                   </h2>
                 </TooltipTrigger>
