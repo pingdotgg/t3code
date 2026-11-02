@@ -5,6 +5,7 @@ import { TriangleAlertIcon } from "lucide-react";
 import {
   createContext,
   memo,
+  use,
   useState,
   type ComponentProps,
   type CSSProperties,
@@ -71,6 +72,11 @@ const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
   CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME,
 );
 export const MarkdownLinkContext = createContext(false);
+/**
+ * A surface's workspace mutation id, for markdown that does not receive one as a prop.
+ * Read only by host-file images, so a change re-mints their URLs without re-rendering rows.
+ */
+export const WorkspaceMutationIdContext = createContext<string | null | undefined>(undefined);
 
 function expandableMarkdownImageProps(
   onImageExpand: ((preview: ExpandedImagePreview) => void) | undefined,
@@ -339,14 +345,19 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   const resource = props.resource;
+  const mutableImage =
+    props.kind !== "video" &&
+    (resource._tag === "media-file" || resource._tag === "workspace-file");
+  const workspaceMutationId =
+    props.workspaceMutationId !== undefined
+      ? props.workspaceMutationId
+      : mutableImage
+        ? use(WorkspaceMutationIdContext)
+        : undefined;
   const assetUrl = useAssetUrlState(
     props.environmentId,
     resource,
-    props.workspaceMutationId !== undefined &&
-      props.kind !== "video" &&
-      (resource._tag === "media-file" || resource._tag === "workspace-file")
-      ? props.workspaceMutationId
-      : undefined,
+    mutableImage ? workspaceMutationId : undefined,
   );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const path =

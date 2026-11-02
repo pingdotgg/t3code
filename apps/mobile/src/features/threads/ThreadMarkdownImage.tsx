@@ -5,7 +5,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { Image } from "expo-image";
-import { createContext, useContext, useId, useState } from "react";
+import { createContext, use, useContext, useId, useState } from "react";
 import { fetch } from "expo/fetch";
 import { parse, SvgAst, type JsxAST } from "react-native-svg";
 import { Pressable, StyleSheet, View, type ViewStyle } from "react-native";
@@ -29,6 +29,7 @@ import {
 
 /** Use known feed width immediately; later image measurement would move already-positioned rows. */
 export const MarkdownImageAvailableWidthContext = createContext(0);
+export const MarkdownImageRevisionContext = createContext<string | undefined>(undefined);
 
 type ImageSize = { readonly width: number; readonly height: number };
 
@@ -277,7 +278,11 @@ export function ThreadMarkdownImage(props: {
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
   const withGallery = useFilePreviewGallery();
-  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
+  const revision =
+    props.resource._tag === "media-file" || props.resource._tag === "draft-workspace-file"
+      ? use(MarkdownImageRevisionContext)
+      : undefined;
+  const assetUrl = useAssetUrlState(props.environmentId, props.resource, revision);
   const resourceKey =
     props.resource._tag === "attachment"
       ? `attachment:${props.resource.attachmentId}`

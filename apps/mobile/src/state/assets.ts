@@ -2,6 +2,7 @@ import { useAtomMount, useAtomSubscribe, useAtomValue } from "@effect/atom-react
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import {
   assetUrlStateFromResult,
+  makeRevisionedAssetUrlFamily,
   blockedAssetUrlState,
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
@@ -26,6 +27,7 @@ import { useAtomQueryRunner } from "./use-atom-query-runner";
 export type { AssetUrlFailureReason, AssetUrlState } from "./asset-url-state";
 
 export const assetEnvironment = createAssetEnvironmentAtoms(connectionAtomRuntime);
+const revisionedAssetUrl = makeRevisionedAssetUrlFamily(assetEnvironment.createUrl);
 
 export const projectFaviconUrlAtom = createProjectFaviconUrlAtomFamily({
   imageCache: projectFaviconDatabaseCache,
@@ -37,6 +39,7 @@ export const projectFaviconUrlAtom = createProjectFaviconUrlAtomFamily({
 export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
+  revision?: string | null,
 ): AssetUrlState {
   const fileAccessSession = useEnvironmentQuery(
     environmentId === null ? null : environmentSession.sessionStateAtom(environmentId),
@@ -54,7 +57,9 @@ export function useAssetUrlState(
   const result = useAtomValue(
     blocked !== null || environmentId === null || resource === null
       ? EMPTY_ASSET_URL_ATOM
-      : assetEnvironment.createUrl({ environmentId, input: { resource } }),
+      : revision === undefined
+        ? assetEnvironment.createUrl({ environmentId, input: { resource } })
+        : revisionedAssetUrl({ environmentId, input: { resource }, revision }),
   );
   const shared =
     blocked ??

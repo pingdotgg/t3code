@@ -7,7 +7,7 @@ import {
 import type { ImageSource } from "expo-image";
 
 /**
- * Signed URLs change on each mint and reconnect, so a URL-keyed cache misses every time.
+ * Signed URLs can change without the underlying file changing.
  * Content that cannot change caches under its identity, and host files under the revision the
  * server read. Anything else stays keyed by URL.
  */
