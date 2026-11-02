@@ -549,6 +549,79 @@ describe("DesktopWindow", () => {
       }),
   );
 
+  it.effect.each(["before", "after"] as const)(
+    "keeps a closed startup window closed until activation %s backend readiness",
+    (activation) =>
+      Effect.gen(function* () {
+        const fake = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        yield* Effect.gen(function* () {
+          const windows = yield* DesktopWindow.DesktopWindow;
+          yield* windows.ensureMain;
+          fake.windowListeners.get("ready-to-show")?.();
+          fake.isDestroyed.mockReturnValue(true);
+          fake.windowListeners.get("closed")?.();
+          assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
+          if (activation === "after") {
+            yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+            assert.equal(yield* Ref.get(createCount), 1);
+          }
+          fake.isDestroyed.mockReturnValue(false);
+          yield* windows.activate;
+          assert.equal(yield* Ref.get(createCount), 2);
+          yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          assert.equal(yield* Ref.get(createCount), 2);
+        }).pipe(Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })));
+      }),
+  );
+
+  it.effect.each(["renderer", "backend"] as const)(
+    "reveals the painted boot shell when %s becomes ready first",
+    (first) =>
+      Effect.gen(function* () {
+        const fake = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const reveal = vi.fn();
+        const painted = Promise.withResolvers<void>();
+        yield* Effect.gen(function* () {
+          const windows = yield* DesktopWindow.DesktopWindow;
+          yield* windows.ensureMain;
+          assert.equal(fake.loadURL.mock.calls.length, 1);
+          yield* windows.activate;
+          yield* windows.revealOrCreateMain;
+          yield* windows.dispatchMenuAction("open-settings");
+          assert.equal(reveal.mock.calls.length, 0);
+          if (first === "backend") {
+            yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+            assert.equal(reveal.mock.calls.length, 0);
+          }
+          fake.windowListeners.get("ready-to-show")?.();
+          yield* Effect.promise(() => painted.promise);
+          assert.equal(reveal.mock.calls.length, 1);
+          yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          assert.equal(yield* Ref.get(createCount), 1);
+          assert.equal(reveal.mock.calls.length, 1);
+          yield* windows.handleBackendNotReady;
+          yield* windows.activate;
+          assert.equal(reveal.mock.calls.length, 2);
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              window: fake.window,
+              createCount,
+              mainWindow,
+              onReveal: () => {
+                reveal();
+                painted.resolve();
+              },
+            }),
+          ),
+        );
+      }),
+  );
+
   it.effect("blocks only repeated Cmd+W input before it reaches the native window menu", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
@@ -1133,6 +1206,10 @@ describe("DesktopWindow", () => {
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        fakeWindow.windowListeners.get("ready-to-show")?.();
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        operations.length = 0;
+        foreground = "Discord";
         yield* desktopWindow.dispatchSnapShotEvent({ type: "started", id: captureOne });
         assert.equal(foreground, "T3 Code");
         foreground = "Explorer";
