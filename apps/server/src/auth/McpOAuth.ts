@@ -271,7 +271,7 @@ const make = Effect.gen(function* () {
     return Effect.map(sign("mcp-client-id", body), (signature) => `${body}.${signature}`);
   };
 
-  const parseClientId = Effect.fn(function* (
+  const parseClientId = Effect.fn("McpOAuth.parseClientId")(function* (
     clientId: string,
   ): Effect.fn.Return<McpOAuthClient | undefined> {
     const [body, signature, extra] = clientId.split(".");
@@ -402,23 +402,23 @@ const make = Effect.gen(function* () {
   });
 
   const approvingBrowserSession: McpOAuth["Service"]["approvingBrowserSession"] = Effect.fn(
-    function* (request, authorization) {
-      const session = yield* environmentAuth
-        .authenticateBrowserSession(request)
-        .pipe(Effect.orElseSucceed(() => undefined));
-      // Approving manages access, and a session may only hand out scopes it holds.
-      if (
-        session === undefined ||
-        !session.scopes.includes(AuthAccessWriteScope) ||
-        !session.scopes.includes(AuthOrchestrationReadScope)
-      )
-        return undefined;
-      return {
-        csrfToken: yield* csrfToken(session.sessionId, authorization),
-        scopes: session.scopes,
-      };
-    },
-  );
+    "McpOAuth.approvingBrowserSession",
+  )(function* (request, authorization) {
+    const session = yield* environmentAuth
+      .authenticateBrowserSession(request)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    // Approving manages access, and a session may only hand out scopes it holds.
+    if (
+      session === undefined ||
+      !session.scopes.includes(AuthAccessWriteScope) ||
+      !session.scopes.includes(AuthOrchestrationReadScope)
+    )
+      return undefined;
+    return {
+      csrfToken: yield* csrfToken(session.sessionId, authorization),
+      scopes: session.scopes,
+    };
+  });
 
   const mintCode = Effect.fn("McpOAuth.mintCode")(function* (
     authorization: AuthorizationRequest,

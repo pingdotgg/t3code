@@ -115,7 +115,12 @@ export function start(loadMain: () => void): void {
         window.show();
         // Let the native show reach the display server before synchronous module evaluation.
         setImmediate(() => {
-          if (!window.isDestroyed()) loadMain();
+          if (window.isDestroyed()) return;
+          try {
+            loadMain();
+          } catch (cause) {
+            fail(cause);
+          }
         });
       } catch (cause) {
         fail(cause);

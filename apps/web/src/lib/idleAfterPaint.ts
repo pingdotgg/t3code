@@ -1,12 +1,15 @@
 export function idleAfterPaint(callback: () => void): () => void {
-  if (!("requestIdleCallback" in window)) return () => {};
-
   let frame: number;
   let idle: number | undefined;
+  let fallback: number | undefined;
   const schedule = () => {
+    if (!("requestIdleCallback" in globalThis)) {
+      fallback = window.setTimeout(callback, 0);
+      return;
+    }
     idle = window.requestIdleCallback(
       (deadline) => {
-        if (deadline.timeRemaining() < 8) {
+        if (!deadline.didTimeout && deadline.timeRemaining() < 8) {
           schedule();
           return;
         }
@@ -21,5 +24,6 @@ export function idleAfterPaint(callback: () => void): () => void {
   return () => {
     window.cancelAnimationFrame(frame);
     if (idle !== undefined) window.cancelIdleCallback(idle);
+    if (fallback !== undefined) window.clearTimeout(fallback);
   };
 }

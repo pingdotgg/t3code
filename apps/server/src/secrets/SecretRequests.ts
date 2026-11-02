@@ -77,11 +77,15 @@ const make = Effect.gen(function* () {
   // Beside the store's own files so the same owner-only directory and cleanup rules apply.
   const filesDir = store.directory === undefined ? undefined : path.join(store.directory, "files");
 
-  const getSalt = yield* Effect.cached(
-    store.getOrCreateRandom("secret-request-salt", 32).pipe(
-      Effect.map((bytes) => Buffer.from(bytes).toString("hex")),
-      Effect.orDie,
-    ),
+  // Cache only success so a transient store failure does not disable requests until restart.
+  let salt: string | undefined;
+  const getSalt = Effect.suspend(() =>
+    salt !== undefined
+      ? Effect.succeed(salt)
+      : store.getOrCreateRandom("secret-request-salt", 32).pipe(
+          Effect.map((bytes) => (salt = Buffer.from(bytes).toString("hex"))),
+          Effect.orDie,
+        ),
   );
 
   const answer: SecretRequests["Service"]["answer"] = Effect.fn("SecretRequests.answer")(
