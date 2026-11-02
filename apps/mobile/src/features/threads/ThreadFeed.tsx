@@ -208,6 +208,7 @@ import {
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import {
   resolveThreadFeedLiveFollow,
+  settleThreadFeedJump,
   resolveThreadFeedReflowAnchor,
   resolveThreadFeedReflowOffset,
   resolveThreadFeedReflowScroll,
@@ -292,6 +293,16 @@ const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
 });
+function nextFrames(count: number): Promise<void> {
+  return new Promise((resolve) => {
+    const tick = (remaining: number) => {
+      if (remaining === 0) resolve();
+      else requestAnimationFrame(() => tick(remaining - 1));
+    };
+    tick(count);
+  });
+}
+
 function formatMessageTime(input: string): string {
   const timestamp = Date.parse(input);
   if (Number.isNaN(timestamp)) {
@@ -2661,6 +2672,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   const reflowSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listHeaderSizeRef = useRef(0);
   const loadedListKeyRef = useRef<string | null>(null);
+  const jumpLandingRef = useRef(false);
   const cancelReflow = () => {
     if (reflowAnchorRef.current === undefined) return;
     reflowAnchorRef.current = undefined;
@@ -3169,7 +3181,8 @@ export const ThreadFeed = memo(function ThreadFeed({
     reportHeaderMaterialVisibility(event.nativeEvent.contentOffset.y + anchorTopInset > 6);
     // Re-arm follow only at the actual end; the broader threshold can reclaim upward drags during streaming.
     const listState = listRef.current?.getState();
-    if (listState) {
+    // A jump's own scroll events still report the end it is leaving.
+    if (listState && !jumpLandingRef.current) {
       transitionEndFollow({
         type: "scroll",
         isAtEnd: listState.isAtEnd,
@@ -3274,19 +3287,46 @@ export const ThreadFeed = memo(function ThreadFeed({
     ? presentedFeed.findIndex((entry) => entry.type === "message" && entry.id === jumpToMessageId)
     : null;
   const followsEnd = endFollowEnabled && !jumpReady;
-  const landJump = useEffectEvent((index: number) => {
-    if (index !== -1) {
-      setEndFollow(false);
-      void listRef.current?.scrollToIndex({ index, viewPosition: 0.2, animated: false });
+  const landJump = useEffectEvent((index: number, cancelled: () => boolean) => {
+    const finish = () => {
+      if (cancelled()) return;
+      jumpLandingRef.current = false;
+      props.onJumpedToMessage?.();
+    };
+    const list = listRef.current;
+    if (index === -1 || !list) {
+      finish();
+      return;
     }
-    props.onJumpedToMessage?.();
+    jumpLandingRef.current = true;
+    setEndFollow(false);
+    void settleThreadFeedJump({
+      land: async () => {
+        // A fractional viewPosition scales with the row, so a message taller
+        // than the screen would open past its first lines.
+        await list.scrollToIndex({
+          index,
+          viewPosition: 0,
+          viewOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET,
+          animated: false,
+        });
+        await nextFrames(4);
+      },
+      position: () => list.getState().positionAtIndex(index),
+      cancelled: () => cancelled() || userScrollSessionRef.current,
+    }).then(finish);
   });
   // Z: a native list scroll after the commit that rendered its target row. The
   // row is often already measured, so no LegendList callback fires for that
   // commit, and setEndFollow notifies the parent, so it can't run during render.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the native list to the jump target after the commit that rendered its row
   useEffect(() => {
-    if (jumpIndex !== null) landJump(jumpIndex);
+    if (jumpIndex === null) return;
+    let cancelled = false;
+    landJump(jumpIndex, () => cancelled);
+    return () => {
+      cancelled = true;
+    };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Jumping to a different message whose row index is unchanged must still land the jump.
   }, [jumpToMessageId, jumpIndex]);
 
