@@ -3,9 +3,11 @@ import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/s
 export type ThreadFeedLiveFollowEvent =
   | { readonly type: "reset" }
   | { readonly type: "user-scroll-begin" }
+  | { readonly type: "content-size-change" | "layout"; readonly isAtEnd: boolean }
   | {
       readonly type: "user-scroll-end";
       readonly isAtEnd: boolean;
+      readonly releaseIsAtEnd?: boolean;
       readonly userScrollSessionActive: boolean;
     }
   | {
@@ -77,8 +79,11 @@ export function resolveThreadFeedLiveFollow(
       return true;
     case "user-scroll-begin":
       return false;
+    case "content-size-change":
+    case "layout":
+      return current;
     case "user-scroll-end":
-      return event.userScrollSessionActive ? event.isAtEnd : current;
+      return event.userScrollSessionActive ? (event.releaseIsAtEnd ?? event.isAtEnd) : current;
     case "disclosure-settled":
       return !event.userScrollSessionActive && event.isAtEnd;
     case "scroll":
@@ -176,4 +181,43 @@ export function resolveThreadFeedReflowScroll(
   if (!point) return null;
   if (Math.abs(readingLine(state, layout) - (point.top + point.offsetWithinRow)) < 1) return null;
   return { index: point.index, viewOffset: layout.headerInset - point.offsetWithinRow };
+}
+
+export function resolveThreadFeedIsAtEnd(
+  current: boolean,
+  event: ThreadFeedLiveFollowEvent,
+  endFollowEnabled: boolean,
+  userScrollSettling: boolean,
+): boolean {
+  switch (event.type) {
+    case "reset":
+      return true;
+    case "user-scroll-begin":
+      return current;
+    case "scroll":
+      // Native scroll frames can precede momentum-begin. Keep the displayed
+      // position stable until that callback or the release timer remeasures it.
+      // A follow scroll can also arrive before the newest streamed layout is pinned.
+      return userScrollSettling || (endFollowEnabled && !event.isAtEnd) ? current : event.isAtEnd;
+    case "content-size-change":
+    case "layout":
+      return shouldMeasureThreadFeedGeometry(endFollowEnabled, userScrollSettling)
+        ? event.isAtEnd
+        : current;
+    default:
+      return event.isAtEnd;
+  }
+}
+
+export function shouldMeasureThreadFeedGeometry(
+  endFollowEnabled: boolean,
+  userScrollSettling: boolean,
+): boolean {
+  return !endFollowEnabled && !userScrollSettling;
+}
+
+export function shouldCatchUpThreadFeedOnScrollEnd(
+  event: Extract<ThreadFeedLiveFollowEvent, { readonly type: "user-scroll-end" }>,
+): boolean {
+  return event.userScrollSessionActive && event.releaseIsAtEnd === true && !event.isAtEnd;
 }
