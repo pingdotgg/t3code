@@ -34,15 +34,29 @@ describe("fx permission prompts", () => {
 
 describe("fx cancellation failures", () => {
   it.each([
-    { content: "Cancelled", cancelled: true },
-    { content: "Cancelled.", cancelled: true },
-    { content: '{"error":{"details":{"error":"Cancelled"}}}', cancelled: true },
-    { content: '{"error":{"details":{"error":"Permission denied"}}}', cancelled: false },
-    { content: "Command failed", cancelled: false },
-    { content: "", cancelled: false },
+    { content: ["Cancelled"], cancelled: true },
+    { content: ["Cancelled."], cancelled: true },
+    { content: ['{"error":{"details":{"error":"Cancelled"}}}'], cancelled: true },
+    { content: ['{"error":{"details":{"error":"Permission denied"}}}'], cancelled: false },
+    { content: ["Command failed"], cancelled: false },
+    { content: [""], cancelled: false },
+    {
+      content: ['{"error":{"details":{"error":"Permission denied"}}}', "Cancelled"],
+      cancelled: false,
+    },
+    {
+      content: ["Command failed", '{"error":{"details":{"error":"Cancelled"}}}'],
+      cancelled: false,
+    },
+    {
+      content: ["Cancelled", '{"error":{"details":{"error":"Permission denied"}}}'],
+      cancelled: true,
+    },
   ])("recognizes $content as cancellation: $cancelled", ({ content, cancelled }) => {
     assert.equal(
-      fxToolCallWasCancelled({ update: { content: [{ content: { text: content } }] } }),
+      fxToolCallWasCancelled({
+        update: { content: content.map((text) => ({ content: { text } })) },
+      }),
       cancelled,
     );
   });
@@ -63,6 +77,7 @@ describe("fx cancellation failures", () => {
       termination_indeterminate: true,
       content:
         '{"error":{"type":"tool_execution_failed","message":"Command started, but its final process status could not be confirmed",',
+      followingContent: ["Cancelled"],
       cancelled: false,
     },
     {
@@ -83,10 +98,13 @@ describe("fx cancellation failures", () => {
     },
   ])(
     "recognizes a command result with exit $exit_code, timeout $timed_out",
-    ({ cancelled, content, ...commandResult }) => {
+    ({ cancelled, content, followingContent = [], ...commandResult }) => {
       assert.equal(
         fxToolCallWasCancelled({
-          update: { command_result: commandResult, content: [{ content: { text: content } }] },
+          update: {
+            command_result: commandResult,
+            content: [content, ...followingContent].map((text) => ({ content: { text } })),
+          },
         }),
         cancelled,
       );

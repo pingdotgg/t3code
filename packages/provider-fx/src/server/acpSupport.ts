@@ -91,8 +91,10 @@ export function fxToolCallWasCancelled(payload: unknown): boolean {
   const texts = Option.isSome(update)
     ? update.value.update.content.map(({ content }) => content.text)
     : [];
+  const firstText = texts[0];
   if (
-    texts.some((text) => /^Cancelled\.?$/.test(text) || Option.isSome(decodeFxCancelledError(text)))
+    firstText !== undefined &&
+    (/^Cancelled\.?$/.test(firstText) || Option.isSome(decodeFxCancelledError(firstText)))
   ) {
     return true;
   }
