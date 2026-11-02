@@ -227,6 +227,22 @@ export function splitMarkdownLinkSearchAndHash(value: string): {
   };
 }
 
+/**
+ * The decoded path a markdown destination names on the host, before any workspace resolution, or
+ * null for a `file:` URL that does not parse. Clients and the guest media route both read it here.
+ */
+export function markdownDestinationHostPath(source: string): string | null {
+  if (/^file:/i.test(source)) {
+    const target = parseFileUrlHref(source);
+    return target === null
+      ? null
+      : stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(target.path));
+  }
+  return stripSlashPrefixedWindowsDrive(
+    safeDecodeURIComponent(splitMarkdownLinkSearchAndHash(source).path),
+  );
+}
+
 export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   const destination = parseMarkdownFileLink(href);
   if (!destination) return false;

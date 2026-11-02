@@ -17,6 +17,7 @@ import {
   type NavigationAction,
   type NavigationState,
 } from "@react-navigation/native";
+import { pipe } from "effect/Function";
 
 import { RegistryContext } from "@effect/atom-react";
 import { ProjectChipIconRasterizer } from "./native/ProjectChipIconImages";
@@ -24,6 +25,7 @@ import { ThreadArrangementHost } from "./features/threads/ThreadArrangementSheet
 import * as Dialog from "./components/ui/Dialog";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
+import { installShowcaseCapture } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
   presentPendingIncomingShare,
   pruneIncomingShareImports,
@@ -42,7 +44,7 @@ import {
   installAppearanceRuntime,
   useAppearancePreferences,
 } from "./features/settings/appearance/AppearancePreferencesProvider";
-import { RootStack, workspaceLocationFromState } from "./Stack";
+import { RootStack, rootPathnameFromState, workspaceLocationFromState } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
 import { subscribeComposerDraftModelReconciliation } from "./state/use-composer-drafts";
 import { environmentThreadShells } from "./state/threads";
@@ -51,6 +53,19 @@ import { OverlayPortalHost } from "./components/ui/OverlayPortal";
 import { shouldHandleAppLink, restoreDraftLinkState } from "./lib/appLinking";
 import { hasCloudPublicConfig } from "./features/cloud/publicConfig";
 import { takeScheduledTaskNewLink } from "./features/settings/scheduled-task-editor-state";
+import {
+  pairingFormLinkAction,
+  startDevAutoConnect,
+  withoutPairingTarget,
+} from "./features/connection/devAutoConnect";
+import {
+  resolvePendingNewTaskPromptLink,
+  takeNewTaskPromptLink,
+} from "./features/prompt-links/newTaskPromptLink";
+import {
+  resolvePendingThreadPromptLink,
+  takeThreadPromptLink,
+} from "./features/prompt-links/threadPromptLink";
 import {
   disposeOnFoundationReplace,
   type FoundationHotModule,
@@ -75,7 +90,9 @@ import {
   linkToRootPath,
   rootNavigationRef,
 } from "./lib/rootNavigation";
+import { pruneNewTaskFlowStates } from "./features/threads/new-task-flow-state";
 import { pruneNewTaskBranchCheckouts } from "./features/threads/NewTaskDraftRouteScreen";
+import { installAppUpdateChecks } from "./features/updates/app-updates";
 
 import "../global.css";
 
@@ -92,11 +109,15 @@ const linkingConfig = {
 } as const;
 
 function getAppStateFromPath(path: string, options: Parameters<typeof getStateFromPath>[1]) {
-  return takeScheduledTaskNewLink(
-    restoreSettingsLinkState(
-      restoreDraftLinkState(getStateFromPath(path, options), path),
-      settingsLinkPage(),
-    ),
+  return pipe(
+    getStateFromPath(path, options),
+    (state) => restoreDraftLinkState(state, path),
+    (state) => restoreSettingsLinkState(state, settingsLinkPage()),
+    takeThreadPromptLink,
+    takeNewTaskPromptLink,
+    withoutPairingTarget,
+    startDevAutoConnect,
+    takeScheduledTaskNewLink,
   );
 }
 
@@ -111,6 +132,10 @@ const appLinking = {
   ): ReturnType<typeof getActionFromState> =>
     // Our router handles the selection; React Navigation's type only lists its own actions.
     (workspaceDetailLinkAction(state) as ReturnType<typeof getActionFromState>) ??
+    pairingFormLinkAction(
+      state,
+      rootNavigationRef.isReady() ? rootNavigationRef.getRootState() : undefined,
+    ) ??
     getActionFromState(state, options),
   getStateFromPath: getAppStateFromPath,
 };
@@ -130,9 +155,12 @@ const Navigation = createStaticNavigation(RootStack);
 function handleNavigationStateChange(state: NavigationState | undefined): void {
   recordWorkspaceSelections(state);
   presentPendingIncomingShare();
+  resolvePendingNewTaskPromptLink(state);
+  resolvePendingThreadPromptLink(state);
   if (!state) return;
   setAgentNotificationPathname(workspaceLocationFromState(state).pathname);
   recordAppShortcutNavigationState(state);
+  pruneNewTaskFlowStates(state);
   pruneNewTaskBranchCheckouts(state);
   pruneIncomingShareImports(state);
 }
@@ -160,6 +188,8 @@ const appServiceDisposers = [
   startIncomingShareInbox(),
   installAgentNotificationNavigation(linkToAppPath),
   installAppShortcuts(linkToAppPath),
+  installAppUpdateChecks(),
+  installShowcaseCapture(rootPathnameFromState),
 ];
 disposeOnFoundationReplace(typeof module === "undefined" ? undefined : module.hot, () => {
   for (const dispose of appServiceDisposers) dispose();
@@ -168,6 +198,7 @@ disposeOnFoundationReplace(typeof module === "undefined" ? undefined : module.ho
 function SplashScreenCoordinator() {
   const { isReady } = useAppearancePreferences();
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hides the native splash screen once appearance preferences have loaded
   useEffect(() => {
     if (isReady) void SplashScreen.hide();
   }, [isReady]);

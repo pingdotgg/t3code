@@ -1,9 +1,12 @@
+import { isCommitSha } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
@@ -294,10 +297,6 @@ function repositoryPathOf(segments: { readonly workspace: string; readonly slug:
   )}`;
 }
 
-function isCommitSha(value: string): boolean {
-  return /^[0-9a-f]{7,64}$/i.test(value);
-}
-
 function stateParams(state: PullRequestListState): ReadonlyArray<string> {
   switch (state) {
     case "open":
@@ -327,6 +326,15 @@ function authorFilter(login: string): string {
  */
 function filterLiteral(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
+// Bitbucket keeps microseconds; include the cursor's whole millisecond before excluding seen IDs.
+function updatedBeforeFilter(updatedBefore: string): string {
+  return Option.match(DateTime.make(updatedBefore), {
+    onNone: () => `updated_on <= ${updatedBefore}`,
+    onSome: (instant) =>
+      `updated_on < ${DateTime.formatIso(DateTime.add(instant, { milliseconds: 1 }))}`,
+  });
 }
 
 function mergeStrategy(method: PullRequestMergeMethod | undefined): string {
@@ -548,12 +556,12 @@ export const make = Effect.gen(function* () {
     listPullRequests: Effect.fn("BitbucketPullRequestApi.listPullRequests")(function (input) {
       return withRepository(input.repository, (path) => {
         const search = input.query?.trim() ?? "";
-        // Exclude already-sent IDs at the inclusive timestamp before applying the page limit.
+        // Exclude already-sent IDs in the boundary millisecond before applying the page limit.
         const predicates = [
           ...(search.length === 0 ? [] : [searchFilter(search)]),
           ...(input.author === undefined ? [] : [authorFilter(input.author)]),
           ...(input.draft === undefined ? [] : [`draft = ${input.draft}`]),
-          ...(input.cursor === undefined ? [] : [`updated_on <= ${input.cursor.updatedBefore}`]),
+          ...(input.cursor === undefined ? [] : [updatedBeforeFilter(input.cursor.updatedBefore)]),
           ...(input.cursor?.seenAt ?? []).map((number) => `id != ${number}`),
         ];
         return listPage({

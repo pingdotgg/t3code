@@ -146,10 +146,12 @@ export function FileTreeBrowser(props: {
   });
 
   const { revealSelection } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands the controlled selection's ancestor directories in the file tree state
   useEffect(() => {
     revealSelection(controlledSelectedPath);
   }, [controlledSelectedPath, revealSelection]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests listings for expanded directories that are not yet loaded or pending
   useEffect(() => {
     const visit = (nodes: ReadonlyArray<FileTreeNode>) => {
       for (const node of nodes) {
@@ -161,6 +163,7 @@ export function FileTreeBrowser(props: {
     visit(tree);
   }, [tree, expandedPaths, onLoadDirectory]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the pending selection timer on unmount
   useEffect(
     () => () => {
       if (pendingSelectionTimeoutRef.current !== null) {

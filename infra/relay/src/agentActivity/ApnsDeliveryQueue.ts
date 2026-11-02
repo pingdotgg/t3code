@@ -1,5 +1,5 @@
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Crypto from "effect/Crypto";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -76,7 +76,7 @@ export class ApnsDeliveryQueue extends Context.Service<
   }
 >()("t3code-relay/agentActivity/ApnsDeliveryQueue") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const sender = yield* ApnsDeliveryQueueSender;
   const crypto = yield* Crypto.Crypto;
   const config = yield* RelayConfiguration.RelayConfiguration;

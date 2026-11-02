@@ -84,6 +84,7 @@ export function usePreviewBridge(input: {
       });
     },
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to preview bridge state changes and capture activity for the current tab
   useEffect(() => {
     if (!previewBridge || typeof window === "undefined") return;
     lastReportedUrl.current = null;

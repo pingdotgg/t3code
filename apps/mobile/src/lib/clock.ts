@@ -13,13 +13,12 @@ export function useDeadlinePassed(deadlineMs: number | null): boolean {
  */
 export function useNowAfter(deadlineMs: number | null): number {
   const passed = useDeadlinePassed(deadlineMs);
-  const [snapshot, setSnapshot] = useState(() => ({ deadlineMs, passed, nowMs: Date.now() }));
-  if (snapshot.deadlineMs !== deadlineMs || snapshot.passed !== passed) {
-    // oxlint-disable-next-line react/purity -- Re-reads the clock only in the render-phase adjustment that runs when the deadline changes or passes.
-    const next = { deadlineMs, passed, nowMs: Date.now() };
-    setSnapshot(next);
-    return next.nowMs;
-  }
+  const readNow = () => ({ deadlineMs, passed, nowMs: Date.now() });
+  const [snapshot, setSnapshot] = useState(readNow);
+  // The clock is read inside the updater: the compiler caches a bare
+  // `Date.now()` in render once per instance, so a later adjustment would reuse
+  // the first reading. React discards this render and re-runs with the update.
+  if (snapshot.deadlineMs !== deadlineMs || snapshot.passed !== passed) setSnapshot(readNow);
   return snapshot.nowMs;
 }
 
