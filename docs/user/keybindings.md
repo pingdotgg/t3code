@@ -67,7 +67,8 @@ find only searches the files loaded so far.
 ## Review a diff from the keyboard
 
 Click into the Diff panel or a pull request's Code tab to review it without the
-mouse. Both start on files. Press `i` to move into a file's lines, and Escape to step back out.
+mouse. The keys also work while a button or tab elsewhere in that panel has focus,
+but not while you type in a text field. Both start on files. Press `i` to move into a file's lines, and Escape to step back out.
 
 On files:
 

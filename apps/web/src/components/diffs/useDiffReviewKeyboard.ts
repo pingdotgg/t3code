@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { shortcutLabelForCommand } from "~/keybindings";
+import { diffPanelHasFocus } from "~/lib/diffFocus";
 import { type CommandHandlers, registerCommands } from "~/shortcuts/dispatcher";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
@@ -99,7 +100,7 @@ interface DiffReviewKeyboardInput<Annotation> {
 
 /**
  * Keyboard review of the Diff panel: a file cursor, a line cursor inside a file, and a line
- * selection. Commands run through the shortcut dispatcher while focus is inside the panel.
+ * selection. Commands run through the shortcut dispatcher while focus is in the diff's panel.
  */
 export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput<Annotation>) {
   const { scopeKey, files } = input;
@@ -312,9 +313,10 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
       event.preventDefault();
       // The viewer drops a scroll requested during a key press that reaches it.
       event.stopPropagation();
-      // Otherwise a clicked header control shows a focus ring while the cursor moves.
-      if (isControlFocused() && document.activeElement !== tabbedToRef.current) {
-        rootRef.current?.focus({ preventScroll: true });
+      // The key now drives the diff, so a control keeping focus would show a stale focus ring.
+      const root = rootRef.current;
+      if (root && (isControlFocused() || !root.contains(document.activeElement))) {
+        root.focus({ preventScroll: true });
       }
     }
     return handled;
@@ -344,7 +346,7 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
     const unregister = registerCommands(handlers, {
       capture: true,
       when: (event) => {
-        if (rootRef.current?.contains(document.activeElement) !== true) return false;
+        if (!rootRef.current || !diffPanelHasFocus(rootRef.current)) return false;
         // A control reached from the keyboard keeps Enter and Space; a clicked one hands them over.
         return !(
           (event.key === "Enter" || event.key === " ") &&
