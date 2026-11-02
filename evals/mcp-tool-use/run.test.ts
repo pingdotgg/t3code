@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import { HttpClient } from "effect/http";
 import * as Schema from "effect/Schema";
 import { assert, expect, it } from "@effect/vitest";
 import { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -116,7 +117,12 @@ it.effect("normalizes Codex web opens for grading and serves the matching web mo
       }).filter(({ pass }) => !pass),
       [],
     );
-  }),
+  }).pipe(
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make(() => Effect.die("Web mocks must not make network requests")),
+    ),
+  ),
 );
 
 it("accepts any tool listed as an alternative", () => {
