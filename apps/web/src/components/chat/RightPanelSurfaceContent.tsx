@@ -10,7 +10,7 @@ import type {
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { lazy, Suspense } from "react";
-import { ActivityPanel } from "./ActivityPanel";
+import { ActivityPanel, type ActivityPanelApprovals } from "./ActivityPanel";
 import SideChatPane from "./SideChatPane";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
@@ -79,6 +79,7 @@ export function RightPanelSurfaceContent(props: {
   readonly pullRequest: RightPanelPullRequestProps;
   readonly files: RightPanelFileProps;
   readonly sideChatParentPanel: SideChatParentPanel;
+  readonly approvals: ActivityPanelApprovals;
 }) {
   const { surface, threadRef, visible, onCloseSurface } = props;
   if (surface === null) return null;
@@ -124,6 +125,7 @@ export function RightPanelSurfaceContent(props: {
           threadRef={threadRef}
           workspaceRoot={props.files.workspaceRoot}
           onOpenFile={props.files.onOpenFile}
+          approvals={props.approvals}
         />
       );
     case "pull-request": {

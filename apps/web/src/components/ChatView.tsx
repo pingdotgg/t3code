@@ -3204,6 +3204,12 @@ export default function ChatView(props: ChatViewProps) {
       onSendAnnotation={sendPreviewAnnotationStable}
       onCloseSurface={closeRightPanelSurface}
       sideChatParentPanel={sideChatParentPanel}
+      approvals={{
+        pending: pendingApprovals,
+        respondingRequestIds,
+        canOperate: canOperateThread,
+        onRespond: onRespondToApprovalStable,
+      }}
       terminal={{
         launchContext: activeTerminalLaunchContext ?? null,
         keybindings,

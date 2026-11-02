@@ -1,4 +1,4 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { RuntimeRequestId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   CheckIcon,
   CircleAlertIcon,
@@ -9,10 +9,11 @@ import {
   ClockIcon,
   XIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
+import type { PendingApproval } from "~/session-logic";
 import { useQuietThreadVisibleTurnItems } from "~/state/entities";
 import { RelativeTime } from "../RelativeTime";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
@@ -25,7 +26,16 @@ import {
   type ActivityPlan,
   type ActivitySummary,
 } from "./activityPanel.logic";
+import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { PierreEntryIcon } from "./PierreEntryIcon";
+
+/** What the panel needs to let the user answer an approval without going back to the chat. */
+export interface ActivityPanelApprovals {
+  readonly pending: ReadonlyArray<PendingApproval>;
+  readonly respondingRequestIds: ReadonlyArray<RuntimeRequestId>;
+  readonly canOperate: boolean;
+  readonly onRespond: ComponentProps<typeof ComposerPendingApprovalActions>["onRespondToApproval"];
+}
 
 const VISIBLE_DONE_STEPS = 8;
 const ROW_CLASS = "flex items-start gap-2 rounded-md px-2 py-1 text-left text-sm";
@@ -59,8 +69,9 @@ function Section(props: {
 }
 
 /** The one answer the panel exists for: where is the agent, and does it need me? */
-function StatusBanner(props: { summary: ActivitySummary }) {
-  const { summary } = props;
+function StatusBanner(props: { summary: ActivitySummary; approvals: ActivityPanelApprovals }) {
+  const { summary, approvals } = props;
+  const approval = summary.phase === "waiting" ? approvals.pending[0] : undefined;
   const { phase, plan, touchedTotals, failedCount } = summary;
 
   let Icon = CircleCheckIcon;
@@ -120,7 +131,45 @@ function StatusBanner(props: { summary: ActivitySummary }) {
             </>
           ) : null}
         </span>
+        {approval ? <ApprovalRequest approval={approval} approvals={approvals} /> : null}
       </div>
+    </div>
+  );
+}
+
+function ApprovalRequest(props: { approval: PendingApproval; approvals: ActivityPanelApprovals }) {
+  const { approval, approvals } = props;
+  const canRespond = approval.responseCapability === "live";
+  const others = approvals.pending.length - 1;
+  return (
+    <div className="mt-1.5 flex flex-col gap-2">
+      {approval.detail ? (
+        <code className="max-h-24 overflow-auto whitespace-pre-wrap rounded-md bg-muted/50 px-2 py-1.5 font-mono text-xs leading-5 wrap-anywhere">
+          {approval.detail}
+        </code>
+      ) : null}
+      {approval.reason ? (
+        <span className="text-xs text-muted-foreground wrap-anywhere">{approval.reason}</span>
+      ) : null}
+      {canRespond ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <ComposerPendingApprovalActions
+            requestId={approval.requestId}
+            disabled={!approvals.canOperate}
+            isResponding={approvals.respondingRequestIds.includes(approval.requestId)}
+            canRespond={canRespond}
+            options={approval.options}
+            onRespondToApproval={approvals.onRespond}
+          />
+        </div>
+      ) : (
+        <span className="text-xs text-warning">
+          Provider process is gone. Interrupt or restart the run to respond.
+        </span>
+      )}
+      {others > 0 ? (
+        <span className="text-2xs text-muted-foreground">{others} more waiting after this</span>
+      ) : null}
     </div>
   );
 }
@@ -291,6 +340,7 @@ export function ActivityPanel(props: {
   threadRef: ScopedThreadRef;
   workspaceRoot: string | undefined;
   onOpenFile: (relativePath: string) => void;
+  approvals: ActivityPanelApprovals;
 }) {
   const visibleItems = useQuietThreadVisibleTurnItems(props.threadRef);
   const summary = deriveActivitySummary(
@@ -319,7 +369,7 @@ export function ActivityPanel(props: {
 
   return (
     <ScrollArea>
-      <StatusBanner summary={summary} />
+      <StatusBanner summary={summary} approvals={props.approvals} />
       {summary.plan ? <PlanSection plan={summary.plan} /> : null}
       <TouchedSection summary={summary} onOpenFile={props.onOpenFile} />
       <DoneSection summary={summary} />
