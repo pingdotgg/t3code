@@ -19,8 +19,19 @@ it.each([
   },
 );
 
-it.each([475, 411, 300])("fills a %sdp cover row beside the compose button", (width) => {
-  const metrics = floatingTabsMetrics(4, width, true);
-  expect(metrics.pill + 2 * 16 + 12 + 56).toBe(width);
-  expect(metrics.height).toBe(56);
-});
+it.each([
+  [475, 1, 56],
+  [411, 1, 56],
+  [475, 1.25, 70],
+  [320, 11 / 16, 48],
+  [320, 1, 56],
+  [320, 22 / 16, 77],
+  [300, 22 / 16, 77],
+] as const)(
+  "fills a %sdp row at scale %s beside a %sdp compose button",
+  (width, scale, fabSize) => {
+    const metrics = floatingTabsMetrics(4, scale, fabSize, width, true);
+    expect(metrics.pill + 2 * 16 + 12 + fabSize).toBe(width);
+    expect(metrics.height).toBe(fabSize);
+  },
+);

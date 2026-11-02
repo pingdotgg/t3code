@@ -28,13 +28,13 @@ export function WorkspaceRootScreen() {
   const workspace = useWorkspaceTabs()!;
   const enabled = useEnabledNavigationTabs();
   const insets = useSafeAreaInsets();
-  const { fabClearance } = useAndroidControlSizing();
+  const { fabClearance, fabSize } = useAndroidControlSizing();
   const context = {
     ...workspace,
     bottomClearance: layout.usesSplitView
       ? workspace.bottomClearance
       : floatingTabsEnabled
-        ? insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + FLOATING_TABS.height
+        ? insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize
         : workspace.state.selectedTab === "threads"
           ? fabClearance + 16
           : 16,

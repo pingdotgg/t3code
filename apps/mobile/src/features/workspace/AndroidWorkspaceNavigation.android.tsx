@@ -81,7 +81,7 @@ export function AndroidWorkspaceNavigation(props: {
   const connectionState = useWorkspaceConnectionState();
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
-  const { scale } = useAndroidControlSizing();
+  const { scale, fabSize } = useAndroidControlSizing();
   const window = useWindowDimensions();
   const rail = Boolean(props.rail);
   const floating = !rail && Boolean(props.floating);
@@ -99,7 +99,7 @@ export function AndroidWorkspaceNavigation(props: {
   const barWidth =
     props.paneWidth ??
     window.width - (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
-  const metrics = floatingTabsMetrics(tabs.length, barWidth, props.fillWidth);
+  const metrics = floatingTabsMetrics(tabs.length, scale, fabSize, barWidth, props.fillWidth);
   if (!rail && keyboardVisible) return null;
 
   return (
@@ -120,7 +120,7 @@ export function AndroidWorkspaceNavigation(props: {
         tabs={tabs}
         selectedTab={selectedTab}
         dark={themeAppearance === "dark"}
-        textScale={floating ? 1 : scale}
+        textScale={scale}
         newEnabled={connectionState.hasConnections}
         safeAreaTop={toolbar.paddingTop}
         safeAreaBottom={insets.bottom}

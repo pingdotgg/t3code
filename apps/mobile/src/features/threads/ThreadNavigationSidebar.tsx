@@ -151,7 +151,7 @@ function ThreadNavigationSidebarPane(
   const drawerColor = materialTheme["--color-drawer"];
 
   const insets = useSafeAreaInsets();
-  const { fabClearance } = useAndroidControlSizing();
+  const { fabClearance, fabSize } = useAndroidControlSizing();
   const projects = useProjects();
   const threads = useNavigationThreadShells();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
@@ -823,7 +823,7 @@ function ThreadNavigationSidebarPane(
                     paddingBottom:
                       Platform.OS === "android"
                         ? floatingTabsEnabled
-                          ? FLOATING_TABS.bottom + FLOATING_TABS.edge + FLOATING_TABS.height
+                          ? FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize
                           : Math.max(insets.bottom, 16) + fabClearance - insets.bottom
                         : 16 + insets.bottom,
                     paddingTop: Platform.OS === "android" ? 6 : topListInset,

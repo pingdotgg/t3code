@@ -61,6 +61,7 @@ import {
   parseActiveThreadPath,
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { useEnabledNavigationTabs } from "../workspace/navigation-tabs";
 import { FLOATING_TABS, floatingTabsMetrics } from "../workspace/floating-workspace-tabs";
 import { AndroidHomeFabLayout } from "../home/AndroidHomeFab";
@@ -302,7 +303,8 @@ function AdaptiveWorkspaceLayoutContent(
   const shouldRenderNavigationRail =
     Platform.OS === "android" && baseLayout.usesSplitView && !floatingTabsEnabled;
   const enabledTabs = useEnabledNavigationTabs();
-  const floatingTabs = floatingTabsMetrics(enabledTabs.length + 1);
+  const { scale, fabSize } = useAndroidControlSizing();
+  const floatingTabs = floatingTabsMetrics(enabledTabs.length + 1, scale, fabSize);
   const navigationRailWidth =
     shouldRenderNavigationRail && (showPrimarySidebar || workspacePage)
       ? ANDROID_WORKSPACE_RAIL_WIDTH

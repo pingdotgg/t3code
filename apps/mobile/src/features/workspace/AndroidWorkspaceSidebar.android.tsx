@@ -4,6 +4,7 @@ import { useEnabledNavigationTabs } from "./navigation-tabs";
 import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
 import { type ReactNode } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { FLOATING_TABS } from "./floating-workspace-tabs";
 import { View } from "react-native";
 import { ScreenContent } from "../../components/ui/ScreenContent";
@@ -21,8 +22,9 @@ export function AndroidWorkspaceSidebar(props: {
   const workspace = useWorkspaceTabs()!;
   const enabled = useEnabledNavigationTabs();
   const insets = useSafeAreaInsets();
+  const { fabSize } = useAndroidControlSizing();
   const bottomClearance = floatingTabsEnabled
-    ? insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + FLOATING_TABS.height
+    ? insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize
     : 16;
   const context = { ...workspace, bottomClearance };
   if (enabled.length === 0) return <WorkspaceNoTabs />;
