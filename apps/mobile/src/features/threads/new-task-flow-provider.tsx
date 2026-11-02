@@ -308,12 +308,7 @@ export function NewTaskFlowProvider(
   // binding outlives the draft's project stamp (submit clears it).
   const updateFlow = (patch: Partial<NewTaskFlowState>) =>
     updateNewTaskFlowState(flowKey, { ...readFlow(), ...patch });
-  const activeDraftStamp = useComposerDraft(activeDraftKey).project;
-  const selection = selectNewTaskProject({
-    flow: flowState,
-    stamp: activeDraftStamp,
-    projects,
-  });
+  const selection = selectNewTaskProject({ flow: flowState, projects });
   const selectedEnvironmentId = selection.project?.environmentId ?? selection.boundMissing ?? null;
 
   // A route draft still waiting for its environment has no project yet: the

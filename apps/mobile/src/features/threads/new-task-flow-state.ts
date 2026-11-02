@@ -167,42 +167,29 @@ export function pruneNewTaskFlowStates(state: NavigationRoutes): void {
 }
 
 /**
- * The project a new-task flow composes in. A draft stamped to a project stays bound to it while
- * the flow still points at that machine: when the project is not loaded, the flow has no project
- * and reports the stamp's machine, instead of moving the draft to another project or machine.
+ * The project a new-task flow composes in. A flow with a project key (an approved route draft or
+ * a project the user picked) is bound to it: when that project is not loaded, the flow has no
+ * project and reports its machine, instead of moving the draft to another project or machine.
  */
 export function selectNewTaskProject<
   P extends { readonly environmentId: EnvironmentId; readonly id: ProjectId },
 >(input: {
   readonly flow: Pick<NewTaskFlowState, "environmentId" | "projectKey">;
-  readonly stamp:
-    | { readonly environmentId: EnvironmentId; readonly projectId: ProjectId }
-    | undefined;
   readonly projects: ReadonlyArray<P>;
 }): { readonly project: P | null; readonly boundMissing: EnvironmentId | null } {
-  const { flow, stamp, projects } = input;
-  if (
-    stamp !== undefined &&
-    (flow.environmentId === null || flow.environmentId === stamp.environmentId) &&
-    !projects.some(
-      (project) => project.environmentId === stamp.environmentId && project.id === stamp.projectId,
-    )
-  ) {
-    return { project: null, boundMissing: stamp.environmentId };
+  const { flow, projects } = input;
+  const key = (project: P) => scopedProjectKey(project.environmentId, project.id);
+  if (flow.projectKey !== null && flow.environmentId !== null) {
+    const bound = projects.find((project) => key(project) === flow.projectKey) ?? null;
+    return { project: bound, boundMissing: bound === null ? flow.environmentId : null };
   }
   const environmentId =
     flow.environmentId !== null &&
     projects.some((project) => project.environmentId === flow.environmentId)
       ? flow.environmentId
       : (projects[0]?.environmentId ?? null);
-  const inEnvironment = projects.filter((project) => project.environmentId === environmentId);
   return {
-    project:
-      inEnvironment.find(
-        (project) => scopedProjectKey(project.environmentId, project.id) === flow.projectKey,
-      ) ??
-      inEnvironment[0] ??
-      null,
+    project: projects.find((project) => project.environmentId === environmentId) ?? null,
     boundMissing: null,
   };
 }

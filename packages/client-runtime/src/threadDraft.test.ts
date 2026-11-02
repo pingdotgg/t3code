@@ -50,6 +50,18 @@ describe("threadDraftMachineName", () => {
       "V​PS · T3 Connect 71bd02e4",
     ],
     [
+      "drops direction controls that would make a name read as another",
+      machine("env-rtl", "one.\u202Etset", "http://box.\u202Elan:3773"),
+      [],
+      "one.tset · box.lan:3773",
+    ],
+    [
+      "treats an empty address as T3 Connect",
+      machine("5c1d0e9a-dddd", "relay", ""),
+      [],
+      "relay · T3 Connect 5c1d0e9a",
+    ],
+    [
       "shows the full id when the short one is shared",
       relayA,
       [relayA, relayTwin],

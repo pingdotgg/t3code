@@ -2,6 +2,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   threadDraftInitialMachine,
   type ThreadDraftItem,
+  type ThreadDraftMachine,
   threadDraftMachineName,
   threadDraftProjectMatch,
 } from "@t3tools/client-runtime/thread-draft";
@@ -94,7 +95,7 @@ export function ThreadDraftCard(props: {
 function unavailableReason(
   item: ThreadDraftItem,
   hint: string | undefined,
-  known: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>,
+  known: ReadonlyArray<ThreadDraftMachine>,
   connected: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
   eligible: ReadonlySet<EnvironmentId>,
 ): string | null {
@@ -111,9 +112,10 @@ function unavailableReason(
     return `This app does not know ${hint === undefined ? "that machine" : `"${hint}"`}. Add it to open the draft there.`;
   }
   if (named === undefined || eligible.has(named.environmentId)) return null;
+  const name = threadDraftMachineName(named, known);
   return connected.some((machine) => machine.environmentId === named.environmentId)
-    ? `${named.label} can't start threads from this app.`
-    : `Connect ${named.label} to open it there.`;
+    ? `${name} can't start threads from this app.`
+    : `Connect ${name} to open it there.`;
 }
 
 function PendingThreadDraft(props: {

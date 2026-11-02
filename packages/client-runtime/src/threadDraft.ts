@@ -9,18 +9,23 @@ export type ThreadDraftItem = Extract<OrchestrationV2TurnItem, { readonly type: 
 export interface ThreadDraftMachine {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  /** `connectionCatalogDisplayUrl`: a URL, SSH `user@host`, or null for T3 Connect. */
+  /** `connectionCatalogDisplayUrl`: a URL, SSH `user@host`, or null or "" for T3 Connect. */
   readonly displayUrl: string | null;
 }
 
 const RELAY_ID_PREFIX_LENGTH = 8;
 
+// Direction controls in a name the other machine chose could make it read as another name.
+const DIRECTION_CONTROLS = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+const plain = (text: string) => text.replace(DIRECTION_CONTROLS, "");
+
 function hostText(machine: ThreadDraftMachine): string | null {
-  if (machine.displayUrl === null) return null;
+  if (!machine.displayUrl) return null;
+  const address = plain(machine.displayUrl);
   try {
-    return new URL(machine.displayUrl).host;
+    return new URL(address).host;
   } catch {
-    return machine.displayUrl;
+    return address;
   }
 }
 
@@ -42,14 +47,13 @@ export function threadDraftMachineName(
         hostText(other) === null &&
         other.environmentId.startsWith(prefix),
     );
-    return `${machine.label} · T3 Connect ${prefixShared ? machine.environmentId : prefix}`;
+    return `${plain(machine.label)} · T3 Connect ${prefixShared ? machine.environmentId : prefix}`;
   }
   const hostShared = known.some(
     (other) => other.environmentId !== machine.environmentId && hostText(other) === host,
   );
-  return hostShared
-    ? `${machine.label} · ${host} · ${machine.environmentId}`
-    : `${machine.label} · ${host}`;
+  const label = plain(machine.label);
+  return hostShared ? `${label} · ${host} · ${machine.environmentId}` : `${label} · ${host}`;
 }
 
 /**
