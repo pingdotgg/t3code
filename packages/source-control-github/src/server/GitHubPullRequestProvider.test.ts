@@ -70,9 +70,11 @@ it.effect("maps credential verification failures without relabeling operation fa
 );
 
 it.effect.each([
-  { status: 403, reason: "forbidden" },
-  { status: 503, reason: "failed" },
-])("classifies GitHub response $status as $reason", ({ status, reason }) =>
+  { status: 403, githubErrorTypes: [], reason: "forbidden" },
+  { status: 503, githubErrorTypes: [], reason: "failed" },
+  { status: 200, githubErrorTypes: ["FORBIDDEN"], reason: "forbidden" },
+  { status: 200, githubErrorTypes: ["INTERNAL"], reason: "failed" },
+])("classifies GitHub response $status as $reason", ({ status, githubErrorTypes, reason }) =>
   Effect.gen(function* () {
     const provider = yield* make.pipe(
       Effect.provide(
@@ -84,6 +86,7 @@ it.effect.each([
                 host: "github.com",
                 operation: "detail",
                 status,
+                githubErrorTypes,
               }),
             ),
         }),

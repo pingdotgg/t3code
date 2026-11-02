@@ -311,6 +311,7 @@ describe("call", () => {
           _tag: "GitHubApiResponseError",
           status: 200,
           githubErrors: ["Could not resolve", "Resource not accessible"],
+          githubErrorTypes: ["NOT_FOUND", "FORBIDDEN"],
         });
       }).pipe(Effect.provide(layer));
     },
