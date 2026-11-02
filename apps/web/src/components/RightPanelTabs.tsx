@@ -83,7 +83,12 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { PanelTabSlotsContext, usePanelTabActionsHost } from "./PanelTabBreadcrumb";
-import { PANE_BODY_UNDER_HEADER_CLASS, PANE_TAB_TITLE_CLASS, PaneNotch } from "./PaneNotch";
+import {
+  PANE_BODY_UNDER_HEADER_CLASS,
+  PANE_INACTIVE_TAB_TITLE_CLASS,
+  PANE_TAB_TITLE_CLASS,
+  PaneNotch,
+} from "./PaneNotch";
 import { previewBridge } from "./preview/previewBridge";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
@@ -698,7 +703,11 @@ function RightPanelTab(
                   >
                     <span
                       className={
-                        notched ? PANE_TAB_TITLE_CLASS : cn("truncate", active && "max-w-60")
+                        notched
+                          ? active
+                            ? PANE_TAB_TITLE_CLASS
+                            : PANE_INACTIVE_TAB_TITLE_CLASS
+                          : cn("truncate", active && "max-w-60")
                       }
                     >
                       {filesCrumb ? "Files" : title}

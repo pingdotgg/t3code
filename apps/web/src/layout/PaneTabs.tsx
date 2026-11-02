@@ -31,7 +31,7 @@ import {
 
 import { ProjectFavicon } from "../components/ProjectFavicon";
 import { ContentButton } from "../components/ui/button";
-import { PANE_TAB_TITLE_CLASS } from "../components/PaneNotch";
+import { PANE_INACTIVE_TAB_TITLE_CLASS } from "../components/PaneNotch";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { surfaceTitle, ThreadSurfaceTabIcon } from "../components/SurfaceTabIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
@@ -398,7 +398,7 @@ export const LayoutPaneTab = memo(function LayoutPaneTab({ tab }: { tab: LayoutT
         >
           <span className={LAYOUT_TAB_ICON_CLASS}>{label.icon}</span>
           <span
-            className={cn("min-w-[4ch]", PANE_TAB_TITLE_CLASS)}
+            className={cn("min-w-[4ch]", PANE_INACTIVE_TAB_TITLE_CLASS)}
             dir={textDirection(label.title)}
           >
             {label.title}
