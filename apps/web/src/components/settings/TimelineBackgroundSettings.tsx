@@ -13,8 +13,10 @@ import {
 import { Button } from "../ui/button";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
-// Base64 stores 3 bytes in every 4 characters.
-const MAX_WALLPAPER_BYTES = Math.floor(MAX_STASH_IMAGE_DATA_URL_CHARS / 4) * 3;
+// Reserve the longest prefix the accepted types produce; base64 stores 3 bytes in every 4 characters.
+const WALLPAPER_DATA_URL_PREFIX_CHARS = "data:image/jpeg;base64,".length;
+const MAX_WALLPAPER_BYTES =
+  Math.floor((MAX_STASH_IMAGE_DATA_URL_CHARS - WALLPAPER_DATA_URL_PREFIX_CHARS) / 4) * 3;
 
 /** Fits the image to the attachment edge and budget, and rejects data that cannot render. */
 async function prepareWallpaper(file: File): Promise<string> {
