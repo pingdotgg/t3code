@@ -50,13 +50,13 @@ const FINGERPRINT_REREAD_MS = 30 * 60_000;
 
 const isProviderError = Schema.is(PullRequestProviderError);
 
-const isRateLimited = (cause: Cause.Cause<PullRequestService.PullRequestError>) =>
+const providerFailureReason = (cause: Cause.Cause<PullRequestService.PullRequestError>) =>
   Option.match(Cause.findErrorOption(cause), {
-    onNone: () => false,
+    onNone: () => null,
     onSome: (error) =>
-      error._tag === "PullRequestOperationError" &&
-      isProviderError(error.cause) &&
-      error.cause.reason === "rate-limited",
+      error._tag === "PullRequestOperationError" && isProviderError(error.cause)
+        ? error.cause.reason
+        : null,
   });
 
 const logFailure =
@@ -444,7 +444,7 @@ export const make = Effect.gen(function* () {
         (cause): Effect.Effect<ProviderChangeRequestWatchFingerprint | null | "paused"> =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.interrupt
-            : isRateLimited(cause)
+            : providerFailureReason(cause) === "rate-limited"
               ? Effect.succeed("paused")
               : Effect.logDebug("pull request watch fingerprint failed", {
                   pullRequest: group.key,
@@ -472,21 +472,33 @@ export const make = Effect.gen(function* () {
     const reference = referenceOf(group);
     // Invalidate cached reads before using the newer fingerprint; clients receive no notification.
     if (fingerprint !== null) yield* pullRequests.invalidate({ reference });
-    const read = yield* Effect.exit(
-      Effect.all(
-        [
-          pullRequests.detail({ ...reference, allowStale: false }),
+    const [detailRead, activityRead] = yield* Effect.all(
+      [
+        Effect.exit(pullRequests.detail({ ...reference, allowStale: false })),
+        Effect.exit(
           plan.activity
             ? pullRequests.activity(reference).pipe(Effect.asSome)
             : Effect.succeed(Option.none<PullRequestActivity>()),
-        ],
-        { concurrency: 2 },
-      ),
+        ),
+      ],
+      { concurrency: 2 },
     );
+    // Activity failures must not cancel or hide a permanent detail failure.
+    const read = Exit.isFailure(detailRead)
+      ? Exit.failCause(detailRead.cause)
+      : Exit.isFailure(activityRead)
+        ? Exit.failCause(activityRead.cause)
+        : Exit.succeed([detailRead.value, activityRead.value] as const);
     if (Exit.isFailure(read)) {
       if (Cause.hasInterruptsOnly(read.cause)) return yield* Effect.failCause(read.cause);
       lastReads.delete(group.key);
-      if (isRateLimited(read.cause)) return;
+      const reason = providerFailureReason(read.cause);
+      if (reason === "rate-limited") return;
+      // Transport and host failures can outlast the failure limit; keep the watch for recovery.
+      if (reason === "failed") {
+        readFailures.delete(group.key);
+        return yield* Effect.failCause(read.cause);
+      }
       const failures = (readFailures.get(group.key) ?? 0) + 1;
       readFailures.set(group.key, failures);
       if (failures >= READ_FAILURE_LIMIT && (yield* eachTarget(group, giveUp))) {

@@ -120,6 +120,15 @@ function gitHubProviderFailure(
       };
     case "SourceControlRateLimitPausedError":
       return { reason: "rate-limited", retryAt: error.retryAt };
+    case "GitHubApiResponseError":
+      return {
+        reason:
+          error.status === 403 ||
+          (error.githubErrorTypes?.includes("FORBIDDEN") &&
+            error.githubErrorTypes.every((type) => type === "FORBIDDEN" || type === "NOT_FOUND"))
+            ? "forbidden"
+            : "failed",
+      };
     case "GitHubApiNotFoundError":
       return error.credential === undefined || error.credential === "app"
         ? { reason: "not-found" }
