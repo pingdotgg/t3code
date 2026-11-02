@@ -111,9 +111,9 @@ export function buildMenuItems(
   gitStatus: VcsStatusResult | null,
   isBusy: boolean,
   hasPrimaryRemote = true,
+  terminology = currentChangeRequestTerms(),
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
-  const terminology = currentChangeRequestTerms();
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
@@ -181,6 +181,7 @@ export function resolveQuickAction(
   isBusy: boolean,
   isDefaultRef = false,
   hasPrimaryRemote = true,
+  terminology = currentChangeRequestTerms(),
 ): GitQuickAction {
   if (isBusy) {
     return { label: "Commit", disabled: true, kind: "show_hint", hint: "Git action in progress." };
@@ -202,7 +203,6 @@ export function resolveQuickAction(
   const hasDefaultBranchDelta = (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0;
   const isBehind = gitStatus.behindCount > 0;
   const isDiverged = isAhead && isBehind;
-  const terminology = currentChangeRequestTerms();
 
   if (!hasBranch) {
     return {

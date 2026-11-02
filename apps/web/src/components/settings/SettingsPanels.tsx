@@ -424,6 +424,7 @@ function AboutVersionSection() {
 }
 
 export function useSettingsRestore(onRestored?: () => void) {
+  const requestTerms = useChangeRequestTerms();
   const {
     theme,
     setTheme,
@@ -490,7 +491,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.sidebarAutoSettleKeepPullRequests !==
     DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests
-      ? ["Keep threads with a PR"]
+      ? [`Keep threads with ${requestTerms.shortLabelWithArticle}`]
       : []),
     ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
       ? ["Auto-settle merged threads"]
@@ -518,7 +519,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? ["Diff layout"] : []),
     ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
-      ? ["Open pull requests and changes panels proactively"]
+      ? [`Open ${requestTerms.plural} and changes panels proactively`]
       : []),
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? ["Show skills in slash menu"]
@@ -1289,6 +1290,7 @@ function DiffColorsSettingsRow() {
 }
 
 export function DiffsSettingsPanel() {
+  const requestTerms = useChangeRequestTerms();
   const settings = useScopedSettings();
   const changeRequestTerms = useChangeRequestTerms();
   const updateSettings = useUpdateScopedSettings();
@@ -1357,7 +1359,7 @@ export function DiffsSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("default-diff-file-state")}
-          description="Start with files expanded or collapsed when opening diffs or a pull request's Code tab."
+          description={`Start with files expanded or collapsed when opening diffs or a ${requestTerms.singular}'s Code tab.`}
           resetAction={
             settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed ? (
               <SettingResetButton
@@ -1402,7 +1404,7 @@ export function DiffsSettingsPanel() {
 
       <SettingsSection id="pull-requests" title={capitalizeTerm(changeRequestTerms.plural)}>
         <SettingsRow
-          {...searchableSetting("proactive-panels")}
+          {...searchableSetting("proactive-panels", requestTerms)}
           description={`Open linked ${changeRequestTerms.plural} first. Otherwise, open Changes for edits to at least 3 files or 50 lines.`}
           resetAction={
             settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled ? (
@@ -1422,7 +1424,7 @@ export function DiffsSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ proactivePanelsEnabled: Boolean(checked) })
               }
-              aria-label="Open pull requests and changes panels proactively"
+              aria-label={`Open ${requestTerms.plural} and changes panels proactively`}
             />
           }
         />
@@ -1497,6 +1499,7 @@ function ScopedCompactIdleThreadsRow() {
 }
 
 export function ThreadsSettingsPanel() {
+  const requestTerms = useChangeRequestTerms();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
@@ -1639,7 +1642,7 @@ export function ThreadsSettingsPanel() {
             serverScoped
             settingKeys={["sidebarAutoSettleOnMerge"]}
             {...searchableSetting("auto-settle-merged-threads")}
-            description="Settle a thread when its pull request merges. Closed pull requests still settle automatically."
+            description={`Settle a thread when its ${requestTerms.singular} merges. Closed ${requestTerms.plural} still settle automatically.`}
             resetAction={
               settings.sidebarAutoSettleOnMerge !==
               DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge ? (
@@ -1715,8 +1718,8 @@ export function ThreadsSettingsPanel() {
             <SettingsRow
               serverScoped
               settingKeys={["sidebarAutoSettleKeepPullRequests"]}
-              title="Keep threads with a PR"
-              description="Inactivity does not settle threads with a pull request. Merge and close still do."
+              title={`Keep threads with ${requestTerms.shortLabelWithArticle}`}
+              description={`Inactivity does not settle threads with a ${requestTerms.singular}. Merge and close still do.`}
               control={
                 <ScopedSwitch
                   settingKeys={["sidebarAutoSettleKeepPullRequests"]}
@@ -1724,7 +1727,7 @@ export function ThreadsSettingsPanel() {
                   onCheckedChange={(checked) =>
                     updateSettings({ sidebarAutoSettleKeepPullRequests: checked })
                   }
-                  aria-label="Keep threads with a PR"
+                  aria-label={`Keep threads with ${requestTerms.shortLabelWithArticle}`}
                 />
               }
             />

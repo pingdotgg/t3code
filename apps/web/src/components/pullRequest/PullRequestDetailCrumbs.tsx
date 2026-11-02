@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import {
   currentChangeRequestTerms,
   sourceControlClients,
@@ -33,6 +34,7 @@ const ROW_CLASS_NAME =
   "col-start-1 row-start-1 flex min-w-0 items-center gap-1 text-sm text-muted-foreground transition-[opacity,transform] ease-out motion-reduce:transform-none motion-reduce:transition-none sm:text-xs";
 
 function BackButton({ onBack, focusable }: { onBack: () => void; focusable: boolean }) {
+  const requestTerms = useChangeRequestTerms();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -43,13 +45,13 @@ function BackButton({ onBack, focusable }: { onBack: () => void; focusable: bool
             {...(focusable ? {} : { tabIndex: -1 })}
             onClick={onBack}
             className="-ml-1.5"
-            aria-label="Back to this thread's pull requests"
+            aria-label={`Back to this thread's ${requestTerms.plural}`}
           >
             <ArrowLeftIcon aria-hidden className="size-3.5" />
           </Button>
         }
       />
-      <TooltipPopup side="top">Back to pull requests</TooltipPopup>
+      <TooltipPopup side="top">Back to {requestTerms.plural}</TooltipPopup>
     </Tooltip>
   );
 }

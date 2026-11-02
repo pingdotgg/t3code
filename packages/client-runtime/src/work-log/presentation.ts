@@ -19,6 +19,7 @@ import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-im
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import {
   currentChangeRequestTerms,
+  formatChangeRequestText,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
@@ -209,7 +210,7 @@ function resolveT3McpToolPresentation(
     Number.isSafeInteger(number) &&
     number > 0
       ? `${shortLabel} #${number}`
-      : detail;
+      : formatChangeRequestText(detail);
   return {
     displayName: `${verb} ${target}`,
     icon: definition.icon,
@@ -422,19 +423,21 @@ function toolGroupActionCount(
 }
 
 function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
+  const terms = currentChangeRequestTerms();
+  const requests = count === 1 ? terms.singular : terms.plural;
   switch (action) {
     case "link-pr":
-      return `Linked ${count} ${count === 1 ? "pull request" : "pull requests"}`;
+      return `Linked ${count} ${requests}`;
     case "unlink-pr":
-      return `Unlinked ${count} ${count === 1 ? "pull request" : "pull requests"}`;
+      return `Unlinked ${count} ${requests}`;
     case "watch-pr":
-      return `Watching ${count} ${count === 1 ? "pull request" : "pull requests"}`;
+      return `Watching ${count} ${requests}`;
     case "unwatch-pr":
-      return `Stopped watching ${count} ${count === 1 ? "pull request" : "pull requests"}`;
+      return `Stopped watching ${count} ${requests}`;
     case "list-prs":
       return count === 1
-        ? "Checked linked pull requests"
-        : `Checked linked pull requests ${count} times`;
+        ? `Checked linked ${terms.plural}`
+        : `Checked linked ${terms.plural} ${count} times`;
     case "read":
       return `Read ${count} ${count === 1 ? "file" : "files"}`;
     case "edit":

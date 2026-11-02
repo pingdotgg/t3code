@@ -9,6 +9,12 @@ import { AsyncResult } from "effect/reactivity";
 import { isValidElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+vi.mock("~/hooks/useSettings", async () => {
+  const { PULL_REQUEST_TERMINOLOGY } =
+    await import("@t3tools/client-runtime/source-control-clients");
+  return { useChangeRequestTerms: () => PULL_REQUEST_TERMINOLOGY };
+});
+
 const state = vi.hoisted(() => ({
   canOperate: false,
   canWriteSourceControl: true,

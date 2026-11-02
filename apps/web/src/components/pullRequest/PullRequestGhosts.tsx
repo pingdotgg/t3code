@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import type { PullRequestListEntry, PullRequestSummary } from "@t3tools/contracts";
 import {
   ArrowLeftIcon,
@@ -50,8 +51,13 @@ const DEFAULT_DETAIL_TABS = [
 ] as const;
 
 export function PullRequestListGhost({ rows = 7, caption }: { rows?: number; caption?: string }) {
+  const requestTerms = useChangeRequestTerms();
   return (
-    <div role="status" aria-label={caption ?? "Loading pull requests"} className="space-y-0.5">
+    <div
+      role="status"
+      aria-label={caption ?? `Loading ${requestTerms.plural}`}
+      className="space-y-0.5"
+    >
       {/* Outside the pulse so the explanation stays readable. */}
       {caption ? (
         <p className="px-3 pb-1 text-xs font-medium text-muted-foreground">{caption}</p>
@@ -101,6 +107,7 @@ export function PullRequestDetailGhost({
   onClose?: (() => void) | undefined;
   onCheckoutError?: ((error: Error) => void) | undefined;
 }) {
+  const requestTerms = useChangeRequestTerms();
   const seed = summary
     ? {
         ...entry,
@@ -143,7 +150,7 @@ export function PullRequestDetailGhost({
                 variant="ghost-muted"
                 className="-ml-1.5"
                 onClick={onBack}
-                aria-label="Back to this thread's pull requests"
+                aria-label={`Back to this thread's ${requestTerms.plural}`}
               >
                 <ArrowLeftIcon aria-hidden className="size-3.5" />
               </Button>

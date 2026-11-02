@@ -17,7 +17,7 @@ export function ChangeRequestTerminologySection() {
       <SettingsSwitchRow
         icon={PullRequestGlyph.pullRequest}
         label="Use merge request terminology"
-        subtitle="Say “merge request” and “MR” instead of “pull request” and “PR” on this device, for every host."
+        subtitle="Use merge request wording throughout this device's app, regardless of source control host."
         disabled={!AsyncResult.isSuccess(preferences)}
         value={terms.shortLabel === "MR"}
         onValueChange={(mergeRequestTerminology) => savePreferences({ mergeRequestTerminology })}

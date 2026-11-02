@@ -103,8 +103,7 @@ export function resolveLinkPullRequestInput(input: {
   if (!Number.isSafeInteger(number) || number < 1) return null;
   if (input.project === null) {
     return {
-      error:
-        "Paste the full pull request URL; this thread has no repository to resolve the number against.",
+      error: `Paste the full ${currentChangeRequestTerms().singular} URL; this thread has no repository to resolve the number against.`,
     };
   }
   const webUrl = input.project.webUrl(number);

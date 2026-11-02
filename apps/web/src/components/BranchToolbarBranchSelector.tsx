@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
@@ -111,6 +112,7 @@ export function BranchToolbarBranchSelector({
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
+  const requestTerms = useChangeRequestTerms();
   const composerFloatingLayerProps = useComposerMenuProps();
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
@@ -275,6 +277,7 @@ export function BranchToolbarBranchSelector({
     branchStatusQuery.data?.refName ?? refs.find((refName) => refName.current)?.name ?? null;
   const sourceControlPresentation = getSourceControlPresentation(
     branchStatusQuery.data?.sourceControlProvider,
+    requestTerms,
   );
   const SourceControlIcon = sourceControlPresentation.Icon;
   const canonicalActiveBranch = resolveBranchToolbarValue({

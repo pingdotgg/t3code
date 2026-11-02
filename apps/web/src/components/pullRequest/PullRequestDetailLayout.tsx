@@ -1,3 +1,5 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import { ArrowLeftIcon, FileDiffIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 
@@ -77,10 +79,11 @@ export function PullRequestDetailTabBar<Tab extends string>({
   inert?: boolean;
   children?: ReactNode;
 }) {
+  const requestTerms = useChangeRequestTerms();
   return (
     <nav
       className="col-span-2 flex min-w-0 flex-wrap items-center gap-2 border-t border-border/60 px-4 py-2"
-      aria-label="Pull request tabs"
+      aria-label={`${capitalizeTerm(requestTerms.singular)} tabs`}
       inert={inert}
     >
       <ToggleGroup

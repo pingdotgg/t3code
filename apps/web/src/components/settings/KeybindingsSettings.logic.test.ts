@@ -6,9 +6,11 @@ import {
 } from "@t3tools/shared/keybindings";
 
 import { resolveShortcutCommand } from "../../keybindings";
+import { setMergeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 
 import {
   buildKeybindingRows,
+  commandLabel,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
@@ -17,6 +19,18 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it("applies terminology to labels derived from command identifiers", () => {
+    expect(commandLabel("pullRequest.copyNumber")).toBe("Pull Request: Copy Number");
+    setMergeRequestTerms(true);
+    try {
+      expect(commandLabel("pullRequest.copyNumber")).toBe("Merge Request: Copy Number");
+      expect(commandLabel("chat.new")).toBe("Chat: New");
+    } finally {
+      setMergeRequestTerms(false);
+    }
+    expect(commandLabel("pullRequest.copyNumber")).toBe("Pull Request: Copy Number");
+  });
+
   it("keeps sibling row identities when a saved binding moves to the end", () => {
     const bindings = compileResolvedKeybindingsConfig([
       { command: "chat.new", key: "mod+n" },

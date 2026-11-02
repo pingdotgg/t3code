@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import type { ProjectId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
   capitalizeTerm,
@@ -364,12 +365,13 @@ const lineKey = (line: PullRequestListLine) =>
   `${line.link.host}/${line.link.repository}#${line.link.number}`;
 
 export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
+  const requestTerms = useChangeRequestTerms();
   const configs = useServerConfigs();
   if (configs.get(threadRef.environmentId) === undefined) {
     return (
       <PullRequestsUnavailableState
-        title="Linked pull requests unavailable"
-        error="This environment does not support multiple linked pull requests."
+        title={`Linked ${requestTerms.plural} unavailable`}
+        error={`This environment does not support multiple linked ${requestTerms.plural}.`}
       />
     );
   }

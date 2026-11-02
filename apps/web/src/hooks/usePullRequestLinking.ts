@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import type { EnvironmentId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -31,6 +32,7 @@ const linkModeAtom = Atom.family((environmentId: EnvironmentId | null) =>
 );
 
 export function usePullRequestLinking(environmentId: EnvironmentId | null | undefined) {
+  const requestTerms = useChangeRequestTerms();
   const mode = useAtomValue(linkModeAtom(environmentId ?? null));
   const link = useAtomCommand(threadEnvironment.linkPullRequest, { reportFailure: false });
   const unlink = useAtomCommand(threadEnvironment.unlinkPullRequest, { reportFailure: false });
@@ -56,7 +58,7 @@ export function usePullRequestLinking(environmentId: EnvironmentId | null | unde
       threadRef.environmentId !== environmentId ||
       (linked && !canLink(url))
     )
-      throw new Error("The pull request is not available in this environment.");
+      throw new Error(`The ${requestTerms.singular} is not available in this environment.`);
     const mutation = planThreadPullRequestMutation({
       capabilities: appAtomRegistry.get(environmentServerConfigsAtom).get(threadRef.environmentId)
         ?.environment.capabilities,
@@ -65,7 +67,7 @@ export function usePullRequestLinking(environmentId: EnvironmentId | null | unde
       linked,
     });
     if (mutation === null)
-      throw new Error("This environment does not support linking this pull request.");
+      throw new Error(`This environment does not support linking this ${requestTerms.singular}.`);
     const result = await (mutation.type === "thread.pull-request.link"
       ? link({ environmentId: threadRef.environmentId, input: mutation.input })
       : unlink({ environmentId: threadRef.environmentId, input: mutation.input }));

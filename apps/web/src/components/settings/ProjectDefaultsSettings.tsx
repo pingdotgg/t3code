@@ -1,3 +1,5 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import {
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
@@ -53,6 +55,7 @@ function isWorktreeSubmodules(value: string | null): value is WorktreeSubmodules
 }
 
 export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
+  const requestTerms = useChangeRequestTerms();
   const { scope, target, targets, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const clientSettings = useClientSettings();
@@ -477,8 +480,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             {...searchableSetting("pull-request-merge-method")}
             description={
               isProjectScope
-                ? "Pull requests in this project start with this method."
-                : "Pull requests start with this method. Last selected reuses whatever you chose most recently on this device."
+                ? `${capitalizeTerm(requestTerms.plural)} in this project start with this method.`
+                : `${capitalizeTerm(requestTerms.plural)} start with this method. Last selected reuses whatever you chose most recently on this device.`
             }
             resetAction={
               settings.pullRequestMergeMethod !== null ? (
@@ -498,7 +501,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                     updateSettings({ pullRequestMergeMethod: value });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Default pull request merge method">
+                <SelectTrigger
+                  size="sm"
+                  aria-label={`Default ${requestTerms.singular} merge method`}
+                >
                   <SelectValue>
                     {(value: string | null) =>
                       value === "merge" || value === "squash" || value === "rebase"

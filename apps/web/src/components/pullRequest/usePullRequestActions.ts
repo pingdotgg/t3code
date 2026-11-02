@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -186,6 +187,7 @@ export function usePullRequestActionRunner({
 }
 
 export function usePullRequestCloseBatch(onClosed: (entry: EnvironmentPullRequestEntry) => void) {
+  const requestTerms = useChangeRequestTerms();
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
   const pending = useRef(new Set<string>());
   const [closingKeys, setClosingKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -228,8 +230,8 @@ export function usePullRequestCloseBatch(onClosed: (entry: EnvironmentPullReques
       type: failures.length > 0 ? "error" : "success",
       title:
         failures.length > 0
-          ? `Closed ${closed} of ${batch.length} pull requests`
-          : `Closed ${closed} pull request${closed === 1 ? "" : "s"}`,
+          ? `Closed ${closed} of ${batch.length} ${requestTerms.plural}`
+          : `Closed ${closed} ${requestTerms.singular}${closed === 1 ? "" : "s"}`,
       ...(failures.length > 0 ? { description: failures.slice(0, 3).join("\n") } : {}),
     });
   };

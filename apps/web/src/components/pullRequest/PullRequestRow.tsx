@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import type { PullRequestAction } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { SearchIcon } from "lucide-react";
@@ -100,7 +101,11 @@ function PullRequestRowImpl({
   sweeping?: boolean;
   onCloseSweepStart?: (entry: EnvironmentPullRequestEntry, event: PointerEvent) => void;
 }) {
-  const { Icon, providerName, terminology } = getSourceControlPresentationForKind(entry.provider);
+  const requestTerms = useChangeRequestTerms();
+  const { Icon, providerName, terminology } = getSourceControlPresentationForKind(
+    entry.provider,
+    requestTerms,
+  );
   return (
     <div
       ref={statsRef}

@@ -1,4 +1,8 @@
 import {
+  currentChangeRequestTerms,
+  capitalizeTerm,
+} from "@t3tools/client-runtime/source-control-clients";
+import {
   type LinkedPrompt,
   parseNewThreadLink,
   parseThreadLinkPrompt,
@@ -43,7 +47,12 @@ function summarize(
     const { owner, name, number } = link.value.pullRequest;
     return {
       ok: true,
-      value: { prompt: link.value.prompt, details: [`Pull request ${owner}/${name}#${number}`] },
+      value: {
+        prompt: link.value.prompt,
+        details: [
+          `${capitalizeTerm(currentChangeRequestTerms().singular)} ${owner}/${name}#${number}`,
+        ],
+      },
     };
   }
   const { repository, provider, model } = link.value;

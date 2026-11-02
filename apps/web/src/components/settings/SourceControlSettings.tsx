@@ -377,7 +377,7 @@ function MergeRequestTerminologySetting() {
     <SettingsSection title="Terminology">
       <SettingsRow
         {...searchableSetting("merge-request-terminology")}
-        description="Say “merge request” and “MR” instead of “pull request” and “PR”, for every host."
+        description="Use merge request wording throughout the app, regardless of source control host."
         resetAction={
           enabled ? (
             <SettingResetButton

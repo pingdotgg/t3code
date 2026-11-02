@@ -4,6 +4,8 @@ import {
   type SearchMatchHint,
   type SearchRange,
 } from "@t3tools/shared/paletteSearch";
+import { useChangeRequestTerms } from "~/hooks/useSettings";
+import { formatChangeRequestText } from "@t3tools/client-runtime/source-control-clients";
 
 /** `text` with each range in semibold foreground. */
 function HighlightedSearchText(props: { text: string; ranges: ReadonlyArray<SearchRange> }) {
@@ -21,9 +23,12 @@ function HighlightedSearchText(props: { text: string; ranges: ReadonlyArray<Sear
 
 /** Why a row matched when its title does not show it: the field and its match. */
 export function SearchMatchHintLine(props: { hint: SearchMatchHint }) {
+  const terms = useChangeRequestTerms();
   return (
     <span className="truncate text-xs text-muted-foreground/85">
-      <span className="text-muted-foreground/70">{props.hint.label}:</span>{" "}
+      <span className="text-muted-foreground/70">
+        {formatChangeRequestText(props.hint.label, terms)}:
+      </span>{" "}
       <HighlightedSearchText text={props.hint.text} ranges={props.hint.ranges} />
     </span>
   );

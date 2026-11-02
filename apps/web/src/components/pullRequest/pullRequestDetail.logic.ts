@@ -778,7 +778,7 @@ function reviewThreadContext(
   return {
     id: `pull-request-finding:${thread.id}`,
     sectionId: `pull-request:${pullRequestNumber}`,
-    sectionTitle: `PR #${pullRequestNumber} review`,
+    sectionTitle: `${currentChangeRequestTerms().shortLabel} #${pullRequestNumber} review`,
     filePath: thread.path,
     startIndex: lineIndex,
     endIndex: lineIndex,
@@ -1042,7 +1042,7 @@ function pullRequestContextComment(
   return {
     id: `pull-request-context:${input.number}`,
     sectionId: `pull-request:${input.number}`,
-    sectionTitle: `PR #${input.number}`,
+    sectionTitle: `${currentChangeRequestTerms().shortLabel} #${input.number}`,
     filePath: `PR #${input.number}`,
     startIndex: 0,
     endIndex: 0,
@@ -1168,7 +1168,7 @@ export function buildAskAboutGuideStopHandoff(input: {
       {
         id: `pull-request-guide-stop:${input.number}:${stop.index}`,
         sectionId: `pull-request:${input.number}`,
-        sectionTitle: `PR #${input.number} review guide`,
+        sectionTitle: `${currentChangeRequestTerms().shortLabel} #${input.number} review guide`,
         filePath: `Guide stop ${stop.index + 1}`,
         startIndex: 0,
         endIndex: 0,

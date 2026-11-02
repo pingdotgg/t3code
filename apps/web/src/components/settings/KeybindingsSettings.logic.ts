@@ -1,3 +1,4 @@
+import { formatChangeRequestText } from "@t3tools/client-runtime/source-control-clients";
 import {
   STATIC_KEYBINDING_COMMANDS,
   type KeybindingCommand,
@@ -375,7 +376,8 @@ export function commandLabel(command: KeybindingCommand): string {
   if (command === "composer.sendAndNewThread") return "Composer: Send and Start New Thread";
   if (command === "thread.steerQueuedMessage") return "Queue: Send First Queued Message";
   if (command === "thread.editQueuedMessage") return "Queue: Edit Last Queued Message";
-  if (command === "thread.copyReference") return "Pull Request: Copy Link or Thread";
+  if (command === "thread.copyReference")
+    return formatChangeRequestText("Pull Request: Copy Link or Thread");
   const usageMetric = METRIC_OPTIONS.find((option) => option.command === command);
   if (usageMetric) return `Usage: ${usageMetric.label}`;
   const usagePeriod = WINDOW_OPTIONS.find((option) => option.command === command);
@@ -386,7 +388,7 @@ export function commandLabel(command: KeybindingCommand): string {
   if (raw.startsWith("script.") && raw.endsWith(".run")) {
     return `Run Script: ${titleCaseCommandSegment(raw.slice("script.".length, -".run".length))}`;
   }
-  return raw.split(".").map(titleCaseCommandSegment).join(": ");
+  return formatChangeRequestText(raw.split(".").map(titleCaseCommandSegment).join(": "));
 }
 
 function titleCaseCommandSegment(segment: string): string {

@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { getCloneDestinationPath } from "@t3tools/client-runtime/operations/projects";
 import {
@@ -386,6 +387,7 @@ function PullRequestLinkCheckout({
   readonly link: Extract<NewThreadLink, { kind: "pull-request" }>;
   readonly project: EnvironmentProject;
 }) {
+  const requestTerms = useChangeRequestTerms();
   const { handoff, startHandoff } = usePullRequestHandoffs({
     environmentId: project.environmentId,
     detail: {
@@ -405,7 +407,7 @@ function PullRequestLinkCheckout({
   return (
     <LinkPage
       title={`Check out ${owner}/${name}#${number}?`}
-      description="This puts the pull request's code in a new worktree and runs your project's setup script on it."
+      description={`This puts the ${requestTerms.singular}'s code in a new worktree and runs your project's setup script on it.`}
     >
       <Button
         size="sm"

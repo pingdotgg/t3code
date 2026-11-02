@@ -1,4 +1,5 @@
 import { useChangeRequestTerms } from "../../state/change-request-terminology";
+import { formatChangeRequestText } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomValue } from "@effect/atom-react";
 import { uuidv4 } from "../../lib/uuid";
 import { useNavigation } from "@react-navigation/native";
@@ -114,6 +115,7 @@ function PaletteRow(props: {
   readonly searchQuery: string;
   readonly onSelect: () => void;
 }) {
+  const terms = useChangeRequestTerms();
   const foregroundClassName = props.selected
     ? "text-thread-selected-foreground"
     : "text-foreground";
@@ -191,7 +193,7 @@ function PaletteRow(props: {
           />
         ) : props.item.matchHint ? (
           <Text numberOfLines={1} className={cn("text-sm", mutedForegroundClassName)}>
-            {props.item.matchHint.label}:{" "}
+            {formatChangeRequestText(props.item.matchHint.label, terms)}:{" "}
             {splitSearchText(props.item.matchHint.text, props.item.matchHint.ranges).map((part) => (
               <Text key={part.start} className={cn("text-sm", part.highlighted && "font-t3-bold")}>
                 {part.text}
@@ -390,7 +392,7 @@ export function CommandPalette(props: {
       const threadActions = [
         ["files", "Go to file", ["open", "files", "browse", "search"]],
         ["terminal", "Open terminal", ["shell", "console"]],
-        ["review", "Review changes", ["diff", "git", "pull request"]],
+        ["review", "Review changes", ["diff", "git", "pull request", "merge request"]],
         [
           "copyThreadReference",
           `Copy ${terms.shortLabel} link or thread`,

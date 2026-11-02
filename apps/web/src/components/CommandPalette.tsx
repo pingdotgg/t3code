@@ -26,7 +26,10 @@ import {
   type AddProjectRemoteSource,
   type AddProjectRemoteSourceReadiness,
 } from "@t3tools/client-runtime/operations/projects";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  formatChangeRequestText,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import {
@@ -1680,7 +1683,7 @@ function OpenCommandPaletteDialog(props: {
     value: `setting:${item.id}`,
     searchTerms: [item.title, SETTINGS_SECTION_LABELS[item.to], ...(item.searchTerms ?? [])],
     title: item.title,
-    description: `Settings · ${SETTINGS_SECTION_LABELS[item.to]}`,
+    description: `Settings · ${formatChangeRequestText(SETTINGS_SECTION_LABELS[item.to], changeRequestTerms)}`,
     ...(item.secondary ? { secondary: true } : {}),
     icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
     run: async () => {

@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import type { SourceControlProviderKind } from "@t3tools/contracts";
 import { ExternalLinkIcon, TriangleAlertIcon } from "lucide-react";
 
@@ -19,7 +20,8 @@ export function PullRequestDiffUnavailableState({
   url: string;
   onRetry: () => void;
 }) {
-  const { providerName, terminology } = getSourceControlPresentationForKind(provider);
+  const requestTerms = useChangeRequestTerms();
+  const { providerName, terminology } = getSourceControlPresentationForKind(provider, requestTerms);
   const { title, description } = describePullRequestDiffError(
     error,
     providerName,
