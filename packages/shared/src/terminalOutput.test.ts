@@ -52,6 +52,9 @@ describe("appendTerminalOutput", () => {
     expect(state.text.length).toBeLessThanOrEqual(1_000);
     expect(state.text.startsWith("line ")).toBe(true);
     expect(state.text.endsWith("line 1999")).toBe(true);
+    // A newline a quarter of the budget past the cut is too far to start on.
+    expect(feed(["abcdefgh\nij\nklmnop"], 8).text).toBe("klmnop");
+    expect(feed(["abcdefgh\nijk\nlmnop"], 8).text).toBe("jk\nlmnop");
   });
 
   it("stays bounded across many appends of huge output, including one endless line", () => {
@@ -127,10 +130,15 @@ describe("appendTerminalOutput edge cases from review", () => {
 
 describe("appendTerminalOutput under adversarial output", () => {
   it("gives the same result however the output is split into chunks", () => {
-    const input = "abcdef\rX\u001b[31mred\u001b[0m\nnext line\r\u001b[2Kdone\n";
-    const whole = feed([input], 3).text;
-    for (let cut = 1; cut < input.length; cut += 1) {
-      expect(feed([input.slice(0, cut), input.slice(cut)], 3).text).toBe(whole);
+    const input =
+      "abcdef\rX\u001b[31mred\u001b[0m\nnext line\r\u001b[2Kdone\n" +
+      "\u001b[1;31mbold red\u001b[mplain\u001b[38:2::12:34:56mrgb\u001b[0m\n" +
+      "\u001b[1;31mbold red again\u001b[mplain again\u001b[38:2::12:34:56mrgb again\u001b[0m";
+    for (const maxChars of [3, 1_024]) {
+      const whole = feed([input], maxChars).text;
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)], maxChars).text).toBe(whole);
+      }
     }
     expect(feed(["abcdef", "\rX"], 3).text).toBe(feed(["abcdef\rX"], 3).text);
   });
@@ -173,6 +181,16 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
       120,
     );
     expect(viewer.text).toBe(appendTerminalOutput(source, " edited", 120).text);
+    for (const [input, maxChars] of [
+      ["a\nbc", 3],
+      ["a\n" + "b".repeat(65535), 65536],
+    ] as const) {
+      const bounded = feed([input], maxChars);
+      const resumed = feed([terminalOutputResumeText(bounded)], maxChars);
+      expect(appendTerminalOutput(resumed, "\r", maxChars).text).toBe(
+        appendTerminalOutput(bounded, "\r", maxChars).text,
+      );
+    }
     const styled = feed([Array(64).fill("\u001b[31mx\u001b[0my".repeat(32)).join("\n")], 4096);
     expect(terminalOutputResumeText(styled).length).toBeLessThanOrEqual(styled.text.length + 63);
   });
