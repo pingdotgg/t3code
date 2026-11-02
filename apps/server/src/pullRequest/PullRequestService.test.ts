@@ -2077,6 +2077,73 @@ it.effect("prefers a matching checkout over a non-repository project's directory
   }),
 );
 
+it.effect.each(["acme/api", "acme/other"])(
+  "does not route through another non-Git project's link to %s",
+  (repository) =>
+    Effect.gen(function* () {
+      const seen: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({ id: "inbox", title: "Inbox", workspaceRoot: "/inbox" }),
+          project({ id: "other", title: "Other", workspaceRoot: "/other" }),
+        ],
+        linkedRepositories: [{ projectId: "other", repository }],
+        providers: [
+          fakePullRequestProvider("github", {
+            readsPublicHostWithoutCheckout: true,
+            getChangeRequestSummary: ({ cwd }) =>
+              Effect.sync(() => {
+                seen.push(cwd);
+                return changeRequest(7, "2026-07-02T00:00:00Z");
+              }),
+          }),
+        ],
+      });
+      const result = yield* service.summary(
+        {
+          projectId: "inbox" as ProjectId,
+          host: "github.com",
+          repository: "acme/api",
+          number: 7,
+        },
+        { recoverTransientFailure: false },
+      );
+      assert.strictEqual(result.projectId, "inbox");
+      assert.deepStrictEqual(seen, ["/inbox"]);
+    }),
+);
+
+it.effect("requires a host for same-named linked repositories on multiple hosts", () =>
+  Effect.gen(function* () {
+    const seen: string[] = [];
+    const service = yield* makeService({
+      projects: [project({ id: "inbox", title: "Inbox", workspaceRoot: "/inbox" })],
+      linkedRepositories: ["github.com", "bitbucket.org"].map((host) => ({
+        projectId: "inbox",
+        repository: "acme/api",
+        host,
+      })),
+      providers: ["github", "bitbucket"].map((kind) =>
+        fakePullRequestProvider(kind, {
+          readsPublicHostWithoutCheckout: true,
+          getChangeRequestSummary: ({ host }) =>
+            Effect.sync(() => {
+              seen.push(host);
+              return changeRequest(7, "2026-07-02T00:00:00Z");
+            }),
+        }),
+      ),
+    });
+    const ref = { projectId: "inbox" as ProjectId, repository: "acme/api", number: 7 };
+    const error = yield* Effect.flip(service.summary(ref, { recoverTransientFailure: false }));
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+    for (const host of ["github.com", "bitbucket.org"]) {
+      yield* service.summary({ ...ref, host });
+    }
+    assert.deepStrictEqual(seen, ["github.com", "bitbucket.org"]);
+  }),
+);
+
 // regression: #17167 refresh linked PRs without a checkout
 it.effect("requires an explicit host for a non-repository project's linked PR", () =>
   Effect.gen(function* () {

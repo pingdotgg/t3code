@@ -1009,12 +1009,20 @@ export const make = Effect.gen(function* () {
       Effect.flatMap(({ supported }): Effect.Effect<SupportedProject, PullRequestError> => {
         const repository = ref.repository.trim();
         const host = ref.host?.trim().toLowerCase();
-        const own =
-          supported.find(
-            (candidate) =>
-              candidate.repository.toLowerCase() === repository.toLowerCase() &&
-              (host === undefined || candidate.host === host),
-          ) ?? supported[0];
+        const matches = supported.filter(
+          (candidate) =>
+            candidate.repository.toLowerCase() === repository.toLowerCase() &&
+            (host === undefined || candidate.host === host),
+        );
+        if (host === undefined && new Set(matches.map((candidate) => candidate.host)).size > 1) {
+          return Effect.fail(
+            new PullRequestOperationError({
+              operation: "resolveRepository",
+              detail: "The change request host is required for this repository.",
+            }),
+          );
+        }
+        const own = matches[0] ?? supported[0];
         if (own !== undefined && own.repository.toLowerCase() === repository.toLowerCase()) {
           if (host === undefined || host === own.host) return Effect.succeed(own);
         }
@@ -1038,7 +1046,12 @@ export const make = Effect.gen(function* () {
           sourceControlDefinitions.findByRepositoryKey(referenceKey) ? {} : { host },
         ).pipe(
           Effect.flatMap(({ supported }) => {
-            const onHost = supported.filter((candidate) => candidate.host === host);
+            const onHost = supported.filter(
+              (candidate) =>
+                candidate.host === host &&
+                (candidate.project.repositoryIdentity != null ||
+                  candidate.project.id === ref.projectId),
+            );
             const route =
               supported.find(
                 (candidate) =>
