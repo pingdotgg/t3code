@@ -152,32 +152,80 @@ it.layer(NodeServices.layer)("fx maintenance", (it) => {
       const path = yield* Path.Path;
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-fx-mise-" });
       const wrapperPath = path.join(directory, "fx");
-      for (const managedPath of [
-        "/home/fx/.local/share/mise/installs/fx/0.0.15/bin/fx",
-        "/home/fx/.local/share/mise/shims/fx",
-        "/home/fx/.local/share/mise/command-wrappers/fx",
+      for (const { managedPath, env } of [
+        { managedPath: "/home/fx/.local/share/mise/installs/fx/0.0.15/bin/fx", env: {} },
+        { managedPath: "/home/fx/.local/share/mise/shims/fx", env: {} },
+        { managedPath: "/home/fx/.local/share/mise/command-wrappers/fx", env: {} },
+        {
+          managedPath: "/opt/tools/installs/fx/0.0.15/bin/fx",
+          env: { MISE_DATA_DIR: "/opt/tools/" },
+        },
+        {
+          managedPath: "/opt/versions/fx/0.0.15/bin/fx",
+          env: { MISE_INSTALLS_DIR: "/opt/versions" },
+        },
+        { managedPath: "/opt/store/fx-abc/bin/fx", env: { MISE_INSTALL_STORE_DIR: "/opt/store" } },
+        { managedPath: "/opt/dispatch/fx", env: { MISE_SHIMS_DIR: "/opt/dispatch" } },
+        {
+          managedPath: "/opt/system/installs/fx/0.0.15/bin/fx",
+          env: { MISE_SYSTEM_DATA_DIR: "/opt/system" },
+        },
+        {
+          managedPath: "/opt/system-installs/fx/0.0.15/bin/fx",
+          env: { MISE_SYSTEM_INSTALLS_DIR: "/opt/system-installs" },
+        },
+        {
+          managedPath: "/opt/system-shims/fx",
+          env: { MISE_SYSTEM_SHIMS_DIR: "/opt/system-shims" },
+        },
       ]) {
         for (const paths of [
           { resolvedCommandPath: managedPath, realCommandPath: binaryPath },
           { resolvedCommandPath: binaryPath, realCommandPath: managedPath },
         ]) {
-          expect(
-            (yield* resolver.resolve({ binaryPath, ...paths, platform: "linux", env: {} })).update,
-          ).toBeNull();
+          const managed = yield* resolver.resolve({ binaryPath, ...paths, platform: "linux", env });
+          expect(managed.update).toBeNull();
+          const managedSnapshot = yield* enrichProviderSnapshotWithVersionAdvisory(
+            snapshot,
+            managed,
+            {
+              enableProviderUpdateChecks: true,
+            },
+          ).pipe(
+            Effect.provideService(HttpClient.HttpClient, serving(new Response("unused"))),
+            Effect.provide(ProviderLatestVersions.layer),
+          );
+          expect(managedSnapshot.versionAdvisory).toMatchObject({
+            status: "behind_latest",
+            latestVersion: "0.0.15",
+            canUpdate: false,
+          });
+          expect(managed.installPath).toBe(paths.realCommandPath);
         }
       }
       for (const command of ["x", "exec"]) {
         yield* fs.writeFileString(wrapperPath, `#!/bin/sh\nexec mise ${command} -- fx "$@"\n`);
-        expect(
-          (yield* resolver.resolve({
-            binaryPath: wrapperPath,
-            resolvedCommandPath: wrapperPath,
-            realCommandPath: wrapperPath,
-            platform: "linux",
-            env: {},
-          })).update,
-        ).toBeNull();
+        const managed = yield* resolver.resolve({
+          binaryPath: wrapperPath,
+          resolvedCommandPath: wrapperPath,
+          realCommandPath: wrapperPath,
+          platform: "linux",
+          env: {},
+        });
+        expect(managed.update).toBeNull();
+        expect(managed.installPath).toBe(wrapperPath);
+        expect(yield* managed.lookupLatestVersion!).toBe("0.0.15");
       }
+      const outsideMise = "/opt/tools-extra/installs/fx/0.0.15/bin/fx";
+      expect(
+        (yield* resolver.resolve({
+          binaryPath: outsideMise,
+          resolvedCommandPath: outsideMise,
+          realCommandPath: outsideMise,
+          platform: "linux",
+          env: { MISE_DATA_DIR: "/opt/tools" },
+        })).update,
+      ).not.toBeNull();
     }).pipe(Effect.scoped),
   );
 

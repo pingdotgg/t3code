@@ -21,7 +21,7 @@ Every fx instance on the same machine shares that machine's fx login. T3 Code do
 
 ## Update fx
 
-When a newer fx release is out, the fx card in **Settings → Providers** shows it. For standalone installs, **Update now** runs the instance's selected executable with `upgrade`, including one set in **Binary path**. For Homebrew's `fx-agent` formula, it uses the owning Homebrew installation to run `brew upgrade fx-agent` and checks Homebrew's release version. If that ownership cannot be confirmed, update through your package manager yourself.
+When a newer fx release is out, the fx card in **Settings → Providers** shows it. For standalone installs, **Update now** runs the instance's selected executable with `upgrade`, including one set in **Binary path**. For Homebrew's `fx-agent` formula, it uses the owning Homebrew installation to run `brew upgrade fx-agent` and checks Homebrew's release version. If that ownership cannot be confirmed, update through your package manager yourself. For mise-managed installs, T3 Code checks stable releases but leaves updates to your mise configuration.
 
 To update a standalone install manually, run `fx upgrade` on the server's machine. If **Binary path** is set, run that exact executable instead, for example `"/path/to/fx" upgrade`. Standalone version checks cover stable releases only; use the same manual command to get newer dev builds on fx's dev channel. On macOS 14 or earlier, which newer fx releases do not support, T3 Code does not offer fx updates.
 

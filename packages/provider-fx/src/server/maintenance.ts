@@ -45,11 +45,15 @@ export const makeFxMaintenance = (
       return manualOnly;
     }
     if (
-      isMiseCommandPath(context.resolvedCommandPath) ||
-      isMiseCommandPath(context.realCommandPath) ||
+      isMiseCommandPath(context.resolvedCommandPath, context.env) ||
+      isMiseCommandPath(context.realCommandPath, context.env) ||
       (yield* isMiseWrapperScript(context))
     ) {
-      return manualOnly;
+      return makeManualOnlyProviderMaintenanceCapabilities({
+        ...input,
+        installPath: context.realCommandPath,
+        lookupLatestVersion,
+      });
     }
     const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
     if (homebrew) {
