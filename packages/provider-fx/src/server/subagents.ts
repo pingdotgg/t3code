@@ -417,7 +417,7 @@ type SessionUpdateHandler = Parameters<
 
 /**
  * Routes fx's hook events through the adapter's session update handlers. A
- * session fx does not confirm hooks for (fx 0.0.13) keeps the ACP-only view.
+ * session fx does not confirm hooks for keeps the ACP-only view.
  */
 export function withFxSubagentHooks(
   runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],

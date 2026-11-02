@@ -433,6 +433,72 @@ describe("FxAdapterV2", () => {
       ],
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
+  it.effect("retains full replies arriving after failed or cancelled children settle", () =>
+    Effect.gen(function* () {
+      for (const phase of ["failed", "cancelled"] as const) {
+        for (const withPreview of [false, true]) {
+          const reply = `Child ${phase}: ${"The complete diagnostic. ".repeat(20)}`;
+          const childSessionId = "fx-session-child";
+          const events = yield* openFxSession({
+            scenario: `late-${phase}-${withPreview}`,
+            runtimeMode: "approval-required",
+            turnModel: "default",
+            frames: [
+              ...initialize,
+              outbound("session/new"),
+              answer("session/new", {
+                ...fxSession({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES }),
+                _meta: { fx: { hooksVersion: 1 } },
+              }),
+              ...setConfig(
+                "mode",
+                "ask",
+                fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES }),
+              ),
+              outbound("session/prompt"),
+              subagentCall("call_child", "Read package.json"),
+              hook(SESSION_ID, "delegation", {
+                callId: "call_child",
+                childSessionId,
+                phase: "dispatched",
+              }),
+              ...(withPreview ? [subagentPreview("call_child", reply)] : []),
+              hook(SESSION_ID, "delegation", {
+                callId: "call_child",
+                childSessionId,
+                phase,
+              }),
+              hook(SESSION_ID, "tool.end", {
+                call: { callId: "call_child", name: "subagent", provenance: "model" },
+                output: JSON.stringify({ ok: false, result: reply, error_code: null }),
+                status: "success",
+              }),
+              answer("session/prompt", { stopReason: "end_turn" }),
+            ],
+          });
+          const subagents = events.flatMap((event) =>
+            event.type === "subagent.updated" ? [event.subagent] : [],
+          );
+          const terminal = subagents.filter((subagent) => subagent.status === phase);
+          assert.isAtLeast(terminal.length, 2);
+          assert.notEqual(terminal[0]?.result, reply);
+          const settled = terminal.at(-1);
+          assert.equal(settled?.result, reply);
+          assert.equal(settled?.completedAt, terminal[0]?.completedAt);
+          assert.isTrue(
+            events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "subagent" &&
+                event.turnItem.status === phase &&
+                event.turnItem.result === reply,
+            ),
+          );
+        }
+      }
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   // A restart reloads the session: fx replays the finished call from history
   // with its 200-byte preview and none of the child's steps, which T3 already
   // holds. The reload confirms hooks, so the next sub-agent shows its steps.
