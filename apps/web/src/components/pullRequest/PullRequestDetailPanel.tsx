@@ -69,7 +69,7 @@ import { PullRequestStackMenu } from "./PullRequestStackMenu";
 import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat";
 import {
   capitalizeTerm,
-  changeRequestTermsFor,
+  currentChangeRequestTerms,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
@@ -470,9 +470,7 @@ export function PullRequestDetailPanel({
   const [handoff, setHandoff] = useState<string | null>(null);
   const turnRefresh = usePullRequestTurnRefresh(environmentId);
   const handoffSummary = detail ?? sharedSummary;
-  const terminology = changeRequestTermsFor(
-    handoffSummary?.provider ?? listEntry?.provider ?? repositoryIdentity?.provider,
-  );
+  const terminology = currentChangeRequestTerms();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { copyToClipboard: copyReference } = useCopyToClipboard<string>({
     target: `${terminology.singular} reference`,

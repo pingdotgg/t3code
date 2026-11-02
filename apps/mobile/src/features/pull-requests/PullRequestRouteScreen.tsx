@@ -128,7 +128,7 @@ import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFa
 import { pullRequestFileJumpScope, subscribePullRequestFileJump } from "./pullRequestFileJump";
 import {
   capitalizeTerm,
-  changeRequestTermsFor,
+  currentChangeRequestTerms,
 } from "@t3tools/client-runtime/source-control-clients";
 
 const EMPTY_IDS: readonly string[] = [];
@@ -414,7 +414,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const pr = usePullRequestLiveChecks(params, result.data);
   const summary = params.initialSummary;
   const identity = pr ?? summary;
-  const terminology = changeRequestTermsFor(identity?.provider);
+  const terminology = currentChangeRequestTerms();
   const permissions = usePullRequestPermissions(params, pr);
   const action = usePullRequestAction(params, pr);
   const maintainerEdits = usePullRequestMaintainerEdits(
@@ -946,7 +946,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
   const commit = route.params.commit;
   const detail = useEnvironmentQuery(composerPullRequests.detail(requestTarget(route.params)));
-  const terminology = changeRequestTermsFor((detail.data ?? route.params.initialSummary)?.provider);
+  const terminology = currentChangeRequestTerms();
   const result = usePullRequestDiff(route.params, terminology);
   const filter = usePullRequestFileFilter(
     result.parsed,

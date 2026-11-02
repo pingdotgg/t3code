@@ -175,7 +175,7 @@ import {
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import { resolvePullRequestPreviewTarget } from "@t3tools/client-runtime/change-request-links";
 import {
-  changeRequestTermsFor,
+  currentChangeRequestTerms,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
@@ -1263,7 +1263,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
                       type: "error",
                       title: `Unable to ${
                         operation === "link-pull-request-to-thread" ? "link" : "unlink"
-                      } ${changeRequestTermsFor(sourceControlClients.findByChangeRequestUrl(href)).singular}`,
+                      } ${currentChangeRequestTerms().singular}`,
                       description: cause instanceof Error ? cause.message : "The request failed.",
                     }),
                   );

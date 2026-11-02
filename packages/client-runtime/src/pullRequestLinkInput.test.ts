@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { sourceControlClients } from "./sourceControlClients.ts";
+import {
+  MERGE_REQUEST_TERMINOLOGY,
+  PULL_REQUEST_TERMINOLOGY,
+  sourceControlClients,
+} from "./sourceControlClients.ts";
 
 import { parsePullRequestReference, resolveLinkPullRequestInput } from "./pullRequestLinkInput.ts";
 
@@ -10,7 +14,7 @@ const changeRequestWebUrl = (kind: string, host: string, repository: string, num
 const project = {
   host: "github.com",
   repository: "acme/web",
-  terminology: sourceControlClients.get("github").changeRequest,
+  terminology: PULL_REQUEST_TERMINOLOGY,
   webUrl: (number: number) => changeRequestWebUrl("github", "github.com", "acme/web", number),
 };
 
@@ -82,7 +86,7 @@ describe("resolveLinkPullRequestInput", () => {
         project: {
           host: "ssh.dev.azure.com",
           repository: "v3/org/project/web",
-          terminology: sourceControlClients.get("azure-devops").changeRequest,
+          terminology: PULL_REQUEST_TERMINOLOGY,
           webUrl: (number) =>
             changeRequestWebUrl("azure-devops", "ssh.dev.azure.com", "v3/org/project/web", number),
         },
@@ -117,7 +121,7 @@ describe("resolveLinkPullRequestInput", () => {
         reference: "#42",
         project: {
           ...project,
-          terminology: sourceControlClients.get("gitlab").changeRequest,
+          terminology: MERGE_REQUEST_TERMINOLOGY,
           webUrl: () => null,
         },
         hasProject: () => true,

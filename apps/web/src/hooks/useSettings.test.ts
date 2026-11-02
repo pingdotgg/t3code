@@ -1,5 +1,6 @@
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
+import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const persistenceMocks = vi.hoisted(() => ({
@@ -181,14 +182,16 @@ describe("persistClientSettingsPatch", () => {
       });
     });
 
-    const firstSettings = { ...DEFAULT_CLIENT_SETTINGS, snapShotFlash: false };
-    const secondSettings = { ...firstSettings, snapShotPlaySound: false };
-    const first = persistClientSettingsPatch({ snapShotFlash: false });
+    const firstSettings = { ...DEFAULT_CLIENT_SETTINGS, mergeRequestTerminology: true };
+    const secondSettings = { ...firstSettings, mergeRequestTerminology: false };
+    const first = persistClientSettingsPatch({ mergeRequestTerminology: true });
     await firstStarted;
-    const second = persistClientSettingsPatch({ snapShotPlaySound: false });
+    expect(currentChangeRequestTerms().shortLabel).toBe("MR");
+    const second = persistClientSettingsPatch({ mergeRequestTerminology: false });
 
     expect(persistenceMocks.setClientSettings).toHaveBeenCalledTimes(1);
     expect(getClientSettings()).toEqual(secondSettings);
+    expect(currentChangeRequestTerms().shortLabel).toBe("PR");
     finishFirst();
     await Promise.all([first, second]);
 

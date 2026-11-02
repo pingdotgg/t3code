@@ -132,8 +132,8 @@ export const GitRunStackedActionInput = Schema.Struct({
   filePaths: Schema.optional(Schema.Array(GitFilePath).check(Schema.isMinLength(1))),
   threadId: Schema.optional(ThreadId),
   projectId: Schema.optional(ProjectId),
-  // False asks for "pull request" wording in progress and toast labels whatever the host calls it.
-  providerTerminology: Schema.optional(Schema.Boolean),
+  // Says "merge request" instead of "pull request" in progress and toast labels.
+  mergeRequestTerminology: Schema.optional(Schema.Boolean),
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 

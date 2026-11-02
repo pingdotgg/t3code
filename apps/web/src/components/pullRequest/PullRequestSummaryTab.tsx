@@ -1,6 +1,6 @@
 import {
   capitalizeTerm,
-  changeRequestTermsFor,
+  currentChangeRequestTerms,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -408,7 +408,7 @@ export function PullRequestSummaryTab({
   onRefresh: () => void;
   onRefreshChecks?: () => void;
 }) {
-  const terminology = changeRequestTermsFor(detail.provider);
+  const terminology = currentChangeRequestTerms();
   const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
   const shownConversations = shown.url === detail.url ? shown.count : COMMENT_PAGE;
   const [commentFilter, setCommentFilter] = useLocalStorage(

@@ -3,7 +3,7 @@ import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-defin
 
 import {
   type ChangeRequestTerminology,
-  changeRequestTermsFor,
+  currentChangeRequestTerms,
   sourceControlClients,
 } from "./sourceControlClients.ts";
 
@@ -51,7 +51,7 @@ export function pullRequestLinkProject(identity: RepositoryIdentity | null | und
   return {
     host,
     repository,
-    terminology: changeRequestTermsFor(definition),
+    terminology: currentChangeRequestTerms(),
     webUrl: (number: number) =>
       definition.changeRequestUrl({
         host,

@@ -1,5 +1,5 @@
 import {
-  changeRequestTermsFor,
+  currentChangeRequestTerms,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
@@ -81,7 +81,7 @@ function NumberLink({
               "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
               toneClassName,
             )}
-            aria-label={`Open ${changeRequestTermsFor(detail.provider).singular} #${detail.number} on host`}
+            aria-label={`Open ${currentChangeRequestTerms().singular} #${detail.number} on host`}
           >
             #{detail.number}
             <ExternalLinkIcon aria-hidden className="size-2.5" />

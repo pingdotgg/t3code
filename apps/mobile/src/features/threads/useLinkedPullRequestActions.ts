@@ -14,8 +14,7 @@ import {
 import { planThreadPullRequestMutation } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import {
   capitalizeTerm,
-  changeRequestTermsFor,
-  sourceControlClients,
+  currentChangeRequestTerms,
 } from "@t3tools/client-runtime/source-control-clients";
 import { AuthOrchestrationOperateScope, type ThreadPullRequestLink } from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
@@ -36,7 +35,7 @@ export function useLinkedPullRequestActions(input: {
   readonly runtime: EnvironmentRuntimeState | null;
 }) {
   const { thread, project, runtime } = input;
-  const terminology = changeRequestTermsFor(project?.repositoryIdentity?.provider);
+  const terminology = currentChangeRequestTerms();
   const capabilities = runtime?.serverConfig?.environment.capabilities;
   const canOperate = useEnvironmentScope(
     thread?.environmentId ?? null,
@@ -148,9 +147,7 @@ export function useLinkedPullRequestActions(input: {
     else if (action === "browser")
       void tryOpenExternalUrl(link.url, "pull-request").then((opened) => {
         if (!opened) {
-          const { shortLabel, singular } = changeRequestTermsFor(
-            sourceControlClients.findByChangeRequestUrl(link.url),
-          );
+          const { shortLabel, singular } = currentChangeRequestTerms();
           Dialog.alert(`Unable to open ${shortLabel}`, `The ${singular} could not be opened.`);
         }
       });

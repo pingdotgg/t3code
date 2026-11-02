@@ -243,7 +243,6 @@ export interface SourceControlDefinition {
   /** Further words settings search finds this host by, besides its label. */
   readonly searchKeywords?: ReadonlyArray<string>;
   readonly credentials?: SourceControlHostCredentials;
-  readonly changeRequest: ChangeRequestTerminology;
   readonly repositoryPathHint: string;
   readonly publicHost: string | null;
   readonly publishDescription: string;
@@ -544,19 +543,23 @@ function defaultRepositorySelector(
   return identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null;
 }
 
-const PULL_REQUEST_TERMINOLOGY: ChangeRequestTerminology = {
+export const PULL_REQUEST_TERMINOLOGY: ChangeRequestTerminology = {
   shortLabel: "PR",
   shortLabelWithArticle: "a PR",
   singular: "pull request",
   plural: "pull requests",
 };
 
-/** A host's own change request terms, or "pull request" for every host when turned off. */
-export function resolveChangeRequestTerms(
-  definition: Pick<SourceControlDefinition, "changeRequest">,
-  useProviderTerms: boolean,
-): ChangeRequestTerminology {
-  return useProviderTerms ? definition.changeRequest : PULL_REQUEST_TERMINOLOGY;
+export const MERGE_REQUEST_TERMINOLOGY: ChangeRequestTerminology = {
+  shortLabel: "MR",
+  shortLabelWithArticle: "an MR",
+  singular: "merge request",
+  plural: "merge requests",
+};
+
+/** Every host's review unit goes by one name, picked by the user's setting. */
+export function changeRequestTerms(mergeRequests: boolean): ChangeRequestTerminology {
+  return mergeRequests ? MERGE_REQUEST_TERMINOLOGY : PULL_REQUEST_TERMINOLOGY;
 }
 
 export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlDefinition = {
@@ -564,12 +567,6 @@ export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlDefinition = {
   label: "source control",
   pickerLabel: "source control",
   icon: null,
-  changeRequest: {
-    shortLabel: "change request",
-    shortLabelWithArticle: "a change request",
-    singular: "change request",
-    plural: "change requests",
-  },
   repositoryPathHint: "URL",
   publicHost: null,
   publishDescription: "Your signed-in server",

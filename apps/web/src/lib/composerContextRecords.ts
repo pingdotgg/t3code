@@ -1,7 +1,6 @@
 import {
   capitalizeTerm,
-  changeRequestTermsFor,
-  sourceControlClients,
+  currentChangeRequestTerms,
 } from "@t3tools/client-runtime/source-control-clients";
 import {
   COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS,
@@ -100,9 +99,7 @@ export function pullRequestContextDisplayState(
 }
 
 export function pullRequestContextKindLabel(comment: ReviewCommentPresentation): string {
-  const url = comment.pullRequest?.url;
-  const host = url === undefined ? null : sourceControlClients.findByChangeRequestUrl(url);
-  const term = changeRequestTermsFor(host).singular;
+  const term = currentChangeRequestTerms().singular;
   const state = pullRequestContextDisplayState(comment);
   if (state === null) return capitalizeTerm(term);
   return `${capitalizeTerm(state)} ${term}`;

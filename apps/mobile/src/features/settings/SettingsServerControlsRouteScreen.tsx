@@ -1,6 +1,4 @@
 import { useNavigation } from "@react-navigation/native";
-import { useProjectsChangeRequestTerms } from "../../state/entities";
-import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import { SettingsRow } from "./components/SettingsRow";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
@@ -179,7 +177,6 @@ export function SettingsEnvironmentMaintenanceRouteScreen() {
 }
 
 function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
-  const changeRequestTerms = useProjectsChangeRequestTerms();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
@@ -416,7 +413,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       canWrite={(environmentId) => writableEnvironments.has(environmentId)}
                     />
                   )}
-                  <SettingsSection title={capitalizeTerm(changeRequestTerms.plural)}>
+                  <SettingsSection title="Pull requests">
                     <SettingsSwitchRow
                       icon={PullRequestGlyph.merged}
                       label="Remove agent credits when merging"

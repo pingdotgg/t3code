@@ -1,4 +1,4 @@
-import { useProjectsChangeRequestTerms } from "~/state/entities";
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { Spinner } from "~/components/ui/spinner";
 import type {
   EnvironmentId,
@@ -106,7 +106,7 @@ export function PullRequestSearchInput({
   onSubmit: (value: string) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
-  const terms = useProjectsChangeRequestTerms();
+  const terms = useChangeRequestTerms();
   return (
     <InputGroup className="min-w-0 flex-1 **:[input]:h-9 sm:**:[input]:h-8">
       <InputGroupAddon>

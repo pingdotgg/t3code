@@ -3,7 +3,7 @@ import type { EnvironmentId, PullRequestDetail, PullRequestRef } from "@t3tools/
 import { useState } from "react";
 import {
   capitalizeTerm,
-  changeRequestTermsFor,
+  currentChangeRequestTerms,
 } from "@t3tools/client-runtime/source-control-clients";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -95,7 +95,7 @@ export function PullRequestTitleEditor({
         size="sm"
         disabled={titleSaving}
         value={titleDraft}
-        aria-label={`${capitalizeTerm(changeRequestTermsFor(detail.provider).singular)} title`}
+        aria-label={`${capitalizeTerm(currentChangeRequestTerms().singular)} title`}
         onChange={(event) => setTitleScope({ pullRequestKey, text: event.target.value })}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;

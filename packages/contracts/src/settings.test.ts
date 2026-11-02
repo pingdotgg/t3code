@@ -311,12 +311,12 @@ describe("ClientSettings notifications", () => {
   });
 });
 
-describe("ClientSettings provider terminology", () => {
-  it("uses each host's own terms unless turned off", () => {
-    expect(decodeClientSettings({}).providerSpecificTerminology).toBe(true);
-    expect(
-      decodeClientSettings({ providerSpecificTerminology: false }).providerSpecificTerminology,
-    ).toBe(false);
+describe("ClientSettings merge request terminology", () => {
+  it("says pull request until turned on", () => {
+    expect(decodeClientSettings({}).mergeRequestTerminology).toBe(false);
+    expect(decodeClientSettings({ mergeRequestTerminology: true }).mergeRequestTerminology).toBe(
+      true,
+    );
   });
 });
 

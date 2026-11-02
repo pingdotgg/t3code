@@ -169,9 +169,8 @@ uses the project's instructions and recent commit subjects.
 
 Open **Pull requests** to review changes and comments, request reviewers, check out a branch,
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
-GitLab calls these merge requests, and T3 Code uses that name for GitLab projects. To say
-"pull request" everywhere on web and desktop, turn off **Use version control specific language**
-in **Settings → Source control**.
+GitLab calls these merge requests. To say "merge request" instead of "pull request" on web and
+desktop, turn on **Use merge request terminology** in **Settings → Source control**.
 
 On mobile, **Pull requests** lists reviews across your connected environments. Open a review
 to read its description, activity, commits, and changed files. Line comments stay as drafts

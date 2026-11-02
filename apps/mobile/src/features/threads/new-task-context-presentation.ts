@@ -1,6 +1,6 @@
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import {
-  changeRequestTermsFor,
+  currentChangeRequestTerms,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { resolveSendEnvMode } from "@t3tools/shared/projectSettings";
@@ -83,8 +83,7 @@ export function resolveNewTaskBranchLabel(input: {
 }): string {
   if (input.workspaceMode === "worktree" && input.pullRequestReference) {
     const parsed = sourceControlClients.parseChangeRequestUrl(input.pullRequestReference);
-    if (parsed)
-      return `From ${changeRequestTermsFor(parsed.definition).shortLabel} #${parsed.link.number}`;
+    if (parsed) return `From ${currentChangeRequestTerms().shortLabel} #${parsed.link.number}`;
   }
   if (!input.branchName) {
     return "Choose branch";

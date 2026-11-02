@@ -18,7 +18,7 @@ import {
   openOnProviderLabel,
   pullRequestActionLabel,
 } from "./pullRequestActions";
-import { changeRequestTermsFor } from "@t3tools/client-runtime/source-control-clients";
+import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import { scopedPullRequestListKey, type EnvironmentPullRequestListEntry } from "./pullRequestList";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestTarget } from "./usePullRequestDiff";
@@ -58,7 +58,7 @@ export function usePullRequestListActions(
     action: PullRequestAction | "request-review",
   ) => {
     const { environmentId } = entry;
-    const terminology = changeRequestTermsFor(entry.provider);
+    const terminology = currentChangeRequestTerms();
     if (pending.current) return;
     pending.current = true;
     setBusyKey(scopedPullRequestListKey(entry));
@@ -138,7 +138,7 @@ export function usePullRequestListActions(
       (value) => value === action,
     );
     if (!supported) return;
-    const label = pullRequestActionLabel(supported, changeRequestTermsFor(entry.provider));
+    const label = pullRequestActionLabel(supported, currentChangeRequestTerms());
     Dialog.alert(`${label}?`, `#${entry.number} · ${entry.title}`, [
       { text: "Cancel", style: "cancel" },
       {
@@ -149,7 +149,7 @@ export function usePullRequestListActions(
     ]);
   };
   const actions = (entry: EnvironmentPullRequestListEntry): MenuProps["actions"] => {
-    const terminology = changeRequestTermsFor(entry.provider);
+    const terminology = currentChangeRequestTerms();
     return [
       {
         id: "open",

@@ -56,8 +56,7 @@ import {
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import {
   type ChangeRequestTerminology,
-  resolveChangeRequestTerms,
-  UNKNOWN_SOURCE_CONTROL_CLIENT,
+  changeRequestTerms,
 } from "@t3tools/source-control-core/shared/definition";
 import {
   normalizeThreadPullRequestKey,
@@ -659,16 +658,6 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
-  const changeRequestTermsFor = Effect.fn("GitManager.changeRequestTermsFor")(function* (
-    cwd: string,
-    providerTerminology: boolean,
-  ) {
-    const definition = yield* sourceControlProvider(cwd).pipe(
-      Effect.map((provider) => sourceControlDefinitions.get(provider.kind)),
-      Effect.orElseSucceed(() => UNKNOWN_SOURCE_CONTROL_CLIENT),
-    );
-    return resolveChangeRequestTerms(definition, providerTerminology);
-  });
   const serverSettingsService = yield* ServerSettings.ServerSettingsService;
   const threads = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -1896,9 +1885,8 @@ export const make = Effect.gen(function* () {
   const buildCompletionToast = Effect.fn("buildCompletionToast")(function* (
     cwd: string,
     result: Pick<GitRunStackedActionResult, "action" | "branch" | "commit" | "push" | "pr">,
-    providerTerminology: boolean,
+    terms: ChangeRequestTerminology,
   ) {
-    const terms = yield* changeRequestTermsFor(cwd, providerTerminology);
     const summary = summarizeGitActionResult(result, terms);
     let latestOpenPr: PullRequestInfo | null = null;
     let currentBranchIsDefault = false;
@@ -2241,13 +2229,9 @@ export const make = Effect.gen(function* () {
     fallbackBranch: string | null,
     threadId: ThreadId | undefined,
     emit: GitActionProgressEmitter,
-    providerTerminology: boolean,
+    terms: ChangeRequestTerminology,
   ) {
     const provider = yield* sourceControlProvider(cwd);
-    const terms = resolveChangeRequestTerms(
-      sourceControlDefinitions.get(provider.kind),
-      providerTerminology,
-    );
     const details = yield* gitCore.statusDetails(cwd);
     const branch = details.branch ?? fallbackBranch;
     if (!branch) {
@@ -3153,10 +3137,7 @@ export const make = Effect.gen(function* () {
 
         const currentBranch = branchStep.name ?? initialStatus.branch;
         const commitAction = isCommitAction(input.action) ? input.action : null;
-        const providerTerminology = input.providerTerminology ?? true;
-        const changeRequestTerms = wantsPr
-          ? yield* changeRequestTermsFor(input.cwd, providerTerminology)
-          : null;
+        const terms = changeRequestTerms(input.mergeRequestTerminology === true);
 
         const commit = commitAction
           ? yield* Ref.set(currentPhase, Option.some("commit")).pipe(
@@ -3194,7 +3175,7 @@ export const make = Effect.gen(function* () {
               .emit({
                 kind: "phase_started",
                 phase: "pr",
-                label: `Preparing ${changeRequestTerms?.shortLabel ?? "PR"}...`,
+                label: `Preparing ${terms.shortLabel}...`,
               })
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
@@ -3205,7 +3186,7 @@ export const make = Effect.gen(function* () {
                     currentBranch,
                     input.threadId,
                     progress.emit,
-                    providerTerminology,
+                    terms,
                   ),
                 ),
               )
@@ -3214,7 +3195,7 @@ export const make = Effect.gen(function* () {
         const toast = yield* buildCompletionToast(
           input.cwd,
           { action: input.action, branch: branchStep, commit, push, pr },
-          providerTerminology,
+          terms,
         );
 
         const result = {

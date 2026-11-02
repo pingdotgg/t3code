@@ -10,7 +10,7 @@ import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-r
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 
 import {
-  changeRequestTermsFor,
+  currentChangeRequestTerms,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
@@ -65,7 +65,7 @@ function EnabledPullRequestThreadLinks({
 }: PullRequestThreadLinksProps) {
   const parsedUrl = sourceControlClients.parseChangeRequestUrl(url);
   const parsed = parsedUrl?.link ?? null;
-  const term = changeRequestTermsFor(parsedUrl?.definition).singular;
+  const term = currentChangeRequestTerms().singular;
   const thread = useThreadShell(threadRef?.environmentId === environmentId ? threadRef : null);
   const currentThreadRef = thread === null ? null : threadRef;
   const linking = usePullRequestLinking(environmentId);

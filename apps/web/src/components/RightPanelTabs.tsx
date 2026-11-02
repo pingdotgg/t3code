@@ -1,7 +1,7 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import {
   capitalizeTerm,
   type ChangeRequestTerminology,
-  changeRequestTermsFor,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -158,8 +158,6 @@ export interface RightPanelTabsProps {
   sideChatAvailable?: boolean;
   /** Overrides the default reason while side chats are available but cannot start. */
   sideChatDisabledReason?: string | null;
-  /** The thread's host terms; absent reads as the default host's. */
-  changeRequestTerms?: ChangeRequestTerminology | undefined;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   children: ReactNode;
 }
@@ -1029,7 +1027,7 @@ function RightPanelTab(
 }
 
 export function RightPanelTabs(props: RightPanelTabsProps) {
-  const changeRequestTerms = props.changeRequestTerms ?? changeRequestTermsFor(undefined);
+  const changeRequestTerms = useChangeRequestTerms();
   const focusedSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;

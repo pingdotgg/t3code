@@ -1,9 +1,6 @@
 import type { PullRequestContextMetadata } from "@t3tools/contracts";
-import {
-  capitalizeTerm,
-  changeRequestTermsFor,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { ArrowRightIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
@@ -12,10 +9,7 @@ import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 
 export function PullRequestContextDetails({ metadata }: { metadata: PullRequestContextMetadata }) {
   const state = resolvePullRequestState(metadata);
-  // A context chip carries the change request's URL alone, so the URL names its host.
-  const { singular } = changeRequestTermsFor(
-    sourceControlClients.findByChangeRequestUrl(metadata.url),
-  );
+  const { singular } = useChangeRequestTerms();
   return (
     <div className="max-w-80 space-y-1 overflow-hidden py-0.5 text-left">
       <div className="flex items-center gap-1.5 text-xs font-medium">

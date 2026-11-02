@@ -5,7 +5,6 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { act, render } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
-import { changeRequestTermsForHosts } from "@t3tools/client-runtime/source-control-clients";
 import { primaryServerKeybindingsAtom } from "../state/server";
 
 vi.mock("@effect/atom-react", async (original) => ({
@@ -67,7 +66,6 @@ vi.mock("../state/environments", async (original) => ({
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
   useProjects: () => [],
-  useProjectsChangeRequestTerms: () => changeRequestTermsForHosts([]),
   useThreadShells: () => [],
   useVisibleThreadShells: () => [],
   useHiddenThreadKeys: () => new Set(),

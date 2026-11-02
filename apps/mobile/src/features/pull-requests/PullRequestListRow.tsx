@@ -1,6 +1,6 @@
 import {
   capitalizeTerm,
-  changeRequestTermsFor,
+  currentChangeRequestTerms,
 } from "@t3tools/client-runtime/source-control-clients";
 import { memo } from "react";
 import { Pressable, View } from "react-native";
@@ -74,7 +74,7 @@ export const PullRequestListRow = memo(
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ selected: props.selected, busy: props.busy }}
-            accessibilityLabel={`${capitalizeTerm(changeRequestTermsFor(item.provider).singular)} ${item.number}, ${item.title}, ${status.label}${conflict ? `, ${conflict.label.toLowerCase()}` : ""}, by ${item.author?.login ?? "unknown author"}${review ? `, ${review.accessibleLabel}` : ""}${item.checksState ? `, checks ${item.checksState}` : ""}${item.stack ? `, stack ${item.stack.position} of ${item.stack.size}` : ""}${item.labels.length ? `, ${item.labels.map((label) => label.name).join(", ")}` : ""}, ${item.additions} additions, ${item.deletions} deletions`}
+            accessibilityLabel={`${capitalizeTerm(currentChangeRequestTerms().singular)} ${item.number}, ${item.title}, ${status.label}${conflict ? `, ${conflict.label.toLowerCase()}` : ""}, by ${item.author?.login ?? "unknown author"}${review ? `, ${review.accessibleLabel}` : ""}${item.checksState ? `, checks ${item.checksState}` : ""}${item.stack ? `, stack ${item.stack.position} of ${item.stack.size}` : ""}${item.labels.length ? `, ${item.labels.map((label) => label.name).join(", ")}` : ""}, ${item.additions} additions, ${item.deletions} deletions`}
             accessibilityHint="Double tap to open. Touch and hold for quick actions."
             onPress={() => props.onSelect(item)}
             disabled={props.busy}

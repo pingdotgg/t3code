@@ -70,12 +70,6 @@ export const definition = defineSourceControl({
     newTokenUrl: (host) => `https://${host}/settings/personal-access-tokens/new`,
     appSignIn: APP_SIGN_IN,
   },
-  changeRequest: {
-    shortLabel: "PR",
-    shortLabelWithArticle: "a PR",
-    singular: "pull request",
-    plural: "pull requests",
-  },
   repositoryPathHint: "owner/repo",
   publicHost: "github.com",
   publishDescription: "github.com",

@@ -1,7 +1,4 @@
-import {
-  changeRequestTermsFor,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import {
   type EnvironmentId,
   type ProjectId,
@@ -93,10 +90,7 @@ export function useThreadLinkedPullRequest(input: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: `Unable to update the thread ${
-            changeRequestTermsFor(sourceControlClients.findByChangeRequestUrl(replacement.url))
-              .singular
-          }`,
+          title: `Unable to update the thread ${currentChangeRequestTerms().singular}`,
           description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );

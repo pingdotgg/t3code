@@ -1,5 +1,5 @@
 import { SourceControlProviderKind, type VcsStatusResult } from "@t3tools/contracts";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { MERGE_REQUEST_TERMINOLOGY } from "@t3tools/client-runtime/source-control-clients";
 import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import { assert, describe, it } from "vite-plus/test";
 import {
@@ -171,20 +171,20 @@ describe("when: the ref is on GitLab", () => {
     },
   };
 
-  it("names merge requests in actions and the default-ref dialog", () => {
+  it("defaults to pull requests and accepts merge terms for the default-ref dialog", () => {
     const ahead = status({ ...gitLab, hasUpstream: false, aheadCount: 2 });
-    assert.equal(resolveQuickAction(ahead, false).label, "Push & create MR");
+    assert.equal(resolveQuickAction(ahead, false).label, "Push & create PR");
     assert.equal(
       resolveQuickAction(status({ ...gitLab, hasWorkingTreeChanges: true }), false).label,
-      "Commit, push & MR",
+      "Commit, push & PR",
     );
-    assert.equal(buildMenuItems(ahead, false).find((item) => item.id === "pr")?.label, "Create MR");
+    assert.equal(buildMenuItems(ahead, false).find((item) => item.id === "pr")?.label, "Create PR");
 
     const copy = resolveDefaultBranchActionDialogCopy({
       action: "create_pr",
       branchName: "main",
       includesCommit: false,
-      terminology: sourceControlClients.get("gitlab").changeRequest,
+      terminology: MERGE_REQUEST_TERMINOLOGY,
     });
     assert.equal(copy.title, "Push & create MR from default ref?");
     assert.include(copy.description, "create a merge request on");

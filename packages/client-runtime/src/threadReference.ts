@@ -8,7 +8,7 @@ import {
   threadContextRecord,
 } from "@t3tools/shared/composerContextReferences";
 
-import { changeRequestTermsFor, sourceControlClients } from "./sourceControlClients.ts";
+import { currentChangeRequestTerms } from "./sourceControlClients.ts";
 import { resolveThreadCurrentPullRequestLink } from "./threadPullRequests.ts";
 
 export interface ThreadReferenceCopyTarget {
@@ -55,9 +55,7 @@ export function resolveThreadReferenceCopyTarget(input: {
     resolveThreadCurrentPullRequestLink(input.pullRequests ?? [])?.url ??
     input.linkedPullRequestUrl;
   if (!pullRequestUrl) return threadChipCopyTarget(input.threadRef, input.title);
-  const { shortLabel, singular } = changeRequestTermsFor(
-    sourceControlClients.findByChangeRequestUrl(pullRequestUrl),
-  );
+  const { shortLabel, singular } = currentChangeRequestTerms();
   return {
     kind: "pull-request",
     value: pullRequestUrl,

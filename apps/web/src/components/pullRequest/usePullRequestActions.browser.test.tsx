@@ -1,5 +1,5 @@
 import { EnvironmentId, ProjectId, type PullRequestRef } from "@t3tools/contracts";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { PULL_REQUEST_TERMINOLOGY } from "@t3tools/client-runtime/source-control-clients";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -23,7 +23,7 @@ function MergeButton({ reference }: { reference: PullRequestRef }) {
   const { actionPending, perform } = usePullRequestActionRunner({
     environmentId: EnvironmentId.make("environment"),
     reference,
-    terminology: sourceControlClients.get(undefined).changeRequest,
+    terminology: PULL_REQUEST_TERMINOLOGY,
   });
   return (
     <button type="button" disabled={actionPending} onClick={() => void perform("merge")}>

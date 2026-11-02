@@ -554,10 +554,7 @@ export function BranchToolbarBranchSelector({
     ? resolveThreadPullRequestBadge(serverThread?.pullRequests)
     : null;
   const displayedPr = linkedStatus?.pr ?? (currentLinkedPr === null ? branchPr : null);
-  const displayedPrStatus = prStatusIndicator(
-    displayedPr,
-    linkedStatus?.sourceControlProvider ?? branchStatusQuery.data?.sourceControlProvider,
-  );
+  const displayedPrStatus = prStatusIndicator(displayedPr);
   const prNumber = currentLinkedPr?.number ?? displayedPr?.number;
   const prUrl = currentLinkedPr?.url ?? displayedPr?.url;
   const openPrLink = useOpenPrLink(threadRef);

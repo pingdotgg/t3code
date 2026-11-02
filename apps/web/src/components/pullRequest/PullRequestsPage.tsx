@@ -1,11 +1,11 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import {
   capitalizeTerm,
-  changeRequestTermsFor,
+  currentChangeRequestTerms,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { applyPullRequestDraftFilterChange } from "@t3tools/client-runtime/pull-request-query";
 import { Spinner } from "~/components/ui/spinner";
-import { useProjectsChangeRequestTerms } from "~/state/entities";
 import type { PullRequestSpeedActionResult } from "~/components/pullRequest/PullRequestSpeedActions";
 import { usePullRequestCloseBatch } from "~/components/pullRequest/usePullRequestActions";
 import { SidebarPointerSensor } from "~/components/Sidebar.pointer";
@@ -146,7 +146,7 @@ const EMPTY_TERMINAL_LABELS = new Map<string, string>();
 const EMPTY_PENDING_SURFACES = new Set<string>();
 export function PullRequestsPage() {
   const search = useSearch({ from: "/_chat/pull-requests" });
-  const terms = useProjectsChangeRequestTerms();
+  const terms = useChangeRequestTerms();
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
     sort === "ready" || sort === "largest" || sort === "smallest" ? "eager" : "visible";
@@ -1401,9 +1401,7 @@ export function PullRequestsPage() {
     event.stopPropagation();
     if (event.repeat) return;
     const url = openPanelPullRequestUrl;
-    const { shortLabel, singular } = changeRequestTermsFor(
-      sourceControlClients.findByChangeRequestUrl(url),
-    );
+    const { shortLabel, singular } = currentChangeRequestTerms();
     void writeTextToClipboard(url, `${singular} link`).then(
       (didCopy) => {
         if (didCopy)

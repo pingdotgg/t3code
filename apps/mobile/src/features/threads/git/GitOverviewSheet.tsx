@@ -8,7 +8,7 @@ import {
   requiresDefaultBranchConfirmation,
 } from "@t3tools/client-runtime/state/vcs";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { changeRequestTermsFor } from "@t3tools/client-runtime/source-control-clients";
+import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import {
   CommonActions,
   StackActions,
@@ -134,9 +134,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           }),
   }));
 
-  const { shortLabel, singular } = changeRequestTermsFor(
-    gitStatus.data?.sourceControlProvider?.kind,
-  );
+  const { shortLabel, singular } = currentChangeRequestTerms();
 
   const openExistingPr = async () => {
     const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;

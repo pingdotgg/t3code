@@ -369,30 +369,30 @@ function EmptySourceControlDiscovery({
   );
 }
 
-function ProviderTerminologySetting() {
-  const enabled = useClientSettings((settings) => settings.providerSpecificTerminology);
+function MergeRequestTerminologySetting() {
+  const enabled = useClientSettings((settings) => settings.mergeRequestTerminology);
   const updateSettings = useUpdatePrimarySettings();
 
   return (
     <SettingsSection title="Terminology">
       <SettingsRow
-        {...searchableSetting("provider-specific-terminology")}
-        description="Use each host's own terms, like “merge request” and “MR” for GitLab. Off always says “pull request”."
+        {...searchableSetting("merge-request-terminology")}
+        description="Say “merge request” and “MR” instead of “pull request” and “PR”, for every host."
         resetAction={
-          enabled ? null : (
+          enabled ? (
             <SettingResetButton
-              label="version control specific language"
-              onClick={() => updateSettings({ providerSpecificTerminology: true })}
+              label="merge request terminology"
+              onClick={() => updateSettings({ mergeRequestTerminology: false })}
             />
-          )
+          ) : null
         }
         control={
           <Switch
             checked={enabled}
             onCheckedChange={(checked) =>
-              updateSettings({ providerSpecificTerminology: Boolean(checked) })
+              updateSettings({ mergeRequestTerminology: Boolean(checked) })
             }
-            aria-label="Use version control specific language"
+            aria-label="Use merge request terminology"
           />
         }
       />
@@ -555,7 +555,7 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
-      <ProviderTerminologySetting />
+      <MergeRequestTerminologySetting />
       <SourceControlWritingSettingsSection />
     </SettingsPageContainer>
   );

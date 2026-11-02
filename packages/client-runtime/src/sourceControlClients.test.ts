@@ -3,9 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   appSignInTargetForRemote,
-  changeRequestTermsFor,
-  changeRequestTermsForHosts,
-  setProviderChangeRequestTerms,
+  currentChangeRequestTerms,
+  PULL_REQUEST_TERMINOLOGY,
+  setMergeRequestTerms,
   sourceControlClients,
 } from "./sourceControlClients.ts";
 import { normalizeThreadPullRequestKey } from "./threadPullRequests.ts";
@@ -393,38 +393,20 @@ describe("appSignInTargetForRemote", () => {
   });
 });
 
-describe("changeRequestTermsFor", () => {
-  it("follows the host unless provider terminology is off", () => {
-    expect(changeRequestTermsFor("gitlab")).toEqual({
-      shortLabel: "MR",
-      shortLabelWithArticle: "an MR",
-      singular: "merge request",
-      plural: "merge requests",
-    });
-    expect(changeRequestTermsFor(sourceControlClients.get("bitbucket")).singular).toBe(
-      "pull request",
-    );
-    setProviderChangeRequestTerms(false);
+describe("currentChangeRequestTerms", () => {
+  it("says pull request for every host until merge request terms are on", () => {
+    expect(currentChangeRequestTerms()).toBe(PULL_REQUEST_TERMINOLOGY);
+    setMergeRequestTerms(true);
     try {
-      for (const kind of ["gitlab", "github", "unknown"]) {
-        expect(changeRequestTermsFor(kind), kind).toEqual({
-          shortLabel: "PR",
-          shortLabelWithArticle: "a PR",
-          singular: "pull request",
-          plural: "pull requests",
-        });
-      }
+      expect(currentChangeRequestTerms()).toEqual({
+        shortLabel: "MR",
+        shortLabelWithArticle: "an MR",
+        singular: "merge request",
+        plural: "merge requests",
+      });
     } finally {
-      setProviderChangeRequestTerms(true);
+      setMergeRequestTerms(false);
     }
-  });
-
-  it("names a list after its hosts only when they all agree", () => {
-    expect(changeRequestTermsForHosts(["gitlab", undefined, "gitlab"]).plural).toBe(
-      "merge requests",
-    );
-    expect(changeRequestTermsForHosts(["gitlab", "github"]).plural).toBe("pull requests");
-    expect(changeRequestTermsForHosts([]).plural).toBe("pull requests");
-    expect(changeRequestTermsForHosts(["gitlab"], false).plural).toBe("pull requests");
+    expect(currentChangeRequestTerms()).toBe(PULL_REQUEST_TERMINOLOGY);
   });
 });

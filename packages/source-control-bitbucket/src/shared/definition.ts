@@ -74,12 +74,6 @@ export const definition = defineSourceControl({
   label: "Bitbucket",
   pickerLabel: "Bitbucket",
   icon,
-  changeRequest: {
-    shortLabel: "PR",
-    shortLabelWithArticle: "a PR",
-    singular: "pull request",
-    plural: "pull requests",
-  },
   repositoryPathHint: "workspace/repository",
   publicHost: "bitbucket.org",
   publishDescription: "bitbucket.org",

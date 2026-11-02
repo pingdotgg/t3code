@@ -1,7 +1,7 @@
 import type { ProjectId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
   capitalizeTerm,
-  changeRequestTermsFor,
+  currentChangeRequestTerms,
   sourceControlClients,
   UNKNOWN_SOURCE_CONTROL_CLIENT,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -248,7 +248,7 @@ function LinkRowImpl({
                   <TooltipPopup>
                     {stack.kind === "native"
                       ? `${sourceControlClients.hostLabelForChangeRequestUrl(link.url)} stack of ${stack.size}: merging a layer lands the ones below it.`
-                      : `${stack.size} ${changeRequestTermsFor(linkHost).plural} chained by base branch.`}
+                      : `${stack.size} ${currentChangeRequestTerms().plural} chained by base branch.`}
                   </TooltipPopup>
                 </Tooltip>
               ) : null}
@@ -283,7 +283,7 @@ function LinkRowImpl({
         <PullRequestSpeedActions
           entry={actionEntry}
           hostActions={linkHostActions}
-          terminology={changeRequestTermsFor(linkHost)}
+          terminology={currentChangeRequestTerms()}
         />
       ) : null}
       <span
@@ -428,10 +428,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   const rowInputs = { speedMode, environmentProjects, capabilities, supportsWatch, thread };
 
   if (linkCount === 0) {
-    const { plural, singular } = changeRequestTermsFor(
-      environmentProjects.find((project) => project.id === thread?.projectId)?.repositoryIdentity
-        ?.provider,
-    );
+    const { plural, singular } = currentChangeRequestTerms();
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
         <PullRequestGlyph.link aria-hidden className="size-6 text-muted-foreground/60" />

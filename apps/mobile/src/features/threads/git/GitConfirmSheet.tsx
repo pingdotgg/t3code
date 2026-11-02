@@ -1,5 +1,5 @@
 import { resolveDefaultBranchActionDialogCopy } from "@t3tools/client-runtime/state/vcs";
-import { changeRequestTermsFor } from "@t3tools/client-runtime/source-control-clients";
+import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -15,7 +15,6 @@ import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
-import { useThreadSelection } from "../../../state/use-thread-selection";
 import { SheetActionButton } from "./gitSheetComponents";
 
 type GitConfirmSheetProps = StaticScreenProps<{
@@ -35,8 +34,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
-  const { selectedThreadProject } = useThreadSelection();
-  const terminology = changeRequestTermsFor(selectedThreadProject?.repositoryIdentity?.provider);
+  const terminology = currentChangeRequestTerms();
 
   const params = props.route.params;
 

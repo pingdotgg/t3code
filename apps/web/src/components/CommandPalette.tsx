@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -25,10 +26,7 @@ import {
   type AddProjectRemoteSource,
   type AddProjectRemoteSourceReadiness,
 } from "@t3tools/client-runtime/operations/projects";
-import {
-  changeRequestTermsFor,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import {
@@ -136,7 +134,6 @@ import {
   useHiddenThreadKeys,
   useEnvironmentThreadRefs,
   useProjects,
-  useProjectsChangeRequestTerms,
   useServerConfigs,
   useVisibleThreadShells,
   waitForProject,
@@ -435,7 +432,7 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
-  const projectsChangeRequestTerms = useProjectsChangeRequestTerms();
+  const changeRequestTerms = useChangeRequestTerms();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -1368,11 +1365,7 @@ function OpenCommandPaletteDialog(props: {
           : ["copy", "thread", "thread id", "reference"],
       title:
         activeThreadReferenceCopyTarget.kind === "pull-request"
-          ? `Copy ${
-              changeRequestTermsFor(
-                sourceControlClients.findByChangeRequestUrl(activeThreadReferenceCopyTarget.value),
-              ).shortLabel
-            } link`
+          ? `Copy ${changeRequestTerms.shortLabel} link`
           : "Copy thread",
       description: activeThreadReferenceCopyTarget.description,
       icon: <LinkIcon className={ITEM_ICON_CLASS} />,
@@ -1386,13 +1379,7 @@ function OpenCommandPaletteDialog(props: {
     threadPullRequestLinkMode(activeThreadServerConfig?.environment.capabilities) !== "unsupported"
   ) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
-    const { plural, singular } = changeRequestTermsFor(
-      projects.find(
-        (project) =>
-          project.environmentId === activeThread.environmentId &&
-          project.id === activeThread.projectId,
-      )?.repositoryIdentity?.provider,
-    );
+    const { plural, singular } = changeRequestTerms;
     actionItems.push({
       kind: "action",
       value: "action:link-pull-request",
@@ -1564,21 +1551,24 @@ function OpenCommandPaletteDialog(props: {
       value: "action:pull-requests",
       searchTerms: [
         ...new Set(
-          sourceControlClients.definitions.flatMap((definition) => {
-            const shortLabel = definition.changeRequest.shortLabel.toLowerCase();
-            return [
-              definition.changeRequest.plural,
-              `${shortLabel}s`,
-              shortLabel,
-              ...definition.label.toLowerCase().split(/[^a-z0-9]+/u),
-            ].filter(Boolean);
-          }),
+          sourceControlClients.definitions.flatMap((definition) =>
+            definition.label
+              .toLowerCase()
+              .split(/[^a-z0-9]+/u)
+              .filter(Boolean),
+          ),
         ),
+        "pull requests",
+        "prs",
+        "pr",
+        "merge requests",
+        "mrs",
+        "mr",
         "review",
         "merge",
         "branch",
       ],
-      title: `Open ${projectsChangeRequestTerms.plural}`,
+      title: `Open ${changeRequestTerms.plural}`,
       icon: <PullRequestGlyph.pullRequest className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({ to: "/pull-requests", search: readPullRequestListPreferences() });

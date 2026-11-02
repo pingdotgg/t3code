@@ -18,7 +18,7 @@ import {
 import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import {
-  changeRequestTermsFor,
+  currentChangeRequestTerms,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
@@ -201,7 +201,7 @@ function resolveT3McpToolPresentation(
   const urlTarget =
     typeof input?.url === "string" ? sourceControlClients.parseChangeRequestUrl(input.url) : null;
   const number = urlTarget?.link.number ?? input?.number;
-  const { shortLabel } = changeRequestTermsFor(urlTarget?.definition);
+  const { shortLabel } = currentChangeRequestTerms();
   const target =
     actionKind !== undefined &&
     actionKind !== "list-prs" &&

@@ -11,10 +11,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import {
-  changeRequestTermsFor,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import { videoMimeType } from "@t3tools/shared/video";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -186,9 +183,7 @@ export function ComposerContextSheet(props: {
     record?.kind === "review-comment" && "pullRequest" in record
       ? record.pullRequest?.url
       : undefined;
-  const changeRequestTerm = changeRequestTermsFor(
-    pullRequestUrl ? sourceControlClients.findByChangeRequestUrl(pullRequestUrl) : undefined,
-  ).singular;
+  const changeRequestTerm = currentChangeRequestTerms().singular;
   const terminal = record?.kind === "terminal" && !("payload" in record) ? record : null;
   return (
     <Sheet title={terminal?.terminalLabel ?? props.label} onClose={props.onClose}>

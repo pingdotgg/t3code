@@ -571,7 +571,7 @@ function runStackedAction(
     commitMessage?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
-    providerTerminology?: boolean;
+    mergeRequestTerminology?: boolean;
   },
   options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
 ) {
@@ -5523,7 +5523,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("says pull request for a GitLab branch when provider terminology is off", () =>
+  it.effect("says merge request on any host when merge request terminology is on", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -5536,14 +5536,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["push", "-u", "origin", "feature/generic-terms"]);
       const { manager } = yield* makeManager({
         providerScenario: {
-          kind: "gitlab",
+          kind: "github",
           prListSequence: [
             [],
             [
               {
                 number: 12,
                 title: "Generic terms",
-                url: "https://gitlab.com/pingdotgg/codething-mvp/-/merge_requests/12",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/12",
                 baseRefName: "main",
                 headRefName: "feature/generic-terms",
                 state: "open",
@@ -5557,7 +5557,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       const result = yield* runStackedAction(
         manager,
-        { cwd: repoDir, action: "create_pr", providerTerminology: false },
+        { cwd: repoDir, action: "create_pr", mergeRequestTerminology: true },
         {
           progressReporter: {
             publish: (event) =>
@@ -5569,11 +5569,11 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       );
 
       expect(labels).toEqual([
-        "Preparing PR...",
-        "Generating PR content...",
-        "Creating pull request...",
+        "Preparing MR...",
+        "Generating MR content...",
+        "Creating merge request...",
       ]);
-      expect(result.toast.title).toBe("Created PR #12");
+      expect(result.toast.title).toBe("Created MR #12");
     }),
   );
 });

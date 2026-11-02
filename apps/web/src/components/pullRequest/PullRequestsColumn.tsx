@@ -1,4 +1,4 @@
-import { useProjectsChangeRequestTerms } from "~/state/entities";
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import type { PullRequestInvolvement, PullRequestListState } from "@t3tools/contracts";
 import { Plug2Icon, SearchIcon } from "lucide-react";
@@ -37,7 +37,7 @@ function ExpandableSearch({
    */
   onFocusWithin?: (focused: boolean) => void;
 }) {
-  const terms = useProjectsChangeRequestTerms();
+  const terms = useChangeRequestTerms();
   const containerRef = useRef<HTMLDivElement | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the search input DOM node when the topbar search opens
   useEffect(() => {
@@ -112,7 +112,7 @@ export function PullRequestsColumn({
   listBody: ReactNode;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
-  const terms = useProjectsChangeRequestTerms();
+  const terms = useChangeRequestTerms();
   const title = capitalizeTerm(terms.plural);
   const contentArea = workspaceAreaProps("pull-requests", 1, title);
   const markerRef = useRef<HTMLDivElement | null>(null);
@@ -281,7 +281,7 @@ function PullRequestRefreshControl({
   refreshing: boolean;
   onRefresh: () => void;
 }) {
-  const terms = useProjectsChangeRequestTerms();
+  const terms = useChangeRequestTerms();
   return (
     <Button
       size={compact ? "icon-sm" : "icon"}

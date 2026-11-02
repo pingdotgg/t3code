@@ -1,6 +1,5 @@
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
-import { useProjectsChangeRequestTerms } from "../../state/entities";
-import { useEnabledNavigationTabs, useWorkspaceTabLabels } from "./navigation-tabs";
+import { WORKSPACE_TAB_LABELS, useEnabledNavigationTabs } from "./navigation-tabs";
 import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
 import { SettingsRouteScreen } from "../settings/SettingsRouteScreen";
 import { WorkspaceSectionToolbar } from "./WorkspaceSectionToolbar";
@@ -48,18 +47,19 @@ import {
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 
+const TAB_TITLES = WORKSPACE_TAB_LABELS;
+
 function WorkspaceRootTitle(props: {
   readonly columnWidth: number;
   readonly onOpenEnvironments: () => void;
 }) {
   const { state, settingsOpen } = useWorkspaceTabs()!;
-  const tabLabels = useWorkspaceTabLabels();
   const maxWidth = Math.max(0, props.columnWidth - (use(HeaderItemsWidthContext) ?? 160));
   const enabled = useEnabledNavigationTabs();
   const tabTitle = settingsOpen
     ? "Settings"
     : enabled.length
-      ? tabLabels[state.selectedTab]
+      ? TAB_TITLES[state.selectedTab]
       : "Navigation";
   return (
     <View style={{ width: maxWidth, minHeight: 32, justifyContent: "center" }}>
@@ -97,8 +97,6 @@ function WorkspaceRootContent() {
   const keyboardHeight = useKeyboardState((keyboard) => keyboard.height);
   const workspace = useWorkspaceTabs()!;
   const { state } = workspace;
-  const tabLabels = useWorkspaceTabLabels();
-  const changeRequestTerms = useProjectsChangeRequestTerms();
   // Settings is a workspace tab too; its list takes the place of the selected tab's.
   const settingsOpen = workspace.settingsOpen;
   const renderHeaderTitle = () => (
@@ -145,7 +143,7 @@ function WorkspaceRootContent() {
               title: settingsOpen
                 ? "Settings"
                 : enabled.length
-                  ? tabLabels[state.selectedTab]
+                  ? TAB_TITLES[state.selectedTab]
                   : "Navigation",
               headerShown: true,
               headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
@@ -174,9 +172,7 @@ function WorkspaceRootContent() {
                 ? [
                     {
                       accessibilityLabel:
-                        state.selectedTab === "threads"
-                          ? "Search threads"
-                          : `Search ${changeRequestTerms.plural}`,
+                        state.selectedTab === "threads" ? "Search threads" : "Search pull requests",
                       icon: "magnifyingglass" as const,
                       onPress: () => {
                         dispatchHardwareKeyboardCommand("focusSearch");

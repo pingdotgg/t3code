@@ -39,7 +39,7 @@ import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
 import {
-  changeRequestTermsFor,
+  currentChangeRequestTerms,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import {
@@ -124,11 +124,6 @@ function linkedPullRequestReference(fallback: ThreadLinkedPullRequest) {
   return { ...fallback, ...(host === undefined ? {} : { host }) };
 }
 
-function changeRequestTerminologyForUrl(url: string | undefined) {
-  const host = url === undefined ? null : sourceControlClients.findByChangeRequestUrl(url);
-  return changeRequestTermsFor(host);
-}
-
 export function linkedPullRequestSnapshotStatus(
   link: ThreadPullRequestLink,
 ): LinkedThreadPullRequestStatus | null {
@@ -175,7 +170,7 @@ function resolveThreadPullRequestBadgePresentation({
   readonly url?: string | undefined;
   readonly status: PrStatusIndicator | null;
 }): ThreadPullRequestBadgePresentation | null {
-  const terminology = changeRequestTerminologyForUrl(url);
+  const terminology = currentChangeRequestTerms();
   if (badge?.kind === "stack") {
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
     return {
@@ -414,12 +409,9 @@ function ThreadPullRequestMiniListItem({
   );
 }
 
-export function prStatusIndicator(
-  pr: ThreadPr,
-  provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
-): PrStatusIndicator | null {
+export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   if (!pr) return null;
-  const { shortLabel } = changeRequestTermsFor(provider?.kind);
+  const { shortLabel } = currentChangeRequestTerms();
   const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true });
 
   const tooltipLead = `${shortLabel} #${pr.number} - ${state.label}`;
@@ -702,10 +694,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     linkedPullRequestStatus: linkedPullRequest,
   };
   const pr = linkedPullRequest?.pr ?? resolveDisplayedThreadPr(displayedPrInput);
-  const prStatus = prStatusIndicator(
-    pr,
-    linkedPullRequest?.sourceControlProvider ?? resolveDisplayedThreadPrProvider(displayedPrInput),
-  );
+  const prStatus = prStatusIndicator(pr);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -746,7 +735,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
       {pendingLink ? (
         <PullRequestGlyph.pullRequest
           className="size-3 text-muted-foreground"
-          aria-label={`${changeRequestTerminologyForUrl(pendingLink.url).shortLabel} #${pendingLink.number}, status pending`}
+          aria-label={`${currentChangeRequestTerms().shortLabel} #${pendingLink.number}, status pending`}
         />
       ) : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
@@ -867,7 +856,7 @@ export function ThreadSearchPullRequestNumber({
     badge,
     number: pr?.number ?? stored?.number,
     url: pr?.url ?? stored?.url,
-    status: prStatusIndicator(pr, linked?.sourceControlProvider),
+    status: prStatusIndicator(pr),
   });
   if (presentation === null) return null;
   const aggregate = badge !== null && (badge.kind === "stack" || badge.others > 0);

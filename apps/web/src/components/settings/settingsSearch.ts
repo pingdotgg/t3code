@@ -995,12 +995,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   ...sourceControlHostSearchItems(sourceControlClients.definitions),
   {
-    id: "provider-specific-terminology",
-    title: "Use version control specific language",
+    id: "merge-request-terminology",
+    title: "Use merge request terminology",
     to: "/settings/source-control",
-    searchTerms: [
-      `terminology wording merge request mr pull request pr ${SOURCE_CONTROL_HOST_LABELS}`,
-    ],
+    searchTerms: ["terminology wording merge request mr pull request pr gitlab"],
   },
   {
     id: "source-control-writing-style",

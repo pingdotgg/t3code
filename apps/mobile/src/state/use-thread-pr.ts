@@ -97,12 +97,6 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
   const summary = pullRequestRef === null ? undefined : (pullRequestSummary.data ?? snapshot);
   // Rows pass `pr` into callbacks; a fresh object per render would invalidate them.
   const summaryPresentation =
-    summary === undefined
-      ? null
-      : presentThreadPr(pullRequestDetailToVcsStatus(summary), {
-          kind: summary.provider,
-          name: summary.provider,
-          baseUrl: "",
-        });
+    summary === undefined ? null : presentThreadPr(pullRequestDetailToVcsStatus(summary));
   return linkedPresentation ?? summaryPresentation;
 }

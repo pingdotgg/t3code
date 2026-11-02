@@ -51,7 +51,7 @@ describe("resolveNewTaskWorkspaceSelection", () => {
 describe("resolveNewTaskBranchLabel", () => {
   it.each([
     ["https://github.com/acme/repo/pull/123", "From PR #123"],
-    ["https://gitlab.com/acme/repo/-/merge_requests/123", "From MR #123"],
+    ["https://gitlab.com/acme/repo/-/merge_requests/123", "From PR #123"],
   ])("names the change request a worktree starts from (%s)", (pullRequestReference, label) => {
     expect(
       resolveNewTaskBranchLabel({

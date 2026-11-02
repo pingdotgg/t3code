@@ -1,6 +1,6 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { useAtomValue } from "@effect/atom-react";
 import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
-import { useProjectsChangeRequestTerms } from "~/state/entities";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
@@ -1290,7 +1290,7 @@ function DiffColorsSettingsRow() {
 
 export function DiffsSettingsPanel() {
   const settings = useScopedSettings();
-  const changeRequestTerms = useProjectsChangeRequestTerms();
+  const changeRequestTerms = useChangeRequestTerms();
   const updateSettings = useUpdateScopedSettings();
 
   return (

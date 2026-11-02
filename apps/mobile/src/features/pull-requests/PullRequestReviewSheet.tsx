@@ -2,7 +2,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useAtomRefresh } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
-  changeRequestTermsFor,
+  currentChangeRequestTerms,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -244,8 +244,8 @@ export function PullRequestReviewSheet({
       ) : null}
       {reviewing && !canSubmitComments ? (
         <Text className="text-sm text-danger-foreground">
-          You can no longer submit line comments on this{" "}
-          {changeRequestTermsFor(result.data?.provider).singular}. Your drafts are kept here.
+          You can no longer submit line comments on this {currentChangeRequestTerms().singular}.
+          Your drafts are kept here.
         </Text>
       ) : null}
       {submission.error || result.error || store.error ? (

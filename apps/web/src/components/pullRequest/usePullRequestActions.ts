@@ -16,8 +16,7 @@ import { useRef, useState } from "react";
 import {
   capitalizeTerm,
   type ChangeRequestTerminology,
-  changeRequestTermsFor,
-  sourceControlClients,
+  currentChangeRequestTerms,
 } from "@t3tools/client-runtime/source-control-clients";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useClientSettings, useEnvironmentSettings } from "~/hooks/useSettings";
@@ -216,7 +215,7 @@ export function usePullRequestCloseBatch(onClosed: (entry: EnvironmentPullReques
         setClosingKeys(new Set(pending.current));
         if (result._tag === "Failure") {
           failures.push(
-            `#${entry.number}: ${readableFailure(squashAtomCommandFailure(result), actionFailureHints(changeRequestTermsFor(entry.provider).singular).close)}`,
+            `#${entry.number}: ${readableFailure(squashAtomCommandFailure(result), actionFailureHints(currentChangeRequestTerms().singular).close)}`,
           );
           return;
         }
@@ -264,9 +263,7 @@ export function usePullRequestHandoffs({
   // Serialize all handoffs because they check out the same pull request.
   const [handoff, setHandoff] = useState<string | null>(null);
   // Prompt links hand over a URL alone, so the URL is what names the host.
-  const terminology = changeRequestTermsFor(
-    detail && sourceControlClients.findByChangeRequestUrl(detail.url),
-  );
+  const terminology = currentChangeRequestTerms();
 
   // Questions must not change checkouts or create worktrees.
   const openThreadWithTask = async (

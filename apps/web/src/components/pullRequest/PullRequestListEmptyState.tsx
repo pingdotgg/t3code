@@ -1,4 +1,4 @@
-import { useProjectsChangeRequestTerms } from "~/state/entities";
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { PlusIcon, SearchIcon } from "lucide-react";
@@ -70,7 +70,7 @@ export function PullRequestListEmptyState({
   onLoadMore: () => void;
   onRefresh: () => void;
 }) {
-  const terms = useProjectsChangeRequestTerms();
+  const terms = useChangeRequestTerms();
   if (!hasProjects) {
     return (
       <Empty>

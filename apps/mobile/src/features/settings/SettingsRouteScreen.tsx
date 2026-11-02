@@ -4,7 +4,7 @@ import {
 } from "../workspace/navigation-tab-order";
 import {
   NAVIGATION_TAB_ICONS,
-  useWorkspaceTabLabels,
+  WORKSPACE_TAB_LABELS,
   useNavigationTabOrder,
   useHiddenNavigationTabs,
 } from "../workspace/navigation-tabs";
@@ -291,11 +291,10 @@ function useOverflowRows(): SettingsListRow[] {
   const tabs =
     Platform.OS === "android" && layout.usesSplitView ? [] : overflowNavigationTabs(order, hidden);
   const selectTab = useSelectWorkspaceTab();
-  const tabLabels = useWorkspaceTabLabels();
   return tabs.map((tab) => ({
     id: tab,
     icon: NAVIGATION_TAB_ICONS[tab],
-    label: tabLabels[tab],
+    label: WORKSPACE_TAB_LABELS[tab],
     onPress: () => selectTab(tab),
   }));
 }
