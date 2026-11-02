@@ -54,6 +54,8 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
   readonly hiddenThreadKeysAtom: Atom.Atom<ReadonlySet<string>>;
   /** Live threads, so archived children of loaded, visible parents stay visible. */
   readonly liveThreadRefsAtom: Atom.Atom<ReadonlyArray<ScopedThreadRef>>;
+  /** Whether any connected environment hides tags, including ones outside this archive's scope. */
+  readonly anyEnvironmentHidingAtom: Atom.Atom<boolean>;
   readonly labelPrefix: string;
 }) {
   return Atom.family((environmentKey: string) =>
@@ -83,31 +85,14 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
         }
       }
 
-      // A task can point at a machine outside this archive's scope; its tags still apply.
-      for (const { snapshot } of snapshots) {
-        for (const thread of snapshot.threads) {
-          const parentEnvironmentId = thread.delegatedFrom?.environmentId;
-          if (
-            parentEnvironmentId === undefined ||
-            environments.some((environment) => environment.environmentId === parentEnvironmentId)
-          ) {
-            continue;
-          }
-          environments.push({
-            environmentId: parentEnvironmentId,
-            threads: [],
-            hiddenTags: get(options.hiddenThreadTagsAtom(parentEnvironmentId)),
-          });
-        }
-      }
-
       // One pass over every environment's page, so archived tasks follow parents archived elsewhere.
+      // Any connected machine may hide an unloaded parent, so the global flag decides, not the scope.
+      const hidingAnywhere = get(options.anyEnvironmentHidingAtom);
       const hidden = hiddenThreadKeys(
         environments,
         get(options.hiddenThreadKeysAtom),
-        environments.some((environment) => environment.hiddenTags !== null)
-          ? new Set(get(options.liveThreadRefsAtom).map(threadKey))
-          : undefined,
+        hidingAnywhere ? new Set(get(options.liveThreadRefsAtom).map(threadKey)) : undefined,
+        hidingAnywhere,
       );
       if (hidden.size === 0) return { snapshots, error, isLoading };
       return {

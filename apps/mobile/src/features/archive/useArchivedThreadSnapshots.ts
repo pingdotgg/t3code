@@ -24,6 +24,7 @@ const archivedSnapshotsAtom = createArchivedThreadSnapshotsAtomFamily({
   hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
   hiddenThreadKeysAtom: environmentThreadShells.hiddenThreadKeysAtom,
   liveThreadRefsAtom: environmentThreadShells.threadRefsAtom,
+  anyEnvironmentHidingAtom: environmentThreadShells.anyEnvironmentHidingAtom,
   labelPrefix: "mobile:archived-thread-snapshots",
 });
 

@@ -26,6 +26,7 @@ it("does not expose an archived snapshot failure message", () => {
     hiddenThreadTagsAtom: () => Atom.make(null),
     hiddenThreadKeysAtom: Atom.make((): ReadonlySet<string> => new Set()),
     liveThreadRefsAtom: Atom.make((): ReadonlyArray<ScopedThreadRef> => []),
+    anyEnvironmentHidingAtom: Atom.make(false),
     labelPrefix: "test:archived-thread-snapshots",
   });
   const registry = AtomRegistry.make();
@@ -65,7 +66,14 @@ describe("archived delegated tasks follow their parent on another machine", () =
     { name: "live visible parent", parentPage: page([]), live: true, tasks: 1 },
     { name: "parent page not loaded yet", parentPage: null, live: false, tasks: 0 },
     { name: "archive scoped to the task's machine", parentPage: undefined, live: false, tasks: 0 },
-  ])("$name", ({ parentPage, live, tasks }) => {
+    {
+      name: "only a third machine hides tags",
+      parentPage: page([]),
+      live: false,
+      tasks: 0,
+      parentTags: null,
+    },
+  ])("$name", ({ parentPage, live, tasks, parentTags = ["private"] }) => {
     const snapshotsAtom = createArchivedThreadSnapshotsAtomFamily<Error>({
       getSnapshotAtom: (environmentId) =>
         Atom.make(
@@ -76,11 +84,13 @@ describe("archived delegated tasks follow their parent on another machine", () =
               : AsyncResult.success(parentPage),
         ),
       hiddenThreadTagsAtom: (environmentId) =>
-        Atom.make(environmentId === parentEnvironmentId ? ["private"] : null),
+        Atom.make(environmentId === parentEnvironmentId ? parentTags : null),
       hiddenThreadKeysAtom: Atom.make((): ReadonlySet<string> => new Set()),
       liveThreadRefsAtom: Atom.make((): ReadonlyArray<ScopedThreadRef> =>
         live ? [{ environmentId: parentEnvironmentId, threadId: parentId }] : [],
       ),
+      // The parent's machine hides tags; a scoped archive learns that only from this flag.
+      anyEnvironmentHidingAtom: Atom.make(true),
       labelPrefix: "test:archived-thread-snapshots",
     });
     const registry = AtomRegistry.make();
