@@ -125,8 +125,16 @@ describe("Sidebar", () => {
     const handle = screen.container.querySelector<HTMLElement>(
       '[data-slot="sidebar-restore-handle"]',
     )!;
-    dispatch(handle, "pointerdown", 2);
-    dispatch(handle, "pointermove", 260);
+    const edge = screen.container.querySelector<HTMLElement>('[data-slot="sidebar-restore-edge"]')!;
+    await userEvent.hover(edge);
+    const bounds = edge.getBoundingClientRect();
+    const startX = bounds.right - 1;
+    const endX = startX + 258;
+    const y = bounds.top + bounds.height / 2;
+    expect(handle.contains(document.elementFromPoint(startX, y))).toBe(true);
+    expect(edge.contains(document.elementFromPoint(2, y))).toBe(false);
+    dispatch(handle, "pointerdown", startX);
+    dispatch(handle, "pointermove", endX);
     await vi.waitFor(() =>
       expect(
         sidebar.querySelector('[data-slot="sidebar-gap"]')!.getBoundingClientRect().width,
@@ -136,7 +144,7 @@ describe("Sidebar", () => {
     expect(
       sidebar.querySelector('[data-slot="sidebar-container"]')!.getBoundingClientRect().left,
     ).toBe(0);
-    dispatch(handle, "pointermove", 2);
+    dispatch(handle, "pointermove", startX);
     await vi.waitFor(() =>
       expect(
         sidebar.querySelector('[data-slot="sidebar-container"]')!.getBoundingClientRect().right,
@@ -145,17 +153,17 @@ describe("Sidebar", () => {
     expect(sidebar.querySelector('[data-slot="sidebar-gap"]')!.getBoundingClientRect().width).toBe(
       0,
     );
-    dispatch(handle, "pointerup", 2);
+    dispatch(handle, "pointerup", startX);
     expect(sidebar.dataset.state).toBe("collapsed");
     expect(onResize).toHaveBeenCalledTimes(2);
-    dispatch(handle, "pointerdown", 2);
-    dispatch(handle, "pointermove", 260);
+    dispatch(handle, "pointerdown", startX);
+    dispatch(handle, "pointermove", endX);
     await vi.waitFor(() =>
       expect(
         sidebar.querySelector('[data-slot="sidebar-container"]')!.getBoundingClientRect().left,
       ).toBe(0),
     );
-    dispatch(handle, "pointerup", 260);
+    dispatch(handle, "pointerup", endX);
     await vi.waitFor(() => expect(sidebar.dataset.state).toBe("expanded"));
     expect(onResize).toHaveBeenLastCalledWith(258);
     expect(sidebar.inert).toBe(false);
