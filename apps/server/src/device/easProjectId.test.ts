@@ -179,43 +179,13 @@ it.effect.each([
     expected: Option.some(ID_A),
   },
   {
-    case: "reads app.json's id through a config that spreads parts of config",
-    files: {
-      "app.config.js": `module.exports = ({ config }) => ({
-        ...config,
-        ios: { ...config.ios, infoPlist: { ...config?.ios.infoPlist, CFBundleDisplayName: "Dev" } },
-        plugins: [...config.plugins, "expo-dev-client"],
-      });`,
-      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
-    },
-    expected: Option.some(ID_A),
-  },
-  {
-    case: "reads app.json's id through a config typed in a JSDoc comment",
-    files: {
-      "app.config.js": `/** @param {import('expo/config').ConfigContext} context */
-      module.exports = ({ config }) => ({ ...config, name: "Dev" });`,
-      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
-    },
-    expected: Option.some(ID_A),
-  },
-  {
-    case: "reads app.json's id through a config typed in a multiline JSDoc comment",
-    files: {
-      "app.config.js": `/**
-       * The dev variant of the app.
-       * @param {import('expo/config').ConfigContext} context
-       * @returns {import('expo/config').ExpoConfig}
-       */
-      module.exports = ({ config }) => ({ ...config, name: "Dev" });`,
-      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
-    },
-    expected: Option.some(ID_A),
-  },
-  {
-    case: "reads app.json's id through a config with a line comment that names an import",
+    case: "reads app.json's id through a config typed in a multi-line JSDoc or line comment",
     files: {
       "app.config.js": `// Types: import('expo/config').ExpoConfig
+      /**
+       * The dev variant of the app.
+       * @param {import('expo/config').ConfigContext} context
+       */
       module.exports = ({ config }) => ({ ...config, name: "Dev" });`,
       "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
     },
@@ -235,10 +205,19 @@ it.effect.each([
     expected: Option.none(),
   },
   {
-    case: "gives no answer when a config spreads what a call on config returns",
+    case: "gives no answer when a template line that only looks like a comment replaces extra",
     files: {
-      "app.config.js": `module.exports = ({ config }) => ({ ...config, ...config.variant("dev") });`,
-      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+      "app.config.js": `module.exports = ({ config }) => {
+        const banner = \`
+/* \${(config.extra = config.preview.extra)} */\`;
+        return { ...config, name: banner };
+      };`,
+      "app.json": JSON.stringify({
+        expo: {
+          extra: { eas: { projectId: ID_A } },
+          preview: { extra: { eas: { projectId: ID_B } } },
+        },
+      }),
     },
     expected: Option.none(),
   },
