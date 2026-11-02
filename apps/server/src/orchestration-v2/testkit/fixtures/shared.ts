@@ -22,6 +22,7 @@ import {
 } from "@t3tools/contracts";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 
 import type {
   OrchestratorV2ScenarioResult,
@@ -177,6 +178,12 @@ export type OrchestratorFixtureInputStep =
       readonly attachments?: ReadonlyArray<ChatAttachment>;
     }
   | {
+      /** Forks the thread at a run into a second thread, then sends `text` there. */
+      readonly type: "fork";
+      readonly fromRunIndex: number;
+      readonly text: string;
+    }
+  | {
       readonly type: "queue_message";
       readonly text: string;
       readonly attachments?: ReadonlyArray<ChatAttachment>;
@@ -229,6 +236,10 @@ export type OrchestratorFixtureInputStep =
       readonly type: "interrupt";
       readonly targetRunIndex: number;
       readonly waitForTurnItemType?: OrchestrationV2TurnItem["type"];
+      /** With waitForTurnItemType: wait until that item has this status. */
+      readonly waitForTurnItemStatus?: OrchestrationV2TurnItem["status"];
+      /** With waitForTurnItemType: wait for it in one of the run's subagent threads. */
+      readonly inSubagentThread?: boolean;
     }
   | {
       readonly type: "stop_background_work";
@@ -259,6 +270,11 @@ export type OrchestratorFixtureInputStep =
   | {
       readonly type: "advance_clock";
       readonly duration: Duration.Input;
+    }
+  | {
+      /** Picks another model of the same provider instance; later messages use it. */
+      readonly type: "set_model";
+      readonly model: string;
     };
 
 export interface OrchestratorFixtureInput {
@@ -330,6 +346,12 @@ export const GROK_MODEL_SELECTION = {
 export const FX_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("fx"),
   model: "default",
+} satisfies ModelSelection;
+
+/** Kiro's cheapest listed model, so recordings stay cheap and do not depend on "auto" routing. */
+export const KIRO_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("kiro"),
+  model: "claude-haiku-4.5",
 } satisfies ModelSelection;
 
 export const OPENCODE_MODEL_SELECTION = {
@@ -483,11 +505,14 @@ export function materializeFixtureInput(input: {
     const steps: Array<OrchestratorV2ScenarioStep> = [];
     let messageIndex = 0;
     let runIndex = 0;
+    let forkThreadId: ThreadId | undefined;
     const activeRunDispatchKeys = new Set<string>();
 
     const runIdFor = (runOrdinal: number) =>
       idAllocator.derive.run({ threadId: ids.threadId, ordinal: runOrdinal });
 
+    // A `set_model` step changes the selection every later message carries.
+    let modelSelection = input.modelSelection;
     const pushDispatch = (
       command: OrchestrationV2Command,
       options: {
@@ -516,7 +541,7 @@ export function materializeFixtureInput(input: {
         }),
         ids,
         scenario: input.scenario,
-        modelSelection: input.modelSelection,
+        modelSelection,
         ...(input.fixtureInput.interactionMode === undefined
           ? {}
           : { interactionMode: input.fixtureInput.interactionMode }),
@@ -559,7 +584,7 @@ export function materializeFixtureInput(input: {
                   commandName: `message-${messageIndex}`,
                 }),
                 ids,
-                modelSelection: input.modelSelection,
+                modelSelection,
                 messageId: yield* idAllocator.allocate.message({
                   threadId: ids.threadId,
                   ordinal: messageIndex,
@@ -593,7 +618,7 @@ export function materializeFixtureInput(input: {
                 commandName: `queue-message-${messageIndex}`,
               }),
               ids,
-              modelSelection: input.modelSelection,
+              modelSelection,
               messageId: yield* idAllocator.allocate.message({
                 threadId: ids.threadId,
                 ordinal: messageIndex,
@@ -731,7 +756,7 @@ export function materializeFixtureInput(input: {
                 commandName: `steer-${messageIndex}`,
               }),
               ids,
-              modelSelection: input.modelSelection,
+              modelSelection,
               messageId: yield* idAllocator.allocate.message({
                 threadId: ids.threadId,
                 ordinal: messageIndex,
@@ -771,7 +796,7 @@ export function materializeFixtureInput(input: {
                 commandName: `restart-${messageIndex}`,
               }),
               ids,
-              modelSelection: input.modelSelection,
+              modelSelection,
               messageId: yield* idAllocator.allocate.message({
                 threadId: ids.threadId,
                 ordinal: messageIndex,
@@ -809,6 +834,10 @@ export function materializeFixtureInput(input: {
               threadId: ids.threadId,
               runId: runIdFor(step.targetRunIndex),
               itemType: step.waitForTurnItemType,
+              ...(step.waitForTurnItemStatus === undefined
+                ? {}
+                : { itemStatus: step.waitForTurnItemStatus }),
+              ...(step.inSubagentThread === true ? { inSubagentThreads: true } : {}),
             });
           }
           pushDispatch(
@@ -858,6 +887,56 @@ export function materializeFixtureInput(input: {
         case "advance_clock":
           steps.push({ type: "advance_clock", duration: step.duration });
           break;
+        case "set_model":
+          modelSelection = { ...input.modelSelection, model: step.model };
+          pushDispatch({
+            type: "thread.model-selection.set",
+            commandId: yield* idAllocator.allocate.command({
+              fixtureName: input.scenario,
+              commandName: `set-model-${step.model}`,
+            }),
+            threadId: ids.threadId,
+            modelSelection,
+          });
+          break;
+        case "fork":
+          {
+            const targetThreadId = yield* idAllocator.allocate.thread({
+              fixtureName: `${input.scenario}-fork`,
+              projectId: ids.projectId,
+            });
+            forkThreadId = targetThreadId;
+            pushDispatch({
+              type: "thread.fork",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: yield* idAllocator.allocate.command({
+                fixtureName: input.scenario,
+                commandName: "thread-fork",
+              }),
+              sourceThreadId: ids.threadId,
+              targetThreadId,
+              sourcePoint: { type: "run", runId: runIdFor(step.fromRunIndex) },
+              title: "Forked thread",
+            });
+            pushDispatch(
+              dispatchMessageCommand({
+                commandId: yield* idAllocator.allocate.command({
+                  fixtureName: input.scenario,
+                  commandName: "fork-message",
+                }),
+                ids: { ...ids, threadId: targetThreadId },
+                modelSelection,
+                messageId: yield* idAllocator.allocate.message({
+                  threadId: targetThreadId,
+                  ordinal: 1,
+                }),
+                text: step.text,
+              }),
+            );
+            steps.push({ type: "await_thread_idle", threadId: targetThreadId });
+          }
+          break;
         case "rollback":
           {
             const scopeId = yield* idAllocator.allocate.checkpointScope({
@@ -891,9 +970,15 @@ export function materializeFixtureInput(input: {
     return {
       commands,
       steps,
-      projectionThreadIds: [ids.threadId],
+      projectionThreadIds:
+        forkThreadId === undefined ? [ids.threadId] : [ids.threadId, forkThreadId],
     };
   });
+}
+
+/** Reads `key` from a recorded frame or payload of unknown shape. */
+export function field(value: unknown, key: string): unknown {
+  return Predicate.hasProperty(value, key) ? value[key] : undefined;
 }
 
 export function projectionFor(
