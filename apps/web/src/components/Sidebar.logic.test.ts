@@ -1,3 +1,4 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { isThreadWorking as isSidebarThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import * as DateTime from "effect/DateTime";
@@ -1005,20 +1006,80 @@ describe("Working shelf (beta)", () => {
   });
 
   it.each([
-    ["connected", true, false],
-    ["connected", false, true],
-    ["connecting", false, false],
-    ["reconnecting", false, true],
-    ["offline", false, true],
-    ["error", false, true],
-    ["unsupported", false, true],
-    ["available", false, true],
-  ] as const)(
-    "lists threads outside the shelf on a %s environment: %s",
-    (phase, shellIsLive, disconnected) => {
-      expect(isSidebarEnvironmentDisconnected(phase, shellIsLive)).toBe(disconnected);
+    ["connected", false],
+    ["connecting", false],
+    ["reconnecting", true],
+    ["offline", true],
+    ["error", true],
+    ["unsupported", true],
+    ["available", true],
+  ] as const)("lists threads outside the shelf on a %s environment: %s", (phase, disconnected) => {
+    expect(isSidebarEnvironmentDisconnected(phase, true, false)).toBe(disconnected);
+  });
+
+  it.each([
+    {
+      name: "foreground refresh",
+      states: [
+        ["connected", true],
+        ["connected", false],
+        ["connected", true],
+      ],
+      expected: [false, false, false],
     },
-  );
+    {
+      name: "reconnect before synchronization",
+      states: [
+        ["connected", true],
+        ["reconnecting", false],
+        ["connected", false],
+        ["connected", true],
+      ],
+      expected: [false, true, true, false],
+    },
+    {
+      name: "connecting again after going offline",
+      states: [
+        ["connected", true],
+        ["offline", false],
+        ["connecting", false],
+        ["connected", false],
+        ["connected", true],
+      ],
+      expected: [false, true, true, true, false],
+    },
+    {
+      name: "explicit connection from available",
+      states: [
+        ["available", false],
+        ["connecting", false],
+        ["connected", false],
+        ["connected", true],
+      ],
+      expected: [true, true, true, false],
+    },
+    {
+      name: "cold start",
+      states: [
+        ["connecting", false],
+        ["connected", false],
+        ["connected", true],
+      ],
+      expected: [false, false, false],
+    },
+  ] satisfies ReadonlyArray<{
+    name: string;
+    states: ReadonlyArray<readonly [EnvironmentConnectionPhase, boolean]>;
+    expected: ReadonlyArray<boolean>;
+  }>)("preserves shelf placement through $name", ({ states, expected }) => {
+    let disconnected = false;
+    expect(
+      states.map(([phase, shellIsLive]) => {
+        disconnected = isSidebarEnvironmentDisconnected(phase, shellIsLive, disconnected);
+        return disconnected;
+      }),
+    ).toEqual(expected);
+  });
 
   it("lists a running thread outside the shelf while its environment is disconnected", () => {
     const thread = { ...idle, runtime, environmentId: localEnvironmentId };

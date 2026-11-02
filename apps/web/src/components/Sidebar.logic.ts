@@ -185,12 +185,14 @@ export function resolveSidebarThreadSection(input: {
   return "active";
 }
 
-// Keep cached placement on the first connection attempt, matching mobile's threadRouteIsHydrating.
+// A healthy refresh keeps its shelf; a reconnect waits for authoritative shell data.
 export function isSidebarEnvironmentDisconnected(
   phase: EnvironmentConnectionPhase,
   shellIsLive: boolean,
+  wasDisconnected: boolean,
 ): boolean {
-  return phase !== "connecting" && (phase !== "connected" || !shellIsLive);
+  if (phase === "connected" && shellIsLive) return false;
+  return phase === "connecting" || phase === "connected" ? wasDisconnected : true;
 }
 
 export function belongsInSidebarWorkingShelf<T extends { readonly environmentId: EnvironmentId }>(
