@@ -359,11 +359,30 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  // A refresh that started after a request saw every change that request could mean, so queued
+  // callers share it instead of each running git status again.
+  const localRefreshLocks = yield* KeyedLock.make<string>();
+  const localRefreshRequests = new Map<string, number>();
+  const localRefreshResults = new Map<
+    string,
+    { readonly startedAt: number; readonly local: VcsStatusLocalResult }
+  >();
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
     function* (cwd: string) {
-      yield* workflow.invalidateLocalStatus(cwd);
-      const local = yield* workflow.localStatus({ cwd });
-      return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+      const requestedAt = (localRefreshRequests.get(cwd) ?? 0) + 1;
+      localRefreshRequests.set(cwd, requestedAt);
+      return yield* localRefreshLocks.withLock(
+        cwd,
+        Effect.gen(function* () {
+          const shared = localRefreshResults.get(cwd);
+          if (shared !== undefined && shared.startedAt >= requestedAt) return shared.local;
+          const startedAt = localRefreshRequests.get(cwd) ?? requestedAt;
+          yield* workflow.invalidateLocalStatus(cwd);
+          const local = yield* workflow.localStatus({ cwd });
+          localRefreshResults.set(cwd, { startedAt, local });
+          return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+        }),
+      );
     },
   );
 
@@ -458,23 +477,14 @@ export const make = Effect.gen(function* () {
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
-        const previousRemote = (yield* getCachedStatus(cwd))?.remote?.value;
         const remoteRead = yield* readRemoteStatus(cwd, options);
-        const remote = remoteRead?.value;
         const pulled =
           options?.refreshUpstream === false
             ? null
             : yield* maybeAutoPull(cwd, remoteRead, options?.policyCwds ?? [cwd]);
         if (pulled !== null) return pulled.remote;
-        if (
-          remote &&
-          (!previousRemote ||
-            previousRemote.aheadCount !== remote.aheadCount ||
-            previousRemote.behindCount !== remote.behindCount ||
-            previousRemote.aheadOfDefaultCount !== remote.aheadOfDefaultCount)
-        ) {
-          yield* refreshLocalStatusCore(cwd);
-        }
+        // Base refs and merge bases can move without changing divergence counts.
+        yield* refreshLocalStatusCore(cwd);
         return yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
       }),
     );
@@ -511,8 +521,7 @@ export const make = Effect.gen(function* () {
         yield* workflow.invalidateStatus(cwd);
         const remoteRead = yield* readRemoteStatus(cwd, { refreshUpstream });
         // Fetch can move the base used for local Changes totals.
-        const local = yield* workflow.localStatus({ cwd });
-        yield* updateCachedLocalStatus(cwd, local, { publish: true });
+        yield* refreshLocalStatusCore(cwd);
         // Without a fetch, the cached behind count cannot justify an automatic pull.
         const pulled = refreshUpstream ? yield* maybeAutoPull(cwd, remoteRead, [rawCwd]) : null;
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
