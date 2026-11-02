@@ -590,7 +590,10 @@ function ProjectDetail({
             }
             control={
               <div className="flex items-center gap-2">
-                <ProjectFavicon project={representative} className="size-6" />
+                <ProjectFavicon
+                  project={{ ...representative, memberProjects: group.memberProjects }}
+                  className="size-6"
+                />
                 <Button
                   size="sm"
                   variant="secondary"
