@@ -144,11 +144,13 @@ function shouldPersistThread(
 ): boolean {
   // Older pages and streamed events grow the in-memory timeline past a bounded
   // snapshot. Keep those projections out of the monolithic cache.
-  if (history.expanded || !isBoundedProjection(thread)) {
+  if (history.expanded) {
     return false;
   }
-  return !thread.runs.some(
-    (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
+  return (
+    !thread.runs.some(
+      (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
+    ) && isBoundedProjection(thread)
   );
 }
 
