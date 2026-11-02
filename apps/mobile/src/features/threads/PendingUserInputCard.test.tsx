@@ -1,4 +1,4 @@
-import type { EnvironmentId, RuntimeRequestId } from "@t3tools/contracts";
+import type { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import * as NodeModule from "node:module";
 import type { ReactNode } from "react";
 import { act } from "react";
@@ -145,6 +145,8 @@ function setup(questionMarkdown: string) {
     root.render(
       <PendingUserInputCard
         environmentId={"env-1" as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        workspaceRoot="/repo"
         canOperateThread
         pendingUserInput={pendingUserInput}
         maxHeight={{ value: 600 } as never}
@@ -192,5 +194,17 @@ it("opens a workspace file link in a question in the thread's file viewer", asyn
       path: ["docs", "probe.md"],
       line: "12",
     },
+  });
+});
+
+it("opens an absolute file link under the workspace root by its workspace path", async () => {
+  using screen = setup("Should I update [probe.md](/repo/docs/probe.md)?");
+
+  await screen.pressLink("probe.md");
+
+  expect(screen.openedUrls).toEqual([]);
+  expect(screen.state.routes.at(-1)).toMatchObject({
+    name: "ThreadFile",
+    params: { environmentId: "env-1", threadId: "thread-1", path: ["docs", "probe.md"] },
   });
 });
