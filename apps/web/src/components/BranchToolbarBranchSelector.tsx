@@ -768,7 +768,7 @@ export function BranchToolbarBranchSelector({
                   )}
                 />
               )}
-              <ComposerContextLabel displayMode={displayMode} compactable={false}>
+              <ComposerContextLabel displayMode={displayMode} compact="truncate">
                 {isActiveBranchResolving ? (
                   <Skeleton className="h-3 w-24" />
                 ) : (
