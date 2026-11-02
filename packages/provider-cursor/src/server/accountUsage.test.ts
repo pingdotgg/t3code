@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -284,6 +285,38 @@ describe("Cursor account history", () => {
 });
 
 describe("readCursorAccountUsage", () => {
+  it.effect("reads an API key's account history through Cursor's API", () =>
+    Effect.gen(function* () {
+      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+      const requests: Array<readonly [string, string | null]> = [];
+      const result = yield* readAccountUsage(
+        { kind: "apiKey", apiKey: "api-key", instanceId: ProviderInstanceId.make("cursor") },
+        0,
+        1781000000000,
+        ({ url, headers }) => {
+          requests.push([url, headers.get("authorization")]);
+          return url.endsWith("/auth/exchange_user_api_key")
+            ? Response.json({ accessToken })
+            : Response.json({
+                totalUsageEventsCount: 1,
+                usageEventsDisplay: [
+                  { timestamp: "1780000000000", model: "gpt-5", tokenUsage: { outputTokens: 4 } },
+                ],
+              });
+        },
+      );
+      assert.isNull(result.error);
+      assert.deepStrictEqual(requests, [
+        ["https://api2.cursor.sh/auth/exchange_user_api_key", "Bearer api-key"],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetFilteredUsageEvents",
+          `Bearer ${accessToken}`,
+        ],
+      ]);
+      assert.strictEqual(result.records[0]?.totals.outputTokens, 4);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("asks for Keychain approval when the prompt goes unanswered", () =>
     Effect.gen(function* () {
       const result = yield* readAccountUsage(

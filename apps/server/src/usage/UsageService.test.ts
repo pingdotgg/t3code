@@ -30,6 +30,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -149,6 +150,7 @@ const layerService = (input: {
   readonly environment?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
   readonly hostname?: string;
+  readonly secretStore?: Partial<ServerSecretStore.ServerSecretStore["Service"]>;
 }) =>
   layerCursorUsageAccounts(
     CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer)),
@@ -158,7 +160,7 @@ const layerService = (input: {
     Layer.provideMerge(ProviderHostLive.layer),
     Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
-    Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
+    Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)(input.secretStore ?? {})),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), NodePath.join(input.home, input.prefix)),
     ),
@@ -239,10 +241,12 @@ function makeFakeCursor() {
     error: null as string | null,
     gate: undefined as Deferred.Deferred<void> | undefined,
     calls: [] as { readonly sinceMs: number; readonly untilMs: number }[],
+    credentials: [] as unknown[],
   };
-  const read = (_credential: unknown, sinceMs: number, untilMs: number) =>
+  const read = (credential: unknown, sinceMs: number, untilMs: number) =>
     Effect.gen(function* () {
       state.calls.push({ sinceMs, untilMs });
+      state.credentials.push(credential);
       if (state.gate !== undefined) yield* Deferred.await(state.gate);
       const { accountKey, error } = state;
       if (error !== null) return { accountKey, records: [], missing: false, error };
@@ -1512,11 +1516,6 @@ describe("UsageService", () => {
           environment: { AGENT_CLI_CREDENTIAL_STORE: "memory" },
           authPath: ["config", "cursor", "auth.json"],
         },
-        {
-          platform: "linux" as const,
-          environment: { CURSOR_API_KEY: "different-account" },
-          authPath: ["config", "cursor", "auth.json"],
-        },
       ].entries()) {
         const authPath = NodePath.join(home, ...testCase.authPath);
         yield* Effect.promise(async () => {
@@ -1542,6 +1541,49 @@ describe("UsageService", () => {
         assert.strictEqual(cursor?.status, "missing");
         assert.include(cursor?.message ?? "", "Cursor CLI login");
         assert.isFalse(summary.buckets.some((bucket) => bucket.provider === "cursor"));
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("reads the Cursor account of an API key or T3 sign-in instead of a CLI login", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const signIn = new TextEncoder().encode(
+        encodeUnknownJsonString({
+          version: 1,
+          backendUrl: "https://api2.cursor.sh",
+          apiKey: "signed-in-key",
+          createdAtMs: 0,
+        }),
+      );
+      for (const [index, testCase] of [
+        { environment: { CURSOR_API_KEY: "environment-key" }, stored: Option.none() },
+        { environment: {}, stored: Option.some(signIn) },
+      ].entries()) {
+        const cursor = makeFakeCursor();
+        const summary = yield* Effect.gen(function* () {
+          const service = yield* makeWithCursor(cursor.read);
+          return yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: `usage-service-cursor-api-key-${index}`,
+              home,
+              settings,
+              platform: "darwin",
+              environment: testCase.environment,
+              secretStore: { get: () => Effect.succeed(testCase.stored) },
+            }),
+          ),
+        );
+        assert.deepStrictEqual(cursor.state.credentials, [
+          {
+            kind: "apiKey",
+            apiKey: index === 0 ? "environment-key" : "signed-in-key",
+            instanceId: "cursor",
+          },
+        ]);
+        assert.strictEqual(cursorSource(summary)?.status, "ok");
       }
     }).pipe(Effect.scoped),
   );
