@@ -15,8 +15,13 @@ export function makePermissionStatusAtom<S>(options: {
   return Atom.writable(
     (get) => {
       // A read that settles after unmount is dropped: setSelf on a disposed lifetime is a no-op.
+      // Only the latest read lands, so a slow earlier read cannot overwrite a newer status.
+      let latest = 0;
       const refresh = () => {
-        void options.read().then((status) => get.setSelf(status));
+        const read = ++latest;
+        void options.read().then((status) => {
+          if (read === latest) get.setSelf(status);
+        });
       };
       refresh();
       get.addFinalizer(subscribeAppActive(refresh));
