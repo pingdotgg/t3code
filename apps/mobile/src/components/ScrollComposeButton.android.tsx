@@ -10,7 +10,11 @@ import {
 import { useState } from "react";
 import { I18nManager, Pressable, View, type StyleProp, type ViewStyle } from "react-native";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
-import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import {
+  useAppearancePreferences,
+  useAndroidFloatingTabs,
+} from "../features/settings/appearance/AppearancePreferencesProvider";
+import { FLOATING_TABS } from "../features/workspace/floating-workspace-tabs";
 import { resolveScaledTextRole } from "../lib/appearancePreferences";
 
 /** Keep the animated width and icon positioning entirely inside Compose, not Yoga. */
@@ -22,7 +26,10 @@ export function ScrollComposeButton(props: {
 }) {
   const { appearance, themeVariables: colors } = useAppearancePreferences();
   const typography = resolveScaledTextRole("footnote", appearance.baseFontSize);
-  const { iconSize, fabSize } = useAndroidControlSizing();
+  const sizing = useAndroidControlSizing();
+  const floatingTabsEnabled = useAndroidFloatingTabs();
+  const iconSize = floatingTabsEnabled ? FLOATING_TABS.iconSize : sizing.iconSize;
+  const fabSize = floatingTabsEnabled ? FLOATING_TABS.height : sizing.fabSize;
   const nativeSize = Math.max(56, fabSize);
   const scale = fabSize / nativeSize;
   const nativeIconSize = Math.round(iconSize / scale);

@@ -14,10 +14,8 @@ import {
 import { useWorkspaceState } from "../../state/workspace";
 import { FabScrollContext } from "./FabScrollContext";
 import { updateFabScroll } from "./fab-scroll";
-import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
-import { useEnabledNavigationTabs } from "../workspace/navigation-tabs";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
-import { FLOATING_TABS, floatingTabsMetrics } from "../workspace/floating-workspace-tabs";
+import { FLOATING_TABS } from "../workspace/floating-workspace-tabs";
 import {
   useAppearancePreferences,
   useAndroidFloatingTabs,
@@ -31,20 +29,9 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
   const [layoutWidth, setLayoutWidth] = useState<number | null>(null);
   const { state } = useWorkspaceState();
   const [expanded, setExpanded] = useState(true);
-  const { scale, fabSize } = useAndroidControlSizing();
-  const tabs = useEnabledNavigationTabs();
-  const floating = floatingTabsMetrics(
-    tabs.length + 1,
-    scale,
-    fabSize,
-    props.paneWidth ?? layoutWidth ?? undefined,
-  );
   const workspace = useWorkspaceTabs();
   const bottomClearance =
-    insets.bottom +
-    FLOATING_TABS.bottom +
-    FLOATING_TABS.edge +
-    Math.max(floating.height, floating.fabOffset + fabSize);
+    insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + FLOATING_TABS.height;
   const context = floatingTabsEnabled && workspace ? { ...workspace, bottomClearance } : workspace;
   const scrollState = useRef({ anchor: 0, expanded: true });
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -79,7 +66,7 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
             floatingTabsEnabled
               ? {
                   right: FLOATING_TABS.edge,
-                  bottom: insets.bottom + FLOATING_TABS.bottom + floating.fabOffset,
+                  bottom: insets.bottom + FLOATING_TABS.bottom,
                 }
               : androidHomeFabPosition(insets.bottom, props.sidebar)
           }
