@@ -35,15 +35,19 @@ const server = await vi.hoisted(async () => {
     }
     return rows;
   });
-  const families = new Map<string, OrchestrationV2ThreadFamily>();
+  const families = new Map<string, OrchestrationV2ThreadFamily | "pending" | "failed">();
   return { key, shellRows, mounted, merged, families, AsyncResult, Atom };
 });
 
 vi.mock("./threads", () => {
   const { Atom, AsyncResult, key, merged, mounted, families } = server;
   type Registry = import("effect/reactivity").AtomRegistry.AtomRegistry;
-  const familyFor = (environmentId: string, threadId: string) =>
+  const readOf = (environmentId: string, threadId: string) =>
     families.get(key(environmentId, threadId)) ?? null;
+  const familyFor = (environmentId: string, threadId: string) => {
+    const read = readOf(environmentId, threadId);
+    return typeof read === "string" ? null : read;
+  };
   const addRows = (
     registry: Registry,
     mountKey: string,
@@ -72,11 +76,13 @@ vi.mock("./threads", () => {
     environmentThreadDetails: {},
     threadFamilies: {
       familyAtom: (environmentId: string, threadId: string) => {
-        const family = familyFor(environmentId, threadId);
+        const read = readOf(environmentId, threadId);
         return Atom.make(
-          family === null
+          read === null || read === "failed"
             ? AsyncResult.fail(new Error("not a known thread"))
-            : AsyncResult.success(family),
+            : read === "pending"
+              ? AsyncResult.initial(true)
+              : AsyncResult.success(read),
         );
       },
       mount: (registry: Registry, environmentId: string, threadId: string) =>
@@ -158,3 +164,25 @@ it("opens a link to an idle subagent the shell omitted", () => {
     childLink,
   );
 });
+
+it("keeps a link's title when the shell drops a subagent it already rendered", () => {
+  using harness = setup();
+  act(() => appAtomRegistry.set(server.shellRows, [PARENT, CHILD]));
+  harness.render(parentReply);
+  act(() => appAtomRegistry.set(server.shellRows, [PARENT]));
+
+  expect(harness.rendered()).toBe(`Child: ${formatThreadLink(childLink, CHILD.title)}`);
+});
+
+it.each(["pending", "failed"] as const)(
+  "labels a link neutrally while its family read is %s, not as gone",
+  (read) => {
+    using harness = setup();
+    server.families.set(server.key(ENV, CHILD.id), read);
+    harness.render(`${parentReply} and ${formatThreadLink(childLink, "Changelog")}`);
+
+    expect(harness.rendered()).toBe(
+      `Child: ${formatThreadLink(childLink, "Thread")} and ${formatThreadLink(childLink, "Changelog")}`,
+    );
+  },
+);

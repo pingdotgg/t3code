@@ -150,7 +150,7 @@ export function relabelThreadLinks(
     }
     return formatThreadLink(
       { environmentId: written.environmentId, threadId },
-      current.trim() || groups.label || threadId,
+      current.trim() || groups.label || "Thread",
     );
   });
 }

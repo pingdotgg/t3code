@@ -67,7 +67,7 @@ const threadTitleAtom = Atom.family((key: string) => {
 
 const decodeThreadKeys = Schema.decodeUnknownSync(Schema.Array(Schema.String));
 
-// Null while the family read of a thread this client lacks is pending, so it is not called gone yet.
+// Null until the family read of a thread this client lacks settles: only a settled read proves it gone.
 const threadLinkTitlesAtom = Atom.family((key: string) => {
   const refKeys = decodeThreadKeys(JSON.parse(key));
   return Atom.make((get) => {
@@ -76,8 +76,8 @@ const threadLinkTitlesAtom = Atom.family((key: string) => {
       const title = get(threadTitleAtom(refKey));
       if (title !== null) titles.set(refKey, title);
       else if (
-        threadFamilyRead(get(threadFamilies.familyAtom(...decodeThreadKey(JSON.parse(refKey))))) ===
-        "pending"
+        threadFamilyRead(get(threadFamilies.familyAtom(...decodeThreadKey(JSON.parse(refKey))))) !==
+        "settled"
       ) {
         titles.set(refKey, null);
       }
@@ -251,7 +251,7 @@ export function useLiveThreadLinkLabels(markdown: string, environmentId: Environ
   const titles = useAtomValue(
     refKeys === null ? EMPTY_THREAD_LINK_TITLES_ATOM : threadLinkTitlesAtom(refKeys),
   );
-  // An empty title keeps the written label; another machine's thread keeps its own label.
+  // An unsettled thread shows its written label or a neutral one; another machine's keeps its own.
   return relabelThreadLinks(markdown, environmentId, (ref) => {
     const title = titles.get(threadKey(ref));
     return title === null ? (ref.environmentId === environmentId ? "" : undefined) : title;
