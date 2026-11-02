@@ -217,29 +217,28 @@ const clampDefaultRuntimeModes = (
   settings: ServerSettings,
   ceiling: RuntimeMode,
 ): ServerSettings => {
-  const projectsAbove = Object.entries(settings.projectSettingsOverrides).filter(
-    ([, overrides]) =>
-      overrides.defaultRuntimeMode !== undefined &&
-      isRuntimeModeAbove(overrides.defaultRuntimeMode, ceiling),
-  );
-  if (!isRuntimeModeAbove(settings.defaultRuntimeMode, ceiling) && projectsAbove.length === 0) {
-    return settings;
-  }
-  return {
-    ...settings,
-    defaultRuntimeMode: isRuntimeModeAbove(settings.defaultRuntimeMode, ceiling)
-      ? ceiling
-      : settings.defaultRuntimeMode,
-    projectSettingsOverrides: {
-      ...settings.projectSettingsOverrides,
-      ...Object.fromEntries(
-        projectsAbove.map(([projectId, overrides]) => [
-          projectId,
-          { ...overrides, defaultRuntimeMode: ceiling },
-        ]),
+  let effective = settings;
+  for (const key of ["defaultRuntimeMode", "sideChatRuntimeMode"] as const) {
+    const projectsAbove = Object.entries(effective.projectSettingsOverrides).filter(
+      ([, overrides]) =>
+        overrides[key] !== undefined && isRuntimeModeAbove(overrides[key], ceiling),
+    );
+    if (!isRuntimeModeAbove(effective[key], ceiling) && projectsAbove.length === 0) continue;
+    effective = Object.assign({}, effective, {
+      [key]: isRuntimeModeAbove(effective[key], ceiling) ? ceiling : effective[key],
+      projectSettingsOverrides: Object.assign(
+        {},
+        effective.projectSettingsOverrides,
+        Object.fromEntries(
+          projectsAbove.map(([projectId, overrides]) => [
+            projectId,
+            { ...overrides, [key]: ceiling },
+          ]),
+        ),
       ),
-    },
-  };
+    });
+  }
+  return effective;
 };
 
 /** Build the overlay for a policy's settings, or describe the first entry this build cannot apply. */
@@ -363,14 +362,16 @@ export function makeManagedSettings(
     };
   }
   // A managed default above the ceiling would start every thread in a mode the policy refuses.
-  if (
-    all.some((entry) => entry.path === "defaultRuntimeMode") &&
-    isRuntimeModeAbove(decoded.value.defaultRuntimeMode, maxRuntimeMode)
-  ) {
-    return {
-      _tag: "Invalid",
-      reason: `"defaultRuntimeMode" is above "limits.maxRuntimeMode"`,
-    };
+  for (const key of ["defaultRuntimeMode", "sideChatRuntimeMode"] as const) {
+    if (
+      all.some((entry) => entry.path === key) &&
+      isRuntimeModeAbove(decoded.value[key], maxRuntimeMode)
+    ) {
+      return {
+        _tag: "Invalid",
+        reason: `"${key}" is above "limits.maxRuntimeMode"`,
+      };
+    }
   }
 
   const defaultsTree = defaults.reduce<unknown>(

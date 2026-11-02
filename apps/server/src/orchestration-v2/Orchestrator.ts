@@ -80,6 +80,7 @@ import {
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
@@ -5363,7 +5364,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         transferId,
         targetThreadId: command.targetThreadId,
         ...(command.title === undefined ? {} : { title: command.title }),
-        ...(command.sideChat ? { sideChat: true } : {}),
+        ...(command.sideChat
+          ? {
+              sideChat: true,
+              sideChatRuntimeMode: resolveProjectSettings(
+                yield* serverSettings.getSettings.pipe(Effect.orDie),
+                sourceProjection.thread.projectId,
+              ).settings.sideChatRuntimeMode,
+            }
+          : {}),
         createdBy: command.createdBy,
         creationSource: command.creationSource,
         createdAt: now,
