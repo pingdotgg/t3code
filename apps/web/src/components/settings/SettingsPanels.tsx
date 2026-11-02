@@ -518,6 +518,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
       ? ["Open pull requests and changes panels proactively"]
       : []),
+    ...(settings.activityPanelAutoOpen !== DEFAULT_UNIFIED_SETTINGS.activityPanelAutoOpen
+      ? ["Open the Activity panel when the agent starts"]
+      : []),
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? ["Show skills in slash menu"]
       : []),
@@ -638,6 +641,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
+      activityPanelAutoOpen: DEFAULT_UNIFIED_SETTINGS.activityPanelAutoOpen,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
@@ -1420,6 +1424,31 @@ export function DiffsSettingsPanel() {
                 updateSettings({ proactivePanelsEnabled: Boolean(checked) })
               }
               aria-label="Open pull requests and changes panels proactively"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("activity-panel-auto-open")}
+          description="Show what the agent is doing, what it finished, and which files it changed as soon as a turn starts. Not used on narrow windows."
+          resetAction={
+            settings.activityPanelAutoOpen !== DEFAULT_UNIFIED_SETTINGS.activityPanelAutoOpen ? (
+              <SettingResetButton
+                label="Activity panel auto-open"
+                onClick={() =>
+                  updateSettings({
+                    activityPanelAutoOpen: DEFAULT_UNIFIED_SETTINGS.activityPanelAutoOpen,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.activityPanelAutoOpen}
+              onCheckedChange={(checked) =>
+                updateSettings({ activityPanelAutoOpen: Boolean(checked) })
+              }
+              aria-label="Open the Activity panel when the agent starts"
             />
           }
         />

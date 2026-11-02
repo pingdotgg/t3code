@@ -577,6 +577,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["proactive automatically open diff pull request pr right panel agent completion"],
   },
   {
+    id: "activity-panel-auto-open",
+    title: "Open the Activity panel when the agent starts",
+    to: "/settings/diffs",
+    searchTerms: ["activity progress plan status automatically open right panel agent working"],
+  },
+  {
     id: "skills-in-slash-menu",
     title: "Show skills in slash menu",
     to: "/settings/chat",

@@ -80,6 +80,8 @@ export type RightPanelSurface =
   | { id: "pull-requests"; kind: "pull-requests" }
   | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
 
+const offeredActivityRunByThreadKey = new Map<string, RunId>();
+
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 14;
 
@@ -119,7 +121,8 @@ interface RightPanelStoreState {
     ref: ScopedThreadRef,
     request:
       | Extract<RightPanelSurface, { kind: "pull-request" | "pull-requests" }>
-      | { kind: "diff"; turnId: RunId },
+      | { kind: "diff"; turnId: RunId }
+      | { kind: "activity"; turnId: RunId },
     expectedUserActionRevision: number,
     activateExisting?: boolean,
   ) => boolean;
@@ -655,6 +658,23 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         let opened = false;
         set((state) => {
           const threadKey = scopedThreadKey(ref);
+          if (request.kind === "activity") {
+            // Offered once per run, and not persisted: a reload mid-run may offer it once more.
+            if (offeredActivityRunByThreadKey.get(threadKey) === request.turnId) return state;
+            offeredActivityRunByThreadKey.set(threadKey, request.turnId);
+            const activePanel = selectActiveRightPanel(state.byThreadKey, ref);
+            opened =
+              (state.userActionRevisionByThreadKey[threadKey] ?? 0) ===
+                expectedUserActionRevision &&
+              activePanel !== "activity" &&
+              activePanel !== "pull-request" &&
+              activePanel !== "pull-requests";
+            return opened
+              ? automaticUpdate(state, threadKey, (thread) =>
+                  upsertSurface(thread, singletonSurface("activity")),
+                )
+              : state;
+          }
           if (request.kind === "diff") {
             const current = selectThreadRightPanelState(state.byThreadKey, ref);
             if (current.proactiveDiffTurnId === request.turnId) return state;
@@ -1137,6 +1157,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       removeThread: (ref) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
+          offeredActivityRunByThreadKey.delete(threadKey);
           if (
             !(threadKey in state.byThreadKey) &&
             !(threadKey in state.threadPanelVisibilityByThreadKey) &&

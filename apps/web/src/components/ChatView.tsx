@@ -1993,6 +1993,8 @@ export default function ChatView(props: ChatViewProps) {
   useProactivePanels({
     threadRef: isServerThread && !embedded ? activeThreadRef : null,
     enabled: settings.proactivePanelsEnabled && !shouldUsePlanSidebarSheet && !embedded,
+    // Not in the sheet: it would slide over the chat the user is following.
+    activityEnabled: settings.activityPanelAutoOpen && !shouldUsePlanSidebarSheet && !embedded,
     settingsHydrated: clientSettingsHydrated,
     threadDetailLoading,
     runningTurnId: activeRunningTurnId,
