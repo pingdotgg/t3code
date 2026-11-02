@@ -1088,7 +1088,9 @@ export function resolveWindowsServerAsarIgnoreGlobs(arch: typeof BuildArch.Type)
   ];
 }
 
-export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 84;
+// Above upstream's 80: MT Code packages fork-only resources, and the prepared server
+// bytecode cache (#28572) added 3 more files to the 0.1.47 build (87).
+export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 90;
 export const WINDOWS_SERVER_RESOURCE_SOURCE_DIR = "apps/desktop/prod-resources/windows-server";
 export const WINDOWS_SERVER_EXTRA_RESOURCES = [
   {
