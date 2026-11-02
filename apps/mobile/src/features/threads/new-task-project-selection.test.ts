@@ -228,9 +228,9 @@ describe("resolveExplicitProjectScopes", () => {
   const scopes = [makeScope([mac, server]), makeScope([makeProject("other", "mac")])];
 
   it("offers every scope unchanged without a tapped machine", () => {
-    expect(
-      resolveExplicitProjectScopes({ scopes, preferredEnvironmentId: undefined }),
-    ).toBe(scopes);
+    expect(resolveExplicitProjectScopes({ scopes, preferredEnvironmentId: undefined })).toBe(
+      scopes,
+    );
   });
 
   it("keeps only the tapped machine's projects and drops empty scopes", () => {
