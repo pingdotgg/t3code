@@ -410,6 +410,9 @@ export interface OrchestratorV2Shape {
     fields: ReadonlyArray<K>,
     filter?: ProjectionRecordFilter,
   ) => Effect.Effect<ProjectionRecords<K>, OrchestratorV2Error>;
+  readonly listAppOwnedChildThreadIds: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, OrchestratorV2Error>;
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
@@ -1346,27 +1349,40 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const offerDelegatedCompletionDelivery =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
     Effect.fnUntraced(function* (threadId: ThreadId, parentRunId: RunId) {
-      const projection = yield* projectionStore.getThreadRecords(
-        threadId,
-        ["runs", "messages", "providerTurns", "providerThreads"],
-        { messageRoles: ["user"] },
-      );
-      const parentRun = projection.runs.find((candidate) => candidate.id === parentRunId);
+      const controls = yield* projectionStore.getThreadRecords(threadId, ["runs"], {
+        runIds: [parentRunId],
+      });
+      const parentRun = controls.runs[0];
       const cohort = parentRun?.delegatedCompletion;
       const delivery = cohort?.delivery;
       if (
         parentRun === undefined ||
         cohort?.disposition !== "open" ||
-        delivery === null ||
-        delivery === undefined ||
+        delivery == null ||
         delivery.taskIds.length === 0 ||
-        projection.thread.archivedAt !== null ||
-        projection.thread.deletedAt !== null ||
-        (completionDeliveryMessage(projection, delivery) !== undefined &&
-          !isUndeliveredMailboxSteer(projection, delivery.messageId))
-      ) {
+        controls.thread.archivedAt !== null ||
+        controls.thread.deletedAt !== null
+      )
         return;
+      const messages = yield* projectionStore.getThreadRecords(threadId, ["messages"], {
+        messageIds: [delivery.messageId],
+      });
+      const message = messages.messages[0];
+      if (message !== undefined) {
+        if (message.delegatedCompletion === undefined || message.runId === null) return;
+        const runs = yield* projectionStore.getThreadRecords(threadId, ["runs"], {
+          runIds: [message.runId],
+        });
+        const run = runs.runs[0];
+        const turns = yield* projectionStore.getThreadRecords(threadId, ["providerTurns"], {
+          providerTurnAttemptIds: run?.activeAttemptId == null ? [] : [run.activeAttemptId],
+        });
+        if (!isUndeliveredMailboxSteer({ ...messages, ...runs, ...turns }, delivery.messageId))
+          return;
       }
+      const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"], {
+        providerThreadIds: parentRun.providerThreadId === null ? [] : [parentRun.providerThreadId],
+      });
       const providerThread =
         parentRun.providerThreadId === null
           ? undefined
@@ -4905,13 +4921,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const selectionMustApplyNow =
       selectionChanged &&
       (providerInstanceChanged || selectionTransition?.type !== "apply_on_next_turn");
+    const attachmentsNeedRestart =
+      input.attachments.length > 0 &&
+      session.providerSession.capabilities.turns.activeSteeringAcceptsAttachments === false;
     const steeringPolicy = yield* mapDispatchError(input.command)(
       commandPolicy.decideSteeringExecution({
         commandId: input.command.commandId,
         threadId: input.command.threadId,
         providerInstanceId: targetRun.providerInstanceId,
         capabilities: session.providerSession.capabilities,
-        forceRestart: input.forceRestart || selectionMustApplyNow,
+        forceRestart: input.forceRestart || selectionMustApplyNow || attachmentsNeedRestart,
       }),
     );
 
@@ -12708,7 +12727,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const projection = yield* projectionStore.getThreadRecords(
       threadId,
       ["runs", "messages", "subagents"],
-      { messageRoles: ["user"] },
+      {
+        runIds: [runId, message.delegatedCompletion.parentRunId],
+        messageIds: [message.id],
+        subagentRunIds: [message.delegatedCompletion.parentRunId],
+      },
     );
     const deliveryRun = projection.runs.find((candidate) => candidate.id === runId);
     const deliveryMessage =
@@ -14023,6 +14046,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       function (threadId, fields, filter) {
         return projectionStore
           .getThreadRecords(threadId, fields, filter)
+          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+      },
+    ),
+    listAppOwnedChildThreadIds: Effect.fn("OrchestratorV2.listAppOwnedChildThreadIds")(
+      function (threadId) {
+        return projectionStore
+          .listAppOwnedChildThreadIds(threadId)
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       },
     ),
