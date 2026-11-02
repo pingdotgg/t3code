@@ -306,7 +306,7 @@ export const make = Effect.gen(function* () {
                   relativePath: directoryPath,
                 })
                 .pipe(Effect.mapError(toError));
-        const { entries, throughSymlink, nestedGitRoot } = yield* Effect.tryPromise({
+        const { entries, throughSymlink, nestedGitRoots } = yield* Effect.tryPromise({
           try: async () => {
             const root = await NodeFSP.realpath(normalizedCwd);
             const directory = await NodeFSP.realpath(target.absolutePath);
@@ -378,17 +378,17 @@ export const make = Effect.gen(function* () {
                 )),
               );
             }
-            let nestedGitRoot = "";
+            const nestedGitRoots: Array<string> = [];
             const segments = target.relativePath.split("/").filter(Boolean);
-            for (let index = segments.length; index > 0 && !nestedGitRoot; index -= 1) {
+            for (let index = 1; index <= segments.length; index += 1) {
               const candidate = segments.slice(0, index).join("/");
               const dotGit = await NodeFSP.lstat(path.join(normalizedCwd, candidate, ".git")).catch(
                 () => null,
               );
-              if (dotGit) nestedGitRoot = candidate;
+              if (dotGit) nestedGitRoots.push(candidate);
             }
             return {
-              nestedGitRoot,
+              nestedGitRoots,
               entries: children.flatMap((child, index): ProjectEntry[] => {
                 const kind = kinds[index];
                 if (kind === undefined) return [];
@@ -422,7 +422,8 @@ export const make = Effect.gen(function* () {
             })
             .pipe(Effect.orElseSucceed(() => undefined));
         // Git refuses paths inside a submodule (128) but still answers for nested clones.
-        if (nestedGitRoot && (yield* checkIgnore([`${nestedGitRoot}/.git`]))?.exitCode === 128) {
+        for (const nestedGitRoot of nestedGitRoots) {
+          if ((yield* checkIgnore([`${nestedGitRoot}/.git`]))?.exitCode !== 128) continue;
           gitRoot = nestedGitRoot;
           gitPrefix = `${gitRoot}/`;
         }

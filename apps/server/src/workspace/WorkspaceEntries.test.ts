@@ -115,6 +115,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* git(cwd, ["update-index", "--add", "--cacheinfo", `160000,${gitlink},sub`]);
         // A nested clone that isn't a submodule keeps the outer repository's ignore rules.
         yield* git(cwd, ["init", "node_modules/pkg"]);
+        yield* git(cwd, ["init", "sub/dist"]);
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });
