@@ -587,6 +587,26 @@ describe("composer rich text document model", () => {
     });
   });
 
+  describe("a dash rule after a paragraph", () => {
+    const paragraph = (text: string) => ({ type: "paragraph", content: [{ type: "text", text }] });
+    const rule = (source: string) => ({ type: "horizontalRule", attrs: { source } });
+
+    it("is written after a blank line, or Markdown reads the paragraph as a heading", () => {
+      const doc = ProseMirrorNode.fromJSON(schema, {
+        type: "doc",
+        content: [
+          paragraph("Please review the clamp helper changes"),
+          rule("---"),
+          paragraph("Then run the tests"),
+        ],
+      });
+      doc.check();
+      expect(serializeEditorDoc(doc).value).toBe(
+        "Please review the clamp helper changes\n\n---\nThen run the tests",
+      );
+    });
+  });
+
   it.each([
     "---",
     "***",
