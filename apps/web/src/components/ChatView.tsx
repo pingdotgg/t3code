@@ -2420,6 +2420,8 @@ export default function ChatView(props: ChatViewProps) {
     showBranchMismatchBanner,
     threadStatusLine,
     timelineBackgroundTaskLabel,
+    timelineBackgroundTaskIsCommand,
+    timelineBackgroundTaskMore,
     shortcuts: threadLifecycleShortcuts,
   } = useThreadLifecycle({
     environmentId,
@@ -3555,6 +3557,8 @@ export default function ChatView(props: ChatViewProps) {
                   isCompacting={isCompacting}
                   pendingRequest={timelinePendingRequest}
                   backgroundTaskLabel={timelineBackgroundTaskLabel}
+                  backgroundTaskIsCommand={timelineBackgroundTaskIsCommand}
+                  backgroundTaskMore={timelineBackgroundTaskMore}
                   usageLimit={timelineUsageLimit}
                   threadErrorMessage={timelineThreadError}
                   onFocusComposer={focusComposerAtEndStable}
