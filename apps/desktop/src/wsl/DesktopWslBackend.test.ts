@@ -58,10 +58,13 @@ const layerServerExposure = Layer.succeed(DesktopServerExposure.DesktopServerExp
     httpBaseUrl: new URL("http://127.0.0.1:3773"),
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
+    tailscaleSignInEnabled: false,
+    tailscaleOnly: false,
   }),
   configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
   setMode: () => Effect.die("unexpected setMode"),
   setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
+  setTailscaleSignInEnabled: () => Effect.die("unexpected setTailscaleSignInEnabled"),
   getAdvertisedEndpoints: Effect.succeed([]),
 } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
 

@@ -29,6 +29,10 @@ export const ConnectionCatalogDocument = Schema.Struct({
   disabledEnvironmentIds: Schema.Array(EnvironmentId).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
+  /** Removed by the user; discovery does not add these again until the user does. */
+  dismissedEnvironmentIds: Schema.Array(EnvironmentId).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
 });
 export type ConnectionCatalogDocument = typeof ConnectionCatalogDocument.Type;
 
@@ -39,6 +43,7 @@ export const EMPTY_CONNECTION_CATALOG_DOCUMENT: ConnectionCatalogDocument = Obje
   credentials: [],
   remoteDpopTokens: [],
   disabledEnvironmentIds: [],
+  dismissedEnvironmentIds: [],
 });
 
 export function replaceCatalogValue<A>(
@@ -129,12 +134,20 @@ export function registerConnectionInCatalog(
   registration: ConnectionRegistration,
   routes: ReadonlyArray<PersistedConnectionTarget> = [registration.target],
 ): ConnectionCatalogDocument {
-  const next = setRoutesInCatalog(document, registration.target.environmentId, routes);
+  const next = {
+    ...setRoutesInCatalog(document, registration.target.environmentId, routes),
+    dismissedEnvironmentIds: removeCatalogValue(
+      document.dismissedEnvironmentIds,
+      (value) => value,
+      registration.target.environmentId,
+    ),
+  };
 
   switch (registration._tag) {
     case "RelayConnectionRegistration":
       return next;
     case "BearerConnectionRegistration":
+    case "TailnetConnectionRegistration":
     case "SshConnectionRegistration":
       return {
         ...next,
@@ -154,10 +167,17 @@ export function registerConnectionInCatalog(
 export function removeConnectionFromCatalog(
   document: ConnectionCatalogDocument,
   environmentId: EnvironmentId,
+  options?: { readonly dismiss?: boolean },
 ): ConnectionCatalogDocument {
   const next = setRoutesInCatalog(document, environmentId, []);
+  const dismissed = removeCatalogValue(
+    next.dismissedEnvironmentIds,
+    (value) => value,
+    environmentId,
+  );
   return {
     ...next,
+    dismissedEnvironmentIds: options?.dismiss === true ? [...dismissed, environmentId] : dismissed,
     remoteDpopTokens: removeCatalogValue(
       next.remoteDpopTokens,
       (value) => value.environmentId,

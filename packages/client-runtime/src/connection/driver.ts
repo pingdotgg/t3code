@@ -11,15 +11,19 @@ import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
 import type {
   ConnectionAttemptError,
   ConnectionAttemptStage,
+  ConnectionRouteOutcome,
   PreparedConnection,
 } from "./model.ts";
 import { ConnectionTransientError } from "./model.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import {
+  connectionRouteAddress,
+  connectionRouteId,
+  connectionRouteKind,
   connectionRoutes,
   routeEntry,
   routeHttpBaseUrl,
-  sendsTokenInClear,
+  unusedWithTailnetSignIn,
   usableRoutes,
 } from "./routes.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -41,13 +45,12 @@ export interface EnvironmentConnectionLease {
 }
 
 export type RouteCheck = "answered" | "silent" | "unchecked";
-/** "unprepared" means the route answered its check but could not be prepared. */
-export type RoutePreflight = "ready" | "unprepared" | "silent" | "unchecked";
+
+export type ReportRouteOutcome = (outcome: ConnectionRouteOutcome) => Effect.Effect<void>;
 
 const ROUTE_CHECK_TIMEOUT_MS = 2_500;
 // Preferred direct routes share one head start, so a relay connection does not
-// wait the full probe timeout for a LAN the device has already left. A route
-// that misses it connects over relay, then upgrades with a second reconnect.
+// wait the full probe timeout for a LAN the device has already left.
 const ROUTE_CHECK_HEAD_START_MS = 500;
 
 export class ConnectionDriver extends Context.Service<
@@ -56,11 +59,8 @@ export class ConnectionDriver extends Context.Service<
     readonly connect: (
       entry: ConnectionCatalogEntry,
       reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
+      reportRoute: ReportRouteOutcome,
     ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, Scope.Scope>;
-    readonly preflight: (
-      entry: ConnectionCatalogEntry,
-      route: ConnectionRoute,
-    ) => Effect.Effect<RoutePreflight>;
     /** Asks the host behind a live session to answer a fresh request on the session's own origin. */
     readonly checkHost: (prepared: PreparedConnection) => Effect.Effect<RouteCheck>;
   }
@@ -72,14 +72,31 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   connectRoute: (
     route: ConnectionRoute,
   ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, R | Scope.Scope>,
+  reportRoute: ReportRouteOutcome,
 ) {
   const routes = usableRoutes(entry);
+  const describe = (route: ConnectionRoute) => ({
+    routeId: connectionRouteId(route.target),
+    kind: connectionRouteKind(route),
+    address: connectionRouteAddress(route),
+  });
+  const attemptScope = yield* Scope.Scope;
+  // The checks live in the attempt's scope, so a route that answers after
+  // another one connected still reports its outcome. Each check is bounded.
   const checks =
     routes.length === 1
       ? []
-      : yield* Effect.forEach(routes, (route) => Effect.forkChild(checkRoute(route)));
+      : yield* Effect.forEach(routes, (route) =>
+          checkRoute(route).pipe(
+            Effect.tap((check) =>
+              check === "unchecked"
+                ? Effect.void
+                : reportRoute({ ...describe(route), result: check }),
+            ),
+            Effect.forkIn(attemptScope),
+          ),
+        );
   const headStart = yield* Effect.forkChild(Effect.sleep(ROUTE_CHECK_HEAD_START_MS));
-  const attemptScope = yield* Scope.Scope;
   let transient: ConnectionAttemptError | undefined;
   let blocked: ConnectionAttemptError | undefined;
   // Each route gets its own scope so a half-open session closes before the next try.
@@ -92,12 +109,19 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     );
     if (result._tag === "Failure") {
       if (result.failure._tag === "ConnectionTransientError") transient ??= result.failure;
-      else blocked ??= result.failure;
+      // The host's own refusal says more than this device's.
+      else if (blocked?.hop === undefined || blocked.hop === "device") blocked = result.failure;
     }
+    yield* reportRoute(
+      result._tag === "Success"
+        ? { ...describe(route), result: "answered" }
+        : { ...describe(route), result: "failed", error: result.failure },
+    );
     return result;
   });
   const silent: Array<{ readonly route: ConnectionRoute; readonly index: number }> = [];
   for (const [index, route] of routes.entries()) {
+    if (unusedWithTailnetSignIn(entry, route)) continue;
     const check =
       checks.length === 0
         ? "unchecked"
@@ -128,6 +152,9 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     if (result._tag === "Success") return result.success;
     if (result.failure.reason === "unsupported") return yield* result.failure;
   }
+  // A skipped route's check still tells the diagnosis whether this device
+  // reaches the host off Tailscale. Every check is bounded.
+  yield* Fiber.joinAll(checks);
   return yield* (
     transient ??
       blocked ??
@@ -181,6 +208,7 @@ export const make = Effect.gen(function* () {
   const connect = Effect.fn("ConnectionDriver.connect")(function* (
     entry: ConnectionCatalogEntry,
     reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
+    reportRoute: ReportRouteOutcome,
   ) {
     const target = entry.target;
     yield* Effect.annotateCurrentSpan({
@@ -204,6 +232,9 @@ export const make = Effect.gen(function* () {
             .renewDpopBeforeExpiry({
               expectedEnvironmentId: prepared.environmentId,
               expiresAtEpochMs: prepared.httpAuthorization.expiresAtEpochMs,
+              ...(prepared.httpAuthorization.tailnetCredentialId === undefined
+                ? {}
+                : { tailnetCredentialId: prepared.httpAuthorization.tailnetCredentialId }),
             })
             .pipe(
               Effect.catch((error) =>
@@ -214,26 +245,11 @@ export const make = Effect.gen(function* () {
         }
         return { prepared, session } satisfies EnvironmentConnectionLease;
       }),
+      reportRoute,
     );
   });
 
-  const preflight = (entry: ConnectionCatalogEntry, route: ConnectionRoute) =>
-    (sendsTokenInClear(connectionRoutes(entry), route)
-      ? Effect.succeed("silent" as const)
-      : checkRoute(entry, route)
-    ).pipe(
-      Effect.filterOrElse(
-        (check): check is Exclude<RouteCheck, "answered"> => check !== "answered",
-        () =>
-          resolver.prepare(routeEntry(entry, route)).pipe(
-            Effect.as<RoutePreflight>("ready"),
-            Effect.orElseSucceed((): RoutePreflight => "unprepared"),
-          ),
-      ),
-      Effect.withSpan("ConnectionDriver.preflight"),
-    );
-
-  return ConnectionDriver.of({ connect, preflight, checkHost });
+  return ConnectionDriver.of({ connect, checkHost });
 });
 
 export const layer = Layer.effect(ConnectionDriver, make);

@@ -83,7 +83,7 @@ const makeDiskSessionStoreLayer = Effect.fn("makeDiskSessionStoreLayer")(functio
 });
 
 it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
-  it.effect.each(["revoke", "revokeAllExcept", "replace"] as const)(
+  it.effect.each(["revoke", "revokeAllExcept", "revokeBySubject", "replace"] as const)(
     "invalidates every connection for a session on %s and leaves other sessions active",
     (operation) =>
       Effect.gen(function* () {
@@ -105,7 +105,13 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
           .pipe(Effect.forkScoped({ startImmediately: true }));
         if (operation === "revoke") yield* sessions.revoke(client.sessionId);
         else if (operation === "revokeAllExcept") yield* sessions.revokeAllExcept(owner.sessionId);
-        else yield* sessions.issue({ ...relaySessionInput, replaceSessionId: client.sessionId });
+        else if (operation === "revokeBySubject") {
+          const sibling = yield* sessions.issue(relaySessionInput);
+          expect(yield* sessions.revokeBySubject(relaySessionInput.subject)).toBe(2);
+          expect((yield* Effect.flip(sessions.verify(sibling.token)))._tag).toBe(
+            "SessionTokenRevokedError",
+          );
+        } else yield* sessions.issue({ ...relaySessionInput, replaceSessionId: client.sessionId });
         yield* Fiber.join(first);
         yield* Fiber.join(second);
         expect(yield* Deferred.isDone(ownerInvalidated)).toBe(false);

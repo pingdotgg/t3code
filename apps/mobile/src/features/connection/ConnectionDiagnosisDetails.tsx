@@ -4,12 +4,14 @@ import {
   type ConnectionDiagnosis,
   connectionDiagnosisText,
   connectionRoutes,
+  environmentTailscaleNotice,
   hasRelayRoute,
   presentConnectionDiagnosis,
   type EnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import Constants from "expo-constants";
+import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { Linking, View } from "react-native";
 
@@ -17,7 +19,9 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { environmentCatalog } from "../../connection/catalog";
 import { cn } from "../../lib/cn";
+import { useNowMinuteMs } from "../../lib/clock";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { relayEnvironmentDiscovery } from "../../state/relay";
 
 const HOP_MARK = { ok: "✓", failed: "✕", unchecked: "–" } as const;
 const HOP_NOTE = { ok: "", failed: " · Failed", unchecked: " · Not checked" } as const;
@@ -31,6 +35,9 @@ export function useConnectionDiagnosis(
     useAtomValue(environmentCatalog.stateAtom(environmentId)),
     () => AVAILABLE_CONNECTION_STATE,
   );
+  const relayStatus = useAtomValue(relayEnvironmentDiscovery.stateValueAtom).environments.get(
+    environmentId,
+  )?.status;
   if (presentation === null || !presentation.entry.enabled) return { diagnosis: null, state };
   const phase = presentation.connection.phase;
   if (phase === "connected" || phase === "unsupported") return { diagnosis: null, state };
@@ -40,10 +47,39 @@ export function useConnectionDiagnosis(
     hostLabel: presentation.entry.target.label,
     state,
     via: relayOnly ? "relay" : "direct",
+    relayStatus: hasRelayRoute(presentation.entry)
+      ? Option.getOrNull(relayStatus ?? Option.none())
+      : null,
     clientVersion: Constants.expoConfig?.version,
     serverVersion: presentation.serverConfig?.environment.serverVersion,
+    hostTailscale: presentation.serverConfig?.tailscale,
   });
   return { diagnosis, state };
+}
+
+/** The host's last reported Tailscale problem, for its row while no connection has failed. */
+export function HostTailscaleNotice(props: { readonly presentation: EnvironmentPresentation }) {
+  return props.presentation.serverConfig?.tailscale?.issues.length ? (
+    <HostTailscaleNoticeLines presentation={props.presentation} />
+  ) : null;
+}
+
+// Ticks once a minute, and only for hosts with a Tailscale issue, so ages and expiry stay current.
+function HostTailscaleNoticeLines(props: { readonly presentation: EnvironmentPresentation }) {
+  const now = useNowMinuteMs();
+  const notice = environmentTailscaleNotice({
+    hostLabel: props.presentation.entry.target.label,
+    entry: props.presentation.entry,
+    serverConfig: props.presentation.serverConfig,
+    now,
+  });
+  if (notice === null) return null;
+  return (
+    <>
+      <Text className="text-xs text-warning-foreground">{notice.headline}</Text>
+      <Text className="text-xs text-foreground-muted">{notice.fix}</Text>
+    </>
+  );
 }
 
 export function ConnectionDiagnosisDetails(props: {
@@ -74,6 +110,11 @@ export function ConnectionDiagnosisDetails(props: {
             {`${index + 1}. ${step}`}
           </Text>
         ))}
+        {diagnosis.policySnippet ? (
+          <Text selectable className="mt-1 font-mono text-xs text-foreground">
+            {diagnosis.policySnippet}
+          </Text>
+        ) : null}
       </View>
       <Text selectable className="font-mono text-xs text-foreground-muted">
         {diagnosis.facts.map(([label, value]) => `${label}: ${value}`).join("\n")}

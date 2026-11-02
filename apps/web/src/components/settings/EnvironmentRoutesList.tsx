@@ -16,15 +16,22 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useAtomValue } from "@effect/atom-react";
 import {
+  AVAILABLE_CONNECTION_STATE,
   type ConnectionRoute,
+  type ConnectionRouteOutcome,
   connectionRouteAddress,
   connectionRouteId,
   connectionRouteLabel,
   connectionRoutes,
   isLearned,
   pendingRouteOrder,
+  offTailnetHint,
+  routeOutcomeText,
+  unusedWithTailnetSignIn,
 } from "@t3tools/client-runtime/connection";
+import { AsyncResult } from "effect/reactivity";
 import { GripVerticalIcon, PlusIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -59,6 +66,12 @@ export function EnvironmentRoutesList({
     prepared._tag === "Some" && environment.connection.phase === "connected"
       ? connectionRouteId(prepared.value.target)
       : null;
+  const state = AsyncResult.getOrElse(
+    useAtomValue(environmentCatalog.stateAtom(environment.environmentId)),
+    () => AVAILABLE_CONNECTION_STATE,
+  );
+  const outcomes = new Map(state.routes.map((outcome) => [outcome.routeId, outcome]));
+  const hint = offTailnetHint(state);
   const reorder = useAtomCommand(environmentCatalog.reorderRoutes, "Reorder routes");
   const removeRoute = useAtomCommand(environmentCatalog.removeRoute, "Remove route");
   const sensors = useSensors(
@@ -108,6 +121,8 @@ export function EnvironmentRoutesList({
                 route={route}
                 position={index + 1}
                 inUse={connectionRouteId(route.target) === activeRouteId}
+                outcome={outcomes.get(connectionRouteId(route.target))}
+                unused={unusedWithTailnetSignIn(environment.entry, route)}
                 removable={routes.length > 1 && !isLearned(route)}
                 onRemove={() => void confirmRemove(route)}
               />
@@ -115,6 +130,7 @@ export function EnvironmentRoutesList({
           </ol>
         </SortableContext>
       </DndContext>
+      {hint !== null ? <p className="pb-1 text-2xs text-muted-foreground">{hint}</p> : null}
       <div className="-ml-1.5 pt-1">
         <Button size="xs" variant="ghost-muted" onClick={onAddRoute}>
           <PlusIcon className="size-3" />
@@ -129,12 +145,16 @@ function SortableRouteRow({
   route,
   position,
   inUse,
+  outcome,
+  unused,
   removable,
   onRemove,
 }: {
   readonly route: ConnectionRoute;
   readonly position: number;
   readonly inUse: boolean;
+  readonly outcome: ConnectionRouteOutcome | undefined;
+  readonly unused: boolean;
   readonly removable: boolean;
   readonly onRemove: () => void;
 }) {
@@ -166,6 +186,19 @@ function SortableRouteRow({
           {inUse ? (
             <span className="rounded-sm bg-success/12 px-1 text-2xs font-normal text-success-foreground">
               In use
+            </span>
+          ) : unused ? (
+            <span className="text-2xs font-normal text-muted-foreground">
+              Not used with Tailscale sign-in
+            </span>
+          ) : outcome !== undefined ? (
+            <span
+              className={cn(
+                "text-2xs font-normal",
+                outcome.result === "answered" ? "text-muted-foreground" : "text-destructive",
+              )}
+            >
+              {routeOutcomeText(outcome)}
             </span>
           ) : null}
         </p>

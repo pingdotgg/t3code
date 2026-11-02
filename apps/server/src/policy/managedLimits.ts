@@ -145,7 +145,7 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
   if (found.length === 0) return;
   // `off` acts on the machine's current name, so a web route under a former name stays.
   const currentName = found.some((route) => route.mount !== undefined && route.owner === undefined)
-    ? yield* readTailscaleStatus.pipe(
+    ? yield* readTailscaleStatus("passive").pipe(
         Effect.map((status) => status.magicDnsName?.toLowerCase() ?? null),
         Effect.orElseSucceed(() => null),
       )
@@ -214,6 +214,7 @@ export const checkServerReachability = Effect.fn("managedLimits.checkServerReach
       readonly authPolicy: ServerAuthPolicy;
       readonly host: string | undefined;
       readonly tailscaleServeEnabled: boolean;
+      readonly tailscaleSignInEnabled?: boolean | undefined;
       /** The background service chose `host` to reach private networks; the user did not. */
       readonly privateNetworkOnly?: boolean | undefined;
     },
@@ -225,6 +226,9 @@ export const checkServerReachability = Effect.fn("managedLimits.checkServerReach
           ? "so the background service cannot listen on private networks; set T3CODE_HOST=127.0.0.1 in its service.env"
           : `so the server cannot listen on ${input.host === "" ? "every interface" : (input.host ?? "this host")}`,
       );
+    if (input.tailscaleSignInEnabled === true && !allowsRemoteClients(policy)) {
+      return yield* refuseRemoteClients(policy, "so Tailscale sign-in cannot be turned on");
+    }
     if (!allowsAuthPolicy(policy, input.authPolicy)) {
       return yield* input.authPolicy === "remote-reachable"
         ? cannotListen()

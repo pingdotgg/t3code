@@ -12,45 +12,83 @@ import * as Queue from "effect/Queue";
 import * as Terminal from "effect/Terminal";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
+import * as Tailscale from "@t3tools/tailscale";
 import { afterEach, vi } from "vite-plus/test";
+
+// The tests must not depend on Tailscale running on the machine that runs them.
+vi.mock("@t3tools/tailscale", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/tailscale")>()),
+  readTailscaleStatus: () => Effect.fail("Tailscale is not running in tests"),
+  readTailscaleProfiles: () => Effect.fail("Tailscale is not running in tests"),
+}));
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ServerOwnership from "../serverOwnership.ts";
 import { upsertServiceEnv } from "./service.ts";
-import { connectEnabled, planRoutes, upCommand } from "./up.ts";
+import { connectEnabled, planRoutes, resolveOwner, upCommand, upPortCheck } from "./up.ts";
+
+const TAGGED_HOST: Tailscale.TailscaleStatus = {
+  version: "1.90.0",
+  magicDnsName: "box.example.ts.net",
+  tailnetIpv4Addresses: ["100.64.0.2"],
+  httpsServeEnabled: null,
+  backendState: "Running",
+  selfNodeId: "n1",
+  selfUserId: null,
+  selfTags: ["tag:t3-box"],
+  keyExpiry: null,
+  keyExpired: false,
+  health: [],
+  magicDnsEnabled: true,
+  tailnetName: null,
+  certDomains: [],
+  userspaceNetworking: false,
+  peers: [],
+  unidentifiedPeers: [],
+  users: [{ userId: "123", loginName: "me@example.com" }],
+};
 
 const none = Option.none<boolean>();
+const off = { tailscale: false, connect: false, lan: false };
+const both = { tailscale: true, connect: true };
+const noFlags = { tailscale: none, connect: none, lan: none };
 
 it.each([
   {
-    label: "a new machine starts from T3 Connect and asks",
-    setup: { installed: false, connect: false, lan: false },
-    flags: { connect: none, lan: none },
-    expected: { routes: { connect: true, lan: false }, ask: ["connect", "lan"] },
+    label: "a new machine with Tailscale starts from it and asks",
+    setup: { installed: false, current: off, available: both },
+    flags: noFlags,
+    expected: { routes: { ...off, tailscale: true }, ask: ["tailscale", "connect", "lan"] },
   },
   {
-    label: "a build without T3 Connect never offers it",
-    setup: { installed: false, connect: null, lan: false },
-    flags: { connect: none, lan: none },
-    expected: { routes: { connect: false, lan: false }, ask: ["lan"] },
+    label: "a new machine without Tailscale starts from T3 Connect",
+    setup: { installed: false, current: off, available: { tailscale: false, connect: true } },
+    flags: noFlags,
+    expected: { routes: { ...off, connect: true }, ask: ["connect", "lan"] },
   },
   {
-    label: "a rerun starts from the current setup",
-    setup: { installed: true, connect: false, lan: true },
-    flags: { connect: none, lan: none },
-    expected: { routes: { connect: false, lan: true }, ask: ["connect", "lan"] },
+    label: "a rerun starts from the current setup and can turn a route off",
+    setup: {
+      installed: true,
+      current: { ...off, tailscale: true, lan: true },
+      available: { tailscale: false, connect: false },
+    },
+    flags: noFlags,
+    expected: { routes: { ...off, tailscale: true, lan: true }, ask: ["tailscale", "lan"] },
   },
   {
-    label: "a route flag on a new machine turns on only that route",
-    setup: { installed: false, connect: false, lan: false },
-    flags: { connect: none, lan: Option.some(true) },
-    expected: { routes: { connect: false, lan: true }, ask: [] },
+    label: "another setup flag asks nothing and keeps every route, even on a new machine",
+    setup: { installed: false, current: off, available: both },
+    flags: { ...noFlags, other: true },
+    expected: { routes: off, ask: [] },
   },
   {
-    label: "a route flag asks nothing and keeps the other route",
-    setup: { installed: true, connect: true, lan: true },
-    flags: { connect: none, lan: Option.some(false) },
-    expected: { routes: { connect: true, lan: false }, ask: [] },
+    label: "a route flag asks nothing and keeps the routes not named, even on a new machine",
+    setup: { installed: false, current: off, available: both },
+    flags: { ...noFlags, lan: Option.some(true) },
+    expected: { routes: { ...off, lan: true }, ask: [] },
   },
 ])("$label", ({ setup, flags, expected }) => {
   expect(planRoutes(setup, flags)).toEqual(expected);
@@ -160,6 +198,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     readonly status?: Partial<BootService.BootServiceStatus>;
     readonly installFails?: boolean;
     readonly restartFails?: boolean;
+    /** What Tailscale reports here. Without it, Tailscale does not answer. */
+    readonly tailscale?: Tailscale.TailscaleStatus;
+    /** A server started by hand runs for this T3 home. */
+    readonly handStarted?: boolean;
+    /** A stopped server left this Serve mapping record. */
+    readonly serveRecord?: string;
+    /** A server holds the T3 home's lock. */
+    readonly serverHoldsLock?: boolean;
+    /** `t3 up` exits with an error. */
+    readonly fails?: boolean;
     /** Runs as if in a terminal, answering each question with this text. */
     readonly answer?: string;
     readonly prints?: string;
@@ -218,7 +266,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     {
       label: "a failed update keeps service.env matching the old service",
       // The old service still runs, so no foreground server is offered.
-      prints: "Fix that, then run `t3 up` again.",
+      prints: "The service kept its old settings. Fix that, then run `t3 up` again.",
+      fails: true,
       installed: true,
       status: { current: false },
       installFails: true,
@@ -251,6 +300,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     },
     {
       label: "no service manager still records the choice",
+      // Every choice is explicit, so the shell's environment cannot change it.
+      prints: "--lan --no-tailscale-sign-in --no-tailscale-serve",
       installed: false,
       status: { supported: false },
       env: "",
@@ -260,19 +311,215 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       envAfter: "T3CODE_LAN=true\n",
     },
     {
-      label: "the old default is kept",
+      label: "Tailscale down here keeps its settings while another route changes",
+      installed: true,
+      env: "T3CODE_LAN=true\nT3CODE_TAILSCALE_SIGN_IN=true\n",
+      args: ["--no-lan"],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=true\n",
+    },
+    {
+      label: "turning Tailscale off stops Serve too, written as false",
+      installed: true,
+      env: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=true\nT3CODE_TAILSCALE_SERVE=true\n",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      // Only turning Serve on implies Tailscale. Off is written, since it may be inherited.
+      label: "--no-tailscale-serve leaves Tailscale off and pins Serve off",
+      installed: true,
+      env: "T3CODE_LAN=false\n",
+      args: ["--no-tailscale-serve"],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      label: "--no-tailscale pins sign-in off even when the file says nothing",
+      installed: true,
+      env: "T3CODE_LAN=false\n",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      label: "--no-tailscale-serve turns Serve off while Tailscale is down here",
+      installed: true,
+      env: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=true\nT3CODE_TAILSCALE_SERVE=true\n",
+      args: ["--no-tailscale-serve"],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=true\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      label: "--no-tailscale pins Serve off when sign-in was already off",
+      installed: true,
+      env: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=false\n",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      label: "--no-tailscale writes its offs with no service to run",
+      installed: false,
+      env: "",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      label: "--no-tailscale-serve writes Serve off with no service to run",
+      installed: false,
+      env: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=true\n",
+      args: ["--no-tailscale-serve"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      // Only the background service reads service.env.
+      label: "a server started by hand is named, not called off",
+      prints: "T3 Code is running here outside the background service",
+      installed: false,
+      handStarted: true,
+      env: "",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      label: "with nothing running, a Serve mapping a stopped server left is removed",
+      prints: "Removed a Tailscale Serve mapping an earlier run left.",
+      installed: false,
+      tailscale: TAGGED_HOST,
+      serveRecord: `{"n1":{"localPort":3773,"localHost":"127.0.0.1","servePort":443,"label":"n1"}}`,
+      env: "",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      label: "a Serve record on another Tailscale account names it and the way out",
+      prints: "may remain on another Tailscale account: me@work.example on work.example. Switch",
+      fails: true,
+      installed: false,
+      tailscale: TAGGED_HOST,
+      serveRecord: `{"work.example/2":{"localPort":3773,"localHost":"127.0.0.1","servePort":443,"label":"me@work.example on work.example"}}`,
+      env: "",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      // The record names a profile, but Tailscale did not list its profiles to tell whose.
+      label: "a Serve record whose profile Tailscale cannot list says so",
+      prints: "Tailscale did not list its accounts",
+      fails: true,
+      installed: false,
+      tailscale: TAGGED_HOST,
+      serveRecord: `{"prof1":{"localPort":3773,"localHost":"127.0.0.1","servePort":443,"label":"me@example.com on example.com","profileId":"prof1"}}`,
+      env: "",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      label: "an unreadable Serve record is reported, not called off",
+      prints: "could not be read",
+      fails: true,
+      installed: false,
+      serveRecord: "{",
+      env: "",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      // The server owns its Serve mapping, so cleanup waits for it to stop.
+      label: "a server that started after the check keeps its Serve record",
+      prints: "T3 Code is running here outside the background service",
+      installed: false,
+      serverHoldsLock: true,
+      serveRecord: `{"n1":{"localPort":3773,"localHost":"127.0.0.1","servePort":443,"label":"n1"}}`,
+      env: "",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      // The service may inherit sign-in, so leaving it unchecked writes the off.
+      label: "leaving Tailscale unchecked pins it off",
+      installed: true,
+      tailscale: { ...TAGGED_HOST, selfTags: [], selfUserId: "123" },
+      answer: "enter",
+      env: "T3CODE_LAN=false\n",
+      args: [],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      // With no saved owner and no terminal, choosing Tailscale would fail with "Pass --owner".
+      label: "--no-tailscale-serve on a tagged host asks for no owner",
+      installed: true,
+      tailscale: TAGGED_HOST,
+      env: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=true\nT3CODE_TAILSCALE_SERVE=true\n",
+      args: ["--no-tailscale-serve"],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=true\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      // Not written as a choice, so status keeps calling it the older install's.
+      label: "the old default is kept, still marked as the old default",
       installed: true,
       env: "",
       args: ["--yes"],
       installs: 0,
       restarts: 0,
-      envAfter: "T3CODE_LAN=true\n",
+      envAfter: "",
     },
   ])("restarts the service only when it must: $label", (input) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-up-test-" });
       yield* fs.writeFileString(`${baseDir}/service.env`, input.env);
+      if (input.serveRecord !== undefined) {
+        yield* fs.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+        yield* fs.writeFileString(
+          `${baseDir}/userdata/tailscale-serve-claim.json`,
+          input.serveRecord,
+        );
+        vi.spyOn(Tailscale, "releaseTailscaleServe").mockReturnValue(Effect.succeed(true));
+      }
+      if (input.serverHoldsLock === true) {
+        yield* ServerOwnership.acquireServerOwnership(
+          `${baseDir}/userdata/server-runtime.json`,
+        ).pipe(Effect.provide(ProcessRunner.layer));
+      }
+      if (input.handStarted === true) {
+        yield* fs.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+        yield* fs.writeFileString(
+          `${baseDir}/userdata/server-runtime.json`,
+          `{"version":1,"pid":${process.pid},"port":3773,"origin":"http://127.0.0.1:3773","startedAt":"2026-10-31T00:00:00.000Z"}`,
+        );
+      }
+      if (input.tailscale !== undefined) {
+        vi.spyOn(Tailscale, "readTailscaleStatus").mockReturnValue(Effect.succeed(input.tailscale));
+      }
       let installs = 0;
       let restarts = 0;
       const status = {
@@ -335,9 +582,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
         ),
       );
       if (input.prints !== undefined) {
-        expect(lines.join("\n")).toContain(input.prints);
+        const failure = exit._tag === "Failure" ? Cause.pretty(exit.cause) : "";
+        expect(`${lines.join("\n")}\n${failure}`).toContain(input.prints);
       }
-      expect(exit._tag).toBe(input.restartFails === true ? "Failure" : "Success");
+      expect(exit._tag).toBe(
+        input.restartFails === true || input.fails === true ? "Failure" : "Success",
+      );
       expect({ installs, restarts }).toEqual({
         installs: input.installs,
         restarts: input.restarts,
@@ -354,3 +604,33 @@ it("rewrites only the named service.env keys and keeps the user's lines", () => 
   );
   expect(upsertServiceEnv("", { T3CODE_LAN: "false" })).toBe("T3CODE_LAN=false\n");
 });
+
+const RUNNING_SERVICE = { port: 3773, serviceManaged: true };
+const MANUAL = { port: 3773, serviceManaged: false };
+
+it.each([
+  { configuredPort: undefined, free: true, running: null, expected: "ok" },
+  { configuredPort: undefined, free: false, running: RUNNING_SERVICE, expected: "ok" },
+  { configuredPort: undefined, free: false, running: null, expected: "taken" },
+  { configuredPort: undefined, free: false, running: MANUAL, expected: "manual" },
+  // t3 up writes T3CODE_PORT=3773, so a later run still checks the port.
+  { configuredPort: "3773", free: false, running: null, expected: "taken" },
+  { configuredPort: "3773", free: false, running: RUNNING_SERVICE, expected: "ok" },
+  { configuredPort: "4000", free: true, running: null, expected: "custom" },
+  { configuredPort: "4000", free: true, running: { ...MANUAL, port: 4000 }, expected: "manual" },
+] as const)(
+  "port check with T3CODE_PORT=$configuredPort, free=$free, running=$running is $expected",
+  ({ configuredPort, free, running, expected }) => {
+    expect(upPortCheck({ configuredPort, portFree: free, running })).toBe(expected);
+  },
+);
+
+it.effect("a rerun on a tagged host keeps the owner saved before, with no prompt", () =>
+  Effect.gen(function* () {
+    // Not interactive, as with --yes, so asking would fail with "Pass --owner".
+    expect(yield* resolveOwner(TAGGED_HOST, Option.none(), "123", false)).toEqual({
+      userId: "123",
+      login: "me@example.com",
+    });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

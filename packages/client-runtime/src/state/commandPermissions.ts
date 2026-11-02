@@ -6,6 +6,7 @@ import {
   type EnvironmentId,
   type AuthSessionState,
   type AuthEnvironmentScope,
+  tailnetScopeDenial,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -61,7 +62,10 @@ function makeCommandPermissions<R, E>(
           if (missing !== undefined)
             return yield* new EnvironmentAuthorizationError({
               ...authScopeRequiredResponse(missing),
-              message: `This connection requires ${missing}.`,
+              message:
+                Option.isSome(session) && session.value.signedInWithTailscale === true
+                  ? tailnetScopeDenial(missing)
+                  : `This connection requires ${missing}.`,
             });
         }),
       );

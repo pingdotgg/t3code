@@ -125,7 +125,7 @@ export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (in
   readonly webPort: number;
   readonly localTarget?: { readonly port: number; readonly host: string };
 }) {
-  const status = yield* readTailscaleStatus.pipe(
+  const status = yield* readTailscaleStatus("active").pipe(
     Effect.mapError((error) => new TailscaleUnavailableError({ cause: error })),
   );
   if (status.magicDnsName === null) {

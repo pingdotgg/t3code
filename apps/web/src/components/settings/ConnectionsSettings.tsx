@@ -29,7 +29,7 @@ import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import {
   applyWslEnableSelection,
   isWslSettingsRowVisible,
-  missingTailscaleEndpointDescription,
+  resolveTailscaleHttpsRow,
   resolveLocalVersionStatusLabel,
   resolveTailscaleServeBaseUrl,
 } from "./ConnectionsSettings.logic";
@@ -136,6 +136,8 @@ import {
   SavedBackendListRow,
 } from "./SavedEnvironmentRows";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
+import { TailnetDevicesSettings } from "./TailnetDevicesSettings";
+import { TailscaleSignInRow } from "./TailscaleSignInRow";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
@@ -260,8 +262,10 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
     | { readonly kind: "wsl-only"; readonly nextValue: boolean };
   const [pendingWslChange, setPendingWslChange] = useState<PendingWslChange | null>(null);
   const isWslConfirmDialogOpen = pendingWslChange !== null;
-  const [pendingTailscaleServeEndpoint, setPendingTailscaleServeEndpoint] =
-    useState<AdvertisedEndpoint | null>(null);
+  // `endpoint` is null when Serve is enabled before Tailscale detection has run.
+  const [pendingTailscaleServeSetup, setPendingTailscaleServeSetup] = useState<{
+    readonly endpoint: AdvertisedEndpoint | null;
+  } | null>(null);
   const [disableTailscaleServeDialogOpen, setDisableTailscaleServeDialogOpen] = useState(false);
   const [tailscaleServePortInput, setTailscaleServePortInput] = useState(
     String(DEFAULT_TAILSCALE_SERVE_PORT),
@@ -346,6 +350,7 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
     parsedTailscaleServePort >= 1 &&
     parsedTailscaleServePort <= 65_535;
 
+  const pendingTailscaleServeEndpoint = pendingTailscaleServeSetup?.endpoint ?? null;
   const pendingTailscaleServeBaseUrl = resolveTailscaleServeBaseUrl(
     pendingTailscaleServeEndpoint,
     parsedTailscaleServePort,
@@ -403,7 +408,7 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
         port: parsedTailscaleServePort,
       });
       refreshDesktopNetworkAccessState();
-      setPendingTailscaleServeEndpoint(null);
+      setPendingTailscaleServeSetup(null);
     });
     if (settled._tag === "Failure") {
       const error = Cause.squash(settled.cause);
@@ -421,11 +426,11 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
     setIsUpdatingTailscaleServe(false);
   };
 
-  const handleStartTailscaleServeSetup = (endpoint: AdvertisedEndpoint) => {
+  const handleStartTailscaleServeSetup = (endpoint: AdvertisedEndpoint | null) => {
     setTailscaleServePortInput(
       String(desktopServerExposureState?.tailscaleServePort ?? DEFAULT_TAILSCALE_SERVE_PORT),
     );
-    setPendingTailscaleServeEndpoint(endpoint);
+    setPendingTailscaleServeSetup({ endpoint });
   };
 
   const handleConfirmTailscaleServeDisable = async () => {
@@ -460,7 +465,7 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
     setIsUpdatingTailscaleServe(false);
   };
 
-  const handleStartTailscaleServeDisable = (_endpoint: AdvertisedEndpoint) => {
+  const handleStartTailscaleServeDisable = () => {
     setDisableTailscaleServeDialogOpen(true);
   };
 
@@ -607,6 +612,10 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
 
   const visibleDesktopPairingLinks = desktopPairingLinks;
   const tailscaleHttpsEndpoint = desktopAdvertisedEndpoints.find(isTailscaleHttpsEndpoint) ?? null;
+  const tailscaleHttpsRow = resolveTailscaleHttpsRow({
+    state: desktopServerExposureState,
+    endpoints: desktopAdvertisedEndpoints,
+  });
   const visibleDesktopNetworkAdvertisedEndpoints = isLocalBackendNetworkAccessible
     ? desktopAdvertisedEndpoints.filter((endpoint) => !isTailscaleHttpsEndpoint(endpoint))
     : [];
@@ -902,24 +911,19 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
   const renderTailscaleRow = () => (
     <SettingsRow
       title={searchableSetting("tailscale-https").title}
-      description={
-        tailscaleHttpsEndpoint
-          ? tailscaleHttpsEndpoint.status === "available"
-            ? tailscaleHttpsEndpoint.httpBaseUrl
-            : "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
-          : missingTailscaleEndpointDescription(desktopServerExposureState)
-      }
+      description={tailscaleHttpsRow.description}
+      status={tailscaleHttpsRow.status}
       control={
-        tailscaleHttpsEndpoint ? (
+        tailscaleHttpsRow.switchChecked !== null ? (
           <Switch
-            checked={tailscaleHttpsEndpoint.status === "available"}
+            checked={tailscaleHttpsRow.switchChecked}
             disabled={isUpdatingTailscaleServe}
             onCheckedChange={(checked) => {
               if (checked) {
                 handleStartTailscaleServeSetup(tailscaleHttpsEndpoint);
                 return;
               }
-              handleStartTailscaleServeDisable(tailscaleHttpsEndpoint);
+              handleStartTailscaleServeDisable();
             }}
             aria-label="Enable Tailscale HTTPS"
           />
@@ -1119,6 +1123,11 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
                 {renderNetworkAccessRow()}
                 {renderEndpointRows()}
                 {renderTailscaleRow()}
+                <TailscaleSignInRow
+                  state={desktopServerExposureState}
+                  wslOnly={desktopWslState?.enabled === true && desktopWslState.wslOnly}
+                  managed={remoteClientsDenial}
+                />
                 {renderWslRow()}
                 {canReadRelay || canManageRelay ? (
                   <CloudLinkRow canReadRelay={canReadRelay} canManageRelay={canManageRelay} />
@@ -1190,6 +1199,10 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
                 )}
               </ScrollArea>
             </FoldedSettingsSection>
+          ) : null}
+          {primaryEnvironmentId !== null &&
+          primaryServerConfig?.environment.capabilities.tailnetSignIn === true ? (
+            <TailnetDevicesSettings environmentId={primaryEnvironmentId} />
           ) : null}
           <AlertDialog
             open={pendingDesktopServerExposureMode !== null && canManageLocalBackend}
@@ -1386,10 +1399,10 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
             </AlertDialogPopup>
           </AlertDialog>
           <Dialog
-            open={pendingTailscaleServeEndpoint !== null}
+            open={pendingTailscaleServeSetup !== null}
             onOpenChange={(open) => {
               if (isUpdatingTailscaleServe) return;
-              if (!open) setPendingTailscaleServeEndpoint(null);
+              if (!open) setPendingTailscaleServeSetup(null);
             }}
           >
             <DialogPopup className="max-w-md">
@@ -1539,6 +1552,19 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
           isSearchTarget={index === 0}
         />
       ))}
+      {savedEnvironments
+        .filter(
+          (environment) =>
+            environment.connection.phase === "connected" &&
+            environment.serverConfig?.environment.capabilities.tailnetSignIn === true,
+        )
+        .map((environment) => (
+          <TailnetDevicesSettings
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+            environmentLabel={environment.label}
+          />
+        ))}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <PullRequestRoutingSettings environments={loadBalancingEnvironments} />
     </SettingsPageContainer>
