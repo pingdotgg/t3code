@@ -5,6 +5,7 @@ import {
   type ThreadId,
   VcsProcessSpawnError,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { newProjectFolderName } from "@t3tools/shared/path";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -21,6 +22,8 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { resolveDirectorySetting } from "../worktreesDirectory.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -97,7 +100,10 @@ export class ManagedProjectFolders extends Context.Service<
       readonly threadId: ThreadId;
       readonly text: string;
     }) => Effect.Effect<Option.Option<string>, ScratchFolderError>;
-    readonly namedProjectsRoot: string;
+    /** Invalid settings (relative, foreign-platform, or a drive root) fall back to the default. */
+    readonly resolveNamedProjectsRoot: (settings: {
+      readonly newProjectsDirectory: string;
+    }) => string;
     /** Removes failed/cancelled creations' folders only while no project owns them. */
     readonly createNamedProject: (input: { readonly name: string }) => Effect.Effect<
       {
@@ -203,6 +209,8 @@ const isGitMissing = (error: GitManagerServiceError) =>
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const gitWorkflow = yield* GitWorkflow.GitWorkflowService;
@@ -341,10 +349,20 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const namedProjectsRoot = path.resolve(config.baseDir, "projects");
+  const defaultNamedProjectsRoot = path.resolve(config.baseDir, "projects");
+  const resolveNamedProjectsRoot: ManagedProjectFolders["Service"]["resolveNamedProjectsRoot"] = (
+    settings,
+  ) =>
+    resolveDirectorySetting(
+      settings.newProjectsDirectory,
+      defaultNamedProjectsRoot,
+      path,
+      homeDirectory,
+    ) ?? defaultNamedProjectsRoot;
 
   const claimNamedFolder = Effect.fn("ManagedProjectFolders.claimNamedFolder")(function* (
     name: string,
+    namedProjectsRoot: string,
   ) {
     yield* fileSystem
       .makeDirectory(namedProjectsRoot, { recursive: true })
@@ -421,7 +439,10 @@ const make = Effect.gen(function* () {
   const createNamedProject: ManagedProjectFolders["Service"]["createNamedProject"] = Effect.fn(
     "ManagedProjectFolders.createNamedProject",
   )(function* (input) {
-    const workspaceRoot = yield* claimNamedFolder(input.name);
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.orElseSucceed(() => ({ newProjectsDirectory: "" })),
+    );
+    const workspaceRoot = yield* claimNamedFolder(input.name, resolveNamedProjectsRoot(settings));
     const removeFolder = fileSystem.remove(workspaceRoot, { recursive: true }).pipe(Effect.ignore);
     const prepared = yield* Effect.all([
       scaffoldRepository(workspaceRoot, input.name).pipe(
@@ -463,7 +484,7 @@ const make = Effect.gen(function* () {
     ensureScratchProject,
     isScratchProject,
     folderForThread,
-    namedProjectsRoot,
+    resolveNamedProjectsRoot,
     createNamedProject,
   });
 });

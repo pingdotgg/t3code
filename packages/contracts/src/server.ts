@@ -720,6 +720,7 @@ export type ServerConfigProviderStatusesPayload = typeof ServerConfigProviderSta
 
 export const ServerConfigSettingsUpdatedPayload = Schema.Struct({
   settings: ServerSettings,
+  newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerConfigSettingsUpdatedPayload = typeof ServerConfigSettingsUpdatedPayload.Type;
 

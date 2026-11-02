@@ -140,6 +140,11 @@ like `pinball-stats` for "Pinball Stats". Turn on **Create private repository on
 publish it. If Git has no name or email on that machine, the project is created without the
 first commit.
 
+To create new projects somewhere else, such as `~/repos`, set **New projects directory** in
+**Settings → Projects**. The path is on the machine running T3 Code, and `~` is that machine's
+home folder. Existing projects stay where they are. Clear the setting to go back to
+`~/.t3/projects`.
+
 Use **Add Project** in the command palette (`Cmd/Ctrl+K`) to clone a repository. Choose a hosting
 provider or paste a Git URL, then choose where to save it. The project opens right away while the
 clone runs in the background: you can write your first prompt, and sending waits until the files

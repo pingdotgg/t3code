@@ -647,9 +647,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["new worktrees start remote origin latest fetched branch local"],
   },
   {
+    id: "new-projects-directory",
+    title: "New projects directory",
+    to: "/settings/projects",
+    scope: "environment-defaults",
+    searchTerms: ["new project folder location path repos repositories create default"],
+  },
+  {
     id: "add-project-starts-in",
     title: "Add project starts in",
-    to: "/settings/threads",
+    to: "/settings/projects",
     scope: "environment-defaults",
     searchTerms: ["base directory folder browser path home"],
   },

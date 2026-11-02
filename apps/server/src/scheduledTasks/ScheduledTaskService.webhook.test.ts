@@ -235,7 +235,7 @@ const withService = <A, E>(
           }),
       }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-        namedProjectsRoot: "/projects",
+        resolveNamedProjectsRoot: () => "/projects",
         isScratchProject: () => Effect.succeed(false),
       }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({}),
