@@ -1,10 +1,20 @@
 import { enableCliCompileCache } from "./cliCompileCache.ts";
+import packageJson from "../package.json" with { type: "json" };
 
 // Packaged builds load this graph with require(esm): top-level await anywhere in it breaks them.
-// ACP agents spawn `acp-mcp-bridge` per session and `acp-mcp-call` per tool call, so those fast
-// paths dispatch before the full CLI module graph (seconds of evaluation) loads.
+// ACP agents spawn `acp-mcp-bridge` per session and `acp-mcp-call` per tool call, so those and
+// version probes dispatch before the full CLI module graph (seconds of evaluation) loads.
 export async function runCliCommand() {
   const command = process.argv[2];
+  if (command === "--version" && process.argv.length === 3) {
+    // Match the CLI formatter's TTY styling without loading its runtime.
+    process.stdout.write(
+      process.stdout.isTTY && !process.env.NO_COLOR
+        ? `\x1b[1mt3\x1b[0m \x1b[2mv\x1b[0m\x1b[1m${packageJson.version}\x1b[0m\n`
+        : `t3 v${packageJson.version}\n`,
+    );
+    return;
+  }
   // Install the socket guard before importing code that can open outbound connections.
   const { ignoreMacosTypeOfServiceEinval } = await import("./outboundHttp.ts");
   ignoreMacosTypeOfServiceEinval();
