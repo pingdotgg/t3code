@@ -12,20 +12,31 @@ function typeset(tex: string, display: boolean): string {
   const key = `${display ? "display" : "inline"}:${tex}`;
   const cached = typesetCache.get(key);
   if (cached !== null) return cached;
+  const options = {
+    displayMode: display,
+    output: "htmlAndMathml" as const,
+    throwOnError: true,
+    // No \href, \url, \htmlClass, or other commands that emit active HTML.
+    trust: false,
+    strict: "ignore" as const,
+    maxSize: 20,
+    maxExpand: 1000,
+  };
   let html = "";
   try {
-    html = katex.renderToString(tex, {
-      displayMode: display,
-      output: "htmlAndMathml",
-      throwOnError: true,
-      // No \href, \url, \htmlClass, or other commands that emit active HTML.
-      trust: false,
-      strict: "ignore",
-      maxSize: 20,
-      maxExpand: 1000,
-    });
+    html = katex.renderToString(tex, options);
   } catch {
-    // Unfinished or unsupported TeX stays readable as its source.
+    // A bare "%" starts a TeX comment, so KaTeX rejects formulas that use it in
+    // labels like \text{3.18% dividend yield}. Escape only the unescaped ones and
+    // try once more before falling back to the source.
+    const repaired = tex.replace(/(^|[^\\])%/g, "$1\\%");
+    if (repaired !== tex) {
+      try {
+        html = katex.renderToString(repaired, options);
+      } catch {
+        // Unfinished or unsupported TeX stays readable as its source.
+      }
+    }
   }
   typesetCache.set(key, html, (key.length + html.length) * 2);
   return html;

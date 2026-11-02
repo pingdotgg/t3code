@@ -1,4 +1,4 @@
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
@@ -33,4 +33,14 @@ it("keeps keyboard scrolling available as a streamed equation outgrows its viewp
   await screen.getByRole("button", { name: "Before equation" }).click();
   await userEvent.keyboard("{Tab}");
   await expect.element(screen.getByRole("button", { name: "After equation" })).toHaveFocus();
+});
+
+it("typesets a display equation whose label has an unescaped percent", async () => {
+  const tex =
+    "R_e=\\underbrace{\\frac{1.0176}{32}}_{\\text{3.18% dividend yield}}+\\underbrace{6\\%}_{\\text{growth}}=\\boxed{9.18\\%}";
+  await using screen = await render(<MarkdownMath tex={tex} display />);
+  await vi.waitFor(() => screen.container.querySelector(".katex") !== null);
+  const text = screen.container.textContent ?? "";
+  expect(text).toContain("9.18%");
+  expect(text).not.toContain("\\[");
 });
