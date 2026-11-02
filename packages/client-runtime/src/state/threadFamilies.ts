@@ -20,6 +20,7 @@ import type { EnvironmentShellState } from "./shell.ts";
 
 const EMPTY_FAMILY: OrchestrationV2ThreadFamily = { snapshotSequence: 0, threads: [] };
 const EMPTY_READS: ReadonlyArray<OrchestrationV2ThreadFamily> = [];
+const EMPTY_REMOVALS: ReadonlyMap<ThreadId, number> = new Map();
 
 interface MountedRows {
   readonly rows: Atom.Atom<ReadonlyArray<OrchestrationV2ThreadFamily>>;
@@ -84,6 +85,11 @@ export function createThreadFamilyAtoms<R, ER, E>(
       Atom.withLabel(`environment-shell-generation:${environmentId}`),
     ),
   );
+  const removedAtAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make(
+      (get) => shellStateValue(get(shellStateAtom(environmentId)))?.removedAt ?? EMPTY_REMOVALS,
+    ).pipe(Atom.withLabel(`environment-shell-removed-at:${environmentId}`)),
+  );
 
   // The generation is part of the key, so a read from before the latest authoritative snapshot is
   // never used again, even while a new read is pending or failed.
@@ -119,9 +125,18 @@ export function createThreadFamilyAtoms<R, ER, E>(
     const [environmentId, threadId] = JSON.parse(key) as [EnvironmentId, ThreadId];
     return Atom.make((get) => {
       const generation = get(generationAtom(environmentId));
-      return generation === 0
-        ? AWAITING_AUTHORITATIVE_SHELL
-        : get(queryFor(environmentId, threadId, generation));
+      if (generation === 0) return AWAITING_AUTHORITATIVE_SHELL;
+      const result = get(queryFor(environmentId, threadId, generation));
+      const removedAt = get(removedAtAtom(environmentId));
+      // A read lasts its generation, so a thread deleted or archived since must not stay in it.
+      return AsyncResult.map(result, (family) => {
+        const threads = threadFamilyRowsMissingFromShell({
+          shellThreads: [],
+          families: [family],
+          removedAt,
+        });
+        return threads.length === family.threads.length ? family : { ...family, threads };
+      });
     }).pipe(Atom.withLabel(`environment-thread-family:${key}`));
   });
   const familyKey = (environmentId: EnvironmentId, threadId: ThreadId) =>

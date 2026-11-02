@@ -71,7 +71,8 @@ import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
 } from "../../providerInstances";
-import { threadEnvironment } from "../../state/threads";
+import { threadEnvironment, threadFamilies } from "../../state/threads";
+import { useEnvironmentQuery } from "../../state/query";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AgentElapsed } from "./AgentElapsed";
@@ -391,6 +392,19 @@ export function ThreadRelationshipsPanel(props: {
   const archivedShells = archived.snapshots.find(
     (entry) => entry.environmentId === props.environmentId,
   )?.snapshot.threads;
+  const shownThreadIds = new Set(
+    [...relationshipShells, ...(archivedShells ?? [])].map((thread) => thread.id),
+  );
+  // The shell omits older settled threads; only a settled family read proves one is gone.
+  const family = useEnvironmentQuery(
+    projection?.contextTransfers.some(
+      (transfer) =>
+        !shownThreadIds.has(transfer.sourceThreadId) ||
+        !shownThreadIds.has(transfer.targetThreadId),
+    )
+      ? threadFamilies.familyAtom(props.environmentId, props.threadId)
+      : null,
+  );
   const currentThread =
     projection?.thread ??
     relationshipShells.find((thread) => thread.id === props.threadId) ??
@@ -463,7 +477,14 @@ export function ThreadRelationshipsPanel(props: {
     ...relationshipShells,
     ...(archivedShells ?? []),
   ];
-  const graph = deriveThreadRelationshipGraph({ threads: shells, projection });
+  const graph = deriveThreadRelationshipGraph({
+    threads: shells,
+    projection,
+    family: {
+      threads: family.data?.threads ?? [],
+      settled: family.isSuccess && !family.isPending && !archived.isLoading,
+    },
+  });
   const currentProject = projects.find((project) => project.id === currentThread?.projectId);
   const latestMergeBackRun = projection === null ? null : resolveLatestMergeBackRun(projection);
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);

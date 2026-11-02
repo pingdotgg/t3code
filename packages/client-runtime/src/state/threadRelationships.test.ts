@@ -255,6 +255,37 @@ describe("thread relationships", () => {
     expect(graph.nodes.has(staleParent)).toBe(false);
   });
 
+  it.each([
+    [false, ["deleted-fork", "absent-subagent"]],
+    [true, ["absent-subagent"]],
+  ])(
+    "with a family read settled %s, drops only fork transfers to threads it lacks",
+    (settled, related) => {
+      const source = ThreadId.make("source");
+      const transfer = (targetThreadId: string, type: string) => ({
+        sourceThreadId: source,
+        targetThreadId: ThreadId.make(targetThreadId),
+        type,
+        status: "pending",
+      });
+      const graph = deriveThreadRelationshipGraph({
+        threads: [],
+        projection: {
+          thread: { id: source, forkedFrom: null, lineage: { parentThreadId: null } },
+          subagents: [],
+          contextTransfers: [
+            transfer("deleted-fork", "fork"),
+            transfer("absent-subagent", "subagent_spawn"),
+          ],
+        } as never,
+        family: { threads: [], settled },
+      });
+      expect(immediateThreadRelationships(graph, source).map(({ threadId }) => threadId)).toEqual(
+        related,
+      );
+    },
+  );
+
   it("resolves merge-back only for forks and prefers the recorded fork source", () => {
     const source = ThreadId.make("thread-source");
     const fallbackParent = ThreadId.make("thread-parent");

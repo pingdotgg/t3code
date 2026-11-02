@@ -429,6 +429,27 @@ it.each([
   await expect.element(screen.getByText("deleted-fork")).not.toBeInTheDocument();
 });
 
+it.each([
+  ["pending", AsyncResult.initial(true)],
+  ["failed", AsyncResult.failure(Cause.fail("read failed"))],
+])("keeps a fork missing from the shell while its family read is %s", async (_, family) => {
+  setupSourceWithTransfers(
+    [{ sourceThreadId: "source", targetThreadId: "older-fork", type: "fork", status: "pending" }],
+    [],
+  );
+  state.family = family;
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={ThreadId.make("source")}
+      showLineage
+      showSideChats={false}
+    />,
+  );
+
+  await expect.element(screen.getByText("older-fork")).toBeVisible();
+});
+
 it("titles an older fork the shell omitted from its family read", async () => {
   setupSourceWithTransfers(
     [{ sourceThreadId: "source", targetThreadId: "older-fork", type: "fork", status: "consumed" }],

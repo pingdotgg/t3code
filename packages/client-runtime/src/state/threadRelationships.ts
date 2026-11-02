@@ -1,5 +1,6 @@
 import {
   isOrchestrationV2WorkActive,
+  type OrchestrationV2ContextTransferType,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type ThreadId,
@@ -42,6 +43,12 @@ export function resolveMergeBackTargetThreadId(
     : projection.thread.lineage.parentThreadId;
 }
 
+// Transfers between a thread and its forks; both ends share a family.
+const FORK_TRANSFER_TYPES: ReadonlySet<OrchestrationV2ContextTransferType> = new Set([
+  "fork",
+  "merge_back",
+]);
+
 function edgeKey(edge: ThreadRelationshipEdge): string {
   return `${edge.sourceThreadId}\u001f${edge.targetThreadId}\u001f${edge.kind}`;
 }
@@ -49,6 +56,14 @@ function edgeKey(edge: ThreadRelationshipEdge): string {
 export function deriveThreadRelationshipGraph(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly projection: OrchestrationV2ThreadProjection | null;
+  /**
+   * The projection thread's family read. Its rows fill in endpoints `threads` omits; once settled,
+   * a fork that is in neither was deleted.
+   */
+  readonly family?: {
+    readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
+    readonly settled: boolean;
+  };
 }): ThreadRelationshipGraph {
   const threadsById = new Map<ThreadId, OrchestrationV2ThreadShell>();
   for (const thread of input.threads) {
@@ -64,9 +79,11 @@ export function deriveThreadRelationshipGraph(input: {
     threads.map((thread) => [thread.id, { threadId: thread.id, thread, missing: false }]),
   );
   const edgesByKey = new Map<string, ThreadRelationshipEdge>();
+  const familyById = new Map(input.family?.threads.map((thread) => [thread.id, thread]));
   const ensureNode = (threadId: ThreadId) => {
     if (!nodes.has(threadId)) {
-      nodes.set(threadId, { threadId, thread: null, missing: true });
+      const thread = familyById.get(threadId) ?? null;
+      nodes.set(threadId, { threadId, thread, missing: thread === null });
     }
   };
   const addEdge = (edge: ThreadRelationshipEdge) => {
@@ -115,8 +132,19 @@ export function deriveThreadRelationshipGraph(input: {
             : subagent.status),
       });
     }
+    const isGone = (threadId: ThreadId) =>
+      input.family?.settled === true &&
+      threadId !== ownerThreadId &&
+      !threadsById.has(threadId) &&
+      !familyById.has(threadId);
     for (const transfer of input.projection.contextTransfers) {
       if (transfer.sourceThreadId === transfer.targetThreadId) continue;
+      if (
+        FORK_TRANSFER_TYPES.has(transfer.type) &&
+        (isGone(transfer.sourceThreadId) || isGone(transfer.targetThreadId))
+      ) {
+        continue;
+      }
       addEdge({
         sourceThreadId: transfer.sourceThreadId,
         targetThreadId: transfer.targetThreadId,

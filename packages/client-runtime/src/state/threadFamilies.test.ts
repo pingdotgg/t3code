@@ -26,6 +26,7 @@ import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type * as RpcSession from "../rpc/session.ts";
+import { selectEnvironmentQueryData } from "./runtime.ts";
 import { EMPTY_SHELL_STATE, type EnvironmentShellState } from "./shell.ts";
 import {
   createThreadFamilyAtoms,
@@ -210,6 +211,14 @@ describe("createThreadFamilyAtoms", () => {
         yield* settle;
         expect(threadFamilyRead(registry.get(family))).toBe("settled");
         expect(mergedIds()).toEqual(["parent", "idle-child"]);
+
+        // The read lasts its generation, so a thread the shell removes later leaves it.
+        registry.set(
+          shellState,
+          AsyncResult.success({ ...shellAt(1), removedAt: new Map([[child.id, 4]]) }),
+        );
+        expect(selectEnvironmentQueryData(registry.get(family))?.threads).toEqual([]);
+        expect(threadFamilyRead(registry.get(family))).toBe("settled");
 
         // A new authoritative snapshot never reuses the old read, even while the next one waits
         // or fails.
