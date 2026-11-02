@@ -14,6 +14,8 @@ import {
 } from "@t3tools/contracts";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { allEditors, getEditor } from "env-editor";
+import { getEditorInfo } from "open-editor";
 import {
   isCommandAvailable,
   resolveSpawnCommand,
@@ -107,6 +109,8 @@ const BrowserLaunchEnvConfig = Config.all({
 }).pipe(Config.map(compactEnv));
 
 const CommandLookupEnvConfig = Config.all({
+  EDITOR: Config.String("EDITOR").pipe(Config.option),
+  VISUAL: Config.String("VISUAL").pipe(Config.option),
   PATH: Config.String("PATH").pipe(Config.option),
   Path: Config.String("Path").pipe(Config.option),
   path: Config.String("path").pipe(Config.option),
@@ -394,6 +398,44 @@ function buildBrowserLaunch(
   };
 }
 
+const resolveDefaultEditorLaunch = Effect.fn("externalLauncher.resolveDefaultEditorLaunch")(
+  function* (target: string, platform: NodeJS.Platform, env: NodeJS.ProcessEnv) {
+    const command = env.VISUAL?.trim() || env.EDITOR?.trim();
+    if (platform !== "linux" || !command || !hasGraphicalLinuxSession(env)) {
+      return Option.none();
+    }
+    if (!(yield* isCommandAvailable(command, { env }))) return Option.none();
+
+    const editor = getEditor(command);
+    // Unknown editors need a terminal because neither library can establish their launch mode.
+    const isTerminalEditor =
+      allEditors().find((known) => known.id === editor.id)?.isTerminalEditor ?? true;
+
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parsed = parseTargetPathAndPosition(target);
+    const literalPath = yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false));
+    const file =
+      literalPath || Option.isNone(parsed)
+        ? { file: path.resolve(target) }
+        : {
+            file: path.resolve(parsed.value.path),
+            line: Number(parsed.value.line),
+            column: Number(Option.getOrElse(parsed.value.column, () => "1")),
+          };
+    const info = getEditorInfo([file], { editor: command });
+    const args = literalPath || Option.isNone(parsed) ? [file.file] : info.arguments;
+    if (!isTerminalEditor) {
+      return Option.some({ command, args });
+    }
+    if (!(yield* isCommandAvailable("xdg-terminal-exec", { env }))) return Option.none();
+    return Option.some({
+      command: "xdg-terminal-exec",
+      args: ["--", command, ...args],
+    });
+  },
+);
+
 const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors")(function* (
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
@@ -405,6 +447,12 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
   const available: EditorId[] = [];
 
   for (const editor of EDITORS) {
+    if (editor.id === "default-editor") {
+      if (Option.isSome(yield* resolveDefaultEditorLaunch("/", platform, env))) {
+        available.push(editor.id);
+      }
+      continue;
+    }
     if (editor.commands === null) {
       if ((yield* resolveUsableFileManagerCommand(platform, env)) !== undefined) {
         available.push(editor.id);
@@ -473,6 +521,14 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
     return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
+  }
+
+  if (editorDef.id === "default-editor") {
+    const launch = yield* resolveDefaultEditorLaunch(input.cwd, platform, env);
+    if (Option.isNone(launch)) {
+      return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
+    }
+    return { editor: editorDef.id, target: input.cwd, ...launch.value };
   }
 
   if (editorDef.commands) {
