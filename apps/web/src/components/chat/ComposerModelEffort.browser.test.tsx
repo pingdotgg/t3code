@@ -6,11 +6,14 @@ import {
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { useState } from "react";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
+
+import "~/index.css";
 
 import { render } from "../../../test/render";
 import { ComposerEffortColumn, describeComposerEffort } from "./ComposerModelEffort";
+import { DockedPickerContext } from "./ProviderModelPicker";
 import type { TraitsSelectionInput } from "./TraitsPicker";
 
 // Shaped like Devin over ACP: its session mode comes first, and its reasoning id is its own.
@@ -122,4 +125,28 @@ it("draws an agent's reasoning as bars and keeps its mode out of the levels", as
     .element(screen.getByRole("button", { name: "Session Mode: Plan" }))
     .toBeInTheDocument();
   await expect.element(page.getByRole("menuitemradio")).not.toBeInTheDocument();
+});
+
+it("names the selected model in full when the column header cuts it off", async () => {
+  const modelLabel = "DeepSeek V4.1 Flash Free";
+  await using screen = await render(
+    <DockedPickerContext value={{ modelLabel }}>
+      {/* The docked column's width. */}
+      <div data-model-picker-effort className="flex w-48 flex-col">
+        <ComposerEffortColumn traits={traitsInput([], () => {})} />
+      </div>
+    </DockedPickerContext>,
+    { router: false }, // no routes involved
+  );
+  const header = screen.getByText(modelLabel);
+  const clipped = header.element();
+  expect(clipped.scrollWidth).toBeGreaterThan(clipped.clientWidth);
+
+  await userEvent.hover(header);
+  await vi.waitFor(() =>
+    expect(
+      clipped.closest("[title]")?.getAttribute("title") ?? "",
+      "hover title of the cut-off model label",
+    ).toBe(modelLabel),
+  );
 });
