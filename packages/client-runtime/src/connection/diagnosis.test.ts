@@ -8,6 +8,8 @@ import { presentConnectionDiagnosis } from "./diagnosis.ts";
 import { mapManagedRelayError, mapRemoteEnvironmentError } from "./errors.ts";
 import {
   AVAILABLE_CONNECTION_STATE,
+  ConnectionBlockedError,
+  ConnectionTransientError,
   type ConnectionAttemptError,
   type SupervisorConnectionState,
 } from "./model.ts";
@@ -126,6 +128,29 @@ describe("presentConnectionDiagnosis", () => {
       relayStatus: { status: "offline", endpointFailure: "origin_unreachable" },
     });
     expect(origin?.hops.map((hop) => hop.hop)).toEqual(["device", "relay", "tunnel", "server"]);
+  });
+
+  it("blames this device, not the host, while its own T3 Connect sign-in loads", () => {
+    const failure = new ConnectionTransientError({
+      reason: "session-pending",
+      detail: "Waiting for the T3 Connect sign-in to load.",
+    });
+    for (const via of ["relay", "direct"] as const) {
+      const diagnosis = diagnose(backoff(failure), via);
+      expect(diagnosis?.headline).not.toContain("did not answer");
+      expect(diagnosis?.hops.find((hop) => hop.result === "failed")?.hop).toBe("device");
+      expect(diagnosis?.moreInfoUrl ?? "").not.toContain(
+        "the-tunnel-works-but-t3-code-does-not-answer",
+      );
+    }
+  });
+
+  it("does not report hops as working when the failure names none", () => {
+    const failure = new ConnectionBlockedError({
+      reason: "authentication",
+      detail: "Your cloud sign-in changed. Sign in again to authorize the environment.",
+    });
+    expect(results(backoff(failure))).not.toContainEqual(expect.stringMatching(/:ok$/));
   });
 
   it("keeps the relay health status out of a failure that has its own cause", () => {
