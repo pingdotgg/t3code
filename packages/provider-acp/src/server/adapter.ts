@@ -27,9 +27,11 @@ import {
   type ProviderRequestKind,
   type ProviderThreadId,
   type ProviderUserInputAnswers,
+  type RuntimeMode,
   type RuntimeRequestId,
   type ThreadTokenUsageSnapshot,
   type ThreadId,
+  isRuntimeModeAbove,
   type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
@@ -233,28 +235,35 @@ export function acpPerTurnPromptUsage(
   usage: EffectAcpSchema.Usage | null | undefined,
   hasSubagents: boolean,
   terminalStatus: OrchestrationV2ProviderTurn["status"],
+  geminiUsage = false,
 ): TurnTokenUsage {
   if (usage == null) {
     return { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents };
   }
+  const inputTokens = geminiUsage
+    ? usage.inputTokens + (usage.cachedReadTokens ?? 0)
+    : usage.inputTokens;
+  const outputTokens = geminiUsage
+    ? usage.outputTokens + (usage.thoughtTokens ?? 0)
+    : usage.outputTokens;
   // TurnTokenUsage contract: input includes cache read + write and reasoning
   // is a subset of output, so clamp counters that exceed their parent and
   // drop the ones the agent left unset. Cache writes are capped at whatever
   // cache reads leave of input, so the pair cannot exceed it.
   const clampSubset = (value: number | null | undefined, parent: number) =>
     value == null ? undefined : Math.min(value, parent);
-  const cachedInputTokens = clampSubset(usage.cachedReadTokens, usage.inputTokens);
+  const cachedInputTokens = clampSubset(usage.cachedReadTokens, inputTokens);
   const cacheCreationTokens = clampSubset(
     usage.cachedWriteTokens,
-    usage.inputTokens - (cachedInputTokens ?? 0),
+    inputTokens - (cachedInputTokens ?? 0),
   );
-  const reasoningTokens = clampSubset(usage.thoughtTokens, usage.outputTokens);
+  const reasoningTokens = clampSubset(usage.thoughtTokens, outputTokens);
   return {
     usageScope: "main_agent",
     usageStatus: terminalStatus === "completed" ? "complete" : "partial",
     hasSubagents,
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
+    inputTokens,
+    outputTokens,
     ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
     ...(cacheCreationTokens === undefined ? {} : { cacheCreationTokens }),
     ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
@@ -265,9 +274,25 @@ export interface AcpAdapterV2Flavor {
   readonly buildPrompt?: (input: {
     readonly text: string;
     readonly attachments: ReadonlyArray<ChatAttachment>;
+    readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
     readonly promptCapabilities: EffectAcpSchema.AgentCapabilities["promptCapabilities"];
+    readonly agentVersion: string | undefined;
+    /** The session's model after selection, with its display name when the agent lists it. */
+    readonly currentModel: { readonly id: string; readonly name: string | undefined } | undefined;
   }) => Effect.Effect<ReadonlyArray<EffectAcpSchema.ContentBlock>, EffectAcpErrors.AcpError>;
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
+  /**
+   * Runs before `session/prompt`. The returned check sees a prompt the agent ended
+   * without an error or cancel, and reports a failure its stop reason hid. A reported
+   * failure restarts the runtime before the next turn.
+   */
+  readonly watchPromptOutcome?: (
+    sessionId: string,
+  ) => Effect.Effect<
+    (
+      result: EffectAcpSchema.PromptResponse,
+    ) => Effect.Effect<OrchestrationV2ProviderFailure | undefined>
+  >;
   readonly requiresSignIn?: (cause: unknown) => boolean;
   /**
    * Runs before attachment paths, T3 instructions and native slash-command detection,
@@ -329,6 +354,11 @@ export interface AcpAdapterV2Flavor {
   readonly sessionModeForPolicy?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   ) => string | undefined;
+  /**
+   * The runtime mode a native session mode grants, for flavors whose modes are permission levels.
+   * Under a policy ceiling, a mode the user picks that this does not place under it is not applied.
+   */
+  readonly runtimeModeForSessionMode?: (modeId: string) => RuntimeMode | undefined;
   readonly clientFileSystem?: {
     readonly readTextFile: (
       request: EffectAcpSchema.ReadTextFileRequest,
@@ -405,8 +435,12 @@ export interface AcpAdapterV2Flavor {
    * leaves usage semantics open, so this stays unset until proven live.
    */
   readonly reportsPerTurnPromptUsage?: boolean;
+  /** Gemini-style usage: inputTokens leaves out cachedReadTokens, outputTokens leaves out thoughtTokens. */
+  readonly geminiPromptUsage?: boolean;
   /** Grok can retain task_already_running until process exit. */
   readonly restartRuntimeAfterInterrupt?: boolean;
+  /** Prompt failures after which the agent process keeps failing until replaced. */
+  readonly restartRuntimeAfterPromptError?: (error: unknown) => boolean;
   readonly restartRuntimeOnEveryInterrupt?: boolean;
   readonly terminateRuntimeProcessGroupOnInterrupt?: boolean;
   readonly preserveRuntimeOnSettledInterrupt?: boolean;
@@ -419,6 +453,13 @@ export interface AcpAdapterV2Flavor {
    * fail before `session/prompt`.
    */
   readonly supportsImagePrompts?: boolean;
+  /**
+   * True when this session's native system prompt carries T3's PR-linking instructions, so
+   * turns omit them. Must use the same negotiated check that sent them on session setup.
+   */
+  readonly sessionCarriesPullRequestLinking?: (
+    initializeResult: EffectAcpSchema.InitializeResponse,
+  ) => boolean;
 }
 
 function acpSupportsImagePrompts(input: {
@@ -900,8 +941,41 @@ function structuredFileChanges(toolCall: AcpToolCallState) {
 // Bound diff search to protect the event loop; empty-sided diffs need no search.
 const ACP_V1_DIFF_MAX_EDITS = 1_000;
 
-export function acpToolCallDiffPatch(content: unknown): string | undefined {
+/**
+ * A `snippet` patch has no known location. Keep its recorded text, so no view numbers it
+ * from line 1.
+ */
+export function acpToolCallSnippetEdit(content: unknown) {
   if (!Array.isArray(content)) return undefined;
+  const diffs = content.flatMap((entry) => {
+    const diff = unknownRecord(entry);
+    return diff?.type === "diff" ? [diff] : [];
+  });
+  const diff = diffs.length === 1 ? diffs[0] : undefined;
+  if (diff === undefined || unknownRecord(diff.patch)?.format !== "snippet") return undefined;
+  return typeof diff.oldText === "string" && typeof diff.newText === "string"
+    ? { oldStr: diff.oldText, newStr: diff.newText }
+    : undefined;
+}
+
+/**
+ * No preview when a flavor marked a diff `omitted` (too large) or `snippet` (line unknown);
+ * the checkpoint diff shows it.
+ */
+function acpToolCallDiffUnpreviewable(content: unknown): boolean {
+  return (
+    Array.isArray(content) &&
+    content.some((entry) => {
+      const format = unknownRecord(unknownRecord(entry)?.patch)?.format;
+      return format === "omitted" || format === "snippet";
+    })
+  );
+}
+
+export function acpToolCallDiffPatch(content: unknown): string | undefined {
+  if (!Array.isArray(content) || acpToolCallDiffUnpreviewable(content)) {
+    return undefined;
+  }
   const diffs = content.flatMap((entry) => {
     const diff = unknownRecord(entry);
     return diff?.type === "diff" ? [diff] : [];
@@ -1043,6 +1117,12 @@ function nodeStatus(status: ProjectedToolStatus): OrchestrationV2ExecutionNode["
 
 function completedAtForStatus(status: ProjectedToolStatus, now: DateTime.Utc): DateTime.Utc | null {
   return status === "completed" || status === "failed" || status === "interrupted" ? now : null;
+}
+
+// Copilot advertises URL ids such as `https://agentclientprotocol.com/protocol/session-modes#plan`.
+function isAcpPlanModeId(id: string): boolean {
+  const name = id.slice(id.lastIndexOf("#") + 1);
+  return name === "plan" || name === "architect";
 }
 
 function selectPermissionOptionId(
@@ -3901,14 +3981,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               case "edit":
               case "delete":
-              case "move":
+              case "move": {
+                const snippet = acpToolCallSnippetEdit(toolCall.data.content);
+                const unpreviewable = acpToolCallDiffUnpreviewable(toolCall.data.content);
                 turnItem = {
                   ...base,
                   type: "file_change",
                   fileName: path ?? toolCall.title ?? "File change",
-                  ...(diffText === undefined ? {} : { diffStr: diffText }),
+                  ...(snippet ??
+                    (unpreviewable || diffText === undefined ? {} : { diffStr: diffText })),
                 };
                 break;
+              }
               case "fetch": {
                 // Grok rawOutput.Content is unreadable by textFromUnknown; bounded content blocks duplicate it.
                 const snippet =
@@ -4033,20 +4117,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (planState.latest === null) return;
             plan = { ...planState.latest, status: "superseded" };
           } else if (update.kind === "items") {
-            const steps: ReadonlyArray<OrchestrationV2PlanStep> = update.plan.map(
-              (step, index) => ({
-                id: `acp-step-${index + 1}`,
-                text: nonEmptyText(step.step, `Step ${index + 1}`),
-                status:
-                  step.status === "inProgress"
-                    ? "running"
-                    : step.status === "completed"
-                      ? "completed"
-                      : "pending",
-              }),
+            // A cancelled entry is not outstanding work, and plan steps have no
+            // cancelled status, so drop it rather than show it as pending.
+            const steps: ReadonlyArray<OrchestrationV2PlanStep> = update.plan.flatMap(
+              (step, index) =>
+                step.status === "cancelled"
+                  ? []
+                  : [
+                      {
+                        id: `acp-step-${index + 1}`,
+                        text: nonEmptyText(step.step, `Step ${index + 1}`),
+                        status:
+                          step.status === "inProgress"
+                            ? "running"
+                            : step.status === "completed"
+                              ? "completed"
+                              : "pending",
+                      },
+                    ],
             );
             const completed =
-              steps.length > 0 && steps.every((step) => step.status === "completed");
+              update.plan.length > 0 && steps.every((step) => step.status === "completed");
             plan = {
               ...base,
               status: completed ? "completed" : "active",
@@ -4616,10 +4707,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (yield* projectAgentTerminalUpdate(notification, context)) return;
           if (
             update.sessionUpdate === "usage_update" ||
-            update.sessionUpdate === "session_info_update" ||
-            (update.sessionUpdate === "state_update" &&
-              update.state === "idle" &&
-              update.usage != null)
+            update.sessionUpdate === "session_info_update"
           ) {
             const stateEvent = parseSessionUpdateEvent(notification).events.find(
               (event) => event._tag === "UsageUpdated" || event._tag === "SessionInfoUpdated",
@@ -4670,7 +4758,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 providerThread,
               });
             }
-            if (update.sessionUpdate !== "state_update") return;
+            return;
           }
           if (yield* followNativeChild(notification, context)) return;
           if (
@@ -6864,10 +6952,33 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               };
             });
           }
-          const optionSelections = (modelSelection.options ?? []).map((selection) =>
-            selection.value === ACP_EMPTY_OPTION_VALUE ? { ...selection, value: "" } : selection,
-          );
           const configOptions = yield* runtime.getConfigOptions;
+          // Under a policy ceiling, a mode the user picks applies only when the flavor can place
+          // it under the ceiling; an unknown mode could be the agent's own skip-approval mode.
+          const ceiling = runtimePolicy.maxRuntimeMode;
+          const isModeChoice = (id: string) =>
+            id === ACP_SESSION_MODE_OPTION_ID ||
+            configOptions.some(
+              (option) =>
+                option.id === id &&
+                (option.category === "mode" || option.category === "collaboration_mode"),
+            );
+          const withinCeiling = (selection: { readonly id: string; readonly value: unknown }) => {
+            if (ceiling === undefined || ceiling === "full-access" || !isModeChoice(selection.id)) {
+              return true;
+            }
+            const granted =
+              typeof selection.value === "string"
+                ? flavor.runtimeModeForSessionMode?.(selection.value)
+                : undefined;
+            return granted !== undefined && !isRuntimeModeAbove(granted, ceiling);
+          };
+          const optionSelections = (modelSelection.options ?? []).flatMap((selection) => {
+            if (!withinCeiling(selection)) return [];
+            return [
+              selection.value === ACP_EMPTY_OPTION_VALUE ? { ...selection, value: "" } : selection,
+            ];
+          });
           const availableConfigIds = new Set(configOptions.map((option) => option.id));
           const hasNativeConfigWithSyntheticModeId = availableConfigIds.has(
             ACP_SESSION_MODE_OPTION_ID,
@@ -6954,8 +7065,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 })),
               });
             }
-            const planMode = effectiveModeState?.availableModes.find(
-              (mode) => mode.id === "plan" || mode.id === "architect",
+            const planMode = effectiveModeState?.availableModes.find((mode) =>
+              isAcpPlanModeId(mode.id),
             );
             if (planMode !== undefined && effectiveModeState?.currentModeId !== planMode.id) {
               yield* runtime.setMode(planMode.id);
@@ -6964,9 +7075,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const choices = option.options.flatMap((entry) =>
                 "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
               );
-              const requested = choices.find(
-                (choice) => choice === "plan" || choice === "architect",
-              );
+              const requested = choices.find(isAcpPlanModeId);
               if (requested !== undefined && option.currentValue !== requested) {
                 yield* runtime.setConfigOption(option.id, requested);
               }
@@ -7052,6 +7161,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   context.promptUsage,
                   context.subagents.size > 0,
                   status,
+                  flavor.geminiPromptUsage,
                 ),
               }),
         });
@@ -7369,11 +7479,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (flavor.buildPrompt) {
             const setup = yield* Ref.get(activeSessionSetup);
+            const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
+            const currentModelId = modelOption?.currentValue;
             const blocks = yield* flavor
               .buildPrompt({
                 text,
                 attachments: turnInput.message.attachments,
+                resolveAttachmentPath: host.resolveAttachmentPath,
                 promptCapabilities: setup?.initializeResult.agentCapabilities?.promptCapabilities,
+                agentVersion: setup?.initializeResult.agentInfo?.version,
+                currentModel:
+                  typeof currentModelId !== "string" || modelOption === undefined
+                    ? undefined
+                    : {
+                        id: currentModelId,
+                        name: flattenSelectChoices(modelOption.options).find(
+                          (choice) => choice.value === currentModelId,
+                        )?.name,
+                      },
               })
               .pipe(
                 Effect.mapError(
@@ -7419,11 +7542,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
           }
           if (!isNativeSlashCommand) {
+            const sessionSetup = yield* Ref.get(activeSessionSetup);
             prompt.push({
               type: "text",
               text: buildRuntimeInstructions({
                 harness: flavor.runtimeHarness ?? driver,
                 model: turnInput.modelSelection.model,
+                pullRequestLinking:
+                  sessionSetup === null ||
+                  flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !== true,
               }),
             });
           }
@@ -7738,6 +7865,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               return;
             }
+            const checkPromptOutcome =
+              flavor.watchPromptOutcome === undefined
+                ? undefined
+                : yield* flavor.watchPromptOutcome(requestedSessionId);
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
             yield* runtime.prompt({ prompt: promptParts!.prompt }).pipe(
               Effect.tap(() =>
@@ -7784,13 +7915,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     if (context.finalized || followsAgentWorkState) return;
                     // ACP v2 reports a failed prompt as an idle `error`, not an RPC error.
                     const idleError = result.stopReason === "error" && !context.interrupted;
-                    const status = idleError
-                      ? "failed"
-                      : result.stopReason === "cancelled"
-                        ? context.interrupted
-                          ? "interrupted"
-                          : "cancelled"
-                        : "completed";
+                    const hiddenFailure =
+                      checkPromptOutcome === undefined ||
+                      context.interrupted ||
+                      result.stopReason === "error" ||
+                      result.stopReason === "cancelled"
+                        ? undefined
+                        : yield* checkPromptOutcome(result);
+                    if (hiddenFailure !== undefined) {
+                      yield* Ref.set(runtimeRestartRequired, true);
+                    }
+                    const failure =
+                      hiddenFailure ?? (idleError ? idleErrorFailure(result.error) : undefined);
+                    const status =
+                      failure !== undefined
+                        ? "failed"
+                        : result.stopReason === "cancelled"
+                          ? context.interrupted
+                            ? "interrupted"
+                            : "cancelled"
+                          : "completed";
                     if (flavor.deferFinalizeForBackgroundWork === true && !context.interrupted) {
                       context.promptSettled = true;
                       context.promptSettledStatus = status;
@@ -7799,11 +7943,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         yield* finishRegisteredBackgroundTool({ taskId, ...completion });
                       }
                     }
-                    if (idleError) {
+                    if (failure !== undefined) {
                       yield* terminalizeOpenForegroundTools(context, "failed");
                       // Unlike an RPC failure, the agent survives an idle error, so its
                       // background tools and subagents keep reporting to this run.
-                      yield* finalizeTurn(context, "failed", idleErrorFailure(result.error), {
+                      yield* finalizeTurn(context, "failed", failure, {
                         childTurnsContinue: hasSurvivingBackgroundWork(context),
                       });
                       return;
@@ -7836,12 +7980,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         Result.isSuccess(error) &&
                         error.success._tag === "AcpRequestError" &&
                         error.success.code === -32800);
+                    const failure = Cause.squash(cause);
+                    if (!interrupted && flavor.restartRuntimeAfterPromptError?.(failure) === true) {
+                      yield* Ref.set(runtimeRestartRequired, true);
+                    }
                     yield* finalizeTurn(
                       context,
                       interrupted ? "interrupted" : "failed",
-                      flavor.promptFailure?.(Cause.squash(cause)) ??
+                      flavor.promptFailure?.(failure) ??
                         makeProviderFailure({
-                          cause: Cause.squash(cause),
+                          cause: failure,
                           class: "provider_error",
                         }),
                     ).pipe(

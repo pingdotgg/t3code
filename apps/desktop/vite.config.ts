@@ -93,7 +93,7 @@ export default defineConfig({
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
-      entry: ["src/boot.ts", "src/compileCache.ts"],
+      entry: ["src/boot.ts", "src/compileCache.ts", "src/serverCompileCache.ts"],
       clean: false,
       deps: {
         neverBundle: (id) => id === "./main.cjs" || id === "./compileCache.cjs",
