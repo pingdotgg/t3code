@@ -142,6 +142,14 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       // Removed stays removed: first launch never installs again.
       yield* command.installOnFirstLaunch;
       expect(yield* fs.exists(link)).toBe(false);
+
+      // Also when first launch was put off (no shell PATH yet) and the user removed it meanwhile.
+      const laterHome = yield* fs.makeTempDirectoryScoped();
+      const later = yield* commandIn({ home: laterHome });
+      yield* later.install;
+      yield* later.uninstall;
+      yield* later.installOnFirstLaunch;
+      expect(yield* fs.exists(path.join(laterHome, ".local", "bin", "t3"))).toBe(false);
     }).pipe(Effect.scoped),
   );
 
@@ -185,15 +193,16 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       // A first launch leaves another home's command alone; only Install takes it over.
       yield* after.installOnFirstLaunch;
       expect(yield* fs.readLink(link!)).toBe(path.join(home, "old-t3", "bin", "t3"));
-      // On PATH, but it runs the other home's launcher, not this one.
+      // On PATH, it runs the other home's launcher. Settings offers Install (not Remove, and not
+      // "another t3 runs first"), which updates that link in place.
       process.env.PATH = path.dirname(link!);
-      expect((yield* after.state).onPath).toBe(false);
+      expect(yield* after.state).toMatchObject({ installedPath: null, onPath: false });
+      expect((yield* after.state).shadowedBy).toBeUndefined();
       process.env.PATH = "";
       // Off PATH, Add to PATH would expose the other home's command, not this one.
       expect((yield* after.state).pathSetup).toBeUndefined();
       yield* Effect.flip(after.addToPath);
       expect(yield* fs.exists(path.join(home, ".zshrc"))).toBe(false);
-      expect((yield* after.state).installedPath).toBe(link);
       // Behind another t3 the install fails, and the old link still works.
       const shadow = path.join(home, "shadow");
       yield* fs.makeDirectory(shadow);

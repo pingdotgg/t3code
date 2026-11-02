@@ -231,8 +231,15 @@ export const make = Effect.gen(function* () {
       return { supported: false, installedPath: null, onPath: false, launcherPath: null } as const;
     }
     const launcherPath = (yield* exists(launcher)) ? launcher : null;
-    const installed = yield* installedAt;
-    const shadowedBy = yield* foreignFirstOnPath;
+    const found = yield* installedAt;
+    // Our link into another T3 home is not this app's command; Install updates it in place.
+    const installed =
+      windows || (Option.isSome(found) && (yield* leadsHere(found.value)))
+        ? found
+        : Option.none<string>();
+    const shadowedBy = (yield* foreignFirstOnPath).pipe(
+      Option.filter((first) => first !== Option.getOrUndefined(found)),
+    );
     const shadow = Option.isSome(shadowedBy) ? { shadowedBy: shadowedBy.value } : {};
     const first = yield* firstOnPath;
     const onPath = windows
@@ -244,7 +251,6 @@ export const make = Effect.gen(function* () {
       onPath ||
       Option.isSome(shadowedBy) ||
       Option.isNone(installed) ||
-      !(yield* leadsHere(installed.value)) ||
       (yield* folderOnPath(installed.value))
         ? undefined
         : startupLine(installed.value);
@@ -356,6 +362,8 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.cliCommand.install"));
 
   const uninstall: DesktopCliCommand["Service"]["uninstall"] = Effect.gen(function* () {
+    // A first launch put off for the shell PATH must not bring back what the user removed.
+    yield* fs.writeFileString(firstLaunchMarker, "").pipe(Effect.ignore);
     if (windows) {
       if (yield* exists(ownedPathMarker)) {
         const entries = pathEntries(yield* readUserPath, ";");
