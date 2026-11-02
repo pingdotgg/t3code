@@ -5,6 +5,7 @@
   "scripts": {
     "mcp-tool-use": "node --env-file-if-exists=../.env mcp-tool-use/run.ts",
     "mcp-tool-use:trim-capture": "node mcp-tool-use/trim-capture.ts",
+    "mobile-design": "node --env-file-if-exists=../.env mobile-design/run.ts",
     "thread-titles": "node --env-file-if-exists=../.env thread-titles/run.ts",
     "test-signal": "node --env-file-if-exists=../.env test-signal/run.ts",
     "typecheck": "tsc --noEmit",
@@ -15,7 +16,8 @@
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "sharp": "0.35.4"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

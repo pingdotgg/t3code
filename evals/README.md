@@ -9,6 +9,7 @@ Write or run an eval when a change affects what a model sees or does: agent inst
 | [mcp-tool-use](mcp-tool-use/)   | Whether agents use T3's MCP tools correctly, including device routing and recovery, in fake threads. |
 | [thread-titles](thread-titles/) | Whether generated thread titles name the right subject.                                              |
 | [test-signal](test-signal/)     | Whether a cheap model running the test-signal check flags low-signal tests.                          |
+| [mobile-design](mobile-design/) | How a model council scores the iOS app's design.                                                     |
 
 ## Run an eval
 

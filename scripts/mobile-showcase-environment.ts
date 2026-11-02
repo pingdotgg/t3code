@@ -248,6 +248,410 @@ export const SHOWCASE_THREADS = [
   },
 ] as const;
 
+export type ShowcaseLiveStep =
+  | {
+      readonly type: "message";
+      readonly text: string;
+      readonly phase?: "commentary" | "final_answer";
+      /** Stop partway through and keep the turn running, for a streaming capture. */
+      readonly hold?: boolean;
+    }
+  | {
+      readonly type: "command";
+      readonly command: string;
+      readonly output: string;
+      readonly exitCode?: number;
+      readonly durationMs?: number;
+      /** Keep running after the turn ends, which the app shows as background work. */
+      readonly background?: boolean;
+    }
+  | {
+      readonly type: "fileChange";
+      readonly changes: ReadonlyArray<{
+        readonly path: string;
+        readonly kind: "add" | "update";
+        readonly diff: string;
+      }>;
+    }
+  | {
+      readonly type: "approval";
+      readonly command: string;
+      readonly reason: string;
+      readonly output: string;
+    }
+  | {
+      readonly type: "question";
+      readonly questions: ReadonlyArray<{
+        readonly id: string;
+        readonly header: string;
+        readonly question: string;
+        readonly options: ReadonlyArray<{ readonly label: string; readonly description: string }>;
+      }>;
+    };
+
+const RECONNECT_BANNER_DIFF = `@@ -0,0 +1,24 @@
++import { Text, View } from "react-native";
++
++import { useReconnectState } from "./useReconnectState";
++
++export function ReconnectBanner(props: { readonly environmentId: string }) {
++  const state = useReconnectState(props.environmentId);
++  if (state.status === "connected") return null;
++  return (
++    <View className="flex-row items-center gap-2 px-4 py-2">
++      <Text className="text-sm font-medium">
++        {state.status === "retrying"
++          ? \`Reconnecting in \${state.secondsLeft}s\`
++          : "Connection lost"}
++      </Text>
++    </View>
++  );
++}
+`;
+
+const RECONNECT_STATE_DIFF = `@@ -12,9 +12,17 @@ export function useReconnectState(environmentId: string) {
+   const connection = useEnvironmentConnection(environmentId);
+-  const [attempt, setAttempt] = useState(0);
++  const [attempt, setAttempt] = useState(0);
++  const delayMs = Math.min(30_000, 1_000 * 2 ** attempt);
+   useEffect(() => {
+-    if (connection.status !== "lost") return;
+-    const timer = setTimeout(() => connection.retry(), 1_000);
++    if (connection.status !== "lost") {
++      setAttempt(0);
++      return;
++    }
++    const timer = setTimeout(() => {
++      setAttempt((value) => value + 1);
++      connection.retry();
++    }, delayMs);
+     return () => clearTimeout(timer);
+-  }, [connection]);
++  }, [connection, delayMs]);
+`;
+
+const LONG_CODE_ANSWER = `Here is the retry helper. It keeps one timer per environment, backs off to 30 seconds, and resets after a clean reconnect.
+
+\`\`\`ts
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
+
+export interface ReconnectOptions {
+  readonly environmentId: string;
+  readonly maxDelay?: Duration.Duration;
+  readonly onAttempt?: (attempt: number, delay: Duration.Duration) => void;
+}
+
+const DEFAULT_MAX_DELAY = Duration.seconds(30);
+
+/** Exponential backoff with jitter, capped, that never gives up on a paired environment. */
+export function reconnectSchedule(options: ReconnectOptions) {
+  const maxDelay = options.maxDelay ?? DEFAULT_MAX_DELAY;
+  return Schedule.exponential(Duration.seconds(1), 2).pipe(
+    Schedule.jittered,
+    Schedule.modifyDelay((_, delay) => Duration.min(delay, maxDelay)),
+    Schedule.tapOutput((delay) =>
+      Effect.sync(() => options.onAttempt?.(Schedule.CurrentIterationMetadata.attempt, delay)),
+    ),
+  );
+}
+
+export const reconnect = Effect.fn("Environment.reconnect")(function* (
+  options: ReconnectOptions,
+  connect: Effect.Effect<void, ConnectionError>,
+) {
+  yield* Effect.logInfo("Reconnecting", { environmentId: options.environmentId });
+  yield* connect.pipe(Effect.retry(reconnectSchedule(options)));
+  yield* Effect.logInfo("Reconnected", { environmentId: options.environmentId });
+});
+
+export class ConnectionError extends Error {
+  readonly _tag = "ConnectionError";
+  constructor(
+    readonly environmentId: string,
+    readonly reason: "timeout" | "refused" | "auth",
+  ) {
+    super(\`\${environmentId} could not connect: \${reason}\`);
+  }
+}
+\`\`\`
+
+Wire it into \`useEnvironmentConnection\` so the banner reads \`attempt\` and \`delay\` from the same schedule.`;
+
+/**
+ * Threads the scripted provider (mobile-showcase-provider.ts) runs live, so captures show real
+ * runs: tool calls, a diff, a long code block, a stream in progress, an approval, a question and
+ * background work. Each one starts with its prompt; the provider plays the steps that match.
+ */
+export const SHOWCASE_LIVE_THREADS = [
+  {
+    id: "tool-calls",
+    projectId: "t3code",
+    title: "Show a reconnect banner",
+    prompt: "Show a banner when an environment drops, and retry with backoff.",
+    steps: [
+      {
+        type: "message",
+        phase: "commentary",
+        text: "I'll find where connection state lives, then add the banner and backoff.",
+      },
+      {
+        type: "command",
+        command: 'rg -n "useEnvironmentConnection" apps/mobile/src',
+        output:
+          "apps/mobile/src/features/home/HomeRouteScreen.tsx:41:  const connection = useEnvironmentConnection(environmentId);\napps/mobile/src/features/connection/useReconnectState.ts:12:  const connection = useEnvironmentConnection(environmentId);\n",
+        durationMs: 180,
+      },
+      {
+        type: "fileChange",
+        changes: [
+          {
+            path: "apps/mobile/src/features/connection/ReconnectBanner.tsx",
+            kind: "add",
+            diff: RECONNECT_BANNER_DIFF,
+          },
+          {
+            path: "apps/mobile/src/features/connection/useReconnectState.ts",
+            kind: "update",
+            diff: RECONNECT_STATE_DIFF,
+          },
+        ],
+      },
+      {
+        type: "command",
+        command: "vp test run apps/mobile/src/features/connection",
+        output:
+          " ✓ useReconnectState.test.ts (9 tests) 41ms\n ✓ ReconnectBanner.test.ts (4 tests) 18ms\n\n Test Files  2 passed (2)\n      Tests  13 passed (13)\n",
+        durationMs: 3_400,
+      },
+      {
+        type: "message",
+        text: "The banner now appears as soon as an environment drops and counts down to the next retry.\n\n- Backoff doubles from 1s and caps at 30s\n- A clean reconnect resets the counter\n- 13 tests pass in `features/connection`",
+      },
+    ],
+  },
+  {
+    id: "long-code",
+    projectId: "t3code",
+    title: "Write the reconnect schedule",
+    prompt: "Write the reconnect schedule as an Effect helper with jittered backoff.",
+    steps: [{ type: "message", text: LONG_CODE_ANSWER }],
+  },
+  {
+    id: "streaming",
+    projectId: "t3code",
+    title: "Cut thread list render cost",
+    prompt: "Profile the thread list and cut the cost of each row render.",
+    steps: [
+      {
+        type: "message",
+        phase: "commentary",
+        text: "Measuring the row renders first, so the change has a baseline.",
+      },
+      {
+        type: "command",
+        command: "vp run render-metrics --surface thread-list",
+        output:
+          "thread-list  rows: 240  mean: 3.8ms  p95: 9.6ms  commits: 612\n  ThreadRow       2.9ms  (memo miss: relative time label)\n  ProjectFavicon  0.6ms\n",
+        durationMs: 8_200,
+      },
+      {
+        type: "message",
+        hold: true,
+        text: "Most of the cost is the relative time label. Every row re-renders once a minute because each label owns its own timer.\n\n1. **Share one clock.** A single minute ticker at the list level, read through context, so rows only re-render when their own label text changes.\n2. **Memo the row on its shell.** `ThreadRow` gets the thread shell and the label string, not the whole entity.\n3. **Keep favicons out of the row commit.**",
+      },
+    ],
+  },
+  {
+    id: "approval",
+    projectId: "t3code",
+    title: "Reset the Metro cache",
+    prompt: "Clear the stale Metro cache and restart the bundler.",
+    steps: [
+      {
+        type: "message",
+        phase: "commentary",
+        text: "The bundle hash is stale. Clearing the cache needs a delete outside the source tree.",
+      },
+      {
+        type: "approval",
+        command: "rm -rf apps/mobile/.expo apps/mobile/node_modules/.cache",
+        reason: "Delete cached Metro bundles so the next start rebuilds them.",
+        output: "",
+      },
+      {
+        type: "message",
+        text: "Cache cleared. The next `vp run dev:client` rebuilds the bundle from scratch.",
+      },
+    ],
+  },
+  {
+    id: "question",
+    projectId: "react",
+    title: "Plan offline mode",
+    prompt: "Add an offline mode for the thread list.",
+    steps: [
+      {
+        type: "message",
+        phase: "commentary",
+        text: "Two choices change the design, so I'll ask before writing code.",
+      },
+      {
+        type: "question",
+        questions: [
+          {
+            id: "cache_scope",
+            header: "Cache",
+            question: "How much history should the phone keep offline?",
+            options: [
+              {
+                label: "Last 50 threads (Recommended)",
+                description: "Fast to load and small on disk. Older threads load when online.",
+              },
+              { label: "Pinned threads only", description: "The smallest cache." },
+              { label: "Everything", description: "Full history, at the cost of storage." },
+            ],
+          },
+          {
+            id: "conflicts",
+            header: "Sync",
+            question: "When the connection returns, which version wins?",
+            options: [
+              {
+                label: "Server state (Recommended)",
+                description: "Local drafts stay, everything else follows the server.",
+              },
+              { label: "Ask me each time", description: "Show a prompt for each conflict." },
+            ],
+          },
+        ],
+      },
+      {
+        type: "message",
+        text: "Thanks. I'll cache the last 50 threads and let the server win on reconnect.",
+      },
+    ],
+  },
+  {
+    id: "background",
+    projectId: "t3code",
+    title: "Check settings in the dev server",
+    prompt: "Start the web dev server and keep it running while you check the settings page.",
+    steps: [
+      {
+        type: "command",
+        command: "vp run dev --filter web",
+        background: true,
+        output:
+          "  VITE v7.1.1  ready in 1.24s\n\n  ➜  Local:   http://127.0.0.1:5173/\n  ➜  press h + enter to show help\n",
+      },
+      {
+        type: "message",
+        text: "The dev server is running in the background on port 5173. Settings renders without console errors; I left the server up so you can open it.",
+      },
+    ],
+  },
+] as const satisfies ReadonlyArray<{
+  readonly id: string;
+  readonly projectId: string;
+  readonly title: string;
+  readonly prompt: string;
+  readonly steps: ReadonlyArray<ShowcaseLiveStep>;
+}>;
+
+export type ShowcaseLiveThreadId = (typeof SHOWCASE_LIVE_THREADS)[number]["id"];
+
+/**
+ * Points the environment's only provider at the scripted Codex peer, so the model picker and
+ * every run are the same on every machine. Call before the server starts.
+ */
+export async function writeShowcaseProviderSettings(baseDir: string): Promise<void> {
+  const binDirectory = NodePath.join(baseDir, "showcase-bin");
+  const codexPath = NodePath.join(binDirectory, "codex");
+  const providerScript = NodePath.join(import.meta.dirname, "mobile-showcase-provider.ts");
+  await NodeFSP.mkdir(binDirectory, { recursive: true });
+  await NodeFSP.writeFile(
+    codexPath,
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(providerScript)} "$@"\n`,
+    { mode: 0o755 },
+  );
+  await NodeFSP.mkdir(NodePath.join(baseDir, "userdata"), { recursive: true });
+  await NodeFSP.writeFile(
+    NodePath.join(baseDir, "userdata", "settings.json"),
+    `${JSON.stringify(
+      {
+        providerInstances: {
+          codex: { driver: "codex", enabled: true, config: { binaryPath: codexPath } },
+          // The only other provider on by default.
+          claudeAgent: { driver: "claudeAgent", enabled: false },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
+/** The server lists itself for the CLI a moment after it starts listening; retry until then. */
+async function launchThreadWhenServerIsUp(
+  launch: () => Promise<{ readonly stdout: string }>,
+): Promise<string> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return (await launch()).stdout;
+    } catch (error) {
+      const notListed = String((error as { stderr?: unknown }).stderr ?? "").includes(
+        "No running T3 Code server",
+      );
+      if (!notListed || attempt >= 40) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+}
+
+/** Starts each live thread whose project this environment owns; returns their thread ids. */
+export async function startShowcaseLiveThreads(input: {
+  readonly baseDir: string;
+  readonly projectIds: ReadonlyArray<string>;
+  readonly repoRoot: string;
+}): Promise<ReadonlyMap<ShowcaseLiveThreadId, string>> {
+  const threads = SHOWCASE_LIVE_THREADS.filter((thread) =>
+    input.projectIds.includes(thread.projectId),
+  );
+  const launched = await Promise.all(
+    threads.map(async (thread) => {
+      const stdout = await launchThreadWhenServerIsUp(() => {
+        const launch = execFile(
+          process.execPath,
+          [
+            "apps/server/src/bin.ts",
+            "thread",
+            "start",
+            thread.projectId,
+            thread.prompt,
+            "--title",
+            thread.title,
+            "--base-dir",
+            input.baseDir,
+            "--json",
+          ],
+          { cwd: input.repoRoot, env: { ...process.env, NO_COLOR: "1" } },
+        );
+        // The CLI reads a piped stdin to its end, so close it.
+        launch.child.stdin?.end();
+        return launch;
+      });
+      const { threadId } = JSON.parse(
+        stdout.slice(stdout.indexOf("{"), stdout.lastIndexOf("}") + 1),
+      ) as { readonly threadId?: string };
+      if (!threadId) throw new Error(`Live thread '${thread.id}' did not start.`);
+      return [thread.id, threadId] as const;
+    }),
+  );
+  return new Map(launched);
+}
+
 function minutesBefore(now: number, minutes: number): string {
   return new Date(now - minutes * 60_000).toISOString();
 }
