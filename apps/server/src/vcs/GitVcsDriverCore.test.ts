@@ -3025,16 +3025,24 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("repository status", () => {
-    it.effect("reads the current branch by name when a tag shares it", () =>
+    it.effect("reads the current branch and upstream by name when other refs share them", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
         yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
         yield* git(cwd, ["checkout", "-b", "release"]);
+        yield* git(cwd, ["push", "-u", "origin", "release"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "unpushed"]);
+        yield* git(cwd, ["branch", "origin/release"]);
         yield* git(cwd, ["tag", "release"]);
         const driver = yield* GitVcsDriver.GitVcsDriver;
 
         const remoteStatus = yield* driver.statusDetailsRemote(cwd, { refreshUpstream: false });
         assert.equal(remoteStatus.branch, "release");
+        assert.equal(remoteStatus.upstreamRef, "origin/release");
+        assert.equal(remoteStatus.aheadCount, 1);
         const preview = yield* driver.getReviewDiffPreview({ cwd });
         const branchRange = preview.sources.find((source) => source.kind === "branch-range");
         assert.equal(branchRange?.headRef, "release");

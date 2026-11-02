@@ -1293,13 +1293,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
+  // `--abbrev-ref` prints `remotes/origin/<name>` when a local `origin/<name>` branch exists.
   const readCurrentUpstreamRef = Effect.fn("readCurrentUpstreamRef")(function* (cwd: string) {
     const upstreamRef = yield* runGitStdout(
       "GitVcsDriver.resolveCurrentUpstream",
       cwd,
-      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+      ["rev-parse", "--symbolic-full-name", "@{upstream}"],
       true,
-    ).pipe(Effect.map((stdout) => stdout.trim()));
+    ).pipe(Effect.map((stdout) => stdout.trim().replace(/^refs\/(?:remotes|heads)\//, "")));
 
     if (upstreamRef.length === 0 || upstreamRef === "@{upstream}") {
       return null;
@@ -2032,7 +2033,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const divergence = yield* executeGit(
         "GitVcsDriver.statusDetailsRemote.divergence",
         cwd,
-        ["rev-list", "--left-right", "--count", `HEAD...${upstreamRef}`],
+        ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
         { allowNonZeroExit: true },
       );
       if (divergence.exitCode === 0) {
