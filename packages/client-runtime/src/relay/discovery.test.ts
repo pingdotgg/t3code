@@ -69,7 +69,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   const sessionIdentity = { accountId: "account-1" };
   const wakeups = yield* SubscriptionRef.make<{
     readonly sequence: number;
-    readonly reason: "application-active" | "credentials-changed";
+    readonly reason: ConnectionWakeups.ConnectionWakeup;
   }>({
     sequence: 0,
     reason: "application-active",
@@ -175,7 +175,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
     networkStatus,
     secondListCall,
     statusRequests,
-    wake: (reason: "application-active" | "credentials-changed") =>
+    wake: (reason: ConnectionWakeups.ConnectionWakeup) =>
       SubscriptionRef.update(wakeups, (event) => ({
         sequence: event.sequence + 1,
         reason,
@@ -471,6 +471,47 @@ describe("RelayEnvironmentDiscovery", () => {
         expect(yield* Ref.get(harness.listCalls)).toBe(1);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
+  );
+
+  it.effect.each(["application-active", "application-active-long"] as const)(
+    "lists the account again when the app returns to the foreground (%s)",
+    (reason) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* Ref.set(harness.listedEnvironments, [environments[0]!]);
+        yield* Effect.gen(function* () {
+          const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+          const requests = yield* Ref.get(harness.statusRequests);
+          for (const environment of environments) {
+            yield* Deferred.succeed(
+              requests.get(environment.environmentId)!,
+              status(environment, "online"),
+            );
+          }
+          // Let the scoped connectivity and wakeup subscriptions start before signing in.
+          yield* Effect.yieldNow;
+          yield* harness.wake("credentials-changed");
+          const signedIn = yield* SubscriptionRef.changes(discovery.state).pipe(
+            Stream.filter((state) => state.listed && !state.refreshing),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          );
+          expect([...signedIn.environments.keys()]).toEqual([environments[0]!.environmentId]);
+
+          yield* Ref.set(harness.listedEnvironments, environments);
+          yield* harness.wake(reason);
+          const relisted = yield* SubscriptionRef.changes(discovery.state).pipe(
+            Stream.filter(
+              (state) => state.environments.size === environments.length && !state.refreshing,
+            ),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          );
+          expect([...relisted.environments.keys()]).toEqual(
+            environments.map((environment) => environment.environmentId),
+          );
+        }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      }),
   );
 
   it.effect("settles to a clean empty state when refreshed while signed out", () =>
