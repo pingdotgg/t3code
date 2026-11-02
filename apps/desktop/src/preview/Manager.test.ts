@@ -814,8 +814,14 @@ describe("PreviewManager", () => {
         yield* manager.navigate("tab_redirect", "https://example.com/");
 
         preview.loadURL.mockRejectedValueOnce(
-          loadError(-3, "ERR_ABORTED", "https://example.com/blocked"),
+          loadError(-3, "ERR_ABORTED", "https://example.com/reload"),
         );
+        yield* manager.navigate("tab_redirect", "https://example.com/reload");
+
+        preview.loadURL.mockImplementationOnce(async () => {
+          preview.listeners.get("will-prevent-unload")?.();
+          throw loadError(-3, "ERR_ABORTED", "https://example.com/blocked");
+        });
         const blocked = yield* Effect.exit(
           manager.navigate("tab_redirect", "https://example.com/blocked"),
         );

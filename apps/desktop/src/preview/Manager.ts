@@ -1994,19 +1994,23 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       return;
     }
-    yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () =>
-      wc.loadURL(url),
-    ).pipe(
-      // Electron reports the replacement URL for a superseded load; blocked unloads report the requested URL.
+    let unloadPrevented = false;
+    const onPreventUnload = () => {
+      unloadPrevented = true;
+    };
+    yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () => {
+      wc.on("will-prevent-unload", onPreventUnload);
+      return wc.loadURL(url);
+    }).pipe(
+      // Blocked unloads and superseding navigations both reject with ERR_ABORTED.
       Effect.catchIf(
         (error) =>
+          !unloadPrevented &&
           Predicate.hasProperty(error.cause, "errno") &&
-          error.cause.errno === -3 &&
-          Predicate.hasProperty(error.cause, "url") &&
-          typeof error.cause.url === "string" &&
-          error.cause.url !== url,
+          error.cause.errno === -3,
         () => Effect.void,
       ),
+      Effect.ensuring(Effect.sync(() => wc.off("will-prevent-unload", onPreventUnload))),
     );
   });
 
