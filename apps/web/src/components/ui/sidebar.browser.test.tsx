@@ -186,7 +186,7 @@ describe("Sidebar", () => {
     });
     const edge = screen.container.querySelector<HTMLElement>('[data-slot="sidebar-hover-edge"]')!;
     const sidebar = screen.container.querySelector<HTMLElement>('[data-slot="sidebar"]')!;
-    await userEvent.hover(edge);
+    await userEvent.hover(edge, { position: { x: 2, y: 10 } });
     await vi.waitFor(() => expect(sidebar.inert).toBe(false));
     await userEvent.click(screen.getByRole("button", { name: "Sidebar menu" }));
     await userEvent.hover(page.getByRole("menuitem", { name: "Menu action" }));
