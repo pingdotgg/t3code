@@ -140,6 +140,8 @@ const awaitWatcher = (settingsPath: string, reads: Queue.Queue<void>) =>
         Effect.andThen(Queue.take(reads).pipe(Effect.timeout("1 second"))),
         Effect.retry({ times: 5 }),
       );
+    const service = yield* ServerSettingsModule.ServerSettingsService;
+    yield* service.withSettingsSnapshot(() => Effect.void);
   });
 
 const usageScript = {
@@ -686,9 +688,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
   );
 
   it.effect("publishes a provider key that another program rotates in settings.json", () =>
-    Effect.forEach(["watcher", "mutation", "missing"] as const, (scenario) =>
+    Effect.forEach(["watcher", "mutation", "missing", "interrupted"] as const, (scenario) =>
       Effect.gen(function* () {
-        const reloadBeforeWatcher = scenario !== "watcher";
+        const reloadBeforeWatcher = scenario !== "watcher" && scenario !== "interrupted";
+        const replacing = yield* Queue.unbounded<void>();
+        const replaces = yield* Latch.make(true);
         const reads = yield* Queue.unbounded<void>();
         yield* Effect.scoped(
           Effect.gen(function* () {
@@ -708,10 +712,36 @@ it.layer(NodeServices.layer)("server settings", (it) => {
               yield* awaitWatcher(config.settingsPath, reads);
               yield* service.withSettingsSnapshot(() => Effect.void);
             }
+            if (scenario === "interrupted") yield* service.updateSettings({});
             const changes = yield* service.subscribeChanges;
             const savedContents = yield* fs.readFileString(config.settingsPath);
 
-            if (scenario === "missing") {
+            if (scenario === "interrupted") {
+              yield* Queue.clear(replacing);
+              yield* replaces.close;
+              const saving = yield* Effect.forkChild(
+                service.updateSettings({
+                  providerInstances: {
+                    [instanceId]: {
+                      driver: ProviderDriverKind.make("antigravity"),
+                      config: { apiKey: "second-key" },
+                    },
+                  },
+                }),
+                { startImmediately: true },
+              );
+              yield* Effect.raceFirst(
+                Queue.take(replacing),
+                Fiber.join(saving).pipe(
+                  Effect.andThen(Effect.die("save did not reach replacement")),
+                ),
+              );
+              const canceled = yield* Effect.forkChild(Fiber.interrupt(saving), {
+                startImmediately: true,
+              });
+              yield* replaces.open;
+              yield* Fiber.join(canceled);
+            } else if (scenario === "missing") {
               yield* fs.remove(config.settingsPath);
               const failure = yield* service
                 .updateSettings({
@@ -752,7 +782,18 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             );
             assert.notInclude(yield* fs.readFileString(config.settingsPath), "second-key");
           }),
-        ).pipe(Effect.provide(layerServerSettingsReportingReads(reads)));
+        ).pipe(
+          Effect.provide(
+            layerServerSettingsAroundFile({
+              read: (access) => access.pipe(Effect.ensuring(Queue.offer(reads, undefined))),
+              replace: (access) =>
+                Queue.offer(replacing, undefined).pipe(
+                  Effect.andThen(replaces.await),
+                  Effect.andThen(access),
+                ),
+            }),
+          ),
+        );
       }).pipe(TestClock.withLive),
     ),
   );
@@ -2198,6 +2239,41 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           (yield* serverSettings.getSettings).providerInstances[instanceId]?.config,
           "apiKey",
           "config-kept",
+        );
+        failRename = false;
+        const opencode = ProviderInstanceId.make("opencode");
+        yield* serverSettings.updateProviderInstance({
+          operation: "upsert",
+          instanceId: opencode,
+          instance: {
+            driver: ProviderDriverKind.make("opencode"),
+            config: { serverUrl: "http://127.0.0.1:4096", serverPassword: "old-password" },
+          },
+        });
+        failRename = true;
+        readDuringWrite = Effect.void;
+        yield* fileSystem.writeFileString(
+          settingsPathToFail,
+          JSON.stringify({
+            providerInstances: {
+              opencode: {
+                driver: "opencode",
+                config: { serverUrl: "http://127.0.0.1:4097", serverPassword: "new-password" },
+              },
+            },
+          }),
+        );
+        assert.equal(
+          (yield* serverSettings.updateSettings({}).pipe(Effect.result))._tag,
+          "Failure",
+        );
+        yield* fileSystem.writeFileString(settingsPathToFail, "{");
+        assert.deepInclude(
+          (yield* serverSettings.getSettings).providerInstances[opencode]?.config,
+          {
+            serverUrl: "http://127.0.0.1:4097",
+            serverPassword: "new-password",
+          },
         );
       }).pipe(Effect.provide(layerSettings));
     }),

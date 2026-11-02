@@ -901,6 +901,10 @@ const make = Effect.gen(function* () {
     const migrated = settingsFileTrusted
       ? yield* moveInlineSettingsSecrets(sourceControlMigration.settings)
       : folded;
+    // A failed rewrite must not leave the retained settings paired with the previous secrets.
+    if (Option.isNone(parseFailure)) {
+      yield* Ref.set(lastGoodSettingsRef, Option.some(migrated));
+    }
     if (
       migrated !== loaded ||
       (settingsFileTrusted && legacyProviders !== undefined) ||
@@ -911,9 +915,7 @@ const make = Effect.gen(function* () {
         yield* secretStore.remove(move.from).pipe(Effect.ignore);
       }
     }
-    if (Option.isNone(parseFailure)) {
-      yield* Ref.set(lastGoodSettingsRef, Option.some(migrated));
-    } else {
+    if (Option.isSome(parseFailure)) {
       const lastGood = yield* Ref.get(lastGoodSettingsRef);
       if (Option.isSome(lastGood)) {
         return {
@@ -1216,6 +1218,8 @@ const make = Effect.gen(function* () {
         const next = yield* normalizeServerSettings(persisted.settings);
         const { materializedNext, written } = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
+            // An interrupted secret-only save can change credentials without changing these bytes.
+            yield* Ref.set(publishedSaveRef, Option.none());
             yield* invalidateMaterialized;
             const rollbackSecretChanges = yield* applySettingsSecretChanges(persisted.changes);
             const materializedExit = yield* Effect.exit(materializeSettingsSecrets(next));
