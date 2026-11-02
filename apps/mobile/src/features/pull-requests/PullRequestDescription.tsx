@@ -27,6 +27,8 @@ export function PullRequestDescription(props: {
   readonly onExpandedChange: (expanded: boolean) => void;
   readonly footer?: ReactNode;
   readonly onTaskListChange?: ComponentProps<typeof PullRequestMarkdown>["onTaskListChange"];
+  /** A new value remounts the rendered body, undoing a tick the native view made itself. */
+  readonly taskReset?: number;
 }) {
   const { expanded, onExpandedChange } = props;
   const [bodyHeight, setBodyHeight] = useState(0);
@@ -68,6 +70,7 @@ export function PullRequestDescription(props: {
                 onLayout={(event) => setBodyHeight(event.nativeEvent.layout.height)}
               >
                 <PullRequestMarkdown
+                  key={props.taskReset}
                   markdown={props.markdown}
                   onTaskListChange={props.onTaskListChange}
                 />

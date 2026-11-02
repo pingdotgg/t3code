@@ -316,7 +316,7 @@ function PullRequestOverview(props: {
   const update = useAtomCommand(composerPullRequests.update);
   const refreshDetail = useAtomRefresh(composerPullRequests.detail(requestTarget(props.params)));
   // A checkbox ticks itself natively on tap and stays tappable while saving. Saves run one at a
-  // time with the latest body. A tap that can't be written back remounts the description to undo
+  // time with the latest body. A tap that can't be written back remounts the body to undo
   // the tick.
   const [taskEdit, setTaskEdit] = useState<TaskListEdit | null>(null);
   const nextTaskBody = useRef<string | null>(null);
@@ -379,7 +379,7 @@ function PullRequestOverview(props: {
         onLayout={(event) => props.onDescriptionLayout(event.nativeEvent.layout.y)}
       >
         <PullRequestDescription
-          key={taskReset}
+          taskReset={taskReset}
           markdown={shownBody}
           onTaskListChange={permissions.canEditChangeRequest ? toggleTask : undefined}
           onCollapse={props.onDescriptionCollapse}
