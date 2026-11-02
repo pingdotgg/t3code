@@ -6,9 +6,8 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { Atom } from "effect/reactivity";
-import { useEffect } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { previewEnvironment } from "./state/preview";
 import { useEnvironmentQuery } from "./state/query";
@@ -43,29 +42,30 @@ export function boundConfiguredLocalServerUrls(
   return bounded;
 }
 
-// The subscription closes with the last reader, so remember its last answer for the next one.
-const lastDiscoveredServersAtom = Atom.family((_environmentId: EnvironmentId | null) =>
+const lastDiscoveredServersAtom = Atom.family((_environmentId: EnvironmentId) =>
   Atom.make<ReadonlyArray<DiscoveredLocalServer> | null>(null).pipe(Atom.keepAlive),
 );
 
-/** Live servers for an environment, or the last list seen until the subscription answers. */
+// The subscription closes with its last reader, so fall back to its last answer until it reopens.
+const discoveredServersAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const last = lastDiscoveredServersAtom(environmentId);
+    const result = get(previewEnvironment.discoveredServers({ environmentId, input: {} }));
+    const live = AsyncResult.getOrElse(result, () => null)?.servers;
+    if (live === undefined) return get.once(last) ?? EMPTY_PORTS;
+    get.set(last, live);
+    return live;
+  }),
+);
+
+const NO_ENVIRONMENT_SERVERS_ATOM = Atom.make(EMPTY_PORTS);
+
 export function useDiscoveredPorts(
   environmentId: EnvironmentId | null,
 ): ReadonlyArray<DiscoveredLocalServer> {
-  const query = useEnvironmentQuery(
-    environmentId === null
-      ? null
-      : previewEnvironment.discoveredServers({ environmentId, input: {} }),
+  return useAtomValue(
+    environmentId === null ? NO_ENVIRONMENT_SERVERS_ATOM : discoveredServersAtom(environmentId),
   );
-  const lastAtom = lastDiscoveredServersAtom(environmentId);
-  const last = useAtomValue(lastAtom);
-  const setLast = useAtomSet(lastAtom);
-  const live = query.data?.servers;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- copies the answer into a cache that outlives this subscription
-  useEffect(() => {
-    if (live !== undefined) setLast(live);
-  }, [live, setLast]);
-  return live ?? last ?? EMPTY_PORTS;
 }
 
 export function useDiscoveredPortsState(
