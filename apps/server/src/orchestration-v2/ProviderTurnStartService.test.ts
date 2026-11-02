@@ -1315,19 +1315,21 @@ effectIt.effect(
     }),
 );
 
-effectIt.effect("keeps a slash command from another thread's agent verbatim", () =>
-  Effect.gen(function* () {
-    const harness = makeLocalCommandHarness({
-      text: "/goal Implement X",
-      senderThreadId: ThreadId.make("launching-thread"),
-      previousTurn: { runStatus: "completed", turnStatus: "completed" },
-    });
-    harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
+effectIt.effect.each(["/goal Implement X", "/review.pr staged changes"])(
+  "keeps the slash command %s from another thread's agent verbatim",
+  (command) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: command,
+        senderThreadId: ThreadId.make("launching-thread"),
+        previousTurn: { runStatus: "completed", turnStatus: "completed" },
+      });
+      harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
 
-    yield* harness.start;
+      yield* harness.start;
 
-    expect(harness.startRootRun.mock.calls[0]?.[0].message.text).toBe("/goal Implement X");
-  }),
+      expect(harness.startRootRun.mock.calls[0]?.[0].message.text).toBe(command);
+    }),
 );
 
 effectIt.effect("marks another thread's brief that starts with an absolute path", () =>

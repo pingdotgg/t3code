@@ -117,7 +117,7 @@ const refusedBeforePrompt = (error: unknown): boolean =>
 
 // A user request relayed by another thread's agent must not read as a new one.
 // Slash commands stay verbatim: providers parse them from the start of the prompt.
-const SLASH_COMMAND = /^\s*\/[\w:-]+(?:\s|$)/u;
+const SLASH_COMMAND = /^\s*\/[^\s/]+(?:\s|$)/u;
 const withAgentSender = (
   message: Pick<OrchestrationV2ConversationMessage, "createdBy" | "senderThreadId">,
   text: string,
