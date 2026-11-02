@@ -53,7 +53,10 @@ it("prepares macOS x64 cache on an ARM64 build host", async () => {
         `
       const childProcess = require("node:child_process");
       const spawn = childProcess.spawnSync;
-      childProcess.spawnSync = (executable, args, options) => spawn(process.execPath, args, options);
+      childProcess.spawnSync = (executable, args, options) => {
+        require("node:assert/strict").equal(executable, ${JSON.stringify(NodePath.join(root, "Fixture.app", "Contents", "MacOS", "Fixture"))});
+        return spawn(process.execPath, args, options);
+      };
       Object.defineProperty(process, "platform", { value: "darwin" });
       Object.defineProperty(process, "arch", { value: "arm64" });
       require(${JSON.stringify(hook)})({
