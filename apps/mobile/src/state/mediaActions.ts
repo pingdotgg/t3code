@@ -132,13 +132,13 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
     run("save-image", async (source, signal) => {
       const file = await localImageFile(source, signal);
       if (!file) return;
-      try {
-        if (signal.aborted) return;
-        await saveImageToLibrary(file.uri, source.mimeType, source.name);
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      } finally {
-        file.dispose();
-      }
+      const saved = signal.aborted
+        ? null
+        : await settlePromise(() => saveImageToLibrary(file.uri, source.mimeType, source.name));
+      file.dispose();
+      if (saved === null) return;
+      if (AsyncResult.isFailure(saved)) throw squashAtomCommandFailure(saved);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     });
 
   const reference = source?.reference;
