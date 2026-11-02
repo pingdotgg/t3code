@@ -1,4 +1,5 @@
-import { NodeHttpServer } from "@effect/platform-node";
+import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
+import * as Undici from "@effect/platform-node/Undici";
 import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -81,8 +82,9 @@ const serveB = (descriptor: ExecutionEnvironmentDescriptor) =>
 const makeA = (
   descriptor: ExecutionEnvironmentDescriptor,
   secrets?: typeof ServerSecretStore.layer,
+  machine?: Layer.Layer<never>,
 ) =>
-  layerLinkingEnvironment(descriptor, secrets).pipe(
+  layerLinkingEnvironment(descriptor, secrets, machine).pipe(
     Layer.build,
     Effect.map((context) => ({
       links: Context.get(context, PeerLinks.PeerLinks),
@@ -114,6 +116,18 @@ const serveApart = (descriptor: ExecutionEnvironmentDescriptor) =>
   Layer.build(Layer.fresh(NodeHttpServer.layerTest)).pipe(
     Effect.flatMap((server) => serveB(descriptor).pipe(Effect.provideContext(server))),
   );
+
+/** Connections to `host` reach 127.0.0.1 instead, as a LAN route would reach the peer. */
+const layerRouteHostToLoopback = (host: string) => {
+  const connect = Undici.buildConnector({});
+  return NodeHttpClient.layerUndiciOptions({
+    connect: (options, callback) =>
+      connect(
+        { ...options, hostname: options.hostname === host ? "127.0.0.1" : options.hostname },
+        callback,
+      ),
+  });
+};
 
 it.effect("links with a pairing code, and the peer holds its agents to the limits they carry", () =>
   Effect.scoped(
@@ -468,7 +482,7 @@ it.effect("tells the agent to link again once the peer revokes the link or it ex
 );
 
 it.effect(
-  "refuses to link itself, plain http off this machine and the tailnet, or a peer that cannot hold a linked agent to its limits",
+  "refuses to link itself, plain http off a private network, or a peer that cannot hold a linked agent to its limits",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -488,24 +502,24 @@ it.effect(
           .pipe(Effect.flip);
         expect(unfenced.reason).toBe("incompatible");
 
-        // Plain http to a LAN address would carry the code and token in clear.
-        const lan = yield* a.links
+        // Plain http to a public address would carry the code and token in clear.
+        const exposed = yield* a.links
           .link({
-            url: "http://192.168.1.20:3773",
+            url: "http://203.0.113.7:3773",
             pairingCode: pairing.credential,
             access: "auto",
           })
           .pipe(Effect.flip);
-        expect(lan.message).toContain("plain http");
-        const lanAlternate = yield* a.links
+        expect(exposed.message).toContain("plain http");
+        const exposedAlternate = yield* a.links
           .link({
             url: b.url,
-            alternateUrls: ["http://192.168.1.20:3773"],
+            alternateUrls: ["http://203.0.113.7:3773"],
             pairingCode: pairing.credential,
             access: "auto",
           })
           .pipe(Effect.flip);
-        expect(lanAlternate.message).toContain("plain http");
+        expect(exposedAlternate.message).toContain("plain http");
 
         yield* Ref.set(b.descriptor, laptop);
         const self = yield* a.links
@@ -514,6 +528,47 @@ it.effect(
         expect(self.reason).toBe("self");
         // Neither attempt spent the pairing code on a session.
         expect(yield* linkedSessions(b)).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "links over plain http on a private network, but never moves a link made over an encrypted address onto it",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const b = yield* serveB(box);
+        const lan = `http://192.168.1.20:${new URL(b.url).port}`;
+        const a = yield* makeA(laptop, undefined, layerRouteHostToLoopback("192.168.1.20"));
+
+        // The address `t3 pair` prints for a server on a LAN.
+        const linked = yield* a.links.link({
+          url: lan,
+          pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+          access: "auto",
+        });
+        expect(linked.urls).toEqual([lan]);
+        yield* probe(a);
+        expect((yield* Ref.get(b.bearers)).length).toBeGreaterThan(0);
+
+        // Linked through an address that encrypts, the token never falls back
+        // to the LAN one, whether the address was typed or the machine picked.
+        const typed = yield* a.links.link({
+          url: b.url,
+          alternateUrls: [lan],
+          pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+          access: "auto",
+        });
+        expect(typed.urls).toEqual([b.url]);
+        const picked = yield* a.links.link({
+          url: lan,
+          alternateUrls: [b.url],
+          pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+          access: "auto",
+          expectedEnvironmentId: box.environmentId,
+        });
+        expect(picked.urls).toEqual([b.url]);
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
@@ -551,7 +606,7 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
       const failed = yield* a.links
         .link({
           url: impostor.url,
-          alternateUrls: ["http://192.168.1.20:3773"],
+          alternateUrls: ["http://203.0.113.7:3773"],
           pairingCode: "unused",
           access: "auto",
           expectedEnvironmentId: box.environmentId,
@@ -560,7 +615,7 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
         .pipe(Effect.flip);
       expect(failed.reason).toBe("unreachable");
       expect(failed.message).toBe(
-        `This environment could not reach Box at ${impostor.url}, http://192.168.1.20:3773.`,
+        `This environment could not reach Box at ${impostor.url}, http://203.0.113.7:3773.`,
       );
       expect(yield* a.links.list).toEqual([]);
       expect(yield* linkedSessions(impostor)).toEqual([]);
@@ -568,7 +623,7 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
       // Every address refused: the message says why.
       const refused = yield* a.links
         .link({
-          url: "http://192.168.1.20:3773",
+          url: "http://203.0.113.7:3773",
           pairingCode: "unused",
           access: "auto",
           expectedEnvironmentId: box.environmentId,

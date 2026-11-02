@@ -354,6 +354,10 @@ and the access, then approve.
   outside agent. Revoke it there to end it. **Forget** on this machine only
   removes it here.
 - Links last 30 days. Link again with a new pairing code to renew one.
+- On a LAN or other private network, a link can use the machine's plain
+  `http://` address, as pairing does. A machine picked from the list is linked
+  over its https, Tailscale or T3 Connect address instead whenever one answers.
+  Plain http to a public address is refused.
 
 An agent can also hand a task to a linked machine with `delegate_task`: it runs
 there as an ordinary thread, in the project with the same repository (or the
