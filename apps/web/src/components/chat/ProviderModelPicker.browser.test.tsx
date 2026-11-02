@@ -8,6 +8,70 @@ import "~/index.css";
 import { render } from "../../../test/render";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import {
+  BackgroundThreadContext,
+  ThreadCoveredByModalContext,
+  useComposerModelPickerOpen,
+} from "./backgroundThread";
+
+it("dismisses the composer picker when a modal covers the thread", async () => {
+  const instanceId = ProviderInstanceId.make("codex");
+  const entries = deriveProviderInstanceEntries([
+    {
+      instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    },
+  ]);
+
+  function Picker() {
+    const [open, setOpen] = useComposerModelPickerOpen();
+    return (
+      <BackgroundThreadContext value>
+        <ProviderModelPicker
+          environmentId={null}
+          activeInstanceId={instanceId}
+          model="original"
+          lockedProvider={null}
+          instanceEntries={entries}
+          modelOptionsByInstance={
+            new Map([[instanceId, [{ slug: "original", name: "Original model" }]]])
+          }
+          triggerAriaLabel="Choose model"
+          isComposerOwned
+          open={open}
+          onOpenChange={setOpen}
+          onInstanceModelChange={() => {}}
+          effortColumn={<div>Effort</div>}
+        />
+      </BackgroundThreadContext>
+    );
+  }
+
+  const view = (covered: boolean) => (
+    <ThreadCoveredByModalContext value={covered}>
+      <Picker />
+    </ThreadCoveredByModalContext>
+  );
+  await using screen = await render(view(false));
+  await screen.getByRole("button", { name: "Choose model" }).click();
+  const search = page.getByPlaceholder("Search models...");
+  await expect.element(search).toBeVisible();
+  await screen.rerender(view(true));
+  await expect.element(search).not.toBeInTheDocument();
+  await screen.rerender(view(false));
+  await expect.element(search).not.toBeInTheDocument();
+  await screen.getByRole("button", { name: "Choose model" }).click();
+  await expect.element(search).toBeVisible();
+});
 
 it("keeps each registry image when adding a model from another ACP agent", async () => {
   const icons = [
