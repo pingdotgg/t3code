@@ -506,8 +506,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const citationThreadRef = parseScopedThreadKey(routeThreadKey);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
-  // The open history belongs to the prompt that opened it; sending closes it.
-  const [workingHistoryKey, setWorkingHistoryKey] = useState<string | null>(null);
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
@@ -578,14 +576,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       }
       return next;
     });
-  };
-  // Opening keeps a followed timeline at its end, so the history lands above
-  // the composer instead of under it. Closing behaves like any collapsing
-  // disclosure.
-  const onToggleWorkingHistory = (key: string) => {
-    // Either way the bar holds still: the history grows and shrinks below it.
-    suspendEndScrollMaintenanceForDisclosure("working-indicator-row");
-    setWorkingHistoryKey((current) => (current === key ? null : key));
   };
   const onToggleAttemptFold = (attemptId: RunAttemptId) => {
     suspendEndScrollMaintenanceForDisclosure(`attempt-fold:${attemptId}`);
@@ -688,7 +678,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     hasThreadError: threadErrorMessage !== null,
     isWorking,
     runlessWorkActive,
-    workingHistoryKey,
     windowlessCitation,
     activeFindEntryId,
   });
@@ -1157,7 +1146,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,
     onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
     onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
-    onToggleWorkingHistory,
     onFocusComposer: onFocusComposer ?? null,
     onInterrupt: onInterrupt ?? null,
     workGroupViewState,

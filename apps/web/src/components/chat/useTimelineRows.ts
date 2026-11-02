@@ -94,9 +94,7 @@ export function useStableRows(
     }
   }
   const previous = state.identity === identity ? state.stable : { byId: new Map(), result: [] };
-  const windowed = input.windowlessCitation
-    ? rows
-    : applyWorkingWindow(rows, input, input.workingHistoryKey);
+  const windowed = input.windowlessCitation ? rows : applyWorkingWindow(rows, input);
   const visibleRows =
     input.activeFindEntryId !== null &&
     windowed.some(
@@ -118,7 +116,6 @@ type StableTimelineRowsInput = Parameters<typeof applyBackgroundActivityGroups>[
   >;
   readonly isWorking: boolean;
   readonly runlessWorkActive: boolean;
-  readonly workingHistoryKey: string | null;
   readonly windowlessCitation: boolean;
   readonly activeFindEntryId: string | null;
 };
