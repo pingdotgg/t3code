@@ -6551,8 +6551,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       );
       assert.deepEqual(
         yield* effectRequests("runtime-layer-queued-edit-drop-attachments"),
-        [{ type: "attachment.cleanup", attachmentIds: [dropped.id], skipReferenced: true }],
-        "dropped files are deleted unless another message still uses them",
+        [
+          {
+            type: "attachment.cleanup",
+            attachmentIds: [shared.id, dropped.id],
+            skipReferenced: true,
+          },
+        ],
+        "dropped files are queued for a cleanup that skips files the thread still references",
       );
 
       yield* orchestrator.dispatch({

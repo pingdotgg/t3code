@@ -19,6 +19,7 @@ import {
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
@@ -79,6 +80,7 @@ export const layerExecutor: Layer.Layer<
   | RuntimeRequestService.RuntimeRequestServiceV2
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
+  | ProjectionStore.ProjectionStoreV2
   | ServerSettings.ServerSettingsService
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
@@ -93,6 +95,7 @@ export const layerExecutor: Layer.Layer<
     const threadTitleRegeneration =
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const settings = yield* ServerSettings.ServerSettingsService;
     return OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
@@ -529,16 +532,12 @@ export const layerExecutor: Layer.Layer<
           case "attachment.cleanup": {
             const request = effect.request;
             return Effect.gen(function* () {
-              // A stale queued edit can restore a dropped file before this cleanup runs.
-              const referenced = request.skipReferenced
-                ? new Set(
-                    (yield* threads.getThreadRecords(effect.threadId, ["messages"], {
-                      messageRoles: ["user"],
-                    })).messages.flatMap((message) =>
-                      message.attachments.map((attachment) => attachment.id),
-                    ),
-                  )
-                : new Set<string>();
+              // Another message or answer may share the file, or a stale queued edit may restore it.
+              const referenced = new Set(
+                request.skipReferenced
+                  ? yield* projectionStore.getThreadAttachmentIds(effect.threadId)
+                  : [],
+              );
               yield* resourceCleanup.cleanupAttachments(
                 request.attachmentIds.filter((id) => !referenced.has(id)),
               );

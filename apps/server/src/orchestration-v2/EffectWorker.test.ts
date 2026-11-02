@@ -26,6 +26,7 @@ import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -81,6 +82,7 @@ function layerExecutorFor(input: {
   readonly events: Ref.Ref<ReadonlyArray<string>>;
   readonly failFirstStart?: Ref.Ref<boolean>;
   readonly threads?: Partial<ThreadManagementService.ThreadManagementService["Service"]>;
+  readonly projectionStore?: Partial<ProjectionStore.ProjectionStoreV2["Service"]>;
   readonly continueAfterRestart?: boolean;
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
   readonly rollback?: CheckpointRollbackService.CheckpointRollbackServiceV2Shape["execute"];
@@ -162,6 +164,7 @@ function layerExecutorFor(input: {
       Layer.mergeAll(
         layerDependencies,
         Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)(input.projectionStore ?? {}),
         ServerSettings.layerTest(
           input.continueAfterRestart === true ? { continueThreadsAfterServerUpdate: true } : {},
         ),
@@ -648,16 +651,13 @@ it.effect.each([
     const removed = yield* Ref.make<ReadonlyArray<string>>([]);
     const layer = layerExecutorFor({
       events,
-      threads: {
-        getThreadRecords: () =>
-          Ref.get(queuedAttachmentIds).pipe(
-            Effect.map(
-              (ids) => ({ messages: [{ attachments: ids.map((id) => ({ id })) }] }) as never,
-            ),
-          ),
+      projectionStore: {
+        getThreadAttachmentIds: () =>
+          Ref.get(queuedAttachmentIds).pipe(Effect.map((ids) => [...ids, "answered"])),
       },
     });
-    // The edit that dropped both files committed; a stale edit restores one before cleanup runs.
+    // The edit that dropped these files committed; a stale edit restores one before cleanup runs,
+    // and a question answer still uses another.
     yield* Ref.set(queuedAttachmentIds, ["restored"]);
     yield* Effect.gen(function* () {
       const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
@@ -667,7 +667,7 @@ it.effect.each([
         threadId,
         request: {
           type: "attachment.cleanup",
-          attachmentIds: ["restored", "dropped"],
+          attachmentIds: ["restored", "answered", "dropped"],
           ...(skipReferenced === undefined ? {} : { skipReferenced }),
         },
         status: "running",
@@ -690,7 +690,7 @@ it.effect.each([
     );
     assert.deepEqual(
       yield* Ref.get(removed),
-      skipReferenced ? ["dropped"] : ["restored", "dropped"],
+      skipReferenced ? ["dropped"] : ["restored", "answered", "dropped"],
     );
   }),
 );

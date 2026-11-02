@@ -9870,19 +9870,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
       });
     }
-    // Thread deletion only cleans files a message still references.
-    const referencedAttachmentIds = new Set(
-      projection.messages
-        .flatMap((message) =>
-          message.id === queuedMessage.id
-            ? (command.attachments ?? message.attachments)
-            : message.attachments,
-        )
-        .map((attachment) => attachment.id),
+    // Thread deletion only cleans files the thread still references.
+    const keptAttachmentIds = new Set(
+      (command.attachments ?? queuedMessage.attachments).map((attachment) => attachment.id),
     );
     const droppedAttachmentIds = queuedMessage.attachments
       .map((attachment) => attachment.id)
-      .filter((id) => !referencedAttachmentIds.has(id));
+      .filter((id) => !keptAttachmentIds.has(id));
     if (droppedAttachmentIds.length > 0) {
       yield* Ref.update(effects, (existing) => [
         ...existing,
