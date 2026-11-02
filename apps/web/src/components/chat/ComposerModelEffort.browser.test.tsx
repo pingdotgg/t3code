@@ -131,15 +131,17 @@ it("names the selected model in full when the column header cuts it off", async 
   // The header shows the trigger's short name; the hover names the model in full.
   const modelLabel = "Opus 5.5 Fast Long Context";
   const modelName = "Claude Opus 5.5 Fast Long Context";
-  await using screen = await render(
-    <DockedPickerContext value={{ modelLabel, modelName }}>
+  const column = (label: string, name: string) => (
+    <DockedPickerContext value={{ modelLabel: label, modelName: name }}>
       {/* The docked column's width. */}
       <div data-model-picker-effort className="flex w-48 flex-col">
         <ComposerEffortColumn traits={traitsInput([], () => {})} />
       </div>
-    </DockedPickerContext>,
-    { router: false }, // no routes involved
+    </DockedPickerContext>
   );
+  await using screen = await render(column(modelLabel, modelName), {
+    router: false, // no routes involved
+  });
   const header = screen.getByText(modelLabel);
   const clipped = header.element();
   await vi.waitFor(() => expect(clipped.scrollWidth).toBeGreaterThan(clipped.clientWidth));
@@ -151,4 +153,12 @@ it("names the selected model in full when the column header cuts it off", async 
       "hover title of the cut-off model label",
     ).toBe(modelName),
   );
+
+  // Picking another model with the keyboard leaves the pointer resting on the header.
+  await screen.rerender(column("Sonnet 5.5 Long Context", "Claude Sonnet 5.5 Long Context"));
+  const next = screen.getByText("Sonnet 5.5 Long Context").element();
+  expect(
+    next.closest("[title]")?.getAttribute("title") ?? "",
+    "title after a model change",
+  ).not.toBe(modelName);
 });

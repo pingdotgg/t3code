@@ -507,7 +507,9 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
           <span className="text-muted-foreground">
             {controls?.effort?.descriptor.label ?? (controls?.others.length ? "Options" : "Effort")}
           </span>
+          {/* Keyed so a model picked under a resting pointer drops the last model's title. */}
           <span
+            key={picker.modelName}
             className="ms-auto min-w-0 truncate text-muted-foreground text-xs"
             onPointerEnter={titleWhenClipped(picker.modelName)}
           >
