@@ -78,7 +78,9 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   connectRoute: (
     route: ConnectionRoute,
   ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, R | Scope.Scope>,
+  reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
 ) {
+  yield* reportProgress({ stage: "preparing" });
   const routes = usableRoutes(entry);
   const checks =
     routes.length === 1
@@ -99,6 +101,8 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     if (result._tag === "Failure") {
       if (result.failure._tag === "ConnectionTransientError") transient ??= result.failure;
       else blocked ??= result.failure;
+      // The failed route may have opened its socket; the next route starts over.
+      yield* reportProgress({ stage: "preparing" });
     }
     return result;
   });
@@ -194,7 +198,6 @@ export const make = Effect.gen(function* () {
       "connection.target.kind": target._tag,
       "connection.route.count": connectionRoutes(entry).length,
     });
-    yield* reportProgress({ stage: "preparing" });
     return yield* connectOverRoutes(
       entry,
       (route) => checkRoute(entry, route),
@@ -222,6 +225,7 @@ export const make = Effect.gen(function* () {
         }
         return { prepared, session } satisfies EnvironmentConnectionLease;
       }),
+      reportProgress,
     );
   });
 

@@ -235,9 +235,11 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
     entry: ConnectionCatalogEntry,
     reportProgress: (progress: ConnectionDriver.ConnectionDriverProgress) => Effect.Effect<void>,
   ) {
-    yield* reportProgress({ stage: "preparing" });
-    return yield* ConnectionDriver.connectOverRoutes(entry, checkRoute, (route) =>
-      connectRoute(route.target, reportProgress),
+    return yield* ConnectionDriver.connectOverRoutes(
+      entry,
+      checkRoute,
+      (route) => connectRoute(route.target, reportProgress),
+      reportProgress,
     );
   });
 
@@ -1936,32 +1938,51 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
-  it.effect("restarts on a network recovery while a fallback route has not opened", () =>
-    Effect.gen(function* () {
-      const fallbackOpening = yield* Deferred.make<void>();
-      const harness = yield* makeHarness({
-        networkStatus: "unknown",
-        checkRoute: () => Effect.succeed("answered"),
-        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
-        opened: (attempt) =>
-          attempt === 2
-            ? Deferred.succeed(fallbackOpening, undefined).pipe(Effect.andThen(Effect.never))
-            : Effect.void,
-        ready: (attempt) => (attempt === 1 ? Effect.fail(transient()) : Effect.void),
-      });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
+  // The LAN route opens and then fails its snapshot, so the attempt moves on to relay.
+  it.effect.each([
+    { stall: "reachability check", sessions: 2 },
+    { stall: "preparation", sessions: 2 },
+    { stall: "opening", sessions: 3 },
+  ] as const)(
+    "restarts on a network recovery while a fallback route stalls in $stall",
+    ({ stall, sessions }) =>
+      Effect.gen(function* () {
+        const stalled = yield* Deferred.make<void>();
+        const stallHere = Deferred.succeed(stalled, undefined).pipe(Effect.andThen(Effect.never));
+        const harness = yield* makeHarness({
+          networkStatus: "unknown",
+          checkRoute: (route) =>
+            stall === "reachability check" && route.target._tag === "RelayConnectionTarget"
+              ? Effect.never
+              : Effect.succeed("answered"),
+          prepare: (_attempt, target) =>
+            stall === "preparation" && target._tag === "RelayConnectionTarget"
+              ? stallHere
+              : Effect.succeed(preparedFor(target)),
+          opened: (attempt) => (stall === "opening" && attempt === 2 ? stallHere : Effect.void),
+          ready: (attempt) =>
+            attempt !== 1
+              ? Effect.void
+              : stall === "reachability check"
+                ? Deferred.succeed(stalled, undefined).pipe(
+                    Effect.andThen(Effect.fail(transient())),
+                  )
+                : Effect.fail(transient()),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
 
-      yield* Deferred.await(fallbackOpening);
-      yield* harness.setNetworkStatus("online");
-      yield* TestClock.adjust("0 millis");
+        yield* Deferred.await(stalled);
+        yield* TestClock.adjust("0 millis");
+        yield* harness.setNetworkStatus("online");
+        yield* TestClock.adjust("0 millis");
 
-      expect(yield* Ref.get(harness.sessionCount)).toBe(3);
-      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
-      expect(prepared.target._tag).toBe("BearerConnectionTarget");
-    }).pipe(Effect.provide(TestClock.layer())),
+        expect(yield* Ref.get(harness.sessionCount)).toBe(sessions);
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
+        expect(prepared.target._tag).toBe("BearerConnectionTarget");
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("tries every route when none answers the reachability check", () =>
