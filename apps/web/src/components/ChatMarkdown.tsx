@@ -453,14 +453,16 @@ function fileLinkSourcesKey(
   cwd: string | undefined,
   imageBaseDir: string | undefined,
 ): string {
-  const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
-    .filter((href) => !parseComposerContextHref(href))
-    .map(normalizeMarkdownLinkHrefKey)
-    .filter((href) => resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd));
-  const spans = extractInlineCodeSpans(text).filter((span) =>
-    resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd),
+  const hrefs = new Set(
+    extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
+      .filter((href) => !parseComposerContextHref(href))
+      .map(normalizeMarkdownLinkHrefKey),
   );
-  return JSON.stringify([[...new Set(hrefs)], [...new Set(spans)]]);
+  const spans = new Set(extractInlineCodeSpans(text));
+  return JSON.stringify([
+    [...hrefs].filter((href) => resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd)),
+    [...spans].filter((span) => resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd)),
+  ]);
 }
 
 function resolveFileLinkSources(

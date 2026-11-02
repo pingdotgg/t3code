@@ -17,6 +17,25 @@ const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   filesystemMetadata: vi.fn(),
 }));
 const parsedSources = vi.hoisted(() => [] as string[]);
+const fileLinkResolutions = vi.hoisted(() => ({ hrefs: [] as string[], spans: [] as string[] }));
+vi.mock(import("../markdown-links"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    resolveMarkdownFileLinkMeta: (
+      ...args: Parameters<typeof actual.resolveMarkdownFileLinkMeta>
+    ) => {
+      fileLinkResolutions.hrefs.push(String(args[0]));
+      return actual.resolveMarkdownFileLinkMeta(...args);
+    },
+    resolveInlineCodeFileLinkMeta: (
+      ...args: Parameters<typeof actual.resolveInlineCodeFileLinkMeta>
+    ) => {
+      fileLinkResolutions.spans.push(args[0]);
+      return actual.resolveInlineCodeFileLinkMeta(...args);
+    },
+  };
+});
 vi.mock(import("mdast-util-from-markdown"), async (original) => {
   const actual = await original();
   return {
@@ -129,6 +148,8 @@ it("keeps compact audio playback loaded across signed URL renewals", async () =>
 function setup() {
   appearance.value = "light";
   parsedSources.length = 0;
+  fileLinkResolutions.hrefs.length = 0;
+  fileLinkResolutions.spans.length = 0;
   settingsOverrides.mathRenderingEnabled = false;
   renderDiagram.mockReset();
   workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
@@ -428,6 +449,30 @@ describe("ChatMarkdown inline code selection", () => {
     await userEvent.dblClick(fenced, { position: { x: 4, y: 4 } });
     expect(window.getSelection()?.toString()).toBe("fenced");
   });
+});
+
+it("resolves repeated file destinations once, keeping authored spellings and order", async () => {
+  setup();
+  await using screen = await renderText(
+    "[1](src/b.ts:3) [2](src/a.ts:1) [3](src/b.ts:3) [4](src/b.ts:4) [5](./src/b.ts:3) [6](src/b.ts:3) `src/z.ts:8` `src/z.ts:9` `src/z.ts:8`",
+  );
+  const hrefs = ["src/b.ts:3", "src/a.ts:1", "src/b.ts:4", "./src/b.ts:3"];
+  const spans = ["src/z.ts:8", "src/z.ts:9"];
+  // Once to build the key, then once to build the lookup maps from it.
+  expect(fileLinkResolutions.hrefs).toEqual([...hrefs, ...hrefs]);
+  expect(fileLinkResolutions.spans).toEqual([...spans, ...spans]);
+  const chips = [...screen.container.querySelectorAll(".chat-markdown-file-link")];
+  expect(chips.map((chip) => chip.getAttribute("data-markdown-copy"))).toEqual([
+    "[1](src/b.ts:3)",
+    "[2](src/a.ts:1)",
+    "[3](src/b.ts:3)",
+    "[4](src/b.ts:4)",
+    "[5](./src/b.ts:3)",
+    "[6](src/b.ts:3)",
+    "`src/z.ts:8`",
+    "`src/z.ts:9`",
+    "`src/z.ts:8`",
+  ]);
 });
 
 describe("ChatMarkdown Windows file links", () => {
