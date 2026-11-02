@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
   type PreviewEvent,
@@ -954,6 +955,33 @@ describe("environment query lifecycle", () => {
         expect(executions).toBe(2);
 
         expect(yield* read).toBe(3);
+      }),
+    ),
+  );
+
+  it.effect("refetches when mounted again after its stale time, while still cached", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let now = 0;
+        using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
+        let contents = "before edit";
+        const harness = yield* makeEnvironmentQueryHarness(Effect.sync(() => contents));
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const read = readEnvironmentQuery(registry, harness.atom);
+
+        const unmount = registry.mount(harness.atom);
+        expect(yield* read).toBe("before edit");
+        unmount();
+        yield* Effect.yieldNow;
+
+        contents = "after edit";
+        // Past the harness's 60s stale time, well inside the default 5 minute idle TTL.
+        now = 61_000;
+        registry.mount(harness.atom);
+        yield* Effect.yieldNow;
+
+        expect(yield* read).toBe("after edit");
       }),
     ),
   );
