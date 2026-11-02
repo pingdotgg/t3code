@@ -635,7 +635,8 @@ const skillsNamed = (text: string, known: ReadonlySet<string>) => [
 ];
 
 const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["status"]) => {
-  const models = turn.models.size === 0 ? {} : { models: [...turn.models] };
+  // A step started during a reconnect gap ran on a model no event reported.
+  const models = turn.models.size === 0 || turn.missedEvents ? {} : { models: [...turn.models] };
   return turn.steps === 0
     ? {
         usageScope: "main_agent" as const,

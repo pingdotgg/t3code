@@ -2150,6 +2150,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const { runtime, thread } = yield* resumed([
         out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
         promptAccepted,
+        event("session.step.started", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_before_gap",
+          agent: "build",
+          model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+          started: 1,
+        }),
         event("session.step.ended", {
           sessionID: SESSION,
           assistantMessageID: "msg_before_gap",
@@ -2171,15 +2178,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         "command_execution:completed",
       ]);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
-      // Steps that ended during the gap sent no tokens, so the measured step is only part of it.
+      // Steps that ended during the gap sent no tokens or models, so both stay incomplete.
       const settled = collected.findLast(
         (event) =>
           event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
       );
-      assert.deepInclude(
-        settled?.type === "provider_turn.updated" ? settled.providerTurn.turnTokenUsage : undefined,
-        { usageStatus: "partial", inputTokens: 100, outputTokens: 10 },
-      );
+      const usage =
+        settled?.type === "provider_turn.updated" ? settled.providerTurn.turnTokenUsage : undefined;
+      assert.deepInclude(usage, { usageStatus: "partial", inputTokens: 100, outputTokens: 10 });
+      assert.notProperty(usage, "models");
     }).pipe(Effect.scoped),
   );
 
