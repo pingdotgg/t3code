@@ -1,6 +1,7 @@
 import type { ChatFileAttachment } from "@t3tools/contracts";
 import type { Directory } from "expo-file-system";
 import type { SharingOptions } from "expo-sharing";
+import { Platform } from "react-native";
 
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
@@ -19,7 +20,7 @@ function downloadFileName(name: string): string {
     return codePoint < 32 ||
       (codePoint >= 127 && codePoint <= 159) ||
       (codePoint >= 0xd800 && codePoint <= 0xdfff) ||
-      URI_UNSAFE_FILE_NAME_CHARACTERS.has(character)
+      (Platform.OS === "android" && URI_UNSAFE_FILE_NAME_CHARACTERS.has(character))
       ? "_"
       : character;
   })
