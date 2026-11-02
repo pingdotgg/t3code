@@ -26,10 +26,11 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
   const handleCopy = (format: "markdown" | "csv" | "html") => {
     const table = containerRef.current?.querySelector("table");
     if (!table) return;
-    if (format === "csv") return copyToClipboard(serializeTableElementToCsv(table), format);
+    const text =
+      format === "csv" ? serializeTableElementToCsv(table) : serializeTableElementToMarkdown(table);
     // Rich-text targets such as Teams, Outlook, and Word paste the HTML flavor as a real table.
     copyToClipboard(
-      serializeTableElementToMarkdown(table),
+      text,
       format,
       format === "html" ? { "text/html": serializeTableElementToHtml(table) } : undefined,
     );

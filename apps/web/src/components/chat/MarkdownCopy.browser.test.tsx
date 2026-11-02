@@ -10,8 +10,15 @@ import { MarkdownTable } from "./MarkdownTable";
 function withoutAsyncClipboard() {
   const original = Object.getOwnPropertyDescriptor(Navigator.prototype, "clipboard");
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
-  const execCommand = vi.spyOn(document, "execCommand").mockReturnValue(true);
+  const copied = new DataTransfer();
+  const execCommand = vi.spyOn(document, "execCommand").mockImplementation(() => {
+    document.activeElement?.dispatchEvent(
+      new ClipboardEvent("copy", { clipboardData: copied, bubbles: true, cancelable: true }),
+    );
+    return true;
+  });
   return {
+    copied,
     execCommand,
     [Symbol.dispose]() {
       execCommand.mockRestore();
@@ -65,9 +72,11 @@ describe("markdown copy without the async clipboard", () => {
     using clipboard = withoutAsyncClipboard();
 
     await userEvent.click(screen.getByRole("button", { name: "Copy table" }));
-    await userEvent.click(page.getByRole("menuitem", { name: "Copy as Markdown" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Copy as rich text" }));
     await expect.element(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
     expect(clipboard.execCommand).toHaveBeenCalledWith("copy");
+    expect(clipboard.copied.getData("text/html")).toContain("<td>Ada</td>");
+    expect(clipboard.copied.getData("text/plain")).toContain("| Name |");
   });
 });
 
@@ -82,7 +91,13 @@ describe("table copy as rich text", () => {
         </thead>
         <tbody>
           <tr>
-            <td>Ada</td>
+            <td>
+              Ada
+              <span data-markdown-math="inline" data-markdown-copy="$x^2$">
+                x²
+              </span>
+              <svg aria-hidden="true" />
+            </td>
           </tr>
         </tbody>
       </MarkdownTable>,
@@ -98,7 +113,9 @@ describe("table copy as rich text", () => {
     const html = await (await item!.getType("text/html")).text();
     const text = await (await item!.getType("text/plain")).text();
     expect(html).toContain('<table border="1">');
-    expect(html).toContain("<td>Ada</td>");
+    expect(html).toContain("<code>$x^2$</code>");
+    expect(html).not.toContain("<svg");
+    expect(html).not.toContain("x²");
     expect(text).toContain("| Name |");
   });
 });
