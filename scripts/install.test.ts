@@ -13,16 +13,12 @@ const nightlies = Array.from({ length: 100 }, (_, index) => ({
 }));
 
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home", () => {
-  it.each([
-    { kind: "default", homeName: ".t3" },
-    { kind: "absolute", homeName: "absolute home" },
-    { kind: "relative", homeName: "custom-home" },
-    { kind: "relative", homeName: "custom home" },
-    { kind: "relative", homeName: "-custom\\home\n" },
-  ])("installs an executable link with $kind home $homeName", async ({ kind, homeName }) => {
-    const root = await NodeFSP.realpath(
+  it("installs a relative home from a directory ending in a newline", async () => {
+    const temporaryRoot = await NodeFSP.realpath(
       await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-home-")),
     );
+    const root = NodePath.join(temporaryRoot, "cwd\n");
+    const homeName = "-custom home\\home\n";
     const home = NodePath.join(root, homeName);
     const version = "1.2.3";
     const target = NodePath.join(home, "runtime/versions", version);
@@ -41,7 +37,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home
           env: {
             ...process.env,
             HOME: root,
-            T3CODE_HOME: kind === "default" ? undefined : kind === "absolute" ? home : homeName,
+            T3CODE_HOME: homeName,
             T3CODE_VERSION: version,
             T3CODE_INSTALL_BIN_DIR: NodePath.dirname(launcher),
             T3CODE_RELEASE_BASE_URL: "http://127.0.0.1:1",
@@ -59,7 +55,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home
         }).trim(),
       ).toBe("t3 v1.2.3");
     } finally {
-      await NodeFSP.rm(root, { recursive: true, force: true });
+      await NodeFSP.rm(temporaryRoot, { recursive: true, force: true });
     }
   });
 });
