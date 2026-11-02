@@ -1994,6 +1994,43 @@ it.layer(
     ),
   );
 
+  it.effect.each([
+    { name: "drops it for the default Claude home", homePath: "~/.claude", expected: undefined },
+    { name: "inherits it for an empty Claude home", homePath: "", expected: "/server-claude" },
+  ])("$name over the server's CLAUDE_CONFIG_DIR", ({ homePath, expected }) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { CLAUDE_CONFIG_DIR: "/server-claude" },
+        resolveProviderInstanceEnvironment: (rawProviderInstanceId, env) =>
+          TerminalManager.resolveProviderInstanceTerminalEnvironment({
+            serverSettings,
+            path,
+            rawProviderInstanceId,
+            env,
+          }),
+      });
+
+      yield* manager.open(
+        openInput({ providerInstanceId: ProviderInstanceId.make("claude_home") }),
+      );
+
+      expect(ptyAdapter.spawnInputs[0]?.env.CLAUDE_CONFIG_DIR).toBe(expected);
+    }).pipe(
+      Effect.provide(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [ProviderInstanceId.make("claude_home")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { homePath },
+            },
+          },
+        }),
+      ),
+    ),
+  );
+
   it.effect("restarts a running terminal when the resolved provider environment changes", () =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("codex_work");

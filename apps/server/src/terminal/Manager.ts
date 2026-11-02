@@ -303,8 +303,14 @@ interface TerminalSessionState {
   unsubscribeExit: (() => void) | null;
   hasRunningSubprocess: boolean;
   childCommandLabel: string | null;
-  runtimeEnv: Record<string, string> | null;
+  runtimeEnv: TerminalRuntimeEnv | null;
 }
+
+// `null` unsets a variable the terminal would otherwise inherit from the server.
+type TerminalRuntimeEnv = Record<string, string | null>;
+type LaunchInput<Input> = Omit<Input, "env"> & {
+  readonly env?: Readonly<TerminalRuntimeEnv> | undefined;
+};
 
 interface TerminalGrid {
   readonly cols: number;
@@ -1382,7 +1388,7 @@ function stripAppImageRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 function createTerminalSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
-  runtimeEnv: Record<string, string> | null | undefined,
+  runtimeEnv: TerminalRuntimeEnv | null | undefined,
   platform: NodeJS.Platform,
   home: string,
 ): NodeJS.ProcessEnv {
@@ -1398,6 +1404,10 @@ function createTerminalSpawnEnv(
         platform === "win32"
           ? Object.keys(spawnEnv).find((candidate) => candidate.toLowerCase() === key.toLowerCase())
           : undefined;
+      if (value === null) {
+        delete spawnEnv[existingKey ?? key];
+        continue;
+      }
       spawnEnv[existingKey ?? key] =
         key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR" ? expandHomePath(value, home) : value;
     }
@@ -1420,8 +1430,8 @@ function createTerminalSpawnEnv(
 }
 
 function normalizedRuntimeEnv(
-  env: Record<string, string> | undefined,
-): Record<string, string> | null {
+  env: Readonly<TerminalRuntimeEnv> | undefined,
+): TerminalRuntimeEnv | null {
   if (!env) return null;
   const entries = Object.entries(env);
   if (entries.length === 0) return null;
@@ -1458,7 +1468,7 @@ interface TerminalManagerOptions {
     providerInstanceId: string,
     env: Record<string, string> | undefined,
   ) => Effect.Effect<
-    Record<string, string>,
+    TerminalRuntimeEnv,
     TerminalProviderInstanceNotFoundError | TerminalProviderEnvironmentError
   >;
 }
@@ -1481,6 +1491,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
   }
 
   let resolved = yield* mergeProviderInstanceEnvironment(instance.environment, input.env ?? {});
+  const unset: Record<string, null> = {};
   if (instance.driver === "codex") {
     const config = decodeCodexSettings(instance.config ?? {});
     if (Option.isSome(config)) {
@@ -1496,12 +1507,17 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
       resolved = yield* makeClaudeEnvironment(config.value, resolved).pipe(
         Effect.provideService(Path.Path, input.path),
       );
+      // A configured home that omits CLAUDE_CONFIG_DIR must also drop the server's value.
+      if (config.value.homePath.trim().length > 0 && resolved.CLAUDE_CONFIG_DIR === undefined) {
+        unset.CLAUDE_CONFIG_DIR = null;
+      }
     }
   }
 
-  return Object.fromEntries(
+  const env: TerminalRuntimeEnv = Object.fromEntries(
     Object.entries(resolved).filter((entry): entry is [string, string] => entry[1] !== undefined),
   );
+  return { ...env, ...unset };
 });
 
 /** @public */
@@ -1560,7 +1576,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     function* <Input extends TerminalOpenInput | TerminalAttachInput>(
       input: Input,
     ): Effect.fn.Return<
-      Input,
+      LaunchInput<Input>,
       TerminalProviderInstanceNotFoundError | TerminalProviderEnvironmentError
     > {
       if (input.providerInstanceId === undefined) return input;
@@ -2857,7 +2873,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   );
 
   const openWithWorkspaceLease = Effect.fn("terminal.openLocked")(function* (
-    requestedInput: TerminalOpenInput,
+    requestedInput: LaunchInput<TerminalOpenInput>,
   ) {
     const terminalId = requestedInput.terminalId;
     yield* assertValidCwd(requestedInput.cwd);
@@ -2985,7 +3001,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return snapshot(liveSession);
   });
 
-  const openLocked = (input: TerminalOpenInput) =>
+  const openLocked = (input: LaunchInput<TerminalOpenInput>) =>
     withWorkspaceLease(
       path.resolve(input.worktreePath ?? input.cwd),
       openWithWorkspaceLease(input),
