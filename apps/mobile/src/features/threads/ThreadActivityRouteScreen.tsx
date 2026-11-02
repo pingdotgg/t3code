@@ -3,6 +3,7 @@ import {
   isActivityItem,
   type ActivitySummary,
 } from "@t3tools/client-runtime/work-log/activity-summary";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { Platform, View } from "react-native";
 
@@ -16,7 +17,7 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { cn } from "../../lib/cn";
-import { useSelectedThreadVisibleTurnItems } from "../../state/use-thread-detail";
+import { useThreadVisibleTurnItems } from "../../state/use-thread-detail";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadSelection } from "../../state/use-thread-selection";
 
@@ -154,7 +155,11 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
   const params = props.route.params;
   const { selectedThreadProject } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
-  const visibleItems = useSelectedThreadVisibleTurnItems();
+  // The route's own thread, so a deep link shows the thread in its URL, not the selected one.
+  const visibleItems = useThreadVisibleTurnItems({
+    environmentId: EnvironmentId.make(params.environmentId),
+    threadId: ThreadId.make(params.threadId),
+  });
   const summary = deriveActivitySummary(
     visibleItems.map((visible) => visible.item).filter(isActivityItem),
     selectedThreadCwd ?? selectedThreadProject?.workspaceRoot ?? null,
