@@ -326,8 +326,7 @@ export function makeFxSubagentHookRouter() {
           },
         ];
       }
-      case "tool.end":
-      case "tool.result": {
+      case "tool.end": {
         const outcome = Option.getOrUndefined(decodeToolOutcome(event.data));
         if (outcome === undefined) return [];
         return [

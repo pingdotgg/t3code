@@ -179,7 +179,6 @@ describe("fx sub-agent hooks", () => {
       "agent_message exec-child:1: Reading package.json.",
       "tool_call call_read in_progress",
       "tool_call_update call_read completed",
-      "tool_call_update call_read completed",
       "tool_call call_nested in_progress",
       "tool_call_update call_nested completed",
       `agent_message result: ${REPLY}`,
@@ -187,7 +186,7 @@ describe("fx sub-agent hooks", () => {
     const read = run.delivered[1]?.update;
     assert.deepInclude(read, { kind: "read", rawInput: { path: "package.json" } });
     let nested: AcpToolCallState | undefined;
-    for (const notification of run.delivered.slice(4, 6)) {
+    for (const notification of run.delivered.slice(3, 5)) {
       for (const event of parseSessionUpdateEvent(notification).events) {
         if (event._tag !== "ToolCallUpdated") continue;
         nested = mergeToolCallState(nested, event.toolCall);
