@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   clampThreadSidebarWidth,
@@ -12,7 +12,7 @@ function renderedWidthAfterViewportChange(
   startupViewportWidth: number,
   viewportWidth: number,
 ): number {
-  const sidebarWidth = resolveInitialThreadSidebarWidth(storedWidth, startupViewportWidth);
+  const sidebarWidth = resolveInitialThreadSidebarWidth(storedWidth);
   const minimumWidth = resolveThreadSidebarMinimumWidth(0);
   return clampThreadSidebarWidth(
     sidebarWidth,
