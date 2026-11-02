@@ -766,7 +766,16 @@ export const fingerprintClaudeCommandSources = Effect.fn("fingerprintClaudeComma
 
       for (const directory of claudeManagedDirectories(path, platform, environment)) {
         yield* addSettings(path.join(directory, "managed-settings.json"));
-        yield* addStat(path.join(directory, "managed-settings.d"));
+        const managedSettingsDirectory = path.join(directory, "managed-settings.d");
+        yield* addStat(managedSettingsDirectory);
+        const managedSettingsFiles = yield* fileSystem
+          .readDirectory(managedSettingsDirectory)
+          .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([])));
+        for (const file of managedSettingsFiles
+          .filter((file) => file.endsWith(".json") && !file.startsWith("."))
+          .sort()) {
+          yield* addSettings(path.join(managedSettingsDirectory, file));
+        }
         for (const subdirectory of CLAUDE_COMMAND_SUBDIRECTORIES) {
           yield* addStat(path.join(directory, ".claude", subdirectory));
         }

@@ -4,6 +4,7 @@ import { ClaudeSettings, type ServerProvider } from "@t3tools/contracts";
 import { vi } from "vite-plus/test";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -227,6 +228,27 @@ it.effect("always starts the CLI when its sources cannot be vouched for", () =>
       assert.strictEqual(probes(), beforeRedirectedEdit + 1);
       yield* write(settingsPath, "{}");
     }
+
+    yield* Effect.gen(function* () {
+      const managedCommands = yield* makeCommands({ PROGRAMDATA: root });
+      const dropIn = path.join(root, "ClaudeCode", "managed-settings.d", "plugins.json");
+      yield* write(dropIn, "{}");
+      const beforeManaged = probes();
+      yield* managedCommands.get(machine, cwd);
+      yield* managedCommands.get(machine, cwd);
+      assert.strictEqual(probes(), beforeManaged + 1);
+
+      yield* write(
+        dropIn,
+        JSON.stringify({ env: { CLAUDE_CODE_PLUGIN_CACHE_DIR: redirectedPlugins } }),
+      );
+      yield* probesTwice(managedCommands);
+      const beforeManagedEdit = probes();
+      yield* write(redirectedCommand, "edited command under managed redirect");
+      yield* managedCommands.get(machine, cwd);
+      assert.strictEqual(probes(), beforeManagedEdit + 1);
+      yield* write(dropIn, "{}");
+    }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
 
     const installed = path.join(config, "plugins", "installed_plugins.json");
     yield* write(
