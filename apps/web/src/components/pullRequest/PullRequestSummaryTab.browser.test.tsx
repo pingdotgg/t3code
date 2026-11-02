@@ -116,11 +116,13 @@ it("explains that comment text is unavailable and directs to host when comments 
     comments: [],
     commentsTruncated: true,
   });
-  const renderedTexts = screen.visibleText();
-  expect(renderedTexts.toLowerCase()).not.toContain("longer");
-  expect(renderedTexts.toLowerCase()).not.toContain("no comments");
-  expect(renderedTexts.toLowerCase()).toContain("host");
-  expect(renderedTexts).toContain(
-    "Comments are not available here. Open this pull request on the host to read them.",
-  );
+  await vi.waitFor(() => {
+    const renderedTexts = screen.visibleText();
+    expect(renderedTexts.toLowerCase()).not.toContain("longer");
+    expect(renderedTexts.toLowerCase()).not.toContain("no comments");
+    expect(renderedTexts.toLowerCase()).toContain("host");
+    expect(renderedTexts).toContain(
+      "Comments are not available here. Open this pull request on the host to read them.",
+    );
+  });
 });
