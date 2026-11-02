@@ -21,7 +21,7 @@ export class ManagedPolicyFileError extends Schema.TaggedError<ManagedPolicyFile
   },
 ) {
   override get message(): string {
-    return `T3 Code cannot use the managed policy at ${this.path}: ${this.reason}. It will not start until an administrator fixes this.`;
+    return `T3 Learn cannot use the managed policy at ${this.path}: ${this.reason}. It will not start until an administrator fixes this.`;
   }
 }
 

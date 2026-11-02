@@ -143,7 +143,7 @@ export type ManagedPolicySummary = typeof ManagedPolicySummary.Type;
 
 /** The message every surface shows when the policy stops an update. */
 export function managedUpdatesMessage(organization: string): string {
-  return `${organization} manages T3 Code updates.`;
+  return `${organization} manages T3 Learn updates.`;
 }
 
 /** The message when the policy allows only stable releases. */
