@@ -300,6 +300,7 @@ function makeLocalCommandHarness(input: {
   readonly sideChat?: {
     readonly contextRun: "current" | "failed" | "cancelled" | "delivered";
     readonly nativeForkFrom?: "idle" | "busy";
+    readonly canForkWhileRunning?: boolean;
     readonly switchedProvider?: boolean;
   };
 }) {
@@ -774,7 +775,15 @@ function makeLocalCommandHarness(input: {
     status: "ready",
     cwd: "/tmp/native-account-command",
     model: null,
-    capabilities: CodexProviderCapabilitiesV2,
+    capabilities: {
+      ...CodexProviderCapabilitiesV2,
+      threads: {
+        ...CodexProviderCapabilitiesV2.threads,
+        canForkWhileRunning:
+          input.sideChat?.canForkWhileRunning ??
+          CodexProviderCapabilitiesV2.threads.canForkWhileRunning,
+      },
+    },
     createdAt: now,
     updatedAt: now,
     lastError: null,
@@ -1295,20 +1304,34 @@ effectIt.effect.each([
 );
 
 effectIt.effect.each([
-  { nativeForkFrom: "idle", forks: true, transferStatus: "consumed", handoffIds: [] },
+  {
+    nativeForkFrom: "idle",
+    canForkWhileRunning: false,
+    forks: true,
+    transferStatus: "consumed",
+    handoffIds: [],
+  },
   {
     nativeForkFrom: "busy",
+    canForkWhileRunning: true,
+    forks: true,
+    transferStatus: "consumed",
+    handoffIds: [],
+  },
+  {
+    nativeForkFrom: "busy",
+    canForkWhileRunning: false,
     forks: false,
     transferStatus: "resolved_portable",
     handoffIds: ["side-chat-fork-context"],
   },
 ] as const)(
-  "runs a planned native side chat fork when the parent is $nativeForkFrom",
-  ({ nativeForkFrom, forks, transferStatus, handoffIds }) =>
+  "runs a planned native side chat fork when the parent is $nativeForkFrom with canForkWhileRunning=$canForkWhileRunning",
+  ({ nativeForkFrom, canForkWhileRunning, forks, transferStatus, handoffIds }) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
         text: "What is the main thread doing?",
-        sideChat: { contextRun: "current", nativeForkFrom },
+        sideChat: { contextRun: "current", nativeForkFrom, canForkWhileRunning },
       });
 
       yield* harness.start;

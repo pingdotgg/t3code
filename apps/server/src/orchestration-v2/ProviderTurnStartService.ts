@@ -1144,12 +1144,14 @@ export const layer: Layer.Layer<
               cause: `Native fork transfer ${nativeForkTransfer.id} has no source provider execution.`,
             });
           }
-          // Providers refuse to fork a busy thread, so a source that started a turn after
-          // dispatch planned this fork gets the portable context dispatch gives a busy source.
+          // The source may have started a turn after dispatch planned this fork.
           const sourceBusy = sourceProjection.runs.some(
             (candidate) => candidate.ordinal > sourceRun.ordinal && isActiveRun(candidate),
           );
-          if (!sourceBusy) {
+          if (
+            !sourceBusy ||
+            session.providerSession.capabilities.threads.canForkWhileRunning === true
+          ) {
             // Rolled-back turns are no longer in the source conversation, so they cannot bound a fork.
             const rolledBackAttemptIds = new Set(
               sourceProjection.attempts

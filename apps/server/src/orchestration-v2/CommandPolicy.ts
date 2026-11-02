@@ -211,7 +211,7 @@ export interface CommandPolicyV2Shape {
       readonly hasStrongNativeSource: boolean;
       readonly sourceRunStatus: OrchestrationV2Run["status"];
       readonly fromSpecificTurn: boolean;
-      /** Later source runs are still active; providers cannot fork a thread mid-turn. */
+      /** Later source runs are still active. */
       readonly sourceBusy: boolean;
     },
   ) => Effect.Effect<ForkExecutionPolicyV2, CommandPolicyV2Error>;
@@ -376,7 +376,7 @@ const decideForkExecution: CommandPolicyV2Shape["decideForkExecution"] = (input)
     (input.sourceRunStatus === "completed" || input.sourceRunStatus === "waiting") &&
     input.sameProvider &&
     input.hasStrongNativeSource &&
-    !input.sourceBusy &&
+    (!input.sourceBusy || input.capabilities.threads.canForkWhileRunning === true) &&
     input.capabilities.threads.canForkThread &&
     (!input.fromSpecificTurn || input.capabilities.threads.canForkFromTurn) &&
     input.capabilities.identity.nativeThreadIds === "strong";
