@@ -21,6 +21,12 @@ describe("T3ProjectFileFromJson", () => {
 });
 
 describe("parseT3ProjectFile", () => {
+  it("reads project defaults from text that starts with a UTF-8 BOM", () => {
+    expect(parseT3ProjectFile('\uFEFF{ "defaultThreadEnvMode": "worktree" }')).toEqual({
+      defaultThreadEnvMode: "worktree",
+    });
+  });
+
   it("reads project defaults from JSONC with a URL in a block comment", () => {
     expect(
       parseT3ProjectFile(`{
