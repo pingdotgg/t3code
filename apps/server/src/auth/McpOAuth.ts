@@ -256,8 +256,15 @@ const make = Effect.gen(function* () {
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
-  const signingKey = yield* Effect.cached(
-    secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(Effect.orDie),
+  // Cache only success so a transient store failure does not disable OAuth until restart.
+  let cachedSigningKey: Uint8Array | undefined;
+  const signingKey = Effect.suspend(() =>
+    cachedSigningKey !== undefined
+      ? Effect.succeed(cachedSigningKey)
+      : secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(
+          Effect.map((bytes) => (cachedSigningKey = bytes)),
+          Effect.orDie,
+        ),
   );
   const codes = yield* Ref.make<ReadonlyMap<string, PendingCode>>(new Map());
 
