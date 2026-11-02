@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 10 as const;
+const USAGE_SCAN_CACHE_VERSION = 11 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
@@ -17,8 +17,9 @@ const SPEED_COMPATIBLE_SINCE_VERSION = 4;
  * replace it, dropping saved usage for deleted transcripts. Separate files keep
  * both.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v10.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v11.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v10.json",
   "usage-scan-cache-v9.json",
   "usage-scan-cache-v8.json",
   "usage-scan-cache-v7.json",
@@ -291,13 +292,13 @@ export function decodeScanCache(
       continue;
     }
     // Keep history for deleted rollouts, but re-parse incompatible reducer state.
-    // v9 repairs skipped initial Codex requests; clean v8 entries can still resume.
+    // v9 and v11 repair skipped Codex requests; clean v8 entries can still resume.
     // v10 adds Claude advisor calls, which no older Claude entry holds.
     const legacy =
       (entry.p === "claude" && version < 10) ||
       (format.state !== undefined &&
         (version < 6 ||
-          (entry.p === "codex" && (version < 8 || (version < 9 && malformedRecords > 0)))));
+          (entry.p === "codex" && (version < 8 || (version < 11 && malformedRecords > 0)))));
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;

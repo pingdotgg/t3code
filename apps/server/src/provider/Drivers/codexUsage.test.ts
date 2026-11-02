@@ -374,6 +374,26 @@ describe("parseCodexLine", () => {
     expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
   });
 
+  it("bills a request whose cumulative counters rewind to an earlier snapshot", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const processed = [
+      counted(counters(100, 20), counters(100, 20)),
+      counted(counters(10, 2), counters(110, 22)),
+      counted(counters(30, 5), counters(140, 27)),
+      counted(counters(20, 4), counters(130, 26)),
+      counted(counters(5, 1), counters(135, 27)),
+    ].map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({
+      processed,
+      skipped: codexUsageFormat.readMalformedRecords?.(state),
+    }).toEqual({ processed: [120, 12, 35, 24, 6], skipped: 0 });
+  });
+
   it("ignores a replay of the current sequence's first request without rewinding the baseline", () => {
     const state = initialCodexScanState();
     parseCodexLine(turnContext, state);
