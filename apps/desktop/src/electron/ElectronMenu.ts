@@ -186,19 +186,43 @@ export const make = Effect.gen(function* () {
     return template;
   };
 
-  // macOS sends the page a mouse move at a wrongly converted point while a frame-aware menu
-  // opens, which hovers whatever sits there. The menu owns the pointer until it closes.
-  const holdMouseMovesWhileMenuOpen = (input: ElectronMenuTemplateInput): (() => void) => {
-    if (platform !== "darwin") return () => undefined;
+  // macOS sends the page mouse moves at a wrongly converted point while a frame-aware menu
+  // opens and just after it closes, which hovers whatever sits there. Page mouse moves are
+  // dropped while the menu is open, then until the real cursor leaves where the menu closed.
+  let releaseMenuMouseHold = () => {};
+  const holdMouseMovesForMenu = (input: ElectronMenuTemplateInput) => {
+    releaseMenuMouseHold();
+    if (platform !== "darwin") return { close: () => {}, release: () => {} };
     const contents = new Set([input.window.webContents]);
     const frameContents = input.frame ? Electron.webContents.fromFrame(input.frame) : undefined;
     if (frameContents) contents.add(frameContents);
-    const dropMouseMove = (event: Electron.Event, mouse: Electron.MouseInputEvent) => {
-      if (mouse.type === "mouseMove") event.preventDefault();
+    let closedAt: Electron.Point | undefined;
+    const onMouse = (event: Electron.Event, mouse: Electron.MouseInputEvent) => {
+      if (mouse.type === "mouseDown") return release();
+      if (mouse.type !== "mouseMove") return;
+      if (closedAt) {
+        const cursor = Electron.screen.getCursorScreenPoint();
+        if (cursor.x !== closedAt.x || cursor.y !== closedAt.y) return release();
+      }
+      event.preventDefault();
     };
-    for (const target of contents) target.on("before-mouse-event", dropMouseMove);
-    return () => {
-      for (const target of contents) target.off("before-mouse-event", dropMouseMove);
+    const release = () => {
+      for (const target of contents) {
+        target.off("before-mouse-event", onMouse);
+        target.off("destroyed", release);
+      }
+      if (releaseMenuMouseHold === release) releaseMenuMouseHold = () => {};
+    };
+    for (const target of contents) {
+      target.on("before-mouse-event", onMouse);
+      target.on("destroyed", release);
+    }
+    releaseMenuMouseHold = release;
+    return {
+      close: () => {
+        closedAt ??= Electron.screen.getCursorScreenPoint();
+      },
+      release,
     };
   };
 
@@ -223,15 +247,15 @@ export const make = Effect.gen(function* () {
         ? Effect.void
         : Effect.try({
             try: () => {
-              const releaseMouseMoves = holdMouseMovesWhileMenuOpen(input);
+              const mouseHold = holdMouseMovesForMenu(input);
               try {
                 Electron.Menu.buildFromTemplate([...input.template]).popup({
                   window: input.window,
                   ...(input.frame ? { frame: input.frame } : {}),
-                  callback: releaseMouseMoves,
+                  callback: mouseHold.close,
                 });
               } catch (cause) {
-                releaseMouseMoves();
+                mouseHold.release();
                 throw cause;
               }
             },
