@@ -231,7 +231,10 @@ const handler = Effect.gen(function* () {
         }),
       ),
       Effect.catch((error) =>
-        Effect.logWarning("Device screenshot failed", { cause: error }).pipe(
+        Effect.logWarning("Device screenshot failed", {
+          errorTag: error._tag,
+          ...(error._tag === "DeviceOperationError" ? { reason: error.reason } : {}),
+        }).pipe(
           Effect.as(
             HttpServerResponse.text(
               error._tag === "DeviceNotFoundError" ? "Device not found" : "Screenshot failed",
