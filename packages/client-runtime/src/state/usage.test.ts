@@ -5,7 +5,9 @@ import {
   UsageDay,
   USAGE_CONTRACT_VERSION,
   type ServerProvider,
+  type UsageModelFilter,
   type UsageSummary,
+  type UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -39,7 +41,7 @@ afterEach(() => {
   for (const registry of registries.splice(0)) registry.dispose();
 });
 
-function harness(ids = ["a"]) {
+function harness(ids = ["a"], modelFilters: Record<string, UsageModelFilter> = {}) {
   const registry = AtomRegistry.make();
   registries.push(registry);
   const environments = ids.map((id) => {
@@ -65,13 +67,18 @@ function harness(ids = ["a"]) {
     if (!environment) throw new Error(`Unknown environment: ${environmentId}`);
     return environment;
   }
+  const requested: { environmentId: EnvironmentId; input: UsageSummaryInput }[] = [];
   const options = {
     registry,
     environmentIds: environments.map((entry) => entry.environmentId),
     input,
     server: {
-      usageSummary: ({ environmentId }: { environmentId: EnvironmentId }) =>
-        get(environmentId).query,
+      usageSummary: (target: { environmentId: EnvironmentId; input: UsageSummaryInput }) => {
+        requested.push(target);
+        return get(target.environmentId).query;
+      },
+      usageModelFilterAtom: (environmentId: EnvironmentId) =>
+        Atom.make<UsageModelFilter | undefined>(modelFilters[environmentId]),
       refreshUsageRates: {
         label: "test:rates",
         requiredScopes: () => [],
@@ -86,7 +93,7 @@ function harness(ids = ["a"]) {
       presentationAtom: (environmentId: EnvironmentId) => get(environmentId).presentation,
     },
   } satisfies Parameters<typeof refreshUsage>[0];
-  return { registry, environments, refresh: () => refreshUsage(options) };
+  return { registry, environments, requested, refresh: () => refreshUsage(options) };
 }
 
 describe("manual usage refresh", () => {
@@ -111,6 +118,23 @@ describe("manual usage refresh", () => {
     entry.scan.resolve(summary);
     await refreshing;
     expect(finished).toBe(true);
+  });
+
+  it("rescans each environment with its own configured model filter", async () => {
+    const modelFilter = { include: [{ provider: "claude" as const, model: "orbit-1" }] };
+    const { environments, requested, refresh } = harness(["filtered", "plain"], {
+      filtered: modelFilter,
+    });
+    const refreshing = refresh();
+    for (const entry of environments) {
+      entry.rates.resolve(AsyncResult.success(pricing));
+      entry.scan.resolve(summary);
+    }
+    await refreshing;
+    expect(requested).toEqual([
+      { environmentId: "filtered", input: { ...input, modelFilter } },
+      { environmentId: "plain", input },
+    ]);
   });
 
   it("settles when an environment disconnects during the rescan", async () => {

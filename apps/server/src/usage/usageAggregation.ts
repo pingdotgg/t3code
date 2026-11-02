@@ -3,6 +3,8 @@ import type {
   UsageBucket,
   UsageCategoryCost,
   UsageDay,
+  UsageModelFilter,
+  UsageModelSelector,
   UsageResolution,
   UsageTokenTotals,
 } from "@t3tools/contracts";
@@ -67,6 +69,7 @@ export interface AggregateOptions {
   readonly rates: RateTable;
   readonly priceOverrides?: RateTable;
   readonly modelAliases?: ReadonlyMap<string, string>;
+  readonly modelFilter?: UsageModelFilter;
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
@@ -86,6 +89,38 @@ export function resolveModelAliases(
     if (!Object.hasOwn(aliases, target)) resolved.set(model, target);
   }
   return resolved;
+}
+
+/** Matches original IDs, so an alias cannot pull excluded usage into a kept model. */
+function keepsUsageRecord(filter: UsageModelFilter | undefined, record: UsageRecord): boolean {
+  if (filter === undefined) return true;
+  const model = record.model.trim();
+  const matches = (selector: UsageModelSelector) =>
+    selector.model === model &&
+    (selector.provider === undefined || selector.provider === record.provider);
+  return (filter.include?.some(matches) ?? true) && !(filter.exclude?.some(matches) ?? false);
+}
+
+const selectorKey = (selector: UsageModelSelector) =>
+  JSON.stringify([selector.provider ?? null, selector.model]);
+
+const canonicalSelectors = (selectors: readonly UsageModelSelector[]) =>
+  [...new Map(selectors.map((selector) => [selectorKey(selector), selector]))]
+    // Code-unit order, so servers in different locales echo the same form.
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([, selector]) => selector);
+
+/** Equal filters get one form, so they share scans and clients can compare echoed filters. */
+export function canonicalModelFilter(
+  filter: UsageModelFilter | undefined,
+): UsageModelFilter | undefined {
+  if (filter === undefined) return undefined;
+  const exclude = filter.exclude?.length ? canonicalSelectors(filter.exclude) : undefined;
+  if (filter.include === undefined && exclude === undefined) return undefined;
+  return {
+    ...(filter.include === undefined ? {} : { include: canonicalSelectors(filter.include) }),
+    ...(exclude === undefined ? {} : { exclude }),
+  };
 }
 
 export interface AggregateResult {
@@ -129,6 +164,7 @@ export class UsageAggregator {
   }
 
   add(input: UsageRecord, sourcePath?: string): boolean {
+    if (!keepsUsageRecord(this.#options.modelFilter, input)) return false;
     const record = this.#mapModel(input);
     if (record.dedupeKey !== null) {
       if (this.#seen.has(record.dedupeKey)) {
