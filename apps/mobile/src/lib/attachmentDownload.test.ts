@@ -138,6 +138,7 @@ describe("downloadAndShareAttachment", () => {
     ["C:\\folder\\clip.mp4", "clip.mp4"],
     ["..", "attachment"],
     ["\ud800file\u0000.txt", "_file_.txt"],
+    ['Oxford [Oxfordshire] a|b^c{d}e`f"g<h>.pdf', "Oxford _Oxfordshire_ a_b_c_d_e_f_g_h_.pdf"],
   ])("uses a safe basename for %j", async (name, expected) => {
     await downloadAndShareAttachment({
       ...input,
