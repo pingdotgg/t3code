@@ -8,6 +8,7 @@ import {
   AuthFilesystemReadScope,
   AuthStandardClientScopes,
   AuthTerminalReadScope,
+  managedCapabilityDenial,
   type AuthEnvironmentScope,
   type AuthGrantScope,
   type AuthPairingCredentialResult,
@@ -53,6 +54,8 @@ import {
 } from "~/environments/primary";
 import { readEnvironmentScope } from "~/state/session";
 import { usePrimaryEnvironmentId } from "~/state/environments";
+import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
+import { ManagedControl } from "../ManagedPolicy";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import {
@@ -577,6 +580,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
   delegatableScopes,
 }: AuthorizedClientsHeaderActionProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const pairingDenial = managedCapabilityDenial(usePrimaryManagedPolicy(), "remoteClients");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pairingLabel, setPairingLabel] = useState("");
   const [pairingScopes, setPairingScopes] = useState<ReadonlyArray<AuthGrantScope>>([
@@ -634,8 +638,16 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
       >
         {isRevokingOtherClients ? "Revoking…" : "Revoke others"}
       </Button>
+      {pairingDenial !== undefined ? (
+        <ManagedControl reason={pairingDenial}>
+          <Button size="xs" variant="default" disabled>
+            <PlusIcon className="size-3" />
+            Create link
+          </Button>
+        </ManagedControl>
+      ) : null}
       <Dialog
-        open={dialogOpen}
+        open={dialogOpen && pairingDenial === undefined}
         onOpenChange={(open) => {
           setDialogOpen(open);
           if (!open) {
@@ -646,14 +658,16 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
           }
         }}
       >
-        <DialogTrigger
-          render={
-            <Button size="xs" variant="default">
-              <PlusIcon className="size-3" />
-              Create link
-            </Button>
-          }
-        />
+        {pairingDenial === undefined ? (
+          <DialogTrigger
+            render={
+              <Button size="xs" variant="default">
+                <PlusIcon className="size-3" />
+                Create link
+              </Button>
+            }
+          />
+        ) : null}
         <DialogPopup className="max-w-md">
           <DialogHeader>
             <DialogTitle>Create pairing link</DialogTitle>
@@ -856,6 +870,7 @@ export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow
   const canDisableTailscaleServe =
     isTailscaleHttpsEndpoint(endpoint) && endpoint.status === "available";
   const shouldShowEndpointUrl = !needsTailscaleSetup;
+  const remoteDenial = managedCapabilityDenial(usePrimaryManagedPolicy(), "remoteClients");
   return (
     <div className={endpointRowClassName(isAvailable)}>
       {isDefault ? (
@@ -891,14 +906,16 @@ export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow
             </span>
           ) : null}
           {needsTailscaleSetup ? (
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => onSetupTailscaleServe(endpoint)}
-              disabled={isUpdatingTailscaleServe}
-            >
-              {isUpdatingTailscaleServe ? "Restarting…" : "Setup"}
-            </Button>
+            <ManagedControl reason={remoteDenial}>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => onSetupTailscaleServe(endpoint)}
+                disabled={isUpdatingTailscaleServe || remoteDenial !== undefined}
+              >
+                {isUpdatingTailscaleServe ? "Restarting…" : "Setup"}
+              </Button>
+            </ManagedControl>
           ) : null}
           {canDisableTailscaleServe ? (
             <Button
