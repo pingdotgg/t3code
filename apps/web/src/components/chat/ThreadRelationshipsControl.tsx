@@ -1245,7 +1245,11 @@ export function ThreadLineageHeaderControl(props: {
         )}
         <MenuItemLabel>{title}</MenuItemLabel>
         {rowMeta ? (
-          <span className="min-w-0 truncate text-meta text-dim-foreground">{rowMeta}</span>
+          <span
+            className={`${agent ? "max-w-28 shrink-0" : "min-w-0"} truncate text-meta text-dim-foreground`}
+          >
+            {rowMeta}
+          </span>
         ) : null}
         {status && badgeVariant ? (
           <Badge variant={badgeVariant} size="sm" className="ms-auto">
