@@ -413,7 +413,7 @@ function sanitizedHtmlFrom(container: Element): string {
 
 export function serializeTableElementToHtml(table: Element): string {
   const clone = table.cloneNode(true) as Element;
-  // Word and Outlook paste a table without a border attribute as gridless text.
+  // Editors that apply no table style of their own show a table without a border as gridless text.
   clone.setAttribute("border", "1");
   const container = document.createElement("div");
   container.append(clone);
