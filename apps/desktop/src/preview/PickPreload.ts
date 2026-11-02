@@ -1248,6 +1248,8 @@ function startAnnotation(sendEnabled: boolean): void {
   const onPointerDown = (event: PointerEvent): void => {
     if (isAnnotationNode(event.target as Element)) {
       event.stopPropagation();
+      // Page script can dispatch on the host; only real input may reach the closed overlay.
+      if (!event.isTrusted) return;
       pressTarget = shadowRoot.elementFromPoint(event.clientX, event.clientY);
       if (pressTarget && dragHandle.contains(pressTarget)) onEditorPointerDown(event);
       return;
@@ -1332,7 +1334,8 @@ function startAnnotation(sendEnabled: boolean): void {
   const onClick = (event: MouseEvent): void => {
     if (isAnnotationNode(event.target as Element)) {
       event.stopPropagation();
-      // A plain Event has no activation behaviour, so the trusted click's runs once.
+      if (!event.isTrusted) return;
+      // The trusted click already ran native activation; a plain Event only reaches listeners.
       overlayClickTarget(event)?.dispatchEvent(new Event("click", { bubbles: true }));
       return;
     }
