@@ -387,7 +387,16 @@ describe("FxAdapterV2", () => {
                     fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES }),
                   ),
                 ]
-              : []),
+              : setConfig(
+                  "provider",
+                  "codex",
+                  fxConfig({
+                    backend: "codex",
+                    model: CODEX_MODEL,
+                    models: [CODEX_MODEL],
+                    modes: FX_0_0_13_MODES,
+                  }),
+                )),
           ],
         }).pipe(Effect.exit);
         if (modelAvailable) {

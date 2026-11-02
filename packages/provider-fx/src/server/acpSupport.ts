@@ -186,11 +186,17 @@ const selectOption = (
 
 /** fx's model catalog changes with its backend, so it must be read after the provider write. */
 export const applyFxModelSelection = Effect.fn("applyFxModelSelection")(function* (
-  runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+  runtime: Pick<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    "getConfigOptions" | "setConfigOption"
+  >,
   modelSelection: ModelSelection,
   defaultChoice: Effect.Effect<FxModelChoice | undefined> | undefined,
 ): Effect.fn.Return<string | undefined, EffectAcpErrors.AcpError> {
-  const backendOption = selectOption(yield* runtime.getConfigOptions, FX_PROVIDER_CONFIG_ID);
+  const originalOptions = yield* runtime.getConfigOptions;
+  const backendOption = selectOption(originalOptions, FX_PROVIDER_CONFIG_ID);
+  const originalBackend = backendOption?.currentValue;
+  const originalModel = selectOption(originalOptions, FX_MODEL_CONFIG_ID)?.currentValue;
   const requested = modelSelection.model.trim();
   const isDefault = requested.length === 0 || requested === FX_DEFAULT_MODEL_SLUG;
   const target = isDefault
@@ -204,31 +210,46 @@ export const applyFxModelSelection = Effect.fn("applyFxModelSelection")(function
     (backendOption !== undefined &&
       (target.backend === backendOption.currentValue ||
         collectSessionConfigOptionValues(backendOption).includes(target.backend)));
-  if (
+  const changingBackend =
     target?.backend !== undefined &&
     backendOption !== undefined &&
     canSelectBackend &&
-    target.backend !== backendOption.currentValue
-  ) {
-    yield* runtime.setConfigOption(FX_PROVIDER_CONFIG_ID, target.backend);
-  }
-  const modelOption = selectOption(yield* runtime.getConfigOptions, FX_MODEL_CONFIG_ID);
-  const current = modelOption?.currentValue;
-  if (target === undefined || target.model === current) return current;
-  if (isDefault && !canSelectBackend) return current;
-  if (
-    isDefault &&
-    (modelOption === undefined ||
-      !collectSessionConfigOptionValues(modelOption).includes(target.model))
-  ) {
-    return yield* new EffectAcpErrors.AcpRequestError({
-      code: -32602,
-      errorMessage: "The default fx model is unavailable on its configured backend.",
-      data: { configId: FX_MODEL_CONFIG_ID },
-    });
-  }
-  yield* runtime.setConfigOption(FX_MODEL_CONFIG_ID, target.model, { allowUnlistedValue: true });
-  return target.model;
+    target.backend !== backendOption.currentValue;
+  return yield* Effect.gen(function* () {
+    if (changingBackend && target?.backend !== undefined) {
+      yield* runtime.setConfigOption(FX_PROVIDER_CONFIG_ID, target.backend);
+    }
+    const modelOption = selectOption(yield* runtime.getConfigOptions, FX_MODEL_CONFIG_ID);
+    const current = modelOption?.currentValue;
+    if (target === undefined || target.model === current) return current;
+    if (isDefault && !canSelectBackend) return current;
+    if (
+      isDefault &&
+      (modelOption === undefined ||
+        !collectSessionConfigOptionValues(modelOption).includes(target.model))
+    ) {
+      return yield* new EffectAcpErrors.AcpRequestError({
+        code: -32602,
+        errorMessage: "The default fx model is unavailable on its configured backend.",
+        data: { configId: FX_MODEL_CONFIG_ID },
+      });
+    }
+    yield* runtime.setConfigOption(FX_MODEL_CONFIG_ID, target.model, { allowUnlistedValue: true });
+    return target.model;
+  }).pipe(
+    Effect.onError(() => {
+      if (!changingBackend || originalBackend === undefined) return Effect.void;
+      return Effect.gen(function* () {
+        yield* runtime.setConfigOption(FX_PROVIDER_CONFIG_ID, originalBackend);
+        const restoredModel = selectOption(yield* runtime.getConfigOptions, FX_MODEL_CONFIG_ID);
+        if (originalModel !== undefined && restoredModel?.currentValue !== originalModel) {
+          yield* runtime.setConfigOption(FX_MODEL_CONFIG_ID, originalModel, {
+            allowUnlistedValue: true,
+          });
+        }
+      }).pipe(Effect.ignoreCause({ log: true }));
+    }),
+  );
 });
 
 /** The shared option loop writes a stored effort; a thread without one starts at medium. */
