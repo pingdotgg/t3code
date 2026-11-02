@@ -188,6 +188,57 @@ export function resolveShareImportProject(input: {
   return followsExplicitChoice ? selected : null;
 }
 
+/**
+ * Projects the chooser may offer after an explicit environment tap. Without
+ * a tapped machine every scope is offered unchanged; with one, each scope
+ * keeps only that machine's projects and empty scopes drop out, so picking a
+ * row cannot silently move the draft elsewhere.
+ */
+export function resolveExplicitProjectScopes(input: {
+  readonly scopes: ReadonlyArray<HomeProjectScope>;
+  readonly preferredEnvironmentId: string | undefined;
+}): ReadonlyArray<HomeProjectScope> {
+  if (input.preferredEnvironmentId === undefined) {
+    return input.scopes;
+  }
+  return input.scopes.flatMap((scope) => {
+    const projects = scope.projects.filter(
+      (project) => String(project.environmentId) === input.preferredEnvironmentId,
+    );
+    if (projects.length === 0) {
+      return [];
+    }
+    return [
+      {
+        ...scope,
+        projects,
+        representative: projects[0] ?? scope.representative,
+        projectRefs: scope.projectRefs.filter(
+          (ref) => String(ref.environmentId) === input.preferredEnvironmentId,
+        ),
+      },
+    ];
+  });
+}
+
+/**
+ * Scratch candidates after an explicit environment tap. Without a tapped
+ * machine every connected environment stays a candidate; with one, only it
+ * is, so "No project" cannot open scratch space on another machine.
+ */
+export function filterScratchEnvironmentsToPreferred<
+  TEnvironment extends { readonly environmentId: EnvironmentId },
+>(
+  environments: ReadonlyArray<TEnvironment>,
+  preferredEnvironmentId: string | undefined,
+): ReadonlyArray<TEnvironment> {
+  return preferredEnvironmentId === undefined
+    ? environments
+    : environments.filter(
+        (environment) => String(environment.environmentId) === preferredEnvironmentId,
+      );
+}
+
 type ProjectRef = { readonly environmentId: string; readonly projectId: string };
 
 export function newTaskDestination(options: {

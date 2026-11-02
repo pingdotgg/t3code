@@ -4,10 +4,12 @@ import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { HomeProjectScope } from "../home/homeThreadList";
 import {
+  filterScratchEnvironmentsToPreferred,
   getProjectScopeSelectionTarget,
   newTaskDestination,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
+  resolveExplicitProjectScopes,
   resolveGenuineEnvironmentProjectMatch,
   resolveNewTaskScratchOption,
   resolveShareImportProject,
@@ -217,6 +219,45 @@ describe("resolveGenuineEnvironmentProjectMatch", () => {
   it("returns null when nothing is selected yet", () => {
     const target = [makeProject("t3code", "server")];
     expect(resolveGenuineEnvironmentProjectMatch(target, null)).toBeNull();
+  });
+});
+
+describe("resolveExplicitProjectScopes", () => {
+  const mac = makeProject("t3code", "mac", { repositoryKey: "github.com/t3tools/t3code" });
+  const server = makeProject("t3code", "server", { repositoryKey: "github.com/t3tools/t3code" });
+  const scopes = [makeScope([mac, server]), makeScope([makeProject("other", "mac")])];
+
+  it("offers every scope unchanged without a tapped machine", () => {
+    expect(
+      resolveExplicitProjectScopes({ scopes, preferredEnvironmentId: undefined }),
+    ).toBe(scopes);
+  });
+
+  it("keeps only the tapped machine's projects and drops empty scopes", () => {
+    const filtered = resolveExplicitProjectScopes({ scopes, preferredEnvironmentId: "server" });
+    expect(filtered.map((scope) => scope.key)).toEqual(["github.com/t3tools/t3code"]);
+    expect(filtered[0]?.projects).toEqual([server]);
+    expect(filtered[0]?.representative).toBe(server);
+    expect(filtered[0]?.projectRefs).toEqual([
+      { environmentId: server.environmentId, projectId: server.id },
+    ]);
+  });
+});
+
+describe("filterScratchEnvironmentsToPreferred", () => {
+  const mac = { environmentId: EnvironmentId.make("mac"), connectionState: "connected" } as const;
+  const server = {
+    environmentId: EnvironmentId.make("server"),
+    connectionState: "connected",
+  } as const;
+
+  it("keeps every environment without a tapped machine", () => {
+    expect(filterScratchEnvironmentsToPreferred([mac, server], undefined)).toEqual([mac, server]);
+  });
+
+  it("never falls back to another environment from the picker", () => {
+    expect(filterScratchEnvironmentsToPreferred([mac, server], "mac")).toEqual([mac]);
+    expect(filterScratchEnvironmentsToPreferred([mac, server], "unknown")).toEqual([]);
   });
 });
 

@@ -38,7 +38,9 @@ import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import {
   filterProjectScopes,
+  filterScratchEnvironmentsToPreferred,
   getProjectScopeSelectionTarget,
+  resolveExplicitProjectScopes,
   resolveNewTaskScratchOption,
 } from "./new-task-project-selection";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
@@ -185,27 +187,10 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   // An explicitly tapped machine constrains the chooser to its own projects
   // so picking a row cannot silently move the draft elsewhere. A normally
   // opened chooser keeps listing every environment.
-  const displayScopes =
-    routePreferredEnvironmentId === undefined
-      ? projectScopes
-      : projectScopes.flatMap((scope) => {
-          const projects = scope.projects.filter(
-            (project) => String(project.environmentId) === routePreferredEnvironmentId,
-          );
-          if (projects.length === 0) {
-            return [];
-          }
-          return [
-            {
-              ...scope,
-              projects,
-              representative: projects[0] ?? scope.representative,
-              projectRefs: scope.projectRefs.filter(
-                (ref) => String(ref.environmentId) === routePreferredEnvironmentId,
-              ),
-            },
-          ];
-        });
+  const displayScopes = resolveExplicitProjectScopes({
+    scopes: projectScopes,
+    preferredEnvironmentId: routePreferredEnvironmentId,
+  });
   const incomingShare = routeShareId ? getShare(routeShareId) : null;
   const incomingShareSubtitle = incomingShare
     ? incomingShare.attachments.length === 0
@@ -246,13 +231,10 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       ? resolveNewTaskScratchOption({
           // Explicit choice stays on the tapped machine: never fall back to
           // another environment's scratch space from this picker.
-          environments:
-            routePreferredEnvironmentId === undefined
-              ? connectedEnvironments
-              : connectedEnvironments.filter(
-                  (environment) =>
-                    String(environment.environmentId) === routePreferredEnvironmentId,
-                ),
+          environments: filterScratchEnvironmentsToPreferred(
+            connectedEnvironments,
+            routePreferredEnvironmentId,
+          ),
           serverConfigs,
           selectedEnvironmentId: preferredEnvironmentId,
         })
