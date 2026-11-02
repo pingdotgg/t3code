@@ -970,7 +970,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       // Batch fsync stages objects in a tmp_objdir-bulk-fsync-* that a killed Git leaves behind.
       // Staging into a private object directory makes that leftover ours to delete.
       const objectsDir = path.join(gitCommonDir, "objects");
-      const stagingObjectsDir = path.join(gitCommonDir, `t3-checkpoint-objects-${indexId}`);
+      const stagingObjectsDir = path.join(objectsDir, `t3-checkpoint-objects-${indexId}`);
       const stageEnv: NodeJS.ProcessEnv = {
         ...commitEnv,
         GIT_OBJECT_DIRECTORY: stagingObjectsDir,
