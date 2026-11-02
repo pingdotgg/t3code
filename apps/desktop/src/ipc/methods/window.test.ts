@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
+import type * as Electron from "electron";
 
 const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
   focusedWebContents: vi.fn(),
@@ -33,6 +34,7 @@ import {
   installRelayTelemetryEnabled,
   pickProjectFavicon,
   probeRemoteEditors,
+  readMedia,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -230,6 +232,34 @@ describe("installRelayTelemetryEnabled", () => {
           new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" }),
         ),
       );
+    }),
+  );
+});
+
+describe("readMedia", () => {
+  it.effect("reads http(s) media only for the main window", () =>
+    Effect.gen(function* () {
+      const fetch = vi.fn(async () => new Response(new Uint8Array([1, 2]), { status: 404 }));
+      const main = {
+        webContents: { id: 1, session: { fetch } },
+      } as unknown as Electron.BrowserWindow;
+      const read = (url: string, senderId: number) =>
+        readMedia
+          .handler(url, { sender: { id: senderId } })
+          .pipe(
+            Effect.provide(
+              Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(main) }),
+            ),
+          );
+
+      assert.strictEqual(yield* read("https://example.com/a.png", 2), null);
+      assert.strictEqual(yield* read("file:///etc/passwd", 1), null);
+      assert.strictEqual(fetch.mock.calls.length, 0);
+      assert.deepEqual(yield* read("https://example.com/a.png", 1), {
+        status: 404,
+        mimeType: "",
+        data: new Uint8Array([1, 2]),
+      });
     }),
   );
 });

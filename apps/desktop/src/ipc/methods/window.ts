@@ -2,6 +2,7 @@ import {
   ContextMenuItemSchema,
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
+  DesktopMediaReadSchema,
   DesktopThemeSchema,
   EDITORS,
   EditorId,
@@ -308,6 +309,34 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.openExternal")(function* (url) {
     const shell = yield* ElectronShell.ElectronShell;
     return yield* shell.openExternal(url);
+  }),
+});
+
+// The renderer can display media it cannot fetch(); reading here keeps Save and Copy working for it.
+export const readMedia = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.READ_MEDIA_CHANNEL,
+  payload: Schema.String,
+  result: Schema.NullOr(DesktopMediaReadSchema),
+  handler: Effect.fn("desktop.ipc.window.readMedia")(function* (url, event) {
+    const window = yield* (yield* ElectronWindow.ElectronWindow).main;
+    if (
+      event === undefined ||
+      Option.isNone(window) ||
+      window.value.webContents.id !== event.sender.id ||
+      !/^https?:$/.test(URL.parse(url)?.protocol ?? "")
+    ) {
+      return null;
+    }
+    const session = window.value.webContents.session;
+    return yield* Effect.tryPromise(async () => {
+      // Like an <img>, send the session's cookies.
+      const response = await session.fetch(url, { credentials: "include" });
+      return {
+        status: response.status,
+        mimeType: response.headers.get("content-type") ?? "",
+        data: new Uint8Array(await response.arrayBuffer()),
+      };
+    }).pipe(Effect.orElseSucceed(() => null));
   }),
 });
 
