@@ -115,14 +115,14 @@ import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { isRichTextFormattingShortcut } from "~/keybindings";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { hasCommandForKeyDown } from "~/shortcuts/dispatcher";
-import { AtSignIcon } from "lucide-react";
 import { basenameOfPath } from "~/pierre-icons";
 import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
+import { FileTagChipContent } from "./chat/FileTagChip";
 import { SkillChipPopover, skillPopoverDescription } from "./chat/SkillInlineText";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { ModelMentionChip, modelMentionKey, modelMentionKeysAtom } from "./chat/ModelMentionChip";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
-import { ContextChip, ContextChipLabel } from "./ContextChip";
+import { ContextChip } from "./ContextChip";
 import {
   ComposerContextActionsContext,
   ComposerContextReferenceChip,
@@ -241,6 +241,10 @@ const SURROUND_CLOSE: Record<string, string> = {
   _: "_",
 };
 
+function resolvedThemeFromDocument(): "light" | "dark" {
+  return document.documentElement.classList.contains("dark") ? "dark" : "light";
+}
+
 const CHIP_NODE_SELECTION_CLASS_NAME =
   "relative inline-flex min-w-0 max-w-full select-none items-baseline data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-sm data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
 
@@ -281,8 +285,13 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
       spellCheck={false}
       data-composer-mention-chip="true"
     >
-      <AtSignIcon aria-hidden="true" />
-      <ContextChipLabel>{basenameOfPath(path)}</ContextChipLabel>
+      <FileTagChipContent
+        path={path}
+        environmentId={actions.environmentId}
+        cwd={actions.cwd}
+        label={basenameOfPath(path)}
+        theme={resolvedThemeFromDocument()}
+      />
     </ContextChip>
   );
   return (
