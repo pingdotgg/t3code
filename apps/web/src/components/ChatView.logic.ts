@@ -782,15 +782,16 @@ export function buildExpiredTerminalContextToastCopy(
 ): { title: string; description: string } {
   const count = Math.max(1, Math.floor(expiredTerminalContextCount));
   const noun = count === 1 ? "Expired terminal context" : "Expired terminal contexts";
+  const pronoun = count === 1 ? "it" : "them";
   if (variant === "empty") {
     return {
       title: `${noun} won't be sent`,
-      description: "Remove it or re-add it to include terminal output.",
+      description: `Remove ${pronoun} or re-add ${pronoun} to include terminal output.`,
     };
   }
   return {
     title: `${noun} omitted from message`,
-    description: "Re-add it if you want that terminal output included.",
+    description: `Re-add ${pronoun} if you want that terminal output included.`,
   };
 }
 
@@ -1100,14 +1101,15 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   if (input.hasPendingApproval || input.hasPendingUserInput || Boolean(input.threadError)) {
     return true;
   }
+  const latestUserMessageChanged =
+    input.localDispatch.latestUserMessageId !== (input.latestUserMessageId ?? null);
   if (input.phase === "connecting" || derivePhase(input.runtime ?? null) === "connecting") {
-    return false;
+    // A message queued behind other work, such as an idle compaction the shell hides, has landed.
+    return input.runtime?.status === "queued" && latestUserMessageChanged;
   }
 
   const latestRun = input.latestRun ?? null;
   const runtime = input.runtime ?? null;
-  const latestUserMessageChanged =
-    input.localDispatch.latestUserMessageId !== (input.latestUserMessageId ?? null);
   const latestRunChanged =
     input.localDispatch.latestRunId !== (latestRun?.runId ?? null) ||
     input.localDispatch.latestRunRequestedAt !== (latestRun?.requestedAt ?? null) ||
@@ -1178,8 +1180,13 @@ export interface PlanFollowUpComposerSnapshot {
   readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
 }
 
+// A draft typed while the send was in flight is newer and stays. Composer refs and the cursor
+// belong to the thread on screen, so they follow only while the follow-up's route is current.
 export function restorePlanFollowUpComposer(input: {
   readonly snapshot: PlanFollowUpComposerSnapshot;
+  readonly draftHasUserContent: boolean;
+  readonly routeIsCurrent: boolean;
+  readonly writeComposerRefs: (snapshot: PlanFollowUpComposerSnapshot) => void;
   readonly writePrompt: (prompt: string) => void;
   readonly writeTerminalContexts: (contexts: ReadonlyArray<TerminalContextDraft>) => void;
   readonly writeReviewComments: (comments: ReadonlyArray<ReviewCommentContext>) => void;
@@ -1192,12 +1199,15 @@ export function restorePlanFollowUpComposer(input: {
     detectTrigger: boolean;
   }) => void;
 }): void {
+  if (input.draftHasUserContent) return;
+  if (input.routeIsCurrent) input.writeComposerRefs(input.snapshot);
   input.writePrompt(input.snapshot.prompt);
   input.writeTerminalContexts(input.snapshot.terminalContexts);
   input.writeReviewComments(input.snapshot.reviewComments);
   input.writePreviewAnnotations(input.snapshot.previewAnnotations);
   input.writeThreadContexts(input.snapshot.threadContexts);
   input.writeEnvironmentContexts(input.snapshot.environmentContexts);
+  if (!input.routeIsCurrent) return;
   input.resetCursor({
     cursor: collapseExpandedComposerCursor(input.snapshot.prompt, input.snapshot.prompt.length),
     prompt: input.snapshot.prompt,
