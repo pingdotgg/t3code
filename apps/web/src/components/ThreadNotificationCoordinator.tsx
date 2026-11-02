@@ -169,7 +169,10 @@ export function startThreadNotifications(
           },
         },
       });
-      openToasts.set(threadKey({ environmentId, threadId: thread.id }), toastId);
+      const toastKey = threadKey({ environmentId, threadId: thread.id });
+      const previousToastId = openToasts.get(toastKey);
+      if (previousToastId !== undefined) toastManager.close(previousToastId);
+      openToasts.set(toastKey, toastId);
       return;
     }
     if (

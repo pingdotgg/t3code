@@ -62,28 +62,7 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
 
         const snapshot = AsyncResult.getOrElse(result, () => null);
         if (snapshot !== null) {
-          const hidden = hiddenThreadKeys(
-            [
-              {
-                environmentId,
-                threads: snapshot.threads,
-                hiddenTags: get(options.hiddenThreadTagsAtom(environmentId)),
-              },
-            ],
-            get(options.hiddenThreadKeysAtom),
-          );
-          snapshots.push({
-            environmentId,
-            snapshot:
-              hidden.size === 0
-                ? snapshot
-                : {
-                    ...snapshot,
-                    threads: snapshot.threads.filter(
-                      (thread) => !hidden.has(threadKey({ environmentId, threadId: thread.id })),
-                    ),
-                  },
-          });
+          snapshots.push({ environmentId, snapshot });
         }
 
         if (error === null && result._tag === "Failure") {
@@ -91,7 +70,29 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
         }
       }
 
-      return { snapshots, error, isLoading };
+      // One pass over every environment's page, so archived tasks follow parents archived elsewhere.
+      const hidden = hiddenThreadKeys(
+        snapshots.map(({ environmentId, snapshot }) => ({
+          environmentId,
+          threads: snapshot.threads,
+          hiddenTags: get(options.hiddenThreadTagsAtom(environmentId)),
+        })),
+        get(options.hiddenThreadKeysAtom),
+      );
+      if (hidden.size === 0) return { snapshots, error, isLoading };
+      return {
+        snapshots: snapshots.map(({ environmentId, snapshot }) => ({
+          environmentId,
+          snapshot: {
+            ...snapshot,
+            threads: snapshot.threads.filter(
+              (thread) => !hidden.has(threadKey({ environmentId, threadId: thread.id })),
+            ),
+          },
+        })),
+        error,
+        isLoading,
+      };
     }).pipe(Atom.withLabel(`${options.labelPrefix}:${environmentKey}`)),
   );
 }

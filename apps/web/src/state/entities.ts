@@ -408,10 +408,15 @@ const relationshipShellsAtomFamily = Atom.family((key: string) => {
   const ref = parseThreadKey(key);
   let previous: ReadonlyArray<OrchestrationV2ThreadShell> = [];
   return Atom.make((get) => {
+    const hidden = get(environmentThreadShells.hiddenThreadKeysAtom);
     const next = selectThreadRelationshipShells(
       ref.threadId,
       get(environmentThreadDetails.threadAtom(ref))?.projection ?? null,
       get(environmentThreadShells.environmentThreadsAtom(ref.environmentId)),
+    ).filter(
+      (shell) =>
+        hidden.size === 0 ||
+        !hidden.has(threadKey({ environmentId: ref.environmentId, threadId: shell.id })),
     );
     if (arrayElementsEqual(previous, next)) return previous;
     previous = next;

@@ -23,14 +23,15 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
       projectId: string;
       title: string;
       archivedAt: string | null;
-      tags: string | null;
+      // json_quote always yields valid JSON (`null` when absent); the lenient schema checks the shape.
+      tags: string;
       host: string;
       repository: string;
       number: number;
       url: string;
     }>`
       SELECT t.thread_id AS id, t.project_id AS "projectId", t.title,
-        t.archived_at AS "archivedAt", json_extract(t.payload_json, '$.tags') AS tags,
+        t.archived_at AS "archivedAt", json_quote(json_extract(t.payload_json, '$.tags')) AS tags,
         json_extract(link.value, '$.host') AS host,
         json_extract(link.value, '$.repository') AS repository,
         json_extract(link.value, '$.number') AS number,
@@ -51,7 +52,7 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
         projectId,
         title,
         archivedAt,
-        ...(tags === null ? {} : { tags: JSON.parse(tags) }),
+        tags: JSON.parse(tags),
       }));
     return yield* decodeLinkedThreads({ threads });
   },

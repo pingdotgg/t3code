@@ -1,8 +1,7 @@
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { threadKey } from "@t3tools/client-runtime/state/entities";
-import { hasHiddenTag } from "@t3tools/client-runtime/state/threads";
+import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { CheckIcon, MessageSquareIcon } from "lucide-react";
@@ -116,12 +115,11 @@ function EnabledPullRequestThreadLinks({
   };
 
   if (parsed === null || (!linkedHere && !linking.canLink(url))) return null;
-  const linkedThreads = (
-    linking.mode === "multiple" ? ((relations.data ?? lastRelations)?.threads ?? []) : []
-  ).filter(
-    (linked) =>
-      !hiddenKeys.has(threadKey({ environmentId, threadId: linked.id })) &&
-      !hasHiddenTag(linked.tags, hiddenTags),
+  const linkedThreads = visibleLinkedThreads(
+    linking.mode === "multiple" ? ((relations.data ?? lastRelations)?.threads ?? []) : [],
+    environmentId,
+    hiddenKeys,
+    hiddenTags,
   );
   const linkedThreadsLabel =
     linkedThreads.length > 0

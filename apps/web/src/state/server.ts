@@ -15,6 +15,7 @@ import {
   presentConnectionState,
   type EnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
+import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/server";
 import { createOutdatedServerUpdateCommand } from "@t3tools/client-runtime/state/outdatedServerUpdate";
 import { createEnvironmentServerConfigsAtom } from "@t3tools/client-runtime/state/shell";
@@ -196,7 +197,7 @@ type ThreadTagToggle = { readonly hiding: boolean; readonly environmentId: Envir
 export const threadTagToggleAtom = Atom.make((get): ThreadTagToggle => {
   const primaryEnvironmentId = get(primaryEnvironmentIdAtom);
   let toggle: ThreadTagToggle = null;
-  for (const environmentId of get(environmentCatalog.catalogValueAtom).entries.keys()) {
+  for (const environmentId of enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))) {
     const settings = get(serverEnvironment.settingsValueAtom(environmentId));
     if (settings === null || settings.hiddenThreadTags.length === 0) continue;
     if (toggle === null || environmentId === primaryEnvironmentId) {

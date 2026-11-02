@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { threadKey } from "@t3tools/client-runtime/state/entities";
-import { hiddenThreadKeys } from "@t3tools/client-runtime/state/threads";
+import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
+import { hasHiddenTag, visibilityParentKey } from "@t3tools/client-runtime/state/threads";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import { Navigate, useNavigate } from "@tanstack/react-router";
@@ -14,7 +14,7 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { useEnvironmentThreadRefs, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentShellStatus } from "../state/shell";
-import { serverEnvironment } from "../state/server";
+import { serverEnvironment, threadTagToggleAtom } from "../state/server";
 import { environmentThreadShells, useEnvironmentThread } from "../state/threads";
 import {
   buildThreadRouteParams,
@@ -95,23 +95,25 @@ export function ThreadRouteView({
       ? NO_HIDDEN_TAGS_ATOM
       : serverEnvironment.hiddenThreadTagsAtom(unlistedThreadRef.environmentId),
   );
+  const unlistedThread = Option.getOrNull(Option.map(unlistedThreadDetail.data, (p) => p.thread));
+  const unlistedParentKey =
+    unlistedThreadRef === null || unlistedThread === null
+      ? null
+      : visibilityParentKey(unlistedThreadRef.environmentId, unlistedThread);
+  const unlistedParentShell = useQuietThreadShell(
+    unlistedParentKey === null ? null : parseThreadKey(unlistedParentKey),
+  );
+  const hidingTaggedThreads = useAtomValue(threadTagToggleAtom)?.hiding === true;
+  // Off-shell threads: a child follows its parent; while hiding, an unloaded parent hides it too.
+  const unlistedHidden =
+    unlistedThread !== null &&
+    (unlistedParentKey === null
+      ? hasHiddenTag(unlistedThread.tags, unlistedHiddenTags)
+      : unlistedParentShell === null
+        ? hidingTaggedThreads
+        : hiddenKeys.has(unlistedParentKey));
   const hiddenByTagFilter =
-    serverThreadRef !== null &&
-    (hiddenKeys.has(threadKey(serverThreadRef)) ||
-      Option.exists(
-        unlistedThreadDetail.data,
-        (projection) =>
-          hiddenThreadKeys(
-            [
-              {
-                environmentId: serverThreadRef.environmentId,
-                threads: [projection.thread],
-                hiddenTags: unlistedHiddenTags,
-              },
-            ],
-            hiddenKeys,
-          ).size > 0,
-      ));
+    serverThreadRef !== null && (hiddenKeys.has(threadKey(serverThreadRef)) || unlistedHidden);
   const renderState = resolveThreadRouteRenderState({
     bootstrapComplete,
     serverThreadExists: serverThreadShell !== null,

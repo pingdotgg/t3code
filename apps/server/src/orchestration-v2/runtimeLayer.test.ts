@@ -2551,11 +2551,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         shell.threads.find((thread) => thread.id === threadId)!;
       const untaggedShell = shellOf(yield* orchestrator.getShellSnapshot());
       yield* TestClock.adjust("1 minute");
-      for (const [step, tag, tagged] of [
-        ["add", "demo", true],
-        ["retry", "demo", true],
-        ["add-other", "private", true],
-        ["remove", "demo", false],
+      for (const [step, tag, tagged, expected] of [
+        ["add", "demo", true, ["demo"]],
+        ["retry", "demo", true, ["demo"]],
+        ["add-other", "private", true, ["demo", "private"]],
+        ["remove", "demo", false, ["private"]],
       ] as const) {
         yield* orchestrator.dispatch({
           type: "thread.tag.set",
@@ -2564,9 +2564,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           tag,
           tagged,
         });
+        assert.deepEqual(shellOf(yield* orchestrator.getShellSnapshot()).tags, expected, step);
       }
       const taggedShell = shellOf(yield* orchestrator.getShellSnapshot());
-      assert.deepEqual(taggedShell.tags, ["private"]);
       // Tags are not activity, so the thread keeps its place in thread lists.
       assert.equal(
         DateTime.toEpochMillis(taggedShell.updatedAt),

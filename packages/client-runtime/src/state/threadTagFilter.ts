@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   isListedThreadLineage,
   type OrchestrationV2ThreadShell,
+  type ThreadId,
 } from "@t3tools/contracts";
 
 import { threadKey } from "./entities.ts";
@@ -19,6 +20,35 @@ export interface TagFilteredEnvironment {
 }
 
 export const NO_HIDDEN_THREADS: ReadonlySet<string> = new Set();
+
+/** The thread a subagent, side chat or delegated task takes its visibility from, if any. */
+export function visibilityParentKey(
+  environmentId: EnvironmentId,
+  thread: Pick<FilterableThread, "lineage" | "delegatedFrom">,
+): string | null {
+  const parentId = thread.lineage.parentThreadId;
+  if (!isListedThreadLineage(thread.lineage) && parentId !== null) {
+    return threadKey({ environmentId, threadId: parentId });
+  }
+  return thread.delegatedFrom === undefined ? null : threadKey(thread.delegatedFrom);
+}
+
+/** Pull request linked-thread rows the tag filter leaves visible. */
+export function visibleLinkedThreads<
+  Row extends { readonly id: ThreadId; readonly tags?: ReadonlyArray<string> | undefined },
+>(
+  rows: ReadonlyArray<Row>,
+  environmentId: EnvironmentId,
+  hiddenKeys: ReadonlySet<string>,
+  hiddenTags: ReadonlyArray<string> | null,
+): ReadonlyArray<Row> {
+  if (hiddenKeys.size === 0 && hiddenTags === null) return rows;
+  return rows.filter(
+    (row) =>
+      !hiddenKeys.has(threadKey({ environmentId, threadId: row.id })) &&
+      !hasHiddenTag(row.tags, hiddenTags),
+  );
+}
 
 export function hasHiddenTag(
   tags: ReadonlyArray<string> | undefined,
@@ -63,13 +93,7 @@ export function hiddenThreadKeys(
     const entry = byKey.get(key);
     if (entry === undefined) return false;
     const { thread, environment } = entry;
-    const parentId = thread.lineage.parentThreadId;
-    const parentKey =
-      !isListedThreadLineage(thread.lineage) && parentId !== null
-        ? threadKey({ environmentId: environment.environmentId, threadId: parentId })
-        : thread.delegatedFrom === undefined
-          ? null
-          : threadKey(thread.delegatedFrom);
+    const parentKey = visibilityParentKey(environment.environmentId, thread);
     const followsParent =
       parentKey !== null && (byKey.has(parentKey) || alreadyHidden.has(parentKey));
     if (!followsParent) {

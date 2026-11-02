@@ -95,6 +95,9 @@ it.effect(
         const payload = yield* encodePayload({
           linkedPullRequest: null,
           ...(fixture.id === "side-chat" ? { lineage: { sideChat: true } } : {}),
+          // Clients hide tagged rows, so the tags must come back with the row.
+          ...(fixture.id === "active" ? { tags: ["private"] } : {}),
+          ...(fixture.id === "archived" ? { tags: "not-a-list" } : {}),
           pullRequests: [{ ...fixture, linkedAt: createdAt, snapshot: null, stack: null }],
         });
         yield* sql`
@@ -165,8 +168,14 @@ it.effect(
       });
       expect(result).toEqual({
         threads: [
-          { id: "archived", projectId: "project-1", title: "archived", archivedAt },
-          { id: "active", projectId: "project-1", title: "active", archivedAt: null },
+          { id: "archived", projectId: "project-1", title: "archived", archivedAt, tags: [] },
+          {
+            id: "active",
+            projectId: "project-1",
+            title: "active",
+            archivedAt: null,
+            tags: ["private"],
+          },
         ],
       });
       assert.deepStrictEqual(
