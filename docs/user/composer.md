@@ -117,7 +117,8 @@ save instructions while leaving it disabled, or disable it later without losing 
 
 The instructions are appended after a blank line to your first message in each
 new chat and appear in the sent message. Later messages, existing conversations,
-forks, and agent-created chats do not get them. Empty instructions add nothing.
+forks, agent-created chats, and scheduled messages do not get them. Slash commands
+without attachments are kept as written. Empty instructions add nothing.
 Choose an environment or project in Settings to control where they apply.
 
 ## Model defaults

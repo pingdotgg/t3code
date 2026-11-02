@@ -5374,11 +5374,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     if (
       command.createdBy === "user" &&
+      command.scheduledTaskId === undefined &&
       projection.thread.lineage.parentThreadId === null &&
       projection.messages.length === 0 &&
-      !isNativeMaintenanceCommand(command)
+      (command.attachments.length > 0 || !command.text.trimStart().startsWith("/"))
     ) {
-      const current = yield* serverSettings.getSettings.pipe(Effect.orDie);
+      const current = yield* serverSettings.getSettings.pipe(mapDispatchError(command));
       const { settings } = resolveProjectSettings(current, projection.thread.projectId);
       const prompt = settings.newChatPrompt.trim();
       if (

@@ -1,4 +1,5 @@
-import { useRef } from "react";
+import { useId, useRef } from "react";
+import { isManagedSettingPath } from "@t3tools/contracts";
 
 import { Textarea } from "../ui/textarea";
 import { ScopedSwitch } from "./ScopedSwitch";
@@ -8,17 +9,23 @@ import { searchableSetting } from "./settingsSearch";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
+  useScopedSettingsWriteAllowed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
 export function NewChatPromptSettings() {
   const settings = useScopedSettings();
-  const { targets } = useSettingsScope();
+  const { targets, connectedEnvironments } = useSettingsScope();
   const scopeKey = targets.map((target) => `${target.environmentId}:${target.projectId}`).join(",");
   const edited = useRef(false);
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["newChatPrompt"]);
   const enabledMixed = useScopedSettingsMixed(["newChatPromptEnabled"]);
+  const canWrite = useScopedSettingsWriteAllowed();
+  const promptPolicy = connectedEnvironments
+    .map((environment) => environment.serverConfig?.managedPolicy)
+    .find((policy) => isManagedSettingPath(policy, "newChatPrompt"));
+  const policyDescriptionId = useId();
 
   return (
     <SettingsRow
@@ -47,6 +54,9 @@ export function NewChatPromptSettings() {
         <Textarea
           key={`${scopeKey}:${mixed}:${settings.newChatPrompt}`}
           aria-label="New chat prompt"
+          aria-describedby={promptPolicy === undefined ? undefined : policyDescriptionId}
+          readOnly={promptPolicy !== undefined}
+          disabled={!canWrite}
           rows={4}
           defaultValue={mixed ? "" : settings.newChatPrompt}
           placeholder={
@@ -59,12 +69,22 @@ export function NewChatPromptSettings() {
           }}
           onBlur={(event) => {
             const value = event.target.value.trim();
-            if (edited.current && (mixed || value !== settings.newChatPrompt)) {
+            if (
+              edited.current &&
+              canWrite &&
+              promptPolicy === undefined &&
+              (mixed || value !== settings.newChatPrompt)
+            ) {
               updateSettings({ newChatPrompt: value });
             }
             edited.current = false;
           }}
         />
+        {promptPolicy === undefined ? null : (
+          <p id={policyDescriptionId} className="mt-2 text-xs text-muted-foreground">
+            Managed by {promptPolicy.organization}.
+          </p>
+        )}
       </div>
     </SettingsRow>
   );
