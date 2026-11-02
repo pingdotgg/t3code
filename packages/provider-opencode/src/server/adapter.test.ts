@@ -1648,9 +1648,11 @@ describe("OpenCodeAdapterV2", () => {
         "root",
         {
           event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          app: { agents: async () => ({ data: [{ name: "plan", permission: [] }] }) },
           session: {
             create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
             get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            update: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
             messages: async () => ({ data: [] }),
             promptAsync: async (input: { agent?: string; variant?: string; system?: string }) => {
               promptInputs.push(input);
