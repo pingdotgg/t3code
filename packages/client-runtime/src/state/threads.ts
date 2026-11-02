@@ -115,10 +115,10 @@ function snapshotToPersist(
 const CACHED_THREAD_MAX_JSON_LENGTH = 4 * 1024 * 1024;
 const jsonLengths = new WeakMap<object, number>();
 
-// Approximates the JSON length without building it. Projection versions share unchanged
-// objects, so the memo limits a repeat check to the rows that changed.
+// Approximates the JSON length without building the whole document. Projection versions
+// share unchanged objects, so the memo limits a repeat check to the rows that changed.
 function approximateJsonLength(value: unknown): number {
-  if (typeof value === "string") return value.length + 2;
+  if (typeof value === "string") return JSON.stringify(value).length;
   if (typeof value !== "object" || value === null) return 8;
   const known = jsonLengths.get(value);
   if (known !== undefined) return known;
@@ -239,7 +239,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const cached =
     retained === undefined
       ? yield* cache.loadThread(environmentId, threadId).pipe(
-          // An oversized cache predates the row limit; a fresh bounded snapshot replaces it.
+          // An oversized cache predates the size limit; a fresh bounded snapshot replaces it.
           Effect.map(Option.filter((snapshot) => isBoundedProjection(snapshot.projection))),
           Effect.catch((error) =>
             Effect.logWarning("Could not load cached thread.").pipe(
@@ -331,6 +331,22 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       )
     )
       return;
+    if (!isBoundedProjection(snapshot.projection)) {
+      // Only a repair arrives here oversized. Drop the entry so its stale rows cannot reload.
+      yield* cache.removeThread(environmentId, threadId).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            savedSnapshot = snapshot;
+          }),
+        ),
+        Effect.catch((error) =>
+          Effect.logWarning("Could not remove the oversized thread cache.").pipe(
+            Effect.annotateLogs({ environmentId, threadId, error: error.message }),
+          ),
+        ),
+      );
+      return;
+    }
     yield* cache.saveThread(environmentId, snapshot).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
@@ -903,7 +919,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                 .loadThread(environmentId, threadId)
                 .pipe(Effect.orElseSucceed(() => Option.none())),
             );
-          if (saved === undefined || !isBoundedProjection(saved.projection)) return;
+          if (saved === undefined) return;
           const projection = settleTurnItems(threadId, saved.projection, latestItems);
           if (projection !== saved.projection) yield* queuePersist({ ...saved, projection });
         }),

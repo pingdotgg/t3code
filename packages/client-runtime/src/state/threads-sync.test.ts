@@ -84,7 +84,7 @@ const CACHED_THREAD_MAX_JSON_LENGTH = 4 * 1024 * 1024;
 // Enough 8 KiB rows to pass that limit, as a long tool history does.
 const OVERSIZED_THREAD_ROWS = 600;
 
-const noticeItem = (index: number): OrchestrationV2TurnItem => ({
+const noticeItem = (index: number, fill = "x"): OrchestrationV2TurnItem => ({
   id: TurnItemId.make(`streamed-item-${index}`),
   threadId: THREAD_ID,
   runId: null,
@@ -100,7 +100,7 @@ const noticeItem = (index: number): OrchestrationV2TurnItem => ({
   completedAt: v2Now,
   updatedAt: v2Now,
   type: "system_notice",
-  message: `Notice ${index} `.padEnd(8 * 1024, "x"),
+  message: `Notice ${index} `.padEnd(8 * 1024, fill),
 });
 
 type TestThreadInput = OrchestrationV2ThreadStreamItem | Error;
@@ -516,43 +516,48 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("does not cache a thread that events grew far past a bounded snapshot", () =>
-    Effect.gen(function* () {
-      const appendedItems = OVERSIZED_THREAD_ROWS;
-      const saved = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const h = yield* makeHarness({
-            cached: BASE_PROJECTION,
-            cachedHistory: { historyCursor: "older", hasMoreHistory: true },
-          });
-          for (let index = 0; index < appendedItems; index++) {
-            const item = noticeItem(index);
-            yield* Queue.offer(h.inputs, {
-              kind: "event",
-              sequence: CACHED_SNAPSHOT_SEQUENCE + 1 + index,
-              event: {
-                id: EventId.make(`event-streamed-item-${index}`),
-                type: "turn-item.updated",
-                threadId: THREAD_ID,
-                occurredAt: v2Now,
-                payload: item,
-              },
+  it.effect.each([
+    { text: "plain text", appendedItems: OVERSIZED_THREAD_ROWS, fill: "x" },
+    // Under the limit in characters, but JSON escapes each control character to six.
+    { text: "escaped text", appendedItems: 180, fill: "\u0001" },
+  ])(
+    "does not cache a thread that events grew far past a bounded snapshot ($text)",
+    ({ appendedItems, fill }) =>
+      Effect.gen(function* () {
+        const saved = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* makeHarness({
+              cached: BASE_PROJECTION,
+              cachedHistory: { historyCursor: "older", hasMoreHistory: true },
             });
-          }
-          yield* awaitThreadState(
-            h.observed,
-            (value) => Option.getOrNull(value.data)?.turnItems.length === appendedItems,
-          );
-          yield* TestClock.adjust("500 millis");
-          return h.savedThreads;
-        }),
-      );
-      // Leaving the thread also saves it, so every write the cache received is here.
-      const savedLengths = (yield* Ref.get(saved)).map(
-        (snapshot) => JSON.stringify(snapshot).length,
-      );
-      expect(Math.max(0, ...savedLengths)).toBeLessThanOrEqual(CACHED_THREAD_MAX_JSON_LENGTH);
-    }),
+            for (let index = 0; index < appendedItems; index++) {
+              const item = noticeItem(index, fill);
+              yield* Queue.offer(h.inputs, {
+                kind: "event",
+                sequence: CACHED_SNAPSHOT_SEQUENCE + 1 + index,
+                event: {
+                  id: EventId.make(`event-streamed-item-${index}`),
+                  type: "turn-item.updated",
+                  threadId: THREAD_ID,
+                  occurredAt: v2Now,
+                  payload: item,
+                },
+              });
+            }
+            yield* awaitThreadState(
+              h.observed,
+              (value) => Option.getOrNull(value.data)?.turnItems.length === appendedItems,
+            );
+            yield* TestClock.adjust("500 millis");
+            return h.savedThreads;
+          }),
+        );
+        // Leaving the thread also saves it, so every write the cache received is here.
+        const savedLengths = (yield* Ref.get(saved)).map(
+          (snapshot) => JSON.stringify(snapshot).length,
+        );
+        expect(Math.max(0, ...savedLengths)).toBeLessThanOrEqual(CACHED_THREAD_MAX_JSON_LENGTH);
+      }),
   );
 
   it.effect("replaces an oversized cache with a fresh bounded snapshot", () =>
@@ -1212,6 +1217,27 @@ describe("EnvironmentThreads", () => {
           cachedHistory: { historyCursor: saved!.historyCursor!, hasMoreHistory: true },
         });
         expect(statuses(yield* SubscriptionRef.get(reloaded.threadState))).toEqual(settledStatuses);
+      }),
+    );
+
+    it.effect("drops the cache when its repair would pass the size limit", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          cached,
+          cachedHistory,
+          ...serverItems({
+            "cached-command": {
+              ...command("cached-command", "completed", 0),
+              output: "x".repeat(CACHED_THREAD_MAX_JSON_LENGTH),
+            },
+          }),
+        });
+
+        yield* harness.reconcilePendingWork;
+        yield* TestClock.adjust("500 millis");
+
+        expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+        expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
       }),
     );
 
