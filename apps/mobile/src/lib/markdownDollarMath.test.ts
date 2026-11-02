@@ -64,6 +64,27 @@ describe("backslash math delimiters", () => {
     );
   });
 
+  it("leaves replies whose literal dollars md4c would pair with an inserted one", () => {
+    for (const reply of [
+      String.raw`It costs $5. The formula is \(\frac{1}{2}\).`,
+      String.raw`Set $HOME. Then \(\lambda=1\).`,
+      String.raw`Invalid \(a $b\) here.`,
+    ]) {
+      expect(markdownWithDollarMath(reply)).toBe(reply);
+    }
+  });
+
+  it("leaves replies the shared parser would reread or cannot walk", () => {
+    const formula = String.raw`\(x\)` + "\n\n";
+    for (const reply of [
+      formula + (String.raw`\[` + "\n\n").repeat(300),
+      formula + (String.raw`\(` + "x".repeat(60) + "\n").repeat(80) + "`" + String.raw`\)`,
+      "- ".repeat(2996) + String.raw`\(x\)`,
+    ]) {
+      expect(markdownWithDollarMath(reply)).toBe(reply);
+    }
+  });
+
   it("keeps container prefixes inside a multi-line formula", () => {
     expect(markdownWithDollarMath(String.raw`> \[` + "\n> a+b\n> " + String.raw`\]`)).toBe(
       "> $$\n> a+b\n> $$",
