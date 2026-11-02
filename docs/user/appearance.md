@@ -50,9 +50,9 @@ without replaying its transitions.
 
 ## Accessibility
 
-Turn on **Inset scrollbars** under **Settings → Appearance → Accessibility** to move vertical
-scrollbars a few pixels away from the right edge of each pane, so they are easier to grab without
-hitting the window's resize edge. This preference applies to the web and desktop clients.
+**Inset scrollbars** is on by default in the web and desktop clients, moving vertical scrollbars
+a few pixels away from each pane's right edge so they are easier to grab without hitting the
+window's resize edge. Turn it off under **Settings → Appearance → Accessibility**.
 
 ## Custom themes
 

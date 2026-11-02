@@ -2172,7 +2172,7 @@ code {
 }
 
 .chat-markdown pre::-webkit-scrollbar {
-  height: var(--app-scrollbar-width);
+  height: 6px;
 }
 
 .chat-markdown pre::-webkit-scrollbar-thumb {
