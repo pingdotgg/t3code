@@ -1247,19 +1247,20 @@ describe("persisted environment queries", () => {
       Effect.scoped(
         Effect.gen(function* () {
           let saved = Option.none<string>();
+          const saves = yield* Queue.unbounded<string>();
           const persistence: QueryPersistence<string> = {
             load: () => Effect.sync(() => saved),
             save: (_environmentId, _key, value) =>
               Effect.sync(() => {
                 saved = Option.some(value);
-              }),
+              }).pipe(Effect.andThen(Queue.offer(saves, value))),
           };
           const first = yield* makeEnvironmentQueryHarness(Effect.succeed("first"), {
             persistence,
           });
           const firstRegistry = yield* mountEnvironmentQuery(first.atom);
           expect(yield* readEnvironmentQuery(firstRegistry, first.atom)).toBe("first");
-          expect(saved).toEqual(Option.some("first"));
+          expect(yield* Queue.take(saves)).toBe("first");
 
           const restarted = yield* makeEnvironmentQueryHarness(Effect.succeed("updated"), {
             persistence,
@@ -1270,9 +1271,29 @@ describe("persisted environment queries", () => {
           yield* SubscriptionRef.set(restarted.supervisorState, queryConnectionState());
           yield* Effect.yieldNow;
           expect(yield* readEnvironmentQuery(registry, restarted.atom)).toBe("updated");
-          expect(saved).toEqual(Option.some("updated"));
+          expect(yield* Queue.take(saves)).toBe("updated");
         }),
       ),
+  );
+
+  it.effect("hands a server answer to readers while its save is still pending", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const finishSave = Latch.makeUnsafe();
+        const saved = yield* Deferred.make<string>();
+        const harness = yield* makeEnvironmentQueryHarness(Effect.succeed("fresh"), {
+          persistence: {
+            load: () => Effect.succeedNone,
+            save: (_environmentId, _key, value) =>
+              finishSave.await.pipe(Effect.andThen(Deferred.succeed(saved, value))),
+          },
+        });
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+        expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("fresh");
+        finishSave.openUnsafe();
+        expect(yield* Deferred.await(saved)).toBe("fresh");
+      }),
+    ),
   );
 
   it.effect("hands each server answer to onAnswer before readers see it", () =>

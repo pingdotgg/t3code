@@ -1,5 +1,6 @@
 import {
   ProjectId,
+  type PullRequestSummary,
   SourceControlProviderKind,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
@@ -130,14 +131,14 @@ describe("knownPullRequestSummary", () => {
         ],
       },
     ];
-    const listed = {
+    const listed: PullRequestSummary = {
       provider: SourceControlProviderKind.make("github"),
       projectId,
       repository: "t3tools/t3code",
       number: 7,
       title: "Listed title",
       url: "https://github.com/t3tools/t3code/pull/7",
-      state: "open" as const,
+      state: "open",
       headBranch: "change-7",
       baseBranch: "main",
       updatedAt: "2026-09-09T00:00:00.000Z",
@@ -149,6 +150,15 @@ describe("knownPullRequestSummary", () => {
     expect(lookup("github.com", 7)?.title).toBe("Listed title");
     expect(lookup("github.com", 8)).toBeUndefined();
     expect(lookup("gitlab.com", 7)).toBeUndefined();
+
+    const sameVersion = { ...listed, updatedAt: "2026-09-08T00:00:00.000Z" };
+    const syncedAt = Date.parse(link.snapshot!.syncedAt);
+    expect(lookup("github.com", 7, [{ ...sameVersion, observedAt: syncedAt - 1 }])?.title).toBe(
+      "Change 7",
+    );
+    expect(lookup("github.com", 7, [{ ...sameVersion, observedAt: syncedAt + 1 }])?.title).toBe(
+      "Listed title",
+    );
   });
 });
 

@@ -67,16 +67,19 @@ it("reads the panel's detail once intent rests on a row for 150 ms", async () =>
   await act(() => vi.advanceTimersByTime(149));
   expect(state.reads).toEqual([]);
   await act(() => vi.advanceTimersByTime(1));
-  expect(state.reads.at(-1)).toEqual({
-    environmentId,
-    input: {
-      projectId: row.projectId,
-      host: "github.com",
-      repository: "owner/repo",
-      number: 7,
-      allowStale: false,
-    },
-  });
+  // Query atoms key on JSON order: this is the order the PRs page panel reads.
+  expect(JSON.stringify(state.reads.at(-1))).toBe(
+    JSON.stringify({
+      environmentId,
+      input: {
+        projectId: row.projectId,
+        repository: "owner/repo",
+        number: 7,
+        host: "github.com",
+        allowStale: false,
+      },
+    }),
+  );
 
   await act(() => leave.click());
   expect(state.reads.at(-1)).toBeNull();

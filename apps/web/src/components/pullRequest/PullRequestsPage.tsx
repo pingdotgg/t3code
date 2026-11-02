@@ -64,6 +64,7 @@ import { PullRequestCompactFilterMenu } from "./PullRequestCompactFilterMenu";
 import { INVOLVEMENT_TABS, SORT_OPTIONS, STATE_TABS } from "./pullRequestListOptions";
 import { PullRequestsColumn } from "./PullRequestsColumn";
 import { PullRequestListGroups } from "./PullRequestListGroups";
+import { pullRequestPanelReference } from "./usePullRequestDetail";
 import { usePullRequestIntentPrefetch } from "./usePullRequestIntentPrefetch";
 import {
   usePullRequestDisplayGroups,
@@ -1533,14 +1534,10 @@ export function PullRequestsPage() {
                   selectedEnvironmentId: panelEnvironmentId,
                 });
               }}
-              reference={{
+              reference={pullRequestPanelReference({
+                ...renderedPullRequestSurface,
                 projectId: renderedPullRequestSurface.projectId as ProjectId,
-                repository: renderedPullRequestSurface.repository,
-                number: renderedPullRequestSurface.number,
-                ...(renderedPullRequestSurface.host
-                  ? { host: renderedPullRequestSurface.host }
-                  : {}),
-              }}
+              })}
               listEntry={
                 listedPullRequestsBySurface.get(
                   pullRequestListEntryId(renderedPullRequestSurface),

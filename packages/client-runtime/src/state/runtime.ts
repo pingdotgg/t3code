@@ -773,8 +773,11 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
             return cached.value;
           }
           if (Option.isNone(previous) && Option.isSome(cached)) yield* emit(cached.value);
+          // Readers must not wait on the disk: web saves one IndexedDB row per listed PR's stats.
           return yield* answer().pipe(
-            Effect.tap((value) => persistence.save(target.environmentId, cacheKey, value)),
+            Effect.tap((value) =>
+              persistence.save(target.environmentId, cacheKey, value).pipe(Effect.forkDetach),
+            ),
           );
         });
       })

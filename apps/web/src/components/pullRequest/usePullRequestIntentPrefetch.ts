@@ -5,6 +5,8 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 
+import { pullRequestPanelReference } from "./usePullRequestDetail";
+
 const INTENT_DELAY_MS = 150;
 
 interface PullRequestIntentTarget {
@@ -33,10 +35,7 @@ export function usePullRequestIntentPrefetch(
       : pullRequestEnvironment.detail({
           environmentId: target.environmentId,
           input: {
-            projectId: target.projectId,
-            host: target.host.toLowerCase(),
-            repository: target.repository,
-            number: target.number,
+            ...pullRequestPanelReference({ ...target, host: target.host.toLowerCase() }),
             allowStale: false,
           },
         }),
