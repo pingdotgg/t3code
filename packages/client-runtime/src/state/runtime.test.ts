@@ -995,8 +995,13 @@ describe("environment query lifecycle", () => {
         let now = 1_000_000;
         using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
         let executions = 0;
+        const finishRefresh = Latch.makeUnsafe();
         const harness = yield* makeEnvironmentQueryHarness(
-          Effect.sync(() => (++executions === 1 ? "stale" : "fresh")),
+          Effect.suspend(() =>
+            ++executions === 1
+              ? Effect.succeed("stale")
+              : finishRefresh.await.pipe(Effect.as("fresh")),
+          ),
         );
         const registry = AtomRegistry.make();
         yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
@@ -1011,6 +1016,12 @@ describe("environment query lifecycle", () => {
         now += 120_000;
         registry.mount(harness.atom);
         yield* Effect.yieldNow;
+        expect(registry.get(harness.atom)).toMatchObject({
+          _tag: "Success",
+          value: "stale",
+          waiting: true,
+        });
+        finishRefresh.openUnsafe();
         expect(yield* read).toBe("fresh");
       }),
     ),
