@@ -10477,14 +10477,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ),
             );
           let connectorReconnects: Fiber.Fiber<void> | undefined;
+          // Connector reconnects cannot finish once their process is gone.
+          const stopConnectorReconnects = Effect.suspend(() =>
+            connectorReconnects === undefined ? Effect.void : Fiber.interrupt(connectorReconnects),
+          );
           const querySession: ClaudeAgentSdkQuerySession = {
             ...openedQuery,
-            // Stop the connector reconnects first: they cannot finish on a closed process.
-            close: Effect.suspend(() =>
-              connectorReconnects === undefined
-                ? Effect.void
-                : Fiber.interrupt(connectorReconnects),
-            ).pipe(Effect.andThen(openedQuery.close)),
+            close: stopConnectorReconnects.pipe(Effect.andThen(openedQuery.close)),
           };
           // Mark only successful opens; retries must not resume sessions that failed to create.
           yield* Ref.update(openedNativeThreads, (current) => {
@@ -10577,6 +10576,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.exit,
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
+                yield* stopConnectorReconnects;
                 const heldContext = yield* Ref.get(activeTurn);
                 if (
                   (yield* Ref.get(queryContext))?.query === querySession &&

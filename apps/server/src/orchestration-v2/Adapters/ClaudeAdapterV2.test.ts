@@ -4408,6 +4408,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ]),
         );
         assert.deepEqual(yield* takeReconnected(2), ["claude.ai Miro", "claude.ai Sentry"]);
+
+        // The same holds when the Claude process exits on its own.
+        yield* Queue.shutdown(harness.processQueues[3]!);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* startProcess("full-access");
+        yield* harness.offerAndWait(
+          init("connector-init-5", [
+            { name: "claude.ai Canva", status: "needs-auth", source: "claudeai" },
+          ]),
+        );
+        assert.deepEqual(yield* takeReconnected(2), ["claude.ai Canva", "claude.ai Sentry"]);
       }).pipe(
         Effect.scoped,
         Effect.provide(
