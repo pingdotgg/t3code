@@ -471,7 +471,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const normalizedFindQuery = findQuery.trim();
   const findActive = findExpanded;
 
-  const disclosurePinsEndRef = useRef(false);
   const disclosureRevealRef = useRef<{
     key: string;
     identity: string;
@@ -479,11 +478,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     ready: boolean;
     contentKey?: string;
   } | null>(null);
-  const pinDisclosureToEnd = () => {
-    if (!disclosurePinsEndRef.current) return;
-    const element = listRef.current?.getScrollableNode();
-    if (element) element.scrollTop = element.scrollHeight;
-  };
 
   // Visible-position anchoring keeps the toggled row still, so content that
   // expands below it near the bottom would otherwise land under the composer.
@@ -528,11 +522,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
     }
     disclosureSettleFrameRef.current = requestAnimationFrame(() => {
-      pinDisclosureToEnd();
       disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
-        pinDisclosureToEnd();
         revealExpandedDisclosure();
-        disclosurePinsEndRef.current = false;
         disclosureAnchorKeyRef.current = null;
         setDisclosureToggleSettling(false);
         disclosureSettleFrameRef.current = null;
@@ -549,9 +540,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     revealsRow = true,
   ) => {
     disclosureAnchorKeyRef.current = anchorKey;
-    disclosurePinsEndRef.current = resolveTimelineIsAtEnd(listRef.current?.getState()) === true;
+    const isAtEnd = resolveTimelineIsAtEnd(listRef.current?.getState()) === true;
     disclosureRevealRef.current =
-      !collapsed && revealsRow && !disclosurePinsEndRef.current
+      !collapsed && revealsRow && !isAtEnd
         ? { key: anchorKey, identity: listIdentityKey, entryId, ready: false }
         : null;
     setDisclosureToggleSettling(true);
@@ -559,7 +550,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
 
   const shouldRestoreVisibleContentPosition = (row: MessagesTimelineRow) => {
-    if (disclosurePinsEndRef.current) return false;
     const disclosureAnchorKey = disclosureAnchorKeyRef.current;
     return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
   };
@@ -1012,8 +1002,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
 
   const handleItemSizeChanged = () => {
-    if (disclosurePinsEndRef.current) {
-      queueMicrotask(pinDisclosureToEnd);
+    if (disclosureAnchorKeyRef.current !== null) {
       scheduleDisclosureSettle();
     }
     scheduleMinimapRefresh();
@@ -1229,7 +1218,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       contentSizeFrame = requestAnimationFrame(() => {
         contentSizeFrame = null;
         handleContentSizeChanged(laidOutData);
-        if (disclosureRevealRef.current?.ready) scheduleDisclosureSettle();
+        const pendingReveal = disclosureRevealRef.current;
+        if (pendingReveal && (pendingReveal.ready || pendingReveal.contentKey !== undefined)) {
+          scheduleDisclosureSettle();
+        }
       });
     };
     const stopListeningToContentSize = list
