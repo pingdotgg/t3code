@@ -464,6 +464,7 @@ function SidebarRestoreHandle({ options }: { options: SidebarResolvedResizableOp
         rawWidth = nextWidth;
         const width = clampSidebarWidth(nextWidth, options);
         container.style.left = "0px";
+        container.style.translate = "0px";
         for (const element of [container, gap]) {
           element.style.width = `${width}px`;
           element.style.transitionDuration = "0ms";
@@ -479,6 +480,7 @@ function SidebarRestoreHandle({ options }: { options: SidebarResolvedResizableOp
       },
       cleanup() {
         container.style.removeProperty("left");
+        container.style.removeProperty("translate");
         for (const element of [container, gap]) {
           element.style.removeProperty("width");
           element.style.removeProperty("transition-duration");

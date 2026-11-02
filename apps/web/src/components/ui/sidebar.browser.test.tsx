@@ -116,6 +116,9 @@ describe("Sidebar", () => {
       ).toBe(258),
     );
     expect(sidebar.dataset.state).toBe("collapsed");
+    expect(
+      sidebar.querySelector('[data-slot="sidebar-container"]')!.getBoundingClientRect().left,
+    ).toBe(0);
     dispatch(handle, "pointerup", 260);
     await vi.waitFor(() => expect(sidebar.dataset.state).toBe("expanded"));
     expect(onResize).toHaveBeenLastCalledWith(258);
