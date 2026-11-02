@@ -46,6 +46,7 @@ import {
 } from "@t3tools/provider-core/server/snapshotSettings";
 import {
   codexContinuationIdentity,
+  codexHomeEnvironment,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
@@ -150,11 +151,11 @@ export const CodexDriver: ProviderDriver<
     const installation = yield* CodexInstallation.CodexInstallation;
     const modelCatalog = yield* ModelCatalog.ModelCatalog;
     const currentCatalog = modelCatalog.current(DRIVER_KIND);
-    const processEnv = yield* mergeProviderInstanceEnvironment(
+    const environmentOverrides = yield* mergeProviderInstanceEnvironment(
       environment,
       yield* HostProcess.Environment,
     );
-    const environmentHome = processEnv.CODEX_HOME;
+    const environmentHome = environmentOverrides.CODEX_HOME;
     const homeLayout = yield* resolveCodexHomeLayout(
       !config.homePath.trim() && !config.shadowHomePath.trim() && environmentHome?.trim()
         ? { ...config, homePath: environmentHome }
@@ -168,7 +169,8 @@ export const CodexDriver: ProviderDriver<
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
-    yield* materializeCodexShadowHome(homeLayout).pipe(
+    const processEnv = yield* materializeCodexShadowHome(homeLayout).pipe(
+      Effect.andThen(() => codexHomeEnvironment(homeLayout, environmentOverrides)),
       Effect.mapError(
         (cause) =>
           new ProviderDriverError({
