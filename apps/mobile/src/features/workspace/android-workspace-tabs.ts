@@ -36,11 +36,3 @@ export function androidWorkspaceSettingsOpen(state: NavigationState): boolean {
       .filter((route) => WORKSPACE_ROUTES.has(route.name) || isSettingsRoute(route.name)),
   );
 }
-
-export function androidWorkspaceTabFromNavigationState(
-  state: NavigationState,
-  selected: AndroidWorkspaceNavigationTab,
-): AndroidWorkspaceNavigationTab {
-  if (androidWorkspaceSettingsOpen(state)) return "settings";
-  return selected === "settings" ? "threads" : selected;
-}

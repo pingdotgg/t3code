@@ -9,7 +9,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { cn } from "../../lib/cn";
-import { relativeTime } from "../../lib/time";
+import { RelativeTime } from "../../components/RelativeTime";
 import {
   selectedThreadRowColors,
   THREAD_LIST_V2_SIDEBAR_ROW_STYLE,
@@ -132,7 +132,7 @@ export const PullRequestListRow = memo(
                   </View>
                 ) : null}
                 <Text className={cn("text-2xs tabular-nums", tertiaryForeground)}>
-                  {relativeTime(item.updatedAt)}
+                  <RelativeTime timestamp={item.updatedAt} />
                 </Text>
               </View>
               <Text

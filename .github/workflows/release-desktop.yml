@@ -147,13 +147,6 @@ jobs:
           git sparse-checkout set --no-cone '/*' '!/.repos/'
           git -c checkout.workers=0 checkout --detach FETCH_HEAD
 
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: false
-
       # pnpm checks the lockfile and policy before reusing this result. A missing
       # artifact leaves the cache empty, so installation runs the checks again.
       - name: Download dependency verification
@@ -163,10 +156,35 @@ jobs:
           name: release-dependency-verification
           path: ${{ runner.temp }}/pnpm-metadata
 
-      - name: Install desktop dependencies
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
         env:
           pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
-        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      # The CLI archive and the staged app install without a lockfile, so they
+      # ask the registry about every package and fetch platform packages the
+      # workspace store lacks. They share this registry metadata and store. A
+      # new week starts cold, which bounds how stale cached ranges can get.
+      - name: Resolve staged install cache
+        id: stage_pnpm
+        shell: bash
+        run: |
+          echo "dir=$RUNNER_TEMP/desktop-stage-pnpm" >> "$GITHUB_OUTPUT"
+          echo "prefix=desktop-stage-pnpm-v2-${{ inputs.platform }}-${{ inputs.arch }}-$(date -u +%G-%V)-" >> "$GITHUB_OUTPUT"
+
+      - name: Restore staged install cache
+        id: stage_pnpm_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ steps.stage_pnpm.outputs.dir }}
+          key: ${{ steps.stage_pnpm.outputs.prefix }}${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ${{ steps.stage_pnpm.outputs.prefix }}
+
+      - name: Mark staged install cache
+        shell: bash
+        run: mkdir -p "${{ steps.stage_pnpm.outputs.dir }}" && touch "$RUNNER_TEMP/desktop-stage-pnpm.marker"
 
       - name: Cache resource monitor
         id: resource_monitor_cache
@@ -259,6 +277,63 @@ jobs:
           if [[ "${{ inputs.version }}" =~ -nightly\.[0-9]{8}\.[0-9]+$ ]]; then brand=nightly; fi
           node scripts/apply-web-brand-assets.ts "$brand" apps/server/dist/client
 
+      - name: Resolve target Node.js for the CLI executable
+        id: target_node
+        if: inputs.cli_archive && inputs.platform == 'win'
+        shell: bash
+        run: echo "version=$(node -p 'require("./package.json").engines.node')" >> "$GITHUB_OUTPUT"
+
+      # The download only changes with engines.node, so a cached copy keeps
+      # releases off nodejs.org, which stalls on the runners some days.
+      - name: Restore target Node.js for the CLI executable
+        id: target_node_cache
+        if: inputs.cli_archive && inputs.platform == 'win'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/node-download
+          key: node-download-v${{ steps.target_node.outputs.version }}-win-${{ inputs.arch }}
+
+      # tsdown downloads the target Node with one fetch and no retry, and
+      # nodejs.org drops that download often enough to fail releases. Seed
+      # tsdown's cache with a retried, checksum-verified copy instead. A transfer
+      # under 100 KB/s for 30s counts as failed, so a stall retries.
+      - name: Download target Node.js for the CLI executable
+        if: inputs.cli_archive && inputs.platform == 'win' && steps.target_node_cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.target_node.outputs.version }}
+        run: |
+          set -euo pipefail
+          name="node-v$VERSION-win-${{ inputs.arch }}"
+          dir="$RUNNER_TEMP/node-download"
+          mkdir -p "$dir"
+          fetch=(curl -fsSL --retry 5 --retry-all-errors --connect-timeout 10 --speed-limit 102400 --speed-time 30)
+          "${fetch[@]}" -o "$dir/$name.zip" "https://nodejs.org/dist/v$VERSION/$name.zip"
+          "${fetch[@]}" -o "$dir/SHASUMS256.txt" "https://nodejs.org/dist/v$VERSION/SHASUMS256.txt"
+          (cd "$dir" && grep " $name.zip\$" SHASUMS256.txt | sha256sum -c -)
+
+      # Saved right away so a later failure in this job still keeps the download.
+      - name: Save target Node.js for the CLI executable
+        if: inputs.cli_archive && inputs.platform == 'win' && steps.target_node_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/node-download
+          key: ${{ steps.target_node_cache.outputs.cache-primary-key }}
+
+      - name: Install target Node.js for the CLI executable
+        if: inputs.cli_archive && inputs.platform == 'win'
+        shell: bash
+        env:
+          VERSION: ${{ steps.target_node.outputs.version }}
+        run: |
+          set -euo pipefail
+          name="node-v$VERSION-win-${{ inputs.arch }}"
+          dir="$RUNNER_TEMP/node-download"
+          dest="${XDG_CACHE_HOME:-$HOME/.cache}/tsdown/node/v$VERSION/win-${{ inputs.arch }}"
+          mkdir -p "$dest"
+          (cd "$dir" && grep " $name.zip\$" SHASUMS256.txt | sha256sum -c -)
+          unzip -p "$dir/$name.zip" "$name/node.exe" > "$dest/node.exe"
+
       # Setup Vite+ selects the exact engines.node version from package.json.
       # Native builds embed that executable; cross-target builds download the
       # same version for their target.
@@ -315,10 +390,22 @@ jobs:
           mkdir -p "$target_dir"
           cp "native/resource-monitor/target/${{ inputs.rust_target }}/release/${binary_name}" "$target_dir/$binary_name"
 
+      - uses: ./.github/actions/setup-apt-mirrors
+        if: inputs.platform == 'linux'
+
+      # The Linux archive ships libatomic.so.1 and points t3's RUNPATH at it.
+      - name: Install patchelf
+        if: inputs.cli_archive && inputs.platform == 'linux'
+        shell: bash
+        run: command -v patchelf || { sudo apt-get update && sudo apt-get install -y patchelf; }
+
       - name: Build CLI archive
         if: inputs.cli_archive
         shell: bash
         env:
+          pnpm_config_cache_dir: ${{ steps.stage_pnpm.outputs.dir }}/cache
+          pnpm_config_store_dir: ${{ steps.stage_pnpm.outputs.dir }}/store
+          pnpm_config_prefer_offline: "true"
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -354,9 +441,6 @@ jobs:
           name: cli-${{ inputs.platform }}-${{ inputs.arch }}
           path: release-cli/*
           if-no-files-found: error
-
-      - uses: ./.github/actions/setup-apt-mirrors
-        if: inputs.platform == 'linux'
 
       - name: Install Linux desktop build libraries
         if: inputs.platform == 'linux'
@@ -438,7 +522,10 @@ jobs:
       - name: Build desktop artifact
         shell: bash
         env:
-          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
+          # pnpm only goes to the registry for packages or versions the cache lacks.
+          pnpm_config_cache_dir: ${{ steps.stage_pnpm.outputs.dir }}/cache
+          pnpm_config_store_dir: ${{ steps.stage_pnpm.outputs.dir }}/store
+          pnpm_config_prefer_offline: "true"
           T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: true
           T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS: ${{ steps.capture_helper_cache.outputs.cache-hit == 'true' }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -522,6 +609,23 @@ jobs:
           fi
 
           vp run dist:desktop:artifact "${args[@]}"
+
+      # Warm installs only touch the store index, so new content means a fetch.
+      - name: Check staged install cache for new content
+        id: stage_pnpm_changed
+        shell: bash
+        run: |
+          dir="${{ steps.stage_pnpm.outputs.dir }}"
+          new=$(find "$dir/cache/v12" "$dir/store/v11/files" -type f -newer "$RUNNER_TEMP/desktop-stage-pnpm.marker" 2>/dev/null | wc -l | tr -d ' ')
+          echo "Staged installs added $new cached files."
+          echo "changed=$([[ "$new" -gt 0 ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Save staged install cache
+        if: steps.stage_pnpm_changed.outputs.changed == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ steps.stage_pnpm.outputs.dir }}
+          key: ${{ steps.stage_pnpm_cache.outputs.cache-primary-key }}
 
       # A build can package fine and still not open (a missing module in the
       # backend or the bundle). This launches the app from the shipped

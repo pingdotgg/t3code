@@ -547,7 +547,7 @@ function createMergedEnvironmentQuery<Input, A>(
         if (result._tag === "Failure" && error === null) {
           error = formatEnvironmentQueryError(result.cause);
         }
-        const value = Option.getOrNull(AsyncResult.value(result));
+        const value = AsyncResult.getOrElse(result, () => null);
         if (value !== null) values.push([target.environmentId, value]);
       }
       return { values, error, isPending };
@@ -603,7 +603,7 @@ export function usePullRequestTurnRefreshes(
 
 export function usePullRequestTurnRefresh(environmentId: EnvironmentId): number | null {
   const result = useAtomValue(pullRequestEnvironment.refreshes({ environmentId, input: {} }));
-  return Option.getOrNull(AsyncResult.value(result));
+  return AsyncResult.getOrElse(result, () => null);
 }
 
 export interface MergedPullRequestListView {

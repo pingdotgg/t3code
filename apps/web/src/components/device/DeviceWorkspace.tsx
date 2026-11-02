@@ -1,4 +1,4 @@
-import type { DeviceSummary, EnvironmentId } from "@t3tools/contracts";
+import type { DeviceHostSummary, DeviceSummary, EnvironmentId } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import {
   captureDeviceScreenshot,
@@ -16,6 +16,7 @@ export function DeviceWorkspace(props: {
   environmentId: EnvironmentId;
   device: DeviceSummary;
   hostLabel: string;
+  hostKind: DeviceHostSummary["kind"] | undefined;
   hostDiagnostics: string | undefined;
   visible: boolean;
   onFloat: () => void;
@@ -29,7 +30,13 @@ export function DeviceWorkspace(props: {
   // A capture always finishes, even if the panel hides or closes meanwhile; the user asked for it.
   const capturing = useRef(false);
   const access = useDeviceHubAccess(props.environmentId, props.device.hostId);
-  const controls = useDeviceControls({ ...props, access });
+  // Settings and tools run commands on the device's own machine, which EAS and Simlock do not expose.
+  const runsHostCommands = props.hostKind === "local" || props.hostKind === "ssh";
+  const controls = useDeviceControls({
+    ...props,
+    access,
+    visible: props.visible && runsHostCommands,
+  });
   const saveScreenshot = () => {
     if (!access || capturing.current || !props.visible) return;
     capturing.current = true;
@@ -80,11 +87,13 @@ export function DeviceWorkspace(props: {
             deviceId={props.device.id}
             hostId={props.device.hostId}
             visible={props.visible}
+            serveSimOnly={props.hostKind === "simlock"}
             axOverlay={axOverlay}
             allowPhoneView
             renderControls={(view) => (
               <DeviceControlsRail
                 platform={props.device.platform}
+                hostKind={props.hostKind}
                 handle={view.handle}
                 view={view}
                 controls={controls}

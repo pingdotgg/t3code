@@ -24,12 +24,10 @@ const state = vi.hoisted(() => ({
     workspaceRoot: string;
   }[],
   createResult: null as Promise<unknown> | null,
-  cloneResult: null as Promise<unknown> | null,
   createNewResult: null as Promise<unknown> | null,
   startCloneResult: null as Promise<unknown> | null,
   connectionStates: {} as Record<string, EnvironmentConnectionPhase>,
   newProjectsRoot: null as string | null,
-  supportsCloneTracking: false,
   waitForProject: vi.fn(),
   dispatch: vi.fn(),
   alert: vi.fn(),
@@ -114,10 +112,7 @@ vi.mock("../../state/entities", () => ({
       [
         "environment",
         {
-          environment: {
-            platform: { os: "linux" },
-            capabilities: { projectCloneTracking: state.supportsCloneTracking },
-          },
+          environment: { platform: { os: "linux" }, capabilities: {} },
           newProjectsRoot: state.newProjectsRoot,
           settings: { addProjectBaseDirectory: state.baseDirectory },
         },
@@ -148,11 +143,10 @@ vi.mock("../../state/filesystem", () => ({ filesystemEnvironment: {} }));
 vi.mock("../../state/sourceControl", () => ({
   sourceControlEnvironment: {
     discovery: (input: unknown) => input,
-    startProjectClone: () => state.startCloneResult,
-    cloneRepository: async ({ input }: { input: { destinationPath: string } }) => {
-      if (state.cloneResult) return state.cloneResult;
+    startProjectClone: async ({ input }: { input: { destinationPath: string } }) => {
+      if (state.startCloneResult) return state.startCloneResult;
       NodeFS.mkdirSync(input.destinationPath);
-      return AsyncResult.success({ cwd: input.destinationPath });
+      return AsyncResult.success(undefined);
     },
   },
 }));
@@ -561,30 +555,6 @@ describe("local project navigation", () => {
 
     expect(navigation.getState()).toEqual(remaining);
     expect(state.dispatch).not.toHaveBeenCalled();
-  });
-
-  it("does not redirect a reopened flow when an earlier legacy clone finishes", async () => {
-    const { created, projected } = setup();
-    state.scopes.add(AuthSourceControlWriteScope);
-    const cloned = Promise.withResolvers<unknown>();
-    state.cloneResult = cloned.promise;
-    const navigation = mountProjectFlow(false, true, true, "AddProjectDestination");
-    try {
-      const submission = cloneAction()();
-      navigation.back();
-      navigation.push("AddProjectDestination");
-      const remaining = navigation.getState();
-      cloned.resolve(AsyncResult.success({ cwd: "/tmp/t3-mobile-audit-fixture/repo" }));
-      created.resolve(AsyncResult.success(undefined));
-      projected.resolve({ environmentId: "environment", id: "project" });
-      await submission;
-
-      expect(state.projects).toEqual(["/tmp/t3-mobile-audit-fixture/repo"]);
-      expect(navigation.getState()).toEqual(remaining);
-      expect(state.dispatch).not.toHaveBeenCalled();
-    } finally {
-      state.cloneResult = null;
-    }
   });
 
   it("does not redirect a reopened flow when an earlier new project finishes", async () => {
