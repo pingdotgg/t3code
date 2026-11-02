@@ -75,6 +75,8 @@ export interface PendingScopedWrite {
   readonly environmentId: EnvironmentId;
   readonly patch: ServerSettingsPatch;
   readonly savedOver?: ServerSettings;
+  readonly confirmed?: ServerSettings;
+  readonly predecessors?: readonly ServerSettings[];
 }
 
 export const pendingScopedWritesAtom = Atom.make<readonly PendingScopedWrite[]>([]).pipe(
@@ -86,7 +88,12 @@ export function pendingScopedWriteApplies(
   write: PendingScopedWrite,
   settings: ServerSettings | undefined,
 ) {
-  return settings !== undefined && (write.savedOver === undefined || write.savedOver === settings);
+  return (
+    settings !== undefined &&
+    (write.savedOver === undefined ||
+      write.savedOver === settings ||
+      write.predecessors?.some((previous) => Equal.equals(previous, settings)) === true)
+  );
 }
 
 export function applyPendingScopedWrites<T extends ScopedSettingsEnvironment>(
@@ -101,13 +108,18 @@ export function applyPendingScopedWrites<T extends ScopedSettingsEnvironment>(
       (current, write) =>
         write.environmentId === environment.environmentId &&
         pendingScopedWriteApplies(write, config.settings)
-          ? applyServerSettingsPatch(current, write.patch)
+          ? (write.confirmed ?? applyServerSettingsPatch(current, write.patch))
           : current,
       config.settings,
     );
+    const { idleCompaction: _mode, ...legacy } = settings;
+    const projected =
+      config.settings.idleCompaction === undefined
+        ? { ...legacy, ...idleCompactionPatch(config.settings, globalIdleCompaction(settings)) }
+        : settings;
     return settings === config.settings
       ? environment
-      : { ...environment, serverConfig: { ...config, settings } };
+      : { ...environment, serverConfig: { ...config, settings: projected } };
   });
 }
 

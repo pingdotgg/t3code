@@ -247,6 +247,19 @@ describe("scoped settings writes", () => {
     const legacy = { settings: { ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: false } };
     expect(scopedIdleCompaction([fixed, modes])).toEqual({ mixed: false, neverAvailable: true });
     expect(scopedIdleCompaction([fixed, legacy])).toEqual({ mixed: false, neverAvailable: false });
+    const legacyEnvironment = environment("Legacy", { settings: legacy.settings });
+    const projected = applyPendingScopedWrites(
+      [legacyEnvironment],
+      [
+        {
+          environmentId: legacyEnvironment.environmentId,
+          patch: { defaultRuntimeMode: "auto" },
+        },
+      ],
+    );
+    expect(scopedIdleCompaction(resolveScopedSettingsTargets(all, projected)).neverAvailable).toBe(
+      false,
+    );
     expect(
       scopedIdleCompaction([fixed, { settings: { ...fixed.settings, idleCompaction: "off" } }])
         .mixed,
@@ -615,6 +628,24 @@ describe("scoped settings mixed values", () => {
       savedOver: [confirmed, waiting][index]!.serverConfig!.settings,
     }));
     expect(mixedAfter(saved)).toBe(false);
+
+    const baseline = waiting.serverConfig!.settings;
+    const first = applyServerSettingsPatch(baseline, { branchNamingMode: "custom" });
+    const second = applyServerSettingsPatch(first, { branchNameInstructions: "Use verify/" });
+    const intermediate = environment("Server", { settings: first });
+    const acknowledged = applyPendingScopedWrites(
+      [intermediate],
+      [
+        {
+          environmentId: intermediate.environmentId,
+          savedOver: baseline,
+          confirmed: second,
+          predecessors: [first],
+          patch: { branchNameInstructions: "Use verify/" },
+        },
+      ],
+    );
+    expect(acknowledged[0]!.serverConfig!.settings.branchNameInstructions).toBe("Use verify/");
 
     const changedElsewhere = environment("Server", {
       settings: { defaultRuntimeMode: "approval-required" },

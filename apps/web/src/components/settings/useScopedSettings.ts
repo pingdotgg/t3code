@@ -21,6 +21,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
+  applyPendingScopedWrites,
   createScopedSettingsSaveQueue,
   persistScopedSettingsPatch,
   planProjectOverridesClear,
@@ -36,22 +37,15 @@ import {
 } from "./scopedSettings";
 
 const enqueueProjectSave = createScopedSettingsSaveQueue();
-const confirmedSaves = new Map<
-  PendingScopedWrite["environmentId"],
-  { readonly previous: ServerSettings | undefined; readonly settings: ServerSettings }
->();
-
 function confirmedEnvironments(environments: ReturnType<typeof useSettingsScope>["environments"]) {
-  return environments.map((environment) => {
-    const config = appAtomRegistry.get(
-      serverEnvironment.configValueAtom(environment.environmentId),
-    );
-    const saved = confirmedSaves.get(environment.environmentId);
-    if (saved && config && saved.previous === config.settings)
-      return { ...environment, serverConfig: { ...config, settings: saved.settings } };
-    confirmedSaves.delete(environment.environmentId);
-    return { ...environment, serverConfig: config ?? null };
-  });
+  return applyPendingScopedWrites(
+    environments.map((environment) => ({
+      ...environment,
+      serverConfig:
+        appAtomRegistry.get(serverEnvironment.configValueAtom(environment.environmentId)) ?? null,
+    })),
+    appAtomRegistry.get(pendingScopedWritesAtom).filter((write) => write.confirmed !== undefined),
+  );
 }
 
 const savedSettings = (environmentId: PendingScopedWrite["environmentId"]) =>
@@ -101,15 +95,29 @@ function useRunScopedPlan() {
       patch,
     }));
     updatePendingScopedWrites((current) => [...current, ...pending]);
-    const settle = (target: Pick<PendingScopedWrite, "environmentId" | "patch">, saved: boolean) =>
-      updatePendingScopedWrites((current) =>
-        current.flatMap((write) => {
+    const settle = (
+      target: Pick<PendingScopedWrite, "environmentId" | "patch">,
+      confirmed?: ServerSettings,
+    ) =>
+      updatePendingScopedWrites((current) => {
+        const previous = current
+          .filter(
+            (write) =>
+              write.environmentId === target.environmentId && write.confirmed !== undefined,
+          )
+          .at(-1);
+        const predecessors = previous?.confirmed
+          ? [...(previous.predecessors ?? []), previous.confirmed]
+          : [];
+        return current.flatMap((write) => {
           if (write.environmentId !== target.environmentId || write.patch !== target.patch)
             return [write];
           const savedOver = savedSettings(write.environmentId);
-          return saved && savedOver !== undefined ? [{ ...write, savedOver }] : [];
-        }),
-      );
+          return confirmed && savedOver !== undefined
+            ? [{ ...write, savedOver, confirmed, predecessors }]
+            : [];
+        });
+      });
     return persistScopedSettingsPatch(
       plan,
       async (request) => {
@@ -126,22 +134,16 @@ function useRunScopedPlan() {
               ),
             )
           : await persistServer(request);
-        if (result._tag === "Success") {
-          confirmedSaves.set(request.environmentId, {
-            previous: savedSettings(request.environmentId),
-            settings: result.value,
-          });
-        }
         settle(
           { environmentId: request.environmentId, patch: request.input.patch },
-          result._tag === "Success",
+          result._tag === "Success" ? result.value : undefined,
         );
         return result;
       },
       persistClientSettingsPatch,
     )
       .then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
-        for (const failed of failedEnvironments) settle(failed, false);
+        for (const failed of failedEnvironments) settle(failed);
         if (failedEnvironments.length === 0) return;
         onFailed?.();
         toastManager.add({
@@ -159,7 +161,7 @@ function useRunScopedPlan() {
         });
       })
       .catch(() => {
-        for (const write of pending) settle(write, false);
+        for (const write of pending) settle(write);
       });
   };
   return (
