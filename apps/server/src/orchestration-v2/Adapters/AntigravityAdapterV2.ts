@@ -28,6 +28,7 @@ import {
   type AntigravityAcpRuntimeInput,
 } from "../../provider/acp/AntigravityAcpSupport.ts";
 import {
+  ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
 } from "../../provider/acp/AntigravityChildWork.ts";
@@ -113,8 +114,8 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
       antigravitySubagentOutput(toolCall) ??
       toolCall.detail ??
       toolCall.title ??
-      "Antigravity subagent batch",
-    title: launch?.title ?? "Antigravity subagent batch",
+      ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
+    title: launch?.title ?? ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
     model: null,
     status,
     childSessionId: null,

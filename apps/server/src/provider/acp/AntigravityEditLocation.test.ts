@@ -35,17 +35,24 @@ describe("antigravityEditPatch", () => {
           },
         ],
       },
+      // Like the runtime, a present PascalCase value wins, and a 0 line means unspecified.
+      { ...replace, target_content: "const other = 15;", StartLine: 5, EndLine: 0 },
     ]) {
       expect(antigravityEditPatch({ path, rawInput, readPreEditFile })).toBe(expected);
     }
+    for (const rawInput of [replace, { ReplacementChunks: [replace] }]) {
+      expect(
+        antigravityEditPatch({ path, rawInput, locations: [{ path, line: 5 }], readPreEditFile }),
+      ).toBe(expected);
+    }
+    // A hunk replaces whole lines, so a match inside a line is not a placement.
     expect(
       antigravityEditPatch({
         path,
-        rawInput: replace,
-        locations: [{ path, line: 5 }],
+        rawInput: { TargetContent: "10", ReplacementContent: "100" },
         readPreEditFile,
       }),
-    ).toBe(expected);
+    ).toMatch(/ snippet, line unknown$/m);
     // The range start is not the target's line: without the file, or outside the range, it stays unplaced.
     const snippet = `${header}@@ -1,1 +1,1 @@ snippet, line unknown\n-const target = 10;\n+const target = 100;\n`;
     expect(

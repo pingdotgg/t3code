@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import {
+  ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
   readAntigravityChildWork,
@@ -148,8 +149,20 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       const opaque = "35bea692fa95447fbdae6333fec5515f";
       expect(yield* read(profile, opaque, launch)).toHaveLength(1);
       // An earlier auto-approved batch stored no launch text, but its planner step claims the record.
-      const auto = { nativeTaskId: `${ROOT}:1`, title: "Antigravity subagent batch", prompt: "" };
+      const auto = {
+        nativeTaskId: `${ROOT}:1`,
+        title: ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
+        prompt: "",
+      };
       expect(yield* read(profile, opaque, launch, [auto])).toEqual([]);
+      // A sibling that cannot be ruled out refuses the match: its planner step is unreadable,
+      // or it is an older permission batch that stored no launch text.
+      for (const sibling of [
+        { ...auto, nativeTaskId: `${ROOT}:99` },
+        { nativeTaskId: "0ld", title: ANTIGRAVITY_SUBAGENT_BATCH_TITLE, prompt: "Running" },
+      ]) {
+        expect(yield* read(profile, opaque, launch, [sibling])).toEqual([]);
+      }
     }),
   );
 

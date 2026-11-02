@@ -21,7 +21,10 @@ export function isAntigravitySnippetPatch(patch: string): boolean {
   return /^@@ .* @@.*$/m.exec(patch)?.[0].endsWith(SNIPPET_LABEL) === true;
 }
 
-const Line = Schema.optional(PositiveInt);
+// The runtime reads a missing, 0 or invalid line as unspecified.
+const Line = Schema.optional(Schema.Unknown);
+const decodeLine = Schema.decodeUnknownOption(PositiveInt);
+const lineOf = (value: unknown) => Option.getOrUndefined(decodeLine(value));
 const ReplacementChunk = Schema.Struct({
   TargetContent: Schema.String,
   ReplacementContent: Schema.String,
@@ -44,14 +47,19 @@ const PASCAL_KEYS: Readonly<Record<string, string>> = {
   start_line: "StartLine",
   end_line: "EndLine",
 };
-const pascalKeys = (value: unknown): unknown =>
-  Array.isArray(value)
-    ? value.map(pascalKeys)
-    : typeof value === "object" && value !== null
-      ? Object.fromEntries(
-          Object.entries(value).map(([key, entry]) => [PASCAL_KEYS[key] ?? key, pascalKeys(entry)]),
-        )
-      : value;
+const pascalKeys = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(pascalKeys);
+  if (typeof value !== "object" || value === null) return value;
+  const fields: Record<string, unknown> = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(fields)) {
+    const pascal = PASCAL_KEYS[key];
+    // Like the runtime, a present PascalCase value wins over its snake_case alias.
+    if (pascal === undefined) result[key] ??= pascalKeys(entry);
+    else if (fields[pascal] == null) result[pascal] = pascalKeys(entry);
+  }
+  return result;
+};
 
 /** Reads a small file for snippet matching; edits to large or unreadable files stay unlocated. */
 export function readAntigravityPreEditFile(path: string): string | undefined {
@@ -65,7 +73,7 @@ export function readAntigravityPreEditFile(path: string): string | undefined {
   }
 }
 
-/** The line of the snippet's only match that starts within `from`..`to`. */
+/** The line of the snippet's only match starting within `from`..`to`, if it spans whole lines. */
 function uniqueStartLine(
   text: string | undefined,
   snippet: string,
@@ -73,24 +81,26 @@ function uniqueStartLine(
   to = Number.POSITIVE_INFINITY,
 ): number | undefined {
   if (text === undefined || snippet === "") return undefined;
-  let found: number | undefined;
+  let found: { readonly line: number; readonly whole: boolean } | undefined;
   let line = 1;
-  let counted = 0;
+  let lineStart = 0;
+  let nextBreak = text.indexOf("\n");
   for (let index = text.indexOf(snippet); index !== -1; index = text.indexOf(snippet, index + 1)) {
-    for (
-      let i = text.indexOf("\n", counted);
-      i !== -1 && i < index;
-      i = text.indexOf("\n", i + 1)
-    ) {
+    while (nextBreak !== -1 && nextBreak < index) {
       line++;
-      counted = i + 1;
+      lineStart = nextBreak + 1;
+      nextBreak = text.indexOf("\n", lineStart);
     }
     if (line > to) break;
     if (line < from) continue;
     if (found !== undefined) return undefined;
-    found = line;
+    const end = index + snippet.length;
+    // A hunk replaces whole lines.
+    const whole =
+      index === lineStart && (end === text.length || text[end] === "\n" || snippet.endsWith("\n"));
+    found = { line, whole };
   }
-  return found;
+  return found?.whole === true ? found.line : undefined;
 }
 
 function snippetHunks(
@@ -126,11 +136,13 @@ export function antigravityEditPatch(input: {
 }): string | typeof ANTIGRAVITY_EDIT_DIFF_OMITTED | undefined {
   const edit = Option.getOrUndefined(decodeEditInput(pascalKeys(input.rawInput)));
   if (edit === undefined) return undefined;
-  const announced = Option.getOrUndefined(decodeLocations(input.locations))?.[0]?.line;
-  const chunks =
-    "ReplacementChunks" in edit
-      ? edit.ReplacementChunks
-      : [{ ...edit, StartLine: edit.StartLine ?? announced }];
+  const announced = lineOf(Option.getOrUndefined(decodeLocations(input.locations))?.[0]?.line);
+  const listed = "ReplacementChunks" in edit ? edit.ReplacementChunks : [edit];
+  const chunks = listed.map((chunk) => ({
+    ...chunk,
+    StartLine: lineOf(chunk.StartLine) ?? (listed.length === 1 ? announced : undefined),
+    EndLine: lineOf(chunk.EndLine),
+  }));
   let file: string | undefined;
   let fileRead = false;
   const textSize = chunks.reduce(

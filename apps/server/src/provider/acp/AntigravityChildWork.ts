@@ -36,6 +36,9 @@ const BATCH_TRANSCRIPT_BYTES = 512 * 1024;
 const STEP_TEXT_CAP = 4_000;
 const TOOL_INPUT_CAP = 1_000;
 
+/** T3's title for a batch whose launch text it never saw. */
+export const ANTIGRAVITY_SUBAGENT_BATCH_TITLE = "Antigravity subagent batch";
+
 interface AntigravityChildLaunch {
   readonly role: string;
   readonly prompt: string;
@@ -180,7 +183,7 @@ const plannerCallIdsAt = (database: NodeSqlite.DatabaseSync, plannerIdx: number)
       )
       .get(plannerIdx, MAX_STEP_BYTES),
   );
-  return (planner === undefined ? undefined : plannerInvokeCallIds(planner)) ?? [];
+  return planner === undefined ? undefined : plannerInvokeCallIds(planner);
 };
 
 /**
@@ -204,7 +207,7 @@ function findInvokeRecord(
   const plannerIdx = plannerIdxOf(input.nativeTaskId);
   if (plannerIdx !== undefined) {
     if (plannerIdx < 0) return undefined;
-    const callIds = plannerCallIdsAt(database, plannerIdx);
+    const callIds = plannerCallIdsAt(database, plannerIdx) ?? [];
     const [callId] = callIds;
     if (callIds.length !== 1) return undefined;
     // The record follows the planner step that issued the call.
@@ -245,12 +248,19 @@ function findInvokeRecord(
   ) {
     return undefined;
   }
-  const claimed = new Set(
-    input.siblings.flatMap((sibling) => {
-      const idx = plannerIdxOf(sibling.nativeTaskId);
-      return idx === undefined || idx < 0 ? [] : plannerCallIdsAt(database, idx);
-    }),
-  );
+  const claimed = new Set<string>();
+  for (const sibling of input.siblings) {
+    const idx = plannerIdxOf(sibling.nativeTaskId);
+    // A sibling that saved no launch text, or whose planner step is unreadable, cannot be ruled out.
+    if (idx === undefined) {
+      if (sibling.title === ANTIGRAVITY_SUBAGENT_BATCH_TITLE) return undefined;
+      continue;
+    }
+    if (idx < 0) continue;
+    const callIds = plannerCallIdsAt(database, idx);
+    if (callIds === undefined || callIds.length === 0) return undefined;
+    for (const callId of callIds) claimed.add(callId);
+  }
   const matches: Array<InvokeRecord> = [];
   for (const row of database
     .prepare("SELECT step_payload FROM steps WHERE step_type = ? ORDER BY idx")
