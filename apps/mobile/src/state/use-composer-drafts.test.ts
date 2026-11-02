@@ -776,11 +776,16 @@ describe("mobile composer drafts", () => {
       sizeBytes: 4,
       fileUri: "file:///clip.mp4",
     };
+    const videoCleanup = Promise.withResolvers<void>();
+    composerAttachmentCleanupMocks.remove.mockImplementationOnce(async () => {
+      videoCleanup.resolve();
+    });
     expect(appendComposerDraftAttachments(key, [image, video], { appendReference: true })).toBe(1);
     expect(getComposerDraftSnapshot(key)).toEqual({ ...before, attachments: [image] });
+    await videoCleanup.promise;
   });
 
-  it("fills images only into slots left after file chips replace the selection", () => {
+  it("fills images only into slots left after file chips replace the selection", async () => {
     const key = "environment-1:replace-at-limit";
     const file = (id: string) => ({
       id,
@@ -801,6 +806,12 @@ describe("mobile composer drafts", () => {
     appendComposerDraftAttachments(key, [file("old")], { appendReference: true });
     const { text } = getComposerDraftSnapshot(key);
     const insertion = captureComposerDraftInsertion(key, { start: 0, end: text.length });
+    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    onTestFinished(() => outboxLoad.mockRestore());
+    const cleanup = Promise.withResolvers<void>();
+    composerAttachmentCleanupMocks.remove.mockImplementationOnce(async () => {
+      cleanup.resolve();
+    });
     expect(
       appendComposerDraftAttachments(key, [image, file("new")], {
         appendReference: true,
@@ -809,6 +820,7 @@ describe("mobile composer drafts", () => {
       }),
     ).toBe(1);
     expect(getComposerDraftSnapshot(key).attachments).toEqual([file("new")]);
+    await cleanup.promise;
   });
   it.each(["environment-1:thread", "environment-1:new-task:draft"])(
     "preserves the captured paste selection across async writes in %s",
