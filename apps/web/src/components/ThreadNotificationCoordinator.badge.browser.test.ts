@@ -288,8 +288,7 @@ it("uses native Windows completion notifications without a persistent browser ba
     onNotificationBadgeClear: () => () => undefined,
   });
   app.start();
-  using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
-  vi.useFakeTimers();
+  using _timers = (await import("../../test/render")).fakeTimers();
   state.shells.set(
     "one",
     shell({
