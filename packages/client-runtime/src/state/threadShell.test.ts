@@ -51,7 +51,7 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
     threads: createEnvironmentThreadShellAtoms({
       catalogValueAtom,
       snapshotAtom,
-      threadTagFilterAtom: () => Atom.make(null),
+      hiddenThreadTagsAtom: () => Atom.make(null),
     }),
   };
 }

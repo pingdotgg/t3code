@@ -1,14 +1,11 @@
-import {
-  EnvironmentId,
-  type OrchestrationV2ArchivedShellSnapshot,
-  type ThreadTagFilter,
-} from "@t3tools/contracts";
+import { EnvironmentId, type OrchestrationV2ArchivedShellSnapshot } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
 import { AsyncResult, Atom } from "effect/reactivity";
 
-import { filterThreadsByTagFilter } from "./threadTagFilter.ts";
+import { threadKey } from "./entities.ts";
+import { hiddenThreadKeys } from "./threadTagFilter.ts";
 
 export interface ArchivedSnapshotEntry {
   readonly environmentId: EnvironmentId;
@@ -46,7 +43,9 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
   readonly getSnapshotAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<AsyncResult.AsyncResult<OrchestrationV2ArchivedShellSnapshot, E>>;
-  readonly threadTagFilterAtom: (environmentId: EnvironmentId) => Atom.Atom<ThreadTagFilter | null>;
+  readonly hiddenThreadTagsAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<ReadonlyArray<string> | null>;
   readonly labelPrefix: string;
 }) {
   return Atom.family((environmentKey: string) =>
@@ -61,13 +60,24 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
 
         const snapshot = AsyncResult.getOrElse(result, () => null);
         if (snapshot !== null) {
-          const threads = filterThreadsByTagFilter(
-            snapshot.threads,
-            get(options.threadTagFilterAtom(environmentId)),
-          );
+          const hidden = hiddenThreadKeys([
+            {
+              environmentId,
+              threads: snapshot.threads,
+              hiddenTags: get(options.hiddenThreadTagsAtom(environmentId)),
+            },
+          ]);
           snapshots.push({
             environmentId,
-            snapshot: threads === snapshot.threads ? snapshot : { ...snapshot, threads },
+            snapshot:
+              hidden.size === 0
+                ? snapshot
+                : {
+                    ...snapshot,
+                    threads: snapshot.threads.filter(
+                      (thread) => !hidden.has(threadKey({ environmentId, threadId: thread.id })),
+                    ),
+                  },
           });
         }
 

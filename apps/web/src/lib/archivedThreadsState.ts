@@ -19,7 +19,7 @@ function archivedSnapshotAtom(environmentId: EnvironmentId) {
 
 const archivedSnapshotsAtom = createArchivedThreadSnapshotsAtomFamily({
   getSnapshotAtom: archivedSnapshotAtom,
-  threadTagFilterAtom: serverEnvironment.threadTagFilterAtom,
+  hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
   labelPrefix: "web:archived-thread-snapshots",
 });
 

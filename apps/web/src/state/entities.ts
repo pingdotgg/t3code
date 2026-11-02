@@ -107,6 +107,13 @@ export function useThreadShells(enabled = true): ReadonlyArray<EnvironmentThread
   );
 }
 
+/** Thread shells minus those the tag filter hides, for lists that show threads to the user. */
+export function useVisibleThreadShells(enabled = true): ReadonlyArray<EnvironmentThreadShell> {
+  return useAtomValue(
+    enabled ? environmentThreadShells.visibleThreadShellsAtom : EMPTY_THREAD_SHELLS_ATOM,
+  );
+}
+
 export function useAllEnvironmentShellsBootstrapped(): boolean {
   return useAtomValue(allEnvironmentShellsBootstrappedAtom);
 }

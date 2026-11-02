@@ -134,7 +134,12 @@ import {
   useEnvironments,
   usePrimaryEnvironmentId,
 } from "../state/environments";
-import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
+import {
+  useProjects,
+  useServerConfigs,
+  useVisibleThreadShells,
+  waitForProject,
+} from "../state/entities";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -423,7 +428,10 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
-  const threadTagFilter = usePrimarySettings((settings) => settings.threadTagFilter);
+  const hasHiddenThreadTags = usePrimarySettings(
+    (settings) => settings.hiddenThreadTags.length > 0,
+  );
+  const hideTaggedThreads = usePrimarySettings((settings) => settings.hideTaggedThreads);
   const updatePrimarySettings = useUpdatePrimarySettings();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
@@ -487,7 +495,7 @@ function OpenCommandPaletteDialog(props: {
     if (activeThreadReferenceCopyTarget === null) return;
     await copyThreadReference(activeThreadReferenceCopyTarget);
   };
-  const threads = useThreadShells();
+  const threads = useVisibleThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providersByEnvironment = useEnvironmentProviders();
   const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
@@ -1589,21 +1597,19 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (threadTagFilter.hide.length > 0 || threadTagFilter.only.length > 0) {
+  if (hasHiddenThreadTags) {
     actionItems.push({
       kind: "action",
       value: "action:thread-tag-filter",
       searchTerms: ["tags", "filter", "hide", "show", "threads", "recording"],
-      title: threadTagFilter.enabled ? "Turn off tag filter" : "Turn on tag filter",
-      icon: threadTagFilter.enabled ? (
+      title: hideTaggedThreads ? "Show tagged threads" : "Hide tagged threads",
+      icon: hideTaggedThreads ? (
         <EyeIcon className={ITEM_ICON_CLASS} />
       ) : (
         <EyeOffIcon className={ITEM_ICON_CLASS} />
       ),
       run: async () => {
-        updatePrimarySettings({
-          threadTagFilter: { ...threadTagFilter, enabled: !threadTagFilter.enabled },
-        });
+        updatePrimarySettings({ hideTaggedThreads: !hideTaggedThreads });
       },
     });
   }

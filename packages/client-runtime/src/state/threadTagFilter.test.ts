@@ -1,12 +1,17 @@
-import { DEFAULT_THREAD_TAG_FILTER, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { filterThreadsByTagFilter } from "./threadTagFilter.ts";
+import { threadKey } from "./entities.ts";
+import { hiddenThreadKeys, NO_HIDDEN_THREADS } from "./threadTagFilter.ts";
+
+const local = EnvironmentId.make("local");
+const linked = EnvironmentId.make("linked");
 
 const thread = (
   id: string,
   tags: Array<string>,
   parent?: { readonly id: string; readonly relationship: "fork" | "subagent" },
+  delegatedFrom?: { readonly environmentId: EnvironmentId; readonly id: string },
 ) => ({
   id: ThreadId.make(id),
   tags,
@@ -15,42 +20,56 @@ const thread = (
     relationshipToParent: parent?.relationship ?? null,
     rootThreadId: ThreadId.make(parent?.id ?? id),
   },
+  ...(delegatedFrom === undefined
+    ? {}
+    : {
+        delegatedFrom: {
+          environmentId: delegatedFrom.environmentId,
+          threadId: ThreadId.make(delegatedFrom.id),
+          title: "parent",
+        },
+      }),
 });
 
-const threads = [
+const localThreads = [
   thread("private", ["private"]),
   thread("private-subagent", [], { id: "private", relationship: "subagent" }),
   thread("private-fork", [], { id: "private", relationship: "fork" }),
-  thread("demo", ["demo"]),
-  thread("demo-subagent", [], { id: "demo", relationship: "subagent" }),
   thread("plain", []),
 ];
-const visibleIds = (filter: Partial<typeof DEFAULT_THREAD_TAG_FILTER>) =>
-  filterThreadsByTagFilter(threads, { ...DEFAULT_THREAD_TAG_FILTER, ...filter }).map(
-    (entry) => entry.id,
-  );
+const linkedThreads = [
+  thread("delegated-from-private", [], undefined, { environmentId: local, id: "private" }),
+  thread("linked-client", ["client"]),
+];
+const hiddenIds = (localTags: Array<string> | null, linkedTags: Array<string> | null) =>
+  [
+    ...hiddenThreadKeys([
+      { environmentId: local, threads: localThreads, hiddenTags: localTags },
+      { environmentId: linked, threads: linkedThreads, hiddenTags: linkedTags },
+    ]),
+  ].toSorted();
+const key = (environmentId: EnvironmentId, id: string) =>
+  threadKey({ environmentId, threadId: ThreadId.make(id) });
 
-describe("filterThreadsByTagFilter", () => {
-  it("keeps every thread while the filter is off", () => {
+describe("hiddenThreadKeys", () => {
+  it("hides nothing while every filter is off", () => {
+    expect(hiddenIds(null, null)).toEqual([]);
     expect(
-      filterThreadsByTagFilter(threads, { ...DEFAULT_THREAD_TAG_FILTER, hide: ["private"] }),
-    ).toBe(threads);
+      hiddenThreadKeys([{ environmentId: local, threads: localThreads, hiddenTags: null }]),
+    ).toBe(NO_HIDDEN_THREADS);
   });
 
-  it("hides tagged threads and the subagents under them, but not their forks", () => {
-    expect(visibleIds({ enabled: true, hide: ["private"] })).toEqual([
-      "private-fork",
-      "demo",
-      "demo-subagent",
-      "plain",
-    ]);
+  it("hides a tagged thread with its subagents and linked tasks, but not its forks", () => {
+    expect(hiddenIds(["private"], null)).toEqual(
+      [
+        key(local, "private"),
+        key(local, "private-subagent"),
+        key(linked, "delegated-from-private"),
+      ].toSorted(),
+    );
   });
 
-  it("keeps only threads with an `only` tag, plus their subagents", () => {
-    expect(visibleIds({ enabled: true, only: ["demo"] })).toEqual(["demo", "demo-subagent"]);
-  });
-
-  it("lets `hide` win over `only`", () => {
-    expect(visibleIds({ enabled: true, hide: ["demo"], only: ["demo"] })).toEqual([]);
+  it("applies each environment's own tags", () => {
+    expect(hiddenIds(null, ["client", "private"])).toEqual([key(linked, "linked-client")]);
   });
 });

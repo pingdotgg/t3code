@@ -1078,10 +1078,13 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),
     ),
   );
-  const threadTagFilterAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get) => get(settingsValueAtom(environmentId))?.threadTagFilter ?? null).pipe(
-      Atom.withLabel(`environment-data:server:thread-tag-filter:${environmentId}`),
-    ),
+  const hiddenThreadTagsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const settings = get(settingsValueAtom(environmentId));
+      return settings?.hideTaggedThreads === true && settings.hiddenThreadTags.length > 0
+        ? settings.hiddenThreadTags
+        : null;
+    }).pipe(Atom.withLabel(`environment-data:server:hidden-thread-tags:${environmentId}`)),
   );
   const usagePricesAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
@@ -1206,7 +1209,7 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     updateStateAtom,
     settingsValueAtom,
-    threadTagFilterAtom,
+    hiddenThreadTagsAtom,
     usageModelFilterAtom,
     providersValueAtom,
     providerAuthState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {

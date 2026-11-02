@@ -5,12 +5,8 @@ import {
 } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
-import {
-  isThreadHiddenByTagFilter,
-  type EnvironmentId,
-  type OrchestrationV2ThreadShell,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
+import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import type { AtomRegistry } from "effect/reactivity";
@@ -24,7 +20,6 @@ import {
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
-import { serverEnvironment } from "../state/server";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
 import {
@@ -65,13 +60,30 @@ export function startThreadNotifications(
   registry: AtomRegistry.AtomRegistry,
   router: AnyRouter,
 ): () => void {
-  const pending = new Map<string, { environmentId: EnvironmentId; notification: Notification }>();
+  const pending = new Map<
+    string,
+    { environmentId: EnvironmentId; threadId: ThreadId; notification: Notification }
+  >();
   const watched = new Map<EnvironmentId, WatchedEnvironment>();
 
-  const trackNotification = (environmentId: EnvironmentId, notification: Notification) => {
+  const trackNotification = (
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    notification: Notification,
+  ) => {
     pending.get(notification.tag)?.notification.close();
-    pending.set(notification.tag, { environmentId, notification });
+    pending.set(notification.tag, { environmentId, threadId, notification });
     setNotificationBadge(pending.size);
+  };
+  // A notification shown before the tag filter turned on must not stay on screen.
+  const closeHiddenPending = (hidden: ReadonlySet<string>) => {
+    const count = pending.size;
+    for (const [tag, entry] of pending) {
+      if (!hidden.has(threadKey(entry))) continue;
+      entry.notification.close();
+      pending.delete(tag);
+    }
+    if (count !== pending.size) setNotificationBadge(pending.size);
   };
   const clearPending = () => {
     for (const { notification } of pending.values()) notification.close();
@@ -87,10 +99,9 @@ export function startThreadNotifications(
   ) => {
     const { thread, status } = state;
     if (
-      isThreadHiddenByTagFilter(
-        state.raw.tags,
-        registry.get(serverEnvironment.threadTagFilterAtom(environmentId)),
-      )
+      registry
+        .get(environmentThreadShells.hiddenThreadKeysAtom)
+        .has(threadKey({ environmentId, threadId: thread.id }))
     )
       return;
     const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
@@ -168,7 +179,7 @@ export function startThreadNotifications(
         // Windows drops clicks after a toast moves into Notification Center.
         requireInteraction: kind === "completion" && isWindowsPlatform(navigator.platform),
       });
-      trackNotification(environmentId, notification);
+      trackNotification(environmentId, thread.id, notification);
       notification.addEventListener("click", () => {
         notification.close();
         window.focus();
@@ -369,11 +380,16 @@ export function startThreadNotifications(
       syncEnvironments();
     },
   );
+  const unsubscribeHidden = registry.subscribe(
+    environmentThreadShells.hiddenThreadKeysAtom,
+    closeHiddenPending,
+  );
   onSettings();
 
   return () => {
     unsubscribeSettings();
     unsubscribeEnvironmentIds();
+    unsubscribeHidden();
     for (const entry of watched.values()) entry.unsubscribe();
     watched.clear();
     stopModeListeners();

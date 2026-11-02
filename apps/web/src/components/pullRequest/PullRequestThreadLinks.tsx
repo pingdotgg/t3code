@@ -9,7 +9,12 @@ import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
-import { useProjects, useServerConfigs, useThreadShell, useThreadShells } from "~/state/entities";
+import {
+  useProjects,
+  useServerConfigs,
+  useThreadShell,
+  useVisibleThreadShells,
+} from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useThreadSearch } from "~/state/queries";
@@ -188,7 +193,7 @@ function ThreadPicker({
   pending: boolean;
   onSelect: (threadId: ThreadId) => void;
 }) {
-  const threads = useThreadShells();
+  const threads = useVisibleThreadShells();
   const linking = usePullRequestLinking(environmentId);
   const projects = useProjects();
   const [query, setQuery] = useState("");
