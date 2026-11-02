@@ -1,5 +1,5 @@
 import { ChevronRightIcon } from "lucide-react";
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useLayoutEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 /**
@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 export interface PanelTabSlots {
   readonly breadcrumb: HTMLElement | null;
   readonly actions: HTMLElement | null;
+  readonly registerActions: () => () => void;
 }
 
 export const PanelTabSlotsContext = createContext<PanelTabSlots | null>(null);
@@ -22,7 +23,25 @@ export function useInPanelTabBar(): boolean {
   return useContext(PanelTabSlotsContext) !== null;
 }
 
-function PanelTabPortal({ slot, children }: { slot: keyof PanelTabSlots; children: ReactNode }) {
+export function usePanelTabActionsHost(): {
+  hasActions: boolean;
+  registerActions: () => () => void;
+} {
+  const [count, setCount] = useState(0);
+  const registerActions = () => {
+    setCount((current) => current + 1);
+    return () => setCount((current) => current - 1);
+  };
+  return { hasActions: count > 0, registerActions };
+}
+
+function PanelTabPortal({
+  slot,
+  children,
+}: {
+  slot: "breadcrumb" | "actions";
+  children: ReactNode;
+}) {
   const slots = useContext(PanelTabSlotsContext);
   if (!slots) return children;
   const element = slots[slot];
@@ -49,5 +68,8 @@ export function PanelTabBreadcrumb({ children }: { children: ReactNode }) {
  * bar they render in place.
  */
 export function PanelTabActions({ children }: { children: ReactNode }) {
+  const registerActions = useContext(PanelTabSlotsContext)?.registerActions;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Tell the tab bar before paint, so its actions notch never draws empty.
+  useLayoutEffect(() => registerActions?.(), [registerActions]);
   return <PanelTabPortal slot="actions">{children}</PanelTabPortal>;
 }
