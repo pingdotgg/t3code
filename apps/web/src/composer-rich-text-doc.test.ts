@@ -635,6 +635,7 @@ describe("composer rich text document model", () => {
   it.each([
     ["text\n---\nmore", "text\n---\nm".length, "text\n\n---\nm".length],
     ["before\n> quoted\nafter", "before\n> quoted\na".length, "before\n> quoted\n\na".length],
+    ["__x__\n---\nmore", "__x__\n---\nm".length, "**x**\n\n---\nm".length],
     ["a\n---\n", "a".length, "a".length],
   ])("restores a caret in the glued draft %j on the same character", (value, caret, settled) => {
     const map = roundTrip(value);
