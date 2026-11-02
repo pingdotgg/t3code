@@ -3169,6 +3169,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const cohortPlanIds = cohortJson("planId");
         const cohortCheckpointIds = cohortJson("checkpointId");
         const cohortHandoffIds = cohortJson("contextHandoffId");
+        // Hide transfers out to deleted threads at read time so undoing the delete restores them.
+        const threadContextTransfers = sql`
+          (transfer.target_thread_id = ${threadId}
+            OR (transfer.source_thread_id = ${threadId} AND EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_threads AS target
+              WHERE target.thread_id = transfer.target_thread_id AND target.deleted_at IS NULL
+            )))
+        `;
         // A newer completion must keep an older active list from resurfacing after paging.
         const [latestTodoList] =
           window === undefined ||
@@ -3554,13 +3562,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             : window === undefined
               ? sql<PayloadRow>`
             SELECT payload_json
-            FROM orchestration_v2_projection_context_transfers
-            WHERE source_thread_id = ${threadId} OR target_thread_id = ${threadId}
+            FROM orchestration_v2_projection_context_transfers AS transfer
+            WHERE ${threadContextTransfers}
             ORDER BY rowid ASC
           `
               : sql<PayloadRow>`
-            SELECT payload_json FROM orchestration_v2_projection_context_transfers
-            WHERE (source_thread_id = ${threadId} OR target_thread_id = ${threadId})
+            SELECT payload_json FROM orchestration_v2_projection_context_transfers AS transfer
+            WHERE ${threadContextTransfers}
               AND (status IN ('pending','running','waiting')
                 OR target_run_id IN (SELECT value FROM json_each(${cohortRunIds}))
                 OR json_extract(payload_json, '$.contextHandoffId') IN
