@@ -735,16 +735,17 @@ internal class SelectionAwareEditText(
 
   private fun pasteContextOrImages(): Boolean {
     val payload = T3ComposerClipboard.read(context)
-    if (payload["html"]?.contains("data-t3-context-fragment=") == true) {
-      pasteContextListener?.invoke(payload)
-      return true
+    return when {
+      payload["html"]?.contains("data-t3-context-fragment=") == true -> pasteContext(payload)
+      pasteImagesOrInterceptedText() -> true
+      T3ComposerClipboard.hasThreadLink(payload["text"].orEmpty()) -> pasteContext(payload)
+      else -> false
     }
-    if (pasteImagesOrInterceptedText()) return true
-    if (T3ComposerClipboard.hasThreadLink(payload["text"].orEmpty())) {
-      pasteContextListener?.invoke(payload)
-      return true
-    }
-    return false
+  }
+
+  private fun pasteContext(payload: Map<String, String>): Boolean {
+    pasteContextListener?.invoke(payload)
+    return true
   }
 
   private fun pasteImagesOrInterceptedText(): Boolean {
