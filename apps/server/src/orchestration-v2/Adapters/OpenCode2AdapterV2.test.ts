@@ -563,6 +563,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         status: 429,
       },
     },
+    {
+      name: "a Claude limit without a reset timestamp",
+      failureClass: "usage_limit",
+      error: {
+        type: "provider.unknown",
+        message: "You've hit your session limit · resets 5:20pm (Europe/Berlin)",
+      },
+    },
+    {
+      name: "an unrelated provider.unknown failure",
+      failureClass: "provider_error",
+      error: {
+        type: "provider.unknown",
+        message: "Request failed. Resets at 2026-11-02T20:00:00Z.",
+      },
+    },
   ] as const)("classifies $name as $failureClass", ({ error, failureClass }) =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
