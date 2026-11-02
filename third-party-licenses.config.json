@@ -228,11 +228,12 @@
       ]
     },
     {
-      "name": "Linux phone passkey helper dependencies (libwebauthn and Rust crates)",
+      "name": "libwebauthn (phone passkeys)",
+      "version": "0.11.0",
       "bundles": ["desktop"],
-      "license": "LGPL-2.1-or-later AND MIT AND Apache-2.0 AND BSD-3-Clause AND BSD-2-Clause AND ISC AND Unicode-3.0",
+      "license": "LGPL-2.1-or-later",
       "sourceUrl": "https://github.com/linux-credentials/libwebauthn",
-      "noticeFile": "native/phone-passkeys/THIRD_PARTY_NOTICES.txt"
+      "noticeFiles": ["native/phone-passkeys/LICENSE.libwebauthn"]
     }
   ],
   "packageOverrides": [
