@@ -23,6 +23,7 @@ import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ComposerControlSize } from "./ComposerControl";
 import { ComposerPermissionsSection, type RuntimeModeOption } from "./ComposerFooterControls";
+import { titleWhenClipped } from "./clippedTitle";
 import { composerFloatingLayerProps, focusCheckedPermission } from "./composerEventScope";
 import { EffortGlyph, FastBolt, resolveEffortGlyph } from "./EffortGlyph";
 import { DockedPickerContext } from "./ProviderModelPicker";
@@ -506,7 +507,10 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
           <span className="text-muted-foreground">
             {controls?.effort?.descriptor.label ?? (controls?.others.length ? "Options" : "Effort")}
           </span>
-          <span className="ms-auto min-w-0 truncate text-muted-foreground text-xs">
+          <span
+            className="ms-auto min-w-0 truncate text-muted-foreground text-xs"
+            onPointerEnter={titleWhenClipped(picker.modelLabel)}
+          >
             {picker.modelLabel}
           </span>
         </div>
