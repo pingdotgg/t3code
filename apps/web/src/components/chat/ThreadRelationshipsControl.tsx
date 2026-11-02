@@ -17,6 +17,7 @@ import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
   isParentThreadRelationship,
+  threadFamilyEvidenceSequence,
   threadRelationshipRowStatus,
   orderWebThreadLineageRows,
   resolveMergeBackTargetThreadId,
@@ -410,13 +411,19 @@ export function ThreadRelationshipsPanel(props: {
       : null,
   );
   const removedAt = useAtomValue(threadFamilies.removedAtAtom(props.environmentId));
+  const settledFamily = family.isSuccess && !family.isPending ? family.data : null;
   // A thread archived since the archive read left the shell but is not in that read yet.
   const staleArchiveSequence =
     archivedSnapshot !== undefined &&
+    settledFamily !== null &&
     !archived.isLoading &&
     projection?.contextTransfers.some((transfer) =>
       [transfer.sourceThreadId, transfer.targetThreadId].some(
-        (id) => (removedAt.get(id) ?? -1) > archivedSnapshot.snapshotSequence,
+        (id) =>
+          !shownThreadIds.has(id) &&
+          !settledFamily.threads.some((thread) => thread.id === id) &&
+          threadFamilyEvidenceSequence({ ...settledFamily, removedAt }, id) >
+            archivedSnapshot.snapshotSequence,
       ),
     )
       ? archivedSnapshot.snapshotSequence
@@ -507,8 +514,9 @@ export function ThreadRelationshipsPanel(props: {
     projection,
     family: {
       threads: family.data?.threads ?? [],
+      snapshotSequence: family.data?.snapshotSequence ?? 0,
       archiveSequence:
-        family.isSuccess && !family.isPending && archived.error === null
+        settledFamily !== null && archived.error === null
           ? (archivedSnapshot?.snapshotSequence ?? null)
           : null,
       removedAt,

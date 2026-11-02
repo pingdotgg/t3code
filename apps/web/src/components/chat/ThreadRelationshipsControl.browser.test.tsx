@@ -474,9 +474,10 @@ it.each([
 });
 
 it.each([
-  ["its archive read failed", false],
-  ["its archive read predates the fork's removal", true],
-])("keeps a fork missing from a settled family read when %s", async (_, staleArchive) => {
+  ["its archive read failed", "failed"],
+  ["its archive read predates the fork's removal", "removal"],
+  ["its archive read predates the family read", "family"],
+] as const)("keeps a fork missing from a settled family read when %s", async (_, archive) => {
   setupSourceWithTransfers(
     [
       {
@@ -488,7 +489,13 @@ it.each([
     ],
     [],
   );
-  if (staleArchive) state.removedAt = new Map([["archived-fork", 2]]);
+  if (archive === "removal") state.removedAt = new Map([["archived-fork", 2]]);
+  else if (archive === "family")
+    state.archived = {
+      snapshots: [{ environmentId, snapshot: { snapshotSequence: 0, projects: [], threads: [] } }],
+      error: null,
+      isLoading: false,
+    };
   else
     state.archived = { snapshots: [], error: "Failed to load archived threads.", isLoading: false };
   await using screen = await render(
@@ -501,7 +508,7 @@ it.each([
   );
 
   await expect.element(screen.getByText("archived-fork")).toBeVisible();
-  expect(state.refreshArchived).toHaveBeenCalledTimes(staleArchive ? 1 : 0);
+  expect(state.refreshArchived).toHaveBeenCalledTimes(archive === "failed" ? 0 : 1);
 });
 
 it("titles an older fork the shell omitted from its family read", async () => {

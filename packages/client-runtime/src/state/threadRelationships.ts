@@ -49,6 +49,17 @@ const FORK_TRANSFER_TYPES: ReadonlySet<OrchestrationV2ContextTransferType> = new
   "merge_back",
 ]);
 
+/** The sequence an archive read must reach before a thread absent from it and the family is gone. */
+export function threadFamilyEvidenceSequence(
+  family: {
+    readonly snapshotSequence: number;
+    readonly removedAt: ReadonlyMap<ThreadId, number>;
+  },
+  threadId: ThreadId,
+): number {
+  return Math.max(family.snapshotSequence, family.removedAt.get(threadId) ?? -1);
+}
+
 function edgeKey(edge: ThreadRelationshipEdge): string {
   return `${edge.sourceThreadId}\u001f${edge.targetThreadId}\u001f${edge.kind}`;
 }
@@ -58,11 +69,13 @@ export function deriveThreadRelationshipGraph(input: {
   readonly projection: OrchestrationV2ThreadProjection | null;
   /**
    * The projection thread's family read. Its rows fill in endpoints `threads` omits. A fork in
-   * neither was deleted only if `threads` holds a successful archive read no older than the fork's
-   * removal: `archiveSequence` is that read's sequence once the family read settled, else null.
+   * neither was deleted only if `threads` holds a successful archive read no older than the family
+   * read or the fork's later removal: `archiveSequence` is that read's sequence once the family read
+   * settled, else null.
    */
   readonly family?: {
     readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
+    readonly snapshotSequence: number;
     readonly archiveSequence: number | null;
     readonly removedAt: ReadonlyMap<ThreadId, number>;
   };
@@ -134,10 +147,11 @@ export function deriveThreadRelationshipGraph(input: {
             : subagent.status),
       });
     }
-    const archiveSequence = input.family?.archiveSequence ?? null;
+    const family = input.family;
     const isGone = (threadId: ThreadId) =>
-      archiveSequence !== null &&
-      (input.family?.removedAt.get(threadId) ?? -1) <= archiveSequence &&
+      family !== undefined &&
+      family.archiveSequence !== null &&
+      threadFamilyEvidenceSequence(family, threadId) <= family.archiveSequence &&
       threadId !== ownerThreadId &&
       !threadsById.has(threadId) &&
       !familyById.has(threadId);
