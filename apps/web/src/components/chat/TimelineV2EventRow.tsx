@@ -102,7 +102,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
               : "text-muted-foreground opacity-55",
           )}
         >
-          <span className="flex shrink-0 items-center -space-x-1.5" aria-hidden>
+          <span className="flex shrink-0 items-center gap-0.5" aria-hidden>
             {agents.slice(0, 3).map(({ item, status }) => (
               <EnvironmentSubagentAvatar
                 key={item.id}
