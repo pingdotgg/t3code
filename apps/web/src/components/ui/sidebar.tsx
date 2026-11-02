@@ -492,7 +492,7 @@ function SidebarRestoreHandle({ options }: { options: SidebarResolvedResizableOp
   const { ref: handleRef, ...drag } = resize;
   return (
     <div
-      className="fixed bottom-0 left-0 top-[var(--workspace-topbar-height)] z-41 w-3 [-webkit-app-region:no-drag] [[data-slot=sidebar-wrapper]:has([data-slot=sidebar-hover-edge])_&]:hidden"
+      className="fixed left-0 top-1/2 z-41 h-16 w-3 -translate-y-1/2 [-webkit-app-region:no-drag]"
       data-slot="sidebar-restore-edge"
       onPointerEnter={(event) => {
         if (event.pointerType === "mouse") setNear(true);
@@ -502,7 +502,7 @@ function SidebarRestoreHandle({ options }: { options: SidebarResolvedResizableOp
       <button
         aria-label="Show sidebar"
         className={cn(
-          "absolute left-0 top-1/2 h-12 w-2 -translate-y-1/2 cursor-e-resize rounded-r-md bg-sidebar-border",
+          "absolute inset-y-0 left-0 w-2 cursor-e-resize rounded-r-md bg-sidebar-border",
           !near && "pointer-events-none opacity-0",
         )}
         data-slot="sidebar-restore-handle"
