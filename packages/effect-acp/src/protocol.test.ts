@@ -52,6 +52,7 @@ const decodeSessionCancelNotification = Schema.decodeEffect(
   Schema.fromJsonString(SessionCancelNotification),
 );
 const decodeExtRequest = Schema.decodeEffect(Schema.fromJsonString(ExtRequest));
+const decodeExtResponse = Schema.decodeEffect(Schema.fromJsonString(ExtResponse));
 const decodeRequestPermissionResponse = Schema.decodeEffect(
   Schema.fromJsonString(RequestPermissionResponse),
 );
@@ -269,6 +270,27 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       );
       assert.instanceOf(error, AcpError.AcpTransportError);
       assert.equal((error as AcpError.AcpTransportError).operation, "read-input-stream");
+
+      const extension = yield* makeInMemoryStdio();
+      const extensionTermination = yield* Deferred.make<AcpError.AcpError>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio: extension.stdio,
+        serverRequestMethods: new Set(),
+        onIncomingRequest: () => Effect.die(new Error("observer bug")),
+        onExtRequest: () => Effect.succeed({ ok: true }),
+        onTermination: (error) => Deferred.succeed(extensionTermination, error).pipe(Effect.asVoid),
+      });
+      yield* Queue.offer(
+        extension.input,
+        yield* encodeJsonl(ExtRequest, {
+          jsonrpc: "2.0",
+          id: 8,
+          method: "x/test",
+          params: { hello: "world" },
+          headers: [],
+        }),
+      );
+      assert.instanceOf(yield* Deferred.await(extensionTermination), AcpError.AcpTransportError);
     }),
   );
 
@@ -505,6 +527,53 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       const response = yield* decodeJsonRpcErrorResponse(yield* Queue.take(output));
       assert.equal(response.id, 9);
       assert.equal(response.error.code, -32603);
+    }),
+  );
+
+  // Grok's x.ai/ask_user_question handler waits for the user to answer.
+  it.effect("keeps reading while an extension request handler waits", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const answer = yield* Deferred.make<void>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onExtRequest: () => Deferred.await(answer).pipe(Effect.as({ ok: true })),
+      });
+      const updates = yield* Queue.unbounded<AcpProtocol.AcpIncomingNotification>();
+      yield* transport.incoming.pipe(
+        Stream.runForEach((notification) => Queue.offer(updates, notification)),
+        Effect.forkScoped,
+      );
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(ExtRequest, {
+          jsonrpc: "2.0",
+          id: 7,
+          method: "x/test",
+          params: { hello: "world" },
+          headers: [],
+        }),
+      );
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          `${encodeUnknownJsonString({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "session-1",
+              update: { sessionUpdate: "usage_update", used: 10, size: 100 },
+            },
+          })}\n`,
+        ),
+      );
+
+      assert.equal((yield* Queue.take(updates))._tag, "SessionUpdate");
+      yield* Deferred.succeed(answer, undefined);
+      const response = yield* decodeExtResponse(yield* Queue.take(output));
+      assert.deepEqual([response.id, response.result], [7, { ok: true }]);
     }),
   );
 

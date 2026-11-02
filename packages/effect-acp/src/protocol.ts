@@ -246,6 +246,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
   options: AcpPatchedProtocolOptions,
 ): Effect.fn.Return<AcpPatchedProtocol, never, Scope.Scope> {
   const parser = makeStrictNdJsonRpcParser();
+  const protocolScope = yield* Scope.Scope;
   const serverQueue = yield* Queue.unbounded<RpcMessage.FromClientEncoded>();
   const clientQueue = yield* Queue.unbounded<RpcMessage.FromServerEncoded>();
   const notificationQueue = yield* Queue.sliding<AcpIncomingNotification>(
@@ -463,6 +464,18 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       ] as const;
     }).pipe(Effect.flatten);
 
+  const terminateWithCause = (cause: Cause.Cause<unknown>) => {
+    const failure = Cause.findErrorOption(cause);
+    const error = Option.isSome(failure) ? failure.value : Cause.squash(cause);
+    const normalized: AcpError.AcpError = isAcpError(error)
+      ? error
+      : new AcpError.AcpTransportError({
+          operation: "read-input-stream",
+          cause: error,
+        });
+    return handleTermination(() => Effect.succeed(normalized));
+  };
+
   const respondWithSuccess = (requestId: AcpError.AcpRequestId, value: unknown) =>
     offerOutgoing({
       _tag: "Exit",
@@ -621,6 +634,11 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
               ),
             ),
         }),
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause) ? Effect.void : terminateWithCause(cause),
+        ),
+        // Handlers can wait on the user (Grok's ask_user_question), so reading goes on.
+        Effect.forkIn(protocolScope, { startImmediately: true }),
         Effect.asVoid,
       );
     }
@@ -751,17 +769,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     // Anything that ends the reader, including a defect in a callback it runs,
     // terminates the connection so pending requests fail instead of hanging.
     Effect.matchCauseEffect({
-      onFailure: (cause) => {
-        const failure = Cause.findErrorOption(cause);
-        const error = Option.isSome(failure) ? failure.value : Cause.squash(cause);
-        const normalized: AcpError.AcpError = isAcpError(error)
-          ? error
-          : new AcpError.AcpTransportError({
-              operation: "read-input-stream",
-              cause: error,
-            });
-        return handleTermination(() => Effect.succeed(normalized));
-      },
+      onFailure: (cause) => terminateWithCause(cause),
       onSuccess: () =>
         handleTermination(() => {
           const ended = new AcpError.AcpInputStreamEndedError({});
