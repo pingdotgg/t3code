@@ -23,7 +23,7 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
-  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-29ddd424.tgz": true
+  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-2f2ee98a.tgz": true
   sharp: true
   "@tsc-rs/typescript": true
   utf-8-validate: false
@@ -355,7 +355,6 @@ packageExtensions:
       vite-plus: "catalog:"
 
 patchedDependencies:
-  react-native-enriched-markdown@1.2.0-t3.16: patches/react-native-enriched-markdown@1.2.0-t3.16.patch
   react-native-image-viewing@0.2.2: patches/react-native-image-viewing@0.2.2.patch
   mdast-util-math@3.0.0: patches/mdast-util-math@3.0.0.patch
   micromark-extension-llm-math@3.1.0: patches/micromark-extension-llm-math@3.1.0.patch
