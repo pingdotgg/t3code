@@ -466,124 +466,139 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
-  it.effect("restarts a ready QUIC connector when the host route to the tunnel edge changes", () =>
-    Effect.gen(function* () {
-      routeSource.address = "192.168.1.20";
-      const readinessChecks = yield* Queue.unbounded<number>();
-      let readinessCheckCount = 0;
-      const httpClient = HttpClient.make((request) =>
-        Effect.gen(function* () {
-          if (!request.url.endsWith("/ready")) {
-            return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
-          }
-          readinessCheckCount += 1;
-          // A VPN becomes the default route while the second check is in flight.
-          if (readinessCheckCount === 2) routeSource.address = "10.8.0.2";
-          yield* Queue.offer(readinessChecks, readinessCheckCount);
-          // cloudflared keeps reporting ready: its probed QUIC MTU no longer fits the new path.
-          return HttpClientResponse.fromWeb(
-            request,
-            Response.json({ status: 200, readyConnections: 1 }),
-          );
-        }),
-      );
-      const fixture = yield* makeTransportSpawner();
-      const runtime = yield* buildCloudManagedEndpointRuntime(
-        fixture.spawner,
-        layerRelayClientAvailable,
-        httpClient,
-      );
-      yield* runtime.applyConfig(tunnelConfig);
-      expect(yield* Queue.take(fixture.started)).toBe(0);
-      yield* fixture.emit(
-        0,
-        "2026-10-30T10:00:00Z INF Starting metrics server on 127.0.0.1:20241/metrics\n" +
-          "2026-10-30T10:00:01Z INF Registered tunnel connection connIndex=0 connection=8f2c event=0 ip=198.41.192.7 location=ams01 protocol=quic\n",
-      );
-      yield* Stream.runHead(runtime.tunnelConnected);
+  it.effect.each([
+    { when: "before its first readiness check", vpnAtCheck: 1 },
+    { when: "while it runs", vpnAtCheck: 2 },
+  ])(
+    "restarts a ready QUIC connector when the host route to the tunnel edge changes $when",
+    ({ vpnAtCheck }) =>
+      Effect.gen(function* () {
+        routeSource.address = "192.168.1.20";
+        const readinessChecks = yield* Queue.unbounded<number>();
+        let readinessCheckCount = 0;
+        const httpClient = HttpClient.make((request) =>
+          Effect.gen(function* () {
+            if (!request.url.endsWith("/ready")) {
+              return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
+            }
+            readinessCheckCount += 1;
+            // A VPN becomes the default route while this check is in flight.
+            if (readinessCheckCount === vpnAtCheck) routeSource.address = "10.8.0.2";
+            yield* Queue.offer(readinessChecks, readinessCheckCount);
+            // cloudflared keeps reporting ready: its probed QUIC MTU no longer fits the new path.
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({ status: 200, readyConnections: 1 }),
+            );
+          }),
+        );
+        const fixture = yield* makeTransportSpawner();
+        const runtime = yield* buildCloudManagedEndpointRuntime(
+          fixture.spawner,
+          layerRelayClientAvailable,
+          httpClient,
+        );
+        yield* runtime.applyConfig(tunnelConfig);
+        expect(yield* Queue.take(fixture.started)).toBe(0);
+        yield* fixture.emit(
+          0,
+          "2026-10-30T10:00:00Z INF Starting metrics server on 127.0.0.1:20241/metrics\n" +
+            "2026-10-30T10:00:01Z INF Registered tunnel connection connIndex=0 connection=8f2c event=0 ip=198.41.192.7 location=ams01 protocol=quic\n",
+        );
+        yield* Stream.runHead(runtime.tunnelConnected);
 
-      yield* TestClock.adjust(Duration.seconds(30));
-      expect(yield* Queue.take(readinessChecks)).toBe(1);
-
-      const outcome = yield* Effect.raceFirst(
-        Queue.take(fixture.started).pipe(Effect.as("connector replaced" as const)),
-        Effect.gen(function* () {
-          for (const check of [2, 3]) {
-            yield* TestClock.adjust(Duration.seconds(30));
-            expect(yield* Queue.take(readinessChecks)).toBe(check);
-          }
-          return "connector kept running after the route changed" as const;
-        }),
-      );
-      expect({
-        outcome,
-        killed: [...new Set(fixture.killed)],
-        spawned: fixture.spawned.length,
-      }).toEqual({
-        outcome: "connector replaced",
-        killed: [800],
-        spawned: 2,
-      });
-    }),
+        const outcome = yield* Effect.raceFirst(
+          Queue.take(fixture.started).pipe(Effect.as("connector replaced" as const)),
+          Effect.gen(function* () {
+            for (const check of [1, 2, 3]) {
+              yield* TestClock.adjust(Duration.seconds(30));
+              expect(yield* Queue.take(readinessChecks)).toBe(check);
+            }
+            return "connector kept running after the route changed" as const;
+          }),
+        );
+        expect({
+          outcome,
+          killed: [...new Set(fixture.killed)],
+          spawned: fixture.spawned.length,
+        }).toEqual({
+          outcome: "connector replaced",
+          killed: [800],
+          spawned: 2,
+        });
+      }),
   );
 
-  it.effect("keeps the connector across an unchanged route and an offline gap", () =>
-    Effect.gen(function* () {
-      // Wi-Fi, offline, the same Wi-Fi again, then a VPN.
-      const routeByCheck = ["192.168.1.20", null, "192.168.1.20", "192.168.1.20", "10.8.0.2"];
-      routeSource.address = routeByCheck[0]!;
-      const readinessChecks = yield* Queue.unbounded<number>();
-      let readinessCheckCount = 0;
-      const httpClient = HttpClient.make((request) =>
-        Effect.gen(function* () {
-          if (!request.url.endsWith("/ready")) {
-            return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
-          }
-          routeSource.address = routeByCheck[readinessCheckCount]!;
-          readinessCheckCount += 1;
-          yield* Queue.offer(readinessChecks, readinessCheckCount);
-          return HttpClientResponse.fromWeb(
-            request,
-            Response.json({ status: 200, readyConnections: 1 }),
-          );
-        }),
-      );
-      const fixture = yield* makeTransportSpawner();
-      const runtime = yield* buildCloudManagedEndpointRuntime(
-        fixture.spawner,
-        layerRelayClientAvailable,
-        httpClient,
-      );
-      yield* runtime.applyConfig(tunnelConfig);
-      expect(yield* Queue.take(fixture.started)).toBe(0);
-      yield* fixture.emit(
-        0,
-        "2026-10-30T10:00:00Z INF Starting metrics server on 127.0.0.1:20241/metrics\n" +
-          "2026-10-30T10:00:01Z INF Registered tunnel connection connIndex=0 connection=8f2c event=0 ip=198.41.192.7 location=ams01 protocol=quic\n",
-      );
-      yield* Stream.runHead(runtime.tunnelConnected);
+  it.effect(
+    "keeps the connector across an unchanged route and offline gaps until the route changes",
+    () =>
+      Effect.gen(function* () {
+        // Wi-Fi, offline, the same Wi-Fi, offline again, then a VPN.
+        const routeByCheck = ["192.168.1.20", null, "192.168.1.20", null, "10.8.0.2", "10.8.0.2"];
+        routeSource.address = routeByCheck[0]!;
+        const readinessChecks = yield* Queue.unbounded<number>();
+        let readinessCheckCount = 0;
+        const httpClient = HttpClient.make((request) =>
+          Effect.gen(function* () {
+            if (!request.url.endsWith("/ready")) {
+              return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
+            }
+            routeSource.address = routeByCheck[readinessCheckCount]!;
+            readinessCheckCount += 1;
+            yield* Queue.offer(readinessChecks, readinessCheckCount);
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({ status: 200, readyConnections: 1 }),
+            );
+          }),
+        );
+        const fixture = yield* makeTransportSpawner();
+        const runtime = yield* buildCloudManagedEndpointRuntime(
+          fixture.spawner,
+          layerRelayClientAvailable,
+          httpClient,
+        );
+        yield* runtime.applyConfig(tunnelConfig);
+        expect(yield* Queue.take(fixture.started)).toBe(0);
+        yield* fixture.emit(
+          0,
+          "2026-10-30T10:00:00Z INF Starting metrics server on 127.0.0.1:20241/metrics\n" +
+            "2026-10-30T10:00:01Z INF Registered tunnel connection connIndex=0 connection=8f2c event=0 ip=198.41.192.7 location=ams01 protocol=quic\n",
+        );
+        yield* Stream.runHead(runtime.tunnelConnected);
 
-      // Reaching check 4 means the route lookups after checks 1-3 have all run.
-      const outcome = yield* Effect.raceFirst(
-        Queue.take(fixture.started).pipe(Effect.as("connector replaced" as const)),
-        Effect.gen(function* () {
-          for (const check of [1, 2, 3, 4]) {
-            yield* TestClock.adjust(Duration.seconds(30));
-            expect(yield* Queue.take(readinessChecks)).toBe(check);
-          }
-          return "connector kept" as const;
-        }),
-      );
-      expect({ outcome, killed: fixture.killed }).toEqual({
-        outcome: "connector kept",
-        killed: [],
-      });
+        // Reaching check 4 means the route lookups after checks 1-3 have all run.
+        const outcome = yield* Effect.raceFirst(
+          Queue.take(fixture.started).pipe(Effect.as("connector replaced" as const)),
+          Effect.gen(function* () {
+            for (const check of [1, 2, 3, 4]) {
+              yield* TestClock.adjust(Duration.seconds(30));
+              expect(yield* Queue.take(readinessChecks)).toBe(check);
+            }
+            return "connector kept" as const;
+          }),
+        );
+        expect({ outcome, killed: fixture.killed }).toEqual({
+          outcome: "connector kept",
+          killed: [],
+        });
 
-      yield* TestClock.adjust(Duration.seconds(30));
-      expect(yield* Queue.take(readinessChecks)).toBe(5);
-      expect(yield* Queue.take(fixture.started)).toBe(1);
-      expect([...new Set(fixture.killed)]).toEqual([800]);
-    }),
+        // The VPN follows an offline reading, which must not have cleared the Wi-Fi baseline.
+        const afterVpn = yield* Effect.raceFirst(
+          Queue.take(fixture.started).pipe(Effect.as("connector replaced" as const)),
+          Effect.gen(function* () {
+            for (const check of [5, 6]) {
+              yield* TestClock.adjust(Duration.seconds(30));
+              expect(yield* Queue.take(readinessChecks)).toBe(check);
+            }
+            return "connector kept after the VPN came up" as const;
+          }),
+        );
+        expect({ afterVpn, killed: [...new Set(fixture.killed)] }).toEqual({
+          afterVpn: "connector replaced",
+          killed: [800],
+        });
+      }),
   );
 
   it.effect(

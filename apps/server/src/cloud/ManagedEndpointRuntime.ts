@@ -522,11 +522,11 @@ export const make = Effect.gen(function* () {
   // Only an explicit 503 counts: a failed request says nothing about the
   // Readiness polling runs for the connector lifetime; keep this loop untraced.
   const watchConnectorReadiness = Effect.fnUntraced(function* (connector: ActiveConnector) {
+    // The route cloudflared probed its path on; a VPN may come up before the first check.
+    let routeSource = yield* readTunnelEdgeRouteSource;
     const readyUrl = `http://${yield* Deferred.await(connector.metricsAddress)}/ready`;
     let notReadyChecks = 0;
     let lastReady: boolean | null = null;
-    // A failed lookup (offline) keeps the last route, so returning to the same network is no change.
-    let routeSource: string | null = null;
     while (true) {
       yield* Effect.sleep(CONNECTOR_READINESS_INTERVAL);
       const status = yield* httpClient.get(readyUrl).pipe(
