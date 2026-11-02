@@ -146,7 +146,9 @@ anything. The command is offered only for providers that appear under **Usage �
 To keep them in view on web and desktop, turn on **Usage limits** in **Settings → Appearance → Thread details**, or right-click the thread details card.
 The bottom of the thread details card then shows how much is left in each limit window of the
 current provider account. Some windows, such as a weekly Opus limit, count only one model. Hover a
-row to see when it resets and your pace. Turn on **Context window** to also show the thread's
+row to see when it resets and your pace. A provider that sends requests through a CLIProxyAPI hub
+reports no limits of its own, so the card shows the hub's accounts for that provider pooled, as
+**Usage → Limits** does. Turn on **Context window** to also show the thread's
 context use against the model's limit. A tick on the bar marks where the provider compacts
 automatically, when it reports that point.
 
