@@ -17,6 +17,12 @@ export const cursorClient = defineProviderClient({
       placeholder: "Paste API key",
       sensitive: true,
     },
+    {
+      name: "CURSOR_TEAM_ID",
+      label: "Team ID",
+      description: "Optional. Leave empty for the account's default team.",
+      sensitive: false,
+    },
   ],
   icon: {
     viewBox: "0 0 466.73 532.09",

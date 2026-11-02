@@ -227,6 +227,27 @@ describe("checkCursorProviderStatus", () => {
     }),
   );
 
+  it.effect("publishes the team id of a browser sign-in", () =>
+    Effect.gen(function* () {
+      const provider = yield* checkCursorProviderStatus(
+        baseCursorSettings,
+        { CURSOR_API_KEY: "browser-key" },
+        { type: "browser", team: { id: 42, name: "Secondary team" } },
+      ).pipe(
+        Effect.provide(
+          CursorSdkCatalog.layerTest(() =>
+            Effect.succeed({
+              user: { apiKeyName: "T3 Code", createdAt: "2026-01-01T00:00:00.000Z" },
+              models: [sdkParameterizedModel],
+            }),
+          ),
+        ),
+      );
+
+      expect(provider.auth).toMatchObject({ workspaceId: "42" });
+    }),
+  );
+
   it.effect("allows slow SDK discovery with a configured readiness timeout", () =>
     Effect.gen(function* () {
       const fiber = yield* checkCursorProviderStatus(baseCursorSettings, {
@@ -297,7 +318,7 @@ describe("checkCursorProviderStatus", () => {
         const provider = yield* checkCursorProviderStatus(
           baseCursorSettings,
           { CURSOR_API_KEY: "free-plan-key" },
-          authenticationType,
+          { type: authenticationType },
         ).pipe(
           Effect.provide(
             CursorSdkCatalog.layerTest(() =>
