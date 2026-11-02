@@ -552,6 +552,20 @@ const refreshEveryUntilFinal =
       { initialValueTarget: self },
     );
 
+/**
+ * Subscribes to `self` for as long as this layer is cached, so a refresh fetches with no reader.
+ * An interval query renews while idle this way: a signed asset URL must not expire in the cache.
+ */
+const observeWhileCached = <A>(self: Atom.Atom<A>): Atom.Atom<A> =>
+  Atom.transform(
+    self,
+    (get) => {
+      get.subscribe(self, (value) => get.setSelf(value));
+      return get.once(self);
+    },
+    { initialValueTarget: self },
+  );
+
 const isStale = (result: AsyncResult.AsyncResult<unknown, unknown>, staleTimeMs: number) => {
   if (result.waiting) return false;
   const success =
@@ -826,7 +840,10 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
     const intervalQuery =
       options.refreshIntervalMs === undefined
         ? queryAtom
-        : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal));
+        : queryAtom.pipe(
+            observeWhileCached,
+            refreshEveryUntilFinal(options.refreshIntervalMs, isFinal),
+          );
     const refreshTrigger = options.refreshTrigger?.(target);
     const cache = (
       refreshTrigger === undefined

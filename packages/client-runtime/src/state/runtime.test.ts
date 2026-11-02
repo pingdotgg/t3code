@@ -92,6 +92,7 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
   execute: Effect.Effect<A, E>,
   {
     refreshTrigger,
+    refreshIntervalMs,
     idleTtlMs,
     persistence,
     initialState,
@@ -100,6 +101,7 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     onAnswer,
   }: {
     readonly refreshTrigger?: Atom.Atom<unknown>;
+    readonly refreshIntervalMs?: number;
     readonly onAnswer?: QueryAnswerHandler<undefined, A>;
     readonly isFinal?: (value: A) => boolean;
     readonly idleTtlMs?: number;
@@ -147,6 +149,7 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     ...(persistence === undefined ? {} : { persistence }),
     execute: () => execute,
     ...(refreshTrigger === undefined ? {} : { refreshTrigger: () => refreshTrigger }),
+    ...(refreshIntervalMs === undefined ? {} : { refreshIntervalMs }),
     ...(idleTtlMs === undefined ? {} : { idleTtlMs }),
     ...(isFinal === undefined ? {} : { isFinal }),
     ...(onAnswer === undefined ? {} : { onAnswer }),
@@ -999,6 +1002,35 @@ describe("environment query lifecycle", () => {
         now = 61_000;
         expect(yield* remount).toBe("after edit");
         expect(fetches).toBe(2);
+      }),
+    ),
+  );
+
+  it.effect("keeps refreshing on its interval while cached with no reader", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Only timers: the registry's interval and TTL sweep. Effect's scheduler uses setImmediate.
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+        let fetches = 0;
+        const answered = yield* Queue.unbounded<number>();
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.sync(() => {
+            fetches += 1;
+            return fetches;
+          }).pipe(Effect.tap((value) => Queue.offer(answered, value))),
+          { refreshIntervalMs: 30_000 },
+        );
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const unmount = registry.mount(harness.atom);
+        expect(yield* Queue.take(answered)).toBe(1);
+        unmount();
+        yield* Effect.yieldNow;
+
+        // A signed asset URL renews this way; one left to expire would reach the next reader.
+        vi.advanceTimersByTime(30_000);
+        expect(yield* Queue.take(answered)).toBe(2);
       }),
     ),
   );
