@@ -471,11 +471,12 @@ export function ThreadRelationshipsPanel(props: {
   const graph = deriveThreadRelationshipGraph({ threads: shells, projection });
   const isHiddenRelation = (threadId: ThreadId) =>
     hiddenKeys.has(threadKey({ environmentId: props.environmentId, threadId }));
-  // While hiding, a parent the client cannot load may be hidden (archived or older); children stay.
-  const isHiddenUnloadedParent = (row: { threadId: ThreadId; edge: ThreadRelationshipEdge }) =>
+  // While hiding, an unloaded parent, fork or transfer may be hidden; unloaded subagent
+  // children (idle, left out of the shell) follow this visible thread, so they stay.
+  const isHiddenUnloadedRelation = (row: { threadId: ThreadId; edge: ThreadRelationshipEdge }) =>
     hidingHere &&
     graph.nodes.get(row.threadId)?.missing === true &&
-    isParentThreadRelationship(row.edge, props.threadId);
+    (row.edge.kind !== "subagent" || isParentThreadRelationship(row.edge, props.threadId));
   const currentProject = projects.find((project) => project.id === currentThread?.projectId);
   const latestMergeBackRun = projection === null ? null : resolveLatestMergeBackRun(projection);
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
@@ -486,7 +487,7 @@ export function ThreadRelationshipsPanel(props: {
     mergeTargetThreadId,
   })
     // The graph rebuilds missing parents from lineage, so filter the rows it returns.
-    .filter((row) => !isHiddenRelation(row.threadId) && !isHiddenUnloadedParent(row))
+    .filter((row) => !isHiddenRelation(row.threadId) && !isHiddenUnloadedRelation(row))
     .map((row) => {
       const agent =
         row.edge.kind === "subagent" && !isParentThreadRelationship(row.edge, props.threadId)
