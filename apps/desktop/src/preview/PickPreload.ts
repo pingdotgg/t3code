@@ -1290,11 +1290,12 @@ function startAnnotation(sendEnabled: boolean): void {
   };
 
   const onPointerUp = (event: PointerEvent): void => {
-    // Click coordinates are whole pixels; pointer coordinates keep the fraction a hit test needs.
     if (event.isTrusted) {
-      releaseTarget = isAnnotationNode(event.target as Element)
-        ? shadowRoot.elementFromPoint(event.clientX, event.clientY)
-        : null;
+      if (!isAnnotationNode(event.target as Element)) releaseTarget = null;
+      // A captured pointer (touch captures implicitly) releases on the pressed element.
+      else if (pressTarget?.hasPointerCapture(event.pointerId)) releaseTarget = pressTarget;
+      // Click coordinates are whole pixels; pointer coordinates keep the fraction a hit test needs.
+      else releaseTarget = shadowRoot.elementFromPoint(event.clientX, event.clientY);
     }
     if (!dragStart) return;
     event.preventDefault();
