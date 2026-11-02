@@ -258,6 +258,24 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("install.ps1 t3
 
       const again = await installOver({ script: "install.ps1", home, binDir });
       expect(again.code, again.output).toBe(0);
+
+      // Another t3 first on PATH still runs, so the installer names this one in full.
+      const otherBin = NodePath.join(root, "other");
+      await NodeFSP.mkdir(otherBin);
+      await NodeFSP.writeFile(NodePath.join(otherBin, "t3.cmd"), "@echo off\r\n");
+      // Windows spells it Path; a second PATH key would be ambiguous.
+      const pathKey =
+        Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+      const shadowed = await installOver({
+        script: "install.ps1",
+        home,
+        binDir,
+        env: { [pathKey]: `${otherBin};${process.env[pathKey] ?? ""}` },
+      });
+      expect(shadowed.code, shadowed.output).toBe(0);
+      expect(shadowed.output).toContain(
+        `Another t3 at ${NodePath.join(otherBin, "t3.cmd")} runs first`,
+      );
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }

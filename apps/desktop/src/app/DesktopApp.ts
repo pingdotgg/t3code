@@ -188,9 +188,15 @@ const bootstrap = Effect.gen(function* () {
 
   yield* snapShot.initialize;
   // A fresh install has no cached shell PATH yet; without it, another t3 on PATH goes unseen.
+  // If the login shell gives none, a later launch tries again.
+  const installCli = (yield* DesktopCliCommand.DesktopCliCommand).installOnFirstLaunch;
   yield* Effect.forkScoped(
     (yield* DesktopShellEnvironment.DesktopShellEnvironment).awaitDiscovery.pipe(
-      Effect.andThen((yield* DesktopCliCommand.DesktopCliCommand).installOnFirstLaunch),
+      Effect.flatMap((found) =>
+        found || environment.platform === "win32"
+          ? installCli
+          : logBootstrapInfo("skipped installing the t3 command without the shell PATH"),
+      ),
     ),
   );
 

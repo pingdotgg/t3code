@@ -201,9 +201,11 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       process.env.PATH = shadow;
       yield* Effect.flip(after.install);
       expect(yield* fs.readLink(link!)).toBe(path.join(home, "old-t3", "bin", "t3"));
-      process.env.PATH = "";
+      // Install takes it over, also with its folder first on PATH.
+      process.env.PATH = path.dirname(link!);
       expect((yield* after.install).installedPath).toBe(link);
       expect(yield* fs.readLink(link!)).toBe(path.join(home, "new-t3", "bin", "t3"));
+      process.env.PATH = "";
       yield* after.uninstall;
       expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
       expect(yield* fs.exists(path.join(home, "bin", "t3"))).toBe(false);

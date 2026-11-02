@@ -304,7 +304,8 @@ export const make = Effect.gen(function* () {
       if (Option.getOrUndefined(target) === launcher) return yield* state;
     }
     const shadowedBy = yield* foreignFirstOnPath;
-    if (Option.isSome(shadowedBy)) {
+    // Our own link into another T3 home runs first too; it is the one this install updates.
+    if (Option.isSome(shadowedBy) && shadowedBy.value !== replaced) {
       return yield* fail(
         `Another t3 at ${shadowedBy.value} runs first in a new terminal. Remove it, or run the launcher directly at ${launcher}.`,
       );

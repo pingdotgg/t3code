@@ -249,11 +249,18 @@ if ($interactive) { [Console]::Error.Write("`r$esc[2K") }
 if ($binDir.Contains(";")) {
   # PATH would split the folder at the `;`, so name the command in full instead.
   Write-Host "  Run ${bold}& '$($shim.Replace("'", "''"))'$reset to get started.`n"
-} elseif (($env:PATH -split ";") -notcontains $binDir) {
+} else {
+  $added = ($env:PATH -split ";") -notcontains $binDir
   # `irm | iex` runs in the user's own session, so t3 works in this window right away.
   # Last, so it never shadows another t3.
-  $env:Path = "$env:Path;$binDir"
-  Write-Host "  Run ${bold}t3$reset to get started. For new windows, add $binDir to your PATH.`n"
-} else {
-  Write-Host "  Run ${bold}t3$reset to use T3 Code here, or ${bold}t3 up$reset to use it from your other devices.`n"
+  if ($added) { $env:Path = "$env:Path;$binDir" }
+  # A t3 earlier on PATH runs instead, so name this one in full.
+  $first = Get-Command t3 -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($first -and [System.IO.Path]::GetFullPath($first.Source) -ne [System.IO.Path]::GetFullPath($shimPath)) {
+    Write-Host "  Another t3 at $($first.Source) runs first, so run ${bold}& '$($shim.Replace("'", "''"))'$reset to use this one.`n"
+  } elseif ($added) {
+    Write-Host "  Run ${bold}t3$reset to get started. For new windows, add $binDir to your PATH.`n"
+  } else {
+    Write-Host "  Run ${bold}t3$reset to use T3 Code here, or ${bold}t3 up$reset to use it from your other devices.`n"
+  }
 }
