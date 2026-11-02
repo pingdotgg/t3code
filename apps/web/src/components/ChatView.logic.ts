@@ -542,9 +542,10 @@ export function resolveComposerInteractionMode(input: {
   planModeEnabled: boolean;
   provider: Pick<ServerProvider, "showInteractionModeToggle"> | null | undefined;
   interactionMode: ProviderInteractionMode;
+  threadInteractionMode?: ProviderInteractionMode | undefined;
 }): { enabled: boolean; interactionMode: ProviderInteractionMode } {
   const enabled =
-    input.planModeEnabled &&
+    (input.planModeEnabled || input.threadInteractionMode === "plan") &&
     input.provider != null &&
     input.provider.showInteractionModeToggle !== false;
   return {

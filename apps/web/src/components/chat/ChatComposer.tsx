@@ -966,6 +966,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const { enabled: planModeUiEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
     provider: selectedProviderStatus,
+    threadInteractionMode: routeKind === "server" ? activeThread?.interactionMode : undefined,
     interactionMode: requestedInteractionMode,
   });
   const selectedModelSelection: ModelSelection = createModelSelection(

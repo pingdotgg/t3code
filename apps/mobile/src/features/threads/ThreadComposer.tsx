@@ -872,6 +872,17 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           />
         ) : null}
 
+        {!props.isDraft &&
+        props.selectedThread.interactionMode === "plan" &&
+        props.onUpdateInteractionMode ? (
+          <Button
+            label="Plan mode · Use Build for next message"
+            tone="text"
+            disabled={isSubmissionLocked}
+            onPress={() => props.onUpdateInteractionMode?.("default")}
+          />
+        ) : null}
+
         <ComposerSurface
           animateLayout={false}
           style={{

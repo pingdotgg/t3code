@@ -40,6 +40,8 @@ import type { Thread } from "../types";
 import { makeThreadFixture, makeThreadProjectionFixture } from "../test-fixtures";
 import {
   getAntigravitySendBlockReason,
+  resolveComposerInteractionMode,
+  shouldShowPlanFollowUpPrompt,
   resolveComposerProviderSelection,
   resolveWorktreeSetupProgress,
   peekRememberedThreadTimeline,
@@ -103,6 +105,48 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
+
+describe("resolveComposerInteractionMode", () => {
+  it("keeps an existing plan thread operable when the legacy setting is off", () => {
+    const input = {
+      planModeEnabled: false,
+      provider: { showInteractionModeToggle: true },
+      threadInteractionMode: "plan" as const,
+    };
+    const planMode = resolveComposerInteractionMode({ ...input, interactionMode: "plan" });
+    expect(planMode).toEqual({
+      enabled: true,
+      interactionMode: "plan",
+    });
+    expect(
+      shouldShowPlanFollowUpPrompt({
+        interactionMode: planMode.interactionMode,
+        pendingUserInputCount: 0,
+        latestTurnSettled: true,
+        hasActionableProposedPlan: true,
+        hasComposerAttachments: false,
+      }),
+    ).toBe(true);
+    expect(resolveComposerInteractionMode({ ...input, interactionMode: "default" })).toEqual({
+      enabled: true,
+      interactionMode: "default",
+    });
+    expect(
+      resolveComposerInteractionMode({
+        ...input,
+        threadInteractionMode: "default",
+        interactionMode: "plan",
+      }),
+    ).toEqual({ enabled: false, interactionMode: "default" });
+    expect(
+      resolveComposerInteractionMode({
+        ...input,
+        provider: { showInteractionModeToggle: false },
+        interactionMode: "plan",
+      }),
+    ).toEqual({ enabled: false, interactionMode: "default" });
+  });
+});
 
 describe("deriveComposerSendState", () => {
   it("keeps text sendable while excluding expired terminal pills", () => {

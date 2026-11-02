@@ -750,7 +750,7 @@ export function LegacyFeaturesSection() {
     <SettingsSection id="legacy-features" title="Legacy">
       <SettingsRow
         {...searchableSetting("legacy-plan-mode")}
-        description="Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode."
+        description="Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses Build for new threads; existing Plan threads keep their controls."
         control={
           <Switch
             checked={settings.planModeEnabled}
