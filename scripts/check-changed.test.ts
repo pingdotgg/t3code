@@ -21,6 +21,7 @@ import {
   docReaderTests,
   gitLines,
   runSteps,
+  splitTests,
   type Step,
 } from "./check-changed.ts";
 import { decide, readWorkspace } from "../.github/scripts/ci-changes.cjs";
@@ -142,6 +143,24 @@ describe("check:changed", () => {
     }),
   );
 
+  it("runs the .github/scripts node:test files with node --test, not vitest", () => {
+    assert.deepStrictEqual(
+      splitTests([
+        "apps/server/src/ws.test.ts",
+        ".github/scripts/ci-changes.test.cjs",
+        ".github\\scripts\\thread-transfer-report.test.cjs",
+        "scripts/check-changed.test.ts",
+      ]),
+      {
+        vitestTests: ["apps/server/src/ws.test.ts", "scripts/check-changed.test.ts"],
+        nodeTests: [
+          ".github/scripts/ci-changes.test.cjs",
+          ".github\\scripts\\thread-transfer-report.test.cjs",
+        ],
+      },
+    );
+  });
+
   it.effect("fails instead of returning an empty file list when git exits nonzero", () => {
     const spawner = (exitCode: number) =>
       ChildProcessSpawner.make(() =>
@@ -177,6 +196,13 @@ describe("check:changed", () => {
         "check:changed: git ls-files exited with 128: fatal: index file corrupt",
       );
     });
+  });
+
+  it.each([
+    "packages/shared/src/testing/longTempDir.ts",
+    "packages/shared/src/testing/providerEnv.ts",
+  ])("tests every package when the shared test setup file %s changes", (file) => {
+    assert.strictEqual(decide([file], readWorkspace(), false).outputs.test_packages, "");
   });
 });
 

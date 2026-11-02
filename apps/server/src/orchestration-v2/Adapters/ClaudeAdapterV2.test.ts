@@ -6103,14 +6103,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
       const providerTurn = lastProviderTurn(harness.events);
       assert.notEqual(providerTurn.nativeTurnRef?.nativeId, subagentUuid);
-      const rollbackTo = (providerThreadTurns: ReadonlyArray<typeof providerTurn>) =>
+      const rollbackTo = (
+        providerThreadTurns: ReadonlyArray<typeof providerTurn>,
+        text = "Background task completed.",
+        targetTurn = providerTurn,
+      ) =>
         harness.runtime.rollbackThread({
           providerThread: harness.providerThread,
           target: {
             type: "provider_turn",
             checkpointId: CheckpointId.make("checkpoint-claude-cursor-subagent-only"),
             appRunOrdinal: 1,
-            providerTurn,
+            providerTurn: targetTurn,
+            message: { role: "user", text, attachments: [] },
           },
           providerThreadTurns,
         });
@@ -6127,6 +6132,64 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ]).pipe(Effect.flip);
       assert.instanceOf(error, ProviderAdapter.ProviderAdapterRollbackThreadError);
       assert.include(String(error.cause), "no SDK assistant message cursor");
+      const earlierCursor = "00000000-0000-4000-8000-000000000648";
+      const turnsAcrossSilent = [
+        {
+          ...providerTurn,
+          id: ProviderTurnId.make("provider-turn-claude-cursor-earlier"),
+          ordinal: providerTurn.ordinal - 1,
+          nativeTurnRef: {
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeId: earlierCursor,
+            strength: "weak",
+          },
+        },
+        providerTurn,
+        {
+          ...providerTurn,
+          id: ProviderTurnId.make("provider-turn-claude-cursor-next"),
+          ordinal: providerTurn.ordinal + 1,
+        },
+      ] satisfies ReadonlyArray<typeof providerTurn>;
+      const semanticError = yield* rollbackTo(turnsAcrossSilent).pipe(Effect.flip);
+      assert.instanceOf(semanticError, ProviderAdapter.ProviderAdapterRollbackThreadError);
+      const pastSilentTurn = yield* rollbackTo(turnsAcrossSilent, "/compact");
+      assert.equal(
+        pastSilentTurn.providerThread.nativeConversationHeadRef?.nativeId,
+        earlierCursor,
+      );
+      const interruptedBeforeCompact = yield* rollbackTo(
+        [
+          {
+            ...providerTurn,
+            id: ProviderTurnId.make("provider-turn-claude-cursor-earlier"),
+            ordinal: 1,
+            nativeTurnRef: {
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeId: earlierCursor,
+              strength: "weak",
+            },
+          },
+          {
+            ...providerTurn,
+            id: ProviderTurnId.make("provider-turn-claude-interrupted-before-compact"),
+            ordinal: 2,
+            status: "interrupted",
+          },
+          { ...providerTurn, ordinal: 3 },
+          {
+            ...providerTurn,
+            id: ProviderTurnId.make("provider-turn-claude-cursor-next"),
+            ordinal: 4,
+          },
+        ],
+        "/compact",
+        { ...providerTurn, ordinal: 3 },
+      ).pipe(Effect.flip);
+      assert.instanceOf(
+        interruptedBeforeCompact,
+        ProviderAdapter.ProviderAdapterRollbackThreadError,
+      );
 
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
@@ -6515,6 +6578,59 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       } else {
         assert.isUndefined(terminal.failure.resetAt);
       }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { cooldown: " (reset after 1h2m3s)", seconds: 3723 },
+    { cooldown: " (reset after 4m 6s) (last error: rate limited)", seconds: 246 },
+    { cooldown: "", seconds: 0 },
+  ])("keeps a gateway's reset on a direct 429 with cooldown '$cooldown'", (input) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-direct-gateway-limit"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      // An API-key session reports a gateway 429 only as text, with no rate_limit_info.
+      const result = `API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down${input.cooldown}`;
+      yield* Queue.offerAll(harness.sdkMessages, [
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000654",
+          error: "rate_limit",
+          text: result,
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000655",
+          result,
+          terminalReason: "api_error",
+          isError: true,
+          apiErrorStatus: 429,
+        }),
+      ]);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.equal(terminal.failure.class, "usage_limit");
+      assert.equal(
+        terminal.failure.resetAt,
+        input.seconds > 0
+          ? DateTime.formatIso(
+              DateTime.makeUnsafe(DateTime.toEpochMillis(now) + input.seconds * 1_000),
+            )
+          : null,
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -10027,6 +10143,96 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         const result = yield* Fiber.join(permission);
         assert.equal(result?.behavior, "allow");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { card: "an approval", toolName: "Bash", toolInput: { command: "echo probe" } },
+    {
+      card: "a question",
+      toolName: "AskUserQuestion",
+      toolInput: {
+        questions: [
+          {
+            header: "Target",
+            question: "Where should this deploy?",
+            options: [
+              { label: "Production", description: "Deploy to production." },
+              { label: "Staging", description: "Deploy to staging." },
+            ],
+            multiSelect: false,
+          },
+        ],
+      },
+    },
+  ])("closes $card card when Claude withdraws its request", ({ toolName, toolInput }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-withdrawn-approval"),
+            text: "Run the probe.",
+            attachments: [],
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: "/workspace",
+            }),
+          }),
+        );
+        // The CLI cancels a request once a PermissionRequest hook has answered it.
+        // @effect-diagnostics-next-line abortControllerInEffect:off - Claude, not the test fiber, withdraws the request.
+        const withdrawal = new AbortController();
+        const permission = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!(toolName, toolInput, {
+            signal: withdrawal.signal,
+            toolUseID: "toolu_01WithdrawnApproval",
+            requestId: "request-withdrawn-approval",
+          }),
+        ).pipe(Effect.forkScoped);
+        const pending = (yield* Queue.take(harness.runtimeRequestReceipts)).runtimeRequest;
+        assert.equal(pending.status, "pending");
+
+        // The turn can end right after the withdrawal, before the callback returns.
+        withdrawal.abort();
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            ...makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000790", result: "Done." }),
+            user_message_uuid: harness.promptUuid(0),
+          }),
+        );
+        yield* harness.awaitTerminal(1);
+        assert.equal((yield* Fiber.join(permission))?.behavior, "deny");
+        // The cancellation has to land before the turn's end finalizes the run.
+        const beforeTerminal = harness.events.slice(
+          0,
+          harness.events.findIndex((event) => event.type === "turn.terminal"),
+        );
+        const statusOf = (type: "runtime_request.updated" | "node.updated" | "turn_item.updated") =>
+          beforeTerminal
+            .flatMap((event): Array<{ readonly type: string; readonly status: string }> =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.id === pending.id
+                ? [{ type: event.type, status: event.runtimeRequest.status }]
+                : event.type === "node.updated" && event.node.id === pending.nodeId
+                  ? [{ type: event.type, status: event.node.status }]
+                  : event.type === "turn_item.updated" && event.turnItem.nodeId === pending.nodeId
+                    ? [{ type: event.type, status: event.turnItem.status }]
+                    : [],
+            )
+            .findLast((entry) => entry.type === type)?.status;
+        assert.equal(statusOf("runtime_request.updated"), "cancelled");
+        assert.equal(statusOf("node.updated"), "cancelled");
+        assert.equal(statusOf("turn_item.updated"), "cancelled");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
