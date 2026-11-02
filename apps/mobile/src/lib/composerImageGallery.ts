@@ -28,7 +28,7 @@ export function composerImageGallery(
       return [{ kind: "image", name: attachment.name, attachment }];
     }
     return attachment.type === "image"
-      ? [{ kind: "image", name: attachment.name, uri: attachment.previewUri }]
+      ? [{ kind: "image", name: attachment.name, uri: attachment.dataUrl ?? attachment.previewUri }]
       : [];
   });
 }
