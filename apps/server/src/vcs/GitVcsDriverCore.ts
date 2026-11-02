@@ -1643,7 +1643,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (
     cwd: string,
   ) {
-    const upstream = yield* resolveCurrentUpstream(cwd);
+    const upstreamRef = yield* readCurrentUpstreamRef(cwd);
+    if (upstreamRef === null) return;
+    const remoteNames = yield* runGitStdout("GitVcsDriver.listRemoteNames", cwd, ["remote"]).pipe(
+      Effect.map(parseRemoteNames),
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    );
+    // An upstream on no configured remote is a local branch (`branch.<name>.remote = .`).
+    const upstream = parseUpstreamRefWithRemoteNames(upstreamRef, remoteNames);
     if (!upstream) return;
     const gitCommonDir = yield* resolveGitCommonDir(cwd);
     yield* Cache.get(
