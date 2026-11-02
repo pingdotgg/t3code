@@ -147,11 +147,28 @@ export function resolveDraftProjectSelection(
 
 type ProjectRef = { readonly environmentId: string; readonly projectId: string };
 
+/** The copy of the thread list's filtered project a new thread starts in: the remembered one if it is a copy. */
+export function newTaskFilteredProject(
+  scope: HomeProjectScope,
+  preferredEnvironmentId: EnvironmentId | null,
+  connectedEnvironmentIds: ReadonlySet<EnvironmentId>,
+  lastProject: ProjectRef | undefined,
+): ProjectRef {
+  const project =
+    scope.projects.find(
+      (candidate) =>
+        candidate.environmentId === lastProject?.environmentId &&
+        candidate.id === lastProject.projectId,
+    ) ?? getProjectScopeSelectionTarget(scope, preferredEnvironmentId, connectedEnvironmentIds);
+  return { environmentId: project.environmentId, projectId: project.id };
+}
+
 export function newTaskDestination(options: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly requestId: string;
   readonly useLastProject: boolean | undefined;
   readonly currentProject: ProjectRef | undefined;
+  readonly filteredProject: ProjectRef | undefined;
   readonly lastProject: ProjectRef | undefined;
 }) {
   const find = (ref: ProjectRef | undefined) =>
@@ -164,7 +181,9 @@ export function newTaskDestination(options: {
   const project =
     options.useLastProject === false
       ? undefined
-      : (find(options.currentProject) ?? (last?.archivedAt == null ? last : undefined));
+      : (find(options.currentProject) ??
+        find(options.filteredProject) ??
+        (last?.archivedAt == null ? last : undefined));
   return project
     ? {
         draft: {

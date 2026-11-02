@@ -11,8 +11,8 @@ Its branch and workspace mode come from your configured defaults. To continue in
 an existing worktree, use **New thread in this worktree** from the branch toolbar.
 
 On mobile, **New thread** starts in the current thread's project, or else in the
-last project you opened or chose on that device. If neither is available, the
-project picker opens. Turn off **Settings → General → Use last project** to
+project the thread list is filtered to, or else in the last project you opened
+or chose on that device. If none is available, the project picker opens. Turn off **Settings → General → Use last project** to
 choose a project every time. When you pick a project that is on more than one
 machine, the thread starts on a connected one if any is connected.
 

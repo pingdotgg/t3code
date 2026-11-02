@@ -6,6 +6,7 @@ import type { HomeProjectScope } from "../home/homeThreadList";
 import {
   getProjectScopeSelectionTarget,
   newTaskDestination,
+  newTaskFilteredProject,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
   resolveNewTaskScratchOption,
@@ -74,6 +75,24 @@ describe("getProjectScopeSelectionTarget", () => {
     // With nothing connected, the usual order still applies.
     expect(target([], "server")).toBe(server);
     expect(target([])).toBe(mac);
+  });
+});
+
+describe("newTaskFilteredProject", () => {
+  it("prefers the remembered copy of the filtered project", () => {
+    const mac = makeProject("t3code", "mac");
+    const server = makeProject("t3code", "server");
+    const connected = new Set([mac.environmentId, server.environmentId]);
+    const filtered = (last?: { readonly environmentId: string; readonly projectId: string }) =>
+      newTaskFilteredProject(makeScope([mac, server]), null, connected, last);
+    expect(filtered({ environmentId: "server", projectId: "t3code" })).toEqual({
+      environmentId: "server",
+      projectId: "t3code",
+    });
+    expect(filtered({ environmentId: "server", projectId: "other" })).toEqual({
+      environmentId: "mac",
+      projectId: "t3code",
+    });
   });
 });
 
