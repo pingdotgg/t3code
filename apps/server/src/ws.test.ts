@@ -184,6 +184,7 @@ it.effect("resends late editors without rolling back updates already sent", () =
         resolveFileManagerRevealKind: () => Effect.succeed(undefined),
       },
       { resolveTargets: () => Effect.succeed([]) },
+      { resolve: () => Effect.succeed([]) },
     ).pipe(Stream.runCollect);
     assert.equal(empty.length, 1);
     const resolved = empty[0];

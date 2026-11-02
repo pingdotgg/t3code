@@ -16,7 +16,6 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Electron from "electron";
 import { vi } from "vite-plus/test";
-import type * as Electron from "electron";
 
 const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
   focusedWebContents: vi.fn(),
