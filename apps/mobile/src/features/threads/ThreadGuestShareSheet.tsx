@@ -28,6 +28,8 @@ import { canShareWithGuest } from "./guestShareAvailability";
 
 const TITLE = "Share with guest";
 const COPY_FEEDBACK_DURATION_MS = 1200;
+const PENDING_MESSAGES_NOTICE =
+  "Send or dismiss pending guest messages in the thread before creating a new link.";
 
 /**
  * Whether this environment offers "Share with guest": the user may create links there, and its
@@ -62,6 +64,8 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
     guestShare === null ? null : Date.parse(guestShare.expiresAt),
   );
   const activeShare = shareExpired ? null : guestShare;
+  const hasPendingMessages =
+    guestShare?.messages.some((message) => message.status === "pending") ?? false;
   // From the thread list the detail loads only now; until it does, an active link is unknown and a
   // new link would end it without the warning.
   const threadLoaded = useAtomValue(
@@ -89,6 +93,10 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
   usePreventRemove(creating, () => {});
 
   const create = async () => {
+    if (hasPendingMessages) {
+      Dialog.alert("Guest messages are waiting", PENDING_MESSAGES_NOTICE);
+      return;
+    }
     setState({ status: "creating" });
     const result = await createGuestShare({ environmentId, input: { threadId } });
     if (result._tag === "Success") {
@@ -195,6 +203,9 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
                 The link works once and expires in 24 hours.
               </Text>
             )}
+            {hasPendingMessages ? (
+              <Text className="text-sm text-foreground-muted">{PENDING_MESSAGES_NOTICE}</Text>
+            ) : null}
             {state.status === "failed" ? (
               <Text accessibilityRole="alert" className="text-sm text-danger-foreground">
                 {state.message}
@@ -214,7 +225,7 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
             tone="primary"
             fullWidth
             loading={creating}
-            disabled={!canCreate || !threadLoaded}
+            disabled={!canCreate || !threadLoaded || hasPendingMessages}
             onPress={() => void create()}
           />
         </>

@@ -3,8 +3,9 @@ import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
-const { Slot } = vi.hoisted(() => ({
+const { Slot, sharing } = vi.hoisted(() => ({
   Slot: ({ children }: { children?: ReactNode }) => children,
+  sharing: { messages: [] as Array<{ status: "pending" | "dismissed" }> },
 }));
 
 vi.mock("react-native", () => ({
@@ -35,11 +36,17 @@ vi.mock("../../state/threads", () => ({
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => () => {} }));
 vi.mock("./ThreadGuestShareBar", () => ({
-  useThreadGuestShare: () => ({ guestName: null, expiresAt: "1970-01-01T00:00:01.000Z" }),
+  useThreadGuestShare: () => ({
+    guestName: null,
+    expiresAt: "1970-01-01T00:00:01.000Z",
+    messages: sharing.messages,
+  }),
 }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Slot }));
 vi.mock("../../components/ui/Button", () => ({
-  Button: ({ label }: { label: string }) => <button>{label}</button>,
+  Button: ({ label, disabled }: { label: string; disabled?: boolean }) => (
+    <button disabled={disabled}>{label}</button>
+  ),
 }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../components/ui/AndroidScreenHeader", () => ({ AndroidSheetHeader: () => null }));
@@ -52,24 +59,25 @@ vi.mock("../../lib/copyTextWithHaptic", () => ({ tryCopyTextWithHaptic: () => tr
 import { ThreadGuestShareSheet } from "./ThreadGuestShareSheet";
 
 it("stops treating a retained guest link as active when it expires", async () => {
+  sharing.messages = [];
   vi.useFakeTimers();
   vi.setSystemTime(0);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const container = document.createElement("div");
   const root = createRoot(container);
-  try {
-    await act(() =>
-      root.render(
-        <ThreadGuestShareSheet
-          route={{
-            params: {
-              environmentId: EnvironmentId.make("test"),
-              threadId: ThreadId.make("thread"),
-            },
-          }}
-        />,
-      ),
+  const renderSheet = () =>
+    root.render(
+      <ThreadGuestShareSheet
+        route={{
+          params: {
+            environmentId: EnvironmentId.make("test"),
+            threadId: ThreadId.make("thread"),
+          },
+        }}
+      />,
     );
+  try {
+    await act(renderSheet);
     expect(container.textContent).toContain("A guest link is active.");
     expect(container.querySelector("button")?.textContent).toBe("Create new link");
 
@@ -77,6 +85,14 @@ it("stops treating a retained guest link as active when it expires", async () =>
 
     expect(container.textContent).not.toContain("A guest link is active.");
     expect(container.querySelector("button")?.textContent).toBe("Create link");
+    sharing.messages = [{ status: "pending" }];
+    await act(renderSheet);
+    expect(container.querySelector("button")?.disabled).toBe(true);
+    expect(container.textContent).toContain("Send or dismiss pending guest messages");
+
+    sharing.messages = [{ status: "dismissed" }];
+    await act(renderSheet);
+    expect(container.querySelector("button")?.disabled).toBe(false);
   } finally {
     act(() => root.unmount());
     vi.useRealTimers();
