@@ -41,7 +41,8 @@ function resolveUpdatePolicy(document: ManagedPolicyDocument | undefined): Updat
   if (document === undefined || updates === undefined) return unmanagedUpdatePolicy;
   return {
     mode: updates.mode,
-    feedUrl: updates.feedUrl,
+    // The policy is T3 Code's, so its mirror serves T3 Code builds; T3 Learn keeps its own feed.
+    feedUrl: undefined,
     allowNightly: updates.allowNightly ?? true,
     message: managedUpdatesMessage(document.organization),
   };
@@ -76,7 +77,7 @@ const make = Effect.gen(function* () {
             mode: "off",
             feedUrl: undefined,
             allowNightly: false,
-            message: `Updates are off because T3 Code cannot use the managed policy at ${error.path}. Contact your administrator.`,
+            message: `Updates are off because T3 Learn cannot use the managed policy at ${error.path}. Contact your administrator.`,
           }),
         ),
     }),
