@@ -271,22 +271,26 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
       const copy = path.join(root, "bin/t3-copy");
       yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
       yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
-      yield* fs.writeFileString(executable, "");
-      yield* fs.writeFileString(copy, "");
+      yield* fs.writeFileString(executable, "", { mode: 0o755 });
+      yield* fs.writeFileString(copy, "", { mode: 0o755 });
       yield* fs.symlink(path.join(root, "data/t3"), path.join(root, ".t3"));
       yield* fs.symlink(path.join(root, ".t3/runtime/versions/1.0.0/t3"), launcher);
+      // Earlier PATH entries hold a directory and a non-executable file named t3.
+      yield* fs.makeDirectory(path.join(root, "shadow-dir/t3"), { recursive: true });
+      yield* fs.makeDirectory(path.join(root, "shadow-file"));
+      yield* fs.writeFileString(path.join(root, "shadow-file/t3"), "");
       const resolve = (invokedAs: string) =>
         resolveServerInstallation.pipe(
           Effect.provideService(HostProcess.ExecutablePath, executable),
           Effect.provideService(HostProcess.IsExecutable, true),
           Effect.provideService(HostProcess.InvokedAs, invokedAs),
           Effect.provideService(HostProcess.WorkingDirectory, root),
-          Effect.provideService(HostProcess.Environment, { PATH: "bin" }),
+          Effect.provideService(HostProcess.Environment, { PATH: "shadow-dir:shadow-file:bin" }),
           Effect.provideService(HostProcess.Platform, "linux"),
         );
       const baseDir = path.join(root, ".t3");
 
-      expect(yield* resolve("t3")).toEqual({ kind: "t3-launcher", launcher: "t3", baseDir });
+      expect(yield* resolve("t3")).toEqual({ kind: "t3-launcher", launcher, baseDir });
       expect(yield* resolve(launcher)).toEqual({ kind: "t3-launcher", launcher, baseDir });
       expect(yield* resolve(executable)).toBeNull();
       expect(yield* resolve(copy)).toBeNull();

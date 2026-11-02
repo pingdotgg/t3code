@@ -338,7 +338,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
       const launcher = path.join(root, "bin/t3");
       yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
-      yield* fs.writeFileString(launcher, "");
+      yield* fs.writeFileString(launcher, "", { mode: 0o755 });
 
       const bare = yield* resolveLauncherPath.pipe(
         Effect.provideService(HostProcess.InvokedAs, "t3"),

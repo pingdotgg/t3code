@@ -408,7 +408,13 @@ export const resolveLauncherPath = Effect.gen(function* () {
   for (const directory of (environment["PATH"] ?? "").split(delimiter)) {
     if (directory.length === 0) continue;
     const candidate = path.resolve(cwd, directory, invokedAs);
-    if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+    const info = yield* fs.stat(candidate).pipe(Effect.option);
+    // Like the shell, pass over directories and non-executable files named the same.
+    if (
+      Option.isSome(info) &&
+      info.value.type === "File" &&
+      (platform === "win32" || (info.value.mode & 0o111) !== 0)
+    ) {
       return candidate;
     }
   }

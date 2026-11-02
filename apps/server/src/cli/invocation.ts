@@ -79,11 +79,9 @@ export const resolveServerInstallation = Effect.gen(function* () {
     // Keep the home as the link spells it; `t3 update` only repoints links into that spelling.
     const linked = PINNED_RUNTIME_ENTRY.exec(path.resolve(path.dirname(launcher), link));
     if (!linked || (yield* fs.realPath(linked[1] || "/")) !== (runtime[1] || "/")) return null;
-    // PATH is hydrated before this runs; a bare name lets the host's shell find its own launcher.
-    const invokedAs = yield* HostProcess.InvokedAs;
     return {
       kind: "t3-launcher",
-      launcher: /[\\/]/.test(invokedAs) ? launcher : invokedAs,
+      launcher,
       baseDir: linked[1] || "/",
     } satisfies ServerInstallation;
   }
