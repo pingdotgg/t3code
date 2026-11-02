@@ -1390,7 +1390,7 @@ function AgentMessageFoldHeader(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${label}: ${props.summary}`}
+      accessibilityLabel={props.expanded ? label : `${label}: ${props.summary}`}
       accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the message.`}
       accessibilityState={{ expanded: props.expanded }}
       hitSlop={4}
@@ -1493,7 +1493,9 @@ function ThreadAutomationMessageRow(props: {
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Automation: ${summary}`}
+          accessibilityLabel={
+            props.expanded && taskTitle === undefined ? "Automation" : `Automation: ${summary}`
+          }
           accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the prompt.`}
           accessibilityState={{ expanded: props.expanded }}
           hitSlop={4}
