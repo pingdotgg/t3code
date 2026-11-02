@@ -1159,32 +1159,32 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   return (
     <AssistantMarkdownBlocks
       markdown={liveMarkdown}
-        onCiteText={
-          props.onCiteAssistantText && props.citationSource
-            ? (text) => {
-                if (!text.trim()) return;
-                if (text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH) {
-                  Dialog.alert(
-                    "Quote is too long",
-                    `Select up to ${ASSISTANT_CITATION_MAX_TEXT_LENGTH.toLocaleString()} characters to cite.`,
-                  );
-                  return;
-                }
-                // Native offsets are local to Markdown blocks; navigation resolves the quote in its message.
-                if (!props.citationSource) return;
-                props.onCiteAssistantText?.({
-                  version: 1,
-                  environmentId: props.environmentId,
-                  ...props.citationSource,
-                  text,
-                  start: 0,
-                  end: text.replace(/\s+/g, " ").length,
-                  prefix: "",
-                  suffix: "",
-                });
+      onCiteText={
+        props.onCiteAssistantText && props.citationSource
+          ? (text) => {
+              if (!text.trim()) return;
+              if (text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH) {
+                Dialog.alert(
+                  "Quote is too long",
+                  `Select up to ${ASSISTANT_CITATION_MAX_TEXT_LENGTH.toLocaleString()} characters to cite.`,
+                );
+                return;
               }
-            : undefined
-        }
+              // Native offsets are local to Markdown blocks; navigation resolves the quote in its message.
+              if (!props.citationSource) return;
+              props.onCiteAssistantText?.({
+                version: 1,
+                environmentId: props.environmentId,
+                ...props.citationSource,
+                text,
+                start: 0,
+                end: text.replace(/\s+/g, " ").length,
+                prefix: "",
+                suffix: "",
+              });
+            }
+          : undefined
+      }
       markdownStyles={props.markdownStyles}
       linkHandlers={linkHandlers}
       onUseArtifactTemplate={props.onUseArtifactTemplate}

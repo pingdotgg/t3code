@@ -218,6 +218,7 @@ import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-scroll-position
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
 import type { OrchestrationV2ProviderSession } from "@t3tools/contracts";
+import { voiceInputBlocksSubmission } from "@t3tools/client-runtime/voice-input";
 
 export interface ThreadDetailScreenProps {
   readonly header?: React.ReactNode;
@@ -1395,7 +1396,13 @@ function ThreadDetailBody(
     !props.isSavingQueuedEdit &&
     !props.draftMode?.interactionLocked;
   const handleCiteAssistantText = (citation: AssistantCitation) => {
-    if (!canCiteAssistantText || props.composerDraftKey === null) return;
+    if (
+      !canCiteAssistantText ||
+      props.composerDraftKey === null ||
+      (voiceInputSession.ownerKey === props.composerDraftKey &&
+        voiceInputBlocksSubmission(voiceInputSession.controller.currentState))
+    )
+      return;
     const target = captureComposerDraftInsertion(props.composerDraftKey);
     const prefix = target.start > 0 && !/\s/.test(target.text[target.start - 1]!) ? " " : "";
     insertComposerDraftText(
