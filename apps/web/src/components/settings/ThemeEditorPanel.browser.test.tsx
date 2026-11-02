@@ -148,4 +148,22 @@ describe("ThemeEditorPanel", () => {
     });
     expect((hex.element() as HTMLInputElement).value).toBe(original);
   });
+
+  it("keeps the typed text while backspacing the background hex past valid shorthand", async () => {
+    await using _view = await renderPanel();
+    const hex = page.getByRole("textbox", { name: "Background hex value" });
+    await userEvent.fill(hex, "#222222");
+    await expect.element(hex).toHaveValue("#222222");
+
+    // Four- and three-digit prefixes are valid shorthand; the guided palette must not rewrite them.
+    for (const expected of ["#22222", "#2222", "#222", "#22", "#2", "#", ""]) {
+      await userEvent.keyboard("{Backspace}");
+      await expect.element(hex).toHaveValue(expected);
+    }
+
+    await userEvent.keyboard("#3366cc");
+    await expect.element(hex).toHaveValue("#3366cc");
+    await act(async () => (hex.element() as HTMLInputElement).blur());
+    await expect.element(hex).toHaveValue("#3366cc");
+  });
 });
