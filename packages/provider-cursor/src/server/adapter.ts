@@ -45,6 +45,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import { createTurnItemOrdinalAllocator } from "@t3tools/provider-core/server/turnItemOrdinals";
 import { CursorTransportFailure } from "./transportFailure.ts";
 import { cursorContextWindowTokens, cursorSdkModelSelection } from "./sdkModel.ts";
 import {
@@ -963,6 +964,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const adapterOptions = options;
+  const turnItemOrdinals = createTurnItemOrdinalAllocator();
   const apiKey = adapterOptions.environment.CURSOR_API_KEY?.trim() || undefined;
 
   return ProviderAdapter.ProviderAdapterV2.of({
@@ -1001,15 +1003,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           Queue.offer(events, event).pipe(Effect.asVoid);
 
         const resolveItemOrdinal = (context: ActiveCursorTurn, nativeItemId: string) =>
-          Effect.sync(() => {
-            const existing = context.itemOrdinals.get(nativeItemId);
-            if (existing !== undefined) {
-              return existing;
-            }
-            const ordinal = context.input.providerTurnOrdinal * 100 + context.itemOrdinals.size + 1;
-            context.itemOrdinals.set(nativeItemId, ordinal);
-            return ordinal;
-          });
+          Effect.sync(() =>
+            turnItemOrdinals.resolve(
+              context.input.providerTurnOrdinal,
+              context.itemOrdinals,
+              nativeItemId,
+            ),
+          );
 
         const resolvePlanId = Effect.fnUntraced(function* (
           context: ActiveCursorTurn,

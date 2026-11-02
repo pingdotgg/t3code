@@ -111,7 +111,8 @@ import {
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import { createTurnItemOrdinalAllocator } from "@t3tools/provider-core/server/turnItemOrdinals";
 import {
   type BackgroundWork,
   type BackgroundWorkReport,
@@ -1503,6 +1504,7 @@ function shouldPersistToolUpdate(
   return persist;
 }
 
+// @effect-diagnostics-next-line no-low-value-comments:off -- temporary investigation probe
 export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   options: AcpAdapterV2Options,
 ) {
@@ -1514,6 +1516,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const { flavor, selfInvocation: self } = options;
+  const turnItemOrdinals = createTurnItemOrdinalAllocator();
   const readMcpContext = (threadId: ThreadId | null) =>
     threadId === null
       ? Effect.succeed(acpMcpContext(undefined, self, flavor.mcpOverHttp))
@@ -2239,13 +2242,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         );
 
         const resolveItemOrdinal = (context: ActiveAcpTurn, nativeItemId: string) =>
-          Effect.sync(() => {
-            const existing = context.itemOrdinals.get(nativeItemId);
-            if (existing !== undefined) return existing;
-            const ordinal = context.input.providerTurnOrdinal * 100 + context.itemOrdinals.size + 1;
-            context.itemOrdinals.set(nativeItemId, ordinal);
-            return ordinal;
-          });
+          Effect.sync(() =>
+            turnItemOrdinals.resolve(
+              context.input.providerTurnOrdinal,
+              context.itemOrdinals,
+              nativeItemId,
+            ),
+          );
 
         const resolveSubagentChildOrdinal = (subagent: ActiveAcpSubagent, nativeItemId: string) => {
           const existing = subagent.childItemOrdinals.get(nativeItemId);
@@ -3562,6 +3565,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           incoming: AcpToolCallState,
           projectedStatus?: ProjectedToolStatus,
         ) {
+          // @effect-diagnostics-next-line globalConsoleInEffect:off -- probe
           if (context.assistant.current?.sourceMessageId == null)
             yield* closeTextStream(context, "assistant");
           if (context.reasoning.current?.sourceMessageId == null)
@@ -4460,8 +4464,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             };
           }
           const update = notification.update;
+          // @effect-diagnostics-next-line globalConsoleInEffect:off -- probe
           let alreadyHandledToolUpdate = false;
           if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+            // @effect-diagnostics-next-line globalConsoleInEffect:off -- probe
             yield* trackRunningBackgroundTools(notification);
             // Long-timeout get_command_or_subagent_output consumption ends with TaskOutput alone.
             for (const event of parseSessionUpdateEvent(notification).events) {
