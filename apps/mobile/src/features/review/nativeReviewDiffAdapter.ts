@@ -44,6 +44,28 @@ export function buildNativeReviewSnippetRows(
   }));
 }
 
+export function buildReviewCommentPatch(comment: ReviewInlineComment): string {
+  if ((comment.fenceLanguage ?? "diff") !== "diff") {
+    return "";
+  }
+  if (!comment.diff.trim()) {
+    return "";
+  }
+  const diff = comment.diff.trimStart().replace(/\n+$/, "");
+
+  if (diff.startsWith("diff --git ")) {
+    return diff;
+  }
+
+  const normalizedPath = comment.filePath.replaceAll("\\", "/");
+  return [
+    `diff --git a/${normalizedPath} b/${normalizedPath}`,
+    `--- a/${normalizedPath}`,
+    `+++ b/${normalizedPath}`,
+    diff,
+  ].join("\n");
+}
+
 function opaqueNativeHexColor(color: string, background: string): string {
   const hex = NATIVE_HEX_COLOR.exec(color);
   if (hex && !hex[4]) return color;

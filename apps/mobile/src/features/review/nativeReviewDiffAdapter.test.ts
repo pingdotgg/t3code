@@ -8,6 +8,7 @@ import { combinePullRequestDiffPages } from "../pull-requests/pullRequestDiffPag
 import { createPullRequestDiffHighlightFiles } from "../pull-requests/pullRequestDiffHighlightFiles";
 import {
   buildNativeReviewDiffData,
+  buildReviewCommentPatch,
   getCachedNativeReviewDiffData,
 } from "./nativeReviewDiffAdapter";
 import type { ReviewInlineComment } from "./reviewCommentSelection";
@@ -45,6 +46,24 @@ function filesPatch(paths: ReadonlyArray<string>) {
     )
     .join("\n");
 }
+
+describe("buildReviewCommentPatch", () => {
+  it("keeps a selection's trailing blank line and whitespace", () => {
+    const rows = (diff: string) =>
+      buildNativeReviewDiffData(
+        buildReviewParsedDiff(
+          buildReviewCommentPatch({ ...makeComment("Insert here."), diff }),
+          "review-comment-trailing-blank",
+        ),
+      ).rows.filter((row) => row.kind === "line");
+
+    expect(rows("@@ -3,1 +2,2 @@\n+two\t\n ")).toMatchObject([
+      { content: "two\t", change: "add" },
+      { content: "", change: "context" },
+    ]);
+    expect(rows("@@ -4,1 +4,1 @@\n ")).toMatchObject([{ content: "", change: "context" }]);
+  });
+});
 
 describe("buildNativeReviewDiffData languages", () => {
   it.each([
