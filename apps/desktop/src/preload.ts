@@ -91,6 +91,19 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.on(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, handler);
     return () => ipcRenderer.removeListener(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, handler);
   },
+  showThreadNotification: (notification) =>
+    ipcRenderer.invoke(IpcChannels.SHOW_THREAD_NOTIFICATION_CHANNEL, notification),
+  closeThreadNotification: (id) =>
+    ipcRenderer.invoke(IpcChannels.CLOSE_THREAD_NOTIFICATION_CHANNEL, id),
+  setThreadNotificationReady: (ready) =>
+    ipcRenderer.invoke(IpcChannels.THREAD_NOTIFICATION_READY_CHANNEL, ready),
+  onThreadNotificationActivated: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, target: Parameters<typeof listener>[0]) =>
+      listener(target);
+    ipcRenderer.on(IpcChannels.THREAD_NOTIFICATION_ACTIVATED_CHANNEL, handler);
+    return () =>
+      ipcRenderer.removeListener(IpcChannels.THREAD_NOTIFICATION_ACTIVATED_CHANNEL, handler);
+  },
   onTrackpadScrollBegin: (listener) => {
     const handler = () => listener();
     ipcRenderer.on(IpcChannels.TRACKPAD_SCROLL_BEGIN_CHANNEL, handler);

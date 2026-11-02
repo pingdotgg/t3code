@@ -1,6 +1,10 @@
 import { WORKING_EXIT_GRACE_MS } from "@t3tools/client-runtime/state/thread-inbox";
 import type { AnyRouter } from "@tanstack/react-router";
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type DesktopThreadNotification,
+  type DesktopThreadNotificationTarget,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
@@ -259,6 +263,57 @@ it("holds a completion through a continuation gap and notifies once it settles",
   expect(TestNotification.sent).toEqual([]);
   await vi.advanceTimersByTimeAsync(1);
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
+});
+
+it("uses native Windows completion notifications without a persistent browser banner", async () => {
+  await using app = setup();
+  const show = vi.fn<(notification: DesktopThreadNotification) => Promise<boolean>>(
+    async () => true,
+  );
+  const close = vi.fn(async () => undefined);
+  let activate: ((target: DesktopThreadNotificationTarget) => void) | undefined;
+  using _bridge = stubGlobal("desktopBridge", {
+    getClientPlatform: () => "win32",
+    showThreadNotification: show,
+    closeThreadNotification: close,
+    setThreadNotificationReady: async () => true,
+    onThreadNotificationActivated: (
+      listener: (target: DesktopThreadNotificationTarget) => void,
+    ) => {
+      activate = listener;
+      return () => {
+        activate = undefined;
+      };
+    },
+    onNotificationBadgeClear: () => () => undefined,
+  });
+  app.start();
+  using _timers = fakeTimers();
+  state.shells.set(
+    "one",
+    shell({
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
+    }),
+  );
+  await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
+  expect(show).toHaveBeenCalledWith(
+    expect.objectContaining({
+      environmentId: "one",
+      threadId: "thread",
+      title: "Thread completed",
+      body: "Test thread",
+    }),
+  );
+  expect(TestNotification.sent).toEqual([]);
+  const shown = show.mock.calls[0]![0];
+  activate!({ id: shown.id, environmentId: shown.environmentId, threadId: shown.threadId });
+  expect(state.navigate).toHaveBeenCalledWith({
+    to: "/$environmentId/$threadId",
+    params: { environmentId: "one", threadId: "thread" },
+  });
+  state.mode = "off";
+  app.changeSettings();
+  expect(close).toHaveBeenCalledWith(shown.id);
 });
 
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
