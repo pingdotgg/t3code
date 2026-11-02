@@ -15,7 +15,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
@@ -43,6 +43,7 @@ import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import { LinkAccessPicker } from "./LinkAccessPicker";
 import { ANOTHER_ADDRESS, LinkMachineSelect } from "./LinkMachineSelect";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { searchableSetting } from "./settingsSearch";
 
@@ -59,13 +60,13 @@ export function LinkedEnvironmentsSettings({
   readonly isSearchTarget: boolean;
 }) {
   const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }));
-  const askAgain = useEffectEvent(() => {
-    if (!links.isPending) links.refresh();
+  // Links made outside this client bump nothing the shared list reads, so showing the panel
+  // asks again. Listing probes every linked environment, too costly for a timer nobody asked for.
+  useLiveRefresh(links.isPending ? null : links.refresh, {
+    key: `linked-environments:${environmentId}`,
+    intervalMs: null,
+    refreshOnShow: true,
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- links change outside this client, and the shared list only revalidates when built
-  useEffect(() => {
-    askAgain();
-  }, []);
   const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));
   const search = searchableSetting("linked-environments");
   return (
