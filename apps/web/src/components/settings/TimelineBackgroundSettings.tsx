@@ -29,6 +29,20 @@ async function prepareWallpaper(file: File): Promise<string> {
   return dataUrl;
 }
 
+/** Saves the image as the wallpaper; returns an error message, or "" on success. */
+async function saveWallpaper(file: File): Promise<string> {
+  try {
+    const timelineBackgroundImage = await prepareWallpaper(file);
+    await persistClientSettingsUpdate((settings) => ({
+      ...settings,
+      timelineBackgroundImage,
+    }));
+    return "";
+  } catch (cause) {
+    return cause instanceof Error ? cause.message : "Could not save wallpaper.";
+  }
+}
+
 export function TimelineBackgroundSettings() {
   const image = useClientSettings((settings) => settings.timelineBackgroundImage);
   const opacity = useClientSettings((settings) => settings.timelineBackgroundOpacity);
@@ -55,17 +69,8 @@ export function TimelineBackgroundSettings() {
   async function upload(file: File) {
     setBusy(true);
     setError("");
-    try {
-      const timelineBackgroundImage = await prepareWallpaper(file);
-      await persistClientSettingsUpdate((settings) => ({
-        ...settings,
-        timelineBackgroundImage,
-      }));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not save wallpaper.");
-    } finally {
-      setBusy(false);
-    }
+    setError(await saveWallpaper(file));
+    setBusy(false);
   }
   return (
     <SettingsSection id="appearance-wallpaper" title="Wallpaper">
