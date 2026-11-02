@@ -635,8 +635,11 @@ const skillsNamed = (text: string, known: ReadonlySet<string>) => [
 ];
 
 const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["status"]) => {
-  // A step started during a reconnect gap ran on a model no event reported.
-  const models = turn.models.size === 0 || turn.missedEvents ? {} : { models: [...turn.models] };
+  // A step whose start was missed, in a reconnect gap or as an unreadable event, ran on an unreported model.
+  const models =
+    turn.models.size === 0 || turn.missedEvents || turn.steps > turn.startedSteps
+      ? {}
+      : { models: [...turn.models] };
   return turn.steps === 0
     ? {
         usageScope: "main_agent" as const,

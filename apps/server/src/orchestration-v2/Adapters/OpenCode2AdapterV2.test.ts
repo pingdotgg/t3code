@@ -2902,6 +2902,40 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("leaves models unknown when a step ends without a seen start", () =>
+    Effect.gen(function* () {
+      const tokens = { input: 10, output: 1, reasoning: 0, cache: { read: 0, write: 0 } };
+      const step = (id: string) => ({ sessionID: SESSION, assistantMessageID: id });
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.step.started", {
+          ...step("msg_seen"),
+          agent: "build",
+          model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+          started: 1,
+        }),
+        event("session.step.ended", { ...step("msg_seen"), finish: "tool-calls", cost: 0, tokens }),
+        event("session.step.ended", { ...step("msg_unseen"), finish: "stop", cost: 0, tokens }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const turn = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+        ),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const settled = Option.getOrUndefined(yield* Fiber.join(turn));
+      const usage =
+        settled?.type === "provider_turn.updated" ? settled.providerTurn.turnTokenUsage : undefined;
+      assert.deepInclude(usage, { usageStatus: "complete", inputTokens: 20, outputTokens: 2 });
+      assert.notProperty(usage, "models");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("reports cache writes as cache creation, not only as input", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
