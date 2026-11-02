@@ -234,6 +234,7 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
       model: "gpt-5.4",
     }),
     runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
+    providerTurns: [],
     visibleTurnItems: [],
     runtimeRequests: [],
     messages: [],
