@@ -62,10 +62,10 @@ export function evaluatePullRequestWatch(
     const required = detail.checks.filter((check) => check.required === true);
     const gate = required.length > 0 ? required : detail.checks;
     const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
-    // A rerun can go pending or pass between reads; either arms the final notice again.
+    // Pending checks, a passing gate, or a new failure arm the final notice again.
     // The notice ends the watch, so it waits for a complete read of the remarks.
     const pending = detail.checks.some((check) => check.status === "pending");
-    if (pending || passedNow) {
+    if (pending || passedNow || newlyFailed.length > 0) {
       finished = false;
     } else if (remarks !== null && newlyFailed.length === 0 && !finished) {
       changes.push({ kind: "checks-finished", checks: detail.checks });
