@@ -10,6 +10,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -1900,6 +1901,121 @@ it.layer(
               models: [...initialProvider.models],
             }),
           );
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
+    it.effect("publishes the current providers last when an earlier cache write is slow", () =>
+      Effect.gen(function* () {
+        const cursorDriver = ProviderDriverKind.make("cursor");
+        const makeProvider = (instanceId: string, checkedAt: string) =>
+          ({
+            instanceId: ProviderInstanceId.make(instanceId),
+            driver: cursorDriver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt,
+            version: "2026.04.09-f2b0fcd",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          }) satisfies ServerProvider;
+        const slowProvider = makeProvider("cursor", "2026-04-14T00:01:00.000Z");
+        const fastProvider = makeProvider("cursor_fast", "2026-04-14T00:02:00.000Z");
+        const makeInstance = (provider: ServerProvider, changes: PubSub.PubSub<ServerProvider>) =>
+          ({
+            instanceId: provider.instanceId,
+            driverKind: cursorDriver,
+            continuationIdentity: {
+              driverKind: cursorDriver,
+              continuationKey: `cursor:instance:${provider.instanceId}`,
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: cursorDriver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed({ ...provider, checkedAt: "2026-04-14T00:00:00.000Z" }),
+              refresh: Effect.succeed(provider),
+              streamChanges: Stream.fromPubSub(changes),
+              applyUsageLimits: () => Effect.void,
+            },
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          }) satisfies ProviderInstance;
+        const slowChanges = yield* PubSub.unbounded<ServerProvider>();
+        const fastChanges = yield* PubSub.unbounded<ServerProvider>();
+        const instances = [
+          makeInstance(slowProvider, slowChanges),
+          makeInstance(fastProvider, fastChanges),
+        ];
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (instanceId) =>
+              Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
+            listInstances: Effect.succeed(instances),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
+              PubSub.subscribe(pubsub),
+            ),
+          },
+        );
+        // Hold the slow provider's cache write until the fast provider has published.
+        const fileSystem = yield* FileSystem.FileSystem;
+        const slowWriteStarted = yield* Deferred.make<void>();
+        const releaseSlowWrite = yield* Deferred.make<void>();
+        const gatedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          writeFileString: (filePath, data, options) =>
+            data.includes(slowProvider.checkedAt)
+              ? Deferred.succeed(slowWriteStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseSlowWrite)),
+                  Effect.andThen(fileSystem.writeFileString(filePath, data, options)),
+                )
+              : fileSystem.writeFileString(filePath, data, options),
+        });
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provideMerge(layerInstanceRegistry),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-publish-order-",
+              }),
+            ),
+            Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
+            Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, gatedFileSystem)),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const publications = yield* registry.streamChanges.pipe(
+            Stream.take(2),
+            Stream.runCollect,
+            Effect.forkScoped,
+          );
+          const fastPublished = yield* awaitPersistedProvider(registry, fastProvider.checkedAt);
+
+          yield* PubSub.publish(slowChanges, slowProvider);
+          yield* Deferred.await(slowWriteStarted);
+          yield* PubSub.publish(fastChanges, fastProvider);
+          yield* Fiber.join(fastPublished);
+          yield* Deferred.succeed(releaseSlowWrite, undefined);
+
+          const published = yield* Fiber.join(publications);
+          assert.deepStrictEqual(published.at(-1), yield* registry.getProviders);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );
