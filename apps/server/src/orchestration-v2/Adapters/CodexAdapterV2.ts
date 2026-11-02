@@ -4715,7 +4715,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.andThen(
                   Effect.gen(function* () {
                     const current = (yield* Ref.get(providerRetries)).get(context.providerTurnId);
-                    if (current?.startedAt !== state.startedAt || context.retryBudgetExhausted)
+                    // A user Stop already in flight keeps its interrupted outcome.
+                    if (
+                      current?.startedAt !== state.startedAt ||
+                      context.retryBudgetExhausted ||
+                      (yield* Ref.get(interruptingNativeTurns)).has(payload.turnId)
+                    )
                       return;
                     context.retryBudgetExhausted = true;
                     context.latestProviderFailure = {

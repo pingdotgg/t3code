@@ -8845,10 +8845,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 Effect.andThen(
                   Effect.gen(function* () {
                     const current = (yield* Ref.get(providerRetries)).get(context.providerTurnId);
+                    // A user Stop already in flight keeps its interrupted outcome.
                     if (
                       current?.startedAt !== state.startedAt ||
                       (yield* Ref.get(activeTurn)) !== context ||
-                      context.retryBudgetFailure !== undefined
+                      context.retryBudgetFailure !== undefined ||
+                      (yield* Ref.get(interruptedTurns)).has(context.providerTurnId)
                     )
                       return;
                     context.retryBudgetFailure = current.failure;
