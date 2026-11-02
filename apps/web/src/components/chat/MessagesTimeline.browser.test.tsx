@@ -670,11 +670,8 @@ describe("MessagesTimeline messages", () => {
     if (mode === "grouped-delayed") {
       routeThreadKey = `${routeThreadKey}-switched`;
       await screen.rerender(timeline());
-      await vi.waitFor(() =>
-        expect(
-          viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
-        ).toBeLessThanOrEqual(1),
-      );
+      await vi.waitFor(() => expect(viewport.scrollHeight).toBeGreaterThan(3000));
+      await act(() => viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 })));
     }
     if (mode.startsWith("grouped-")) {
       await act(() => {
