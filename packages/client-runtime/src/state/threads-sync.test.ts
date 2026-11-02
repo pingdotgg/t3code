@@ -492,6 +492,64 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("does not cache more rows than a bounded snapshot after events grow the thread", () =>
+    Effect.gen(function* () {
+      // The server's THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT.
+      const boundedSnapshotRowLimit = 502;
+      const appendedItems = 600;
+      const saved = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* makeHarness({
+            cached: BASE_PROJECTION,
+            cachedHistory: { historyCursor: "older", hasMoreHistory: true },
+          });
+          for (let index = 0; index < appendedItems; index++) {
+            const item: OrchestrationV2TurnItem = {
+              id: TurnItemId.make(`streamed-item-${index}`),
+              threadId: THREAD_ID,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: index + 1,
+              status: "completed",
+              title: null,
+              startedAt: v2Now,
+              completedAt: v2Now,
+              updatedAt: v2Now,
+              type: "system_notice",
+              message: `Notice ${index}`,
+            };
+            yield* Queue.offer(h.inputs, {
+              kind: "event",
+              sequence: CACHED_SNAPSHOT_SEQUENCE + 1 + index,
+              event: {
+                id: EventId.make(`event-streamed-item-${index}`),
+                type: "turn-item.updated",
+                threadId: THREAD_ID,
+                occurredAt: v2Now,
+                payload: item,
+              },
+            });
+          }
+          yield* awaitThreadState(
+            h.observed,
+            (value) => Option.getOrNull(value.data)?.turnItems.length === appendedItems,
+          );
+          yield* TestClock.adjust("500 millis");
+          return h.savedThreads;
+        }),
+      );
+      // Leaving the thread also saves it, so every write the cache received is here.
+      const savedRows = (yield* Ref.get(saved)).map(
+        (snapshot) => snapshot.projection.turnItems.length,
+      );
+      expect(Math.max(0, ...savedRows)).toBeLessThanOrEqual(boundedSnapshotRowLimit);
+    }),
+  );
+
   it.effect("does not resume past a canceled event whose data was not applied", () =>
     Effect.gen(function* () {
       const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
