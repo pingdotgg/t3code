@@ -1,8 +1,21 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeModule from "node:module";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import Plist, { type PlistObject } from "plist";
+
+interface AfterPackContext {
+  readonly appOutDir: string;
+  readonly electronPlatformName: string;
+  readonly arch: number;
+  readonly packager: unknown;
+}
+
+const prepareServerCompileCache: (context: AfterPackContext) => Promise<void> =
+  NodeModule.createRequire(import.meta.url)("./prepare-server-compile-cache.cjs");
 
 // The backend runs as the generic Helper, so macOS shows that bundle's usage strings in privacy
 // prompts that agent commands trigger. electron-builder only extends the main Info.plist.
@@ -42,12 +55,12 @@ const copyUsageDescriptionsToHelper = Effect.fn("afterPackMacos.copyUsageDescrip
   },
 );
 
-export default function afterPack(context: {
-  readonly appOutDir: string;
-  readonly electronPlatformName: string;
-}): Promise<void> {
-  if (context.electronPlatformName !== "darwin") return Promise.resolve();
-  return Effect.runPromise(
-    copyUsageDescriptionsToHelper(context.appOutDir).pipe(Effect.provide(NodeServices.layer)),
-  );
+// electron-builder takes one afterPack hook, so the macOS hook also runs the shared one.
+export default async function afterPack(context: AfterPackContext): Promise<void> {
+  if (context.electronPlatformName === "darwin") {
+    await Effect.runPromise(
+      copyUsageDescriptionsToHelper(context.appOutDir).pipe(Effect.provide(NodeServices.layer)),
+    );
+  }
+  await prepareServerCompileCache(context);
 }
