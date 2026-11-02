@@ -603,188 +603,192 @@ describe("Grok context usage", () => {
     layerHost,
   );
 
-  it.live("reports Grok's _meta.totalTokens against the model's context window", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "grok-context-usage-" });
-      const sessionId = "grok-context-usage-session";
-      const update = (totalTokens: number, sessionUpdate: Record<string, unknown>) =>
-        ({
-          type: "emit_inbound",
-          frame: {
-            kind: "notification",
-            method: "session/update",
-            params: { sessionId, update: sessionUpdate, _meta: { totalTokens } },
-          },
-        }) as const;
-      const transcript: AcpReplayTranscript = {
-        provider: GROK_PROVIDER,
-        protocol: "acp.ndjson-jsonrpc",
-        version: "1",
-        scenario: "grok-context-usage",
-        entries: [
-          {
-            type: "expect_outbound",
-            frame: { kind: "request", method: "initialize", params: "<any>" },
-          },
-          {
+  // grok-build is the default selection; it means the session's current model.
+  it.live.each(["grok-4.7", "grok-build"])(
+    "reports Grok's _meta.totalTokens against the context window of %s",
+    (model) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "grok-context-usage-" });
+        const sessionId = "grok-context-usage-session";
+        const update = (totalTokens: number, sessionUpdate: Record<string, unknown>) =>
+          ({
             type: "emit_inbound",
             frame: {
-              kind: "response",
-              method: "initialize",
-              result: {
-                protocolVersion: 1,
-                agentCapabilities: { loadSession: true, promptCapabilities: { image: false } },
-                authMethods: [{ id: "replay", name: "Replay" }],
-              },
+              kind: "notification",
+              method: "session/update",
+              params: { sessionId, update: sessionUpdate, _meta: { totalTokens } },
             },
-          },
-          {
-            type: "expect_outbound",
-            frame: { kind: "request", method: "session/new", params: "<any>" },
-          },
-          {
-            type: "emit_inbound",
-            frame: {
-              kind: "response",
-              method: "session/new",
-              result: {
-                sessionId,
-                models: {
-                  currentModelId: "grok-4.7",
-                  availableModels: [
-                    {
-                      modelId: "grok-4.7",
-                      name: "Grok 4.7",
-                      _meta: { totalContextTokens: 500_000 },
-                    },
-                  ],
+          }) as const;
+        const transcript: AcpReplayTranscript = {
+          provider: GROK_PROVIDER,
+          protocol: "acp.ndjson-jsonrpc",
+          version: "1",
+          scenario: "grok-context-usage",
+          entries: [
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "initialize", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "initialize",
+                result: {
+                  protocolVersion: 1,
+                  agentCapabilities: { loadSession: true, promptCapabilities: { image: false } },
+                  authMethods: [{ id: "replay", name: "Replay" }],
                 },
               },
             },
-          },
-          {
-            type: "expect_outbound",
-            frame: { kind: "request", method: "session/prompt", params: "<any>" },
-          },
-          update(1_338, {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: "Done." },
-          }),
-          update(18_609, { sessionUpdate: "available_commands_update", availableCommands: [] }),
-          {
-            type: "emit_inbound",
-            frame: {
-              kind: "response",
-              method: "session/prompt",
-              result: {
-                stopReason: "end_turn",
-                _meta: {
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/new", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/new",
+                result: {
                   sessionId,
-                  totalTokens: 18_609,
-                  modelId: "grok-4.7",
-                  inputTokens: 18_575,
-                  outputTokens: 27,
-                  numTurns: 1,
+                  models: {
+                    currentModelId: "grok-4.7",
+                    availableModels: [
+                      {
+                        modelId: "grok-4.7",
+                        name: "Grok 4.7",
+                        _meta: { totalContextTokens: 500_000 },
+                      },
+                    ],
+                  },
                 },
               },
             },
-          },
-        ],
-      };
-      const instanceId = ProviderInstanceId.make("grok-context-usage");
-      const threadId = ThreadId.make("grok-context-usage-thread");
-      const adapter = yield* makeGrokAdapterV2({
-        instanceId,
-        settings: LAUNCH_TEST_GROK_SETTINGS,
-        environment: {},
-        hostPlatform: "darwin",
-        selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: makeAcpReplayRuntime({
-          transcript,
-          statusPath: path.join(workspace, "status.json"),
-          scriptPath: yield* path.fromFileUrl(
-            new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
-          ),
-          childProcessSpawner,
-          fileSystem: fs,
-          initializeMeta: GROK_ACP_INITIALIZE_META,
-        }),
-      });
-      const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: workspace,
-      });
-      const modelSelection = { instanceId, model: "grok-4.7" };
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make(sessionId),
-        modelSelection,
-        runtimePolicy: policy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy: policy,
-      });
-      const contextUsages: Array<unknown> = [];
-      const terminal = yield* Deferred.make<void>();
-      yield* runtime.events.pipe(
-        Stream.runForEach((event) => {
-          if (event.type === "provider_thread.updated")
-            return Effect.sync(() => contextUsages.push(event.providerThread.contextUsage));
-          if (event.type === "turn.terminal") return Deferred.succeed(terminal, undefined);
-          return Effect.void;
-        }),
-        Effect.forkScoped,
-      );
-      const now = yield* DateTime.now;
-      yield* runtime.startTurn({
-        appThread: {
-          createdBy: "user",
-          creationSource: "web",
-          id: threadId,
-          projectId: ProjectId.make("grok-context-usage-project"),
-          title: "Grok context usage",
-          providerInstanceId: instanceId,
-          modelSelection,
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/prompt", params: "<any>" },
+            },
+            update(1_338, {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Done." },
+            }),
+            update(18_609, { sessionUpdate: "available_commands_update", availableCommands: [] }),
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: {
+                  stopReason: "end_turn",
+                  _meta: {
+                    sessionId,
+                    totalTokens: 18_653,
+                    modelId: "grok-4.7",
+                    inputTokens: 18_575,
+                    outputTokens: 27,
+                    numTurns: 1,
+                  },
+                },
+              },
+            },
+          ],
+        };
+        const instanceId = ProviderInstanceId.make("grok-context-usage");
+        const threadId = ThreadId.make("grok-context-usage-thread");
+        const adapter = yield* makeGrokAdapterV2({
+          instanceId,
+          settings: LAUNCH_TEST_GROK_SETTINGS,
+          environment: {},
+          hostPlatform: "darwin",
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: makeAcpReplayRuntime({
+            transcript,
+            statusPath: path.join(workspace, "status.json"),
+            scriptPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+            ),
+            childProcessSpawner,
+            fileSystem: fs,
+            initializeMeta: GROK_ACP_INITIALIZE_META,
+          }),
+        });
+        const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
           interactionMode: "default",
-          branch: null,
-          worktreePath: workspace,
-          activeProviderThreadId: providerThread.id,
-          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-          forkedFrom: null,
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          lastVisitedAt: null,
-          deletedAt: null,
-        },
-        threadId,
-        runId: RunId.make("grok-context-usage-run"),
-        runOrdinal: 1,
-        providerTurnOrdinal: 1,
-        attemptId: RunAttemptId.make("grok-context-usage-attempt"),
-        rootNodeId: NodeId.make("grok-context-usage-root"),
-        providerThread,
-        message: {
-          createdBy: "user",
-          creationSource: "web",
-          messageId: MessageId.make("grok-context-usage-message"),
-          text: "Say done.",
-          attachments: [],
-        },
-        modelSelection,
-        runtimePolicy: policy,
-      });
-      yield* Deferred.await(terminal);
-      assert.deepEqual(contextUsages.at(-1), { usedTokens: 18_609, maxTokens: 500_000 });
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+          cwd: workspace,
+        });
+        const modelSelection = { instanceId, model };
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(sessionId),
+          modelSelection,
+          runtimePolicy: policy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy: policy,
+        });
+        const contextUsages: Array<unknown> = [];
+        const terminal = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => {
+            if (event.type === "provider_thread.updated")
+              return Effect.sync(() => contextUsages.push(event.providerThread.contextUsage));
+            if (event.type === "turn.terminal") return Deferred.succeed(terminal, undefined);
+            return Effect.void;
+          }),
+          Effect.forkScoped,
+        );
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn({
+          appThread: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("grok-context-usage-project"),
+            title: "Grok context usage",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: workspace,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          threadId,
+          runId: RunId.make("grok-context-usage-run"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("grok-context-usage-attempt"),
+          rootNodeId: NodeId.make("grok-context-usage-root"),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("grok-context-usage-message"),
+            text: "Say done.",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy: policy,
+        });
+        yield* Deferred.await(terminal);
+        assert.deepEqual(contextUsages.at(-1), { usedTokens: 18_653, maxTokens: 500_000 });
+        assert.deepInclude(contextUsages, { usedTokens: 18_609, maxTokens: 500_000 });
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 });

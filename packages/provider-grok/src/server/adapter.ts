@@ -30,6 +30,7 @@ import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeL
 import {
   applyGrokAcpModelSelection,
   currentGrokModelIdFromSessionSetup,
+  GROK_DEFAULT_MODEL_SLUG,
   grokApprovalOptions,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
@@ -258,10 +259,12 @@ export function makeGrokAcpAdapterFlavor(
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
     getModelContextWindow: (selection, session) => {
       if (selection.instanceId !== options.instanceId) return undefined;
-      const modelId = resolveGrokAcpBaseModelId(selection.model);
+      const requestedModelId = resolveGrokAcpBaseModelId(selection.model);
       const models =
         session.sessionSetupResult.models ??
         sessionModelStateFromInitialize(session.initializeResult);
+      const modelId =
+        requestedModelId === GROK_DEFAULT_MODEL_SLUG ? models?.currentModelId : requestedModelId;
       const window = models?.availableModels.find((model) => model.modelId === modelId)?._meta
         ?.totalContextTokens;
       // contextWindows includes selectable larger windows; totalContextTokens is the default.
