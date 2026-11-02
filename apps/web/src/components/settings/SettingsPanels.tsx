@@ -537,6 +537,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.enableProviderUpdateChecks !== DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
       ? ["Provider update checks"]
       : []),
+    ...(settings.automaticUpdates !== DEFAULT_UNIFIED_SETTINGS.automaticUpdates
+      ? ["Update automatically"]
+      : []),
     ...(settings.continueThreadsAfterServerUpdate !==
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
       ? ["Continue threads after restarts"]
@@ -660,6 +663,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      automaticUpdates: DEFAULT_UNIFIED_SETTINGS.automaticUpdates,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
@@ -1929,6 +1933,12 @@ export function MaintenanceSettingsPanel() {
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
 
+  const supportsAutomaticUpdates =
+    connectedEnvironments.length > 0 &&
+    connectedEnvironments.every(
+      (target) => target.serverConfig?.environment.capabilities.automaticUpdates === true,
+    );
+
   return (
     <SettingsPageContainer>
       <SettingsSection id="updates" title="Updates">
@@ -1961,6 +1971,40 @@ export function MaintenanceSettingsPanel() {
             />
           }
         />
+        <SettingsRow
+          serverScoped
+          settingKeys={["automaticUpdates"]}
+          {...searchableSetting("automatic-updates")}
+          description="Install updates for provider CLIs that support one-click updates in the background on the selected environments while nothing is running."
+          status={
+            !supportsAutomaticUpdates
+              ? "All selected connected environments must support automatic updates."
+              : !settings.enableProviderUpdateChecks
+                ? "Turn on Provider update checks to update automatically."
+                : undefined
+          }
+          resetAction={
+            supportsAutomaticUpdates &&
+            settings.automaticUpdates !== DEFAULT_UNIFIED_SETTINGS.automaticUpdates ? (
+              <SettingResetButton
+                label="automatic updates"
+                onClick={() =>
+                  updateSettings({ automaticUpdates: DEFAULT_UNIFIED_SETTINGS.automaticUpdates })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["automaticUpdates"]}
+              checked={settings.automaticUpdates}
+              disabled={!supportsAutomaticUpdates || !settings.enableProviderUpdateChecks}
+              onCheckedChange={(checked) => updateSettings({ automaticUpdates: Boolean(checked) })}
+              aria-label="Update automatically"
+            />
+          }
+        />
+
         <SettingsRow
           {...searchableSetting("continue-threads-after-server-update")}
           serverScoped
