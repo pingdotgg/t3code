@@ -116,6 +116,8 @@ describe("antigravityEditPatch", () => {
       ["const line3 = 3;", "x\n"],
       ["const line3 = 3;\n", "x"],
       ["const line20 = 20;", "x\n"],
+      // Clearing the last line of a file with no final newline removes the line.
+      ["const line20 = 20;", ""],
     ]) {
       expect(
         antigravityEditPatch({

@@ -156,10 +156,13 @@ export function antigravityEditPatch(input: {
   const placed: Array<{ readonly start: number; readonly hunks: StructuredPatchHunk[] }> = [];
   const snippets: StructuredPatchHunk[] = [];
   for (const chunk of chunks) {
-    // Whether a changed final line break splits or joins lines depends on what follows the match.
+    // Whether a changed final line break, or a cleared line, splits, joins or removes lines
+    // depends on what follows the match. Only a whole-line delete is certain.
+    const targetEndsLine = chunk.TargetContent.endsWith("\n");
     if (
-      chunk.ReplacementContent !== "" &&
-      chunk.TargetContent.endsWith("\n") !== chunk.ReplacementContent.endsWith("\n")
+      chunk.ReplacementContent === ""
+        ? !targetEndsLine
+        : targetEndsLine !== chunk.ReplacementContent.endsWith("\n")
     )
       return ANTIGRAVITY_EDIT_DIFF_OMITTED;
     const hunks = snippetHunks(chunk.TargetContent, chunk.ReplacementContent, budget);
