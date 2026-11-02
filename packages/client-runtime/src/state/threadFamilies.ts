@@ -265,6 +265,8 @@ export function createThreadFamilyAtoms<R, ER, E>(
     /** The current generation's family read, for decisions that need a settled answer. */
     familyAtom: (environmentId: EnvironmentId, threadId: ThreadId) =>
       familyAtom(familyKey(environmentId, threadId)),
+    /** Sequences of the shell's thread removals since its latest authoritative snapshot. */
+    removedAtAtom,
     mount,
     mountRows,
     refresh,

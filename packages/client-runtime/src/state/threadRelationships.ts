@@ -57,12 +57,14 @@ export function deriveThreadRelationshipGraph(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly projection: OrchestrationV2ThreadProjection | null;
   /**
-   * The projection thread's family read. Its rows fill in endpoints `threads` omits; once settled,
-   * a fork that is in neither was deleted.
+   * The projection thread's family read. Its rows fill in endpoints `threads` omits. A fork in
+   * neither was deleted only if `threads` holds a successful archive read no older than the fork's
+   * removal: `archiveSequence` is that read's sequence once the family read settled, else null.
    */
   readonly family?: {
     readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
-    readonly settled: boolean;
+    readonly archiveSequence: number | null;
+    readonly removedAt: ReadonlyMap<ThreadId, number>;
   };
 }): ThreadRelationshipGraph {
   const threadsById = new Map<ThreadId, OrchestrationV2ThreadShell>();
@@ -132,8 +134,10 @@ export function deriveThreadRelationshipGraph(input: {
             : subagent.status),
       });
     }
+    const archiveSequence = input.family?.archiveSequence ?? null;
     const isGone = (threadId: ThreadId) =>
-      input.family?.settled === true &&
+      archiveSequence !== null &&
+      (input.family?.removedAt.get(threadId) ?? -1) <= archiveSequence &&
       threadId !== ownerThreadId &&
       !threadsById.has(threadId) &&
       !familyById.has(threadId);

@@ -278,7 +278,7 @@ describe("thread relationships", () => {
             transfer("absent-subagent", "subagent_spawn"),
           ],
         } as never,
-        family: { threads: [], settled },
+        family: { threads: [], archiveSequence: settled ? 0 : null, removedAt: new Map() },
       });
       expect(immediateThreadRelationships(graph, source).map(({ threadId }) => threadId)).toEqual(
         related,

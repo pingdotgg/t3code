@@ -11,12 +11,22 @@ const state = vi.hoisted(() => ({
   relatedShells: [] as unknown[],
   family: null as unknown,
   familyAtom: null as unknown,
+  removedAt: new Map<string, number>(),
+  removedAtAtom: null as unknown,
+  archived: null as unknown,
+  refreshArchived: vi.fn(),
 }));
 
 vi.mock(import("@effect/atom-react"), async (original) => ({
   ...(await original()),
   useAtomValue: ((atom: unknown, select?: (value: unknown) => unknown) =>
-    atom === state.familyAtom ? (select ? select(state.family) : state.family) : false) as never,
+    atom === state.familyAtom
+      ? select
+        ? select(state.family)
+        : state.family
+      : atom === state.removedAtAtom
+        ? state.removedAt
+        : false) as never,
 }));
 
 vi.mock(import("../../state/entities"), () => ({
@@ -34,15 +44,21 @@ vi.mock(import("../../state/environments"), () => ({
   useEnvironmentProviders: (() => new Map()) as never,
 }));
 vi.mock(import("../../lib/archivedThreadsState"), () => ({
-  useArchivedThreadSnapshots: (() => ({ snapshots: [] })) as never,
+  useArchivedThreadSnapshots: (() => state.archived) as never,
+  refreshArchivedThreadsForEnvironment: state.refreshArchived,
 }));
 vi.mock(import("../../state/threads"), async (original) => {
   const actual = await original();
   const { Atom } = await import("effect/reactivity");
   state.familyAtom = Atom.make(null);
+  state.removedAtAtom = Atom.make(null);
   return {
     ...actual,
-    threadFamilies: { ...actual.threadFamilies, familyAtom: (() => state.familyAtom) as never },
+    threadFamilies: {
+      ...actual.threadFamilies,
+      familyAtom: (() => state.familyAtom) as never,
+      removedAtAtom: (() => state.removedAtAtom) as never,
+    },
   };
 });
 vi.mock(import("../../state/use-atom-command"), () => ({
@@ -64,6 +80,13 @@ function setup() {
   state.commandSucceeds = false;
   state.relatedShells = [];
   state.family = AsyncResult.initial(true);
+  state.removedAt = new Map();
+  state.archived = {
+    snapshots: [{ environmentId, snapshot: { snapshotSequence: 1, projects: [], threads: [] } }],
+    error: null,
+    isLoading: false,
+  };
+  state.refreshArchived.mockClear();
   state.projection = {
     thread: {
       id: threadId,
@@ -448,6 +471,37 @@ it.each([
   );
 
   await expect.element(screen.getByText("older-fork")).toBeVisible();
+});
+
+it.each([
+  ["its archive read failed", false],
+  ["its archive read predates the fork's removal", true],
+])("keeps a fork missing from a settled family read when %s", async (_, staleArchive) => {
+  setupSourceWithTransfers(
+    [
+      {
+        sourceThreadId: "source",
+        targetThreadId: "archived-fork",
+        type: "fork",
+        status: "pending",
+      },
+    ],
+    [],
+  );
+  if (staleArchive) state.removedAt = new Map([["archived-fork", 2]]);
+  else
+    state.archived = { snapshots: [], error: "Failed to load archived threads.", isLoading: false };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={ThreadId.make("source")}
+      showLineage
+      showSideChats={false}
+    />,
+  );
+
+  await expect.element(screen.getByText("archived-fork")).toBeVisible();
+  expect(state.refreshArchived).toHaveBeenCalledTimes(staleArchive ? 1 : 0);
 });
 
 it("titles an older fork the shell omitted from its family read", async () => {

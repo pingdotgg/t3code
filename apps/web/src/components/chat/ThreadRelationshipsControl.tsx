@@ -55,9 +55,12 @@ import {
   SquareIcon,
   UnplugIcon,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
+import {
+  refreshArchivedThreadsForEnvironment,
+  useArchivedThreadSnapshots,
+} from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   useProjects,
@@ -389,9 +392,10 @@ export function ThreadRelationshipsPanel(props: {
   const relationshipShells = useThreadRelationshipShells(ref);
   const allProjects = useProjects();
   const archived = useArchivedThreadSnapshots([props.environmentId]);
-  const archivedShells = archived.snapshots.find(
+  const archivedSnapshot = archived.snapshots.find(
     (entry) => entry.environmentId === props.environmentId,
-  )?.snapshot.threads;
+  )?.snapshot;
+  const archivedShells = archivedSnapshot?.threads;
   const shownThreadIds = new Set(
     [...relationshipShells, ...(archivedShells ?? [])].map((thread) => thread.id),
   );
@@ -405,6 +409,27 @@ export function ThreadRelationshipsPanel(props: {
       ? threadFamilies.familyAtom(props.environmentId, props.threadId)
       : null,
   );
+  const removedAt = useAtomValue(threadFamilies.removedAtAtom(props.environmentId));
+  // A thread archived since the archive read left the shell but is not in that read yet.
+  const staleArchiveSequence =
+    archivedSnapshot !== undefined &&
+    !archived.isLoading &&
+    projection?.contextTransfers.some((transfer) =>
+      [transfer.sourceThreadId, transfer.targetThreadId].some(
+        (id) => (removedAt.get(id) ?? -1) > archivedSnapshot.snapshotSequence,
+      ),
+    )
+      ? archivedSnapshot.snapshotSequence
+      : null;
+  const refreshedArchiveSequence = useRef<number | null>(null);
+  const environmentId = props.environmentId;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the server's archive once per stale read
+  useEffect(() => {
+    if (staleArchiveSequence === null) return;
+    if (refreshedArchiveSequence.current === staleArchiveSequence) return;
+    refreshedArchiveSequence.current = staleArchiveSequence;
+    refreshArchivedThreadsForEnvironment(environmentId);
+  }, [staleArchiveSequence, environmentId, refreshedArchiveSequence]);
   const currentThread =
     projection?.thread ??
     relationshipShells.find((thread) => thread.id === props.threadId) ??
@@ -482,7 +507,11 @@ export function ThreadRelationshipsPanel(props: {
     projection,
     family: {
       threads: family.data?.threads ?? [],
-      settled: family.isSuccess && !family.isPending && !archived.isLoading,
+      archiveSequence:
+        family.isSuccess && !family.isPending && archived.error === null
+          ? (archivedSnapshot?.snapshotSequence ?? null)
+          : null,
+      removedAt,
     },
   });
   const currentProject = projects.find((project) => project.id === currentThread?.projectId);
