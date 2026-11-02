@@ -1,4 +1,10 @@
-import type { SourceControlProviderKind } from "@t3tools/contracts";
+import type {
+  SourceControlAppAccess,
+  SourceControlProviderKind,
+  SourceControlSignInError,
+  SourceControlSignInPrompt,
+  SourceControlSignInResult,
+} from "@t3tools/contracts";
 import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
@@ -21,6 +27,25 @@ export interface SourceControlMediaRequest {
   readonly headers: Readonly<Record<string, string>>;
 }
 
+/** The server side of a definition's `credentials.appSignIn`. */
+export interface SourceControlSignIn {
+  /** Replaces any sign-in already pending for `host`; the driver finishes it on its own. */
+  readonly start: (
+    host: string,
+  ) => Effect.Effect<SourceControlSignInPrompt, SourceControlSignInError>;
+  /** The outcome of the latest sign-in `start` began for `host`, waiting for it if pending. */
+  readonly wait: (
+    host: string,
+  ) => Effect.Effect<SourceControlSignInResult, SourceControlSignInError>;
+  /** Ends the sign-in pending for `host`; its `wait` fails as cancelled. */
+  readonly cancel: (host: string) => Effect.Effect<void>;
+  /** Whether the sign-in reaches `owner/name`, so clients can suggest installing the app there. */
+  readonly access: (
+    host: string,
+    repository: string,
+  ) => Effect.Effect<SourceControlAppAccess["status"]>;
+}
+
 export interface SourceControlDriverInstance {
   readonly sourceControl: SourceControlProvider.SourceControlProvider["Service"];
   readonly discovery: SourceControlProviderDiscoverySpec;
@@ -37,6 +62,9 @@ export interface SourceControlDriverInstance {
     HttpClientError.HttpClientError,
     Scope.Scope
   >;
+  readonly signIn?: SourceControlSignIn;
+  /** Whether the server's account on `host` starred `repository` (`owner/name`). */
+  readonly isRepositoryStarred?: (host: string, repository: string) => Effect.Effect<boolean>;
 }
 
 /** What the server gives every driver. A driver builds anything else it needs itself. */

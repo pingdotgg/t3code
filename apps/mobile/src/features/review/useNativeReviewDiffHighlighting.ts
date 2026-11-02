@@ -2,7 +2,7 @@ import type { HighlightScheme } from "../../lib/highlights";
 
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   highlightNativeReviewDiffVisibleRows,
@@ -182,7 +182,7 @@ export function useNativeReviewDiffHighlighting(input: {
     };
   }, [collapsedFileIds, enabled, files, resetKey, rows, scheme, viewport, viewportScope]);
 
-  const acknowledgeTokenPatch = useCallback((payload: Readonly<Record<string, unknown>>) => {
+  const acknowledgeTokenPatch = (payload: Readonly<Record<string, unknown>>) => {
     const pending = pendingPatchesRef.current;
     const head = pending[0];
     traceDiffHighlight("patch-ack", {
@@ -196,25 +196,22 @@ export function useNativeReviewDiffHighlighting(input: {
       return;
     pending.shift();
     setTokensPatchJson(pending[0]?.json ?? createEmptyTokenPatch(head.resetKey));
-  }, []);
+  };
 
-  const rejectTokenPatch = useCallback(
-    (payload: Readonly<Record<string, unknown>>) => {
-      const head = pendingPatchesRef.current[0];
-      traceDiffHighlight("patch-rejected", {
-        reset: diffHighlightTraceId(payload.resetKey),
-        chunk: typeof payload.chunkIndex === "number" ? payload.chunkIndex : -1,
-        matches:
-          !!head && payload.resetKey === head.resetKey && payload.chunkIndex === head.chunkIndex,
-      });
-      if (!head || payload.resetKey !== head.resetKey || payload.chunkIndex !== head.chunkIndex)
-        return;
-      for (const rowId of head.rowIds) highlightedRowIdsRef.current.delete(rowId);
-      // Retry these rows only on a later viewport request, not in a failure loop.
-      acknowledgeTokenPatch(payload);
-    },
-    [acknowledgeTokenPatch],
-  );
+  const rejectTokenPatch = (payload: Readonly<Record<string, unknown>>) => {
+    const head = pendingPatchesRef.current[0];
+    traceDiffHighlight("patch-rejected", {
+      reset: diffHighlightTraceId(payload.resetKey),
+      chunk: typeof payload.chunkIndex === "number" ? payload.chunkIndex : -1,
+      matches:
+        !!head && payload.resetKey === head.resetKey && payload.chunkIndex === head.chunkIndex,
+    });
+    if (!head || payload.resetKey !== head.resetKey || payload.chunkIndex !== head.chunkIndex)
+      return;
+    for (const rowId of head.rowIds) highlightedRowIdsRef.current.delete(rowId);
+    // Retry these rows only on a later viewport request, not in a failure loop.
+    acknowledgeTokenPatch(payload);
+  };
 
   return {
     rejectTokenPatch,

@@ -66,7 +66,7 @@ export function setNativelyPoppingWorkspaceRoute(key: string | null) {
  * it, or else the detail column's current page of the same kind, keeps its key, so the column
  * updates in place instead of pushing.
  */
-export function workspaceDetailState<
+function workspaceDetailState<
   State extends { readonly index: number; readonly routes: readonly RouteLike[] },
 >(state: State, detail: WorkspaceDetail, sheet?: WorkspaceDetailSheet, popping?: string | null) {
   const { workspace } = workspaceRoutesOf(state.routes.slice(0, state.index + 1));

@@ -22,6 +22,29 @@ export const offersLinkedEnvironments = (
 ): boolean =>
   config?.environment.capabilities.peerLinks === true && config.settings.linkedEnvironmentsEnabled;
 
+/**
+ * The machines an environment's agents can work on, by name: its links that have not
+ * expired, named as this client names them, else as the link does.
+ */
+export function linkedEnvironmentNames(input: {
+  readonly links: ReadonlyArray<Pick<PeerLinkSummary, "environmentId" | "label" | "status">>;
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+  }>;
+}): ReadonlyMap<EnvironmentId, string> {
+  const names = new Map(
+    input.environments.map((environment) => [environment.environmentId, environment.label]),
+  );
+  return new Map(
+    input.links.flatMap((link) =>
+      link.status === "expired"
+        ? []
+        : [[link.environmentId, names.get(link.environmentId) ?? link.label] as const],
+    ),
+  );
+}
+
 /** The access a request opens with: the agent's suggestion, else supervised. */
 export const linkRequestDefaultAccess = (
   item: Pick<LinkRequestItem, "requestedAccess">,

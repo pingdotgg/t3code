@@ -126,8 +126,7 @@ function harness() {
           marked.push(input);
           current.target.last_aggregate_json = input.aggregate ? encodeJson(input.aggregate) : null;
         }),
-      markStartQueued: () => Effect.void,
-      clearStartQueued: () => Effect.void,
+
       invalidateDeliveryToken: () => Effect.void,
     }),
     Layer.succeed(AgentActivityRows.AgentActivityRows, {

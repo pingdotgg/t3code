@@ -35,7 +35,7 @@ function cancelIdle(handle: number): void {
   clearTimeout(handle);
 }
 
-export function prewarmReviewDiffSection(input: {
+function prewarmReviewDiffSection(input: {
   readonly threadKey: string;
   readonly section: ReviewSectionItem;
 }): void {
@@ -52,7 +52,7 @@ export function prewarmReviewDiffSection(input: {
   getCachedNativeReviewDiffData({ parsedDiff, comments: [] });
 }
 
-export function getReviewDiffPrewarmSections(input: {
+function getReviewDiffPrewarmSections(input: {
   readonly threadKey: string;
   readonly sections: ReadonlyArray<ReviewSectionItem>;
   readonly selectedSectionId: string | null;

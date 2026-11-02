@@ -61,7 +61,7 @@ export interface Pool {
   readonly env: NodeJS.ProcessEnv;
 }
 
-export class AgentDeviceError extends Error {}
+class AgentDeviceError extends Error {}
 
 // A shared pool's workers drop off the gateway and stall under load for seconds at a time.
 const TRANSIENT =
@@ -70,7 +70,7 @@ const TRANSIENT =
 /** Failures that say the pool could not serve the pose, not that the app misbehaved. */
 export const poolError = (message: string) =>
   TRANSIENT.test(message) ||
-  /Daemon connection closed|WORKER_UNREACHABLE|xcrun timed out|refused by simlock|is not available on this simlock/i.test(
+  /Daemon connection closed|Failed to read daemon response|WORKER_UNREACHABLE|xcrun timed out|refused by simlock|is not available on this simlock/i.test(
     message,
   );
 

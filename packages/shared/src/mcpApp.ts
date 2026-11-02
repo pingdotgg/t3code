@@ -131,13 +131,6 @@ export function mcpAppReferencesEqual(left: McpAppReference, right: McpAppRefere
   );
 }
 
-export function readMcpAppResourceUri(meta: unknown): string | undefined {
-  if (!Predicate.isObject(meta)) return undefined;
-  const nested = Predicate.isObject(meta.ui) ? meta.ui.resourceUri : undefined;
-  const uri = nested ?? meta["ui/resourceUri"];
-  return typeof uri === "string" && uri.startsWith(MCP_APP_RESOURCE_SCHEME) ? uri : undefined;
-}
-
 export function mcpAppToolCallableByApp(meta: unknown): boolean {
   const visibility =
     Predicate.isObject(meta) && Predicate.isObject(meta.ui) ? meta.ui.visibility : undefined;

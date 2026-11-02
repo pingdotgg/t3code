@@ -14,7 +14,7 @@ export interface StreamingMessageMark {
 
 const STREAM_HAPTIC_THROTTLE_MS = 320;
 
-export function latestStreamingAssistantMessage(
+function latestStreamingAssistantMessage(
   thread: EnvironmentThread | null,
 ): StreamingMessageMark | null {
   const messages = thread?.projection.messages ?? [];

@@ -46,7 +46,6 @@ const THREAD_KEYBINDING_COMMANDS = [
   "thread.undo",
   ...THREAD_JUMP_KEYBINDING_COMMANDS,
 ] as const;
-export type ThreadKeybindingCommand = (typeof THREAD_KEYBINDING_COMMANDS)[number];
 
 const MODEL_PICKER_KEYBINDING_COMMANDS = [
   "modelPicker.toggle",
@@ -54,9 +53,10 @@ const MODEL_PICKER_KEYBINDING_COMMANDS = [
   "modelPicker.nextProvider",
   ...MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
 ] as const;
-export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMANDS)[number];
 
 export const STATIC_KEYBINDING_COMMANDS = [
+  "workspace.focusNext",
+  "workspace.focusPrevious",
   "sidebar.toggle",
   "navigation.back",
   "navigation.forward",

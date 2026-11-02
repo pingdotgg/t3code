@@ -1,5 +1,5 @@
 export const CONTEXT_CHIP_ACCENTS = {
-  image: "oklch(0.62 0.16 16)",
+  image: "oklch(0.62 0.136 237)",
   video: "oklch(0.62 0.16 48)",
   file: "oklch(0.62 0.136 237)",
   mention: "oklch(0.62 0.11 215)",

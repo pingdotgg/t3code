@@ -1,8 +1,9 @@
-import type {
-  EnvironmentId,
-  EnvironmentMachineKind,
-  ScopedThreadRef,
-  ThreadId,
+import {
+  isListedThreadLineage,
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 
@@ -24,12 +25,15 @@ export interface ComposerThreadItem {
 
 /**
  * Threads to reference from the composer, matched and ranked like the command
- * palette, without subagent threads. The agent can only read threads on its
- * own server, so candidates stay within the composer's environment.
+ * palette, without subagent or side chat threads. The agent reads threads on its own server
+ * and on the machines it links to, so candidates stay within those, and a linked
+ * machine's threads say which machine they are on.
  */
 export function matchComposerThreadItems(input: {
   shells: ReadonlyArray<ComposerThreadCandidate>;
   environmentId: EnvironmentId;
+  /** The machines the composer's environment links to, by name. */
+  linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
   excludeThreadId: ThreadId | null;
   query: string;
   /** Recency is measured against this time. */
@@ -39,10 +43,11 @@ export function matchComposerThreadItems(input: {
   if (query.length === 0) return [];
   const candidates = input.shells.filter(
     (shell) =>
-      shell.environmentId === input.environmentId &&
+      (shell.environmentId === input.environmentId ||
+        input.linkedEnvironments.has(shell.environmentId)) &&
       shell.id !== input.excludeThreadId &&
       shell.archivedAt === null &&
-      shell.lineage.relationshipToParent !== "subagent",
+      isListedThreadLineage(shell.lineage),
   );
   return rankSearchItems(candidates, (shell, options) =>
     scoreThreadSearch(query, threadSearchSubject(shell, null), input.now, {
@@ -51,13 +56,19 @@ export function matchComposerThreadItems(input: {
     }),
   )
     .slice(0, COMPOSER_THREAD_RESULT_LIMIT)
-    .map(({ item: shell }) => ({
-      id: `thread:${shell.environmentId}:${shell.id}`,
-      type: "thread",
-      thread: { environmentId: shell.environmentId, threadId: shell.id },
-      label: shell.title,
-      description: "Thread",
-    }));
+    .map(({ item: shell }) => {
+      const machine =
+        shell.environmentId === input.environmentId
+          ? undefined
+          : input.linkedEnvironments.get(shell.environmentId);
+      return {
+        id: `thread:${shell.environmentId}:${shell.id}`,
+        type: "thread",
+        thread: { environmentId: shell.environmentId, threadId: shell.id },
+        label: shell.title,
+        description: machine === undefined ? "Thread" : `Thread on ${machine}`,
+      };
+    });
 }
 
 export interface ComposerEnvironmentCandidate {

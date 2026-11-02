@@ -123,6 +123,27 @@ it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
     }),
   );
 
+  it.effect.each(["", "{", '{"pr":{"revision":42}}'])(
+    "recovers from malformed scope revisions without reusing stale entries: %j",
+    (corrupt) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-cache-" });
+        const original = yield* cacheLayer(directory);
+        yield* original.get("summary", Effect.succeed("stale"), ["pr"]);
+        yield* fs.writeFileString(directory + "/revisions", corrupt);
+        const recovered = yield* cacheLayer(directory);
+        let reads = 0;
+        const lookup = Effect.sync(() => String(++reads));
+        assert.strictEqual(yield* recovered.get("summary", lookup, ["pr"]), "1");
+        assert.strictEqual(yield* recovered.get("summary", lookup, ["pr"]), "1");
+        yield* recovered.invalidate("pr");
+        assert.strictEqual(yield* recovered.get("summary", lookup, ["pr"]), "2");
+        const restarted = yield* cacheLayer(directory);
+        assert.strictEqual(yield* restarted.get("summary", lookup, ["pr"]), "2");
+        assert.strictEqual(reads, 2);
+      }),
+  );
   it.effect("resumes caching after a failed scope read", () =>
     Effect.gen(function* () {
       const backing = yield* KeyValueStore.KeyValueStore;

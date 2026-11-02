@@ -61,6 +61,7 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   ],
 })
   .annotate(Tool.Title, "Organize a thread")
+  .annotate(Tool.Strict, true)
   .annotate(Tool.Destructive, true);
 
 const commandTool = {
@@ -226,6 +227,7 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   success: Schema.Struct({
     taskId: ScheduledTaskId,
     threadId: ScheduledTask.fields.threadId,
+    link: Schema.optional(Schema.String),
     lastRunStatus: ScheduledTask.fields.lastRunStatus,
     runCount: NonNegativeInt,
     nextRunAt: ScheduledTask.fields.nextRunAt,

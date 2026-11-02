@@ -197,6 +197,7 @@ describe("webhook route", () => {
       [{ _tag: "not_found" }, 404, "not_found"],
       [{ _tag: "rejected_signature" }, 401, "rejected_signature"],
       [{ _tag: "disabled" }, 409, "disabled"],
+      [{ _tag: "blocked_by_policy" }, 403, "blocked_by_policy"],
       [{ _tag: "rate_limited", outcome: "rate_limited" }, 429, "rate_limited"],
       [{ _tag: "rate_limited", outcome: "queue_full" }, 429, "queue_full"],
       [{ _tag: "expired" }, 410, "expired"],
@@ -244,6 +245,32 @@ describe("webhook route", () => {
       );
       expect(streamed.status).toBe(413);
       expect(calls).toBe(0);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it("refuses HEAD probes without triggering the hook", async () => {
+    let calls = 0;
+    const { handler, dispose } = handlerFor(() => {
+      calls += 1;
+      return Effect.succeed({
+        _tag: "accepted",
+        deliveryId: ScheduledTaskWebhookDeliveryId.make("delivery:1"),
+        outcome: "accepted",
+      });
+    });
+    try {
+      const response = await handler(
+        new Request("http://env.local/api/hooks/id/tok", { method: "HEAD" }),
+      );
+      expect(response.status).toBe(405);
+      expect(response.headers.get("allow")).toBe("GET, POST, PUT, PATCH");
+      expect(response.headers.get("x-t3-hook-outcome")).toBe("method_not_allowed");
+      expect(calls).toBe(0);
+      const get = await handler(new Request("http://env.local/api/hooks/id/tok"));
+      expect(get.status).toBe(202);
+      expect(calls).toBe(1);
     } finally {
       await dispose();
     }

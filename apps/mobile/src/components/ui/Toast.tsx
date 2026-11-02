@@ -1,5 +1,5 @@
 import { MOBILE_MOTION, MOBILE_SHAPE } from "../../lib/designTokens";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { AccessibilityInfo, Platform, StyleSheet, View, useWindowDimensions } from "react-native";
 import { GestureDetector, usePanGesture } from "react-native-gesture-handler";
 import Animated, {
@@ -134,19 +134,16 @@ function SwipeableToast(props: ToastProps & { readonly onDismiss: () => void }) 
   const [glassReady, setGlassReady] = useState(Platform.OS !== "ios");
   const finishEntering = useCallback(() => setGlassReady(true), []);
   // UIKit can skip glass on a moving host; remount the surface after entry so its blur installs.
-  const toastEntering = useMemo(
-    () => (values: EntryAnimationsValues) => {
-      "worklet";
-      return {
-        initialValues: { originY: values.targetOriginY + values.targetHeight + 12 },
-        animations: { originY: withTiming(values.targetOriginY, ENTER_TIMING) },
-        callback: (finished: boolean) => {
-          if (finished) runOnJS(finishEntering)();
-        },
-      };
-    },
-    [finishEntering],
-  );
+  const toastEntering = (values: EntryAnimationsValues) => {
+    "worklet";
+    return {
+      initialValues: { originY: values.targetOriginY + values.targetHeight + 12 },
+      animations: { originY: withTiming(values.targetOriginY, ENTER_TIMING) },
+      callback: (finished: boolean) => {
+        if (finished) runOnJS(finishEntering)();
+      },
+    };
+  };
   const { onDismiss } = props;
   const translation = useSharedValue(0);
   const width = useSharedValue(0);

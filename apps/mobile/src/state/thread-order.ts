@@ -71,16 +71,8 @@ export function beginPendingThreadOrder(pending: PendingThreadOrder) {
       section: current.section,
       now: new Date(nowMs).toISOString(),
       queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),
-      settlementEnvironmentIds: new Set(
-        [...configs].flatMap(([id, config]) =>
-          config.environment.capabilities.threadSettlement === true ? [id] : [],
-        ),
-      ),
-      snoozeEnvironmentIds: new Set(
-        [...configs].flatMap(([id, config]) =>
-          config.environment.capabilities.threadSnooze === true ? [id] : [],
-        ),
-      ),
+      settlementEnvironmentIds: new Set(configs.keys()),
+      snoozeEnvironmentIds: new Set(configs.keys()),
     });
     const next = reconcilePendingThreadOrder(current, ordered);
     if (next === null) {

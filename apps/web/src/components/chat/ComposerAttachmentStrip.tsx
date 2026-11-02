@@ -707,7 +707,8 @@ export function ComposerAttachButton({
             />
           }
         >
-          <PaperclipIcon />
+          {/* The clip's weight sits in its upper loop; 1px down reads as centered on the row. */}
+          <PaperclipIcon className="translate-y-px" />
         </TooltipTrigger>
         <TooltipPopup>Attach files</TooltipPopup>
       </Tooltip>
