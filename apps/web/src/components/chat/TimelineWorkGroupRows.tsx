@@ -86,21 +86,16 @@ import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   SkillChipPopover,
   skillInstructionsOpener,
   skillPopoverDescription,
 } from "./SkillInlineText";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
-import { useAtomValue } from "@effect/atom-react";
-import { environmentThreadDetails } from "../../state/threads";
 import { useAssistantMessageText } from "../../state/entities";
 import { AssistantCitationSource } from "./AssistantCitationSource";
-import { EnvironmentSubagentAvatar } from "./V2LifecycleRow";
 import { presentSlashCommand } from "./timelineSlashCommands";
 import { commandRunsTests } from "@t3tools/shared/toolOutput";
-import { isActiveSubagentStatus } from "@t3tools/client-runtime/state/subagentRuntime";
 import { DiffStatBlocks } from "./DiffStatLabel";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 
@@ -1015,51 +1010,9 @@ const WORKING_HISTORY_BATCH = 50;
 const transitionsSettled = (element: HTMLElement | null) =>
   Promise.allSettled(element?.getAnimations().map((animation) => animation.finished) ?? []);
 
-/** Running subagents outrank the diff; live statuses come from the thread's subagent roster. */
-function WorkingAgentsSlot({
-  groups,
-  fallback,
-}: {
-  groups: ReadonlyArray<Extract<TimelineRow, { kind: "event" }>>;
-  fallback: ReactNode;
-}) {
-  const ctx = use(TimelineRowCtx);
-  const members = groups.flatMap((group) =>
-    (group.subagents ?? [group.projectedItem]).flatMap(({ item }) =>
-      item.type === "subagent" ? [item] : [],
-    ),
-  );
-  const threadId = groups[0]!.projectedItem.item.threadId;
-  const liveAgents = useAtomValue(
-    environmentThreadDetails.threadAtom(scopeThreadRef(ctx.activeThreadEnvironmentId, threadId)),
-    (thread) => thread?.projection.subagents,
-  );
-  const running = members.filter((item) => {
-    const live = liveAgents?.find((agent) => agent.id === item.subagentId);
-    return live ? isActiveSubagentStatus(live.status) : subagentItemIsLive(item.status);
-  }).length;
-  if (running === 0) return fallback;
-  return (
-    <span className="inline-flex shrink-0 items-center gap-2.5 text-meta text-muted-foreground">
-      <span className="flex items-center -space-x-1" aria-hidden>
-        {members.slice(0, 3).map((item) => (
-          <EnvironmentSubagentAvatar
-            key={item.id}
-            className="size-[18px] border-0 bg-(--subagent-avatar-1,var(--muted)) ring-2 ring-background [&_svg]:size-2.5"
-            driver={item.driver}
-            environmentId={ctx.activeThreadEnvironmentId}
-            providerInstanceId={item.providerInstanceId}
-          />
-        ))}
-      </span>
-      {running} of {members.length} running
-    </span>
-  );
-}
-
 /**
  * One item, most important first: needs you, reconnecting, failed tests,
- * running agents, then the diff. Empty until there is something to show.
+ * then the diff. Empty until there is something to show.
  */
 function WorkingBarSlot({
   window,
@@ -1126,20 +1079,9 @@ function WorkingBarSlot({
       </span>
     );
   }
-  const agentGroups = window.items.flatMap((item) => (item.kind === "agents" ? [item.row] : []));
-  const diff = window.diff ? (
+  return window.diff ? (
     <DiffStatBlocks additions={window.diff.additions} deletions={window.diff.deletions} />
   ) : null;
-  if (
-    agentGroups.some((group) =>
-      (group.subagents ?? [group.projectedItem]).some(({ item }) =>
-        subagentItemIsLive(item.status),
-      ),
-    )
-  ) {
-    return <WorkingAgentsSlot groups={agentGroups} fallback={diff} />;
-  }
-  return diff;
 }
 
 function subagentItemIsLive(status: OrchestrationV2TurnItem["status"]): boolean {
