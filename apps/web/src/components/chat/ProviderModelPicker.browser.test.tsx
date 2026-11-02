@@ -207,7 +207,7 @@ it("names a row's cut-off sub-provider and its provider instance on hover", asyn
   await screen.getByRole("button", { name: "Choose model" }).click();
   const label = page.getByRole("option", { name: new RegExp(name) }).getByText(subProvider);
   const clipped = label.element();
-  expect(clipped.scrollWidth).toBeGreaterThan(clipped.clientWidth);
+  await vi.waitFor(() => expect(clipped.scrollWidth).toBeGreaterThan(clipped.clientWidth));
 
   await userEvent.hover(label);
   await vi.waitFor(() => {

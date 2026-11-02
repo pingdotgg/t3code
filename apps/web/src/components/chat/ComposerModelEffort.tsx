@@ -509,7 +509,7 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
           </span>
           <span
             className="ms-auto min-w-0 truncate text-muted-foreground text-xs"
-            onPointerEnter={titleWhenClipped(picker.modelLabel)}
+            onPointerEnter={titleWhenClipped(picker.modelName)}
           >
             {picker.modelLabel}
           </span>

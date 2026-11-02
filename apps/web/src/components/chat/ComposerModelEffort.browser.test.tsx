@@ -128,9 +128,11 @@ it("draws an agent's reasoning as bars and keeps its mode out of the levels", as
 });
 
 it("names the selected model in full when the column header cuts it off", async () => {
-  const modelLabel = "DeepSeek V4.1 Flash Free";
+  // The header shows the trigger's short name; the hover names the model in full.
+  const modelLabel = "Opus 5.5 Fast Long Context";
+  const modelName = "Claude Opus 5.5 Fast Long Context";
   await using screen = await render(
-    <DockedPickerContext value={{ modelLabel }}>
+    <DockedPickerContext value={{ modelLabel, modelName }}>
       {/* The docked column's width. */}
       <div data-model-picker-effort className="flex w-48 flex-col">
         <ComposerEffortColumn traits={traitsInput([], () => {})} />
@@ -140,13 +142,13 @@ it("names the selected model in full when the column header cuts it off", async 
   );
   const header = screen.getByText(modelLabel);
   const clipped = header.element();
-  expect(clipped.scrollWidth).toBeGreaterThan(clipped.clientWidth);
+  await vi.waitFor(() => expect(clipped.scrollWidth).toBeGreaterThan(clipped.clientWidth));
 
   await userEvent.hover(header);
   await vi.waitFor(() =>
     expect(
       clipped.closest("[title]")?.getAttribute("title") ?? "",
       "hover title of the cut-off model label",
-    ).toBe(modelLabel),
+    ).toBe(modelName),
   );
 });
