@@ -1526,12 +1526,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
 }
 
 @layer components {
-  .context-chip {
-    border-radius: 0.5em;
-    padding-inline: 0.5em;
-    font-size: 0.86em;
-  }
-
   /* AnimatedHeight owns resizing for its contents. Nested collapsibles must
      expose their final layout immediately, otherwise each animation frame
      restarts the parent's transition and the dialog trails behind its content. */
@@ -2082,7 +2076,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --table-row-rule: #00000005;
   --composer-icon: #525252;
   --pill-icon: var(--composer-icon);
-  --context-reference-fill: #0000000a;
   --selection-neutral: #00000006;
   --selection-subtle: #00000009;
   --model-picker-rail: #0000001a;
@@ -2224,7 +2217,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --table-row-rule: #ffffff08;
   --composer-icon: #9e9e9e;
   --pill-icon: var(--composer-icon);
-  --context-reference-fill: #ffffff10;
   --selection-neutral: #ffffff0a;
   --selection-subtle: #ffffff0f;
   --model-picker-rail: #00000033;
