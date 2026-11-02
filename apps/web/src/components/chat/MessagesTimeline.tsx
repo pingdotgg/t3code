@@ -96,7 +96,7 @@ import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
-import type { ModelSwitchRun } from "@t3tools/client-runtime/handoff";
+import type { ModelSwitchAttempt, ModelSwitchRun } from "@t3tools/client-runtime/handoff";
 import { useAtomValue } from "@effect/atom-react";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
@@ -300,6 +300,8 @@ interface MessagesTimelineProps {
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<ServerProviderSkill>;
   runs: ReadonlyArray<HandoffTimelineRun & ModelSwitchRun>;
+  /** Steering restarts rewrite their run; attempts keep what each one replaced. */
+  attempts: ReadonlyArray<ModelSwitchAttempt>;
   anchorMessageId: MessageId | null;
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
@@ -399,6 +401,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
   runs: runsProp,
+  attempts,
   anchorMessageId,
   onAnchorReady,
   onAnchorSizeChanged,
@@ -719,7 +722,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(activeThreadEnvironmentId)) ??
     EMPTY_SERVER_PROVIDERS;
-  const modelSwitches = useStableModelSwitches(runsProp, providers);
+  const modelSwitches = useStableModelSwitches(runsProp, attempts, providers);
   const minimapItems = deriveTimelineMinimapItems(rows);
   const minimapRowIndices = minimapItems.map((item) => item.rowIndex);
   const restoreRowIndex =

@@ -5183,6 +5183,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       status: "pending",
       startedAt: null,
       completedAt: null,
+      restartedFrom: {
+        userMessageId: targetRun.userMessageId,
+        modelSelection: targetRun.modelSelection,
+      },
     };
     const nextRootNode: OrchestrationV2ExecutionNode = {
       id: nextRootNodeId,

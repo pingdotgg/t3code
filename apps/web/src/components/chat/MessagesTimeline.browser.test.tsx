@@ -97,6 +97,7 @@ function baseProps(): Omit<TimelineProps, "timelineEntries"> {
     latestRun: null,
     turnDiffSummaries: [],
     runs: [],
+    attempts: [],
     routeThreadKey: `environment-local:thread-${Math.random().toString(36).slice(2)}`,
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},

@@ -187,6 +187,7 @@ describe("model switches", () => {
     effort?: string,
     overrides: Partial<ModelSwitchRun> = {},
   ): ModelSwitchRun => ({
+    id: RunId.make(`run-${id}`),
     ordinal,
     status: "completed",
     startedAt: DateTime.makeUnsafe("2026-10-11T00:00:00Z"),
@@ -224,6 +225,29 @@ describe("model switches", () => {
     ).toMatchObject({ label: "Effort changed", effortChanged: true });
   });
 
+  it("marks each steering restart against what it replaced", () => {
+    const restart = (attemptOrdinal: number, message: string, model: string) => ({
+      runId: RunId.make("run-b"),
+      attemptOrdinal,
+      restartedFrom: {
+        userMessageId: MessageId.make(`message-${message}`),
+        modelSelection: { instanceId: from, model },
+      },
+    });
+    const switches = resolveModelSwitches(
+      [
+        switchRun("a", 1, "gpt", undefined, { id: RunId.make("run-a") }),
+        switchRun("s2", 2, "gpt", undefined, { id: RunId.make("run-b") }),
+      ],
+      [restart(3, "s1", "max"), restart(2, "b", "mini")],
+    );
+    expect([...switches].map(([id, change]) => [id, change.from.model, change.to.model])).toEqual([
+      ["message-b", "gpt", "mini"],
+      ["message-s1", "mini", "max"],
+      ["message-s2", "max", "gpt"],
+    ]);
+  });
+
   it("reads an unset effort as the model's default", () => {
     const providers = [
       {
@@ -251,6 +275,7 @@ describe("model switches", () => {
         switchRun("c", 3, "gpt", "high"),
         switchRun("d", 4, "gpt"),
       ],
+      [],
       providers,
     );
     expect(keys(switches)).toEqual(["c", "d"]);
@@ -293,6 +318,7 @@ describe("model switches", () => {
       });
     const effortSwitch = resolveModelSwitches(
       [thought("a", 1), thought("b", 2, "deep")],
+      [],
       providers,
     ).get(MessageId.make("message-b"));
     expect(effortSwitch?.label).toBe("Effort changed");

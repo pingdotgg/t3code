@@ -2,6 +2,7 @@ import type {
   MessageId,
   ModelSelection,
   OrchestrationV2Run,
+  OrchestrationV2RunAttempt,
   OrchestrationV2TurnItem,
   ProviderInstanceId,
   ServerProvider,
@@ -99,7 +100,18 @@ function latestRunModelBefore(
 
 export type ModelSwitchRun = Pick<
   OrchestrationV2Run,
-  "ordinal" | "status" | "startedAt" | "modelSelection" | "userMessageId" | "contextHandoffId"
+  | "id"
+  | "ordinal"
+  | "status"
+  | "startedAt"
+  | "modelSelection"
+  | "userMessageId"
+  | "contextHandoffId"
+>;
+
+export type ModelSwitchAttempt = Pick<
+  OrchestrationV2RunAttempt,
+  "runId" | "attemptOrdinal" | "restartedFrom"
 >;
 
 export interface ModelSwitch {
@@ -111,16 +123,20 @@ export interface ModelSwitch {
 }
 
 /**
- * Model or effort changes between consecutive runs, keyed by the message that started the later
- * run. Runs that carried a context handoff are skipped; their handoff row already shows the swap.
- * `providers` resolves an unset effort to the model's default.
+ * Model or effort changes, keyed by the message that started each run or steering restart.
+ * Context handoffs are skipped; their handoff row already shows the swap. `providers` resolves an
+ * unset effort to the model's default.
  */
 export function resolveModelSwitches(
   runs: ReadonlyArray<ModelSwitchRun>,
+  attempts: ReadonlyArray<ModelSwitchAttempt> = [],
   providers: ReadonlyArray<ServerProvider> = [],
 ): ReadonlyMap<MessageId, ModelSwitch> {
+  const restarts = attempts
+    .filter((attempt) => attempt.restartedFrom !== undefined)
+    .sort((left, right) => left.attemptOrdinal - right.attemptOrdinal);
   const switches = new Map<MessageId, ModelSwitch>();
-  let previous: ModelSwitchRun | undefined;
+  let previous: ModelSelection | undefined;
   for (const run of [...runs].sort((left, right) => left.ordinal - right.ordinal)) {
     // Runs that never ran do not change what the agent used.
     if (
@@ -129,23 +145,32 @@ export function resolveModelSwitches(
     ) {
       continue;
     }
-    if (previous !== undefined && run.contextHandoffId === null) {
-      const from = previous.modelSelection;
-      const to = run.modelSelection;
+    // A restart rewrites its run, so the run holds only the latest message and selection.
+    const starts = [
+      ...restarts.flatMap((attempt) =>
+        attempt.runId === run.id && attempt.restartedFrom ? [attempt.restartedFrom] : [],
+      ),
+      { userMessageId: run.userMessageId, modelSelection: run.modelSelection },
+    ];
+    for (const [index, { userMessageId, modelSelection: to }] of starts.entries()) {
+      const from = previous;
+      previous = to;
+      if (from === undefined) continue;
+      const handedOff =
+        index === 0 ? run.contextHandoffId !== null : from.instanceId !== to.instanceId;
+      if (handedOff) continue;
       const fromEffort = resolveEffort(from, modelsFor(providers, from));
       const toEffort = resolveEffort(to, modelsFor(providers, to));
       const effortChanged =
         fromEffort !== undefined && toEffort !== undefined && fromEffort.value !== toEffort.value;
-      if (from.model !== to.model || effortChanged) {
-        switches.set(run.userMessageId, {
-          label: from.model === to.model ? "Effort changed" : "Model changed",
-          from: effortChanged ? withEffort(from, fromEffort) : from,
-          to: effortChanged ? withEffort(to, toEffort) : to,
-          effortChanged,
-        });
-      }
+      if (from.model === to.model && !effortChanged) continue;
+      switches.set(userMessageId, {
+        label: from.model === to.model ? "Effort changed" : "Model changed",
+        from: effortChanged ? withEffort(from, fromEffort) : from,
+        to: effortChanged ? withEffort(to, toEffort) : to,
+        effortChanged,
+      });
     }
-    previous = run;
   }
   return switches;
 }

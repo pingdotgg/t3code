@@ -58,9 +58,13 @@ export function modelSwitchesAtom(environmentId: EnvironmentId, threadId: Thread
   let previous: { signature: string; value: ReadonlyMap<MessageId, ModelSwitch> } | null = null;
   const ref = scopeThreadRef(environmentId, threadId);
   return Atom.make((get) => {
-    const runs = get(environmentThreadDetails.threadAtom(ref))?.projection?.runs ?? [];
+    const projection = get(environmentThreadDetails.threadAtom(ref))?.projection;
     const providers = get(serverEnvironment.configValueAtom(environmentId))?.providers;
-    const value = resolveModelSwitches(runs, providers);
+    const value = resolveModelSwitches(
+      projection?.runs ?? [],
+      projection?.attempts ?? [],
+      providers,
+    );
     // Run activity changes frequently; keep the map identity until a switch changes.
     const signature = JSON.stringify([...value]);
     if (previous?.signature !== signature) previous = { signature, value };

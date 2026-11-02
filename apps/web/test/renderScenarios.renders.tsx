@@ -95,6 +95,7 @@ function timelineFor() {
       latestRun={null}
       turnDiffSummaries={[]}
       runs={[]}
+      attempts={[]}
       routeThreadKey={`environment-local:${thread}`}
       onOpenTurnDiff={() => {}}
       onOpenThread={() => {}}

@@ -407,6 +407,10 @@ it.live("retries a failed selection restart session open before completing", () 
         "selection restart supersede must not project hard-Stop interrupt items",
       );
       assert.equal(projection.runs.at(-1)?.modelSelection.model, replacementSelection.model);
+      assert.deepEqual(projection.attempts[1]?.restartedFrom, {
+        userMessageId: MessageId.make("message:selection-restart:first"),
+        modelSelection: initialSelection,
+      });
       assert.equal(projection.runs.at(-1)?.status, "completed");
       assert.isTrue(captured.failedReplacementOpen);
       assert.equal(captured.closedSessionCount, 0);

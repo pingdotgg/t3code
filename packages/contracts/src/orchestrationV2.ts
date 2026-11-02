@@ -749,6 +749,10 @@ export const OrchestrationV2RunAttempt = Schema.Struct({
   ]),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** A steering restart rewrites its run; this keeps the message and selection it replaced. */
+  restartedFrom: Schema.optional(
+    Schema.Struct({ userMessageId: MessageId, modelSelection: ModelSelection }),
+  ),
 });
 export type OrchestrationV2RunAttempt = typeof OrchestrationV2RunAttempt.Type;
 
