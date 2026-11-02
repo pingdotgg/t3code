@@ -1,6 +1,7 @@
 import type { UiLanguage } from "@t3tools/contracts";
 
 import { enMessages as chatEn, zhHansMessages as chatZh } from "./messagesChat.ts";
+import { enMessages as diffsEn, zhHansMessages as diffsZh } from "./messagesDiffs.ts";
 import { enMessages as generalEn, zhHansMessages as generalZh } from "./messagesGeneral.ts";
 import { enMessages as interfaceEn, zhHansMessages as interfaceZh } from "./messages.ts";
 import { enMessages as navEn, zhHansMessages as navZh } from "./messagesSettingsNav.ts";
@@ -18,6 +19,7 @@ const enCatalog = {
   ...interfaceEn,
   ...generalEn,
   ...chatEn,
+  ...diffsEn,
   ...navEn,
   ...typographyEn,
 };
@@ -28,6 +30,7 @@ const zhCatalog: Partial<Record<MessageKey, string>> = {
   ...interfaceZh,
   ...generalZh,
   ...chatZh,
+  ...diffsZh,
   ...navZh,
   ...typographyZh,
 };
