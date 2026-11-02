@@ -1011,7 +1011,7 @@ export function pullRequestListNotices(
       : undefined;
     const detail = host === undefined ? undefined : unreadable.get(host);
     if (host !== undefined && detail !== undefined) {
-      notices.set(`host ${host}`, `${host}: ${detail}`);
+      notices.set(`host ${host}`, `${host} could not be read. ${detail}`);
     } else {
       notices.set(
         `project ${error.environmentId} ${error.projectId}`,

@@ -531,7 +531,7 @@ describe("what the list could not read", () => {
     );
 
     expect(notices).toEqual([
-      "github.com: No GitHub credential on the server.",
+      "github.com could not be read. No GitHub credential on the server.",
       "service: team/service could not be read.",
     ]);
   });
