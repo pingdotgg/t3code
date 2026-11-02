@@ -516,9 +516,8 @@ function runInEnvironment<A, E, R>(
 const refreshOnSignalWhileRead =
   <V>(signal: Atom.Atom<unknown>, isFinal: (value: V) => boolean) =>
   <A extends V>(self: Atom.Atom<A>): Atom.Atom<A> => {
-    // The signal value each registry's data was read under. Held outside the node because the
-    // registry can sweep this node while `self` keeps the data, and the rebuilt node must still
-    // see a change it missed.
+    // The signal value each registry's data was read under. Held outside the node because a
+    // rebuilt node must still see a change it missed.
     const readUnder = new WeakMap<AtomRegistry.AtomRegistry, unknown>();
     return Atom.transform(
       self,
@@ -665,7 +664,9 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   const connectionAtom = environmentConnectionAtoms(runtime);
   const family = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
-    const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
+    const isFinal = (result: AsyncResult.AsyncResult<A, unknown>) =>
+      options.isFinal !== undefined && Option.exists(AsyncResult.value(result), options.isFinal);
+    const refreshTrigger = options.refreshTrigger?.(target);
     const queryAtom = runtime
       .atom<
         A,
@@ -779,24 +780,22 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         });
       })
       .pipe(
-        Atom.swr({
-          staleTime: options.staleTimeMs ?? 30_000,
-          revalidateOnMount: true,
-        }),
-        Atom.setIdleTTL(idleTtlMs),
+        (self) =>
+          refreshTrigger === undefined
+            ? self
+            : self.pipe(refreshOnSignalWhileRead(refreshTrigger, isFinal)),
+        // The idle TTL keeps the data (and the signal it was read under), but nothing above it:
+        // `swr` checks staleness only when its node is built, and polling serves only readers.
+        Atom.setIdleTTL(options.idleTtlMs ?? 5 * 60_000),
       );
-    const isFinal = (result: AsyncResult.AsyncResult<A, unknown>) =>
-      options.isFinal !== undefined && Option.exists(AsyncResult.value(result), options.isFinal);
-    const intervalQuery =
+    return (
       options.refreshIntervalMs === undefined
         ? queryAtom
-        : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal));
-    const refreshTrigger = options.refreshTrigger?.(target);
-    return (
-      refreshTrigger === undefined
-        ? intervalQuery
-        : intervalQuery.pipe(refreshOnSignalWhileRead(refreshTrigger, isFinal))
-    ).pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(`${options.label}:${key}`));
+        : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal))
+    ).pipe(
+      Atom.swr({ staleTime: options.staleTimeMs ?? 30_000, revalidateOnMount: true }),
+      Atom.withLabel(`${options.label}:${key}`),
+    );
   });
   return (target) => family(environmentRpcKey(target));
 }

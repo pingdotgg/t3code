@@ -949,6 +949,7 @@ describe("environment query lifecycle", () => {
         expect(yield* read).toBe(2);
 
         unmount();
+        yield* Effect.yieldNow;
         registry.set(trigger, 2);
         registry.set(trigger, 3);
         expect(executions).toBe(2);
