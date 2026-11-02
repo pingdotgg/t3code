@@ -59,7 +59,8 @@ function localStatusLabel(run: UpdateEverythingRun, local: UpdateRunLocalState, 
 const capsuleButtonClassName =
   "absolute inset-0 cursor-pointer rounded-full outline-hidden ring-ring hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset";
 
-const capsuleLabelClassName = "pointer-events-none relative min-w-0 flex-1 truncate pl-3 text-xs";
+const capsuleLabelClassName =
+  "pointer-events-none relative w-0 min-w-0 flex-1 truncate pl-3 text-xs";
 
 export function SidebarUpdateCapsule({
   run,
@@ -95,7 +96,7 @@ export function SidebarUpdateCapsule({
     <Popover>
       <div
         className={cn(
-          "relative flex h-8 min-w-0 flex-1 items-center rounded-full bg-sidebar-control-surface text-sidebar-foreground",
+          "relative flex h-8 flex-1 items-center rounded-full bg-sidebar-control-surface text-sidebar-foreground",
           view.tone === "slow" && "ring-1 ring-warning/40 ring-inset",
           view.tone === "failed" && "ring-1 ring-destructive/40 ring-inset",
         )}

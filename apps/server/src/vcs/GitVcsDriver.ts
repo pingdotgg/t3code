@@ -20,6 +20,8 @@ import {
   type VcsCreateRefResult,
   type VcsCreateWorktreeInput,
   type VcsCreateWorktreeResult,
+  type ReviewBranchCommitsInput,
+  type ReviewBranchCommitsResult,
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewResult,
   type ReviewDiffFileContentsInput,
@@ -283,6 +285,11 @@ export interface GitWriteConfigValueInput {
   readonly value: string;
 }
 
+export interface GitWorktreeBaseRemote {
+  remoteName: string;
+  branchName: string;
+}
+
 export interface GitSetBranchUpstreamInput {
   cwd: string;
   branch: string;
@@ -328,6 +335,9 @@ export class GitVcsDriver extends Context.Service<
       cwd: string,
       baseRef: string,
     ) => Effect.Effect<GitRangeContext, GitCommandError>;
+    readonly getReviewBranchCommits: (
+      input: ReviewBranchCommitsInput,
+    ) => Effect.Effect<ReviewBranchCommitsResult, GitCommandError>;
     readonly getReviewDiffPreview: (
       input: ReviewDiffPreviewInput,
     ) => Effect.Effect<ReviewDiffPreviewResult, GitCommandError>;
@@ -387,10 +397,13 @@ export class GitVcsDriver extends Context.Service<
     ) => Effect.Effect<GitResolveRemoteTrackingCommitResult, GitCommandError>;
     readonly resolveWorktreeBaseRemote: (
       input: GitFetchWorktreeBaseCommitInput,
-    ) => Effect.Effect<{ remoteName: string; branchName: string } | null, GitCommandError>;
-    /** Fetches the configured upstream, explicit remote ref, or origin; null uses the local base. */
+    ) => Effect.Effect<GitWorktreeBaseRemote | null, GitCommandError>;
+    /**
+     * Fetches the configured upstream, explicit remote ref, or origin; null uses the local base.
+     * A caller that already ran `resolveWorktreeBaseRemote` passes its result as `remote`.
+     */
     readonly fetchWorktreeBaseCommit: (
-      input: GitFetchWorktreeBaseCommitInput,
+      input: GitFetchWorktreeBaseCommitInput & { readonly remote?: GitWorktreeBaseRemote },
     ) => Effect.Effect<GitResolveRemoteTrackingCommitResult | null, GitCommandError>;
     readonly fetchRemoteBranch: (
       input: GitFetchRemoteBranchInput,
@@ -825,6 +838,45 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     return path.resolve(physicalCwd, gitCommonDir);
   });
 
+  // --verify prints HEAD after the paths; --quiet leaves only paths for an unborn HEAD.
+  const resolveCaptureRepository = Effect.fn("GitVcsDriver.resolveCaptureRepository")(function* (
+    cwd: string,
+  ) {
+    const result = yield* execute({
+      operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+      cwd,
+      args: [
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+        "--git-path",
+        "index",
+        "--verify",
+        "--quiet",
+        "HEAD",
+      ],
+      allowNonZeroExit: true,
+    });
+    const headExists = result.exitCode === 0;
+    const headChecked = headExists || result.exitCode === 1;
+    const lines = result.stdout.split("\n");
+    const [gitCommonDir = "", indexPath = ""] = lines;
+    if (headChecked && lines.length === (headExists ? 4 : 3) && lines.at(-1) === "") {
+      return {
+        gitCommonDir: gitCommonDir.trim(),
+        indexPath: indexPath.trim(),
+        headExists,
+      };
+    }
+    // Git before 2.31 echoes --path-format, and a path containing a newline spans lines.
+    // Separate commands read the paths as before and report a failure the same way.
+    return {
+      gitCommonDir: yield* resolveGitCommonDir(cwd),
+      indexPath: undefined,
+      headExists: headChecked ? headExists : yield* hasHeadCommit(cwd),
+    };
+  });
+
   // Git defaults and macOS writeout-only can leave empty refs after crashes; flush before publication.
   // Set fsync first: Git 2.36 ignores unknown batch without resetting the method.
   // Batch fully flushes refs and equals fsync on macOS HFS+/APFS and Windows NTFS/ReFS.
@@ -857,7 +909,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "-c",
         "splitIndex.sharedIndexExpire=never",
       ];
-      const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
+      const { gitCommonDir, indexPath, headExists } = yield* resolveCaptureRepository(input.cwd);
       const indexId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
       const commitEnv: NodeJS.ProcessEnv = {
@@ -876,7 +928,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       );
 
       yield* Effect.gen(function* () {
-        const headExists = yield* hasHeadCommit(input.cwd);
         const sparseConfig = yield* execute({
           operation,
           cwd: input.cwd,
@@ -895,17 +946,19 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         }
         if (headExists) {
           const reusedIndex = yield* Effect.gen(function* () {
-            const indexPath = yield* execute({
-              operation,
-              cwd: input.cwd,
-              args: ["rev-parse", "--path-format=absolute", "--git-path", "index"],
-            });
-            const { mtime } = yield* fileSystem.stat(indexPath.stdout.trim());
+            const userIndexPath =
+              indexPath ??
+              (yield* execute({
+                operation,
+                cwd: input.cwd,
+                args: ["rev-parse", "--path-format=absolute", "--git-path", "index"],
+              })).stdout.trim();
+            const { mtime } = yield* fileSystem.stat(userIndexPath);
             if (Option.isNone(mtime)) return false;
             // Stay below the source timestamp even if Date rounded up, preserving Git's racy check.
             const indexTime = Math.floor((mtime.value.getTime() - 1) / 1000);
             if (indexTime <= 0) return false;
-            yield* fileSystem.copyFile(indexPath.stdout.trim(), tempIndexPath);
+            yield* fileSystem.copyFile(userIndexPath, tempIndexPath);
             yield* execute({
               operation,
               cwd: input.cwd,
@@ -1321,6 +1374,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         operation,
         cwd: input.cwd,
         args: [
+          // Not --no-relative, which Git before 2.28 rejects.
+          "-c",
+          "diff.relative=false",
           "diff",
           ...(input.format === "numstat" ? ["--numstat", "-z"] : ["--patch"]),
           "--no-color",
@@ -1377,7 +1433,15 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         execute({
           operation,
           cwd: input.cwd,
-          args: [...args, "--name-only", "-z", "--no-renames", "--no-ext-diff"],
+          args: [
+            "-c",
+            "diff.relative=false",
+            ...args,
+            "--name-only",
+            "-z",
+            "--no-renames",
+            "--no-ext-diff",
+          ],
           maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
           outputMode: "error",
         }).pipe(Effect.map((result) => result.stdout.split("\0")));
