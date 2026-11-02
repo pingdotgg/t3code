@@ -173,7 +173,7 @@ it.layer(layerTest)("GrokDriver", (it) => {
   }
 
   it.effect("probes a ~/ binary path from the home directory", () => {
-    const spawned: Array<string> = [];
+    const argv: Array<string> = [];
     return Effect.gen(function* () {
       const path = yield* Path.Path;
       const instance = yield* GrokDriver.create({
@@ -184,13 +184,14 @@ it.layer(layerTest)("GrokDriver", (it) => {
         config: { ...GrokDriver.defaultConfig(), binaryPath: "~/bin/grok" },
       }).pipe(Effect.provideService(HostProcess.HomeDirectory, "/test-home"));
       yield* instance.snapshot.refresh;
-      expect(spawned).not.toHaveLength(0);
-      expect(new Set(spawned)).toEqual(new Set([path.join("/test-home", "bin", "grok")]));
+      // Agent launches may be wrapped in /bin/sh, so look at every argv element.
+      expect(argv).toContain(path.join("/test-home", "bin", "grok"));
+      expect(argv).not.toContain("~/bin/grok");
     }).pipe(
       Effect.provideService(
         ChildProcessSpawner.ChildProcessSpawner,
-        stdoutSpawner((command) => {
-          spawned.push(command);
+        stdoutSpawner((command, args) => {
+          argv.push(command, ...args);
           return "grok 1.0.0\n";
         }),
       ),
