@@ -482,7 +482,7 @@ it.effect("tells the agent to link again once the peer revokes the link or it ex
 );
 
 it.effect(
-  "refuses to link itself, plain http off a private network, or a peer that cannot hold a linked agent to its limits",
+  "refuses to link itself, plain http that could leave the private network, or a peer that cannot hold a linked agent to its limits",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -520,6 +520,14 @@ it.effect(
           })
           .pipe(Effect.flip);
         expect(exposedAlternate.message).toContain("plain http");
+        // So could a name, whatever it looks like: a search domain or unicast
+        // DNS can resolve it to a public address.
+        for (const url of ["http://box:3773", "http://box.local:3773"]) {
+          const named = yield* a.links
+            .link({ url, pairingCode: pairing.credential, access: "auto" })
+            .pipe(Effect.flip);
+          expect(named.message).toContain("plain http");
+        }
 
         yield* Ref.set(b.descriptor, laptop);
         const self = yield* a.links

@@ -29,15 +29,12 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
-import {
-  isLocalLoopbackHost,
-  isPrivateNetworkHost,
-  isTailnetHost,
-} from "@t3tools/shared/hostClassification";
+import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { isPrivateNetworkAddress } from "../startupAccess.ts";
 
 const PeerHttpApi = HttpApi.make(EnvironmentHttpApi.identifier)
   .add(EnvironmentHttpApi.groups.metadata)
@@ -145,7 +142,8 @@ const sendsInClear = (url: string | URL) => {
 /**
  * The base URL a peer is reached at, normalised to its origin. The pairing
  * code and then the link's token travel to it, so plain http off this machine
- * and the tailnet is accepted only on a private network, as servers pair there.
+ * and the tailnet is accepted only to a private IP, as a LAN server pairs
+ * over. A name is refused: DNS could resolve it to a public address.
  */
 const peerOrigin = (url: string) => {
   const parsed = URL.parse(url);
@@ -157,11 +155,11 @@ const peerOrigin = (url: string) => {
       }),
     );
   }
-  if (sendsInClear(parsed) && !isPrivateNetworkHost(parsed.hostname)) {
+  if (sendsInClear(parsed) && !isPrivateNetworkAddress(parsed.hostname)) {
     return Effect.fail(
       new PeerLinkError({
         reason: "unreachable",
-        message: `${url} is plain http outside a private network, which would send the link's credentials unencrypted. Use its https address, its Tailscale address, or its IP address on your local network.`,
+        message: `${url} is plain http to an address that is not a private IP, so the link's credentials could travel unencrypted across the internet. Use its https address, its Tailscale address, or its IP address on your local network.`,
       }),
     );
   }
