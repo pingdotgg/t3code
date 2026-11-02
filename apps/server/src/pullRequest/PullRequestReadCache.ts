@@ -88,9 +88,17 @@ export const make = Effect.gen(function* () {
     crypto.digest("SHA-256", new TextEncoder().encode(key)).pipe(Effect.map(Hex.encode));
   const revisions = yield* Cache.makeWith(
     () =>
-      backing
-        .get("revisions")
-        .pipe(Effect.flatMap((raw) => Schema.decodeEffect(revisionCodec)(raw ?? "{}"))),
+      backing.get("revisions").pipe(
+        Effect.flatMap((raw) => Schema.decodeEffect(revisionCodec)(raw ?? "{}")),
+        Effect.catchTags({
+          SchemaError: Effect.fn("PullRequestReadCache.recoverRevisions")(function* () {
+            // Without scope revisions, persisted PR entries cannot be trusted.
+            yield* backing.clear;
+            yield* Effect.logWarning("PR cache reset after invalid scope revisions");
+            return yield* Schema.decodeEffect(revisionCodec)("{}");
+          }),
+        }),
+      ),
     {
       capacity: 1,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
