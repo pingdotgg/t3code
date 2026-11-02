@@ -1,0 +1,6 @@
+2026-11-02T15:11:02.370Z start mode=stored argv=["--uid="]
+2026-11-02T15:11:02.376Z recv initialize id=1073741824
+2026-11-02T15:11:02.381Z recv authenticate id=1073741825
+2026-11-02T15:11:02.381Z answer authenticate
+2026-11-02T15:11:02.383Z recv session/new id=1073741826
+2026-11-02T15:11:02.383Z session/new: never answering

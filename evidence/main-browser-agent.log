@@ -1,0 +1,6 @@
+2026-11-02T15:11:16.541Z start mode=browser argv=["--uid="]
+2026-11-02T15:11:16.546Z recv initialize id=1073741824
+2026-11-02T15:11:16.549Z recv authenticate id=1073741825
+2026-11-02T15:11:36.554Z answer authenticate
+2026-11-02T15:11:36.559Z recv session/new id=1073741826
+2026-11-02T15:11:36.559Z session/new: never answering
