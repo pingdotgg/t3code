@@ -1340,8 +1340,18 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
 
   it.effect("stops tracking a failed prompt's commands unless the run keeps them", () =>
     Effect.gen(function* () {
-      const { session, prompts, turnInput, seen, takeUntil, toolStatuses, send } =
-        yield* openRunningCommandSession();
+      const {
+        session,
+        prompts,
+        finalizeScheduled,
+        continuationRequests,
+        turnInput,
+        seen,
+        takeUntil,
+        toolStatuses,
+        send,
+        say,
+      } = yield* openRunningCommandSession();
       const hasPendingBackgroundWork = session.hasPendingBackgroundWork;
       if (hasPendingBackgroundWork === undefined) {
         return assert.fail("Antigravity sessions must report pending background work");
@@ -1368,6 +1378,14 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
           ? event
           : assert.fail("expected a failed terminal");
       });
+      const lastItem = (nativeId: string) => {
+        const event = seen.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === nativeId,
+        );
+        return event?.type === "turn_item.updated" ? event.turnItem : {};
+      };
 
       // A rejected prompt takes its commands with it, so nothing may block a replacement session.
       const rejected = yield* startPrompt(1);
@@ -1376,37 +1394,69 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
       const rejectedTerminal = yield* failedTerminal;
       assert.isUndefined(rejectedTerminal.childTurnsContinue);
       assert.isFalse(yield* hasPendingBackgroundWork, "the rejected prompt's command is gone");
-
-      // A hidden failure keeps the command until the next turn replaces the agent process.
-      const refused = yield* startPrompt(2);
-      yield* runCommand("replaced-build");
-      yield* Deferred.succeed(refused, { stopReason: "refusal" });
-      const refusedTerminal = yield* failedTerminal;
-      assert.isTrue(refusedTerminal.childTurnsContinue);
-      assert.isTrue(yield* hasPendingBackgroundWork);
-      const refusedRunId = turnInput(2, false).runId;
-      assert.deepEqual(toolStatuses(refusedRunId, "replaced-build"), ["running"]);
-      const errored = yield* startPrompt(3);
-      assert.isFalse(yield* hasPendingBackgroundWork, "the replaced process's command is gone");
-      // The replacement ends the killed command on its own run before the next turn opens.
-      yield* takeUntil((event) => event.type === "provider_turn.updated");
-      const killed = seen.findLast(
-        (event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.nativeItemRef?.nativeId === "replaced-build",
-      );
-      assert.deepInclude(killed?.type === "turn_item.updated" ? killed.turnItem : {}, {
-        runId: refusedRunId,
-        providerTurnId: refusedTerminal.providerTurnId,
-        status: "interrupted",
-      });
+      assert.deepEqual(toolStatuses(turnInput(1, false).runId, "rejected-build").slice(-1), [
+        "failed",
+      ]);
 
       // An idle error leaves the agent and its command running for the same run.
+      const errored = yield* startPrompt(2);
       yield* runCommand("surviving-build");
       yield* Deferred.succeed(errored, { stopReason: "error" });
       const erroredTerminal = yield* failedTerminal;
       assert.isTrue(erroredTerminal.childTurnsContinue);
       assert.isTrue(yield* hasPendingBackgroundWork, "the surviving command still counts");
+
+      // A hidden failure keeps its command until the next turn replaces the agent process.
+      const refused = yield* startPrompt(3);
+      yield* runCommand("replaced-build");
+      yield* Deferred.succeed(refused, { stopReason: "refusal" });
+      const refusedTerminal = yield* failedTerminal;
+      assert.isTrue(refusedTerminal.childTurnsContinue);
+      const refusedRunId = turnInput(3, false).runId;
+      assert.deepEqual(toolStatuses(refusedRunId, "replaced-build"), ["running"]);
+
+      // Before the replacement, the agent reports progress, starts another command and replies.
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "replaced-build",
+        status: "in_progress",
+        content: [{ type: "content", content: { type: "text", text: "compiling" } }],
+      });
+      yield* runCommand("wake-build");
+      yield* say("Still building.");
+      assert.lengthOf(continuationRequests, 1);
+
+      const continuation = turnInput(4, true);
+      yield* session.startTurn(continuation).pipe(Effect.forkScoped);
+      yield* takeUntil(
+        (event) =>
+          event.type === "message.updated" &&
+          event.message.runId === continuation.runId &&
+          event.message.text.includes("Still building."),
+      );
+      // The replacement ends every killed command on the run that owns it.
+      assert.deepInclude(lastItem("surviving-build"), {
+        runId: turnInput(2, false).runId,
+        providerTurnId: erroredTerminal.providerTurnId,
+        status: "interrupted",
+      });
+      assert.deepInclude(lastItem("replaced-build"), {
+        runId: refusedRunId,
+        providerTurnId: refusedTerminal.providerTurnId,
+        status: "interrupted",
+      });
+      assert.deepEqual(toolStatuses(continuation.runId, "replaced-build"), []);
+      // A command known only from the replayed wake ends on the continuation.
+      yield* TestClock.adjust(yield* Queue.take(finalizeScheduled));
+      const continuationTerminal = yield* takeUntil(
+        (event) => event.type === "turn.terminal" && event.runOrdinal === continuation.runOrdinal,
+      );
+      assert.equal(
+        continuationTerminal.type === "turn.terminal" ? continuationTerminal.status : null,
+        "completed",
+      );
+      assert.deepEqual(toolStatuses(continuation.runId, "wake-build").slice(-1), ["failed"]);
+      assert.isFalse(yield* hasPendingBackgroundWork, "the replaced process's commands are gone");
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
