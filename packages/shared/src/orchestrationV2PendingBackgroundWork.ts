@@ -126,6 +126,7 @@ type PendingBackgroundWorkTurnItem = {
   readonly type: OrchestrationV2TurnItem["type"];
   readonly status: OrchestrationV2TurnItem["status"];
   readonly title: string | null;
+  readonly userShell?: unknown;
   /** Shell readers join the owner, even when its provider thread belongs to a child app thread. */
   readonly owningProviderInstanceId?: OrchestrationV2ProviderThread["providerInstanceId"];
   readonly runId?: OrchestrationV2Run["id"] | string | null;
@@ -155,7 +156,12 @@ function isPersistentDynamicToolInput(input: unknown): boolean {
 }
 
 function descriptionFromTurnItem(item: PendingBackgroundWorkTurnItem): string | undefined {
-  if (typeof item.title === "string" && item.title.trim().length > 0) {
+  // A `!` command's title is the generic "You ran"; the command itself names it.
+  if (
+    item.userShell === undefined &&
+    typeof item.title === "string" &&
+    item.title.trim().length > 0
+  ) {
     return item.title.trim();
   }
   if (item.type === "command_execution" && typeof item.input === "string") {

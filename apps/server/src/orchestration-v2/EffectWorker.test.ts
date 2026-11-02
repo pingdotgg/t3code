@@ -1,3 +1,4 @@
+import * as ShellCommandService from "./ShellCommandService.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
@@ -157,6 +158,7 @@ function layerExecutorFor(input: {
     ),
   );
   return EffectWorker.layerExecutor.pipe(
+    Layer.provide(Layer.mock(ShellCommandService.ShellCommandService)({})),
     Layer.provide(
       Layer.mergeAll(
         layerDependencies,

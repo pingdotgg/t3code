@@ -636,6 +636,18 @@ it.effect("keeps native maintenance commands out of steering and restart message
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       for (const scenario of [
         {
+          name: "steer-shell",
+          first: "Fix the parser",
+          next: "!printf queued",
+          mode: "steer_active",
+        },
+        {
+          name: "steer-shell-restart",
+          first: "Fix the parser",
+          next: "!printf queued",
+          mode: "restart_active",
+        },
+        {
           name: "compact-steer",
           first: "Fix the parser",
           next: " /COMPACT ",
@@ -699,6 +711,18 @@ it.effect("keeps native maintenance commands out of steering and restart message
           const queued = (yield* threads.getThreadProjection(launched.threadId)).runs[1];
           assert.equal(queued?.status, "queued");
           assert.equal(queued?.userMessageId, MessageId.make(`${scenario.name}:message`));
+          if (scenario.next.startsWith("!") && queued !== undefined) {
+            const failure = yield* threads
+              .dispatch({
+                type: "queued-message.promote-to-steer",
+                commandId: CommandId.make(`${scenario.name}:promote`),
+                threadId: launched.threadId,
+                queuedRunId: queued.id,
+                targetRunId: targetRun.id,
+              })
+              .pipe(Effect.flip);
+            assert.include(String(failure.cause), "Shell commands cannot be promoted");
+          }
           continue;
         }
         const failure = yield* dispatch.pipe(Effect.flip);

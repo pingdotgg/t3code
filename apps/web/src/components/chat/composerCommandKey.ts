@@ -15,6 +15,7 @@ import {
   type ComposerTrigger,
   collapseExpandedComposerCursor,
   composerSubmissionIntentForKey,
+  isShellModePrompt,
 } from "../../composer-logic";
 import { type PendingUserInput } from "../../session-logic";
 import { type PreviewAnnotationPayload } from "@t3tools/contracts";
@@ -38,7 +39,8 @@ export function composerCommandKeyHandler(input: {
   readonly sendShortcut: ChatComposerProps["settings"]["sendShortcut"];
   readonly routeKind: ChatComposerProps["routeKind"];
   readonly phase: ChatComposerProps["phase"];
-  readonly isCompacting: boolean;
+  /** False while a send cannot steer: during compaction, or for a shell command. */
+  readonly canSteer: boolean;
   readonly followUpBehavior: ChatComposerProps["settings"]["followUpBehavior"];
   readonly isSoftwareKeyboardOpen: boolean;
   readonly planModeUiEnabled: boolean;
@@ -72,7 +74,7 @@ export function composerCommandKeyHandler(input: {
   readonly nudgeComposerMenuHighlight: (key: "ArrowDown" | "ArrowUp") => void;
   readonly onSelectComposerItem: (item: ComposerCommandItem) => void;
   readonly resolveActiveComposerTrigger: () => { trigger: ComposerTrigger | null };
-  readonly readComposerSnapshot: () => { value: string };
+  readonly readComposerSnapshot: () => { value: string; expandedCursor: number };
   readonly applyPromptReplacement: (
     rangeStart: number,
     rangeEnd: number,
@@ -90,7 +92,7 @@ export function composerCommandKeyHandler(input: {
     sendShortcut,
     routeKind,
     phase,
-    isCompacting,
+    canSteer,
     followUpBehavior,
     isSoftwareKeyboardOpen,
     planModeUiEnabled,
@@ -198,6 +200,17 @@ export function composerCommandKeyHandler(input: {
     );
   };
 
+  const exitShellMode = (): boolean => {
+    if (pendingUserInputs.length > 0) return false;
+    const snapshot = readComposerSnapshot();
+    if (!isShellModePrompt(snapshot.value)) return false;
+    const bang = snapshot.value.indexOf("!");
+    return applyPromptReplacement(bang, bang + 1, "", {
+      expandedCursorAfterReplace:
+        snapshot.expandedCursor > bang ? snapshot.expandedCursor - 1 : snapshot.expandedCursor,
+    });
+  };
+
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem = false) => {
     const submissionIntent = composerSubmissionIntentForKey({
       event,
@@ -218,11 +231,13 @@ export function composerCommandKeyHandler(input: {
     const menuIsActive =
       !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
     if (key === "Escape") {
-      if (!menuIsActive || event.isComposing || event.keyCode === 229) return false;
+      if (event.isComposing || event.keyCode === 229) return false;
+      if (!menuIsActive) return exitShellMode();
       dismissComposerTrigger(trigger);
       composerMenuOpenRef.current = false;
       return true;
     }
+    if (key === "Backspace" && promptRef.current === "!") return exitShellMode();
     if (menuIsActive && (submissionIntent === null || submissionIntent === "foreground")) {
       const currentItems = composerMenuItemsRef.current;
       const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
@@ -249,7 +264,7 @@ export function composerCommandKeyHandler(input: {
           running: phase === "running",
           alternateModifier: submissionIntent === "alternate",
           activeTurnDefault: followUpBehavior,
-          canSteer: !isCompacting,
+          canSteer,
         }),
         submissionIntent,
       );

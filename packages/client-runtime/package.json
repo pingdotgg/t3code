@@ -355,6 +355,10 @@
       "types": "./src/state/composerDispatch.ts",
       "default": "./src/state/composerDispatch.ts"
     },
+    "./state/user-shell-commands": {
+      "types": "./src/state/userShellCommands.ts",
+      "default": "./src/state/userShellCommands.ts"
+    },
     "./state/thread-subagents": {
       "types": "./src/state/threadSubagents.ts",
       "default": "./src/state/threadSubagents.ts"

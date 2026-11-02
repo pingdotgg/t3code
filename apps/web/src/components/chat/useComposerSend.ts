@@ -22,6 +22,7 @@ import {
   type ModelSelection,
   type PreviewAnnotationPayload,
   type ThreadId,
+  parseShellCommand,
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
@@ -113,6 +114,7 @@ import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
+import { shellCommandPermissionAtom } from "./userShellCommands";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   threadContextsOutsideEnvironment,
@@ -545,11 +547,59 @@ export function useComposerSend(input: ComposerSendInput) {
       notifyDirectAnnotationAttached();
       return;
     }
+    // The server runs `!` text as a command and queues it behind an active run, so it neither
+    // carries context nor redirects the agent away from pending approvals.
+    const shellCommand = parseShellCommand(promptAtSend.trim());
+    if (shellCommand !== null) {
+      if (!appAtomRegistry.get(shellCommandPermissionAtom(environmentId))) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Shell command not sent",
+            description: "This connection needs terminal access to run commands here.",
+          }),
+        );
+        return;
+      }
+      if (
+        directAnnotation ||
+        sendCtx.images.length > 0 ||
+        sendCtx.files.length > 0 ||
+        filterTerminalContextsWithText(sendCtx.terminalContexts).length > 0 ||
+        sendCtx.previewAnnotations.length > 0 ||
+        sendCtx.reviewComments.length > 0 ||
+        sendCtx.threadContexts.length > 0 ||
+        sendCtx.environmentContexts.length > 0
+      ) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Shell commands take text only",
+            description: "Remove the attachments and context, then send it again.",
+          }),
+        );
+        return;
+      }
+      if (sendCtx.multipleModelSelections !== null) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Shell commands run in one thread",
+            description: "Pick a single model, then send it again.",
+          }),
+        );
+        return;
+      }
+    }
     const multipleModelSelections = sendCtx.multipleModelSelections;
-    const approvalFeedbackTarget = pendingApprovalsRef.current.find(
-      (approval) =>
-        approval.supportsFeedback && approval.requestId === sendCtx.shownPendingApprovalIds[0],
-    );
+    const approvalFeedbackTarget =
+      shellCommand === null
+        ? pendingApprovalsRef.current.find(
+            (approval) =>
+              approval.supportsFeedback &&
+              approval.requestId === sendCtx.shownPendingApprovalIds[0],
+          )
+        : undefined;
     const multipleModelBlock =
       multipleModelSelections === null
         ? null
@@ -718,6 +768,7 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     if (
       !directAnnotation &&
+      shellCommand === null &&
       sendInteractionModeEnabled &&
       showPlanFollowUpPrompt &&
       activeProposedPlan &&
@@ -906,13 +957,17 @@ export function useComposerSend(input: ComposerSendInput) {
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
-    const outgoingMessageText = formatOutgoingPrompt({
-      provider: ctxSelectedProvider,
-      model: ctxSelectedModel,
-      models: ctxSelectedProviderModels,
-      effort: ctxSelectedPromptEffort,
-      text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-    });
+    // An effort prefix would hide the `!` from the server.
+    const outgoingMessageText =
+      shellCommand !== null
+        ? messageTextForSend
+        : formatOutgoingPrompt({
+            provider: ctxSelectedProvider,
+            model: ctxSelectedModel,
+            models: ctxSelectedProviderModels,
+            effort: ctxSelectedPromptEffort,
+            text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+          });
     if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
       return;
     }
@@ -1033,7 +1088,7 @@ export function useComposerSend(input: ComposerSendInput) {
     // drafts leave them alone. After navigating away during an upload, the shown approvals
     // are another thread's, so this send leaves them alone too.
     const approvalsToDecline =
-      currentRouteThreadKeyRef.current === routeThreadKey
+      shellCommand === null && currentRouteThreadKeyRef.current === routeThreadKey
         ? pendingApprovalsRef.current.filter((approval) =>
             sendCtx?.shownPendingApprovalIds.includes(approval.requestId),
           )

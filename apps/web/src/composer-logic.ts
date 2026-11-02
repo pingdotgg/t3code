@@ -324,6 +324,11 @@ export function parseSideChatCommand(text: string): { prompt: string } | null {
   return match ? { prompt: match[1]?.trim() ?? "" } : null;
 }
 
+/** Sends trim the prompt, so leading whitespace before `!` still makes a shell command. */
+export function isShellModePrompt(prompt: string): boolean {
+  return prompt.trimStart().startsWith("!");
+}
+
 export function parseStandaloneComposerSlashCommand(
   text: string,
 ): Exclude<ComposerSlashCommand, "model" | "side" | "btw"> | null {

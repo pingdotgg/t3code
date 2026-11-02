@@ -21,6 +21,7 @@ import {
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type ChatAttachment,
+  userShellCommand,
   CommandId,
   type GuestMessageId,
   isCompactionCommandMessage,
@@ -587,6 +588,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "prepared-run.retry":
     case "subagent.stop":
     case "run.interrupt":
+    case "shell-command.stop":
+    case "shell-command.delivery.set":
     case "queued-message.promote-to-steer":
     case "queued-run.start":
     case "queue.resume":
@@ -4268,6 +4271,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* Ref.update(effects, (existing) => [
         ...existing,
         {
+          id: `effect:${command.commandId}:shell-output.cleanup`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: { type: "shell-output.cleanup" as const },
+        },
+        {
           id: `effect:${command.commandId}:terminal.cleanup`,
           commandId: command.commandId,
           threadId: command.threadId,
@@ -4770,6 +4779,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: input.command.commandId,
         commandType: input.command.type,
         cause: `Target run ${input.targetRunId} was not found.`,
+      });
+    }
+    if (userShellCommand(input) !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: input.command.commandId,
+        commandType: input.command.type,
+        cause: "Shell commands must run as a separate queued turn.",
       });
     }
     if (isNativeMaintenanceCommand(input)) {
@@ -5684,6 +5700,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.dispatchMode,
       command.deliveryIntent,
     );
+    if (userShellCommand(command) !== null && projection.runs.some(isActiveRun)) {
+      dispatchMode = { type: "queue_after_active" };
+    }
     if (dispatchMode.type === "steer_active") {
       const targetRunId = dispatchMode.targetRunId;
       const target = projection.runs.find((run) => run.id === targetRunId);
@@ -9548,6 +9567,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Queued run ${queuedRun.id} is missing message or execution state.`,
       });
     }
+    if (userShellCommand(queuedMessage) !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Shell commands cannot be promoted to Steer.",
+      });
+    }
     if (
       queuedMessage.delegatedCompletion !== undefined ||
       queuedMessage.notification !== undefined
@@ -13109,6 +13135,68 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       | undefined;
     let updateDelegatedCompletionOnlyRunId: RunId | undefined;
     switch (command.type) {
+      case "shell-command.stop":
+      case "shell-command.delivery.set": {
+        const item = yield* projectionStore
+          .getTurnItem({ threadId: command.threadId, itemId: command.itemId })
+          .pipe(mapDispatchError(command));
+        if (item?.type !== "command_execution" || item.userShell === undefined) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "No user-run shell command exists for this item.",
+          });
+        }
+        if (command.type === "shell-command.delivery.set") {
+          const previous = item.userShell.delivery;
+          if (
+            !(
+              (previous === "pending" && command.delivery === "dismissed") ||
+              (previous === "dismissed" && command.delivery === "pending")
+            )
+          ) {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "Shell delivery can only change between pending and dismissed.",
+            });
+          }
+          const now = yield* DateTime.now;
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "turn-item.updated",
+            threadId: command.threadId,
+            runId: item.runId ?? undefined,
+            nodeId: item.nodeId ?? undefined,
+            occurredAt: now,
+            payload: {
+              ...item,
+              userShell: { ...item.userShell, delivery: command.delivery },
+              updatedAt: now,
+            },
+          });
+        } else {
+          if (item.status !== "running") {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "Only running shell commands can be stopped.",
+            });
+          }
+          yield* Ref.update(effects, (current) => [
+            ...current,
+            {
+              id: `effect:${command.commandId}:shell-command.stop`,
+              commandId: command.commandId,
+              threadId: command.threadId,
+              request: { type: "shell-command.stop" as const, itemId: command.itemId },
+            },
+          ]);
+        }
+        break;
+      }
       case "thread.create":
         yield* dispatchThreadCreate(command, events);
         break;
@@ -13584,6 +13672,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
+          command.type === "shell-command.stop" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true),

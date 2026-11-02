@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  userShellCommand,
   CommandId,
   ContextTransferId,
   EnvironmentId,
@@ -401,11 +402,20 @@ it.layer(Layer.provideMerge(layerTools, layerOrchestration))("work a link starts
       });
       assert.equal(renamed.isError, false, JSON.stringify(renamed.content));
       for (const [name, args] of [
+        ["t3_thread_send", { threadId: users, message: "!printf plain-text" }],
         ["t3_project_update", { projectId, title: "The desk's now" }],
         ["t3_project_create", { title: "t3code", workspaceRoot: "/p/t3code" }],
       ] as const) {
         const changed = yield* call(trusted, name, args);
         assert.equal(changed.isError, false, `${name}: ${JSON.stringify(changed.content)}`);
+      }
+      const { messages } = yield* projections.getThreadRecords(users, ["messages"]);
+      const sent = messages.find((message) => message.text === "!printf plain-text");
+      assert.isDefined(sent);
+      if (sent !== undefined) {
+        assert.equal(sent.createdBy, "agent");
+        assert.equal(sent.creationSource, "mcp");
+        assert.isNull(userShellCommand(sent));
       }
     }),
   );

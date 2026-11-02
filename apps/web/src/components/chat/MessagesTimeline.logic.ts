@@ -1,6 +1,7 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
+import { isUserShellItem } from "@t3tools/client-runtime/state/user-shell-commands";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import {
@@ -92,6 +93,12 @@ function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
     (entry.toolLifecycleStatus === undefined &&
       (entry.sourceActivityKind === "task.progress" || workLogEntryIsToolLike(entry)))
   );
+}
+
+/** A command the user ran with `!` stands alone, so the agent's work never folds it away. */
+function workEntryUserShellCommand(entry: WorkLogEntry): string | null {
+  const item = entry.projectedItem?.item;
+  return item !== undefined && isUserShellItem(item) ? item.input : null;
 }
 
 function singleToolCallLabel(entry: WorkLogEntry): string {
@@ -1142,6 +1149,7 @@ function deriveTurnFolds(input: {
       }
       if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
       if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) continue;
+      if (entry.kind === "work" && workEntryUserShellCommand(entry.entry) !== null) continue;
       hiddenEntryIds.add(entry.id);
     }
     if (hiddenEntryIds.size === 0) {
@@ -1187,9 +1195,16 @@ function deriveTurnFolds(input: {
     const segmentHiddenIds = (entries: ReadonlyArray<TimelineEntry>) =>
       new Set(entries.flatMap((entry) => (hiddenEntryIds.has(entry.id) ? [entry.id] : [])));
     const firstSegment = group.entries.slice(0, group.steerSegments[0]?.startIndex);
-    foldsByAnchorEntryId.set(group.anchorEntryId, {
+    // The command the user ran stays above the fold of the agent's reply to it.
+    const isShellEntry = (entry: TimelineEntry) =>
+      entry.kind === "work" && workEntryUserShellCommand(entry.entry) !== null;
+    const anchorEntryId =
+      firstSegment[0]?.id === group.anchorEntryId && isShellEntry(firstSegment[0])
+        ? (firstSegment.find((entry) => !isShellEntry(entry))?.id ?? group.anchorEntryId)
+        : group.anchorEntryId;
+    foldsByAnchorEntryId.set(anchorEntryId, {
       runId,
-      anchorEntryId: group.anchorEntryId,
+      anchorEntryId,
       createdAt: group.startBoundary ?? firstEntry.createdAt,
       hiddenEntryIds: segmentHiddenIds(firstSegment),
       entryIds: new Set(firstSegment.map((entry) => entry.id)),
@@ -1816,6 +1831,18 @@ export function deriveMessagesTimelineRows(input: {
         });
         continue;
       }
+      const userShellCommand = workEntryUserShellCommand(timelineEntry.entry);
+      if (userShellCommand !== null) {
+        nextRows.push({
+          kind: "work",
+          id: timelineEntry.id,
+          createdAt: timelineEntry.createdAt,
+          groupedEntries: [timelineEntry.entry],
+          isExpandedToolGroup: false,
+          displayLabel: `${timelineEntry.entry.label} ${commandDisplayText(userShellCommand)}`,
+        });
+        continue;
+      }
       const groupedEntries = [timelineEntry.entry];
       let cursor = index + 1;
       while (cursor < timelineEntries.length) {
@@ -1831,6 +1858,7 @@ export function deriveMessagesTimelineRows(input: {
           nextEntry.entry.itemType === "system_notice" ||
           nextEntry.entry.itemType === "notification" ||
           nextEntry.entry.questionAnswer !== undefined ||
+          workEntryUserShellCommand(nextEntry.entry) !== null ||
           isPendingApproval(nextEntry.entry) ||
           activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||
