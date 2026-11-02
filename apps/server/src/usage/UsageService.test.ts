@@ -67,12 +67,17 @@ const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unkno
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonString = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
 
-function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
+function claudeLine(
+  id: number,
+  outputTokens: number,
+  model = "claude-fable-5",
+  sessionId = "session-1",
+): string {
   return `${JSON.stringify({
     type: "assistant",
     timestamp: "2026-08-01T10:00:00Z",
     requestId: `req_${id}`,
-    sessionId: "session-1",
+    sessionId,
     message: {
       id: `msg_${id}`,
       model,
@@ -2075,6 +2080,111 @@ describe("UsageService", () => {
           Effect.provide(layerService({ prefix: "usage-service-unreadable", home, settings })),
         );
       }).pipe(Effect.scoped),
+  );
+
+  it.live("filters original model IDs before aliases, pricing, buckets and session counts", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          transcript,
+          claudeLine(1, 3, "orbit-1", "mixed") +
+            claudeLine(2, 5, "orbit-2", "mixed") +
+            claudeLine(3, 7, "drift-9", "mixed") +
+            claudeLine(4, 11, "drift-9", "excluded-only"),
+        ),
+      );
+      const rates = {
+        "orbit-1": { input_cost_per_token: 0.000001, output_cost_per_token: 0.00001 },
+        "orbit-2": { input_cost_per_token: 0.000002, output_cost_per_token: 0.00002 },
+      };
+      const include = {
+        // The codex selector must not match the Claude drift-9 records.
+        include: [
+          { provider: "claude", model: "orbit-1" },
+          { model: "orbit-2" },
+          { provider: "codex", model: "drift-9" },
+        ],
+      };
+      const exclude = { exclude: [{ model: "drift-9" }] };
+      const HOURLY: UsageSummaryInput = {
+        ...WINDOW,
+        resolution: "hour",
+        sinceTime: "2026-08-01T09:00:00Z",
+        untilTime: "2026-08-01T11:00:00Z",
+      };
+      const cells = (summary: UsageSummary) =>
+        summary.buckets.map(({ model, totals, costUsd, records, sessions }) => ({
+          model,
+          outputTokens: totals.outputTokens,
+          costUsd: Math.round(costUsd * 1e6),
+          records,
+          sessions,
+        }));
+
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        // Same service, concurrent reads: the in-flight key must keep these scans apart.
+        const [unfiltered, noOp, keepNothing, included, reordered, excluded, hourly] =
+          yield* Effect.all(
+            [
+              service.readSummary(WINDOW),
+              service.readSummary({ ...WINDOW, modelFilter: { exclude: [] } }),
+              service.readSummary({ ...WINDOW, modelFilter: { include: [] } }),
+              service.readSummary({ ...WINDOW, modelFilter: include }),
+              service.readSummary({
+                ...WINDOW,
+                modelFilter: { include: [...include.include].reverse() },
+              }),
+              service.readSummary({ ...WINDOW, modelFilter: exclude }),
+              service.readSummary({ ...HOURLY, modelFilter: include }),
+            ],
+            { concurrency: "unbounded" },
+          );
+
+        // Unfiltered keeps today's behavior: the alias folds drift-9 into orbit-1.
+        assert.deepStrictEqual(cells(unfiltered), [
+          { model: "orbit-1", outputTokens: 21, costUsd: 240, records: 3, sessions: 2 },
+          { model: "orbit-2", outputTokens: 5, costUsd: 120, records: 1, sessions: 1 },
+        ]);
+        assert.strictEqual(unfiltered.sources[0]?.distinctSessions, 2);
+        assert.strictEqual(unfiltered.modelFilter, undefined);
+        assert.strictEqual(noOp, unfiltered);
+        assert.deepStrictEqual(keepNothing.buckets, []);
+        assert.strictEqual(keepNothing.sources[0]?.distinctSessions, 0);
+
+        const kept = [
+          { model: "orbit-1", outputTokens: 3, costUsd: 40, records: 1, sessions: 1 },
+          { model: "orbit-2", outputTokens: 5, costUsd: 120, records: 1, sessions: 1 },
+        ];
+        assert.deepStrictEqual(cells(included), kept);
+        assert.deepStrictEqual(cells(excluded), kept);
+        assert.deepStrictEqual(cells(hourly), kept);
+        assert.strictEqual(hourly.buckets[0]?.hourStart, "2026-08-01T10:00:00.000Z");
+        for (const summary of [included, excluded, hourly]) {
+          assert.strictEqual(summary.sources[0]?.distinctSessions, 1);
+        }
+        // Equal filters share one scan and echo one canonical form.
+        assert.strictEqual(reordered, included);
+        assert.deepStrictEqual(included.modelFilter, {
+          include: [
+            { provider: "claude", model: "orbit-1" },
+            { provider: "codex", model: "drift-9" },
+            { model: "orbit-2" },
+          ],
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-model-filter-test",
+            home,
+            settings: { ...settings, usageModelAliases: { "drift-9": "orbit-1" } },
+            ratesDocument: rates,
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.live("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>

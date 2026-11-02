@@ -263,18 +263,19 @@ options.
 
 ### Prepared server bytecode
 
-Native desktop artifact builds generate server bytecode with the packaged Electron executable,
-after ASAR creation and before signing. Cross-platform and cross-architecture builds skip this
-step explicitly. CLI, SEA and WSL runtimes keep their existing behavior; only desktop backend
-imports covered by generation receive prepared bytecode. Worker-only modules compile normally.
+Native macOS and Windows desktop artifact builds generate server bytecode with the packaged
+Electron executable, after ASAR creation and before signing. Linux builds skip generation until
+native packaging and relocated AppImage reuse have been validated. Cross-platform and
+cross-architecture builds also skip generation explicitly. CLI, SEA and WSL runtimes keep their
+existing behavior; only desktop backend imports covered by generation receive prepared bytecode.
+Worker-only modules compile normally.
 
 Electron's Node 24 cache has no read-only option and includes the producer UID in its directory
 name. The backend links individual prepared files into its writable cache with keys for the
 installed module paths. Node replaces files atomically, so regeneration cannot write through those
 links into signed resources. Windows uses hard links and falls back to normal caching when volumes
 differ or resource permissions prevent linking. Protected installations therefore may not reuse
-prepared bytecode. No cache bytes are copied during startup. AppImage backends discard their links
-on normal exit because each mount changes module paths.
+prepared bytecode. No cache bytes are copied during startup.
 
 The key calculation follows Node's internal portable ESM format. Generation checks that the
 packaged engine produced the expected CLI entry and fails the build if that format changes.
