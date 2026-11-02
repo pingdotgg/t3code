@@ -200,7 +200,6 @@ export function patchPullRequestListEntries<Entry extends PullRequestListEntry>(
         "isDraft",
         "mergeability",
         "updatedAt",
-        "observedAt",
       ]),
     };
     return listAccepts(input, next.state, next.isDraft) ? [next] : [];
@@ -277,12 +276,10 @@ function actionPatchedQuery<Input, A, E>(
           const pending = pendingRead(registry);
           // A read sent before the action may miss its result, and so may one sent before the host
           // committed. The server's post-commit refresh restarts that one, but not a read outside
-          // its stream, whose re-read need not even show as waiting, so a mounted one restarts here.
+          // its stream, whose re-read need not even show as waiting, so a mounted one the reply
+          // changes restarts here.
           const unrefreshed = options.refreshedByServer?.(target.input) === false;
           const freshRead = pending !== undefined && !unrefreshed && !readsBeforeSend.has(pending);
-          const restart = unrefreshed
-            ? pending !== undefined || (registry.getNodes().get(atom)?.listeners.size ?? 0) > 0
-            : pending !== undefined && !freshRead;
           const reread = () => (freshRead ? undefined : registry.refresh(atom));
           if (reply === undefined) {
             return options.rereadWithoutReply === true ? reread() : undefined;
@@ -297,9 +294,11 @@ function actionPatchedQuery<Input, A, E>(
           const lacking = options.rereads?.(shown.value, reply) === true;
           const next = reuseUnchanged(shown.value, patched);
           if (next === shown.value)
-            return lacking || (unrefreshed && restart) ? reread() : undefined;
+            return lacking || (unrefreshed && pending !== undefined) ? reread() : undefined;
           yield* options.onAnswer?.(target, next, registry) ?? Effect.void;
-          if (lacking || restart) registry.refresh(atom);
+          const mounted = (registry.getNodes().get(atom)?.listeners.size ?? 0) > 0;
+          if (!freshRead && (pending !== undefined || lacking || (unrefreshed && mounted)))
+            registry.refresh(atom);
           registry.update(
             atom,
             AsyncResult.map(() => next),
@@ -376,6 +375,7 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
               projectId: value.projectId,
               repository: value.repository,
               number: value.number,
+              ...(value.observedAt === undefined ? {} : { observedAt: value.observedAt }),
             },
     },
   );
@@ -487,7 +487,6 @@ export function createPullRequestEnvironmentAtoms<R, E>(
               "headBranch",
               "baseBranch",
               "updatedAt",
-              "observedAt",
               "mergedAt",
               "closedAt",
               "autoMergeEnabled",
@@ -518,21 +517,24 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           persistence: previewPersistence,
           concerns: samePullRequest,
           rereadWithoutReply: true,
+          // Servers before action replies send unstamped previews, which only a read can order.
           patch: (_input, value, _reference, reply) =>
-            isStalePullRequestReply(value, reply)
-              ? value
-              : {
-                  ...value,
-                  ...pickDefined(reply, [
-                    "title",
-                    "url",
-                    "author",
-                    "state",
-                    "isDraft",
-                    "updatedAt",
-                    "observedAt",
-                  ]),
-                },
+            value.updatedAt === undefined && value.observedAt === undefined
+              ? "refresh"
+              : isStalePullRequestReply(value, reply)
+                ? value
+                : {
+                    ...value,
+                    ...pickDefined(reply, [
+                      "title",
+                      "url",
+                      "author",
+                      "state",
+                      "isDraft",
+                      "updatedAt",
+                      "observedAt",
+                    ]),
+                  },
         },
       ),
     );
