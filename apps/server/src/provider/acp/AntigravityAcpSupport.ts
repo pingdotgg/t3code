@@ -394,7 +394,7 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
       mimeType === "video/mp4" &&
       isQualifiedAntigravityRelease(input.agentVersion) &&
       // The agent turns a file URI into a path with unquote(urlparse(uri).path), which drops
-      // Windows drives and UNC hosts. Keep the saved path there until Windows is qualified.
+      // Windows drives and UNC hosts. Keep the saved path there until Google fixes it.
       platform !== "win32" &&
       antigravityModelAcceptsVideo(input.currentModel);
     const textFile =
