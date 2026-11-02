@@ -57,10 +57,9 @@ describe("main app return location", () => {
     const router = screen.router!;
     using _tracking = { [Symbol.dispose]: startMainAppLocationTracking(router) };
 
-    await settled(router, router.navigate(assistantCitationNavigation(citation)));
-    expect(assistantCitationFromLocation(router.state.location.href)).toEqual(citation);
-
     const returnLocation = async (from: string, control: string) => {
+      await settled(router, router.navigate(assistantCitationNavigation(citation)));
+      expect(assistantCitationFromLocation(router.state.location.href)).toEqual(citation);
       await settled(router, router.navigate({ href: from }));
       await userEvent.click(screen.getByRole("button", { name: control }));
       await vi.waitFor(() => expect(router.state.location.pathname).toBe(THREAD_PATH));
