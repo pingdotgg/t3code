@@ -2330,11 +2330,14 @@ export const layer = Layer.effect(
                 yield* remove;
                 continue;
               }
+              const current = yield* findTask(taskId);
               const prepared = yield* Effect.gen(function* () {
+                // The snapshot keeps the identity runTask checks; the prompt is the one saved now.
                 const task = yield* decodePendingTask(entry.task_json);
                 const request = yield* decodePendingRequest(entry.request_json);
                 const frameId = Buffer.from(yield* crypto.randomBytes(6)).toString("hex");
-                return { task, rendered: renderWebhookPrompt(task.prompt, request, frameId) };
+                const prompt = current?.createdAt === task.createdAt ? current.prompt : task.prompt;
+                return { task, rendered: renderWebhookPrompt(prompt, request, frameId) };
               }).pipe(Effect.exit);
               if (Exit.isFailure(prepared)) {
                 if (Cause.hasInterruptsOnly(prepared.cause))
