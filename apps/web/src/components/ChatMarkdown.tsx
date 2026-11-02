@@ -170,6 +170,7 @@ import {
   needsWorkspaceBasenameLookup,
   pickStrippedWorkspaceMatch,
   pickWorkspaceBasenameMatch,
+  pickWorkspaceSuffixMatch,
   stripRepeatedWorkspacePrefix,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
@@ -771,7 +772,16 @@ function useChatMarkdownState({
     const strippedPath = isBasename
       ? null
       : stripRepeatedWorkspacePrefix(workspaceRelativePath, cwd);
-    if (!isBasename && strippedPath === null) return null;
+    const literalPathIsMissing = async () => {
+      const metadata = await getFilesystemMetadata({
+        environmentId,
+        input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
+      });
+      return metadata._tag === "Success" && metadata.value.entries[0] === null;
+    };
+    const isSubPath = !isBasename && strippedPath === null;
+    // A sub-path that resolves as written needs no search.
+    if (isSubPath && !(await literalPathIsMissing())) return null;
     const result = await searchProjectEntries({
       environmentId,
       input: {
@@ -782,18 +792,17 @@ function useChatMarkdownState({
       },
     });
     if (result._tag !== "Success") return null;
-    if (strippedPath === null) {
+    if (isBasename) {
       return pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries);
+    }
+    if (strippedPath === null) {
+      return pickWorkspaceSuffixMatch(workspaceRelativePath, cwd, result.value.entries);
     }
     const match = pickStrippedWorkspaceMatch(strippedPath, cwd, result.value.entries);
     if (match === null) return null;
     // Search can be truncated or still scanning, so it cannot rule out the
     // literal path. Check the host before redirecting to the stripped match.
-    const metadata = await getFilesystemMetadata({
-      environmentId,
-      input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
-    });
-    return metadata._tag === "Success" && metadata.value.entries[0] === null ? match : null;
+    return (await literalPathIsMissing()) ? match : null;
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;
@@ -801,12 +810,7 @@ function useChatMarkdownState({
     const isLatestLookup = claimWorkspaceBasenameLookup();
     const openAt = (path: string) =>
       useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
-    if (
-      fileLinkMeta.workspaceLookupPath === null ||
-      !cwd ||
-      (!needsWorkspaceBasenameLookup(panelPath) &&
-        stripRepeatedWorkspacePrefix(panelPath, cwd) === null)
-    ) {
+    if (fileLinkMeta.workspaceLookupPath === null || !cwd) {
       openAt(panelPath);
       return;
     }
