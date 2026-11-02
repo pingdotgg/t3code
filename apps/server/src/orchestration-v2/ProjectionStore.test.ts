@@ -6,6 +6,7 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  ContextTransferId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
@@ -3152,6 +3153,99 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         snapshot.projection.providerThreads.map((thread) => thread.id),
         [ProviderThreadId.make(`provider-thread:${targetThreadId}`)],
       );
+    }),
+  );
+
+  it.effect("drops a source's transfers to deleted forks from its thread snapshot", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const projectId = ProjectId.make("project:deleted-fork-transfer");
+      const sourceThreadId = ThreadId.make("thread:deleted-fork-transfer:source");
+      const liveForkId = ThreadId.make("thread:deleted-fork-transfer:live-fork");
+      const deletedForkId = ThreadId.make("thread:deleted-fork-transfer:deleted-fork");
+      const makeThread = (threadId: ThreadId) => ({
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        id: threadId,
+        projectId,
+        title: String(threadId),
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage:
+          threadId === sourceThreadId
+            ? { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId }
+            : {
+                parentThreadId: sourceThreadId,
+                relationshipToParent: "fork" as const,
+                rootThreadId: sourceThreadId,
+              },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      });
+      for (const threadId of [sourceThreadId, liveForkId, deletedForkId]) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:deleted-fork-transfer:thread:${threadId}`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: makeThread(threadId),
+        });
+      }
+      for (const forkId of [liveForkId, deletedForkId]) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:deleted-fork-transfer:transfer:${forkId}`),
+          type: "context-transfer.created",
+          threadId: forkId,
+          occurredAt: now,
+          payload: {
+            id: ContextTransferId.make(`transfer:${forkId}`),
+            type: "fork",
+            sourceThreadId,
+            targetThreadId: forkId,
+            sourcePoint: { threadId: sourceThreadId },
+            basePoint: null,
+            sourceProviderInstanceId: providerInstanceId,
+            targetProviderInstanceId: providerInstanceId,
+            targetRunId: null,
+            status: "pending",
+            resolution: null,
+            createdBy: "user",
+            error: null,
+            createdAt: now,
+            updatedAt: now,
+            consumedAt: null,
+          },
+        });
+      }
+      yield* projectionStore.apply({
+        id: EventId.make("event:deleted-fork-transfer:delete"),
+        type: "thread.deleted",
+        threadId: deletedForkId,
+        occurredAt: now,
+        payload: { ...makeThread(deletedForkId), deletedAt: now },
+      });
+
+      for (const { projection } of [
+        yield* projectionStore.getThreadSnapshotWindow(sourceThreadId, { rowLimit: 10 }),
+        yield* projectionStore.getThreadSnapshot(sourceThreadId),
+      ]) {
+        assert.deepEqual(
+          projection.contextTransfers.map((transfer) => transfer.targetThreadId),
+          [liveForkId],
+        );
+      }
     }),
   );
 
