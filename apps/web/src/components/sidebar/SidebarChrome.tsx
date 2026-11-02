@@ -4,7 +4,8 @@ import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useAtomValue } from "@effect/atom-react";
-import { useClientSettings, useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { useDockLayoutStore } from "../../dock/dockLayoutStore";
+import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { shortcutLabelForCommand } from "../../keybindings";
 import {
   navigateHistory,
@@ -47,7 +48,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }) {
   const stageLabel = useEnvironmentStageLabel();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
-  const side = useClientSettings((settings) => settings.threadSidebarSide);
+  const side = useDockLayoutStore((state) => state.threadsSide);
   const backdropVariant = resolveSidebarStageBackdropVariant(
     stageLabel,
     environmentIdentificationMode,
@@ -108,7 +109,7 @@ export function SidebarBrandWidthProbe({
   isElectron: boolean;
   onWidthChange: (width: number) => void;
 }) {
-  const side = useClientSettings((settings) => settings.threadSidebarSide);
+  const side = useDockLayoutStore((state) => state.threadsSide);
   const observeWidth = (probe: HTMLDivElement) => {
     return observeResize(probe, ([entry]) => {
       if (entry) onWidthChange(entry.borderBoxSize[0]?.inlineSize ?? probe.offsetWidth);

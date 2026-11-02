@@ -25,11 +25,16 @@ export interface DockLayout {
   readonly kindGroups: Readonly<Partial<Record<RightPanelKind, string>>>;
 }
 
+export type ThreadsSide = "left" | "right";
+
 interface DockLayoutStoreState extends DockLayout {
+  /** Lives here, not in client settings, because desktop builds drop settings they don't know. */
+  readonly threadsSide: ThreadsSide;
   /** The thread whose surfaces the workspace shows; ChatView claims it while mounted. */
   readonly threadRef: ScopedThreadRef | null;
   /** The group a new tab should open in, set by that group's add menu. */
   readonly pendingSurfaceGroupId: string | null;
+  setThreadsSide: (threadsSide: ThreadsSide) => void;
   setThreadRef: (threadRef: ScopedThreadRef | null) => void;
   setPendingSurfaceGroup: (groupId: string | null) => void;
   setNodeSizes: (sizes: Readonly<Record<string, number>>) => void;
@@ -74,8 +79,10 @@ export const useDockLayoutStore = create<DockLayoutStoreState>()(
   persist(
     (set) => ({
       ...createInitialLayout(),
+      threadsSide: "left",
       threadRef: null,
       pendingSurfaceGroupId: null,
+      setThreadsSide: (threadsSide) => set({ threadsSide }),
       setThreadRef: (threadRef) => set({ threadRef }),
       setPendingSurfaceGroup: (pendingSurfaceGroupId) => set({ pendingSurfaceGroupId }),
       setNodeSizes: (sizes) => set((state) => ({ root: setDockNodeSizes(state.root, sizes) })),
@@ -110,13 +117,15 @@ export const useDockLayoutStore = create<DockLayoutStoreState>()(
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
-      partialize: ({ root, kindGroups }) => ({ root, kindGroups }),
+      partialize: ({ root, kindGroups, threadsSide }) => ({ root, kindGroups, threadsSide }),
       merge: (persisted, current) => {
-        const saved = (persisted ?? {}) as Partial<DockLayout>;
+        const saved = (persisted ?? {}) as Partial<DockLayout & { threadsSide: ThreadsSide }>;
+        const threadsSide = saved.threadsSide === "right" ? "right" : "left";
         const root = parseDockTree(saved.root);
         const ids = root ? dockGroupIds(root) : null;
-        if (!root || !ids?.has(PANEL_GROUP_ID) || !ids.has(CHAT_GROUP_ID)) return current;
-        return { ...current, root, kindGroups: saved.kindGroups ?? {} };
+        if (!root || !ids?.has(PANEL_GROUP_ID) || !ids.has(CHAT_GROUP_ID))
+          return { ...current, threadsSide };
+        return { ...current, root, kindGroups: saved.kindGroups ?? {}, threadsSide };
       },
     },
   ),

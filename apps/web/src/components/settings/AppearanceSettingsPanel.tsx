@@ -19,6 +19,7 @@ import {
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { useCustomThemes } from "../../hooks/useCustomThemes";
+import { useDockLayoutStore } from "../../dock/dockLayoutStore";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { useTheme } from "../../hooks/useTheme";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -99,6 +100,8 @@ export function AppearanceSettingsPanel() {
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const threadsSide = useDockLayoutStore((state) => state.threadsSide);
+  const setThreadsSide = useDockLayoutStore((state) => state.setThreadsSide);
   const environmentStageLabel = useEnvironmentStageLabel();
   const environmentStageVariant = resolveSidebarStageBackdropVariant(environmentStageLabel);
   const environmentIdentificationOptionList =
@@ -293,30 +296,20 @@ export function AppearanceSettingsPanel() {
           {...searchableSetting("thread-sidebar-side")}
           description="Choose which side of the window the threads sidebar sits on."
           resetAction={
-            settings.threadSidebarSide !== DEFAULT_UNIFIED_SETTINGS.threadSidebarSide ? (
-              <SettingResetButton
-                label="sidebar position"
-                onClick={() =>
-                  updateSettings({
-                    threadSidebarSide: DEFAULT_UNIFIED_SETTINGS.threadSidebarSide,
-                  })
-                }
-              />
+            threadsSide !== "left" ? (
+              <SettingResetButton label="sidebar position" onClick={() => setThreadsSide("left")} />
             ) : null
           }
           control={
             <div className="w-full sm:w-40">
               <Select
-                value={settings.threadSidebarSide}
+                value={threadsSide}
                 onValueChange={(value) => {
-                  if (value === "left" || value === "right")
-                    updateSettings({ threadSidebarSide: value });
+                  if (value === "left" || value === "right") setThreadsSide(value);
                 }}
               >
                 <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Sidebar position">
-                  <SelectValue>
-                    {settings.threadSidebarSide === "left" ? "Left" : "Right"}
-                  </SelectValue>
+                  <SelectValue>{threadsSide === "left" ? "Left" : "Right"}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   <SelectItem value="left">Left (default)</SelectItem>

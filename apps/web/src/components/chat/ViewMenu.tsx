@@ -11,7 +11,7 @@ import {
 import type { ComponentType } from "react";
 
 import { resetDockLayout } from "../../dock/dockActions";
-import { useClientSettings } from "../../hooks/useSettings";
+import { useDockLayoutStore } from "../../dock/dockLayoutStore";
 import {
   selectRightPanelKindShown,
   useRightPanelStore,
@@ -80,7 +80,7 @@ export function ViewMenu(props: {
 }) {
   const { toggleSidebar } = useSidebar();
   const threadsShown = useSidebarVisibility();
-  const threadsSide = useClientSettings((settings) => settings.threadSidebarSide);
+  const threadsSide = useDockLayoutStore((state) => state.threadsSide);
   const ThreadsIcon = threadsSide === "right" ? PanelRight : PanelLeft;
   return (
     <Menu>

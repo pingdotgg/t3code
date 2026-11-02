@@ -34,12 +34,13 @@ import {
 } from "../rightPanelStore";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useClientSettings, useEnvironmentIdentificationMode } from "../hooks/useSettings";
+import { useEnvironmentIdentificationMode } from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
   usePanelNavigationSuppression,
 } from "../panelAnimations";
+import { useDockLayoutStore } from "../dock/dockLayoutStore";
 import { DockWorkspace } from "../dock/DockWorkspace";
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
@@ -330,7 +331,7 @@ function SidebarControl() {
   const isSidebarVisible = useSidebarVisibility();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
-  const sidebarSide = useClientSettings((settings) => settings.threadSidebarSide);
+  const sidebarSide = useDockLayoutStore((state) => state.threadsSide);
   const onBanner = isSidebarVisible && Boolean(stageBackdropVariant);
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle", {
     context: { usagePageOpen },
@@ -417,7 +418,7 @@ function SidebarControl() {
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
-  const sidebarSide = useClientSettings((settings) => settings.threadSidebarSide);
+  const sidebarSide = useDockLayoutStore((state) => state.threadsSide);
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
     pendingKey: null,

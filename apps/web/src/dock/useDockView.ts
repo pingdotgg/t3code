@@ -3,7 +3,6 @@ import { useShallow } from "zustand/react/shallow";
 
 import { useSidebar } from "../components/ui/sidebar";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import { useClientSettings } from "../hooks/useSettings";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { CHAT_GROUP_ID } from "./dockLayout";
@@ -19,7 +18,7 @@ const NARROW_LAYOUT: DockLayout = {
 export function useDockView(threadRef: ScopedThreadRef | null) {
   const narrow = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const { open, isMobile } = useSidebar();
-  const side = useClientSettings((settings) => settings.threadSidebarSide);
+  const side = useDockLayoutStore((state) => state.threadsSide);
   const stored = useDockLayoutStore(useShallow(({ root, kindGroups }) => ({ root, kindGroups })));
   const thread = useRightPanelStore((state) =>
     threadRef && !narrow ? selectThreadRightPanelState(state.byThreadKey, threadRef) : null,

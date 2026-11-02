@@ -22,6 +22,24 @@ beforeEach(() => {
   useRightPanelStore.setState({ byThreadKey: {} });
 });
 
+describe("threadsSide", () => {
+  it("is saved with the layout, where a desktop app on older contracts cannot drop it", () => {
+    useDockLayoutStore.setState({ threadsSide: "right" });
+    const { partialize, merge } = useDockLayoutStore.persist.getOptions();
+    const saved = partialize!(dock());
+    useDockLayoutStore.setState({ threadsSide: "left" });
+    expect(saved).toMatchObject({ threadsSide: "right" });
+    expect(merge!(saved, dock())).toMatchObject({ threadsSide: "right" });
+  });
+
+  it("stays put when the panel layout resets", () => {
+    useDockLayoutStore.setState({ threadsSide: "right" });
+    resetDockLayout();
+    expect(dock().threadsSide).toBe("right");
+    useDockLayoutStore.setState({ threadsSide: "left" });
+  });
+});
+
 describe("applyDockDrop", () => {
   it("splits a tab into a new group and sends that kind's next tab after it", () => {
     useRightPanelStore.getState().openTerminal(ref, "a");

@@ -11,7 +11,6 @@ import {
 
 import { useSidebar } from "../components/ui/sidebar";
 import { isElectron } from "../env";
-import { useClientSettings } from "../hooks/useSettings";
 import { cn } from "../lib/utils";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
@@ -282,7 +281,7 @@ export function DockWorkspace(props: {
   const view = useDockView(threadRef);
   const chatSlot = useDockGroupSlots(CHAT_GROUP_ID).body;
   const { open, isMobile } = useSidebar();
-  const sidebarSide = useClientSettings((settings) => settings.threadSidebarSide);
+  const sidebarSide = useDockLayoutStore((state) => state.threadsSide);
   const sidebarToggleInCorner = sidebarSide === "right" && (isMobile || !open);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- browser surfaces track their on-screen rect, which a dock change can move without resizing
   useLayoutEffect(() => {
