@@ -11,6 +11,7 @@ import {
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
+import { createModelSelection } from "@t3tools/shared/model";
 import { type ReactNode, useRef, useState } from "react";
 import type {
   EnvironmentId,
@@ -59,10 +60,11 @@ import {
   useEnvironmentHttpBaseUrl,
   type EnvironmentPresentation,
 } from "../../state/environments";
-import { useProjects, useThreadShell } from "../../state/entities";
+import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
+import { useThreadSearch } from "../../state/queries";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { threadFamilies } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -86,12 +88,22 @@ import {
   scheduledTaskDefaultModel,
   taskToDraft,
   type DraftState,
+  type DestinationMode,
   type ScheduleMode,
   type WorkspaceMode,
 } from "./scheduledTasksSettings.logic";
 import { Label } from "../ui/label";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/menu";
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
+import { Command, CommandInput, CommandItem, CommandList } from "../ui/command";
+import { MessageSquareIcon } from "lucide-react";
+import {
+  resolveCompatibleRuntimeMode,
+  runtimeModeConfig,
+  runtimeModeOptions,
+} from "../chat/runtimeModeConfig";
+import { resolveComposerInteractionMode } from "../ChatView.logic";
+import { TraitsPicker } from "../chat/TraitsPicker";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Badge } from "../ui/badge";
@@ -142,6 +154,7 @@ const EMPTY_DRAFT: DraftState = {
   weekdays: new Set([1, 2, 3, 4, 5]),
   projectId: "",
   threadId: "",
+  destinationMode: "new_thread",
   workspaceMode: "worktree",
   baseRef: "main",
   startFromOrigin: true,
@@ -1134,33 +1147,191 @@ function ScheduledTaskEditorDialog({
 
 function ScheduledTaskDestination({
   environmentId,
-  threadId,
+  projectId,
+  draft,
+  onChange,
+  disabled,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId | null;
+  readonly projectId: string;
+  readonly draft: Pick<DraftState, "destinationMode" | "threadId">;
+  readonly onChange: (patch: Partial<Pick<DraftState, "destinationMode" | "threadId">>) => void;
+  readonly disabled: boolean;
 }) {
-  const ref = threadId === null ? null : scopeThreadRef(environmentId, threadId);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const ref =
+    draft.destinationMode === "existing_thread" && draft.threadId
+      ? scopeThreadRef(environmentId, draft.threadId as ThreadId)
+      : null;
   const shell = useThreadShell(ref);
   // The shell can omit older settled threads; their family read still carries the title.
   const family = useEnvironmentQuery(
     ref !== null && shell === null ? threadFamilies.familyAtom(environmentId, ref.threadId) : null,
   );
-  const thread = shell ?? family.data?.threads.find((row) => row.id === threadId);
+  const thread =
+    shell ?? family.data?.threads.find((row) => row.id === (draft.threadId as ThreadId));
+  const boundLabel = thread?.title.trim() || (ref ? `Thread ${ref.threadId}` : "Select a thread…");
   return (
     <Field label="Destination">
-      {ref === null ? (
+      <div className="flex flex-wrap items-center gap-2">
+        <ToggleGroup
+          aria-label="Destination"
+          value={[draft.destinationMode]}
+          onValueChange={(values) => {
+            const mode = values[0] as DestinationMode | undefined;
+            if (mode === "new_thread" || mode === "existing_thread")
+              onChange({
+                destinationMode: mode,
+                ...(mode === "new_thread" ? { threadId: "" } : {}),
+              });
+          }}
+        >
+          <Toggle value="new_thread" disabled={disabled}>
+            New thread
+          </Toggle>
+          <Toggle value="existing_thread" disabled={disabled}>
+            Existing thread
+          </Toggle>
+        </ToggleGroup>
+        {draft.destinationMode === "existing_thread" ? (
+          <Button
+            size="sm"
+            variant="outline"
+            type="button"
+            disabled={disabled}
+            onClick={() => setPickerOpen(true)}
+          >
+            <MessageSquareIcon className="size-3.5" />
+            <span className="max-w-56 truncate">
+              {draft.threadId ? `Change: ${boundLabel}` : "Select…"}
+            </span>
+          </Button>
+        ) : null}
+        {draft.destinationMode === "existing_thread" && draft.threadId ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange({ threadId: "" })}
+          >
+            Clear
+          </Button>
+        ) : null}
+      </div>
+      {draft.destinationMode === "new_thread" ? (
         <p className="text-sm text-muted-foreground">
           Each run starts a new thread with the workspace and model below.
         </p>
       ) : (
         <div className="space-y-1 text-sm">
-          <p className="wrap-anywhere">{thread?.title.trim() || `Thread ${ref.threadId}`}</p>
-          <p className="text-muted-foreground">
-            Each run continues this conversation, in its workspace and with its current model.
-          </p>
+          {draft.threadId ? (
+            <>
+              <p className="wrap-anywhere">{boundLabel}</p>
+              <p className="text-muted-foreground">
+                Each run continues this conversation. A bound run follows the thread's workspace and
+                current model; deleting the thread deletes its bound tasks.
+              </p>
+            </>
+          ) : (
+            <p className="text-muted-foreground">
+              Pick the thread each run posts into. Saving without a thread starts a new one.
+            </p>
+          )}
         </div>
       )}
+      {pickerOpen ? (
+        <ScheduledTaskThreadPicker
+          environmentId={environmentId}
+          projectId={projectId}
+          selectedThreadId={draft.threadId ? (draft.threadId as ThreadId) : null}
+          onSelect={(threadId) => {
+            onChange({ destinationMode: "existing_thread", threadId });
+            setPickerOpen(false);
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
+      ) : null}
     </Field>
+  );
+}
+
+function ScheduledTaskThreadPicker({
+  environmentId,
+  projectId,
+  selectedThreadId,
+  onSelect,
+  onClose,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: string;
+  readonly selectedThreadId: ThreadId | null;
+  readonly onSelect: (threadId: string) => void;
+  readonly onClose: () => void;
+}) {
+  const threads = useThreadShells();
+  const projects = useProjects();
+  const [query, setQuery] = useState("");
+  // Mounts older settled threads matching the query, which shells may leave out.
+  useThreadSearch([environmentId], query, { titlesOnly: true });
+  const projectNames = new Map(
+    projects
+      .filter((project) => project.environmentId === environmentId)
+      .map((project) => [project.id, project.title]),
+  );
+  const search = query.trim().toLocaleLowerCase();
+  const candidates = threads
+    .filter(
+      (thread) =>
+        thread.environmentId === environmentId &&
+        thread.archivedAt === null &&
+        (projectId === "" || thread.projectId === projectId) &&
+        `${thread.title} ${projectNames.get(thread.projectId) ?? ""}`
+          .toLocaleLowerCase()
+          .includes(search),
+    )
+    .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogPopup className="max-w-md" showCloseButton={false}>
+        <DialogTitle className="sr-only">Choose a destination thread</DialogTitle>
+        <Command mode="none" value={query} onValueChange={setQuery} aria-label="Choose a thread">
+          <CommandInput placeholder="Search threads or projects…" />
+          <CommandList className="max-h-80 overflow-y-auto">
+            {candidates.length === 0 ? (
+              <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                No active threads found.
+              </div>
+            ) : (
+              candidates.map((thread) => (
+                <CommandItem
+                  key={thread.id}
+                  value={thread.id}
+                  disabled={thread.id === selectedThreadId}
+                  onClick={() => onSelect(thread.id)}
+                >
+                  <MessageSquareIcon aria-hidden className="size-4 shrink-0" />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate">{thread.title || "Untitled thread"}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {projectNames.get(thread.projectId)}
+                    </span>
+                  </span>
+                  {thread.id === selectedThreadId ? (
+                    <span className="text-xs text-muted-foreground">Current</span>
+                  ) : null}
+                </CommandItem>
+              ))
+            )}
+          </CommandList>
+        </Command>
+      </DialogPopup>
+    </Dialog>
   );
 }
 
@@ -1239,20 +1410,46 @@ function ScheduledTaskEditorForm({
 
   const firstInstance = instanceEntries[0];
   const draftSelection = draft.modelKey ? splitModelKey(draft.modelKey) : null;
+  // Provider options (reasoning, speed) live on the stored selection; the
+  // compact modelKey round-trips them through baseModelSelection.
+  const draftSelectionWithOptions =
+    draftSelection !== null &&
+    draft.baseModelSelection !== null &&
+    draft.baseModelSelection.instanceId === draftSelection.instanceId &&
+    draft.baseModelSelection.model === draftSelection.model
+      ? draft.baseModelSelection
+      : draftSelection;
   const activeSelection =
-    draftSelection &&
-    instanceEntries.some((entry) => entry.instanceId === draftSelection.instanceId && entry.enabled)
-      ? draftSelection
+    draftSelectionWithOptions &&
+    instanceEntries.some(
+      (entry) => entry.instanceId === draftSelectionWithOptions.instanceId && entry.enabled,
+    )
+      ? draftSelectionWithOptions
       : scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
   const activeInstanceId =
     activeSelection?.instanceId ?? firstInstance?.instanceId ?? ("" as ProviderInstanceId);
   const activeModel = activeSelection?.model ?? "";
+  const activeEntry =
+    instanceEntries.find((entry) => entry.instanceId === activeInstanceId) ?? null;
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     providers,
     activeInstanceId,
     activeModel,
   );
+  const { modes: compatibleRuntimeModes } = resolveCompatibleRuntimeMode(
+    draft.runtimeMode,
+    activeEntry?.snapshot.supportedRuntimeModes,
+  );
+  const compatibleRuntimeModeOptions = runtimeModeOptions.filter((mode) =>
+    compatibleRuntimeModes.includes(mode),
+  );
+  const { enabled: planModeUiEnabled, interactionMode: compatibleInteractionMode } =
+    resolveComposerInteractionMode({
+      planModeEnabled: settings.planModeEnabled,
+      provider: activeEntry?.snapshot ?? null,
+      interactionMode: draft.interactionMode,
+    });
 
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
@@ -1328,8 +1525,21 @@ function ScheduledTaskEditorForm({
       draft.baseModelSelection.model === selection.model
         ? draft.baseModelSelection
         : selection;
-    const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
-      draft.workspaceMode === "root"
+    const boundToThread = draft.destinationMode === "existing_thread" && draft.threadId !== "";
+    if (draft.destinationMode === "existing_thread" && !boundToThread) {
+      reportFailure(
+        "Destination thread is required",
+        "Pick the thread each run posts into, or switch back to a new thread.",
+      );
+      return;
+    }
+    const runtimeMode = compatibleRuntimeModes.includes(draft.runtimeMode)
+      ? draft.runtimeMode
+      : (compatibleRuntimeModes[0] ?? draft.runtimeMode);
+    const interactionMode = planModeUiEnabled ? compatibleInteractionMode : "default";
+    const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy = boundToThread
+      ? { type: "root" }
+      : draft.workspaceMode === "root"
         ? { type: "root" }
         : draft.workspaceMode === "existing_worktree"
           ? { type: "existing_worktree", worktreePath: draft.existingWorktreePath.trim() }
@@ -1345,11 +1555,11 @@ function ScheduledTaskEditorForm({
       enabled: draft.enabled,
       schedule,
       projectId: selectedProjectId as ProjectId,
-      threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
+      threadId: boundToThread ? (draft.threadId as ThreadId) : null,
       workspaceStrategy,
       modelSelection,
-      runtimeMode: draft.runtimeMode,
-      interactionMode: draft.interactionMode,
+      runtimeMode,
+      interactionMode,
       creationSource: "web",
     };
     // Lock before React renders, and keep successful creates locked until the form closes.
@@ -1394,6 +1604,9 @@ function ScheduledTaskEditorForm({
                 setDraft((current) => ({
                   ...current,
                   projectId: defaultScheduledTaskProjectId(projectsOn(next.environmentId), scope),
+                  // Bindings don't cross environments; start unbound on the new one.
+                  destinationMode: "new_thread",
+                  threadId: "",
                   modelKey: "",
                   baseModelSelection: null,
                   baseRef: "main",
@@ -1468,7 +1681,10 @@ function ScheduledTaskEditorForm({
 
           <ScheduledTaskDestination
             environmentId={environmentId}
-            threadId={draft.threadId ? (draft.threadId as ThreadId) : null}
+            projectId={selectedProjectId}
+            draft={draft}
+            disabled={saving || !connected}
+            onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
           />
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -1476,7 +1692,13 @@ function ScheduledTaskEditorForm({
               <Select
                 value={selectedProjectId}
                 onValueChange={(projectId) =>
-                  setDraft((current) => ({ ...current, projectId: projectId ?? "" }))
+                  setDraft((current) => ({
+                    ...current,
+                    projectId: projectId ?? "",
+                    // A destination thread lives in one project; re-pick after switching.
+                    destinationMode: "new_thread",
+                    threadId: "",
+                  }))
                 }
               >
                 <SelectTrigger size="sm" id="scheduled-task-project">
@@ -1567,7 +1789,7 @@ function ScheduledTaskEditorForm({
           </Field>
 
           <Field label="Model">
-            <div>
+            <div className="flex flex-wrap items-center gap-1.5">
               <ProviderModelPicker
                 environmentId={environmentId}
                 disabled={saving || !connected}
@@ -1582,8 +1804,91 @@ function ScheduledTaskEditorForm({
                   setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
                 }
               />
+              {activeSelection && activeEntry ? (
+                <TraitsPicker
+                  provider={activeEntry.driverKind}
+                  instanceId={activeSelection.instanceId}
+                  models={activeEntry.models}
+                  model={activeSelection.model}
+                  modelOptions={activeSelection.options ?? []}
+                  allowPromptInjectedEffort={false}
+                  planModeEnabled={settings.planModeEnabled}
+                  disabled={saving || !connected}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onModelOptionsChange={(options) =>
+                    setDraft((current) => ({
+                      ...current,
+                      modelKey: `${activeSelection.instanceId}:${activeSelection.model}`,
+                      baseModelSelection: createModelSelection(
+                        activeSelection.instanceId,
+                        activeSelection.model,
+                        options,
+                      ),
+                    }))
+                  }
+                />
+              ) : null}
             </div>
           </Field>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Permissions" htmlFor="scheduled-task-runtime-mode">
+              <Select
+                value={draft.runtimeMode}
+                disabled={saving || !connected}
+                onValueChange={(value) =>
+                  setDraft((current) => ({
+                    ...current,
+                    runtimeMode: (value ?? "full-access") as DraftState["runtimeMode"],
+                  }))
+                }
+              >
+                <SelectTrigger size="sm" id="scheduled-task-runtime-mode">
+                  <SelectValue>{runtimeModeConfig[draft.runtimeMode].label}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {compatibleRuntimeModeOptions.map((mode) => {
+                    const option = runtimeModeConfig[mode];
+                    return (
+                      <SelectItem key={mode} value={mode} label={option.label}>
+                        <span className="block truncate">{option.label}</span>
+                        <span className="block max-w-72 truncate text-xs text-muted-foreground">
+                          {option.description}
+                        </span>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectPopup>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {runtimeModeConfig[draft.runtimeMode].description}
+              </p>
+            </Field>
+
+            <Field label="Mode" htmlFor="scheduled-task-interaction-mode">
+              <ToggleGroup
+                aria-label="Interaction mode"
+                value={[planModeUiEnabled ? draft.interactionMode : "default"]}
+                onValueChange={(values) => {
+                  const mode = values[0] as DraftState["interactionMode"] | undefined;
+                  if (mode === "default" || mode === "plan")
+                    setDraft((current) => ({ ...current, interactionMode: mode }));
+                }}
+              >
+                <Toggle value="default" disabled={saving || !connected || !planModeUiEnabled}>
+                  Build
+                </Toggle>
+                <Toggle value="plan" disabled={saving || !connected || !planModeUiEnabled}>
+                  Plan
+                </Toggle>
+              </ToggleGroup>
+              <p className="text-xs text-muted-foreground">
+                {planModeUiEnabled
+                  ? "Plan drafts a proposal before acting."
+                  : "Plan is unavailable for this provider."}
+              </p>
+            </Field>
+          </div>
 
           <div className="space-y-3">
             {task?.schedule.type === "interval" &&

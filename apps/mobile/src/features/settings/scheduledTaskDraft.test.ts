@@ -9,6 +9,8 @@ import {
 import {
   scheduledTaskDefaultModel,
   DEFAULT_SCHEDULE,
+  createDraft,
+  editDraft,
   scheduleDraftForTask,
   scheduleFromDraft,
 } from "./scheduledTaskDraft";
@@ -206,4 +208,42 @@ it("rejects dedupe keys without valid request placeholders", () => {
   expect(
     scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "webhook", coalesceKey: "{{body.bad" }),
   ).toBeNull();
+});
+
+describe("scheduled task destination and modes", () => {
+  it("starts new drafts unbound with default modes", () => {
+    const draft = createDraft(null, null);
+    expect(draft.destinationMode).toBe("new_thread");
+    expect(draft.threadId).toBeNull();
+    expect(draft.runtimeMode).toBe("full-access");
+    expect(draft.interactionMode).toBe("default");
+  });
+
+  it("opens bound tasks on the existing-thread destination", () => {
+    const draft = editDraft({
+      threadId: "thread-1",
+      projectId: "project-1",
+      title: "t",
+      prompt: "p",
+      enabled: true,
+      schedule: { type: "interval", everyMs: 60_000 },
+      workspaceStrategy: { type: "root" },
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "project-model" },
+      runtimeMode: "auto",
+      interactionMode: "plan",
+      createdBy: "user",
+      creationSource: "mobile",
+      createdAt: "2026-09-17T00:00:00.000Z",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+      nextRunAt: null,
+      lastRunAt: null,
+      lastRunStatus: "never",
+      lastRunError: null,
+      runCount: 0,
+    } as never);
+    expect(draft.destinationMode).toBe("existing_thread");
+    expect(draft.threadId).toBe("thread-1");
+    expect(draft.runtimeMode).toBe("auto");
+    expect(draft.interactionMode).toBe("plan");
+  });
 });

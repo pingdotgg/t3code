@@ -110,6 +110,7 @@ import {
   SettingsScheduledTasksRouteScreen,
   SettingsScheduledTaskNewRouteScreen,
   SettingsScheduledTaskEditRouteScreen,
+  ScheduledTaskThreadPickerRouteScreen,
 } from "./features/settings/SettingsScheduledTasksRouteScreen";
 import {
   ScheduledTaskModelPickerRouteScreen,
@@ -414,6 +415,10 @@ const SETTINGS_SCREENS = {
             ...THREAD_SETTINGS_SHEET_OPTIONS,
           }),
     },
+  }),
+  SettingsScheduledTaskThread: createNativeStackScreen({
+    screen: ScheduledTaskThreadPickerRouteScreen,
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Destination thread" },
   }),
   SettingsClientStorage: createNativeStackScreen({
     screen: SettingsClientStorageRouteScreen,

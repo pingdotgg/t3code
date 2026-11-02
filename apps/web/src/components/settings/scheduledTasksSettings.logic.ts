@@ -54,6 +54,7 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
 
 export type ScheduleMode = "fixed" | "once" | "interval" | "webhook";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
+export type DestinationMode = "new_thread" | "existing_thread";
 
 export interface DraftState {
   readonly editingId: string | null;
@@ -70,6 +71,7 @@ export interface DraftState {
   readonly weekdays: ReadonlySet<number>;
   readonly projectId: string;
   readonly threadId: string;
+  readonly destinationMode: DestinationMode;
   readonly workspaceMode: WorkspaceMode;
   readonly baseRef: string;
   readonly startFromOrigin: boolean;
@@ -254,6 +256,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     weekdays,
     projectId: task.projectId,
     threadId: task.threadId ?? "",
+    destinationMode: task.threadId ? "existing_thread" : "new_thread",
     workspaceMode: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
     startFromOrigin:

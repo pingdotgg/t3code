@@ -168,6 +168,13 @@ describe("editing scheduled task branch settings", () => {
     expect(draft.baseRef).toBe("release");
     expect(draft.startFromOrigin).toBe(false);
   });
+
+  it("round-trips the destination through the draft", () => {
+    expect(taskToDraft(legacyTask).destinationMode).toBe("new_thread");
+    expect(taskToDraft({ ...legacyTask, threadId: "thread-1" as never }).destinationMode).toBe(
+      "existing_thread",
+    );
+  });
 });
 
 describe("one-time scheduled tasks", () => {

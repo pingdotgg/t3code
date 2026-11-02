@@ -1,12 +1,14 @@
 import { isWebhookDedupeTemplate } from "@t3tools/contracts";
 import type {
   ModelSelection,
+  ProviderInteractionMode,
   ServerConfig,
   ProjectId,
   RuntimeMode,
   ScheduledTask,
   ScheduledTaskUpsertSchedule,
   ScheduledTaskWebhookSignature,
+  ThreadId,
 } from "@t3tools/contracts";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
@@ -201,6 +203,8 @@ export type ScheduledTaskDraft = {
   readonly title: string;
   readonly prompt: string;
   readonly projectId: ProjectId | null;
+  readonly threadId: ThreadId | null;
+  readonly destinationMode: "new_thread" | "existing_thread";
   readonly modelSelection: ModelSelection | null;
   readonly modelSelectionIsExplicit: boolean;
   readonly schedule: ScheduleDraft;
@@ -210,6 +214,7 @@ export type ScheduledTaskDraft = {
   readonly enabled: boolean;
   readonly startFromOrigin: boolean;
   readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
 };
 
 function draftSignature(draft: ScheduledTaskDraft): string {
@@ -238,6 +243,9 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.enabled,
     draft.startFromOrigin,
     draft.runtimeMode,
+    draft.interactionMode,
+    draft.destinationMode,
+    draft.threadId,
   ]);
 }
 
@@ -257,6 +265,8 @@ export function createDraft(
     title: "",
     prompt: "",
     projectId,
+    threadId: null,
+    destinationMode: "new_thread",
     modelSelection,
     modelSelectionIsExplicit: false,
     schedule: DEFAULT_SCHEDULE,
@@ -266,6 +276,7 @@ export function createDraft(
     enabled: true,
     startFromOrigin: true,
     runtimeMode: "full-access",
+    interactionMode: "default",
   };
 }
 
@@ -275,6 +286,8 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     title: task.title,
     prompt: task.prompt,
     projectId: task.projectId,
+    threadId: task.threadId,
+    destinationMode: task.threadId ? "existing_thread" : "new_thread",
     modelSelection: task.modelSelection,
     modelSelectionIsExplicit: true,
     schedule: scheduleDraftForTask(task),
@@ -290,5 +303,6 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
         ? (task.workspaceStrategy.startFromOrigin ?? false)
         : true,
     runtimeMode: task.runtimeMode,
+    interactionMode: task.interactionMode,
   };
 }

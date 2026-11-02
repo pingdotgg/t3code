@@ -215,4 +215,16 @@ describe("ScheduledTasksSettings", () => {
     await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeInTheDocument();
     await expect.element(name).toHaveValue("My draft");
   });
+
+  it("exposes destination, permissions, and mode controls when editing", async () => {
+    setup();
+    await using screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    const dialog = page.getByRole("dialog");
+    await expect.element(dialog.getByText("Fix login bug")).toBeVisible();
+    // Destination toggle with bound thread shown; permissions + Build/Plan mode controls.
+    await expect.element(dialog.getByLabelText("Destination")).toBeVisible();
+    await expect.element(dialog.getByLabelText("Permissions")).toBeVisible();
+    await expect.element(dialog.getByLabelText("Interaction mode")).toBeVisible();
+    await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
+  });
 });

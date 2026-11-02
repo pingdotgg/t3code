@@ -8,9 +8,14 @@ import { readEnvironmentScope } from "../../state/session";
 import type {
   EnvironmentId,
   ProjectId,
+  RuntimeMode,
+  ProviderInteractionMode,
   ScheduledTask,
   ScheduledTaskUpsertInput,
+  ThreadId,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { runtimeModeChoicesForSupportedModes } from "../threads/thread-settings-options";
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
@@ -38,6 +43,7 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { AppState, Platform, Pressable, TextInput as RNTextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import * as Haptics from "expo-haptics";
 import { Button } from "../../components/ui/Button";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -55,7 +61,13 @@ import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { usePreparedConnection } from "../../state/session";
 import { buildModelOptions } from "../../lib/modelOptions";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
+import {
+  useProjects,
+  useEnvironmentServerConfig,
+  useQuietThreadShell,
+  useThreadShells,
+} from "../../state/entities";
+import { useDebouncedValue, useThreadSearch } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -85,6 +97,8 @@ import {
   scheduledTaskEditorSessionAtom,
 } from "./scheduled-task-editor-state";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { AsyncResult } from "effect/reactivity";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import {
   formatNextScheduledTaskRun,
   formatScheduledTaskInterval,
@@ -95,6 +109,7 @@ type ScheduledTaskRoutes = {
   SettingsScheduledTaskEdit: undefined;
   SettingsScheduledTaskModel: undefined;
   SettingsScheduledTaskBranch: undefined;
+  SettingsScheduledTaskThread: undefined;
 };
 
 const DAYS = [
@@ -370,6 +385,266 @@ function PickerRow(props: {
         type="monochrome"
       />
     </Pressable>
+  );
+}
+
+function TaskDestinationSection({
+  environmentId,
+  draft,
+  disabled,
+  setDraft,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly draft: Draft;
+  readonly disabled: boolean;
+  readonly setDraft: (draft: Draft) => void;
+}) {
+  const navigation = useNavigation<NativeStackNavigationProp<ScheduledTaskRoutes>>();
+  const ref =
+    draft.destinationMode === "existing_thread" && draft.threadId
+      ? scopeThreadRef(environmentId, draft.threadId)
+      : null;
+  const shell = useQuietThreadShell(ref);
+  const boundLabel = shell?.title.trim() || (ref ? `Thread ${ref.threadId}` : "Select a thread…");
+  return (
+    <SettingsSection title="Destination">
+      <View className="px-4 py-3">
+        <SegmentedControl
+          variant="card"
+          options={[
+            { value: "new_thread", label: "New thread" },
+            { value: "existing_thread", label: "Existing thread" },
+          ]}
+          selected={draft.destinationMode}
+          onSelect={(mode) =>
+            setDraft({
+              ...draft,
+              destinationMode: mode,
+              ...(mode === "new_thread" ? { threadId: null } : {}),
+            })
+          }
+        />
+      </View>
+      {draft.destinationMode === "existing_thread" ? (
+        <>
+          <PickerRow
+            label="Thread"
+            borderTop
+            value={draft.threadId ? boundLabel : "Select a thread…"}
+            onPress={() => navigation.navigate("SettingsScheduledTaskThread")}
+            disabled={disabled}
+          />
+          {draft.threadId ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Clear destination thread"
+              disabled={disabled}
+              onPress={() => setDraft({ ...draft, threadId: null })}
+              className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70 disabled:opacity-50"
+            >
+              <Text textRole="body" className="text-foreground">
+                Clear
+              </Text>
+            </Pressable>
+          ) : null}
+          <Text className="px-4 pb-3 text-sm text-foreground-muted">
+            {draft.threadId
+              ? "Each run continues this conversation. A bound run follows the thread's workspace and current model; deleting the thread deletes its bound tasks."
+              : "Pick the thread each run posts into. Saving without a thread starts a new one."}
+          </Text>
+        </>
+      ) : (
+        <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
+          Each run starts a new thread with the workspace and model below.
+        </Text>
+      )}
+    </SettingsSection>
+  );
+}
+
+function TaskRuntimeRow({
+  borderTop,
+  draft,
+  provider,
+  setDraft,
+}: {
+  readonly borderTop?: boolean;
+  readonly draft: Draft;
+  readonly provider: { supportedRuntimeModes?: ReadonlyArray<RuntimeMode> } | null;
+  readonly setDraft: (draft: Draft) => void;
+}) {
+  const choices = runtimeModeChoicesForSupportedModes(provider?.supportedRuntimeModes);
+  return (
+    <SelectRow
+      label="Permissions"
+      borderTop={borderTop}
+      value={
+        choices.find((choice) => choice.mode === draft.runtimeMode)?.label ?? "Choose permissions"
+      }
+      actions={choices.map((choice) => ({
+        id: choice.mode,
+        title: choice.label,
+        state: choice.mode === draft.runtimeMode ? ("on" as const) : undefined,
+      }))}
+      onSelect={(id) => {
+        if (
+          id === "approval-required" ||
+          id === "auto-accept-edits" ||
+          id === "auto" ||
+          id === "full-access"
+        )
+          setDraft({ ...draft, runtimeMode: id });
+      }}
+    />
+  );
+}
+
+function TaskInteractionRow({
+  borderTop,
+  draft,
+  planModeEnabled,
+  provider,
+  disabled,
+  setDraft,
+}: {
+  readonly borderTop?: boolean;
+  readonly draft: Draft;
+  readonly planModeEnabled: boolean;
+  readonly provider: { showInteractionModeToggle?: boolean } | null;
+  readonly disabled?: boolean;
+  readonly setDraft: (draft: Draft) => void;
+}) {
+  const available = planModeEnabled && provider?.showInteractionModeToggle !== false;
+  return (
+    <View
+      className={
+        borderTop
+          ? "min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3"
+          : "min-h-14 flex-row items-center gap-3 px-4 py-3"
+      }
+    >
+      <View className="min-w-0 flex-1">
+        <Text textRole="body" className="text-foreground">
+          Mode
+        </Text>
+        <Text className="text-sm text-foreground-muted">
+          {available
+            ? "Plan drafts a proposal before acting."
+            : "Plan is unavailable for this provider."}
+        </Text>
+      </View>
+      <SegmentedControl
+        variant="card"
+        options={[
+          { value: "default", label: "Build" },
+          { value: "plan", label: "Plan" },
+        ]}
+        selected={available ? draft.interactionMode : "default"}
+        onSelect={(mode: ProviderInteractionMode) => {
+          if (!disabled && available) setDraft({ ...draft, interactionMode: mode });
+        }}
+      />
+    </View>
+  );
+}
+
+export function ScheduledTaskThreadPickerRouteScreen() {
+  const navigation = useNavigation();
+  const { editor, setEditor } = useScheduledTaskEditor();
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query, 150);
+  const shells = useThreadShells();
+  const projects = useProjects();
+  const environmentId = editor?.environmentId ?? null;
+  // Mounts older settled threads matching the query, which shells may leave out.
+  useThreadSearch(environmentId ? [environmentId] : [], debouncedQuery, { titlesOnly: true });
+  const projectNames = new Map(
+    projects
+      .filter((project) => project.environmentId === environmentId)
+      .map((project) => [project.id, project.title]),
+  );
+  if (!editor || !environmentId) return <MissingDraftScreen />;
+  const search = debouncedQuery.trim().toLocaleLowerCase();
+  const candidates = shells
+    .filter(
+      (thread) =>
+        thread.environmentId === environmentId &&
+        thread.archivedAt === null &&
+        (editor.draft.projectId === null || thread.projectId === editor.draft.projectId) &&
+        `${thread.title} ${projectNames.get(thread.projectId) ?? ""}`
+          .toLocaleLowerCase()
+          .includes(search),
+    )
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return (
+    <SettingsScreen title="Destination thread">
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        className="flex-1"
+        contentContainerClassName="gap-5 px-5 pt-4"
+      >
+        <SettingsSection>
+          <FormField
+            label="Search"
+            value={query}
+            placeholder="Search threads or projects…"
+            onChange={setQuery}
+          />
+          {candidates.length === 0 ? (
+            <Text className="p-4 text-base text-foreground-muted">No active threads found.</Text>
+          ) : (
+            candidates.map((thread, index) => (
+              <Pressable
+                key={thread.id}
+                accessibilityRole="button"
+                accessibilityLabel={`Use ${thread.title || "untitled thread"}`}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  setEditor((current) =>
+                    current
+                      ? {
+                          ...current,
+                          draft: {
+                            ...current.draft,
+                            destinationMode: "existing_thread",
+                            threadId: thread.id as ThreadId,
+                          },
+                        }
+                      : current,
+                  );
+                  navigation.goBack();
+                }}
+                className={
+                  index === 0
+                    ? "min-h-14 flex-row items-center gap-3 px-4 py-3 active:opacity-70"
+                    : "min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
+                }
+              >
+                <View className="min-w-0 flex-1">
+                  <Text textRole="body" className="text-foreground" numberOfLines={1}>
+                    {thread.title || "Untitled thread"}
+                  </Text>
+                  <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+                    {projectNames.get(thread.projectId) ?? ""}
+                  </Text>
+                </View>
+                {editor.draft.threadId === thread.id ? (
+                  <Text className="text-sm text-foreground-muted">Current</Text>
+                ) : null}
+              </Pressable>
+            ))
+          )}
+        </SettingsSection>
+      </ScrollView>
+    </SettingsScreen>
+  );
+}
+
+function MissingDraftScreen() {
+  return (
+    <SettingsScreen title="Scheduled task">
+      <Text className="p-5 text-base text-foreground-muted">Open a scheduled task form first.</Text>
+    </SettingsScreen>
   );
 }
 
@@ -717,6 +992,13 @@ function TaskForm({
   const offersOnce =
     config?.environment.capabilities.oneTimeSchedules === true ||
     draft.task?.schedule.type === "once";
+  const providerForDraft =
+    config?.providers.find(
+      (provider) => provider.instanceId === draft.modelSelection?.instanceId,
+    ) ?? null;
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const planModeEnabled =
+    AsyncResult.isSuccess(preferences) && preferences.value.planModeEnabled === true;
   const save = async () => {
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
@@ -781,6 +1063,28 @@ function TaskForm({
       Dialog.alert("Project unavailable", "Choose a project in this environment.");
       return;
     }
+    const boundToThread = draft.destinationMode === "existing_thread" && draft.threadId !== null;
+    if (draft.destinationMode === "existing_thread" && !boundToThread) {
+      Dialog.alert(
+        "Destination thread is required",
+        "Pick the thread each run posts into, or switch back to a new thread.",
+      );
+      return;
+    }
+    const runtimeChoices = runtimeModeChoicesForSupportedModes(
+      providerForDraft?.supportedRuntimeModes,
+    );
+    const runtimeMode = runtimeChoices.some((choice) => choice.mode === draft.runtimeMode)
+      ? draft.runtimeMode
+      : runtimeChoices[0]?.mode;
+    if (!runtimeMode) {
+      Dialog.alert("Permissions unavailable", "This provider offers no runtime modes.");
+      return;
+    }
+    const interactionMode =
+      planModeEnabled && providerForDraft?.showInteractionModeToggle !== false
+        ? draft.interactionMode
+        : "default";
     const input: ScheduledTaskUpsertInput = {
       ...(draft.task ? { id: draft.task.id, requireExisting: true } : {}),
       title: draft.title.trim(),
@@ -789,9 +1093,9 @@ function TaskForm({
       modelSelection: draft.modelSelection,
       schedule,
       enabled: draft.enabled,
-      threadId: draft.task?.threadId ?? null,
+      threadId: boundToThread ? draft.threadId : null,
       workspaceStrategy:
-        draft.workspace === "root"
+        boundToThread || draft.workspace === "root"
           ? { type: "root" }
           : draft.workspace === "existing_worktree"
             ? { type: "existing_worktree", worktreePath: draft.checkoutPath.trim() }
@@ -800,8 +1104,8 @@ function TaskForm({
                 baseRef: draft.baseRef.trim() || "main",
                 startFromOrigin: draft.startFromOrigin,
               },
-      runtimeMode: draft.runtimeMode,
-      interactionMode: draft.task?.interactionMode ?? "default",
+      runtimeMode,
+      interactionMode,
       creationSource: draft.task?.creationSource ?? "mobile",
     };
     submissionPending.current = true;
@@ -874,6 +1178,13 @@ function TaskForm({
           {promptField}
         </SettingsSection>
 
+        <TaskDestinationSection
+          environmentId={environmentId}
+          draft={draft}
+          disabled={saving || dictationPending || environmentUnavailable}
+          setDraft={setDraft}
+        />
+
         <SettingsSection title="Context">
           <SelectRow
             label="Project"
@@ -901,6 +1212,9 @@ function TaskForm({
               setDraft({
                 ...draft,
                 projectId: project.id,
+                // A destination thread lives in one project; re-pick after switching.
+                destinationMode: "new_thread",
+                threadId: null,
                 modelSelection: keepsExplicitModel
                   ? draft.modelSelection
                   : scheduledTaskDefaultModel(config, project),
@@ -922,6 +1236,15 @@ function TaskForm({
             }
             onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
             disabled={saving || dictationPending || environmentUnavailable}
+          />
+          <TaskRuntimeRow borderTop draft={draft} provider={providerForDraft} setDraft={setDraft} />
+          <TaskInteractionRow
+            borderTop
+            draft={draft}
+            planModeEnabled={planModeEnabled}
+            provider={providerForDraft}
+            disabled={saving || dictationPending || environmentUnavailable}
+            setDraft={setDraft}
           />
         </SettingsSection>
 
