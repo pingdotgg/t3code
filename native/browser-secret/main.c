@@ -1,5 +1,6 @@
 #include <libsecret/secret.h>
 #include <stdio.h>
+#include <string.h>
 
 /* Exit codes are consumed by ChromiumKeys.ts. Stdout contains only the secret,
  * with no newline or other framing that could change the derived cookie key. */
@@ -14,18 +15,44 @@ static const SecretSchema chromium_schema = {
     .attributes = {{"application", SECRET_SCHEMA_ATTRIBUTE_STRING}, {NULL, 0}},
 };
 
+/* On KDE Chromium writes the key through KWallet, which ksecretd exposes as
+ * server=<folder>, user=<entry> with no application attribute. Pairs follow
+ * Chromium's freedesktop_secret_key_provider.h branding. */
+static const SecretSchema kwallet_schema = {
+    .name = "org.qt.keychain",
+    .flags = SECRET_SCHEMA_DONT_MATCH_NAME,
+    .attributes = {{"server", SECRET_SCHEMA_ATTRIBUTE_STRING},
+                   {"user", SECRET_SCHEMA_ATTRIBUTE_STRING},
+                   {NULL, 0}},
+};
+static const char *const kwallet_entries[][3] = {
+    {"chrome", "Chrome Keys", "Chrome Safe Storage"},
+    {"chromium", "Chromium Keys", "Chromium Safe Storage"},
+};
+
+/* libsecret keeps the normal desktop unlock prompt. A cancelled unlock can
+ * still return a locked item, so callers check the item before reading it. */
+static GList *search(const SecretSchema *schema, GHashTable *attributes, GError **error) {
+    GList *items = secret_service_search_sync(
+        NULL, schema, attributes, SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS, NULL, error);
+    g_hash_table_unref(attributes);
+    return items;
+}
+
 int main(int argc, char **argv) {
     if (argc != 2 || argv[1][0] == '\0') return 64;
     g_set_application_name("T3 Code");
 
-    GHashTable *attributes = secret_attributes_build(&chromium_schema, "application", argv[1], NULL);
     GError *error = NULL;
-    /* libsecret keeps the normal desktop unlock prompt. A cancelled unlock can
-     * still return a locked item, so check the item before reading its value. */
-    GList *items = secret_service_search_sync(
-        NULL, &chromium_schema, attributes,
-        SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS, NULL, &error);
-    g_hash_table_unref(attributes);
+    GList *items = search(
+        &chromium_schema, secret_attributes_build(&chromium_schema, "application", argv[1], NULL), &error);
+    for (gsize i = 0; error == NULL && items == NULL && i < G_N_ELEMENTS(kwallet_entries); i++) {
+        if (strcmp(argv[1], kwallet_entries[i][0]) != 0) continue;
+        items = search(&kwallet_schema,
+                       secret_attributes_build(&kwallet_schema, "server", kwallet_entries[i][1],
+                                               "user", kwallet_entries[i][2], NULL),
+                       &error);
+    }
 
     int status = READ_FAILED;
     if (error != NULL) {
