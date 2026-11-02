@@ -522,6 +522,8 @@ export const pullRequestDiffStatKey = (row: {
 export interface MergedPullRequestList {
   readonly viewers: PullRequestViewers;
   readonly providers: PullRequestListResult["providers"];
+  /** Keyed like `viewers`: `providers` folds hosts across environments and drops their reasons. */
+  readonly unreadableHosts: Readonly<Record<string, string>>;
   readonly entries: ReadonlyArray<EnvironmentPullRequestEntry>;
   readonly errors: ReadonlyArray<EnvironmentPullRequestError>;
   readonly truncated: boolean;
@@ -536,6 +538,7 @@ export function mergePullRequestLists(
   const viewers: Record<string, string> = {};
   const truncatedEnvironments: string[] = [];
   const providers = new Map<string, PullRequestListResult["providers"][number]>();
+  const unreadableHosts: Record<string, string> = {};
   const entries: EnvironmentPullRequestEntry[] = [];
   const errors: EnvironmentPullRequestError[] = [];
   const nextCursors: Record<string, PullRequestListCursors> = {};
@@ -545,6 +548,9 @@ export function mergePullRequestLists(
       viewers[`${environmentId} ${host}`] = login;
     }
     for (const provider of answer.providers) {
+      if (!provider.configured && provider.detail !== null) {
+        unreadableHosts[`${environmentId} ${provider.host}`] = provider.detail;
+      }
       const held = providers.get(provider.host);
       providers.set(
         provider.host,
@@ -569,6 +575,7 @@ export function mergePullRequestLists(
   return {
     viewers,
     providers: [...providers.values()],
+    unreadableHosts,
     entries: entries.toSorted(comparePullRequestsByRecency),
     errors,
     truncated,
@@ -988,36 +995,44 @@ export function findProjectForRepository<
 
 /** What the answer could not read: one line per unreadable host, else one per project. */
 export function pullRequestListNotices(
-  answer: Pick<MergedPullRequestList, "providers" | "errors">,
+  answer: Pick<MergedPullRequestList, "unreadableHosts" | "errors">,
   projects: ReadonlyArray<{
     readonly id: string;
     readonly environmentId: string;
     readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
   }>,
-): ReadonlyArray<string> {
+  environmentLabels: ReadonlyMap<string, string> | null,
+): ReadonlyArray<{ readonly key: string; readonly text: string }> {
   if (answer.errors.length === 0) return [];
-  const unreadable = new Map(
-    answer.providers.flatMap((provider) =>
-      provider.configured || provider.detail === null ? [] : [[provider.host, provider.detail]],
-    ),
+  const identities = new Map(
+    projects.map((project) => [
+      `${project.environmentId} ${project.id}`,
+      project.repositoryIdentity,
+    ]),
   );
   const notices = new Map<string, string>();
   for (const error of answer.errors) {
-    const identity = projects.find(
-      (project) => project.id === error.projectId && project.environmentId === error.environmentId,
-    )?.repositoryIdentity;
+    const prefix =
+      environmentLabels === null
+        ? ""
+        : `${environmentLabels.get(error.environmentId) || "Environment"}: `;
+    const identity = identities.get(`${error.environmentId} ${error.projectId}`);
     const host = identity
       ? sourceControlClients.changeRequestHost(identity, identity.provider)
       : undefined;
-    const detail = host === undefined ? undefined : unreadable.get(host);
+    const detail =
+      host === undefined ? undefined : answer.unreadableHosts[`${error.environmentId} ${host}`];
     if (host !== undefined && detail !== undefined) {
-      notices.set(`host ${host}`, `${host} could not be read. ${detail}`);
+      notices.set(
+        `host ${error.environmentId} ${host}`,
+        `${prefix}${host} could not be read. ${detail}`,
+      );
     } else {
       notices.set(
         `project ${error.environmentId} ${error.projectId}`,
-        `${error.projectTitle}: ${error.message}`,
+        `${prefix}${error.projectTitle}: ${error.message}`,
       );
     }
   }
-  return [...notices.values()];
+  return [...notices].map(([key, text]) => ({ key, text }));
 }

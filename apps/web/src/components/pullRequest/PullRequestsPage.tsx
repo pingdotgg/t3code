@@ -670,7 +670,6 @@ export function PullRequestsPage() {
 
   const viewers = baselineQuery.data?.viewers ?? listData?.viewers ?? EMPTY_VIEWERS;
   const listErrors = baselineQuery.data?.errors ?? listData?.errors ?? [];
-  const listProviders = baselineQuery.data?.providers ?? listData?.providers ?? [];
   const facets = collectPullRequestListFacets(
     [
       ...(facetQuery.data?.entries ?? []),
@@ -688,7 +687,7 @@ export function PullRequestsPage() {
     heldPullRequestsBySurface,
   } = pullRequestGroups({
     known: ordered?.key === filterKey ? ordered.entries : (listData?.entries ?? []),
-    providers: listProviders,
+    providers: baselineQuery.data?.providers ?? listData?.providers ?? [],
     viewers,
     involvement: search.involvement,
     localFilters,
@@ -1136,14 +1135,15 @@ export function PullRequestsPage() {
     </div>
   );
   const listNotices = pullRequestListNotices(
-    { providers: listProviders, errors: listErrors },
+    baselineQuery.data ?? listData ?? { unreadableHosts: {}, errors: [] },
     projects,
+    capableEnvironments.length > 1 ? environmentLabels : null,
   );
   const unreadNotice =
     listNotices.length > 0 ? (
       <div className="flex flex-col gap-1 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
         {listNotices.map((notice) => (
-          <span key={notice}>{notice}</span>
+          <span key={notice.key}>{notice.text}</span>
         ))}
       </div>
     ) : null;
