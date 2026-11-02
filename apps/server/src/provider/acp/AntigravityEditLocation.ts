@@ -97,7 +97,11 @@ function uniqueStartLine(
     const end = index + snippet.length;
     // A hunk replaces whole lines.
     const whole =
-      index === lineStart && (end === text.length || text[end] === "\n" || snippet.endsWith("\n"));
+      index === lineStart &&
+      (end === text.length ||
+        snippet.endsWith("\n") ||
+        text[end] === "\n" ||
+        text.startsWith("\r\n", end));
     found = { line, whole };
   }
   return found?.whole === true ? found.line : undefined;
@@ -108,8 +112,8 @@ function snippetHunks(
   newText: string,
   maxEditLength: number,
 ): StructuredPatchHunk[] | undefined {
-  // Snippets usually stop mid-file, so a missing final newline is not a change.
-  const eol = oldText.endsWith("\n") || newText.endsWith("\n") ? "" : "\n";
+  // A target without its newline keeps the line's own newline, on both sides.
+  const eol = oldText.endsWith("\n") ? "" : "\n";
   return structuredPatch("", "", oldText + eol, newText + eol, undefined, undefined, {
     maxEditLength,
   })?.hunks;

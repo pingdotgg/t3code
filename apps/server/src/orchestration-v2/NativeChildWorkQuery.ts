@@ -61,13 +61,23 @@ const make = Effect.gen(function* () {
       ) {
         return NO_CHILDREN;
       }
+      const others = subagents.filter(
+        (candidate) =>
+          candidate.id !== subagent.id &&
+          candidate.driver === "antigravity" &&
+          candidate.origin === "provider_native" &&
+          candidate.providerInstanceId === subagent.providerInstanceId,
+      );
       const { runs, providerThreads } = yield* threads.getThreadRecords(
         parentThreadId,
         ["runs", "providerThreads"],
-        { runIds: [subagent.runId] },
+        { runIds: [subagent.runId, ...others.flatMap((other) => other.runId ?? [])] },
       );
-      const providerThreadId = runs.find((run) => run.id === subagent.runId)?.providerThreadId;
-      const providerThread = providerThreads.find((candidate) => candidate.id === providerThreadId);
+      const providerThreadOf = (runId: string | null) => {
+        const providerThreadId = runs.find((run) => run.id === runId)?.providerThreadId;
+        return providerThreads.find((candidate) => candidate.id === providerThreadId);
+      };
+      const providerThread = providerThreadOf(subagent.runId);
       const rootSessionId = providerThread?.nativeThreadRef?.nativeId;
       if (!rootSessionId || providerThread?.providerInstanceId !== subagent.providerInstanceId) {
         return NO_CHILDREN;
@@ -81,14 +91,11 @@ const make = Effect.gen(function* () {
         rootSessionId,
         nativeTaskId,
         launch: { title: subagent.title, prompt: subagent.prompt },
-        siblings: subagents.flatMap((candidate) => {
-          const id = candidate.nativeTaskRef?.nativeId;
-          return candidate.id !== subagent.id &&
-            candidate.driver === "antigravity" &&
-            candidate.origin === "provider_native" &&
-            candidate.providerInstanceId === subagent.providerInstanceId &&
-            id
-            ? [{ nativeTaskId: id, title: candidate.title, prompt: candidate.prompt }]
+        // Only batches from the same agent session can share its records.
+        siblings: others.flatMap((other) => {
+          const id = other.nativeTaskRef?.nativeId;
+          return id && providerThreadOf(other.runId)?.nativeThreadRef?.nativeId === rootSessionId
+            ? [{ nativeTaskId: id, title: other.title, prompt: other.prompt }]
             : [];
         }),
       });

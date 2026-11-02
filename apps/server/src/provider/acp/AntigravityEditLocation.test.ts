@@ -68,8 +68,41 @@ describe("antigravityEditPatch", () => {
   });
 
   it("finds an unannounced snippet in the pre-edit file", () => {
+    const expected = `${header}@@ -10,1 +10,1 @@\n-const target = 10;\n+const target = 100;\n`;
     expect(antigravityEditPatch({ path, rawInput: replace, readPreEditFile: () => file })).toBe(
-      `${header}@@ -10,1 +10,1 @@\n-const target = 10;\n+const target = 100;\n`,
+      expected,
+    );
+    const crlf = file.replaceAll("\n", "\r\n");
+    expect(antigravityEditPatch({ path, rawInput: replace, readPreEditFile: () => crlf })).toBe(
+      expected,
+    );
+  });
+
+  it("counts a line break the replacement adds", () => {
+    // The target's line keeps its newline, so "x\n" turns one line into two.
+    expect(
+      antigravityEditPatch({
+        path,
+        rawInput: {
+          ReplacementChunks: [
+            { TargetContent: "const line3 = 3;", ReplacementContent: "x\n" },
+            { TargetContent: "const other = 15;", ReplacementContent: "const other = 150;" },
+          ],
+        },
+        readPreEditFile: () => file,
+      }),
+    ).toBe(
+      [
+        header.trimEnd(),
+        "@@ -3,1 +3,2 @@",
+        "-const line3 = 3;",
+        "+x",
+        "+",
+        "@@ -15,1 +16,1 @@",
+        "-const other = 15;",
+        "+const other = 150;",
+        "",
+      ].join("\n"),
     );
   });
 
