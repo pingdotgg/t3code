@@ -91,6 +91,23 @@ describe("resolveDockView", () => {
     ).toBe("bottom");
   });
 
+  it("gives a maximized group the title bar corners, since it covers the whole dock", () => {
+    const maximized = thread({
+      surfaces: [terminal("a")],
+      activeSurfaceId: "terminal:a",
+      maximized: true,
+    });
+    expect(view({ thread: maximized, threadsSide: "left" }).edges).toMatchObject({
+      left: null,
+      right: "bottom",
+    });
+    expect(view({ thread: maximized, threadsSide: "right" }).edges).toMatchObject({
+      left: "bottom",
+      right: null,
+    });
+    expect(view({ thread: maximized, threadsSide: null }).edges.top.has("bottom")).toBe(true);
+  });
+
   it("gives up the title bar corner the threads sidebar occupies", () => {
     expect(view({ threadsSide: "left" }).edges).toMatchObject({ left: null, right: "chat" });
     expect(view({ threadsSide: "right" }).edges).toMatchObject({ left: "chat", right: null });

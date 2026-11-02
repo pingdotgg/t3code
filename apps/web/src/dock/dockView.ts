@@ -65,8 +65,14 @@ export function resolveDockView(input: {
       surfaces.length > 0 && thread ? resolveGroupActiveSurface(thread, id, layout) : null;
     groups.set(id, { id, surfaces, activeSurface, launcher: showsLauncher });
   }
-  const edges = resolveDockTitlebarEdges(layout.root, new Set(groups.keys()));
   const active = thread?.surfaces.find((surface) => surface.id === thread.activeSurfaceId);
+  const maximizedGroupId =
+    thread?.isOpen && thread.maximized && active ? resolveSurfaceGroupId(active, layout) : null;
+  // A maximized group covers the dock, so the corners above it are its own.
+  const edges = resolveDockTitlebarEdges(
+    maximizedGroupId === null ? layout.root : { kind: "group", id: maximizedGroupId },
+    new Set(maximizedGroupId === null ? groups.keys() : [maximizedGroupId]),
+  );
   return {
     root: layout.root,
     groups,
@@ -75,7 +81,6 @@ export function resolveDockView(input: {
       left: threadsSide === "left" ? null : edges.left,
       right: threadsSide === "right" ? null : edges.right,
     },
-    maximizedGroupId:
-      thread?.isOpen && thread.maximized && active ? resolveSurfaceGroupId(active, layout) : null,
+    maximizedGroupId,
   };
 }
