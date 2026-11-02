@@ -1,7 +1,8 @@
-import type {
-  ModelSelection,
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2TurnItem,
+import {
+  isCompactionCommandMessage,
+  type ModelSelection,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -17,12 +18,18 @@ export function modelSwitchSince(
   to: ModelSelection,
   baseline?: ModelSelection,
 ): Pick<Extract<OrchestrationV2TurnItem, { type: "user_message" }>, "modelSwitch"> {
+  // Clients hide pending queued messages and replace `/compact` with a compaction row.
   const shown = new Set(
-    projection.turnItems.flatMap((item) => (item.type === "user_message" ? [item.messageId] : [])),
+    projection.turnItems.flatMap((item) =>
+      item.type === "user_message" &&
+      !(item.inputIntent === "queued_turn" && item.status === "pending") &&
+      !isCompactionCommandMessage({ role: "user", ...item })
+        ? [item.messageId]
+        : [],
+    ),
   );
   let previous: OrchestrationV2ThreadProjection["runs"][number] | undefined;
   for (const run of projection.runs) {
-    // Pending queued messages are hidden until their run starts.
     if (run.status === "rolled_back" || run.status === "queued") continue;
     // A wake shows as a notification, but its context handoff row still shows the swap.
     if (!shown.has(run.userMessageId) && run.contextHandoffId === null) continue;

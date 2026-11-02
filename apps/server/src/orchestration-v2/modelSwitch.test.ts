@@ -28,6 +28,10 @@ const shown = (...messages: ReadonlyArray<string>) =>
   messages.map((message) => ({
     type: "user_message",
     messageId: MessageId.make(message),
+    inputIntent: "turn_start",
+    status: "completed",
+    text: message,
+    attachments: [],
   })) as unknown as OrchestrationV2ThreadProjection["turnItems"];
 
 describe("modelSwitchSince", () => {
@@ -42,12 +46,32 @@ describe("modelSwitchSince", () => {
             run("queued", 3, "c", "queued"),
             run("undone", 4, "d", "rolled_back"),
           ],
-          // A legacy pending queued message is in the items but has not run.
           turnItems: shown("first", "failed", "queued", "undone"),
         },
         selection("a"),
       ),
     ).toEqual({ modelSwitch: { from: selection("b"), to: selection("a") } });
+  });
+
+  it("skips messages clients hide", () => {
+    const [first, pending, compact] = shown("first", "pending", "/compact");
+    expect(
+      modelSwitchSince(
+        {
+          runs: [
+            run("first", 1, "a"),
+            run("pending", 2, "b", "cancelled"),
+            run("/compact", 3, "c"),
+          ],
+          turnItems: [
+            first!,
+            { ...pending!, inputIntent: "queued_turn", status: "pending" },
+            compact!,
+          ] as OrchestrationV2ThreadProjection["turnItems"],
+        },
+        selection("c"),
+      ),
+    ).toEqual({ modelSwitch: { from: selection("a"), to: selection("c") } });
   });
 
   it("counts a wake whose handoff row shows the swap", () => {

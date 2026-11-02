@@ -3594,10 +3594,12 @@ export const ThreadFeed = memo(function ThreadFeed({
         workspaceRoot={props.workspaceRoot}
       >
         <ThreadMediaVisibility>
-          {info.item.type === "message" ? (
+          {info.item.type === "message" &&
+          info.item.message.projectedItem?.item.type === "user_message" &&
+          info.item.message.projectedItem.item.modelSwitch ? (
             <ThreadModelSwitchDivider
               environmentId={props.environmentId}
-              projectedItem={info.item.message.projectedItem}
+              modelSwitch={info.item.message.projectedItem.item.modelSwitch}
               iconColor={iconSubtleColor}
             />
           ) : null}

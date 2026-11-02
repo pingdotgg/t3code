@@ -15,6 +15,7 @@ import {
 import type {
   EnvironmentId,
   ModelSelection,
+  OrchestrationV2ModelSwitch,
   OrchestrationV2ProjectedTurnItem,
   ProviderInstanceId,
   ServerProvider,
@@ -53,15 +54,12 @@ function handoffEndpointsAtom(
 /** A same-harness model or effort change. Shows only what changed. */
 export function ThreadModelSwitchDivider(props: {
   environmentId: EnvironmentId;
-  projectedItem: OrchestrationV2ProjectedTurnItem | undefined;
+  modelSwitch: OrchestrationV2ModelSwitch;
   iconColor: ColorValue;
 }) {
-  const providers =
-    useAtomValue(serverEnvironment.configValueAtom(props.environmentId))?.providers ?? [];
-  const item = props.projectedItem?.item;
-  const modelSwitch = item?.type === "user_message" ? item.modelSwitch : undefined;
-  const change = modelSwitch ? resolveModelSwitchChange(modelSwitch, providers) : null;
-  if (modelSwitch === undefined || change === null) return null;
+  const providers = useAtomValue(serverEnvironment.providersValueAtom(props.environmentId)) ?? [];
+  const change = resolveModelSwitchChange(props.modelSwitch, providers);
+  if (change === null) return null;
   const describe = (selection: ModelSelection, effort: string | undefined) => {
     const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
     const model = provider?.models.find((candidate) => candidate.slug === selection.model);
@@ -71,7 +69,7 @@ export function ThreadModelSwitchDivider(props: {
       selection.model;
     return [change.modelChanged ? modelName : null, effort].filter(Boolean).join(" ");
   };
-  const { from, to } = modelSwitch;
+  const { from, to } = props.modelSwitch;
   return (
     <ThreadContextDivider
       label={`${describe(from, change.effort?.from)} → ${describe(to, change.effort?.to)}`}
