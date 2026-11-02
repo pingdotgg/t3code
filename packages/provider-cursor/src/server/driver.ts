@@ -138,6 +138,7 @@ export const CursorDriver: ProviderDriver<
       displayName: displayName ?? "Cursor",
       enabled,
       ...(processEnv.CURSOR_API_KEY ? { apiKey: processEnv.CURSOR_API_KEY } : {}),
+      ...(processEnv.CURSOR_TEAM_ID ? { teamId: processEnv.CURSOR_TEAM_ID } : {}),
       store: credentials.store,
       credentialBinding: credentials.binding,
       onChanged: (signedIn): Effect.Effect<void, ProviderSetupError> =>
@@ -174,11 +175,18 @@ export const CursorDriver: ProviderDriver<
       Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
         ...sdkRunner,
         open: (input) =>
-          auth.requireApiKey.pipe(
-            Effect.flatMap((apiKey) =>
+          auth.requireAccess.pipe(
+            Effect.flatMap(({ apiKey, team }) =>
               Effect.acquireRelease(
                 sdkRunner
-                  .open({ ...input, options: { ...input.options, apiKey } })
+                  .open({
+                    ...input,
+                    options: {
+                      ...input.options,
+                      apiKey,
+                      ...(team ? { teamId: team.id } : {}),
+                    },
+                  })
                   .pipe(
                     Effect.flatMap((session) =>
                       Effect.cached(session.close).pipe(
@@ -210,20 +218,20 @@ export const CursorDriver: ProviderDriver<
     const textGeneration = yield* makeCursorTextGeneration(
       effectiveConfig,
       processEnv,
-      auth.requireApiKey,
+      auth.requireAccess,
       auth.withAccess,
     );
 
-    const checkProvider = auth.readApiKey.pipe(
+    const checkProvider = auth.readAccess.pipe(
       Effect.orElseSucceed(() => undefined),
-      Effect.flatMap((apiKey) =>
+      Effect.flatMap((access) =>
         checkCursorProviderStatus(
           effectiveConfig,
           {
             ...processEnv,
-            CURSOR_API_KEY: apiKey,
+            CURSOR_API_KEY: access?.apiKey,
           },
-          auth.usesApiKey ? "api-key" : "browser",
+          { type: auth.usesApiKey ? "api-key" : "browser", team: access?.team },
         ).pipe(
           Effect.filterOrElse(
             (snapshot) =>
@@ -237,8 +245,9 @@ export const CursorDriver: ProviderDriver<
                 Effect.flatMap((settings) =>
                   readCursorUsageLimits(
                     effectiveConfig,
-                    { ...processEnv, CURSOR_API_KEY: apiKey },
+                    { ...processEnv, CURSOR_API_KEY: access?.apiKey },
                     settings.cursorKeychainUsageEnabled,
+                    access?.team?.id,
                   ),
                 ),
                 Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),

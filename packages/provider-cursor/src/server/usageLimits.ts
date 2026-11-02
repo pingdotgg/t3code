@@ -65,6 +65,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
   settings: Pick<CursorSettings, "apiEndpoint">,
   environment: NodeJS.ProcessEnv = process.env,
   allowKeychain = false,
+  teamId?: number,
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   return yield* Effect.gen(function* () {
@@ -140,7 +141,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
           "connect-protocol-version": "1",
           "x-cursor-client-type": "cli",
         }),
-        HttpClientRequest.bodyJsonUnsafe({}),
+        HttpClientRequest.bodyJsonUnsafe(teamId === undefined ? {} : { teamId }),
       ),
     );
     const body = yield* HttpClientResponse.schemaBodyJson(CursorUsageResponse)(

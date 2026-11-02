@@ -88,6 +88,9 @@ describe("Cursor usage limits", () => {
           expect(request.method).toBe("POST");
           expect(request.headers.authorization).toBe("Bearer instance-token");
           expect(request.headers["connect-protocol-version"]).toBe("1");
+          expect(
+            request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
+          ).toBe('{"teamId":42}');
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
@@ -104,6 +107,8 @@ describe("Cursor usage limits", () => {
           const limits = yield* readCursorUsageLimits(
             { apiEndpoint: "https://cursor.example/" },
             { XDG_CONFIG_HOME: directory, HOME: directory, AGENT_CLI_CREDENTIAL_STORE: "file" },
+            false,
+            42,
           ).pipe(
             Effect.provideService(HostProcess.Platform, platform),
             Effect.provideService(HttpClient.HttpClient, client),
