@@ -163,7 +163,6 @@ export interface ThreadPullRequestBadgePresentation {
   readonly more: number;
 }
 
-/** Composer footers use a state glyph; sidebar rows use a mono PR number and folded-link count. */
 export type ThreadPullRequestBadgeAppearance = "glyph" | "number";
 
 function resolveThreadPullRequestBadgePresentation({
