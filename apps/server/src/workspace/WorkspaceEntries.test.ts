@@ -111,7 +111,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* git(cwd, ["init", "sub"]);
         yield* writeTextFile(cwd, "sub/.gitignore", "dist/\n");
         yield* writeTextFile(cwd, "sub/dist/out.js");
-        yield* git(cwd, ["update-index", "--add", "--cacheinfo", `160000,${"1".repeat(40)},sub`]);
+        const gitlink = yield* git(cwd, ["hash-object", "tracked.txt"]);
+        yield* git(cwd, ["update-index", "--add", "--cacheinfo", `160000,${gitlink},sub`]);
+        // A nested clone that isn't a submodule keeps the outer repository's ignore rules.
+        yield* git(cwd, ["init", "node_modules/pkg"]);
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });

@@ -306,7 +306,7 @@ export const make = Effect.gen(function* () {
                   relativePath: directoryPath,
                 })
                 .pipe(Effect.mapError(toError));
-        const { entries, throughSymlink, gitRoot } = yield* Effect.tryPromise({
+        const { entries, throughSymlink, nestedGitRoot } = yield* Effect.tryPromise({
           try: async () => {
             const root = await NodeFSP.realpath(normalizedCwd);
             const directory = await NodeFSP.realpath(target.absolutePath);
@@ -378,18 +378,17 @@ export const make = Effect.gen(function* () {
                 )),
               );
             }
-            // Git refuses paths inside a submodule from the outer repository, so ask the nearest one.
-            let gitRoot = "";
+            let nestedGitRoot = "";
             const segments = target.relativePath.split("/").filter(Boolean);
-            for (let index = segments.length; index > 0 && !gitRoot; index -= 1) {
+            for (let index = segments.length; index > 0 && !nestedGitRoot; index -= 1) {
               const candidate = segments.slice(0, index).join("/");
               const dotGit = await NodeFSP.lstat(path.join(normalizedCwd, candidate, ".git")).catch(
                 () => null,
               );
-              if (dotGit) gitRoot = candidate;
+              if (dotGit) nestedGitRoot = candidate;
             }
             return {
-              gitRoot,
+              nestedGitRoot,
               entries: children.flatMap((child, index): ProjectEntry[] => {
                 const kind = kinds[index];
                 if (kind === undefined) return [];
@@ -406,8 +405,8 @@ export const make = Effect.gen(function* () {
           },
           catch: toError,
         });
-        const gitPrefix = gitRoot ? `${gitRoot}/` : "";
-        const directoryGitPath = target.relativePath.slice(gitPrefix.length);
+        let gitRoot = "";
+        let gitPrefix = "";
         // stdin avoids argument limits; ignore classification is optional without git/repositories.
         const checkIgnore = (paths: ReadonlyArray<string>) =>
           vcsProcess
@@ -422,6 +421,12 @@ export const make = Effect.gen(function* () {
               maxOutputBytes: 16 * 1024 * 1024,
             })
             .pipe(Effect.orElseSucceed(() => undefined));
+        // Git refuses paths inside a submodule (128) but still answers for nested clones.
+        if (nestedGitRoot && (yield* checkIgnore([`${nestedGitRoot}/.git`]))?.exitCode === 128) {
+          gitRoot = nestedGitRoot;
+          gitPrefix = `${gitRoot}/`;
+        }
+        const directoryGitPath = target.relativePath.slice(gitPrefix.length);
         // Check ignored folders once to avoid child index lookups; exit 0 guarantees no tracked descendants.
         // Symlinks and pathspec magic still need per-child checks.
         if (
