@@ -562,11 +562,12 @@ export function useThreadComposerState() {
     const serverConfig = selectedEnvironmentRuntime?.serverConfig;
     if (
       selectedEnvironmentRuntime?.connectionState === "connected" &&
-      isModelSelectionUnavailable(serverConfig, modelSelection, thread.projectId)
+      draft.modelSelection !== undefined &&
+      isModelSelectionUnavailable(serverConfig, draft.modelSelection, thread.projectId)
     ) {
       const { title, detail } = describeUnavailableModelSelection(
         serverConfig,
-        modelSelection,
+        draft.modelSelection,
         thread.projectId,
       );
       Dialog.alert(title, detail);
