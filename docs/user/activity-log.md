@@ -1,9 +1,11 @@
 # Activity log
 
-On web and desktop, consecutive tool calls appear as an expandable summary. Open it to inspect
-commands, tool inputs, status, and exit codes. Expand a tool call to see its output. A running
-command's output updates live, and long output shows only its most recent part. Use **Open diff** on
-a file change to review its contents.
+Follow the agent's thinking as it works. Consecutive tool calls share one row. Open the row to see
+the calls, then select a call to inspect its output. A single call opens directly. When the turn
+finishes, select **Worked for…** above the answer to see its thinking and tool calls again.
+
+On web and desktop, a running command's output updates live. Long output shows its most recent
+part. Use **Open diff** on a file change to review its contents.
 
 T3 Orchestrator summaries describe the actions taken, such as **Ran 2 commands and sent messages
 to 3 threads**. Repeated messages to the same destinations show both counts: **Sent 5 messages to

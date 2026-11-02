@@ -5,6 +5,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { hasVisibleText } from "@t3tools/shared/String";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -152,6 +153,11 @@ function isStreamingAssistantMessage(visibleItem: VisibleTurnItem): boolean {
   return visibleItem.item.type === "assistant_message" && visibleItem.item.streaming;
 }
 
+/** Timelines swap Thinking for the reply once it shows text, so that change must publish. */
+function hasVisibleAssistantText(visibleItem: VisibleTurnItem): boolean {
+  return visibleItem.item.type === "assistant_message" && hasVisibleText(visibleItem.item.text);
+}
+
 /** Whether `next` only streams more text into assistant messages that were already streaming. */
 function sameApartFromStreamedAssistantText(
   previous: OrchestrationV2ThreadProjection["visibleTurnItems"],
@@ -164,6 +170,7 @@ function sameApartFromStreamedAssistantText(
       before === after ||
       (isStreamingAssistantMessage(before) &&
         isStreamingAssistantMessage(after) &&
+        hasVisibleAssistantText(before) === hasVisibleAssistantText(after) &&
         sameVisibleTurnItemStructure(before, after)),
   );
 }
