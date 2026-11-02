@@ -58,6 +58,8 @@ interface ScannerTestInput {
   readonly providerInstances?: ContractServerSettings["providerInstances"];
   /** Secret values the test resolver hands back, keyed by `SecretReference.reference`. */
   readonly secretValues?: Readonly<Record<string, string>>;
+  /** Collects every reference `SecretResolver.read` receives, in order. */
+  readonly secretReads?: Array<string>;
 }
 
 const layerScannerTest = (input: ScannerTestInput) =>
@@ -107,6 +109,7 @@ const layerScannerTest = (input: ScannerTestInput) =>
           : [Layer.succeed(HostProcess.HomeDirectory, input.hostHomeDirectory)]),
         Layer.succeed(SecretResolver.SecretResolver, {
           read: (references) => {
+            for (const reference of references) input.secretReads?.push(reference.reference);
             const secretValues = input.secretValues ?? {};
             return Effect.succeed(references.map((reference) => secretValues[reference.reference]));
           },
@@ -741,6 +744,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const hostHomePath = yield* makeTempDir("t3code-host-home-");
         const secretHomePath = yield* makeTempDir("t3code-codex-secret-");
         const workspace = yield* makeTempDir("t3code-workspace-codex-");
+        const secretReads: Array<string> = [];
 
         yield* writeTranscript({
           filePath: path.join(
@@ -763,12 +767,18 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           providerInstances: {
             [ProviderInstanceId.make("codex")]: {
               driver: ProviderDriverKind.make("codex"),
-              // Drivers read the resolved secret; discovery must see the same home.
+              // Drivers read the resolved secret; discovery must see the same home. The API
+              // key cannot affect discovery, so its reference must stay unread.
               environment: [
                 {
                   name: "CODEX_HOME",
                   value: { provider: SecretProviderId.make("test"), reference: "vault:codex-home" },
                   sensitive: false,
+                },
+                {
+                  name: "OPENAI_API_KEY",
+                  value: { provider: SecretProviderId.make("test"), reference: "vault:api-key" },
+                  sensitive: true,
                 },
               ],
               // Blank so the secret home wins over the harness default settings home.
@@ -776,8 +786,10 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             },
           },
           secretValues: { "vault:codex-home": secretHomePath },
+          secretReads,
         });
 
+        expect(secretReads).toEqual(["vault:codex-home"]);
         expect(result.candidates.map((candidate) => [candidate.path, candidate.sources])).toEqual([
           [workspace, ["codex"]],
         ]);

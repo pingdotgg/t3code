@@ -14,6 +14,7 @@ import {
   type AgentSessionScanResult,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironment,
+  type ProviderInstanceEnvironmentVariable,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -766,17 +767,23 @@ export const make = Effect.gen(function* () {
     fileSystem.stat(target).pipe(Effect.asSome, Effect.orElseSucceed(Option.none));
 
   // Drivers see the environment with secret references resolved (readInstanceSecrets); discovery
-  // must read the same values or a secret-backed home goes undiscovered.
+  // must read the same values or a secret-backed home goes undiscovered. Home selection only
+  // reads `relevant` variables, so only their references are read; the rest are dropped because
+  // every consumer either matches relevant names or skips non-string values.
   const resolveInstanceEnvironment = Effect.fn("AgentSessionScanner.resolveInstanceEnvironment")(
-    function* (environment: ProviderInstanceEnvironment | undefined) {
+    function* (
+      environment: ProviderInstanceEnvironment | undefined,
+      relevant: (variable: ProviderInstanceEnvironmentVariable) => boolean,
+    ) {
       const variables = environment ?? [];
-      const references = variables.flatMap((variable) =>
-        isSecretReference(variable.value) ? [variable.value] : [],
-      );
+      const references = variables
+        .filter(relevant)
+        .flatMap((variable) => (isSecretReference(variable.value) ? [variable.value] : []));
       const values = references.length === 0 ? [] : yield* secretResolver.read(references);
       let index = 0;
       return variables.flatMap((variable) => {
         if (typeof variable.value === "string") return [{ ...variable, value: variable.value }];
+        if (!relevant(variable)) return [];
         const secret = values[index++];
         // An unreadable reference stays out, matching the driver's environment.
         return secret === undefined ? [] : [{ ...variable, value: secret, sensitive: true }];
@@ -1328,9 +1335,20 @@ export const make = Effect.gen(function* () {
       const homes: Array<{ homePath: string; providerInstanceId: ProviderInstanceId }> = [];
       const seenHomes = new Set<string>();
       for (const { instanceId, config: instance } of instances) {
-        const instanceEnvironment = yield* resolveInstanceEnvironment(instance.environment);
+        // Resolve only the secrets home selection reads; other instance secrets stay unread.
+        const homeVariableNames =
+          source === "pi"
+            ? ["PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR"]
+            : ["CLAUDE_CONFIG_DIR", "CODEX_HOME"];
+        const instanceEnvironment = yield* resolveInstanceEnvironment(
+          instance.environment,
+          (variable) =>
+            // Windows merges variable names case-insensitively; discovery must match the merge.
+            homeVariableNames.some((name) =>
+              windows ? variable.name.toUpperCase() === name : variable.name === name,
+            ),
+        );
         const environmentHome = (name: "CLAUDE_CONFIG_DIR" | "CODEX_HOME") => {
-          // Windows merges variable names case-insensitively; discovery must match the merge.
           const configured = instanceEnvironment.findLast((variable) =>
             windows ? variable.name.toUpperCase() === name : variable.name === name,
           )?.value;
