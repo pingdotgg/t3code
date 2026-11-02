@@ -5500,38 +5500,43 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         },
       });
 
-      for (const fresh of [true, false]) {
-        yield* projectionStore.apply({
-          id: EventId.make("event:" + suffix + ":fresh-" + fresh),
-          type: "runtime-request.updated",
-          threadId,
-          runId,
-          nodeId,
-          driver,
-          occurredAt: now,
-          payload: {
-            id: requestId,
+      for (const responseCapability of [
+        { type: "live", providerSessionId: ProviderSessionId.make("session:pending-secret") },
+        { type: "message" },
+      ] as const) {
+        for (const fresh of [true, false]) {
+          yield* projectionStore.apply({
+            id: EventId.make("event:" + suffix + ":fresh-" + fresh),
+            type: "runtime-request.updated",
+            threadId,
+            runId,
             nodeId,
-            providerTurnId: null,
-            nativeRequestRef: null,
-            kind: "user_input",
-            status: "pending",
-            responseCapability: { type: "message" },
-            createdAt: fresh
-              ? DateTime.add(now, { seconds: 5 })
-              : DateTime.subtract(now, { seconds: 1 }),
-            resolvedAt: null,
-          },
-        });
-        for (const shell of [
-          (yield* projectionStore.getShellSnapshot()).threads.find(
-            (thread) => thread.id === threadId,
-          ),
-          ProjectionStore.threadShellFromProjection(
-            yield* projectionStore.getThreadProjection(threadId),
-          ),
-        ]) {
-          assert.equal(shell?.pendingRuntimeRequest?.id, fresh ? requestId : "secret:b");
+            driver,
+            occurredAt: now,
+            payload: {
+              id: requestId,
+              nodeId,
+              providerTurnId: null,
+              nativeRequestRef: null,
+              kind: "user_input",
+              status: "pending",
+              responseCapability,
+              createdAt: fresh
+                ? DateTime.add(now, { seconds: 5 })
+                : DateTime.subtract(now, { seconds: 1 }),
+              resolvedAt: null,
+            },
+          });
+          for (const shell of [
+            (yield* projectionStore.getShellSnapshot()).threads.find(
+              (thread) => thread.id === threadId,
+            ),
+            ProjectionStore.threadShellFromProjection(
+              yield* projectionStore.getThreadProjection(threadId),
+            ),
+          ]) {
+            assert.equal(shell?.pendingRuntimeRequest?.id, fresh ? requestId : "secret:b");
+          }
         }
       }
 
