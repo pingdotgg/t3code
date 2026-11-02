@@ -1664,3 +1664,81 @@ it.effect("an unanswered Stop is flagged until Force stop ends the run with its 
     assert.lengthOf(late.storedEvents, 0);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect.each(["Stop", "Force stop"] as const)(
+  "%s ends a running run whose provider turn already completed",
+  (action) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:stop-completed-turn");
+      yield* createWatchingThread(threadId, 7);
+      yield* send(threadId, "go", "start_immediately");
+      const now = yield* DateTime.now;
+      const started = yield* orchestrator.getThreadProjection(threadId);
+      const run = started.runs[0]!;
+      const attempt = started.attempts[0]!;
+      const providerThreadId = run.providerThreadId!;
+      const providerTurnId = ProviderTurnId.make("provider-turn:stop-completed-turn");
+      const apply = (event: Omit<OrchestrationV2DomainEvent, "id" | "threadId">) =>
+        projections.apply({
+          ...event,
+          id: EventId.make(`event:stop-completed-turn:${event.type}`),
+          threadId,
+        } as OrchestrationV2DomainEvent);
+      yield* apply({
+        type: "run.updated",
+        runId: run.id,
+        occurredAt: now,
+        payload: { ...run, status: "running", startedAt: now, activeAttemptId: attempt.id },
+      });
+      yield* apply({
+        type: "run-attempt.updated",
+        occurredAt: now,
+        payload: { ...attempt, status: "completed", startedAt: now, completedAt: now },
+      });
+      yield* apply({
+        type: "provider-turn.updated",
+        occurredAt: now,
+        payload: {
+          id: providerTurnId,
+          providerThreadId,
+          nodeId: run.rootNodeId!,
+          runAttemptId: attempt.id,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "completed",
+          startedAt: now,
+          completedAt: now,
+        },
+      });
+      // The provider session was already released.
+      yield* apply({
+        type: "provider-thread.updated",
+        occurredAt: now,
+        payload: {
+          ...started.providerThreads.find((thread) => thread.id === providerThreadId)!,
+          providerSessionId: ProviderSessionId.make("session:gone"),
+        },
+      });
+      yield* send(threadId, "follow", "queue_after_active");
+
+      if (action === "Stop") {
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("stop-completed-turn"),
+          threadId,
+        });
+      } else {
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        yield* threads.forceStopThread({ threadId });
+      }
+      const stopped = yield* orchestrator.getThreadProjection(threadId);
+      assert.notEqual(stopped.runs[0]?.status, "running", "the stopped run is still running");
+      assert.deepInclude(stopped.attempts[0], { status: "completed", completedAt: now });
+      assert.isTrue(
+        stopped.turnItems.some((item) => item.type === "run_interrupt_result"),
+        "the stopped run has no interrupt result",
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
