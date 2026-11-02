@@ -1065,6 +1065,69 @@ it.effect("a coalesced window dispatches the prompt saved after it opened", () =
   );
 });
 
+it.effect("retrying a running window keeps the prompt it was dispatched with", () => {
+  const workers = new Map<string, Effect.Effect<void>>();
+  return withService(
+    ({ service, sql, launches }) =>
+      Effect.gen(function* () {
+        const schedule = {
+          type: "webhook",
+          dedupe: { coalesceKey: "{{body}}", coalesceWindowSeconds: 10 },
+        };
+        const save = (prompt: string) =>
+          Effect.flatMap(webhookTaskInput({ prompt, schedule }), service.upsert);
+        const { task } = yield* save("Prompt when the window opened");
+        yield* service.triggerWebhook(requestFor(task));
+        yield* save("Prompt at dispatch");
+        yield* sql`CREATE TRIGGER fail_completion BEFORE UPDATE ON scheduled_tasks
+          WHEN NEW.last_run_status = 'succeeded' BEGIN SELECT RAISE(FAIL, 'completion unavailable'); END`;
+        yield* TestClock.adjust("10 seconds");
+        yield* drainPendingDispatch(workers);
+        const launched = yield* Queue.take(launches);
+        assert.equal(launched.initialMessage?.text, "Prompt at dispatch");
+        yield* save("Prompt saved after dispatch");
+        yield* sql`DROP TRIGGER fail_completion`;
+        yield* drainPendingDispatch(workers);
+        assert.equal((yield* sql`SELECT 1 FROM scheduled_task_webhook_pending`).length, 0);
+        const owner = (yield* service.listWebhookDeliveries({ id: task.id })).deliveries[0]!;
+        const { delivery } = yield* service.getWebhookDelivery({
+          id: task.id,
+          deliveryId: owner.id,
+        });
+        assert.equal(delivery.renderedPrompt, "Prompt at dispatch");
+      }),
+    { workers },
+  );
+});
+
+it.effect("a coalesced window fails its delivery when the task row cannot be read", () => {
+  const workers = new Map<string, Effect.Effect<void>>();
+  return withService(
+    ({ service, sql, launches }) =>
+      Effect.gen(function* () {
+        const { task } = yield* service.upsert(
+          yield* webhookTaskInput({
+            schedule: {
+              type: "webhook",
+              dedupe: { coalesceKey: "{{body}}", coalesceWindowSeconds: 10 },
+            },
+          }),
+        );
+        yield* service.triggerWebhook(requestFor(task));
+        yield* sql`UPDATE scheduled_tasks SET model_selection_json = 'not json' WHERE task_id = ${task.id}`;
+        yield* TestClock.adjust("10 seconds");
+        yield* drainPendingDispatch(workers);
+        assert.equal(yield* Queue.size(launches), 0);
+        assert.equal((yield* sql`SELECT 1 FROM scheduled_task_webhook_pending`).length, 0);
+        const [delivery] = yield* sql<{
+          outcome: string;
+        }>`SELECT outcome FROM scheduled_task_webhook_deliveries`;
+        assert.equal(delivery?.outcome, "dispatch_failed");
+      }),
+    { workers },
+  );
+});
+
 it.effect("recovers a persisted coalescing window after restarting the service", () => {
   const workers = new Map<string, Effect.Effect<void>>();
   return withService(
