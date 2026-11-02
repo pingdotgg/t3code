@@ -1812,6 +1812,64 @@ describe("PreviewManager", () => {
       }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );
 
+  effectIt.effect("opens a new-tab link the agent clicked in the background", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+      const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+      const contents = Object.assign(
+        makeTestPreviewWebContents(async () => {
+          throw new Error("unused");
+        }, 42),
+        { isDevToolsOpened: () => false, getUserAgent: () => "Electron" },
+      );
+      fromId.mockReturnValue(contents);
+      const manager = yield* PreviewManager.PreviewManager;
+      const openLinks = yield* Queue.unbounded<{ url: string; background: boolean }>();
+      yield* manager.subscribeOpenLinks(({ url, background }) =>
+        Queue.offer(openLinks, { url, background }).pipe(Effect.asVoid),
+      );
+      const attached = yield* Deferred.make<void>();
+      yield* host.events.pipe(
+        Stream.runForEach((line) =>
+          new TextDecoder().decode(line).includes('"type":"attached"')
+            ? Deferred.succeed(attached, undefined)
+            : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* manager.createTab("tab_1", { serverTab });
+      yield* manager.registerWebview("tab_1", 42);
+      yield* Deferred.await(attached);
+      const openWindow = vi.mocked(contents.setWindowOpenHandler).mock.calls[0]![0];
+      const clickBlankLink = (url: string) =>
+        openWindow({ url, disposition: "foreground-tab" } as Electron.HandlerDetails);
+
+      clickBlankLink("https://example.com/person");
+      expect(yield* Queue.take(openLinks)).toEqual({
+        url: "https://example.com/person",
+        background: false,
+      });
+
+      yield* host.handleCommandLine(
+        JSON.stringify({
+          type: "cdp",
+          ...serverTab,
+          message: JSON.stringify({
+            id: 1,
+            method: "Input.dispatchMouseEvent",
+            params: { type: "mousePressed", x: 10, y: 10, button: "left", clickCount: 1 },
+            sessionId: "t3-preview-page",
+          }),
+        }),
+      );
+      clickBlankLink("https://example.com/agent");
+      expect(yield* Queue.take(openLinks)).toEqual({
+        url: "https://example.com/agent",
+        background: true,
+      });
+    }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+  );
+
   effectIt.effect("discards a screenshot that resolves after its guest is replaced", () =>
     withManager((manager) =>
       Effect.gen(function* () {
