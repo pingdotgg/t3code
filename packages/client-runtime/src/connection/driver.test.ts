@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as HttpClient from "effect/http/HttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as RpcSession from "../rpc/session.ts";
@@ -52,7 +52,8 @@ describe("ConnectionDriver", () => {
                 ),
             }),
             Layer.mock(RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization)({}),
-            Layer.mock(HttpClient.HttpClient)({}),
+            // SSH routes have no HTTP check, so the driver never sends a request.
+            FetchHttpClient.layer,
           ),
         ),
       );
