@@ -1,8 +1,15 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { resolveHandoffEndpoints, type HandoffEndpoints } from "@t3tools/client-runtime/handoff";
+import {
+  resolveHandoffEndpoints,
+  resolveModelSwitches,
+  type HandoffEndpoint as HandoffEndpointValue,
+  type HandoffEndpoints,
+  type ModelSwitch,
+} from "@t3tools/client-runtime/handoff";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
+import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import {
   normalizeProviderAccentColor,
   resolveProviderInstanceDisplayName,
@@ -10,9 +17,10 @@ import {
 } from "@t3tools/client-runtime/state/provider-instance-display";
 import type {
   EnvironmentId,
+  MessageId,
   OrchestrationV2ProjectedTurnItem,
-  ProviderInstanceId,
   ServerProvider,
+  ThreadId,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
@@ -43,6 +51,43 @@ function handoffEndpointsAtom(
     if (JSON.stringify(next) !== JSON.stringify(previous)) previous = next;
     return previous;
   });
+}
+
+/** Same-harness model and effort switches for a thread, keyed by the run's first user message. */
+export function modelSwitchesAtom(environmentId: EnvironmentId, threadId: ThreadId) {
+  let previous: { signature: string; value: ReadonlyMap<MessageId, ModelSwitch> } | null = null;
+  const ref = scopeThreadRef(environmentId, threadId);
+  return Atom.make((get) => {
+    const runs = get(environmentThreadDetails.threadAtom(ref))?.projection?.runs ?? [];
+    const value = resolveModelSwitches(runs);
+    // Run activity changes frequently; keep the map identity until a switch changes.
+    const signature = JSON.stringify([...value]);
+    if (previous?.signature !== signature) previous = { signature, value };
+    return previous.value;
+  });
+}
+
+export function ThreadModelSwitchRow(props: {
+  environmentId: EnvironmentId;
+  modelSwitch: ModelSwitch;
+  iconColor: ColorValue;
+  surfaceColor: string;
+}) {
+  const { from, to, effortChanged } = props.modelSwitch;
+  return (
+    <ThreadHandoffDivider
+      environmentId={props.environmentId}
+      endpoints={{ from: [from], to }}
+      iconColor={props.iconColor}
+      surfaceColor={props.surfaceColor}
+      label={
+        from.instanceId === to.instanceId && from.model === to.model
+          ? "Effort changed"
+          : "Model changed"
+      }
+      showEffort={effortChanged}
+    />
+  );
 }
 
 export function ThreadHandoffRow(props: {
@@ -78,6 +123,7 @@ export function ThreadHandoffDivider(props: {
   surfaceColor: string;
   label: string;
   failed?: boolean;
+  showEffort?: boolean;
 }) {
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const { endpoints } = props;
@@ -97,6 +143,7 @@ export function ThreadHandoffDivider(props: {
       };
     }),
     surfaceColor: props.surfaceColor,
+    showEffort: props.showEffort,
   };
   return (
     <ThreadContextDivider
@@ -128,19 +175,32 @@ export function ThreadHandoffDivider(props: {
   );
 }
 
-function HandoffEndpoint(props: {
-  instanceId: ProviderInstanceId;
-  model?: string | undefined;
-  providers: ReadonlyArray<HandoffProvider>;
-  surfaceColor: string;
-}) {
+function HandoffEndpoint(
+  props: HandoffEndpointValue & {
+    providers: ReadonlyArray<HandoffProvider>;
+    surfaceColor: string;
+    showEffort?: boolean | undefined;
+  },
+) {
   const provider = props.providers.find((candidate) => candidate.instanceId === props.instanceId);
   const model = provider?.models.find((candidate) => candidate.slug === props.model);
-  const label =
+  const effort =
+    props.showEffort && props.model
+      ? formatModelSelectionEffort(
+          {
+            instanceId: props.instanceId,
+            model: props.model,
+            ...(props.options === undefined ? {} : { options: props.options }),
+          },
+          provider?.models,
+        )
+      : null;
+  const modelLabel =
     (model ? resolveModelShortName(model, provider?.driver) : undefined) ??
     model?.name ??
     props.model ??
     (provider ? resolveProviderInstanceDisplayName(provider) : props.instanceId);
+  const label = effort === null ? modelLabel : `${modelLabel} ${effort}`;
   const showBadge = provider !== undefined && shouldShowInstanceBadge(provider, props.providers);
   return (
     <Pressable

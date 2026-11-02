@@ -1,5 +1,6 @@
 import {
   ContextHandoffId,
+  MessageId,
   ProviderInstanceId,
   RunId,
   type OrchestrationV2ThreadProjection,
@@ -8,8 +9,10 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import {
   resolveHandoffEndpoints,
+  resolveModelSwitches,
   resolvePendingHandoff,
   type HandoffTimelineRun,
+  type ModelSwitchRun,
 } from "./handoff.ts";
 
 const from = ProviderInstanceId.make("codex_personal");
@@ -171,5 +174,60 @@ describe("pending context handoff", () => {
     expect(
       resolvePendingHandoff(projection, { instanceId: to, model: "target" }, providers),
     ).toBeNull();
+  });
+});
+
+describe("model switches", () => {
+  const switchRun = (
+    id: string,
+    ordinal: number,
+    model: string,
+    effort?: string,
+    overrides: Partial<ModelSwitchRun> = {},
+  ): ModelSwitchRun => ({
+    id: RunId.make(id),
+    ordinal,
+    status: "completed",
+    modelSelection: {
+      instanceId: from,
+      model,
+      ...(effort === undefined ? {} : { options: [{ id: "reasoningEffort", value: effort }] }),
+    },
+    userMessageId: MessageId.make(`message-${id}`),
+    contextHandoffId: null,
+    ...overrides,
+  });
+
+  it("marks model and stated effort changes in run order", () => {
+    const switches = resolveModelSwitches([
+      switchRun("d", 4, "gpt", "low"),
+      switchRun("a", 1, "gpt", "high"),
+      switchRun("b", 2, "gpt", "high"),
+      switchRun("c", 3, "gpt"),
+      switchRun("e", 5, "mini", "low"),
+    ]);
+    expect([...switches.keys()]).toEqual([MessageId.make("message-e")]);
+    expect(switches.get(MessageId.make("message-e"))).toMatchObject({
+      from: { model: "gpt" },
+      to: { model: "mini" },
+      effortChanged: false,
+    });
+    expect(
+      resolveModelSwitches([switchRun("a", 1, "gpt", "high"), switchRun("b", 2, "gpt", "low")]).get(
+        MessageId.make("message-b"),
+      )?.effortChanged,
+    ).toBe(true);
+  });
+
+  it("skips handoff runs and compares across rolled-back runs", () => {
+    const switches = resolveModelSwitches([
+      switchRun("a", 1, "gpt"),
+      switchRun("b", 2, "mini", undefined, { status: "rolled_back" }),
+      switchRun("c", 3, "gpt"),
+      switchRun("d", 4, "other", undefined, {
+        contextHandoffId: ContextHandoffId.make("handoff"),
+      }),
+    ]);
+    expect(switches.size).toBe(0);
   });
 });

@@ -1,3 +1,9 @@
+import {
+  resolveModelSwitches,
+  type ModelSwitch,
+  type ModelSwitchRun,
+} from "@t3tools/client-runtime/handoff";
+import type { MessageId } from "@t3tools/contracts";
 import { useState } from "react";
 import {
   computeStableMessagesTimelineRows,
@@ -31,6 +37,25 @@ export function useStableHandoffRuns(
           providerInstanceId: run.providerInstanceId,
           modelSelection: run.modelSelection,
         }));
+  setState({ source: runs, signature, value });
+  return value;
+}
+
+const EMPTY_MODEL_SWITCHES: ReadonlyMap<MessageId, ModelSwitch> = new Map();
+
+/** Run status changes per stream event; keep the map identity until a switch changes. */
+export function useStableModelSwitches(
+  runs: ReadonlyArray<ModelSwitchRun>,
+): ReadonlyMap<MessageId, ModelSwitch> {
+  const [state, setState] = useState<{
+    readonly source: ReadonlyArray<ModelSwitchRun> | null;
+    readonly signature: string;
+    readonly value: ReadonlyMap<MessageId, ModelSwitch>;
+  }>({ source: null, signature: "[]", value: EMPTY_MODEL_SWITCHES });
+  if (state.source === runs) return state.value;
+  const next = resolveModelSwitches(runs);
+  const signature = JSON.stringify([...next]);
+  const value = signature === state.signature ? state.value : next;
   setState({ source: runs, signature, value });
   return value;
 }
