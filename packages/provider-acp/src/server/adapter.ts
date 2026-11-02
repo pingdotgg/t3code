@@ -112,7 +112,7 @@ import {
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { createTurnItemOrdinalAllocator } from "@t3tools/provider-core/server/turnItemOrdinals";
 import {
   type BackgroundWork,
@@ -1639,7 +1639,6 @@ function shouldPersistToolUpdate(
   return persist;
 }
 
-// @effect-diagnostics-next-line no-low-value-comments:off -- temporary investigation probe
 export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   options: AcpAdapterV2Options,
 ) {
@@ -3716,7 +3715,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           incoming: AcpToolCallState,
           projectedStatus?: ProjectedToolStatus,
         ) {
-          // @effect-diagnostics-next-line globalConsoleInEffect:off -- probe
           if (context.assistant.current?.sourceMessageId == null)
             yield* closeTextStream(context, "assistant");
           if (context.reasoning.current?.sourceMessageId == null)
@@ -4616,10 +4614,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             };
           }
           const update = notification.update;
-          // @effect-diagnostics-next-line globalConsoleInEffect:off -- probe
           let alreadyHandledToolUpdate = false;
           if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
-            // @effect-diagnostics-next-line globalConsoleInEffect:off -- probe
             yield* trackRunningBackgroundTools(notification);
             // Long-timeout get_command_or_subagent_output consumption ends with TaskOutput alone.
             for (const event of parseSessionUpdateEvent(notification).events) {
