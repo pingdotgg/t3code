@@ -258,6 +258,7 @@ import {
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { Kbd } from "../ui/kbd";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { usePanelAnimationSettings } from "../../panelAnimations";
@@ -3451,9 +3452,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               ? "Choose a project above to start a thread"
                               : showProviderUnavailable
                                 ? "Enable a provider in Settings to send a message"
-                                : offeredPromptSuggestion !== null
-                                  ? `${offeredPromptSuggestion}  ⇥ Tab`
-                                  : DEFAULT_COMPOSER_PLACEHOLDER
+                                : (offeredPromptSuggestion ?? DEFAULT_COMPOSER_PLACEHOLDER)
+                    }
+                    placeholderSuffix={
+                      offeredPromptSuggestion !== null ? (
+                        <span className="ml-2 inline-flex align-[1px]">
+                          <Kbd variant="outline">⇥ Tab</Kbd>
+                        </span>
+                      ) : undefined
                     }
                     disabled={
                       projectSelectionRequired ||
