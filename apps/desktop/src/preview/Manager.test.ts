@@ -1820,12 +1820,7 @@ describe("PreviewManager", () => {
         makeTestPreviewWebContents(async () => {
           throw new Error("unused");
         }, 42),
-        {
-          isDevToolsOpened: () => false,
-          getUserAgent: () => "Electron",
-          isFocused: () => true,
-          focusedFrame: {},
-        },
+        { isDevToolsOpened: () => false, getUserAgent: () => "Electron", focusedFrame: {} },
       );
       fromId.mockReturnValue(contents);
       const manager = yield* PreviewManager.PreviewManager;
