@@ -131,15 +131,7 @@ export function acceptsTrackSwitchRelease(
   );
 }
 
-/**
- * One page of GitHub's list-releases endpoint, newest first. Callers walk pages
- * until a channel match turns up; a busy nightly train can push the newest
- * preview or stable release past any single page.
- *
- * A CLI index mirror set through `T3CODE_RELEASE_INDEX_BASE_URL` serves the same JSON (an
- * array of `{ tag_name, draft? }`, newest first, empty past the last page) at
- * `<base>/index.json?per_page=100&page=N`.
- */
+/** Mirrors serve GitHub-shaped release pages at `<base>/index.json?per_page=100&page=N`. */
 export function cliReleaseIndexPageUrl(page: number, indexBaseUrl?: string): string {
   const mirror = indexBaseUrl?.trim().replace(/\/+$/, "");
   return mirror

@@ -1,13 +1,6 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off globalFetch:off globalConsole:off preferSchemaOverJson:off - Host-side dev lab that spawns isolated servers and fake CLIs with Node APIs directly.
-/**
- * Update lab: several isolated T3 servers ("machines") with fake provider
- * CLIs, a fake npm registry and a fake t3 release feed, for exercising
- * provider, server and launcher update flows end to end. State lives in the
- * gitignored `<repo>/.t3/update-lab`. Fake CLIs and package managers re-enter
- * this file as `__tool`, and the registry/feed server as `__feed`, so the lab
- * stays one file. Run `node scripts/update-lab.ts --help`.
- */
+// Fake tools and the feed re-enter this script; run with --help for the lab commands.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -69,7 +62,7 @@ version and installed dependencies. Homebrew layouts are simulated on Linux.
       apps/server stamped with <version>, runs on this checkout's deps) or
       a real CLI archive built by the release pipeline. Source runtimes
       include apps/web/dist when present; otherwise they serve APIs only.
-  reset                         Delete the lab (only after down).
+  reset                         Clear lab state after down, keeping its two lock files.
 
 Providers: codex claude opencode pi grok. Install methods rotate across envs:
 npm prefix, pnpm, bun, yarn, volta, vite-plus, Homebrew formula and cask,
@@ -204,9 +197,8 @@ function requireState(): LabState {
 
 /** Keep the descriptor open so the kernel releases the lock even if this process dies. */
 function acquireLock(name: "state" | "processes"): () => void {
-  NodeFS.mkdirSync(NodePath.dirname(LAB), { recursive: true });
-  // Keep lock files outside LAB so reset cannot unlink a lock another process holds.
-  const fd = NodeFS.openSync(`${LAB}.${name}.lock`, "a");
+  NodeFS.mkdirSync(LAB, { recursive: true });
+  const fd = NodeFS.openSync(NodePath.join(LAB, `.${name}.lock`), "a");
   try {
     NodeChildProcess.execFileSync("flock", ["-x", "3"], {
       stdio: ["ignore", "ignore", "inherit", fd],
@@ -377,7 +369,7 @@ function layOutInstall(envId: string, provider: ProviderKey, method: Method): vo
 
 function seedEnvFiles(state: LabState, env: LabEnv): void {
   const home = homeDir(env.id);
-  NodeFS.mkdirSync(home, { recursive: true });
+  NodeFS.mkdirSync(NodePath.join(home, ".cache/tmp"), { recursive: true });
   // The server reads PATH from a login shell first; these dotfiles keep it on the lab PATH.
   const profile = `export PATH='${envPath(env.id)}'\n`;
   for (const file of [".bash_profile", ".bashrc", ".profile", ".zprofile", ".zshrc"]) {
@@ -476,6 +468,26 @@ async function runTool(envId: string, tool: string, args: string[]): Promise<voi
       const { pkg } = PROVIDERS[key];
       if (arg !== pkg && !arg.startsWith(`${pkg}@`)) continue;
       const requested = arg.slice(pkg.length + 1);
+      if (tool === "npm" && args[0] === "view") {
+        const response = await fetch(
+          `${process.env.npm_config_registry}/${encodeURIComponent(pkg)}/latest`,
+        );
+        if (!response.ok) fail(`npm view failed (${response.status}).`);
+        const metadata = (await response.json()) as { version: string };
+        return void console.log(JSON.stringify(metadata.version));
+      }
+      if (tool === "pnpm" && args[0] === "outdated") {
+        return void console.log(JSON.stringify({ [pkg]: { latest: state.latest[key] } }));
+      }
+      if (tool === "pnpm" && args[0] === "ls") {
+        return void console.log(
+          JSON.stringify([{ dependencies: { [pkg]: { version: env.installs[key].version } } }]),
+        );
+      }
+      const subcommand = tool === "yarn" ? args[1] : args[0];
+      if (!["install", "i", "add"].includes(subcommand ?? "")) {
+        fail(`update-lab ${tool}: unsupported ${args.join(" ")}`);
+      }
       if (method === "npm") {
         const prefix = args[args.indexOf("--prefix") + 1];
         if (
@@ -659,13 +671,7 @@ function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-/**
- * Publish `t3-<version>-<platform>.tar.gz` + SHA256SUMS. Without `--archive`
- * this is a source runtime: a copy of apps/server whose package.json carries
- * `version` (every version check reads it) and whose node_modules links back
- * to this checkout, started by a `t3` wrapper. An existing web build is copied
- * beside the server; publishing does not build the client.
- */
+// Source runtimes use this checkout's dependencies and copy an existing web build without rebuilding it.
 function buildRuntime(version: string, archive: string | undefined): string {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version))
     fail(`Not an exact version: ${version}`);
@@ -808,12 +814,13 @@ function launcherLabel(env: LabEnv): string {
 /** The minimal environment a lab server sees; nothing from this shell leaks in. */
 function serverEnvironment(state: LabState, env: LabEnv): NodeJS.ProcessEnv {
   const home = homeDir(env.id);
-  const keep = ["LANG", "LC_ALL", "TZ", "USER", "LOGNAME", "TMPDIR"];
+  const keep = ["LANG", "LC_ALL", "TZ", "USER", "LOGNAME"];
   return {
     ...Object.fromEntries(
       keep.flatMap((key) => (process.env[key] ? [[key, process.env[key]]] : [])),
     ),
     HOME: home,
+    TMPDIR: NodePath.join(home, ".cache/tmp"),
     PATH: envPath(env.id),
     SHELL: "/bin/bash",
     XDG_CONFIG_HOME: NodePath.join(home, ".config"),
@@ -931,7 +938,7 @@ async function sessionToken(env: LabEnv): Promise<string> {
       "update-lab",
       "--token-only",
     ],
-    { cwd: REPO, encoding: "utf8", env: { PATH: process.env.PATH, HOME: homeDir(env.id) } },
+    { cwd: REPO, encoding: "utf8", env: serverEnvironment(requireState(), env) },
   ).trim();
   NodeFS.writeFileSync(tokenPath, token, { mode: 0o600 });
   return token;
@@ -1272,7 +1279,7 @@ async function main(argv: string[]): Promise<void> {
           "--base-url",
           originOf(state, env),
         ],
-        { cwd: REPO, encoding: "utf8", env: { PATH: process.env.PATH, HOME: homeDir(env.id) } },
+        { cwd: REPO, encoding: "utf8", env: serverEnvironment(requireState(), env) },
       );
       return void console.log(/(http\S+\/pair#token=\S+)/.exec(output)?.[1] ?? output);
     }
@@ -1351,11 +1358,15 @@ async function main(argv: string[]): Promise<void> {
         if (state && [state.feedPid, ...state.envs.map((e) => e.pid)].some((pid) => pid !== null)) {
           fail("Run `down` first.");
         }
-        NodeFS.rmSync(LAB, { recursive: true, force: true });
+        // Never unlink locks that another command may already have open.
+        for (const entry of NodeFS.readdirSync(LAB)) {
+          if (entry === ".state.lock" || entry === ".processes.lock") continue;
+          NodeFS.rmSync(NodePath.join(LAB, entry), { recursive: true, force: true });
+        }
       } finally {
         release();
       }
-      return void console.log(`Removed ${LAB}.`);
+      return void console.log(`Cleared ${LAB} (lock files retained).`);
     }
     default:
       console.log(HELP);

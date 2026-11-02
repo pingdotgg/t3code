@@ -51,27 +51,38 @@ const unrelatedLsof = ProcessRunner.ProcessRunner.of({
 
 afterEach(() => vi.restoreAllMocks());
 
-it.effect("authenticates each release page until the requested channel is found", () =>
-  Effect.gen(function* () {
-    const pages: string[] = [];
-    const httpClient = HttpClient.make((request) => {
-      const url = new URL(request.url);
-      assert.equal(url.origin, "https://api.github.com");
-      assert.equal(url.pathname, "/repos/pingdotgg/t3code/releases");
-      assert.equal(request.headers.accept, "application/vnd.github+json");
-      assert.equal(request.headers.authorization, "Bearer gh-token");
-      const page = url.searchParams.get("page") ?? "";
-      pages.push(page);
-      const tag_name = page === "1" ? "v1.2.4-preview.20260101.1" : "v1.2.3";
-      return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json([{ tag_name }])));
-    });
-    const version = yield* resolveNewestVersion("stable").pipe(
-      Effect.provideService(HostProcess.Environment, { GH_TOKEN: "gh-token" }),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-    );
-    assert.equal(version, "1.2.3");
-    assert.deepStrictEqual(pages, ["1", "2"]);
-  }),
+it.effect.each([undefined, " https://mirror.example/releases/ ", "   "])(
+  "authenticates public release pages and keeps credentials off index mirrors",
+  (indexBaseUrl) =>
+    Effect.gen(function* () {
+      const pages: string[] = [];
+      const httpClient = HttpClient.make((request) => {
+        const url = new URL(request.url);
+        assert.equal(
+          url.origin,
+          indexBaseUrl?.trim() ? "https://mirror.example" : "https://api.github.com",
+        );
+        assert.equal(
+          url.pathname,
+          indexBaseUrl?.trim() ? "/releases/index.json" : "/repos/pingdotgg/t3code/releases",
+        );
+        assert.equal(request.headers.accept, "application/vnd.github+json");
+        assert.equal(
+          request.headers.authorization,
+          indexBaseUrl?.trim() ? undefined : "Bearer gh-token",
+        );
+        const page = url.searchParams.get("page") ?? "";
+        pages.push(page);
+        const tag_name = page === "1" ? "v1.2.4-preview.20260101.1" : "v1.2.3";
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json([{ tag_name }])));
+      });
+      const version = yield* resolveNewestVersion("stable", indexBaseUrl).pipe(
+        Effect.provideService(HostProcess.Environment, { GH_TOKEN: "gh-token" }),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
+      assert.equal(version, "1.2.3");
+      assert.deepStrictEqual(pages, ["1", "2"]);
+    }),
 );
 
 it.effect("reads the newest version from the update feed file a mirror publishes", () =>
