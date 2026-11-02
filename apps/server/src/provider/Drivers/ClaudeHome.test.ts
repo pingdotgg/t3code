@@ -6,6 +6,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
@@ -57,6 +59,12 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         for (const homePath of ["~/.claude", `${path.join(NodeOS.homedir(), ".claude")}/`]) {
           expect(yield* makeClaudeEnvironment({ homePath }, baseEnv)).toEqual({ KEEP: "1" });
         }
+        // Windows env names are case-insensitive, so any spelling selects the config dir there.
+        const windowsEnv = yield* makeClaudeEnvironment(
+          { homePath: "~/.claude" },
+          { Claude_Config_Dir: "/tmp/claude-inherited", KEEP: "1" },
+        ).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+        expect(windowsEnv).toEqual({ KEEP: "1" });
       }),
     );
 
