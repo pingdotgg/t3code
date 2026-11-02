@@ -1,5 +1,5 @@
 import { GlassView } from "expo-glass-effect";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentRef, type ReactNode } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import Animated, { useAnimatedStyle, useReducedMotion, withTiming } from "react-native-reanimated";
 import { withUniwind } from "uniwind";
@@ -27,8 +27,13 @@ export interface TabsProps<Value extends string> {
 export function Tabs<Value extends string>(props: TabsProps<Value>) {
   const { themeAppearance } = useAppearancePreferences();
   const reduceMotion = useReducedMotion();
+  const scrollView = useRef<ComponentRef<typeof ScrollView>>(null);
   const [frames, setFrames] = useState<Partial<Record<Value, { x: number; width: number }>>>({});
   const frame = frames[props.selected];
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the selected tab visible in the native scroll viewport
+  useEffect(() => {
+    if (frame) scrollView.current?.scrollTo({ x: frame.x, animated: false });
+  }, [frame]);
   const duration = reduceMotion ? 0 : 220;
   const indicatorStyle = useAnimatedStyle(() => ({
     width: withTiming(frame?.width ?? 0, { duration }),
@@ -37,6 +42,7 @@ export function Tabs<Value extends string>(props: TabsProps<Value>) {
 
   return (
     <ScrollView
+      ref={scrollView}
       horizontal
       showsHorizontalScrollIndicator={false}
       className={cn("grow-0", props.className)}
