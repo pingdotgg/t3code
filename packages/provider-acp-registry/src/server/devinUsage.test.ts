@@ -1,14 +1,18 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { readDevinUsage } from "./devinUsage.ts";
+import { AcpRegistrySettings } from "../settings.ts";
+import { devinUsageReader, readDevinUsage } from "./devinUsage.ts";
 
 const openDatabase = (filename: string) =>
   Layer.build(NodeSqliteClient.layer({ filename })).pipe(
@@ -95,6 +99,44 @@ describe("readDevinUsage", () => {
 
       const missing = yield* readDevinUsage(path.join(dir, "absent.db"), sinceMs);
       assert.isTrue(missing.missing);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+const decode = Schema.decodeUnknownSync(AcpRegistrySettings);
+
+describe("devinUsageReader", () => {
+  it.effect("scans only registry Devin instances", () =>
+    Effect.gen(function* () {
+      const instances = [
+        { id: "acpRegistry", config: decode({}), dir: "/default" },
+        { id: "acpRegistry_kimi", config: decode({ agentId: "kimi" }), dir: "/kimi" },
+        {
+          id: "acpRegistry_local",
+          config: decode({ source: "local", agentId: "devin", commandPath: "devin" }),
+          dir: "/local",
+        },
+        { id: "acpRegistry_devin", config: decode({ agentId: "devin" }), dir: "/devin" },
+      ];
+      if (devinUsageReader.kind !== "scan") throw new Error("Expected a Devin scan reader");
+      const sources = yield* devinUsageReader
+        .scan({
+          instances: instances.map(({ id, config, dir }) => ({
+            instanceId: ProviderInstanceId.make(id),
+            config,
+            environment: { DEVIN_SESSIONS_DIR: dir },
+            configured: true,
+          })),
+          settings: DEFAULT_SERVER_SETTINGS,
+          windowStartMs: 0,
+          retentionCutoffMs: 0,
+          awaitRefresh: true,
+        })
+        .pipe(Effect.provideService(HostProcess.HomeDirectory, "/home/test"));
+      assert.deepStrictEqual(
+        sources.map((source) => source.dir),
+        ["/devin"],
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

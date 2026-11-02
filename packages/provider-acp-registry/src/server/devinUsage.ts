@@ -172,6 +172,8 @@ export const devinUsageReader: ProviderUsageReader<AcpRegistrySettings, DevinUsa
     const path = yield* Path.Path;
     const dirs = new Set<string>();
     for (const instance of instances) {
+      // Local commands are not identified as Devin by filename; only registry Devin instances count.
+      if (instance.config?.source !== "registry" || instance.config.agentId !== "devin") continue;
       dirs.add(yield* resolveDevinSessionsDir(instance.environment));
     }
     return yield* Effect.forEach(
