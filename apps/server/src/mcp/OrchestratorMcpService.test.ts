@@ -65,6 +65,7 @@ import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { resolveRuntimeMode } from "./delegatedTaskModes.ts";
+import type { ProjectionRecordFilter } from "../orchestration-v2/ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
@@ -453,6 +454,7 @@ describe("OrchestratorMcpService", () => {
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
           getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+          listAppOwnedChildThreadIds: () => Effect.succeed([]),
           dispatch: (command) =>
             Ref.update(dispatched, (commands) => [...commands, command]).pipe(
               Effect.as({} as never),
@@ -544,6 +546,7 @@ describe("OrchestratorMcpService", () => {
                 ? Effect.map(Ref.get(status), parentProjection)
                 : Effect.succeed(childProjection),
             getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+            listAppOwnedChildThreadIds: () => Effect.succeed([]),
             delegatedTaskResultPending: () => Effect.succeed(false),
             stopDelegatedTasks: () => Effect.void,
             // The orchestrator's subagent.stop repair is covered in ThreadStop.test.ts.
@@ -642,6 +645,7 @@ describe("OrchestratorMcpService", () => {
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
           getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+          listAppOwnedChildThreadIds: () => Effect.succeed([]),
           dispatch: (command) =>
             Ref.update(dispatched, (commands) => [...commands, command]).pipe(
               Effect.andThen(Effect.fail(new Error("simulated stop failure") as never)),
@@ -723,6 +727,7 @@ describe("OrchestratorMcpService", () => {
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
           getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+          listAppOwnedChildThreadIds: () => Effect.succeed([]),
           dispatch: (command) =>
             Ref.update(dispatched, (commands) => [...commands, command]).pipe(
               Effect.andThen(
@@ -810,6 +815,7 @@ describe("OrchestratorMcpService", () => {
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
           getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+          listAppOwnedChildThreadIds: () => Effect.succeed([]),
           dispatch: (command) =>
             Ref.update(dispatched, (commands) => [...commands, command]).pipe(
               Effect.andThen(
@@ -865,16 +871,25 @@ describe("OrchestratorMcpService", () => {
       const taskId = NodeId.make("node:mcp-cancel-grandchild-task");
       const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
       const stoppedBelow = yield* Ref.make(false);
-      const appOwnedTask = (id: string, threadId: ThreadId, childId: ThreadId) => ({
+      const subagentReads = yield* Ref.make<ReadonlyArray<ProjectionRecordFilter | undefined>>([]);
+      const appOwnedTask = (
+        id: string,
+        threadId: ThreadId,
+        childId: ThreadId,
+        settled?: "settled",
+      ) => ({
         id: NodeId.make(id),
         threadId,
         origin: "app_owned",
         childThreadId: childId,
         driver: "codex",
         model: "gpt-5.6-terra",
-        result: null,
-        completionDelivery: { state: "pending" },
+        status: settled === undefined ? "running" : "completed",
+        result: settled === undefined ? null : "Done.",
+        completionDelivery: { state: settled === undefined ? "pending" : "delivered" },
       });
+      // Older tasks the parent and child dispatched and that have long settled.
+      const settledThreadId = ThreadId.make("thread:mcp-cancel-grandchild-settled");
       const projections = new Map([
         [
           parentThreadId,
@@ -886,7 +901,15 @@ describe("OrchestratorMcpService", () => {
             },
             runs: [],
             contextTransfers: [],
-            subagents: [appOwnedTask(taskId, parentThreadId, childThreadId)],
+            subagents: [
+              appOwnedTask(
+                "node:mcp-cancel-grandchild-old",
+                parentThreadId,
+                settledThreadId,
+                "settled",
+              ),
+              appOwnedTask(taskId, parentThreadId, childThreadId),
+            ],
           },
         ],
         [
@@ -897,8 +920,26 @@ describe("OrchestratorMcpService", () => {
             contextTransfers: [],
             messages: [],
             subagents: [
+              appOwnedTask(
+                "node:mcp-cancel-grandchild-done",
+                childThreadId,
+                settledThreadId,
+                "settled",
+              ),
               appOwnedTask("node:mcp-cancel-grandchild-below", childThreadId, grandchildThreadId),
             ],
+            providerThreads: [],
+            runtimeRequests: [],
+          },
+        ],
+        [
+          settledThreadId,
+          {
+            thread: { id: settledThreadId },
+            runs: [],
+            contextTransfers: [],
+            messages: [],
+            subagents: [],
             providerThreads: [],
             runtimeRequests: [],
           },
@@ -919,7 +960,21 @@ describe("OrchestratorMcpService", () => {
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadRecords: (threadId) => Effect.succeed(projections.get(threadId)!),
+          getThreadRecords: (threadId, fields, filter) =>
+            ((fields as ReadonlyArray<string>).includes("subagents")
+              ? Ref.update(subagentReads, (reads) => [...reads, filter])
+              : Effect.void
+            ).pipe(Effect.as(projections.get(threadId)!)),
+          listAppOwnedChildThreadIds: (threadId) =>
+            Effect.succeed(
+              projections
+                .get(threadId)!
+                .subagents.flatMap((task) =>
+                  task.origin === "app_owned" && task.childThreadId !== null
+                    ? [task.childThreadId]
+                    : [],
+                ),
+            ),
           getThreadShell: (threadId) =>
             Effect.succeed(
               threadId === grandchildThreadId && child.raisedDuringStop !== true
@@ -982,6 +1037,12 @@ describe("OrchestratorMcpService", () => {
         const error = yield* service
           .cancelTask(scope, { taskId, clientRequestId: "cancel-grandchild-above-modes" })
           .pipe(Effect.flip);
+        // No read decodes every task a thread has dispatched.
+        for (const filter of yield* Ref.get(subagentReads)) {
+          assert.isTrue(
+            filter?.subagentIds !== undefined || filter?.omitSettledSubagents !== undefined,
+          );
+        }
         return {
           code: error.code,
           dispatched: yield* Ref.get(dispatched),

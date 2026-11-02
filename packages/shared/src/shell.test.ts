@@ -135,6 +135,13 @@ describe("readEnvironmentFromLoginShell", () => {
       SSH_AUTH_SOCK: "/tmp/secretive.sock",
     });
     expect(execFile).toHaveBeenCalledTimes(1);
+    expect(execFile).toHaveBeenCalledWith("/bin/zsh", expect.any(Array), {
+      encoding: "utf8",
+      timeout: 5000,
+      killSignal: "SIGKILL",
+      detached: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
   });
 
   it("omits environment variables that are missing or empty", () => {
