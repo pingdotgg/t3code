@@ -7036,7 +7036,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }),
           hasPendingBackgroundWorkForThread: Effect.fn(
             "CodexAdapterV2.hasPendingBackgroundWorkForThread",
-          )(function* (providerThread) {
+          )(function* (providerThread, options) {
             const contexts = [
               ...(yield* Ref.get(activeTurns)).values(),
               ...(yield* Ref.get(settledTurns)).values(),
@@ -7044,9 +7044,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const roots = contexts.filter(
               (context) => context.providerThread.id === providerThread.id,
             );
+            // Settled ancestors leave these maps, so replacement checks walk each live turn's lineage.
+            const owned = (context: ActiveCodexTurnContext) => {
+              if (options?.includeSubagents !== true) {
+                return roots.some(
+                  (root) => context === root || isDescendantCodexTurn(context, root),
+                );
+              }
+              for (
+                let ancestor: ActiveCodexTurnContext | undefined = context;
+                ancestor !== undefined;
+                ancestor = ancestor.subagent?.parentContext
+              ) {
+                if (ancestor.providerThread.id === providerThread.id) return true;
+              }
+              return false;
+            };
             for (const context of contexts) {
-              if (!roots.some((root) => context === root || isDescendantCodexTurn(context, root)))
-                continue;
+              if (!owned(context)) continue;
               if (yield* turnHasRetainedBackgroundWork(context.nativeTurnId)) return true;
               if (
                 context.subagent !== null &&

@@ -347,7 +347,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly beforeUnload?: Effect.Effect<void>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
-    /** Offers `unload:<native id>` and `archive:<native id>`; also gives the runtime archiveThread. */
+    /** Offers `unload:<native id>`, `archive:<native id>` and `close`; also gives the runtime archiveThread. */
     readonly nativeThreadExits?: Queue.Queue<string>;
   } = {},
 ) {
@@ -356,7 +356,13 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     Ref.update(state, (current) => ({
       ...current,
       closeCount: current.closeCount + 1,
-    })),
+    })).pipe(
+      Effect.andThen(
+        options.nativeThreadExits === undefined
+          ? Effect.void
+          : Queue.offer(options.nativeThreadExits, "close"),
+      ),
+    ),
   );
   // Register after countClose to wedge teardown before its finalizer, matching a provider stream that never yields.
   const hangClose = Effect.addFinalizer(() =>
@@ -3876,14 +3882,195 @@ it.effect(
         });
         yield* endTurn(parentThread);
         yield* TestClock.adjust("1 second");
+        // Each child archives once before the session closes.
         assert.deepEqual(
-          [yield* Queue.take(exits), yield* Queue.take(exits)],
-          ["archive:native-delivered", "archive:native-late"],
+          [yield* Queue.take(exits), yield* Queue.take(exits), yield* Queue.take(exits)],
+          ["archive:native-delivered", "archive:native-late", "close"],
         );
       });
 
       yield* effect.pipe(
         Effect.provide(layerTest({ state, idleTimeoutMs: 1000, nativeThreadExits: exits })),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a delegated child's session until its parent takes the result",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const exits = yield* Queue.unbounded<string>();
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        // The parent runs elsewhere, so nothing else keeps the child's session alive.
+        const parentId = ThreadId.make("thread-provider-session-manager-remote-parent");
+        const parentRunId = idAllocator.derive.run({ threadId: parentId, ordinal: 1 });
+        const threadId = ThreadId.make("thread-provider-session-manager-awaiting-child");
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+          nativeThreadId: "native-awaiting-child",
+        });
+        const taskId = NodeId.make("node-task-awaiting-child");
+        const taskEvent = Effect.fnUntraced(function* (delivery: "pending" | "delivered") {
+          return {
+            id: yield* idAllocator.allocate.event({ threadId: parentId }),
+            type: "subagent.updated" as const,
+            threadId: parentId,
+            runId: parentRunId,
+            nodeId: taskId,
+            driver: CODEX_DRIVER,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: taskId,
+              threadId: parentId,
+              runId: parentRunId,
+              parentNodeId: idAllocator.derive.rootNode({ runId: parentRunId }),
+              origin: "app_owned",
+              createdBy: "agent",
+              driver: CODEX_DRIVER,
+              providerInstanceId: modelSelection.instanceId,
+              providerThreadId: null,
+              childThreadId: threadId,
+              nativeTaskRef: null,
+              prompt: "Implement it.",
+              title: null,
+              model: null,
+              completionDelivery: { state: delivery, observedByRunId: null },
+              status: "completed",
+              result: "Done.",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            } satisfies OrchestrationV2Subagent,
+          };
+        });
+        const created = yield* makeThreadCreatedEvent({
+          idAllocator,
+          threadId,
+          now,
+          delegatedBy: parentId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: parentId, now }),
+            {
+              ...created,
+              payload: { ...created.payload, activeProviderThreadId: providerThread.id },
+            },
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: providerThread,
+            },
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "run.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                id: runId,
+                threadId,
+                ordinal: 1,
+                providerInstanceId: modelSelection.instanceId,
+                modelSelection,
+                providerThreadId: providerThread.id,
+                userMessageId: MessageId.make("message-awaiting-child"),
+                rootNodeId: null,
+                activeAttemptId: null,
+                status: "completed",
+                requestedAt: now,
+                startedAt: now,
+                completedAt: now,
+                checkpointId: null,
+                contextHandoffId: null,
+                delegatedTaskId: taskId,
+              } satisfies OrchestrationV2Run,
+            },
+            yield* taskEvent("pending"),
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "agent",
+            creationSource: "server",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "turn",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        // The manager has scheduled its idle release once a subscriber sees the terminal.
+        const subscription = yield* runtime.subscribeEvents!;
+        yield* Queue.offer((yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "turn-awaiting-child",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* subscription.events.pipe(Stream.runHead);
+
+        // The child unloads without archiving, and its result's pending delivery pins the session.
+        yield* TestClock.adjust("1 second");
+        assert.deepEqual([yield* Queue.take(exits), yield* Queue.take(exits)].sort(), [
+          "probe",
+          "unload:native-awaiting-child",
+        ]);
+        // A busy parent takes the result after the idle timeout; the pinned session archives it.
+        yield* eventSink.write({ events: [yield* taskEvent("delivered")] });
+        yield* TestClock.adjust("1 second");
+        for (const exit of ["probe", "archive:native-awaiting-child", "close"]) {
+          assert.equal(yield* Queue.take(exits), exit);
+        }
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            nativeThreadExits: exits,
+            hasPendingBackgroundWork: Queue.offer(exits, "probe").pipe(Effect.as(false)),
+          }),
+        ),
       );
     }),
 );
