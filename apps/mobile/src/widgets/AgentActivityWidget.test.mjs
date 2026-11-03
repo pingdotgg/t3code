@@ -35,7 +35,6 @@ it("embeds an Agent Activity Home Screen layout and initial data independently o
       { cwd: projectRoot, stdio: "pipe" },
     );
     const { widgets } = JSON.parse(NodeFS.readFileSync(outputPath, "utf8"));
-    expect(widgets.AgentActivity.layout).toContain("Tap to refresh");
     expect(widgets.AgentActivity.initialProps).toMatchObject({ activeCount: 0, activities: [] });
     const runtimePath = NodePath.join(directory, "runtime.js");
     NodeChildProcess.execFileSync(
@@ -59,7 +58,7 @@ it("embeds an Agent Activity Home Screen layout and initial data independently o
           threadId: "thread",
           threadTitle: "Review the task",
           projectTitle: "Project",
-          status: "Waiting for input",
+          status: "Input",
           phase: "waiting_for_input",
           deepLink: "/threads/environment/mcp%3Atask",
         },
@@ -74,7 +73,7 @@ it("embeds an Agent Activity Home Screen layout and initial data independently o
       const active = JSON.stringify(context.__expoWidgetRender(props, environment));
       expect(active).toContain("1 active");
       expect(active).toContain("Review the task");
-      expect(active).toContain("Needs input");
+      expect(active).toContain("Input");
       expect(active).toContain("t3code-dev:///threads/environment/mcp%3Atask");
       for (const [source, subtitle] of [
         ["loading", "Loading agents…"],
@@ -94,14 +93,34 @@ it("embeds an Agent Activity Home Screen layout and initial data independently o
       const expired = JSON.stringify(
         context.__expoWidgetRender({ ...props, freshUntil: 1_000 }, environment),
       );
-      expect(expired).toContain("Tap to refresh");
-      expect(expired).not.toContain("Needs input");
+      expect(expired).toContain("Out of date");
+      expect(expired).not.toContain("Input");
       const scheduled = JSON.stringify(
         context.__expoWidgetRender(props, { ...environment, timestamp: 3_000 }),
       );
-      expect(scheduled).toContain("Tap to refresh");
-      expect(scheduled).not.toContain("Needs input");
+      expect(scheduled).toContain("Out of date");
+      expect(scheduled).not.toContain("Input");
     }
+    const aggregate = {
+      ...props,
+      activeCount: 10,
+      activities: Array.from({ length: 5 }, (_, index) => ({
+        ...props.activities[0],
+        threadId: `thread-${index}`,
+        threadTitle: `Relay task ${index + 1}`,
+        phase: "running",
+        status: "Working",
+      })),
+    };
+    const aggregateLayout = JSON.stringify(
+      context.__expoWidgetRender(aggregate, {
+        widgetFamily: "systemMedium",
+        colorScheme: "light",
+        widgetRenderingMode: "fullColor",
+      }),
+    );
+    expect(aggregateLayout).toContain("Relay task 5");
+    expect(aggregateLayout).toContain("10 active");
   } finally {
     NodeFS.rmSync(directory, { recursive: true, force: true });
   }
