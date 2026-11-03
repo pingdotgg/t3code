@@ -1149,9 +1149,10 @@ export const layer: Layer.Layer<
             (candidate) => candidate.ordinal > sourceRun.ordinal && isActiveRun(candidate),
           );
           if (
-            !sourceBusy ||
-            (session.providerSession.capabilities.threads.canForkWhileRunning === true &&
-              sourceProviderTurn?.nativeTurnRef != null)
+            (sourceRun.status === "completed" || sourceRun.status === "waiting") &&
+            (!sourceBusy ||
+              (session.providerSession.capabilities.threads.canForkWhileRunning === true &&
+                sourceProviderTurn?.nativeTurnRef != null))
           ) {
             // Rolled-back turns are no longer in the source conversation, so they cannot bound a fork.
             const rolledBackAttemptIds = new Set(
@@ -1164,7 +1165,7 @@ export const layer: Layer.Layer<
                 )
                 .map((attempt) => attempt.id),
             );
-            return yield* loadFromProvider(
+            const forked = yield* Effect.result(
               session.forkThread({
                 sourceProviderThread,
                 sourceProviderTurns: sourceProjection.providerTurns.filter(
@@ -1179,6 +1180,16 @@ export const layer: Layer.Layer<
                   : { providerTurnId: sourceProviderTurn.id }),
               }),
             );
+            if (forked._tag === "Success") return forked.success;
+            if (forked.failure._tag !== "ProviderAdapterForkThreadError") {
+              return yield* loadFromProvider(Effect.fail(forked.failure));
+            }
+            // A parent rollback can remove the boundary after the source snapshot was read.
+            yield* Effect.logWarning("Recovering a failed native fork with portable context", {
+              sourceThreadId: nativeForkTransfer.sourceThreadId,
+              runId,
+              error: forked.failure,
+            });
           }
           const sourceItems = yield* ContextHandoffService.readForkHistoryItems(
             projectionStore,

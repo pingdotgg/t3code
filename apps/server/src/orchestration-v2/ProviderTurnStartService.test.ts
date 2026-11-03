@@ -302,6 +302,7 @@ function makeLocalCommandHarness(input: {
     readonly nativeForkFrom?: "idle" | "busy";
     readonly canForkWhileRunning?: boolean;
     readonly sourceBoundary?: "native" | "synthetic" | "missing";
+    readonly sourceRolledBack?: boolean;
     readonly switchedProvider?: boolean;
   };
 }) {
@@ -533,7 +534,10 @@ function makeLocalCommandHarness(input: {
         ordinal: 1,
         providerThreadId: parentProviderThread.id,
         activeAttemptId: parentTurns[0]!.attempt.id,
-        status: "completed" as const,
+        status:
+          input.sideChat?.sourceRolledBack === true
+            ? ("rolled_back" as const)
+            : ("completed" as const),
         completedAt: now,
       },
       {
@@ -803,13 +807,14 @@ function makeLocalCommandHarness(input: {
       strength: "strong" as const,
     },
   };
-  const forkThread = vi.fn((_fork: ProviderAdapter.ProviderAdapterV2ForkThreadInput) =>
+  const forkThread = vi.fn<ProviderAdapter.ProviderAdapterV2SessionRuntime["forkThread"]>(() =>
     Effect.succeed(sideChatThread),
   );
   const sideChatSession = {
     driver: providerThread.driver,
     providerSession,
-    ensureThread: () => Effect.succeed(sideChatThread),
+    ensureThread: () =>
+      "ensureThreadFailure" in input ? ensureThread() : Effect.succeed(sideChatThread),
     resumeThread: () => Effect.succeed(sideChatThread),
     forkThread,
     startTurn,
@@ -1389,6 +1394,80 @@ effectIt.effect.each([
       );
       expect(harness.projection().providerThreads[0]?.handoffIds).toEqual(handoffIds);
     }),
+);
+
+effectIt.effect.each([
+  { nativeForkFrom: "idle", rollback: "before-start" },
+  { nativeForkFrom: "busy", rollback: "before-start" },
+  { nativeForkFrom: "idle", rollback: "during-fork" },
+  { nativeForkFrom: "busy", rollback: "during-fork" },
+] as const)(
+  "recovers a planned $nativeForkFrom fork after rollback $rollback",
+  ({ nativeForkFrom, rollback }) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue from the selected turn",
+        sideChat: {
+          contextRun: "current",
+          nativeForkFrom,
+          sourceRolledBack: rollback === "before-start",
+        },
+      });
+      harness.forkThread.mockImplementation(() =>
+        Effect.fail(
+          new ProviderAdapter.ProviderAdapterForkThreadError({
+            driver: ProviderDriverKind.make("codex"),
+            providerThreadId: ProviderThreadId.make("side-chat-parent-provider-thread"),
+            cause: "Selected native turn was removed by rollback",
+          }),
+        ),
+      );
+
+      yield* harness.startWithRetry;
+
+      expect(harness.forkThread).toHaveBeenCalledTimes(rollback === "before-start" ? 0 : 1);
+      expect(harness.projection().contextTransfers).toMatchObject([
+        { id: "side-chat-fork", status: "resolved_portable" },
+      ]);
+      expect(harness.startTurn.mock.calls[0]?.[0].message.text).toContain("PARENT_HISTORY");
+      expect(harness.projection().providerThreads[0]?.handoffIds).toEqual([
+        "side-chat-fork-context",
+      ]);
+      expect(harness.settledRuns).toEqual([]);
+    }),
+);
+
+effectIt.effect("preserves portable initialization failures after a native fork fails", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue from the selected turn",
+      sideChat: { contextRun: "current", nativeForkFrom: "busy" },
+      ensureThreadFailure: "Portable session unavailable",
+    });
+    harness.forkThread.mockImplementation(() =>
+      Effect.fail(
+        new ProviderAdapter.ProviderAdapterForkThreadError({
+          driver: ProviderDriverKind.make("codex"),
+          providerThreadId: ProviderThreadId.make("side-chat-parent-provider-thread"),
+          cause: "Selected native turn was removed by rollback",
+        }),
+      ),
+    );
+
+    const result = yield* Effect.result(harness.startWithRetry);
+
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toMatchObject({
+        _tag: "ProviderTurnStartError",
+        cause: {
+          _tag: "ProviderAdapterEventStreamError",
+          cause: "Portable session unavailable",
+        },
+      });
+    }
+    expect(harness.startTurn).not.toHaveBeenCalled();
+  }),
 );
 
 effectIt.effect.each([
