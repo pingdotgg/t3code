@@ -98,7 +98,7 @@ const spawnFailure = (command: ChildProcess.StandardCommand, code: SpawnFailure)
 };
 
 // GNU env passes the environment through untouched and execvp's the command.
-// It reads any operand containing `=` as an assignment, even after `--`.
+// It reads any operand containing `=` as an assignment, and a lone `-` as -i, even after `--`.
 const viaEnv = (command: ChildProcess.StandardCommand, cwd: string | undefined) =>
   ChildProcess.make(
     "/usr/bin/env",
@@ -226,7 +226,7 @@ const make = Effect.gen(function* () {
       try: () => findExecutable(candidates, command.command.includes("/")),
       catch: (code) => spawnFailure(command, code as SpawnFailure),
     });
-    return envChdir && !command.command.includes("=")
+    return envChdir && command.command !== "-" && !command.command.includes("=")
       ? viaEnv(command, workingDirectory)
       : viaShell(command, workingDirectory);
   });

@@ -105,6 +105,11 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("NonBlockingSpa
           const native = yield* run(command).pipe(Effect.provide(NodeServices.layer));
           expect(yield* run(command).pipe(Effect.provide(spawner))).toBe(native);
         }
+        // GNU env reads a lone `-` as -i even after `--`.
+        yield* fileSystem.writeFileString(`${root}/fresh/-`, "#!/bin/sh\necho dash\n");
+        yield* fileSystem.chmod(`${root}/fresh/-`, 0o755);
+        const dash = ChildProcess.make("-", [], { env: { PATH: `${root}/fresh` }, cwd: root });
+        expect(yield* run(dash).pipe(Effect.provide(spawner))).toBe("dash\n");
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });

@@ -212,10 +212,30 @@ export const createMuseSdkHostEffect = Effect.fn("createMuseSdkHostEffect")(func
   options: Omit<MuseSdkHostOptions, "signal">,
   createHost: typeof createMuseSdkHost = createMuseSdkHost,
 ) {
-  const launch = options.launch ?? (yield* museLaunch(options.binaryPath, options.environment));
+  const native = options.launch ?? (yield* museLaunch(options.binaryPath, options.environment));
+  // libuv blocks the server while the child runs chdir and the PATH search, which a hung
+  // mount stalls, so off Windows the shell does both in the child.
+  const { cwd = ".", ...childEntered } = options;
+  const hostOptions: Omit<MuseSdkHostOptions, "signal"> =
+    (yield* HostProcess.Platform) === "win32"
+      ? { ...options, launch: native }
+      : {
+          ...childEntered,
+          launch: {
+            command: "/bin/sh",
+            args: [
+              "-c",
+              'cd -P -- "$1" || exit 125\nshift\nexec "$@"',
+              "t3-muse",
+              cwd.startsWith("/") ? cwd : `./${cwd}`,
+              native.command,
+              ...native.args,
+            ],
+          },
+        };
   let startup: Promise<MuseSdkHost> | undefined;
   return yield* Effect.tryPromise((signal) => {
-    startup = createHost({ ...options, launch, signal });
+    startup = createHost({ ...hostOptions, signal });
     return startup;
   }).pipe(
     Effect.onInterrupt(() =>
