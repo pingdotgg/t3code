@@ -427,9 +427,9 @@ export function ThreadDetailsPrRow({
   return (
     <>
       {detail !== null && (showChecks || trailingAction !== null || watching) ? (
-        <div className="flex min-h-9 min-w-0 items-center gap-1 ps-2.5 pe-1">
+        <div className="flex min-h-9 min-w-0 items-center gap-2.5 ps-2.5 pe-1">
           {icon}
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <Tooltip>
               <TooltipTrigger
                 render={
