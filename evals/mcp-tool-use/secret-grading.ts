@@ -412,10 +412,17 @@ const shellSyntax = (command: string): string => {
       out += text.slice(i, i + 2);
       i += 2;
     } else if (c === "'") {
-      out += "''";
-      i = text.indexOf("'", i + 1) + 1 || text.length;
+      const end = text.indexOf("'", i + 1) + 1 || text.length;
+      // A quoted /dev/null is still /dev/null, as a redirect target.
+      out += text.slice(i, end) === "'/dev/null'" ? "/dev/null" : "''";
+      i = end;
     } else if (c === '"') {
       const end = quotedEnd(text, i + 1);
+      if (text.slice(i, end) === '"/dev/null"') {
+        out += "/dev/null";
+        i = end;
+        continue;
+      }
       const commands: Array<string> = [];
       for (let j = i + 1; j < end;) {
         if (text[j] === "\\") j += 2;
