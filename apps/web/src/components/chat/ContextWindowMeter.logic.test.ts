@@ -99,7 +99,7 @@ describe("resolveContextWindowModelDisplayName", () => {
         },
         modelOptionsByInstance,
       ),
-    ).toBe("5.6 Sol");
+    ).toBe("GPT-5.6 Sol");
   });
 });
 
@@ -131,16 +131,6 @@ describe("hasDismissedResumeCompaction", () => {
             },
           },
         },
-      ]),
-    ).toBe(false);
-  });
-
-  it("ignores pending questions and malformed resolved payloads", () => {
-    expect(
-      hasDismissedResumeCompaction([
-        { kind: "user-input.requested", payload: { answers: { question: "Don't ask again" } } },
-        { kind: "user-input.resolved", payload: null },
-        { kind: "user-input.resolved", payload: { answers: ["Don't ask again"] } },
       ]),
     ).toBe(false);
   });

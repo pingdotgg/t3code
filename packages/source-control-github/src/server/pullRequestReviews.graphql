@@ -182,11 +182,6 @@ query ReviewThreads(
             oid
             messageHeadline
             committedDate
-            additions
-            deletions
-            parents(first: 1) {
-              totalCount
-            }
             authors(first: 3) {
               nodes {
                 name

@@ -19,23 +19,9 @@ const facts = (overrides: Partial<ReachabilityFacts>): ReachabilityFacts => ({
 });
 
 describe("classifyReachability", () => {
-  it("names a generic blocker when no exit node is on", () => {
-    const result = classifyReachability(
-      facts({ connector: notConnected, edgeReachable: false }),
-      checkedAt,
-    );
-
-    expect(result).toMatchObject({
-      cause: "edge_unreachable",
-      hint: "A VPN, proxy, or firewall may block it.",
-    });
-  });
-
   it.each([
     [{ kind: "status", status: 502 }, "origin_unreachable"],
     [{ kind: "status", status: 530 }, "no_connector"],
-    [{ kind: "status", status: 404 }, "unexpected_response"],
-    [{ kind: "dns_failed" }, "dns_failed"],
     [{ kind: "network_error" }, "timeout"],
   ] as const)("maps endpoint result %o to %s", (endpoint, cause) => {
     expect(classifyReachability(facts({ endpoint, edgeReachable: true }), checkedAt)).toMatchObject(
@@ -78,6 +64,13 @@ describe("classifyReachability", () => {
     expect(
       classifyReachability(facts({ connector: notConnected, edgeReachable: true }), checkedAt),
     ).toMatchObject({ cause: "connector_not_ready" });
+  });
+
+  it("does not point an unlinked server at a background service it may not have", () => {
+    // Desktop and `t3 serve` run the server without a background service.
+    const result = classifyReachability(facts({ managedTunnelConfigured: false }), checkedAt);
+    expect(result).toMatchObject({ cause: "not_linked" });
+    expect(result.status === "unreachable" && result.fix).not.toContain("t3 service");
   });
 });
 

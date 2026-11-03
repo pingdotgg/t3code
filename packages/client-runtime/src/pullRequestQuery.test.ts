@@ -78,6 +78,7 @@ describe("colon-namespaced labels typed as a search", () => {
     expect(parsePullRequestQuery("size:S,size:XS").filters.labels).toEqual([["size:S", "size:XS"]]);
   });
 
+  // regression: #19934 negated key:value qualifiers become namespaced label exclusions
   it("excludes one the same way", () => {
     expect(parsePullRequestQuery("-size:XXL").filters.excludedLabels).toEqual(["size:XXL"]);
     expect(parsePullRequestQuery("-size:S,XS").filters.excludedLabels).toEqual([

@@ -347,6 +347,7 @@ describe("wrapped editor document changes", () => {
     expect(instance.getLinePosition(6001)?.top).toBe(before!.top);
   });
 
+  // regression: #10018 retaining wrapped row heights must not shift rows in an unwrapped layout
   it("keeps unwrapped positions unchanged", async () => {
     const { instance, append } = await makeFixture("scroll");
     const before = instance.getLinePosition(6001);
@@ -382,63 +383,3 @@ describe("wrapped editor document changes", () => {
     expect(instance.getLinePosition(6001)).toEqual({ top: 120008, height: 20 });
   });
 });
-
-class EditorElement extends MeasuredElement {
-  style: Record<string, string> = {};
-  parentElement: EditorElement | null = null;
-
-  override appendChild(child: EditorElement) {
-    child.parentElement = this;
-    this.children.push(child);
-    return child;
-  }
-
-  append(child: EditorElement) {
-    this.appendChild(child);
-  }
-
-  prepend(child: EditorElement) {
-    child.parentElement = this;
-    this.children.unshift(child);
-  }
-
-  replaceChildren(...children: (EditorElement | string)[]) {
-    this.children = [];
-    for (const child of children) if (typeof child !== "string") this.appendChild(child);
-  }
-
-  setAttribute() {}
-  removeAttribute() {}
-  addEventListener() {}
-  removeEventListener() {}
-  after() {}
-
-  remove() {
-    if (this.parentElement) {
-      this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
-    }
-  }
-
-  set innerHTML(value: string) {
-    expect(value.startsWith("<svg")).toBe(true);
-    this.replaceChildren(new EditorElement());
-  }
-
-  get firstElementChild() {
-    return this.children[0] ?? null;
-  }
-
-  querySelectorAll(selector: string) {
-    expect(selector).toBe("[data-code]");
-    return this.children.filter((child) => "code" in child.dataset);
-  }
-
-  querySelector(selector: string) {
-    expect(selector).toBe("[data-deletions]");
-    return null;
-  }
-
-  getContext() {
-    return { measureText: (text: string) => ({ width: text.length * 8 }) };
-  }
-}

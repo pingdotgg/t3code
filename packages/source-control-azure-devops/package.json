@@ -3,37 +3,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client/definition": {
-      "types": "./src/client/definition.ts",
-      "import": "./src/client/definition.ts"
-    },
-    "./server/AzureDevOpsCli": {
-      "types": "./src/server/AzureDevOpsCli.ts",
-      "import": "./src/server/AzureDevOpsCli.ts"
-    },
-    "./server/azureDevOpsDiff": {
-      "types": "./src/server/azureDevOpsDiff.ts",
-      "import": "./src/server/azureDevOpsDiff.ts"
-    },
-    "./server/AzureDevOpsPullRequestCli": {
-      "types": "./src/server/AzureDevOpsPullRequestCli.ts",
-      "import": "./src/server/AzureDevOpsPullRequestCli.ts"
-    },
-    "./server/azureDevOpsPullRequestJson": {
-      "types": "./src/server/azureDevOpsPullRequestJson.ts",
-      "import": "./src/server/azureDevOpsPullRequestJson.ts"
-    },
-    "./server/AzureDevOpsPullRequestProvider": {
-      "types": "./src/server/AzureDevOpsPullRequestProvider.ts",
-      "import": "./src/server/AzureDevOpsPullRequestProvider.ts"
-    },
-    "./server/azureDevOpsPullRequests": {
-      "types": "./src/server/azureDevOpsPullRequests.ts",
-      "import": "./src/server/azureDevOpsPullRequests.ts"
-    },
-    "./server/AzureDevOpsSourceControlProvider": {
-      "types": "./src/server/AzureDevOpsSourceControlProvider.ts",
-      "import": "./src/server/AzureDevOpsSourceControlProvider.ts"
+    "./shared/definition": {
+      "types": "./src/shared/definition.ts",
+      "import": "./src/shared/definition.ts"
     },
     "./server/driver": {
       "types": "./src/server/driver.ts",
@@ -41,7 +13,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc-rs --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {

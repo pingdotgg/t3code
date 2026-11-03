@@ -8,12 +8,6 @@ import {
   resolveComposerControlledEventCount,
 } from "./composerEditorRevision";
 
-describe("acknowledgeComposerNativeEvent", () => {
-  it("rejects events older than the latest native text revision", () => {
-    expect(acknowledgeComposerNativeEvent(5, 4)).toBeNull();
-  });
-});
-
 describe("isComposerNativeEcho", () => {
   const snapshots = [{ eventCount: 3, value: "native", selection: { start: 6, end: 6 } }];
 

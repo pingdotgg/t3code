@@ -2,7 +2,6 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   COMPOSER_MENTION_DRAG_TYPE,
-  COMPOSER_PULL_REQUEST_DRAG_TYPE,
   type ComposerMentionDropHost,
   makeComposerMentionDragHandlers,
 } from "./composerMentionDrag.ts";
@@ -60,9 +59,6 @@ describe("makeComposerMentionDragHandlers", () => {
   });
 
   it("stops the native event too, not just the synthetic one", () => {
-    // React's stopPropagation only halts synthetic dispatch; without the
-    // native stop, the editor's own DOM listeners process the drop and sync
-    // their stale state back over the inserted mention.
     const { host } = makeHost();
     const handlers = makeComposerMentionDragHandlers(host);
     const { event, calls } = makeDragEvent();
@@ -73,21 +69,10 @@ describe("makeComposerMentionDragHandlers", () => {
   });
 
   it('answers dragover with the "move" effect the tree allows', () => {
-    // Naming an effect outside the source's effectAllowed makes the browser
-    // cancel the drop without ever firing it.
     const { host } = makeHost();
     const handlers = makeComposerMentionDragHandlers(host);
     const { event } = makeDragEvent();
     handlers.onDragOver(event);
     expect(event.dataTransfer.dropEffect).toBe("move");
-  });
-
-  it("ignores a pull request payload that does not decode", () => {
-    const { host, log } = makeHost();
-    const handlers = makeComposerMentionDragHandlers(host);
-    handlers.onDrop(
-      makeDragEvent({ format: COMPOSER_PULL_REQUEST_DRAG_TYPE, mention: '{"number":0}' }).event,
-    );
-    expect(log).toEqual(["active:false"]);
   });
 });

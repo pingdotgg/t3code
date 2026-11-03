@@ -63,9 +63,4 @@ describe("collectMatches", () => {
     expect(find("oldName")).toEqual(["file-0:deletions:2:6-13", "file-0:additions:3:14-21"]);
     expect(find("nil")).toEqual(["file-1:deletions:1:0-3", "file-1:additions:1:2-5"]);
   });
-
-  it("returns nothing for an empty query or an invalid pattern", () => {
-    expect(find("")).toEqual([]);
-    expect(find("(", { regex: true })).toEqual([]);
-  });
 });

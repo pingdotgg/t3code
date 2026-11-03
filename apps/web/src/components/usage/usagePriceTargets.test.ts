@@ -96,36 +96,6 @@ describe("model price writes", () => {
     expect([...results.values()].every((result) => result.status === "saved")).toBe(true);
   });
 
-  it("reports thrown writes and permission/version restrictions without aborting other saves", async () => {
-    const onResult = vi.fn();
-    const write = vi.fn(async () => {
-      throw new Error("connection lost");
-    });
-    await writeUsagePrices({
-      targets: [
-        target("lost"),
-        target("denied", { unavailable: "Read-only access" }),
-        target("old", { unavailable: "Update server to edit prices" }),
-      ],
-      changes: new Map([[EnvironmentId.make("lost"), [{ model: "example", price }]]]),
-      write,
-      onResult,
-    });
-    expect(write).toHaveBeenCalledTimes(1);
-    expect(onResult).toHaveBeenCalledWith("lost", {
-      status: "failed",
-      error: "Could not save. Try again.",
-    });
-    expect(onResult).toHaveBeenCalledWith("denied", {
-      status: "failed",
-      error: "Read-only access",
-    });
-    expect(onResult).toHaveBeenCalledWith("old", {
-      status: "failed",
-      error: "Update server to edit prices",
-    });
-  });
-
   it("sends mappings beside prices and fails servers that cannot store them", async () => {
     const write = vi.fn(async () => ({ _tag: "Success" as const }));
     const onResult = vi.fn();

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
+import * as NodeReadline from "node:readline";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -38,20 +39,68 @@ const killGroup = (pgid: number) =>
     }
   });
 
+// libuv ignores a failed setsid(), which happens when the new pid equals the id of a group
+// that still has members (such as a sleep orphaned by an earlier test). The child would then
+// share the test worker's group, so the script first confirms it leads its own group and exits
+// with 97 before starting anything if it does not.
+const groupLeaderGuard = `pgid="$(ps -o pgid= -p $$ 2>&1 | tr -d ' ')"; [ "$pgid" = "$$" ] || { echo "ungrouped:$pgid"; exit 97; }; echo grouped; `;
+
+// Yields the group, or a description of why this shell cannot be used as one.
+const spawnGroupLeader = (args: ReadonlyArray<string>, script: string) =>
+  Effect.gen(function* () {
+    const child = NodeChildProcess.spawn("/bin/sh", ["-c", groupLeaderGuard + script, ...args], {
+      detached: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const pid = child.pid;
+    if (pid === undefined) return yield* Effect.die("spawn failed");
+    const grouped = yield* Deferred.make<true | string>();
+    const exited = yield* Deferred.make<NodeJS.Signals | null>();
+    const printed = yield* Deferred.make<void>();
+    child.once("exit", (_code, signal) => Deferred.doneUnsafe(exited, Effect.succeed(signal)));
+    // "close" fires after stdout drains, so a guard line always lands first. It only fires before
+    // "grouped" when the shell died without starting the script, such as from a signal.
+    child.once("close", (code, signal) =>
+      Deferred.doneUnsafe(
+        grouped,
+        Effect.succeed(
+          `shell ${pid} exited (code ${code}, signal ${signal}) before its group check`,
+        ),
+      ),
+    );
+    NodeReadline.createInterface({ input: child.stdout }).on("line", (line) => {
+      if (line === "grouped") Deferred.doneUnsafe(grouped, Effect.succeed(true));
+      if (line.startsWith("ungrouped:")) {
+        const output = line.slice("ungrouped:".length);
+        Deferred.doneUnsafe(
+          grouped,
+          Effect.succeed(`\`ps -o pgid= -p ${pid}\` printed ${JSON.stringify(output)}`),
+        );
+      }
+      if (line === "ready") Deferred.doneUnsafe(printed, Effect.void);
+    });
+    const result = yield* Deferred.await(grouped);
+    return result === true
+      ? { pid, exited: Deferred.await(exited), printed: Deferred.await(printed) }
+      : result;
+  });
+
+// A pid colliding with a live group id is rare, so a few retries clear it. Repeated failures
+// mean the guard itself is broken (for example a missing or BusyBox `ps`).
+const GROUP_LEADER_ATTEMPTS = 5;
+
 const spawnGroup = (args: ReadonlyArray<string>, script = "sleep 600 & wait") =>
   Effect.acquireRelease(
     Effect.gen(function* () {
-      const child = NodeChildProcess.spawn("/bin/sh", ["-c", script, ...args], {
-        detached: true,
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      const exited = yield* Deferred.make<NodeJS.Signals | null>();
-      const printed = yield* Deferred.make<void>();
-      child.once("exit", (_code, signal) => Deferred.doneUnsafe(exited, Effect.succeed(signal)));
-      child.stdout.once("data", () => Deferred.doneUnsafe(printed, Effect.void));
-      const pid = child.pid;
-      if (pid === undefined) return yield* Effect.die("spawn failed");
-      return { pid, exited: Deferred.await(exited), printed: Deferred.await(printed) };
+      let failure = "";
+      for (let attempt = 0; attempt < GROUP_LEADER_ATTEMPTS; attempt++) {
+        const group = yield* spawnGroupLeader(args, script);
+        if (typeof group !== "string") return group;
+        failure = group;
+      }
+      return yield* Effect.die(
+        `no shell led its own process group after ${GROUP_LEADER_ATTEMPTS} attempts; last: ${failure}`,
+      );
     }),
     ({ pid }) => killGroup(pid),
   );
@@ -64,7 +113,7 @@ const recordFromDeadServer = (stateDir: string, server: { readonly pid: number }
       ownerPid: previousServer.pid,
     });
     yield* Effect.asVoid(previousLedger.track({ pid: server.pid, port: 4096, args: SERVE_ARGS }));
-    process.kill(-previousServer.pid, "SIGKILL");
+    yield* killGroup(previousServer.pid);
     yield* previousServer.exited;
   });
 

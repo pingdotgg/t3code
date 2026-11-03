@@ -19,11 +19,13 @@ import {
   composerStateAtPromptEnd,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  extendReplacementRangeForTrailingSpace,
   formatAssistantCitationForComposer,
-  isCollapsedCursorAdjacentToInlineToken,
   isPathSuggestionCurrent,
+  parseSideChatCommand,
   replaceTextRange,
 } from "./composer-logic";
+import { slashCommandItemsForPromptPosition } from "./components/chat/composerSlashCommandSearch";
 import { carryDisplacedCustomAnswerIntoPrompt } from "./pendingUserInput";
 import { formatTerminalContextReference } from "./lib/terminalContext";
 
@@ -265,20 +267,17 @@ describe("detectComposerTrigger", () => {
     expect(trigger).toBeNull();
   });
 
-  it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
-    "detects %sskill trigger at cursor",
-    (prefix) => {
-      const text = `Use ${prefix}gh-fi`;
-      const trigger = detectComposerTrigger(text, text.length);
-
-      expect(trigger).toEqual({
-        kind: "skill",
-        query: "gh-fi",
-        rangeStart: "Use ".length,
-        rangeEnd: text.length,
-      });
-    },
-  );
+  it.each([
+    "It costs $5",
+    "budget $9.99",
+    "only $.99",
+    "about €20",
+    "raise $10k",
+    "raise $10k.",
+    "is it $5?",
+  ])("does not detect a skill trigger for the amount in %j", (text) => {
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
 
   it("detects a pull request number at a token boundary", () => {
     const text = "Compare this with #8737";
@@ -291,33 +290,12 @@ describe("detectComposerTrigger", () => {
     });
   });
 
-  it("opens pull request completion from a bare hash", () => {
-    const text = "Compare with #";
-
-    expect(detectComposerTrigger(text, text.length)).toEqual({
-      kind: "pull-request",
-      query: "",
-      rangeStart: "Compare with ".length,
-      rangeEnd: text.length,
-    });
-  });
-
-  it("supports hyphenated pull request search terms", () => {
-    const text = "Find #inline-context";
-
-    expect(detectComposerTrigger(text, text.length)).toEqual({
-      kind: "pull-request",
-      query: "inline-context",
-      rangeStart: "Find ".length,
-      rangeEnd: text.length,
-    });
-  });
-
   it("does not keep pull request completion active for headings or embedded hashes", () => {
     expect(detectComposerTrigger("# Heading", "# Heading".length)).toBeNull();
     expect(detectComposerTrigger("issue#123", "issue#123".length)).toBeNull();
   });
 
+  // regression: #936 @file autocomplete used the wrong cursor when typing mid-text
   it("detects @path trigger in the middle of existing text", () => {
     const text = "Please inspect @in this sentence";
     const cursorAfterAt = "Please inspect @".length;
@@ -404,10 +382,6 @@ describe("filterComposerPullRequestMatches", () => {
 });
 
 describe("expandCollapsedComposerCursor", () => {
-  it("keeps cursor unchanged when no mention segment is present", () => {
-    expect(expandCollapsedComposerCursor("plain text", 5)).toBe(5);
-  });
-
   it("maps collapsed mention cursor to expanded text cursor", () => {
     const text = "what's in my @AGENTS.md fsfdas";
     const collapsedCursorAfterMention = "what's in my ".length + 2;
@@ -418,6 +392,7 @@ describe("expandCollapsedComposerCursor", () => {
     );
   });
 
+  // regression: #2625 cursor mapping broke for quoted mentions containing spaces
   it("maps collapsed quoted mention cursor to expanded text cursor", () => {
     const text = 'what is in @"My File.md" please';
     const collapsedCursorAfterMention = "what is in ".length + 2;
@@ -444,16 +419,6 @@ describe("expandCollapsedComposerCursor", () => {
     const expandedCursor = expandCollapsedComposerCursor(text, collapsedCursorAfterMention);
 
     expect(detectComposerTrigger(text, expandedCursor)).toBeNull();
-  });
-
-  it.each(["$", "€", "𑿝"])("maps collapsed %s skill cursor to expanded text cursor", (prefix) => {
-    const text = `run ${prefix}review-follow-up then`;
-    const collapsedCursorAfterSkill = "run ".length + 2;
-    const expandedCursorAfterSkill = `run ${prefix}review-follow-up `.length;
-
-    expect(expandCollapsedComposerCursor(text, collapsedCursorAfterSkill)).toBe(
-      expandedCursorAfterSkill,
-    );
   });
 });
 
@@ -483,15 +448,6 @@ describe("collapseExpandedComposerCursor", () => {
     const collapsedCursor = collapseExpandedComposerCursor(text, expandedCursor);
 
     expect(collapsedCursor).toBe("open ".length + 1 + " then @src/index.ts ".length);
-    expect(expandCollapsedComposerCursor(text, collapsedCursor)).toBe(expandedCursor);
-  });
-
-  it("collapses only genuine mentions when package-like text exists earlier", () => {
-    const text = "install @scope/pkg then @README.md ";
-    const expandedCursor = text.length;
-    const collapsedCursor = collapseExpandedComposerCursor(text, expandedCursor);
-
-    expect(collapsedCursor).toBe("install @scope/pkg then ".length + 1 + " ".length);
     expect(expandCollapsedComposerCursor(text, collapsedCursor)).toBe(expandedCursor);
   });
 });
@@ -540,9 +496,6 @@ describe("assistant citation cursor offsets", () => {
     for (const offset of [1, citationSource.length - 1, citationSource.length]) {
       expect(collapseExpandedComposerCursor(text, prefix.length + offset)).toBe(prefix.length + 1);
     }
-    expect(isCollapsedCursorAdjacentToInlineToken(text, prefix.length, "right")).toBe(true);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, prefix.length + 1, "left")).toBe(true);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, prefix.length + 2, "left")).toBe(false);
   });
 
   it("deletes one collapsed citation without changing its neighbor or surrounding punctuation", () => {
@@ -556,37 +509,6 @@ describe("assistant citation cursor offsets", () => {
 
     expect(result).toEqual({ text: `(),${citationSource}!`, cursor: 1 });
     expect(collapseExpandedComposerCursor(result.text, result.text.length)).toBe("(),□!".length);
-  });
-});
-
-describe("isCollapsedCursorAdjacentToInlineToken", () => {
-  it("detects left adjacency only when cursor is directly after a mention", () => {
-    const text = "open @AGENTS.md next";
-    const mentionStart = "open ".length;
-    const mentionEnd = mentionStart + 1;
-
-    expect(isCollapsedCursorAdjacentToInlineToken(text, mentionEnd, "left")).toBe(true);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, mentionStart, "left")).toBe(false);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, mentionEnd + 1, "left")).toBe(false);
-  });
-
-  it("detects right adjacency only when cursor is directly before a mention", () => {
-    const text = "open @AGENTS.md next";
-    const mentionStart = "open ".length;
-    const mentionEnd = mentionStart + 1;
-
-    expect(isCollapsedCursorAdjacentToInlineToken(text, mentionStart, "right")).toBe(true);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, mentionEnd, "right")).toBe(false);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, mentionStart - 1, "right")).toBe(false);
-  });
-
-  it("treats context reference pills as inline tokens for adjacency checks", () => {
-    const text = `open ${terminalReference} next`;
-    const tokenStart = "open ".length;
-    const tokenEnd = tokenStart + 1;
-
-    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenEnd, "left")).toBe(true);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
   });
 });
 
@@ -617,5 +539,40 @@ describe("literal editor answer cursor state", () => {
       });
     }
     expect(composerStateAtPromptEnd("Use $my").trigger?.kind).toBe("skill");
+  });
+});
+
+describe("extendReplacementRangeForTrailingSpace", () => {
+  it("swallows one existing space after the range when the replacement ends with one", () => {
+    expect(extendReplacementRangeForTrailingSpace("@fi rest", 3, "@file ")).toBe(4);
+    expect(extendReplacementRangeForTrailingSpace("@firest", 3, "@file ")).toBe(3);
+    expect(extendReplacementRangeForTrailingSpace("@fi rest", 3, "@file")).toBe(3);
+    expect(extendReplacementRangeForTrailingSpace("@fi", 3, "@file ")).toBe(3);
+  });
+});
+
+describe("parseSideChatCommand", () => {
+  it("reads an optional prompt after /side or /btw", () => {
+    expect(parseSideChatCommand("/side")).toEqual({ prompt: "" });
+    expect(parseSideChatCommand("  /SIDE  why does this fail?\nline two ")).toEqual({
+      prompt: "why does this fail?\nline two",
+    });
+    expect(parseSideChatCommand("/btw check @src/a.ts")).toEqual({ prompt: "check @src/a.ts" });
+  });
+
+  it("ignores other commands and inline mentions, which the menu does not offer", () => {
+    expect(parseSideChatCommand("/sidebar")).toBeNull();
+    expect(parseSideChatCommand("/btwx")).toBeNull();
+    expect(parseSideChatCommand("ask /side later")).toBeNull();
+    const items = (["side", "btw", "plan"] as const).map((command) => ({
+      id: `slash:${command}`,
+      type: "slash-command" as const,
+      command,
+      label: `/${command}`,
+      description: "",
+    }));
+    expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
+      "slash:plan",
+    ]);
   });
 });

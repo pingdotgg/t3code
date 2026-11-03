@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as RpcClientError from "effect/rpc/RpcClientError";
 
-import * as AcpSchema from "./_generated/schema.gen.ts";
 import { callRpc } from "./_internal/shared.ts";
 import * as AcpError from "./errors.ts";
 
@@ -54,25 +53,17 @@ describe("effect-acp errors", () => {
     });
   });
 
-  it.effect("preserves protocol request errors as request errors", () => {
-    const failure = AcpSchema.Error.make({
-      code: -32602,
-      message: "Invalid params",
-      data: { field: "sessionId" },
+  it("includes the authored detail but not the cause in the transport message", () => {
+    const cause = new Error("connection refused at a private endpoint");
+    const error = new AcpError.AcpTransportError({
+      detail: "ACP replay did not consume all frames",
+      cause,
     });
 
-    return Effect.gen(function* () {
-      const error = yield* callRpc("session/load", Effect.fail(failure)).pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        _tag: "AcpRequestError",
-        code: -32602,
-        errorMessage: "Invalid params",
-        data: { field: "sessionId" },
-        method: "session/load",
-        operation: "receive-response",
-      });
-    });
+    expect(error.message).toBe(
+      "ACP transport operation failed: ACP replay did not consume all frames.",
+    );
+    expect(error.cause).toBe(cause);
   });
 
   it("preserves structured extension handler failures behind stable request errors", () => {
@@ -135,14 +126,17 @@ describe("effect-acp errors", () => {
   it.effect("summarizes schema issues by path without payload values", () =>
     Effect.gen(function* () {
       const secret = "acp-summary-secret";
-      const cause = yield* Schema.decodeUnknownEffect(
+      const decodeStruct = Schema.decodeUnknownEffect(
         Schema.Struct({
           update: Schema.Struct({ used: Schema.Number, size: Schema.Number }),
           env: Schema.Record(Schema.String, Schema.Number),
         }),
-      )({ update: { size: secret }, env: { [`${secret} key`]: secret } }, { errors: "all" }).pipe(
-        Effect.flip,
       );
+
+      const cause = yield* decodeStruct(
+        { update: { size: secret }, env: { [`${secret} key`]: secret } },
+        { errors: "all" },
+      ).pipe(Effect.flip);
       const error = AcpError.AcpProtocolParseError.fromSchemaError(
         "decode-notification-payload",
         "session/update",

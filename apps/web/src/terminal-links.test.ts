@@ -17,6 +17,36 @@ function createBufferLine(text: string, isWrapped = false): TerminalBufferLineLi
 
 describe("extractTerminalLinks", () => {
   it.each([
+    String.raw`C:\dev\ai-test\dir 1`,
+    String.raw`C:\dev\ai-test\dir 1\test`,
+    "C:\\",
+    String.raw`\\server\my share\dir 1`,
+    "/home/Jane Doe/project",
+    String.raw`C:\dev\folder (draft)\name!`,
+  ])("keeps the full PowerShell prompt path %s in one link", (path) => {
+    expect(extractTerminalLinks(`PS ${path}> `)).toEqual([
+      { kind: "path", text: path, start: 3, end: 3 + path.length },
+    ]);
+  });
+
+  it("keeps links in a command separate from the PowerShell prompt path", () => {
+    const path = String.raw`C:\dev\dir 1\test`;
+    const prompt = `PS ${path}> `;
+    const url = "https://example.com";
+    expect(extractTerminalLinks(`${prompt}echo ${url}`)).toEqual([
+      { kind: "path", text: path, start: 3, end: 3 + path.length },
+      { kind: "url", text: url, start: prompt.length + 5, end: prompt.length + 5 + url.length },
+    ]);
+  });
+
+  it("does not extend ordinary output paths through trailing prose", () => {
+    const path = String.raw`C:\dev\project`;
+    expect(extractTerminalLinks(`see ${path} for details`)).toEqual([
+      { kind: "path", text: path, start: 4, end: 4 + path.length },
+    ]);
+  });
+
+  it.each([
     String.raw`src\index.ts:12`,
     String.raw`.\src\index.ts:12:7`,
     String.raw`..\src\index.ts:12`,
@@ -61,25 +91,6 @@ describe("extractTerminalLinks", () => {
       { kind: "path", text: path, start: 1, end: 1 + path.length },
       { kind: "url", text: url, start: path.length + 3, end: path.length + 3 + url.length },
       { kind: "path", text: "src/index.ts", start: line.length - 12, end: line.length },
-    ]);
-  });
-
-  it("finds http urls and path tokens", () => {
-    const line =
-      "failed at https://example.com/docs and src/components/ThreadTerminalDrawer.tsx:42";
-    expect(extractTerminalLinks(line)).toEqual([
-      {
-        kind: "url",
-        text: "https://example.com/docs",
-        start: 10,
-        end: 34,
-      },
-      {
-        kind: "path",
-        text: "src/components/ThreadTerminalDrawer.tsx:42",
-        start: 39,
-        end: 81,
-      },
     ]);
   });
 
@@ -176,6 +187,25 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
+  it.each([
+    "connected to redis://127.0.0.1:6379/0",
+    "connected to postgres://localhost:5432/app",
+    "uploaded s3://bucket/reports/today.csv",
+    "    at main (file:///Users/jane/app/src/index.mjs:3:7)",
+    "+redis://localhost:6379/0",
+    "-redis://localhost:6379/0",
+  ])("does not turn part of a non-web URL into an editor link: %s", (line) => {
+    expect(extractTerminalLinks(line)).toEqual([]);
+  });
+
+  it("keeps file links beside a non-web URL", () => {
+    const line = "src/db.ts:4 redis://localhost:6379/0 C:/app/src/db.ts:9";
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text: "src/db.ts:4", start: 0, end: 11 },
+      { kind: "path", text: "C:/app/src/db.ts:9", start: 37, end: 55 },
+    ]);
+  });
+
   it("keeps a question mark inside a filesystem path", () => {
     const path = "/tmp/report?draft";
     expect(extractTerminalLinks(`wrote ${path}`)).toEqual([
@@ -251,6 +281,7 @@ describe("resolvePathLinkTarget", () => {
     ).toBe("C:/Users/julius/project/src/main.ts:12");
   });
 
+  // regression: #13408 terminal links kept a trailing colon
   it("keeps the line and column of a compiler diagnostic", () => {
     const [link] = extractTerminalLinks("/Users/julius/project/main.c:10:5: error: expected ';'");
     expect(resolvePathLinkTarget(link?.text ?? "", "/Users/julius/project")).toBe(

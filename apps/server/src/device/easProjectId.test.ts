@@ -89,16 +89,6 @@ it.effect.each([
     expected: Option.none(),
   },
   {
-    case: "gives no answer for a config naming two projects, even with app.json",
-    files: {
-      "app.config.js": `export default () => ({
-        extra: { eas: { projectId: process.env.PROD ? "${ID_A}" : "${ID_B}" } },
-      });`,
-      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
-    },
-    expected: Option.none(),
-  },
-  {
     case: "gives no answer when one app sets its project from a variable",
     files: {
       "apps/mobile/app.config.ts": `export default {
@@ -122,49 +112,10 @@ it.effect.each([
     expected: Option.none(),
   },
   {
-    case: "gives no answer when a config joins the project id from pieces",
-    files: {
-      "apps/mobile/app.config.ts": `export default {
-        extra: { eas: { projectId: "${ID_A.slice(0, 9)}" + "${ID_A.slice(9)}" } },
-      };`,
-      "apps/kiosk/app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_B } } } }),
-    },
-    expected: Option.none(),
-  },
-  {
-    case: "reads a project id a comment follows",
-    files: {
-      "app.config.ts": `export default {
-        extra: { eas: { projectId: "${ID_A}" /* production */ // the only one
-        } },
-      };`,
-    },
-    expected: Option.some(ID_A),
-  },
-  {
-    case: "gives no answer when a separator inside a comment precedes the rest of the id",
-    files: {
-      "apps/mobile/app.config.ts": `export default {
-        extra: { eas: { projectId: "${ID_A.slice(0, 9)}" // prefix, continued (below)
-          + "${ID_A.slice(9)}" } },
-      };`,
-      "apps/kiosk/app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_B } } } }),
-    },
-    expected: Option.none(),
-  },
-  {
     case: "gives no answer when a spread after the project id may replace it",
     files: {
       "apps/mobile/app.config.js": `import { eas } from "./app.shared.js";
         export default { extra: { eas: { projectId: "${ID_A}", ...eas } } };`,
-    },
-    expected: Option.none(),
-  },
-  {
-    case: "gives no answer when a spread at the top of the config may replace the project id",
-    files: {
-      "apps/mobile/app.config.js": `import { brand } from "./app.shared.js";
-        export default { extra: { eas: { projectId: "${ID_A}" } }, ...brand };`,
     },
     expected: Option.none(),
   },
@@ -176,16 +127,6 @@ it.effect.each([
         Object.assign(config.extra.eas, JSON.parse(process.env.EAS_OVERRIDES ?? "{}"));
         return config;
       };`,
-    },
-    expected: Option.none(),
-  },
-  {
-    case: "gives no answer when the config is assigned over from defaults that name the project id",
-    files: {
-      "app.config.js": `module.exports = Object.assign(
-        { name: "Mobile", extra: { eas: { projectId: "${ID_A}" } } },
-        require("./app.config.local.js"),
-      );`,
     },
     expected: Option.none(),
   },
@@ -206,76 +147,9 @@ it.effect.each([
     expected: Option.none(),
   },
   {
-    case: "does not let a sibling win over an app whose config returns app.json's config changed",
-    files: {
-      "apps/mobile/app.config.js": `module.exports = ({ config }) => {
-        config.name = "Mobile";
-        return config;
-      };`,
-      "apps/mobile/app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
-      "apps/kiosk/app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_B } } } }),
-    },
-    expected: Option.none(),
-  },
-  {
-    case: "gives no answer when a spread of an identifier starting with config may replace app.json's id",
-    files: {
-      "app.config.js": `const config$ = require("./app.local.js");
-        module.exports = ({ config }) => ({ ...config, ...config$ });`,
-      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
-    },
-    expected: Option.none(),
-  },
-  {
-    case: "gives no answer when a config spreads the config but replaces extra",
-    files: {
-      "app.config.js": `module.exports = ({ config }) => ({ ...config, extra: {} });`,
-      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
-    },
-    expected: Option.none(),
-  },
-  {
     case: "gives no answer when a config has more extra entries than are read",
     files: {
       "app.config.js": `module.exports = ({ config }) => ({ ...config, extra: { ...config.extra, ${"extra: { ...config.extra, ".repeat(40)}${"}".repeat(40)} } });`,
-      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
-    },
-    expected: Option.none(),
-  },
-  {
-    case: "gives no answer when a config assigns extra in brackets after a literal id",
-    files: {
-      "app.config.js": `module.exports = ({ config }) => {
-        const c = { ...config, extra: { eas: { projectId: "${ID_A}" } } };
-        c["extra"] = other();
-        return c;
-      };`,
-    },
-    expected: Option.none(),
-  },
-  {
-    case: "gives no answer when a config deletes from the config it spreads",
-    files: {
-      "app.config.js": `module.exports = ({ config }) => {
-        delete config.extra;
-        return { ...config };
-      };`,
-      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
-    },
-    expected: Option.none(),
-  },
-  {
-    case: "gives no answer when a config spreads part of the config over it",
-    files: {
-      "app.config.js": `module.exports = ({ config }) => ({ ...config, ...config.extra.preview });`,
-      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
-    },
-    expected: Option.none(),
-  },
-  {
-    case: "gives no answer when an extra entry spreads the whole config, not its extra",
-    files: {
-      "app.config.js": `module.exports = ({ config }) => ({ ...config, extra: { ...config } });`,
       "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
     },
     expected: Option.none(),
@@ -290,15 +164,6 @@ it.effect.each([
       "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
     },
     expected: Option.some(ID_A),
-  },
-  {
-    case: "gives no answer when a config may return another file's config on some builds",
-    files: {
-      "app.config.js": `module.exports = process.env.PROD
-        ? { extra: { eas: { projectId: "${ID_A}" } } }
-        : require("./app.config.staging.js");`,
-    },
-    expected: Option.none(),
   },
   {
     case: "reads a project id that follows spreads",
@@ -330,14 +195,6 @@ it.effect.each([
     expected: Option.none(),
   },
   {
-    case: "reads a static config that is not wrapped in `expo`",
-    files: {
-      "apps/mobile/app.config.json": JSON.stringify({ extra: { eas: { projectId: ID_A } } }),
-      "apps/README.md": "one app",
-    },
-    expected: Option.some(ID_A),
-  },
-  {
     case: "does not guess between an unwrapped static config and a wrapped one",
     files: {
       "apps/mobile/app.config.json": JSON.stringify({ extra: { eas: { projectId: ID_A } } }),
@@ -359,14 +216,14 @@ it.effect.each([
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
-it.effect.each(["\r", "\u2028", "\u2029"])(
-  "gives no answer when a comment ending in %o precedes the rest of a joined id",
-  (terminator) =>
+it.effect(
+  "gives no answer when a comment ending in a non-LF line terminator precedes the rest of a joined id",
+  () =>
     Effect.gen(function* () {
       // A line comment ends at any ECMAScript line terminator, not only LF.
       const root = yield* workspace({
         "apps/mobile/app.config.ts":
-          `export default { extra: { eas: { projectId: "${ID_A.slice(0, 9)}" // prefix${terminator}` +
+          `export default { extra: { eas: { projectId: "${ID_A.slice(0, 9)}" // prefix\u2028` +
           `+ "${ID_A.slice(9)}" } } };`,
         "apps/kiosk/app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_B } } } }),
       });

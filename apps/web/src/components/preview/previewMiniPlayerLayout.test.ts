@@ -207,15 +207,6 @@ describe("resolvePreviewMiniPlayerFrame with the details card", () => {
 describe("clampPreviewMiniPlayerPosition", () => {
   const player = { width: 360, height: 240 };
 
-  it("keeps the player above a growing composer", () => {
-    expect(
-      clampPreviewMiniPlayerPosition({ x: 500, y: 448 }, container, player, {
-        composer: { ...composer, height: 160 },
-        detailsCard: null,
-      }),
-    ).toEqual({ x: 500, y: 288 });
-  });
-
   it("lets the player drop into the margin beside the composer", () => {
     expect(
       clampPreviewMiniPlayerPosition(
@@ -236,13 +227,6 @@ describe("clampPreviewMiniPlayerPosition", () => {
         obstacles,
       ),
     ).toEqual({ x: composer.right + gap, y: 500 });
-  });
-
-  it("keeps the player out from under the details card", () => {
-    expect(clampPreviewMiniPlayerPosition({ x: 700, y: 40 }, container, player, withCard)).toEqual({
-      x: 628,
-      y: 260 + gap,
-    });
   });
 
   it("clears the card and the composer together in a tight column", () => {

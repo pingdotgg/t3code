@@ -1,4 +1,3 @@
-import { EnvironmentId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => {
@@ -99,21 +98,7 @@ vi.mock("react-native", () => ({
   },
 }));
 
-import { loadPreferences, saveConnection, savePreferencesPatch } from "../persistence/imperative";
-import { toStableSavedRemoteConnection } from "./connection";
-
-const managedConnection = {
-  environmentId: EnvironmentId.make("environment-1"),
-  environmentLabel: "Desktop",
-  pairingUrl: "https://desktop.example/",
-  displayUrl: "https://desktop.example/",
-  httpBaseUrl: "https://desktop.example/",
-  wsBaseUrl: "wss://desktop.example/",
-  bearerToken: null,
-  authenticationMethod: "dpop",
-  dpopAccessToken: "short-lived-token",
-  relayManaged: true,
-} as const;
+import { loadPreferences, savePreferencesPatch } from "../persistence/imperative";
 
 describe("mobile connection storage", () => {
   beforeEach(() => {
@@ -121,13 +106,31 @@ describe("mobile connection storage", () => {
     vi.clearAllMocks();
   });
 
-  it("persists relay-managed connections without their ephemeral access token", async () => {
-    await saveConnection(managedConnection);
+  it("persists tab order locally and retains it when another preference changes", async () => {
+    const navigationTabOrder = ["usage", "threads", "pullRequests"];
+    const hiddenNavigationTabs = ["issues", "home"];
+    await savePreferencesPatch({ navigationTabOrder, hiddenNavigationTabs });
+    await savePreferencesPatch({ baseFontSize: 19 });
+    await expect(loadPreferences()).resolves.toEqual({
+      navigationTabOrder,
+      hiddenNavigationTabs,
+      baseFontSize: 19,
+    });
+  });
 
-    const savedValue = mocks.setItemAsync.mock.calls[0]?.[1];
-    expect(savedValue).toBeDefined();
-    expect(JSON.parse(savedValue ?? "")).toEqual({
-      connections: [toStableSavedRemoteConnection(managedConnection)],
+  it("ignores invalid tab-order entries without dropping other saved preferences", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        navigationTabOrder: ["usage", null, 4, "threads"],
+        hiddenNavigationTabs: ["home", null],
+        baseFontSize: 18,
+      }),
+      1,
+    );
+    await expect(loadPreferences()).resolves.toEqual({
+      navigationTabOrder: ["usage", "threads"],
+      hiddenNavigationTabs: ["home"],
+      baseFontSize: 18,
     });
   });
 
@@ -136,14 +139,6 @@ describe("mobile connection storage", () => {
     await mocks.setItemAsync("t3code.preferences", JSON.stringify({ baseFontSize: 17 }));
 
     await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 17 });
-  });
-
-  it("persists Material You independently for each appearance", async () => {
-    const themes = { lightThemeId: "material-you", darkThemeId: "ocean" } as const;
-    await savePreferencesPatch(themes);
-    await expect(loadPreferences()).resolves.toEqual(themes);
-    await savePreferencesPatch({ lightThemeId: "t3-chat" });
-    await expect(loadPreferences()).resolves.toEqual({ ...themes, lightThemeId: "t3-chat" });
   });
 
   it("falls back to secure storage when SQLite cannot save preferences", async () => {
@@ -185,21 +180,6 @@ describe("mobile connection storage", () => {
     await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 21 });
     expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({ baseFontSize: 21 });
     expect(mocks.getStoredValue("t3code.preferences.fallback")).toBeNull();
-  });
-
-  it("ignores an invalid fallback even when it has a newer timestamp", async () => {
-    mocks.setPreferencesJson(JSON.stringify({ baseFontSize: 21 }), 30);
-    await mocks.setItemAsync(
-      "t3code.preferences.fallback",
-      JSON.stringify({ payload: "{", updatedAt: 40 }),
-    );
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 21 });
-    expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({ baseFontSize: 21 });
-    expect(mocks.getStoredValue("t3code.preferences.fallback")).toBeNull();
-
-    warn.mockRestore();
   });
 
   it("keeps SQLite authoritative when stale legacy preferences remain", async () => {

@@ -3,7 +3,7 @@ import { NodeViewContent, NodeViewWrapper, type NodeViewProps } from "@tiptap/re
 import { languageOfInfoString, withInfoStringLanguage } from "~/composer-code-languages";
 
 import { useRenderedAppearance } from "../../hooks/useTheme";
-import { MarkdownCodeBlockFrame } from "../ChatMarkdown";
+import { MarkdownCodeBlockFrame } from "./MarkdownCodeBlock";
 import { ComposerCodeBlockLanguagePicker } from "./ComposerCodeBlockLanguagePicker";
 
 export function ComposerCodeBlockNodeView({
@@ -45,7 +45,6 @@ export function ComposerCodeBlockNodeView({
     >
       <div className="chat-markdown-shiki">
         <pre className="max-w-full overflow-x-auto px-3 pt-1 pb-2">
-          {/* A caret needs a line to sit on even before any code is typed. */}
           <NodeViewContent<"code">
             as="code"
             className="block min-h-[1lh] font-mono whitespace-pre-wrap text-inherit [overflow-wrap:anywhere]"

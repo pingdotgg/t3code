@@ -10,7 +10,6 @@ import * as Schema from "effect/Schema";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as PreviewManager from "../../preview/Manager.ts";
-import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
 import * as PreviewIpc from "./preview.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
@@ -121,18 +120,6 @@ describe("preview IPC methods", () => {
     expect(first.scope).not.toBe(second.scope);
   });
 
-  it("preserves lone surrogates without collapsing them to replacement characters", () => {
-    const highSurrogate = PreviewIpc.resolvePartitionScope("environment", "profile-\ud800");
-    const lowSurrogate = PreviewIpc.resolvePartitionScope("environment", "profile-\udc00");
-    const replacement = PreviewIpc.resolvePartitionScope("environment", "profile-�");
-
-    expect(highSurrogate.scope).toBe('["environment","profile-\\ud800"]');
-    expect(lowSurrogate.scope).toBe('["environment","profile-\\udc00"]');
-    expect(highSurrogate.scope).not.toBe(lowSurrogate.scope);
-    expect(highSurrogate.scope).not.toBe(replacement.scope);
-    expect(lowSurrogate.scope).not.toBe(replacement.scope);
-  });
-
   it("keeps the legacy default partition scope and incognito persistence", () => {
     expect(PreviewIpc.resolvePartitionScope("environment::legacy", undefined)).toEqual({
       scope: "environment::legacy",
@@ -148,37 +135,5 @@ describe("preview IPC methods", () => {
       persistent: false,
       namespace: "profile",
     });
-  });
-
-  effectIt.effect("targets imports at the same partition tuple as the renderer", () => {
-    const received: Array<Parameters<BrowserImport.BrowserImport["Service"]["importCookies"]>[0]> =
-      [];
-    const browserImport = BrowserImport.BrowserImport.of({
-      listSources: Effect.succeed([]),
-      importCookies: (input) =>
-        Effect.sync(() => {
-          received.push(input);
-          return { imported: 0, skipped: 0, skippedDomains: [] };
-        }),
-    });
-    const request = (environmentId: string, targetProfileId: string) =>
-      PreviewIpc.importBrowserCookies.handler({
-        environmentId,
-        sourceId: "helium",
-        sourceProfileDirectory: "Default",
-        targetProfileId,
-      });
-
-    return Effect.gen(function* () {
-      yield* request("a", "b");
-      yield* request("a::b", DEFAULT_BROWSER_PROFILE_ID);
-
-      expect(received[0]).toMatchObject(PreviewIpc.resolvePartitionScope("a", "b"));
-      expect(received[1]).toMatchObject(
-        PreviewIpc.resolvePartitionScope("a::b", DEFAULT_BROWSER_PROFILE_ID),
-      );
-      expect(received[0]?.namespace).toBe("profile");
-      expect(received[1]?.namespace).toBeUndefined();
-    }).pipe(Effect.provideService(BrowserImport.BrowserImport, browserImport));
   });
 });

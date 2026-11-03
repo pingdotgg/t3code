@@ -1,20 +1,5 @@
-import type { CommonActions, NavigationState } from "@react-navigation/native";
-
-export type AndroidWorkspaceDestination =
-  | { readonly name: "Thread"; readonly params: ReactNavigation.RootParamList["Thread"] }
-  | { readonly name: "PullRequest"; readonly params: ReactNavigation.RootParamList["PullRequest"] };
-
-export type AndroidWorkspaceResetAction = ReturnType<typeof CommonActions.reset> & {
-  readonly target: string;
-};
-
-interface WorkspaceNavigation {
-  readonly dispatch: (action: AndroidWorkspaceResetAction) => void;
-  readonly getParent: () => WorkspaceNavigation | undefined;
-  readonly getState: () => NavigationState | undefined;
-  /** Only on the navigation container, whose `getState` stays empty until the first action. */
-  readonly getRootState?: () => NavigationState | undefined;
-}
+import type { NavigationState } from "@react-navigation/native";
+import { resetRootStack, type RootStackNavigation } from "./root-stack-reset";
 
 function androidWorkspaceBackReturnsToThread(state: NavigationState) {
   const current = state.routes[state.index];
@@ -27,72 +12,53 @@ function androidWorkspaceBackReturnsToThread(state: NavigationState) {
   );
 }
 
-export function androidWorkspaceNavigationState(
-  state: NavigationState,
-  destination?: AndroidWorkspaceDestination,
-  reviewers?: ReactNavigation.RootParamList["PullRequestReviewers"],
-) {
+/** The root stack with only the workspace list. */
+export function androidWorkspaceNavigationState(state: NavigationState) {
   const home = state.routes.find((route) => route.name === "Home") ?? { name: "Home" };
-  if (!destination) return { ...state, index: 0, routes: [home] };
-  const identity =
-    destination.name === "Thread"
-      ? ["environmentId", "threadId"]
-      : ["environmentId", "projectId", "repository", "number", "host"];
-  const params = destination.params as Readonly<Record<string, unknown>>;
-  const existing = state.routes.findLast((route) => {
-    if (route.name !== destination.name) return false;
-    const current = route.params as Readonly<Record<string, unknown>> | undefined;
-    return identity.every((key) => current?.[key] === params[key]);
-  });
-  return {
-    ...state,
-    index: reviewers ? 2 : 1,
-    routes: [
-      home,
-      { ...existing, ...destination },
-      ...(reviewers ? [{ name: "PullRequestReviewers", params: reviewers }] : []),
-    ],
-  };
+  return { ...state, index: 0, routes: [home] };
 }
 
-/**
- * Resets the root stack to a workspace list or detail. Always reads and targets the root
- * navigator: the sidebar and rail render in the root layout, where `useNavigation()` is the
- * container, and a container dispatch runs on the deepest focused navigator. With Settings
- * or New task open, that is their nested stack, which rejects the reset.
- */
-export function resetAndroidWorkspace(
-  navigation: WorkspaceNavigation,
-  destination?: AndroidWorkspaceDestination,
-  reviewers?: ReactNavigation.RootParamList["PullRequestReviewers"],
-) {
-  let root = navigation;
-  for (let parent = root.getParent(); parent; parent = root.getParent()) root = parent;
-  const state = root.getRootState?.() ?? root.getState();
-  if (!state) return;
-  // Same shape as `CommonActions.reset`, which would pull React Native into node tests.
-  navigation.dispatch({
-    type: "RESET",
-    payload: androidWorkspaceNavigationState(state, destination, reviewers),
-    target: state.key,
-  });
+export function resetAndroidWorkspace(navigation: RootStackNavigation) {
+  resetRootStack(navigation, androidWorkspaceNavigationState);
 }
 
 export function parentThreadIsBelow(
   state: NavigationState,
   parent: ReactNavigation.RootParamList["Thread"],
 ) {
+  if (!parent?.environmentId || !parent.threadId) return false;
   const previous = state.routes[state.index - 1];
   const params = previous?.params as ReactNavigation.RootParamList["Thread"] | undefined;
   return (
     previous?.name === "Thread" &&
     params?.environmentId === parent.environmentId &&
-    params.threadId === parent.threadId
+    params?.threadId === parent.threadId
   );
 }
 
+/**
+ * How a thread link opened from inside a thread reaches its target. `navigate` would reuse the
+ * current Thread route, so Back would skip the thread the link was in and land on the list.
+ */
+export function linkedThreadStep(
+  state: NavigationState,
+  target: ReactNavigation.RootParamList["Thread"],
+): "stay" | "pop" | "push" {
+  const params = state.routes[state.index]?.params as
+    | ReactNavigation.RootParamList["Thread"]
+    | undefined;
+  if (
+    state.routes[state.index]?.name === "Thread" &&
+    params?.environmentId === target?.environmentId &&
+    params?.threadId === target?.threadId
+  ) {
+    return "stay";
+  }
+  return parentThreadIsBelow(state, target) ? "pop" : "push";
+}
+
 export function returnToAndroidWorkspaceList(
-  navigation: WorkspaceNavigation & { readonly goBack: () => void },
+  navigation: RootStackNavigation & { readonly goBack: () => void },
   selectTab: () => void,
 ) {
   const state = navigation.getState();

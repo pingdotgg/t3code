@@ -1,8 +1,13 @@
 import {
+  ContextHandoffId,
+  ContextTransferId,
   EventId,
   OrchestrationV2ThreadStreamItem,
+  ProviderThreadId,
+  RunId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2ContextHandoff,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
@@ -126,17 +131,6 @@ describe("decideThreadResume", () => {
     });
   });
 
-  it("falls back to a snapshot when the event count exceeds the bound", () => {
-    expect(
-      decideThreadResume({
-        afterSequence: 10,
-        highWater: 20_000,
-        replayEventCount: THREAD_RESUME_MAX_REPLAY_EVENTS + 1,
-        replayEncodedBytes: 1,
-      }),
-    ).toEqual({ mode: "snapshot" });
-  });
-
   it("falls back to a snapshot when encoded replay bytes exceed the bound", () => {
     expect(
       decideThreadResume({
@@ -160,11 +154,31 @@ describe("decideThreadResume", () => {
   });
 
   it("builds socket fallback snapshots with a bounded timeline and history cursor", () => {
+    const projection = timelineProjection(80);
+    // A delivered side chat digest stays "ready", which bounded snapshots keep.
+    const sideChatHandoff = {
+      id: ContextHandoffId.make("side-chat-handoff"),
+      transferId: ContextTransferId.make("side-chat-transfer"),
+      threadId: THREAD_ID,
+      targetRunId: RunId.make("side-chat-run"),
+      fromProviderThreadIds: [],
+      toProviderThreadId: ProviderThreadId.make("side-chat-provider-thread"),
+      coveredRunOrdinals: { from: 1, to: 1 },
+      strategy: "manual_context",
+      status: "ready",
+      summaryMessageId: null,
+      summaryText: "x".repeat(8_000),
+      delivery: { nativeThreadId: "native", status: "inline", itemIds: [] },
+      createdByProviderInstanceId: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    } satisfies OrchestrationV2ContextHandoff;
     const snapshot = buildBoundedThreadStreamSnapshot({
       snapshotSequence: 44,
-      projection: timelineProjection(80),
+      projection: { ...projection, contextHandoffs: [sideChatHandoff] },
     });
 
+    expect(snapshot.projection.contextHandoffs.map((handoff) => handoff.summaryText)).toEqual([""]);
     expect(snapshot.kind).toBe("snapshot");
     expect(snapshot.snapshotSequence).toBe(44);
     expect(snapshot.projection.visibleTurnItems).toHaveLength(75);
@@ -172,7 +186,6 @@ describe("decideThreadResume", () => {
     expect(snapshot.historyCursor).not.toBeNull();
     expect(snapshot.hasMoreHistory).toBe(true);
     expect(snapshot.latestLocalTurnOrdinal).toBe(80);
-    expect(snapshot.payloadBudgetExceeded).toBe(false);
   });
 
   it("rejects a 10 MiB raw replay even when its projected form fits the wire budget", () => {

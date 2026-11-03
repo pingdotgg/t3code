@@ -1,0 +1,141 @@
+{
+  "orchestration_v2_projection_threads": [
+    {
+      "thread_id": "issue-21397-thread",
+      "project_id": "issue-21397-project",
+      "title": "Usage limit banner reproduction",
+      "default_provider": "claudeAgent",
+      "runtime_mode": "full-access",
+      "interaction_mode": "default",
+      "active_provider_thread_id": "issue-21397-provider_threads-1",
+      "created_at": "2026-10-22T13:06:24.657Z",
+      "updated_at": "2026-10-22T13:39:08.247Z",
+      "archived_at": null,
+      "deleted_at": null,
+      "payload_json": "{\"createdBy\": \"user\", \"creationSource\": \"web\", \"id\": \"issue-21397-thread\", \"projectId\": \"issue-21397-project\", \"title\": \"Usage limit banner reproduction\", \"providerInstanceId\": \"claudeAgent\", \"modelSelection\": {\"instanceId\": \"claudeAgent\", \"model\": \"claude-opus-5-5\"}, \"runtimeMode\": \"full-access\", \"interactionMode\": \"default\", \"branch\": null, \"worktreePath\": null, \"pullRequests\": [], \"activeProviderThreadId\": \"issue-21397-provider_threads-1\", \"linkOrigin\": null, \"delegatedFrom\": null, \"lineage\": {\"parentThreadId\": null, \"relationshipToParent\": null, \"rootThreadId\": \"issue-21397-thread\"}, \"forkedFrom\": null, \"createdAt\": \"2026-10-22T13:06:24.657Z\", \"updatedAt\": \"2026-10-22T13:39:08.247Z\", \"archivedAt\": null, \"settledOverride\": null, \"settledAt\": null, \"snoozedUntil\": \"2026-10-23T08:50:00.000Z\", \"snoozedAt\": \"2026-10-22T19:00:00.000Z\", \"lastVisitedAt\": \"2026-10-22T13:06:24.675Z\", \"deletedAt\": null, \"limitRecovery\": {\"runId\": \"issue-21397-runs-1\", \"resetAt\": \"2026-10-23T08:50:00.000Z\", \"autoResume\": false, \"snooze\": true}}",
+      "provider_instance_id": "claudeAgent"
+    }
+  ],
+  "orchestration_v2_projection_runs": [
+    {
+      "run_id": "issue-21397-runs-1",
+      "thread_id": "issue-21397-thread",
+      "ordinal": 1,
+      "provider": "claudeAgent",
+      "provider_thread_id": "issue-21397-provider_threads-1",
+      "status": "failed",
+      "requested_at": "2026-10-22T13:06:24.676Z",
+      "completed_at": "2026-10-22T19:00:00.000Z",
+      "payload_json": "{\"id\":\"issue-21397-runs-1\",\"threadId\":\"issue-21397-thread\",\"ordinal\":1,\"providerInstanceId\":\"claudeAgent\",\"modelSelection\":{\"instanceId\":\"claudeAgent\",\"model\":\"claude-opus-5-5\"},\"providerThreadId\":\"issue-21397-provider_threads-1\",\"userMessageId\":\"issue-21397-thread\",\"rootNodeId\":\"issue-21397-nodes-1\",\"activeAttemptId\":\"issue-21397-run_attempts-1\",\"status\":\"failed\",\"queuePosition\":null,\"requestedAt\":\"2026-10-22T13:06:24.676Z\",\"startedAt\":\"2026-10-22T13:06:24.761Z\",\"completedAt\":\"2026-10-22T19:00:00.000Z\",\"checkpointId\":null,\"contextHandoffId\":null,\"workspacePreparation\":{\"type\":\"root\"}}",
+      "provider_instance_id": "claudeAgent"
+    }
+  ],
+  "orchestration_v2_projection_run_attempts": [
+    {
+      "attempt_id": "issue-21397-run_attempts-1",
+      "thread_id": "issue-21397-thread",
+      "run_id": "issue-21397-runs-1",
+      "attempt_ordinal": 1,
+      "root_node_id": "issue-21397-nodes-1",
+      "provider": "claudeAgent",
+      "provider_thread_id": "issue-21397-provider_threads-1",
+      "provider_turn_id": null,
+      "status": "completed",
+      "payload_json": "{\"id\":\"issue-21397-run_attempts-1\",\"nativeThreadId\":\"issue-21397-native\",\"runId\":\"issue-21397-runs-1\",\"attemptOrdinal\":1,\"rootNodeId\":\"issue-21397-nodes-1\",\"providerInstanceId\":\"claudeAgent\",\"providerThreadId\":\"issue-21397-provider_threads-1\",\"providerTurnId\":null,\"reason\":\"initial\",\"status\":\"completed\",\"startedAt\":\"2026-10-22T13:06:24.761Z\",\"completedAt\":\"2026-10-22T13:09:08.234Z\"}",
+      "provider_instance_id": "claudeAgent"
+    }
+  ],
+  "orchestration_v2_projection_nodes": [
+    {
+      "node_id": "issue-21397-nodes-1",
+      "thread_id": "issue-21397-thread",
+      "run_id": "issue-21397-runs-1",
+      "parent_node_id": null,
+      "root_node_id": "issue-21397-nodes-1",
+      "kind": "root_turn",
+      "status": "completed",
+      "provider_thread_id": "issue-21397-provider_threads-1",
+      "provider_turn_id": null,
+      "runtime_request_id": null,
+      "checkpoint_scope_id": null,
+      "started_at": "2026-10-22T13:06:24.761Z",
+      "completed_at": "2026-10-22T13:09:08.253Z",
+      "payload_json": "{\"id\":\"issue-21397-nodes-1\",\"threadId\":\"issue-21397-thread\",\"runId\":\"issue-21397-runs-1\",\"parentNodeId\":null,\"rootNodeId\":\"issue-21397-nodes-1\",\"kind\":\"root_turn\",\"status\":\"completed\",\"countsForRun\":true,\"providerThreadId\":\"issue-21397-provider_threads-1\",\"providerTurnId\":null,\"nativeItemRef\":null,\"runtimeRequestId\":null,\"checkpointScopeId\":null,\"startedAt\":\"2026-10-22T13:06:24.761Z\",\"completedAt\":\"2026-10-22T13:09:08.253Z\"}"
+    }
+  ],
+  "orchestration_v2_projection_provider_threads": [
+    {
+      "provider_thread_id": "issue-21397-provider_threads-1",
+      "thread_id": "issue-21397-thread",
+      "owner_node_id": null,
+      "provider": "claudeAgent",
+      "provider_session_id": null,
+      "status": "idle",
+      "first_run_ordinal": 1,
+      "last_run_ordinal": 1,
+      "updated_at": "2026-10-22T13:09:08.234Z",
+      "payload_json": "{\"id\": \"issue-21397-provider_threads-1\", \"driver\": \"claudeAgent\", \"providerInstanceId\": \"claudeAgent\", \"providerSessionId\": null, \"appThreadId\": \"issue-21397-thread\", \"ownerNodeId\": null, \"nativeConversationHeadRef\": null, \"status\": \"idle\", \"firstRunOrdinal\": 1, \"lastRunOrdinal\": 1, \"handoffIds\": [], \"forkedFrom\": null, \"pendingBackgroundTasks\": [], \"contextUsage\": null, \"nativeMetadata\": null, \"goal\": null, \"createdAt\": \"2026-10-22T13:06:24.676Z\", \"updatedAt\": \"2026-10-22T13:09:08.234Z\", \"nativeThreadRef\": {\"driver\": \"claudeAgent\", \"nativeId\": \"issue-21397-native\", \"strength\": \"strong\"}}",
+      "driver": "claudeAgent",
+      "provider_instance_id": "claudeAgent"
+    }
+  ],
+  "orchestration_v2_projection_provider_turns": [
+    {
+      "provider_turn_id": "issue-21397-provider_turns-1",
+      "thread_id": "issue-21397-thread",
+      "provider_thread_id": "issue-21397-provider_threads-1",
+      "node_id": "issue-21397-nodes-1",
+      "run_attempt_id": "issue-21397-run_attempts-1",
+      "ordinal": 1,
+      "status": "completed",
+      "started_at": "2026-10-22T13:06:25.539Z",
+      "completed_at": "2026-10-22T13:09:08.225Z",
+      "payload_json": "{\"id\": \"issue-21397-provider_turns-1\", \"providerThreadId\": \"issue-21397-provider_threads-1\", \"nodeId\": \"issue-21397-nodes-1\", \"runAttemptId\": \"issue-21397-run_attempts-1\", \"nativeTurnRef\": null, \"ordinal\": 1, \"status\": \"completed\", \"startedAt\": \"2026-10-22T13:06:25.539Z\", \"completedAt\": \"2026-10-22T13:09:08.225Z\"}"
+    }
+  ],
+  "orchestration_v2_projection_messages": [
+    {
+      "message_id": "issue-21397-thread",
+      "thread_id": "issue-21397-thread",
+      "run_id": "issue-21397-runs-1",
+      "node_id": "issue-21397-nodes-1",
+      "role": "user",
+      "streaming": 0,
+      "created_at": "2026-10-22T13:06:24.676Z",
+      "updated_at": "2026-10-22T13:06:24.676Z",
+      "payload_json": "{\"createdBy\":\"agent\",\"creationSource\":\"mcp\",\"id\":\"issue-21397-thread\",\"threadId\":\"issue-21397-thread\",\"runId\":\"issue-21397-runs-1\",\"nodeId\":\"issue-21397-nodes-1\",\"role\":\"user\",\"text\":\"Please summarize this sample project.\",\"attachments\":[],\"streaming\":false,\"createdAt\":\"2026-10-22T13:06:24.676Z\",\"updatedAt\":\"2026-10-22T13:06:24.676Z\"}"
+    }
+  ],
+  "orchestration_v2_projection_turn_items": [
+    {
+      "turn_item_id": "issue-21397-turn_items-1",
+      "thread_id": "issue-21397-thread",
+      "run_id": "issue-21397-runs-1",
+      "node_id": "issue-21397-nodes-1",
+      "provider_thread_id": null,
+      "provider_turn_id": null,
+      "parent_item_id": null,
+      "ordinal": 9999999,
+      "type": "error",
+      "status": "failed",
+      "updated_at": "2026-10-22T19:00:00.000Z",
+      "payload_json": "{\"id\":\"issue-21397-turn_items-1\",\"threadId\":\"issue-21397-thread\",\"runId\":\"issue-21397-runs-1\",\"nodeId\":\"issue-21397-nodes-1\",\"providerThreadId\":null,\"providerTurnId\":null,\"nativeItemRef\":null,\"parentItemId\":null,\"ordinal\":9999999,\"type\":\"error\",\"status\":\"failed\",\"title\":\"Usage limit reached\",\"startedAt\":\"2026-10-22T19:00:00.000Z\",\"completedAt\":\"2026-10-22T19:00:00.000Z\",\"updatedAt\":\"2026-10-22T19:00:00.000Z\",\"failure\":{\"class\":\"usage_limit\",\"message\":\"Usage limit reached\",\"code\":\"usageLimitExceeded\",\"retryable\":null,\"resetAt\":\"2026-10-23T08:50:00.000Z\"}}"
+    }
+  ],
+  "projection_projects": [
+    {
+      "project_id": "issue-21397-project",
+      "title": "Sample project",
+      "workspace_root": "__WORKTREE__",
+      "scripts_json": "[]",
+      "created_at": "2026-10-19T00:39:38.662Z",
+      "updated_at": "2026-10-19T00:39:38.662Z",
+      "deleted_at": null,
+      "default_model_selection_json": null,
+      "default_thread_env_mode": null,
+      "favicon_path": null,
+      "auto_pull": 0,
+      "project_icon_json": null
+    }
+  ]
+}

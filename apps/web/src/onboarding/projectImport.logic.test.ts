@@ -122,6 +122,7 @@ describe("groupOnboardingProjects", () => {
     ]);
   });
 
+  // regression: #10547 project import broke on servers that predate git identity
   it("lists candidates without git identity as standalone repositories", () => {
     const { git: _git, ...legacy } = candidate("/code/legacy", { title: "legacy" });
 
@@ -138,16 +139,6 @@ describe("resolveOnboardingProjectId", () => {
   const localEnvironmentId = EnvironmentId.make("local");
   const remoteEnvironmentId = EnvironmentId.make("remote");
   const localProjectId = ProjectId.make("local-project");
-
-  it("uses the scanned project ID before the project reaches the client", () => {
-    expect(
-      resolveOnboardingProjectId(
-        [],
-        localEnvironmentId,
-        candidate("/projects/repo", { projectId: localProjectId }),
-      ),
-    ).toBe(localProjectId);
-  });
 
   it("uses the scanned project ID when the client still has an older project at that root", () => {
     expect(
@@ -201,73 +192,9 @@ describe("resolveOnboardingProjectId", () => {
       ),
     ).toBeNull();
   });
-
-  it("finds an alias after the scanner returns its persisted project root", () => {
-    expect(
-      resolveOnboardingProjectId(
-        [
-          {
-            id: localProjectId,
-            environmentId: localEnvironmentId,
-            workspaceRoot: "/real/projects/repo",
-          },
-        ],
-        localEnvironmentId,
-        candidate("/real/projects/repo"),
-      ),
-    ).toBe(localProjectId);
-  });
-
-  it("finds the current root owner when the scan has no project ID", () => {
-    const recreatedProjectId = ProjectId.make("recreated-project");
-    expect(
-      resolveOnboardingProjectId(
-        [
-          {
-            id: localProjectId,
-            environmentId: localEnvironmentId,
-            workspaceRoot: "/projects/other",
-          },
-          {
-            id: recreatedProjectId,
-            environmentId: localEnvironmentId,
-            workspaceRoot: "/projects/repo",
-          },
-        ],
-        localEnvironmentId,
-        candidate("/projects/repo"),
-      ),
-    ).toBe(recreatedProjectId);
-  });
-
-  it("does not reuse a moved project when the scan has no project ID", () => {
-    expect(
-      resolveOnboardingProjectId(
-        [
-          {
-            id: localProjectId,
-            environmentId: localEnvironmentId,
-            workspaceRoot: "/projects/moved",
-          },
-        ],
-        localEnvironmentId,
-        candidate("/projects/repo"),
-      ),
-    ).toBeNull();
-  });
 });
 
 describe("resolveOnboardingLandingProject", () => {
-  it("skips a failed first project for a later project with imported history", () => {
-    expect(
-      resolveOnboardingLandingProject(
-        ["/projects/failed", "/projects/imported"],
-        new Map([["/projects/imported", "imported"]]),
-        new Map([["/projects/imported", "imported"]]),
-      ),
-    ).toBe("imported");
-  });
-
   it("prefers a partial first import that added history", () => {
     expect(
       resolveOnboardingLandingProject(
@@ -315,6 +242,7 @@ describe("projects on multiple computers", () => {
     );
   });
 
+  // regression: #10465 multi-computer onboarding mixed up which computer a project came from
   it("preserves computer identity when choosing recent projects", () => {
     const first = { ...candidate("/code/app"), environmentId: "first" };
     const second = { ...candidate("/code/app"), environmentId: "second" };

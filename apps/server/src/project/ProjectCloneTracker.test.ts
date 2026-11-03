@@ -3,6 +3,8 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   OrchestrationDispatchCommandError,
   ProjectId,
+  projectCloneProgressSummary,
+  type SourceControlCloneProtocol,
   SourceControlRepositoryError,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -105,13 +107,52 @@ describe("ProjectCloneTracker", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect("flags a clone stalled when git goes quiet and clears it when git speaks", () => {
+    const release = Deferred.makeUnsafe<void>();
+    const resumed = Deferred.makeUnsafe<void>();
+    const harness = makeHarness({
+      clone: (input, options) =>
+        Effect.gen(function* () {
+          const report = options?.onProgress ?? (() => Effect.void);
+          yield* report({ stage: "receiving", percent: 24, detail: "168.80 MiB | 20.69 MiB/s" });
+          yield* Deferred.await(resumed);
+          yield* report({ stage: "receiving", percent: 25, detail: "170.00 MiB | 1.00 MiB/s" });
+          yield* Deferred.await(release);
+          return { cwd: input.destinationPath, remoteUrl: input.remoteUrl ?? "", repository: null };
+        }),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      yield* tracker.start(startInput, harness.hooks);
+      yield* Effect.yieldNow;
+      expect((yield* tracker.get(projectId))?.stalled).toBe(false);
+
+      yield* TestClock.adjust("19 seconds");
+      expect((yield* tracker.get(projectId))?.stalled).toBe(false);
+      yield* TestClock.adjust("1 second");
+      const stalled = yield* tracker.get(projectId);
+      expect(stalled).toMatchObject({ stalled: true, percent: 24 });
+      expect(projectCloneProgressSummary(stalled!)).toBe("Receiving objects · 24% · Stalled");
+
+      yield* Deferred.succeed(resumed, undefined);
+      yield* Effect.yieldNow;
+      expect(yield* tracker.get(projectId)).toMatchObject({ stalled: false, percent: 25 });
+
+      yield* TestClock.adjust("20 seconds");
+      expect((yield* tracker.get(projectId))?.stalled).toBe(true);
+      yield* Deferred.succeed(release, undefined);
+      yield* Effect.yieldNow;
+      expect(yield* tracker.get(projectId)).toMatchObject({ phase: "done", stalled: false });
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("keeps a failed clone with git's own explanation and retries it", () => {
-    let attempts = 0;
+    const protocols: Array<SourceControlCloneProtocol | undefined> = [];
     const harness = makeHarness({
       clone: (input) =>
         Effect.suspend(() => {
-          attempts += 1;
-          return attempts === 1
+          protocols.push(input.protocol);
+          return protocols.length === 1
             ? Effect.fail(
                 new SourceControlRepositoryError({
                   operation: "cloneRepository",
@@ -128,7 +169,7 @@ describe("ProjectCloneTracker", () => {
     });
     return Effect.gen(function* () {
       const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
-      yield* tracker.start(startInput, harness.hooks);
+      yield* tracker.start({ ...startInput, protocol: "ssh" }, harness.hooks);
       yield* Effect.yieldNow;
       const failed = yield* tracker.get(projectId);
       expect(failed).toMatchObject({ phase: "failed", error: "fatal: repository not found" });
@@ -137,7 +178,7 @@ describe("ProjectCloneTracker", () => {
       expect(harness.discarded).toEqual(["/workspace/t3code"]);
       yield* Effect.yieldNow;
       expect((yield* tracker.get(projectId))?.phase).toBe("done");
-      expect(attempts).toBe(2);
+      expect(protocols).toEqual(["ssh", "ssh"]);
     }).pipe(Effect.provide(harness.layer));
   });
 

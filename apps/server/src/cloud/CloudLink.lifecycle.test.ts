@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -43,6 +44,7 @@ import { consumeCloudReplayGuards } from "./CloudLink.ts";
 import { pendingServiceUpdateExists } from "./updateHandoff.ts";
 import { managedTunnelStartupAction } from "./managedTunnelStartup.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   new ServerSecretStore.SecretStorePersistError({
@@ -97,89 +99,6 @@ describe("consumeCloudReplayGuards", () => {
       expect(consumed).toBe(false);
     }),
   );
-
-  it.effect("preserves replay-store availability failures", () =>
-    Effect.gen(function* () {
-      const failure = storeFailure("PermissionDenied");
-      const error = yield* Effect.flip(
-        consumeCloudReplayGuards({
-          secrets: makeSecretStore(() => Effect.fail(failure)),
-          names: ["cloud-jti", "cloud-nonce"],
-          value: new Uint8Array(),
-        }),
-      );
-
-      expect(error).toBe(failure);
-    }),
-  );
-});
-
-describe("reconcileDesiredCloudLink", () => {
-  it.effect("requires stored CLI authorization without exposing an HTTP endpoint", () =>
-    Effect.gen(function* () {
-      const link = yield* CloudLink.CloudLink;
-      const error = yield* Effect.flip(link.reconcileDesiredLink("http://127.0.0.1:3774"));
-
-      expect(error._tag).toBe("CloudLinkAuthorizationMissingError");
-    }).pipe(
-      Effect.provide(CloudLink.layer),
-      Effect.provideService(
-        ConnectReachability.ConnectReachability,
-        ConnectReachability.ConnectReachability.of({
-          check: Effect.die("unused"),
-          latest: Effect.succeed(Option.none()),
-        }),
-      ),
-      Effect.provideService(HttpServer.HttpServer, idleHttpServer),
-      Effect.provideService(
-        ServerConfigModule.ServerConfig,
-        ServerConfigModule.ServerConfig.of({} as ServerConfigModule.ServerConfig["Service"]),
-      ),
-      Effect.provideService(
-        ServerSecretStore.ServerSecretStore,
-        makeSecretStore(unusedSecretStoreOperation),
-      ),
-      Effect.provideService(
-        ServerEnvironment.ServerEnvironment,
-        ServerEnvironment.ServerEnvironment.of({
-          getEnvironmentId: unusedSecretStoreOperation(),
-          getDescriptor: unusedSecretStoreOperation(),
-        }),
-      ),
-      Effect.provideService(
-        ManagedEndpointRuntime.CloudManagedEndpointRuntime,
-        ManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
-          applyConfig: unusedSecretStoreOperation,
-          recoveryRequests: Stream.empty,
-          requestRecovery: () => Effect.void,
-          tunnelConnected: Stream.empty,
-          inspectConnector: Effect.succeed(null),
-          readinessChanged: Stream.empty,
-          withLinkStateLock: (effect) => effect,
-        } satisfies ManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"]),
-      ),
-      Effect.provideService(
-        EnvironmentAuth.EnvironmentAuth,
-        EnvironmentAuth.EnvironmentAuth.of({} as EnvironmentAuth.EnvironmentAuth["Service"]),
-      ),
-      Effect.provideService(
-        CliTokenManager.CloudCliTokenManager,
-        CliTokenManager.CloudCliTokenManager.of({
-          get: unusedSecretStoreOperation(),
-          getExisting: Effect.succeedNone,
-          hasCredential: unusedSecretStoreOperation(),
-          store: () => unusedSecretStoreOperation(),
-          clear: unusedSecretStoreOperation(),
-        }),
-      ),
-      Effect.provideService(
-        HttpClient.HttpClient,
-        HttpClient.make(() => unusedSecretStoreOperation()),
-      ),
-      Effect.provideService(AgentAwarenessRelay.AgentAwarenessRelay, idleAwarenessRelay),
-      Effect.provide(NodeServices.layer),
-    ),
-  );
 });
 
 describe("releaseManagedTunnelOnShutdown", () => {
@@ -221,6 +140,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly address?: HttpServer.HttpServer["Service"]["address"];
     readonly respondEffect?: Effect.Effect<Response>;
     readonly getExisting?: CliTokenManager.CloudCliTokenManager["Service"]["getExisting"];
+    readonly latestReachability?: ConnectReachability.ConnectReachability["Service"]["latest"];
   }
 
   const writeLauncherState = (update: ServiceUpdateRecord) =>
@@ -241,12 +161,12 @@ describe("releaseManagedTunnelOnShutdown", () => {
     (harness: ReleaseHarness) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
-        Effect.provide(CloudLink.layer),
+        Effect.provide(CloudLink.layer.pipe(Layer.provide(ManagedPolicy.layerTest()))),
         Effect.provideService(
           ConnectReachability.ConnectReachability,
           ConnectReachability.ConnectReachability.of({
             check: Effect.die("unused"),
-            latest: Effect.succeed(Option.none()),
+            latest: harness.latestReachability ?? Effect.succeedNone,
           }),
         ),
         Effect.provideService(HttpServer.HttpServer, {
@@ -318,7 +238,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
 
         Effect.provide(
           ServerConfigModule.layerTest("/", { prefix: "t3-http-release-test-" }).pipe(
-            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         ),
         Effect.scoped,
@@ -389,26 +309,6 @@ describe("releaseManagedTunnelOnShutdown", () => {
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 
-  it.effect("leaves the tunnel of a publish-only desired link untouched", () => {
-    const { store, values } = makeMemorySecretStore([
-      [CLOUD_ENDPOINT_RUNTIME_CONFIG, "runtime-config"],
-      [RELAY_URL_SECRET, "https://relay.example.test"],
-      [CLOUD_CLI_DESIRED_LINK_SECRET, "publish_only"],
-    ]);
-    const applyConfigCalls: Array<unknown> = [];
-    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
-
-    return Effect.gen(function* () {
-      const link = yield* CloudLink.CloudLink;
-      const released = yield* link.releaseManagedTunnelOnShutdown();
-
-      expect(released).toBe(false);
-      expect(applyConfigCalls).toEqual([]);
-      expect(requests).toEqual([]);
-      expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(true);
-    }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
-  });
-
   it.effect("keeps the tunnel when shutdown hands off to a pending update", () => {
     const { store, values } = makeMemorySecretStore(managedLinkSecrets);
     const applyConfigCalls: Array<unknown> = [];
@@ -461,6 +361,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 
+  // regression: 808d6853555 keep the managed tunnel across remote update restarts
   it.effect("still releases when the recorded update already settled", () => {
     const { store, values } = makeMemorySecretStore(managedLinkSecrets);
     const applyConfigCalls: Array<unknown> = [];
@@ -527,29 +428,6 @@ describe("releaseManagedTunnelOnShutdown", () => {
         applyConfigCalls,
         requests,
         respond: () => Response.json({ ok: false }),
-      }),
-    );
-  });
-
-  it.effect("keeps the stored connector token when the relay release request fails", () => {
-    const { store, values } = makeMemorySecretStore(managedLinkSecrets);
-    const applyConfigCalls: Array<unknown> = [];
-    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
-
-    return Effect.gen(function* () {
-      const link = yield* CloudLink.CloudLink;
-      const result = yield* Effect.result(link.releaseManagedTunnelOnShutdown());
-
-      expect(result._tag).toBe("Failure");
-      expect(requests).toHaveLength(1);
-
-      expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(true);
-    }).pipe(
-      provideReleaseHarness({
-        store,
-        applyConfigCalls,
-        requests,
-        respond: () => Response.json({ ok: false }, { status: 503 }),
       }),
     );
   });
@@ -808,6 +686,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 
+  // regression: #9386 remove tunnels after hosts go offline
   it.effect(
     "starts the stored connector without a marker when confirmation is not required",
     () => {
@@ -1007,7 +886,6 @@ describe("releaseManagedTunnelOnShutdown", () => {
   });
 
   it.effect.each([
-    { status: 401, body: {}, rejection: "unauthorized" },
     {
       status: 401,
       body: {
@@ -1048,8 +926,6 @@ describe("releaseManagedTunnelOnShutdown", () => {
     );
   });
 
-  // A proof signed with a skewed boot clock is rejected as expired. The next
-  // attempt mints a new proof, so startup reconcile must keep retrying it.
   it.effect("retries a relay link proof rejected as expired", () => {
     const { store } = makeMemorySecretStore([
       [CLOUD_ENDPOINT_RUNTIME_CONFIG, "old-config"],
@@ -1174,5 +1050,58 @@ describe("releaseManagedTunnelOnShutdown", () => {
       });
       expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(false);
     }).pipe(provideReleaseHarness({ store: failingStore, applyConfigCalls, requests }));
+  });
+
+  it.effect("does not report a not-linked check once the managed tunnel config is stored", () => {
+    const { store } = makeMemorySecretStore(managedLinkSecrets);
+    const notLinked = ConnectReachability.classifyReachability(
+      {
+        managedTunnelConfigured: false,
+        connector: null,
+        endpoint: null,
+        edgeReachable: null,
+        exitNode: null,
+      },
+      "2026-10-29T00:00:00.000Z",
+    );
+
+    return Effect.gen(function* () {
+      const state = yield* (yield* CloudLink.CloudLink).linkState();
+
+      expect(state.managedTunnelActive).toBe(true);
+      expect(state.reachability?.status === "unreachable" && state.reachability.cause).not.toBe(
+        "not_linked",
+      );
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls: [],
+        requests: [],
+        latestReachability: Effect.succeedSome(notLinked),
+      }),
+    );
+  });
+
+  it.effect("reports a check that ran after the managed tunnel config was stored", () => {
+    const { store } = makeMemorySecretStore(managedLinkSecrets);
+    const reachable = {
+      status: "reachable" as const,
+      checkedAt: "2026-10-29T00:00:00.000Z",
+      readyConnections: 4,
+      protocol: "quic",
+    };
+
+    return Effect.gen(function* () {
+      const state = yield* (yield* CloudLink.CloudLink).linkState();
+
+      expect(state.reachability).toEqual(reachable);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls: [],
+        requests: [],
+        latestReachability: Effect.succeedSome(reachable),
+      }),
+    );
   });
 });

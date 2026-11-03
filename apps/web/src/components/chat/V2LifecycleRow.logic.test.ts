@@ -17,6 +17,7 @@ describe("subagentResumedSince", () => {
     ).toBe(true);
   });
 
+  // regression: #18099 a resumed subagent's old failure notification row showed failed instead of resumed
   it("is true once a run started after the notification has settled", () => {
     expect(subagentResumedSince({ status: "completed", startedAt: afterFailure }, failedAt)).toBe(
       true,

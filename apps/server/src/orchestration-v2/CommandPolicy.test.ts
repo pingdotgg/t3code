@@ -164,6 +164,53 @@ it.each([
   );
 });
 
+// regression: #26695 an interrupt-restart steer cancels Copilot's background agents
+it("queues a steer for a provider that cannot steer either way", () => {
+  const projection = dispatchProjection(
+    capabilities((current) => ({
+      ...current,
+      turns: {
+        ...current.turns,
+        supportsActiveSteering: false,
+        supportsSteeringByInterruptRestart: false,
+        supportsQueuedMessages: true,
+      },
+    })),
+  );
+  for (const deliveryIntent of ["auto", "steer"] as const) {
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(
+        projection,
+        { type: "start_immediately" },
+        deliveryIntent,
+      ),
+      { type: "queue_after_active" },
+    );
+  }
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(projection, {
+      type: "steer_active",
+      targetRunId: activeRunId,
+    }),
+    { type: "queue_after_active" },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(
+      projection,
+      { type: "start_immediately" },
+      "restart",
+    ),
+    { type: "restart_active", targetRunId: activeRunId },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(projection, {
+      type: "steer_active",
+      targetRunId: RunId.make("command-policy-missing-run"),
+    }),
+    { type: "steer_active", targetRunId: RunId.make("command-policy-missing-run") },
+  );
+});
+
 it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) => {
   const projection = dispatchProjection(baseCapabilities);
   const maintenance = {
@@ -200,222 +247,6 @@ it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) =
 const layer = it.layer(CommandPolicy.layer);
 
 layer("CommandPolicyV2", (it) => {
-  it.effect("reports the actually missing capability across the steering matrix", () =>
-    Effect.gen(function* () {
-      const policy = yield* CommandPolicy.CommandPolicyV2;
-      const providerInstanceId = ProviderInstanceId.make("codex");
-      const fallbackDetail =
-        "providerInstanceId cannot steer active turns directly or by interrupt-and-restart";
-      const forcedRestartDetail =
-        "providerInstanceId cannot satisfy a required interrupt-and-restart";
-
-      const cases: ReadonlyArray<{
-        readonly forceRestart: boolean;
-        readonly supportsActiveSteering: boolean;
-        readonly supportsInterrupt: boolean;
-        readonly supportsSteeringByInterruptRestart: boolean;
-        readonly expected:
-          | { readonly type: "policy"; readonly value: CommandPolicy.SteeringExecutionPolicyV2 }
-          | {
-              readonly type: "error";
-              readonly capability: CommandPolicy.CommandPolicyCapability;
-              readonly detail: string;
-            };
-      }> = [
-        {
-          forceRestart: false,
-          supportsActiveSteering: true,
-          supportsInterrupt: false,
-          supportsSteeringByInterruptRestart: false,
-          expected: { type: "policy", value: "active_steering" },
-        },
-        {
-          forceRestart: false,
-          supportsActiveSteering: true,
-          supportsInterrupt: false,
-          supportsSteeringByInterruptRestart: true,
-          expected: { type: "policy", value: "active_steering" },
-        },
-        {
-          forceRestart: false,
-          supportsActiveSteering: true,
-          supportsInterrupt: true,
-          supportsSteeringByInterruptRestart: false,
-          expected: { type: "policy", value: "active_steering" },
-        },
-        {
-          forceRestart: false,
-          supportsActiveSteering: true,
-          supportsInterrupt: true,
-          supportsSteeringByInterruptRestart: true,
-          expected: { type: "policy", value: "active_steering" },
-        },
-        {
-          forceRestart: false,
-          supportsActiveSteering: false,
-          supportsInterrupt: true,
-          supportsSteeringByInterruptRestart: true,
-          expected: { type: "policy", value: "interrupt_restart" },
-        },
-        {
-          forceRestart: false,
-          supportsActiveSteering: false,
-          supportsInterrupt: true,
-          supportsSteeringByInterruptRestart: false,
-          expected: {
-            type: "error",
-            capability: "interrupt_restart_steering",
-            detail: fallbackDetail,
-          },
-        },
-        {
-          forceRestart: false,
-          supportsActiveSteering: false,
-          supportsInterrupt: false,
-          supportsSteeringByInterruptRestart: true,
-          expected: { type: "error", capability: "active_steering", detail: fallbackDetail },
-        },
-        {
-          forceRestart: false,
-          supportsActiveSteering: false,
-          supportsInterrupt: false,
-          supportsSteeringByInterruptRestart: false,
-          expected: { type: "error", capability: "active_steering", detail: fallbackDetail },
-        },
-        {
-          forceRestart: true,
-          supportsActiveSteering: true,
-          supportsInterrupt: true,
-          supportsSteeringByInterruptRestart: true,
-          expected: { type: "policy", value: "interrupt_restart" },
-        },
-        {
-          forceRestart: true,
-          supportsActiveSteering: false,
-          supportsInterrupt: true,
-          supportsSteeringByInterruptRestart: true,
-          expected: { type: "policy", value: "interrupt_restart" },
-        },
-        {
-          forceRestart: true,
-          supportsActiveSteering: true,
-          supportsInterrupt: true,
-          supportsSteeringByInterruptRestart: false,
-          expected: {
-            type: "error",
-            capability: "interrupt_restart_steering",
-            detail: forcedRestartDetail,
-          },
-        },
-        {
-          forceRestart: true,
-          supportsActiveSteering: false,
-          supportsInterrupt: true,
-          supportsSteeringByInterruptRestart: false,
-          expected: {
-            type: "error",
-            capability: "interrupt_restart_steering",
-            detail: forcedRestartDetail,
-          },
-        },
-        {
-          forceRestart: true,
-          supportsActiveSteering: true,
-          supportsInterrupt: false,
-          supportsSteeringByInterruptRestart: true,
-          expected: {
-            type: "error",
-            capability: "interrupt_restart_steering",
-            detail: forcedRestartDetail,
-          },
-        },
-        {
-          forceRestart: true,
-          supportsActiveSteering: false,
-          supportsInterrupt: false,
-          supportsSteeringByInterruptRestart: true,
-          expected: {
-            type: "error",
-            capability: "interrupt_restart_steering",
-            detail: forcedRestartDetail,
-          },
-        },
-        {
-          forceRestart: true,
-          supportsActiveSteering: true,
-          supportsInterrupt: false,
-          supportsSteeringByInterruptRestart: false,
-          expected: {
-            type: "error",
-            capability: "interrupt_restart_steering",
-            detail: forcedRestartDetail,
-          },
-        },
-        {
-          forceRestart: true,
-          supportsActiveSteering: false,
-          supportsInterrupt: false,
-          supportsSteeringByInterruptRestart: false,
-          expected: {
-            type: "error",
-            capability: "interrupt_restart_steering",
-            detail: forcedRestartDetail,
-          },
-        },
-      ];
-
-      for (const entry of cases) {
-        const decision = policy.decideSteeringExecution({
-          commandId,
-          threadId,
-          providerInstanceId,
-          forceRestart: entry.forceRestart,
-          capabilities: capabilities((current) => ({
-            ...current,
-            turns: {
-              ...current.turns,
-              supportsActiveSteering: entry.supportsActiveSteering,
-              supportsInterrupt: entry.supportsInterrupt,
-              supportsSteeringByInterruptRestart: entry.supportsSteeringByInterruptRestart,
-            },
-          })),
-        });
-
-        if (entry.expected.type === "policy") {
-          assert.equal(yield* decision, entry.expected.value);
-          continue;
-        }
-
-        const error = yield* decision.pipe(Effect.flip);
-        assert.instanceOf(error, CommandPolicy.CommandPolicyCapabilityUnsupportedError);
-        assert.equal(error.commandId, commandId);
-        assert.equal(error.threadId, threadId);
-        assert.equal(error.providerInstanceId, providerInstanceId);
-        assert.equal(error.capability, entry.expected.capability);
-        assert.equal(error.detail, entry.expected.detail);
-      }
-    }),
-  );
-
-  it.effect("uses a native fork when the provider supports the requested source point", () =>
-    Effect.gen(function* () {
-      const policy = yield* CommandPolicy.CommandPolicyV2;
-
-      const result = yield* policy.decideForkExecution({
-        commandId,
-        threadId,
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        capabilities: CodexProviderCapabilitiesV2,
-        sameProvider: true,
-        hasStrongNativeSource: true,
-        sourceRunStatus: "completed",
-        fromSpecificTurn: true,
-      });
-
-      assert.equal(result, "native_fork");
-    }),
-  );
-
   it.effect("falls back to portable context when Cursor cannot fork natively", () =>
     Effect.gen(function* () {
       const policy = yield* CommandPolicy.CommandPolicyV2;
@@ -429,41 +260,31 @@ layer("CommandPolicyV2", (it) => {
         hasStrongNativeSource: true,
         sourceRunStatus: "completed",
         fromSpecificTurn: true,
+        sourceBusy: false,
       });
 
       assert.equal(result, "portable_context");
     }),
   );
 
-  it.effect("returns a typed error when neither native nor portable fork is available", () =>
+  it.effect("forks a busy source through portable context", () =>
     Effect.gen(function* () {
       const policy = yield* CommandPolicy.CommandPolicyV2;
-
-      const error = yield* policy
-        .decideForkExecution({
+      const decide = (sourceBusy: boolean) =>
+        policy.decideForkExecution({
           commandId,
           threadId,
-          providerInstanceId: ProviderInstanceId.make("cursor"),
-          capabilities: capabilities((current) => ({
-            ...current,
-            threads: {
-              ...current.threads,
-              canForkThread: false,
-            },
-            context: {
-              ...current.context,
-              canConsumeHandoffSummaries: false,
-            },
-          })),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          capabilities: CodexProviderCapabilitiesV2,
           sameProvider: true,
           hasStrongNativeSource: true,
           sourceRunStatus: "completed",
           fromSpecificTurn: true,
-        })
-        .pipe(Effect.flip);
+          sourceBusy,
+        });
 
-      assert.instanceOf(error, CommandPolicy.CommandPolicyCapabilityUnsupportedError);
-      assert.equal(error.capability, "context_handoff");
+      assert.equal(yield* decide(false), "native_fork");
+      assert.equal(yield* decide(true), "portable_context");
     }),
   );
 });

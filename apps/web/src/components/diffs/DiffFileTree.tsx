@@ -95,10 +95,12 @@ export function DiffFileTree({
     areAllDirectoriesExpanded(currentModel, directoryPaths),
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the icon set into the imperative Pierre file tree model
   useEffect(() => {
     model.setIcons(icons);
   }, [icons, model]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies path updates, ordering and git status to the imperative Pierre file tree model
   useEffect(() => {
     ordering.update(positions);
     const mounted = mountedPresentationRef.current;
@@ -144,6 +146,7 @@ export function DiffFileTree({
     model.setGitStatus(gitStatus);
   }, [directoryPaths, gitStatus, model, modelPaths, ordering, positions, presented]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands ancestors, selects and scrolls to the requested file in the Pierre tree model
   useEffect(() => {
     if (selectedPath === null) {
       handledRevealRef.current = null;
@@ -228,8 +231,7 @@ export function DiffFileTree({
           ) {
             return;
           }
-          // Pierre does not emit a selection change for its sole selected row.
-          // Read selection before the row handles the click so new selections reveal only once.
+          // Pierre emits no change for its sole selected row; read before the click to avoid double reveals.
           const selected = model.getSelectedPaths();
           const path = selected.length === 1 ? selected[0] : undefined;
           if (!path || !modelPaths.includes(path)) return;

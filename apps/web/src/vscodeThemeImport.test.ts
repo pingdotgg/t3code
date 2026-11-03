@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { getThemeColorsForMode, themeColorToHex, THEME_FILE_VERSION } from "./themePalette";
+import {
+  getThemeColorsForMode,
+  parseThemeFile,
+  themeColorToHex,
+  THEME_FILE_VERSION,
+  toCanonicalThemeColor,
+} from "./themePalette";
 import {
   isVsCodeThemeFile,
   pairVsCodeThemes,
+  parseThemeImport,
   parseVsCodeThemeFile,
   resolveThemeLabelCollisions,
 } from "./vscodeThemeImport";
@@ -30,6 +37,11 @@ function contrastRatio(first: string, second: string): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
+function oklchParts(value: string): { chroma: number; hue: number } {
+  const [, chroma, hue] = /^oklch\(\S+ (\S+) (\S+)\)$/.exec(value)!;
+  return { chroma: Number(chroma), hue: Number(hue) };
+}
+
 const VSCODE_DARK = {
   name: "pierre-dark-soft",
   type: "dark",
@@ -52,6 +64,59 @@ const VSCODE_DARK = {
   },
   tokenColors: [],
 };
+
+describe("theme import text", () => {
+  it("preserves conversion of ordinary VS Code JSON", () => {
+    expect(parseThemeImport(JSON.stringify(VSCODE_DARK))).toEqual(
+      parseVsCodeThemeFile(VSCODE_DARK),
+    );
+  });
+
+  it.each([
+    '{ // line comment\n "name": "Test", "colors": { "editor.background": "#002b36" } }',
+    '{ /* block comment */ "name": "Test", "colors": { "editor.background": "#002b36" } }',
+    '{ "name": "Test", "colors": { "editor.background": "#002b36", }, "tokenColors": [ { "scope": ["comment",], "settings": {}, }, ], }',
+  ])("imports VS Code JSONC without changing conversion: %s", (source) => {
+    const theme = parseThemeImport(source);
+    expect(theme.label).toBe("Test");
+    expect(theme.appearance).toBe("dark");
+    expect(asHex(theme.colors.canvas)).toBe("#002b36");
+  });
+
+  it.each([
+    "",
+    '{ "name": "Test", "colors": { "editor.background": "#002b36" }',
+    '{ "name": "Test" "colors": { "editor.background": "#002b36" } }',
+    '{ "name": "Test", "colors": { "editor.background": "#002b36" } } /* unterminated',
+    '{ "name": "Test", "colors": { "editor.background": "#002b36" } } extra',
+  ])("rejects malformed input rather than using parser recovery: %s", (source) => {
+    expect(() => parseThemeImport(source)).toThrow("That theme file is not valid JSON.");
+  });
+
+  it("preserves native T3 theme parsing and strict JSON syntax", () => {
+    const nativeTheme = {
+      version: THEME_FILE_VERSION,
+      name: "Native theme",
+      appearance: "dark",
+      colors: { canvas: "#002b36" },
+    };
+    const source = JSON.stringify(nativeTheme);
+    expect(parseThemeImport(source)).toEqual(parseThemeFile(nativeTheme));
+    expect(() => parseThemeImport(source.replace("{", "{ /* native theme */"))).toThrow();
+    expect(() => parseThemeImport(source.slice(0, -1) + ",}")).toThrow();
+  });
+
+  it("still validates theme structure after parsing JSONC", () => {
+    expect(() =>
+      parseThemeImport('{ /* not a theme */ "colors": { "editor.foreground": "#fff" } }'),
+    ).toThrow('no "editor.background"');
+    expect(() =>
+      parseThemeImport(
+        '{ "version": 1, "name": "Bad native", "appearance": "dark", "colors": { "unknown": "#fff" } }',
+      ),
+    ).toThrow('"unknown" is not a supported theme color role.');
+  });
+});
 
 describe("VS Code theme import", () => {
   it("recognises workbench themes and rejects our own files", () => {
@@ -204,24 +269,6 @@ describe("VS Code theme import", () => {
     });
     expect(asHex(theme.colors.messageAction)).toBe("#4d9375");
   });
-  it("imports current and other find matches as independent background/text pairs", () => {
-    const { colors } = parseVsCodeThemeFile({
-      type: "dark",
-      colors: {
-        "editor.background": "#202020",
-        "editor.findMatchBackground": "#663399",
-        "editor.findMatchForeground": "#ffffff",
-        "editor.findMatchHighlightBackground": "#bce4ff",
-        "editor.findMatchHighlightForeground": "#17314a",
-      },
-    });
-
-    expect(asHex(colors.searchMatchActiveBackground)).toBe("#663399");
-    expect(asHex(colors.searchMatchActiveForeground)).toBe("#ffffff");
-    expect(asHex(colors.searchMatchBackground)).toBe("#bce4ff");
-    expect(asHex(colors.searchMatchForeground)).toBe("#17314a");
-  });
-
   it("composites find backgrounds onto the canvas and foregrounds onto their match", () => {
     const { colors } = parseVsCodeThemeFile({
       type: "dark",
@@ -311,14 +358,43 @@ describe("VS Code theme import", () => {
     expect(hc.appearance).toBe("light");
   });
 
-  it("keeps an unreadable foreground out of the palette", () => {
+  it.each([
+    ["dark", "#282828"],
+    ["light", "#ffffff"],
+  ] as const)(
+    "keeps a dim status color's hue on a %s canvas instead of replacing it",
+    (type, canvas) => {
+      const theme = parseVsCodeThemeFile({
+        name: "Gruvbox",
+        type,
+        colors: {
+          "editor.background": canvas,
+          "editorError.foreground": "#fb4934",
+          "editorWarning.foreground": "#b57614",
+        },
+      });
+      for (const [role, source] of [
+        ["error", "#fb4934"],
+        ["warning", "#b57614"],
+      ] as const) {
+        const imported = oklchParts(theme.colors[role]);
+        expect(contrastRatio(theme.colors[role], theme.colors.canvas)).toBeGreaterThanOrEqual(4.5);
+        expect(imported.chroma).toBeGreaterThan(0.1);
+        // 8-bit sRGB can only approximate the source hue at the new lightness.
+        expect(
+          Math.abs(imported.hue - oklchParts(toCanonicalThemeColor(source)!).hue),
+        ).toBeLessThan(2);
+      }
+    },
+  );
+
+  it("keeps the derived status color when the file hides its own", () => {
     const theme = parseVsCodeThemeFile({
-      name: "Unreadable",
+      name: "Hidden squiggles",
       type: "dark",
-      colors: { "editor.background": "#101010", "editor.foreground": "#111111" },
+      colors: { "editor.background": "#101010", "editorError.foreground": "#ff000000" },
     });
-    expect(asHex(theme.colors.text)).not.toBe("#111111");
-    expect(contrastRatio(theme.colors.text, theme.colors.canvas)).toBeGreaterThanOrEqual(4.5);
+    expect(oklchParts(theme.colors.error).chroma).toBeGreaterThan(0.1);
   });
 
   it("stays readable when the file replaces a surface but not its foreground", () => {
@@ -408,8 +484,7 @@ describe("VS Code theme import", () => {
   });
 
   it("tells same-named variants apart by their file names", () => {
-    // Dracula ships dracula.json and dracula-soft.json that both say
-    // "Dracula" inside.
+    // Both Dracula theme files declare the same internal name.
     const dracula = (bg: string) =>
       parseVsCodeThemeFile({
         name: "Dracula",
@@ -427,11 +502,5 @@ describe("VS Code theme import", () => {
       { theme: dracula("#22232e") },
     ]);
     expect(numbered.map((theme) => theme.label)).toEqual(["Dracula", "Dracula 2"]);
-  });
-
-  it("explains a file with no editor background", () => {
-    expect(() => parseVsCodeThemeFile({ name: "Empty", type: "dark", colors: {} })).toThrow(
-      /editor\.background/,
-    );
   });
 });

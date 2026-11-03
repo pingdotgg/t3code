@@ -8,17 +8,10 @@ import {
 import { act as reactAct, createContext, use, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { vi } from "vite-plus/test";
-import { commands, page, utils, type Locator, type LocatorSelectors } from "vite-plus/test/browser";
+import { page, utils, type Locator, type LocatorSelectors } from "vite-plus/test/browser";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
-}
-
-declare module "vite-plus/test/browser" {
-  interface BrowserCommands {
-    /** Defined in vite.config.ts. Moves Playwright's mouse off the page. */
-    resetPointer: () => Promise<void>;
-  }
 }
 
 // React warns about every update outside act() while this flag is on, and a real
@@ -104,10 +97,6 @@ export async function render(
         await unmount();
       } finally {
         container.remove();
-        // The real mouse outlives the test, and whatever the next test mounts under it
-        // starts hovered. Parking it here keeps render() itself free of awaits before
-        // the first mount, which tests rely on.
-        await commands.resetPointer();
       }
     },
   };

@@ -20,6 +20,7 @@ const projectId = ProjectId.make("project-a");
 const otherProjectId = ProjectId.make("project-b");
 
 describe("resolveSendEnvMode", () => {
+  // regression: #21404 non-git projects send from the current checkout, git repos keep their mode
   it.each(["local", "worktree"] as const)(
     "uses local for non-git projects requesting %s",
     (mode) => {

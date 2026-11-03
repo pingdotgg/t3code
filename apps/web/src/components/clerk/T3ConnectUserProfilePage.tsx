@@ -11,9 +11,12 @@ import { useRef, useState } from "react";
 import {
   deregisterManagedRelayEnvironmentCommand,
   useManagedRelayEnvironments,
+  useManagedTunnelUsage,
 } from "../../cloud/managedRelayState";
+import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { Button } from "../ui/button";
+import { T3CHAT_SUBSCRIPTION_URL, TunnelUsageMeter, tunnelUpgradeCopy } from "../cloud/TunnelUsage";
+import { Button, InlineButton } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { toastManager } from "../ui/toast";
@@ -22,6 +25,7 @@ import {
   ClerkUserProfileRefreshButton,
   ClerkUserProfileRow,
 } from "./ClerkUserProfilePage";
+import { useT3ChatLink } from "./useT3ChatLink";
 
 const linkedAtFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
@@ -110,9 +114,59 @@ function T3ConnectEnvironmentRow(props: {
   );
 }
 
+function T3ConnectTunnelUsage() {
+  const usage = useManagedTunnelUsage();
+  const t3Chat = useT3ChatLink();
+  if (usage.used === null || usage.limit === null) return null;
+  return (
+    <div className="border-t py-4">
+      <TunnelUsageMeter used={usage.used} limit={usage.limit} />
+      {usage.upgrade ? (
+        <p className="mt-2 text-xs leading-4.5 text-muted-foreground">
+          {usage.upgrade === "link" && t3Chat.linkUrl ? (
+            <>
+              Confirm on{" "}
+              <a
+                className="underline"
+                href={t3Chat.linkUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                t3.chat
+              </a>
+              , then select Refresh.
+            </>
+          ) : (
+            <>
+              {tunnelUpgradeCopy(usage.upgrade)}{" "}
+              {usage.upgrade === "link" ? (
+                <InlineButton disabled={t3Chat.pending !== null} onClick={() => void t3Chat.link()}>
+                  {t3Chat.pending === "link" ? "Opening…" : "Link T3 Chat"}
+                </InlineButton>
+              ) : (
+                <a
+                  className="underline"
+                  href={T3CHAT_SUBSCRIPTION_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Upgrade on T3 Chat
+                </a>
+              )}
+            </>
+          )}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function T3ConnectUserProfilePage() {
   const environmentsState = useManagedRelayEnvironments();
   const deregisterEnvironment = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
+    reportFailure: false,
+  });
+  const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refreshAfterMutation, {
     reportFailure: false,
   });
   const [deregisteringEnvironmentId, setDeregisteringEnvironmentId] =
@@ -147,6 +201,7 @@ export function T3ConnectUserProfilePage() {
         return { accountId, linkedAtById };
       });
       environmentsState.refresh();
+      void refreshRelayEnvironments();
       toastManager.add({
         type: "success",
         title: "Server deregistered",
@@ -188,6 +243,8 @@ export function T3ConnectUserProfilePage() {
     (environment) =>
       removedEnvironmentLinkedAt.get(environment.environmentId) !== environment.linkedAt,
   );
+  const usage = useManagedTunnelUsage();
+  const refreshAll = usage.refresh;
   const isInitialLoad =
     !environmentsState.accountId || (environmentsState.data === null && !environmentsState.error);
 
@@ -199,11 +256,12 @@ export function T3ConnectUserProfilePage() {
         <ClerkUserProfileRefreshButton
           disabled={deregisteringEnvironmentId !== null}
           isPending={environmentsState.isPending}
-          onClick={environmentsState.refresh}
+          onClick={refreshAll}
         />
       }
     >
       <div>
+        <T3ConnectTunnelUsage />
         {environmentsState.error ? (
           <div className="mb-4 border-t border-destructive/35 py-3 text-xs" role="alert">
             <p className="font-medium text-destructive-foreground">
