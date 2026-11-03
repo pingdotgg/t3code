@@ -12,7 +12,7 @@ internal object T3ComposerClipboard {
   // Pasted thread links become chips in JS; packages/shared/src/threadLinks.ts parses them.
   fun hasThreadLink(text: String): Boolean =
     text.contains("t3-thread://v2/") || text.contains("https://app.t3.codes/") ||
-    text.contains("://threads/")
+      text.contains("://threads/")
 
   fun write(context: Context, text: String, fragment: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
