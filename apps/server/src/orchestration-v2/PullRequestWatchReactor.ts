@@ -1,6 +1,5 @@
 import {
   CommandId,
-  MessageId,
   type OrchestrationV2Notification,
   type PullRequestActivity,
   type PullRequestComment,
@@ -41,6 +40,7 @@ import {
   evaluatePullRequestWatch,
   PULL_REQUEST_WATCH_NO_CHECKS_MS,
   pullRequestWatchMessage,
+  pullRequestWatchWakeMessageId,
 } from "./pullRequestWatch.ts";
 
 /** Checks take minutes; faster sweeps waste the account's shared host quota. */
@@ -298,7 +298,7 @@ export const make = Effect.gen(function* () {
       ...(endedWatch === undefined ? {} : { endedWatch }),
       ...(wake === undefined
         ? {}
-        : { wake: { ...wake, messageId: MessageId.make(`message:pr-watch:${uuid}`) } }),
+        : { wake: { ...wake, messageId: pullRequestWatchWakeMessageId(uuid) } }),
     });
   });
 

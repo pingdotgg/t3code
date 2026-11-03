@@ -39,6 +39,16 @@ describe("pipelineChildLiveState", () => {
 });
 
 describe("pipelineStepStatusDisplay", () => {
+  it("shows a step that waits on its watched pull request as waiting, not as attention", () => {
+    expect(pipelineStepStatusDisplay({ status: "running" }, null, true, true)).toEqual({
+      label: "Waiting on pull request",
+      tone: "default",
+    });
+    expect(pipelineStepStatusDisplay({ status: "running" }, null, true, false).tone).toBe(
+      "attention",
+    );
+  });
+
   it("shows one status: the thread's live state for a running step", () => {
     expect(pipelineStepStatusDisplay({ status: "running" }, "working")).toEqual({
       label: "Working",

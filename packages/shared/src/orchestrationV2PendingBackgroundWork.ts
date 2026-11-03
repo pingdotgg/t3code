@@ -300,14 +300,25 @@ export function derivePendingBackgroundWork(input: {
   return Array.from(byTaskId.values());
 }
 
+/** Whether a link's watch still holds its thread open as pending work. */
+export function pullRequestWatchHoldsThread(
+  link: Pick<PendingBackgroundWorkPullRequest, "source" | "snapshot"> & {
+    readonly watch?: unknown;
+  },
+): boolean {
+  // The watch reactor ends a merged PR's watch without waking the agent, so it holds nothing.
+  return (
+    link.watch !== undefined &&
+    link.source !== "stack-dismissed" &&
+    link.snapshot?.state !== "merged"
+  );
+}
+
 function pullRequestWatchTasks(
   pullRequests: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined,
 ): Array<PendingBackgroundWorkTask> {
   return (pullRequests ?? []).flatMap((link) =>
-    // The watch reactor ends a merged PR's watch without waking the agent, so it holds nothing.
-    link.watch === undefined ||
-    link.source === "stack-dismissed" ||
-    link.snapshot?.state === "merged"
+    !pullRequestWatchHoldsThread(link)
       ? []
       : [
           {

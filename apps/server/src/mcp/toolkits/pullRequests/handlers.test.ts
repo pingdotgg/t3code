@@ -367,7 +367,7 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
-  it.effect("refuses a watch from a pipeline step, which hands back when its turn ends", () =>
+  it.effect("lets a pipeline step watch its pull request but still hands back a linked one", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         thread: {
@@ -375,11 +375,10 @@ describe("pull request toolkit handlers", () => {
           pipeline: { runId: PipelineRunId.make("run-1"), stepId: PipelineStepId.make("review") },
         },
       });
-      const error = yield* harness
-        .call("watch_pull_request", { repository: "t3tools/t3code", number: 1 })
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "PullRequestWatchFromPipelineStepError" });
-      expect(yield* Ref.get(harness.commands)).toEqual([]);
+      yield* harness.call("watch_pull_request", { repository: "t3tools/t3code", number: 1 });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.watch", number: 1, watching: true },
+      ]);
       const result = yield* harness.call("link_pull_request", {
         url: "https://github.com/t3tools/t3code/pull/124",
       });

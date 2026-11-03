@@ -149,15 +149,6 @@ export class PullRequestWatchFromSubagentError extends Schema.TaggedError<PullRe
   }
 }
 
-export class PullRequestWatchFromPipelineStepError extends Schema.TaggedError<PullRequestWatchFromPipelineStepError>()(
-  "PullRequestWatchFromPipelineStepError",
-  {},
-) {
-  override get message(): string {
-    return "This thread is a pipeline step, so it cannot watch pull requests. Finish your step, then hand off with `handoff_pipeline_step`, including the pull request's state in its output.";
-  }
-}
-
 export class PullRequestListFailedError extends Schema.TaggedError<PullRequestListFailedError>()(
   "PullRequestListFailedError",
   { cause: Schema.Defect() },
@@ -199,7 +190,6 @@ export const PullRequestToolError = Schema.Union([
   PullRequestWatchFailedError,
   PullRequestNotOpenError,
   PullRequestWatchFromSubagentError,
-  PullRequestWatchFromPipelineStepError,
   PullRequestProjectNotFoundError,
   PullRequestGuideFailedError,
 ]);

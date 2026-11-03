@@ -148,6 +148,7 @@ describe("escalation", () => {
     for (const stepNumber of [1, 3]) {
       const text = pipelineHandoffInstructions({ stepNumber, stepCount: 3, stepName: "Review" });
       assert.include(text, "escalate_to_pipeline_coordinator");
+      assert.include(text, "watch_pull_request");
     }
   });
 

@@ -70,12 +70,17 @@ export function pipelineStepStatusDisplay(
   liveState: PipelineChildLiveState | null,
   /** The run paused because this step ended its turn without handing off. */
   awaitingHandoff = false,
+  /** The step's thread watches a pull request, so it is waiting rather than stuck. */
+  watchingPullRequest = false,
 ): PipelineStepStatusDisplay {
   if (step.status === "running" && liveState !== null) {
     return {
       label: PIPELINE_CHILD_LIVE_STATE_LABEL[liveState],
       tone: liveState === "working" ? "working" : "attention",
     };
+  }
+  if (step.status === "running" && awaitingHandoff && watchingPullRequest) {
+    return { label: "Waiting on pull request", tone: "default" };
   }
   if (step.status === "running" && awaitingHandoff) {
     return { label: "No handoff", tone: "attention" };

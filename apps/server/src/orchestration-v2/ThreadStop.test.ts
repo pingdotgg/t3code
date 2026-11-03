@@ -6,6 +6,8 @@ import {
   MessageId,
   NodeId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadPipeline,
+  PipelineRunId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -78,7 +80,11 @@ const pullRequest = (number: number) => ({
   number,
 });
 
-const createWatchingThread = (threadId: ThreadId, number: number) =>
+const createWatchingThread = (
+  threadId: ThreadId,
+  number: number,
+  pipeline?: OrchestrationV2ThreadPipeline,
+) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     yield* orchestrator.dispatch({
@@ -94,6 +100,7 @@ const createWatchingThread = (threadId: ThreadId, number: number) =>
       worktreePath: null,
       createdBy: "user",
       creationSource: "web",
+      ...(pipeline === undefined ? {} : { pipeline }),
     });
     yield* watch(threadId, number);
   });
@@ -889,12 +896,16 @@ it.effect(
 );
 
 it.effect(
-  "thread.stop ends an idle thread's watches and accepts a thread with nothing to stop",
+  "thread.stop ends an idle pipeline step's watches and accepts a thread with nothing to stop",
   () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const threadId = ThreadId.make("thread:stop-idle");
-      yield* createWatchingThread(threadId, 3);
+      // A pipeline step may watch; the pipeline runner relies on Stop ending that watch.
+      yield* createWatchingThread(threadId, 3, {
+        runId: PipelineRunId.make("pipeline-run:stop-idle"),
+        stepId: "review",
+      });
 
       yield* orchestrator.dispatch({
         type: "thread.stop",

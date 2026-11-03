@@ -1,11 +1,22 @@
-import type {
-  OrchestrationV2Notification,
-  PullRequestCheck,
-  PullRequestComment,
-  PullRequestDetail,
-  ThreadPullRequestWatch,
+import {
+  MessageId,
+  type OrchestrationV2Notification,
+  type OrchestrationV2Run,
+  type PullRequestCheck,
+  type PullRequestComment,
+  type PullRequestDetail,
+  type ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+
+const WAKE_MESSAGE_PREFIX = "message:pr-watch:";
+
+export const pullRequestWatchWakeMessageId = (uuid: string) =>
+  MessageId.make(`${WAKE_MESSAGE_PREFIX}${uuid}`);
+
+/** Whether a run was started by a pull request watch waking its thread. */
+export const isPullRequestWatchWake = (run: Pick<OrchestrationV2Run, "userMessageId">) =>
+  run.userMessageId.startsWith(WAKE_MESSAGE_PREFIX);
 
 /** Bounds consecutive comment-only wakes to stop bot reply loops; check, conflict, or push news resets it. */
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;

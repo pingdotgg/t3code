@@ -3613,19 +3613,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is a subagent; its parent thread watches pull requests.`,
       });
     }
-    // A pipeline step hands back when its turn ends; a watch would wake it after the pipeline moved on.
-    if (
-      command.type === "thread.pull-request.watch" &&
-      command.watching &&
-      thread.pipeline !== undefined &&
-      thread.pipeline.stepId !== null
-    ) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: `Thread ${command.threadId} is a pipeline step; its pipeline hands the pull request back to the user.`,
-      });
-    }
     // Agent watches use the latest executed run to catch calls racing Stop; users can still watch.
     if (
       command.type === "thread.pull-request.watch" &&

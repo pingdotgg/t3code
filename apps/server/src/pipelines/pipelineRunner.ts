@@ -10,6 +10,7 @@ import {
   pipelineDefinitionIssues,
   resolvePipelineStepCompaction,
   type OrchestrationV2Actor,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   type PipelinePauseReason,
   type PipelineRun,
@@ -31,6 +32,7 @@ import {
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";
+import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Cause from "effect/Cause";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -51,9 +53,11 @@ import {
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { isPullRequestWatchWake } from "../orchestration-v2/pullRequestWatch.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { forkParked } from "../serverActivation.ts";
+import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import * as PipelineStore from "./PipelineStore.ts";
 import { compactStepThread, latestRunIsCompaction } from "./PipelineStepCompaction.ts";
 import {
@@ -258,6 +262,44 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     );
   });
 
+  /**
+   * A step may watch its pull request while it waits, but only while it is the run's active step:
+   * a watch left behind would hold the finished step on the Working shelf and wake it later.
+   * Stopping a thread ends its watches already, so only paths that leave the thread running call this.
+   */
+  const unwatchStepPullRequests = Effect.fn("PipelineRunner.unwatchStepPullRequests")(function* (
+    run: PipelineRun,
+    threadId: ThreadId,
+  ) {
+    yield* bestEffort(
+      "Could not end pipeline step pull request watches",
+      Effect.gen(function* () {
+        const shell = yield* threads.getThreadShell(threadId);
+        if (shell === null) return;
+        for (const link of threadPullRequestsOf(shell)) {
+          if (link.watch === undefined) continue;
+          yield* threads.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: commandIdFor(
+              run.id,
+              "unwatch",
+              threadId,
+              link.host,
+              link.repository,
+              link.number,
+              link.watch.startedAt,
+            ),
+            threadId,
+            host: link.host,
+            repository: link.repository,
+            number: link.number,
+            watching: false,
+          });
+        }
+      }),
+    );
+  });
+
   const stopThread = (
     run: PipelineRun,
     step: PipelineRunStep,
@@ -283,12 +325,13 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
       }),
     );
 
+  /** A failed step's thread is left for hand work, but its watch must not outlive the run. */
   const stopActiveChild = (run: PipelineRun) => {
     const step = run.steps[run.currentStepIndex];
-    if (step === undefined || step.status !== "running" || step.childThreadId === null) {
-      return Effect.void;
-    }
-    return stopThread(run, step, step.childThreadId, "cancel");
+    if (step === undefined || step.childThreadId === null) return Effect.void;
+    return step.status === "running"
+      ? stopThread(run, step, step.childThreadId, "cancel")
+      : unwatchStepPullRequests(run, step.childThreadId);
   };
 
   /** A failed, stopped or paused step's thread can still be worked on by hand, so always stop it. */
@@ -402,25 +445,40 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
       });
       const run = waited.resultRun ?? waited.run;
       if (run === null) return { _tag: "failed", message: "The step's thread has no run." };
-      if (run.status === "interrupted" || run.status === "cancelled") return { _tag: "stopped" };
-      if (run.status !== "completed" && run.status !== "failed") {
-        return { _tag: "failed", message: `The step's run ended with status ${run.status}.` };
-      }
+      // `resultRun` leaves out monitor runs, but a pull request watch's wake is the step's own work.
+      const latest = waited.run;
+      const wake =
+        latest !== null &&
+        latest.status === "completed" &&
+        isPullRequestWatchWake(latest) &&
+        runRanAfter(latest, run)
+          ? latest
+          : null;
       const records = yield* threads.getProjectThreadRecords(
         { projectId, threadId },
         ["runs", "messages", "turnItems"],
         {
           messageRoles: ["assistant"],
-          messageRunIds: [run.id],
-          turnItemRunIds: [run.id],
+          messageRunIds: wake === null ? [run.id] : [wake.id, run.id],
+          turnItemRunIds: wake === null ? [run.id] : [wake.id, run.id],
           turnItemTypes: ["assistant_message", "error"],
         },
       );
-      const result = subagentResultForRun(records, run);
-      if (run.status === "failed") return { _tag: "failed", message: result.text };
       // Without an assistant answer the projection substitutes placeholder text; later prompts get "".
-      const answered = result.messageId !== null || result.turnItemId !== null;
-      return { _tag: "completed", output: answered ? result.text : "" };
+      const answer = (candidate: OrchestrationV2Run) => {
+        const result = subagentResultForRun(records, candidate);
+        return result.messageId !== null || result.turnItemId !== null ? result.text : null;
+      };
+      const woken = wake === null ? null : answer(wake);
+      if (woken !== null) return { _tag: "completed", output: woken };
+      if (run.status === "interrupted" || run.status === "cancelled") return { _tag: "stopped" };
+      if (run.status !== "completed" && run.status !== "failed") {
+        return { _tag: "failed", message: `The step's run ended with status ${run.status}.` };
+      }
+      if (run.status === "failed") {
+        return { _tag: "failed", message: subagentResultForRun(records, run).text };
+      }
+      return { _tag: "completed", output: answer(run) ?? "" };
     },
     Effect.catchTags({
       ThreadManagementThreadNotFoundError: () => Effect.succeed<SettledStep>({ _tag: "deleted" }),
@@ -868,6 +926,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
           ]);
         });
         if (applied && advanced) {
+          yield* Effect.uninterruptible(unwatchStepPullRequests(run, childThreadId));
           yield* syncParentWorkspace(run, cursor, childThreadId, attempt, "done");
         }
         return;
@@ -1231,7 +1290,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
   const continueRun = Effect.fn("PipelineRunner.continueRun")(function* (
     input: PipelineRunStepActionInput,
   ) {
-    yield* section(
+    const accepted = yield* section(
       Effect.gen(function* () {
         const run = yield* readRun(input.runId);
         yield* requireStatus(run, ["paused"], "Only a paused run can continue.");
@@ -1244,12 +1303,14 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
           pauseReason: null,
           error: null,
         } as const;
+        let accepted: { readonly run: PipelineRun; readonly threadId: ThreadId } | null = null;
         if (run.pauseReason === "awaiting_handoff" && step?.status === "running") {
           // Accept the step without a handoff: its last message becomes the output, and the next
           // launch refreshes it from the thread in case the conversation went on.
           yield* store.updateRunWithSteps(run.id, advancePatch(run, now), [
             { index: step.index, patch: { status: "completed", error: null, completedAt: now } },
           ]);
+          if (step.childThreadId !== null) accepted = { run, threadId: step.childThreadId };
         } else if (
           step?.status === "failed" ||
           step?.status === "stopped" ||
@@ -1273,8 +1334,12 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
         }
         yield* notifyRunChanged(run.id);
         yield* wake(run.id);
+        return accepted;
       }),
     );
+    if (accepted !== null) {
+      yield* Effect.uninterruptible(unwatchStepPullRequests(accepted.run, accepted.threadId));
+    }
     return yield* result(input.runId);
   });
 
@@ -1553,7 +1618,12 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
       ["paused", "cancelled", "completed"],
       "Only a paused, cancelled or completed run can rerun a step.",
     );
-    if (stepIndex > run.currentStepIndex || stepIndex >= run.steps.length) {
+    // A run paused before a step points at it; rerunning it would get around who may Continue.
+    if (
+      stepIndex > run.currentStepIndex ||
+      stepIndex >= run.steps.length ||
+      run.steps[stepIndex]?.status === "pending"
+    ) {
       return yield* pipelineError(`Step ${stepIndex + 1} has not run yet.`, { runId: run.id });
     }
     yield* requireParent(run);

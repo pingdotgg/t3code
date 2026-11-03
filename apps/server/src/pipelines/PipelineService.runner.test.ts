@@ -138,6 +138,8 @@ const makeHarness = Effect.gen(function* () {
   const unrecordedWorkspaces = new Set<ThreadId>();
   const deletedThreads = new Set<ThreadId>();
   const archivedThreads = new Set<ThreadId>();
+  /** Threads whose agent watches pull request 7; ending the watch removes them. */
+  const watchedThreads = new Set<ThreadId>();
   const commands: Array<OrchestrationV2ServerCommand> = [];
   /** Keyed by the run a wait names, else by its thread. */
   const waits = new Map<string, Deferred.Deferred<ThreadManagementWaitResult>>();
@@ -148,8 +150,18 @@ const makeHarness = Effect.gen(function* () {
   /** Keyed by a run id, else by a thread for all its runs. */
   const outputs = new Map<string, CannedOutput>();
 
-  const runFor = (threadId: ThreadId, status: RunStatus, runId?: string) =>
-    ({ id: runId ?? `run-of:${threadId}`, status }) as unknown as OrchestrationV2Run;
+  const runFor = (
+    threadId: ThreadId,
+    status: RunStatus,
+    runId?: string,
+    { ordinal = 1, userMessageId = `message-of:${runId ?? threadId}` } = {},
+  ) =>
+    ({
+      id: runId ?? `run-of:${threadId}`,
+      status,
+      ordinal,
+      userMessageId,
+    }) as unknown as OrchestrationV2Run;
 
   const waitFor = (key: string) => {
     const existing = waits.get(key);
@@ -169,8 +181,13 @@ const makeHarness = Effect.gen(function* () {
     runId?: string,
   ) {
     const run = runFor(threadId, status, runId);
-    const result: ThreadManagementWaitResult = { threadId, run, timedOut: false, resultRun: run };
-    const key = runId ?? threadId;
+    yield* resolveWait(runId ?? threadId, { threadId, run, timedOut: false, resultRun: run });
+  });
+
+  const resolveWait = Effect.fn("harness.resolveWait")(function* (
+    key: string,
+    result: ThreadManagementWaitResult,
+  ) {
     const current = waitFor(key);
     if (yield* Deferred.isDone(current)) {
       const replacement = Deferred.makeUnsafe<ThreadManagementWaitResult>();
@@ -179,6 +196,20 @@ const makeHarness = Effect.gen(function* () {
     } else {
       yield* Deferred.succeed(current, result);
     }
+  });
+
+  /** Settles the thread's wait after a monitor, by default a pull request watch, woke it. */
+  const settleAfterWake = Effect.fn("harness.settleAfterWake")(function* (
+    threadId: ThreadId,
+    wakeRunId: string,
+    userMessageId = "message:pr-watch:wake",
+  ) {
+    yield* resolveWait(threadId, {
+      threadId,
+      run: runFor(threadId, "completed", wakeRunId, { ordinal: 2, userMessageId }),
+      timedOut: false,
+      resultRun: runFor(threadId, "completed"),
+    });
   });
 
   /** Delegated work a thread still has, as the projection reports it. */
@@ -292,6 +323,19 @@ const makeHarness = Effect.gen(function* () {
       activeRunId: activeRuns.has(threadId) ? "run-active" : null,
       deletedAt: deletedThreads.has(threadId) ? "2026-10-28T10:00:00.000Z" : null,
       archivedAt: archivedThreads.has(threadId) ? "2026-10-28T10:00:00.000Z" : null,
+      ...(watchedThreads.has(threadId)
+        ? {
+            pullRequests: [
+              {
+                host: "github.com",
+                repository: "t3tools/t3code",
+                number: 7,
+                source: "agent",
+                watch: { startedAt: "2026-10-28T10:00:00.000Z" },
+              },
+            ],
+          }
+        : {}),
     } as unknown as OrchestrationV2ThreadShell;
   };
 
@@ -320,6 +364,13 @@ const makeHarness = Effect.gen(function* () {
           if (command.type === "message.dispatch") {
             trace.push(`compact:${command.threadId}`);
             yield* Queue.offer(compactions, command);
+          }
+          // Like the orchestrator, Stop ends the thread's watches too.
+          if (
+            (command.type === "thread.pull-request.watch" && !command.watching) ||
+            command.type === "thread.stop"
+          ) {
+            watchedThreads.delete(command.threadId);
           }
           if (command.type === "thread.stop") {
             yield* Queue.offer(stopStarted, command.threadId);
@@ -438,6 +489,7 @@ const makeHarness = Effect.gen(function* () {
     outputs,
     delegatedWork,
     settle,
+    settleAfterWake,
     subscriptions,
     stopStarted,
     stopGate,
@@ -450,6 +502,7 @@ const makeHarness = Effect.gen(function* () {
     unrecordedWorkspaces,
     deletedThreads,
     archivedThreads,
+    watchedThreads,
   };
 });
 
@@ -653,6 +706,9 @@ it.effect("pauseBefore pauses the run and Continue re-captures the feeding outpu
       assert.strictEqual(paused.pauseReason, "awaiting_continue");
       assert.strictEqual(paused.currentStepIndex, 1);
       assert.strictEqual(yield* Queue.size(harness.launches), 0);
+      // Rerunning the step the run is paused before would start it without Continue.
+      const notRun = yield* Effect.flip(service.rerunFromStep({ runId: run.id, stepIndex: 1 }));
+      assert.include(notRun.message, "has not run yet");
       harness.delegatedWork.set(first.threadId, {
         backgroundTasks: [{ taskId: "bg-1" }],
         subagents: [],
@@ -1348,6 +1404,126 @@ it.effect("a handoff after the pause resumes the run once the agent's turn ends"
       assert.strictEqual(promptBody(second.input.initialMessage?.text), "Build from: plan on main");
     }),
   ),
+);
+
+it.effect("a step's pull request watch ends when the step stops being the active one", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      harness.behavior.autoHandoff = false;
+      const { run } = yield* service.start(startInput("cmd-watch-handoff"));
+      const first = yield* Queue.take(harness.launches);
+      // The agent watches its PR and ends its turn: the run waits as awaiting_handoff.
+      harness.watchedThreads.add(first.threadId);
+      harness.outputs.set(first.threadId, { reply: "Waiting on checks." });
+      yield* harness.settle(first.threadId, "completed");
+      yield* awaitRun(service, run.id, (current) => current.pauseReason === "awaiting_handoff");
+      assert.isTrue(harness.watchedThreads.has(first.threadId));
+
+      // The watch woke the agent; it hands off and the run moves on without the watch.
+      yield* service.handoffStep({ runId: run.id, threadId: first.threadId, output: "merged" });
+      harness.outputs.set(first.threadId, { reply: "Done." });
+      yield* harness.settle(first.threadId, "completed");
+      const second = yield* Queue.take(harness.launches);
+      assert.strictEqual(promptBody(second.input.initialMessage?.text), "Build from: merged");
+      assert.isFalse(harness.watchedThreads.has(first.threadId));
+
+      assert.deepInclude(commandOfType(harness.commands, "thread.pull-request.watch"), {
+        type: "thread.pull-request.watch",
+        commandId: commandOfType(harness.commands, "thread.pull-request.watch")[0]!.commandId,
+        threadId: first.threadId,
+        host: "github.com",
+        repository: "t3tools/t3code",
+        number: 7,
+        watching: false,
+      });
+
+      // Skipping a waiting step stops its thread, which ends the watch.
+      harness.watchedThreads.add(second.threadId);
+      yield* harness.settle(second.threadId, "completed");
+      yield* awaitRun(service, run.id, (current) => current.pauseReason === "awaiting_handoff");
+      yield* service.skipStep({ runId: run.id, stepIndex: 1 });
+      assert.isFalse(harness.watchedThreads.has(second.threadId));
+    }),
+  ),
+);
+
+it.effect("a rerun or a revision of an earlier step ends a waiting step's watch", () =>
+  Effect.forEach(["rerun", "revise"] as const, (action) =>
+    withService(
+      Effect.fn(function* (harness, service) {
+        harness.behavior.autoHandoff = false;
+        const { run } = yield* service.start(startInput(`cmd-watch-${action}`));
+        const first = yield* Queue.take(harness.launches);
+        yield* service.handoffStep({ runId: run.id, threadId: first.threadId, output: "plan" });
+        yield* harness.settle(first.threadId, "completed");
+        const second = yield* Queue.take(harness.launches);
+        harness.watchedThreads.add(second.threadId);
+        yield* harness.settle(second.threadId, "completed");
+        yield* awaitRun(service, run.id, (current) => current.pauseReason === "awaiting_handoff");
+        if (action === "rerun") {
+          yield* service.rerunFromStep({ runId: run.id, stepIndex: 0 });
+        } else {
+          yield* service.reviseStep({ runId: run.id, stepIndex: 0, feedback: "x", author: "user" });
+        }
+        assert.isFalse(harness.watchedThreads.has(second.threadId), action);
+      }),
+    ),
+  ),
+);
+
+it.effect("cancelling a run ends its current step's pull request watch, failed or running", () =>
+  Effect.forEach(["running", "failed"] as const, (state) =>
+    withService(
+      Effect.fn(function* (harness, service) {
+        const { run } = yield* service.start(startInput(`cmd-watch-cancel-${state}`));
+        const first = yield* Queue.take(harness.launches);
+        harness.watchedThreads.add(first.threadId);
+        if (state === "failed") {
+          yield* harness.settle(first.threadId, "failed");
+          yield* awaitRun(service, run.id, (current) => current.pauseReason === "step_failed");
+        }
+        yield* service.cancel({ runId: run.id });
+        assert.isFalse(harness.watchedThreads.has(first.threadId), state);
+      }),
+    ),
+  ),
+);
+
+it.effect(
+  "Continue after a watch woke the step passes on its latest answer and ends the watch",
+  () =>
+    Effect.forEach(
+      [
+        ["message:pr-watch:wake", "Checks are green."],
+        // Another monitor's wake, such as a dev server's watchdog, is not the step's answer.
+        ["message:monitor:dev-server", "Waiting on checks."],
+      ] as const,
+      ([wakeMessageId, expected]) =>
+        withService(
+          Effect.fn(function* (harness, service) {
+            harness.behavior.autoHandoff = false;
+            const { run } = yield* service.start(startInput(`cmd-watch-continue:${wakeMessageId}`));
+            const first = yield* Queue.take(harness.launches);
+            harness.watchedThreads.add(first.threadId);
+            harness.outputs.set(first.threadId, { reply: "Waiting on checks." });
+            yield* harness.settle(first.threadId, "completed");
+            yield* awaitRun(
+              service,
+              run.id,
+              (current) => current.pauseReason === "awaiting_handoff",
+            );
+            harness.outputs.set("wake-run", { reply: "Checks are green." });
+            yield* harness.settleAfterWake(first.threadId, "wake-run", wakeMessageId);
+            yield* service.continueRun({ runId: run.id, stepIndex: 0 });
+            const second = yield* Queue.take(harness.launches);
+            assert.strictEqual(
+              promptBody(second.input.initialMessage?.text),
+              `Build from: ${expected}`,
+            );
+            assert.isFalse(harness.watchedThreads.has(first.threadId));
+          }),
+        ),
+    ),
 );
 
 it.effect("a handoff is refused while the step's thread has background work", () =>

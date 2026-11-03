@@ -10,11 +10,14 @@ import type {
 import {
   availablePipelineActions,
   createPipelineEscalationWatcher,
+  pipelineAwaitingHandoffThreadId,
   pipelineRevisionAuthorLabel,
+  pipelineRunNeedsAttention,
   pipelineRunStateLabel,
   pipelineStepPosition,
   pipelineStepStatusLabel,
   stepName,
+  threadWatchesPullRequest,
 } from "@t3tools/client-runtime/pipeline-run-presentation";
 import {
   isAtomCommandInterrupted,
@@ -59,11 +62,25 @@ function reportFailure(title: string, result: AtomCommandResult<unknown, unknown
   }
 }
 
-function runTone(run: PipelineRun): StatusTone {
+function useRunWaitingOnPullRequest(
+  environmentId: EnvironmentId,
+  run: PipelineRun | null,
+): boolean {
+  const childThreadId = pipelineAwaitingHandoffThreadId(run);
+  const shell = useQuietThreadShell(
+    childThreadId === null ? null : { environmentId, threadId: childThreadId },
+  );
+  return threadWatchesPullRequest(shell);
+}
+
+function runTone(run: PipelineRun, waitingOnPullRequest: boolean): StatusTone {
   switch (run.status) {
     case "running":
       return { label: "Running", ...STEP_TONES.active };
     case "paused":
+      if (!pipelineRunNeedsAttention(run, waitingOnPullRequest)) {
+        return { label: "Waiting", ...STEP_TONES.active };
+      }
       return {
         label: run.pauseReason === "awaiting_continue" ? "Paused" : "Needs attention",
         pillClassName: "bg-warning",
@@ -99,8 +116,9 @@ export function PipelineRunSummaryHeader(props: {
     }),
   );
   const run = runQuery.data?.run ?? null;
+  const waitingOnPullRequest = useRunWaitingOnPullRequest(props.environmentId, run);
   if (run === null) return <View style={{ paddingTop: props.topInset }} />;
-  const tone = runTone(run);
+  const tone = runTone(run, waitingOnPullRequest);
   const stepIndex = Math.min(run.currentStepIndex, run.steps.length - 1);
   return (
     <View
@@ -138,6 +156,7 @@ export function PipelineRunPanel(props: {
     serverEnvironment.pipelineRunLive({ environmentId, input: { runId: props.runId } }),
   );
   const run = runQuery.data?.run ?? null;
+  const waitingOnPullRequest = useRunWaitingOnPullRequest(environmentId, run);
   const [expanded, setExpanded] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const openThread = useOpenLinkedThread();
@@ -236,7 +255,7 @@ export function PipelineRunPanel(props: {
 
   const actions = availablePipelineActions(run);
   const stepIndex = run.currentStepIndex;
-  const tone = runTone(run);
+  const tone = runTone(run, waitingOnPullRequest);
   const stepInput = { runId: run.id, stepIndex };
   const currentStepName = stepName(run, Math.min(stepIndex, run.steps.length - 1));
   const actionsVisible = actions.continue || actions.retry || actions.skip || actions.cancel;
@@ -268,7 +287,8 @@ export function PipelineRunPanel(props: {
           </View>
         </View>
         <Text textRole="footnote" className="text-foreground-secondary" numberOfLines={1}>
-          {runProgressLabel(run)} · {currentStepName} · {pipelineRunStateLabel(run)}
+          {runProgressLabel(run)} · {currentStepName} ·{" "}
+          {pipelineRunStateLabel(run, waitingOnPullRequest)}
         </Text>
       </Pressable>
       {run.error ? (
