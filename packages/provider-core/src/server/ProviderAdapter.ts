@@ -100,8 +100,6 @@ export const ProviderAdapterV2Event = Schema.Union([
     /** Work remaining at this point in the event stream, including native continuations. */
     pendingBackgroundWork: Schema.optional(Schema.Boolean),
     retainedNativeTurnIds: Schema.optional(Schema.Array(Schema.String)),
-    /** Roster tasks an unexpected provider process exit took with it. */
-    lostBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)),
   }),
   Schema.Struct({
     type: Schema.Literal("provider_turn.updated"),
@@ -136,6 +134,15 @@ export const ProviderAdapterV2Event = Schema.Union([
     driver: ProviderDriverKind,
     providerTurnId: ProviderTurnId,
     pending: Schema.Boolean,
+  }),
+  // The process exited before this work reported back. It can follow the run's last event, so it
+  // is ingested without one.
+  Schema.Struct({
+    type: Schema.Literal("background_work.lost"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    providerThreadId: ProviderThreadId,
+    tasks: Schema.Array(OrchestrationV2PendingBackgroundTask),
   }),
   /** Unpersisted deltas go only to clients showing the row; final output arrives in turn_item.updated. */
   Schema.Struct({

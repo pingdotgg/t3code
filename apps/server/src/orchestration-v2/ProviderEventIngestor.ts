@@ -464,17 +464,18 @@ export const layer: Layer.Layer<
     // The run records what an unexpected process exit took, as a server restart would.
     const lostBackgroundWorkEvents = Effect.fnUntraced(function* (
       input: ProviderEventIngestInput,
-      threadId: ThreadId,
+      event: Extract<
+        ProviderAdapter.ProviderAdapterV2Event,
+        { readonly type: "background_work.lost" }
+      >,
     ) {
-      if (input.event.type !== "provider_thread.updated") return [];
-      const lostTasks = input.event.lostBackgroundTasks ?? [];
-      if (lostTasks.length === 0 || input.event.providerThread.ownerNodeId !== null) return [];
+      const threadId = event.threadId;
       const run = latestStartedRun(
         (yield* projections.getThreadRecords(threadId, ["runs"])).runs,
-        input.event.providerThread.id,
+        event.providerThreadId,
       );
       if (run === undefined) return [];
-      const work = lostTasks.map((task) => ({
+      const work = event.tasks.map((task) => ({
         ...cancelledRosterTaskWork(task),
         cause: "provider_exit" as const,
       }));
@@ -545,12 +546,10 @@ export const layer: Layer.Layer<
                 threadId,
                 payload: input.event.providerThread,
               });
-              const lost = yield* lostBackgroundWorkEvents(input, threadId);
               return input.event.retainedNativeTurnIds === undefined
-                ? [updated, ...lost]
+                ? [updated]
                 : [
                     updated,
-                    ...lost,
                     ...(yield* rollBackRewoundRuns(input, {
                       threadId,
                       providerThreadId: input.event.providerThread.id,
@@ -658,6 +657,8 @@ export const layer: Layer.Layer<
             }
             case "background_work.updated":
               return [];
+            case "background_work.lost":
+              return yield* lostBackgroundWorkEvents(input, input.event);
             case "command_output.delta":
               // Live output is routed to the command output hub before ingestion.
               return [];
@@ -748,7 +749,6 @@ export const layer: Layer.Layer<
                   ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
                   ...input.writeIfProviderThreadOwner,
                   events,
-                  ...(effects.length === 0 ? {} : { effects }),
                 })
                 .pipe(retryLockTimeout, Effect.mapError(mapWriteError));
               return ownerResult.storedEvents;
@@ -772,7 +772,6 @@ export const layer: Layer.Layer<
                 threadId: input.threadId,
                 ...input.writeIfRunCurrent,
                 events,
-                ...(effects.length === 0 ? {} : { effects }),
               })
               .pipe(retryLockTimeout, Effect.mapError(mapWriteError));
             return result.storedEvents;

@@ -127,7 +127,9 @@ export function cancelledByProviderExit(work: ReadonlyArray<Pick<Work, "cause">>
 export function restartCancelledBackgroundWorkNote(work: ReadonlyArray<Work>): string {
   const omitted = work.length - MAX_NOTE_ENTRIES;
   return [
-    `Note: ${cancelledByProviderExit(work) ? "the provider process exited" : "the T3 server restarted"}, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:`,
+    cancelledByProviderExit(work)
+      ? "Note: your agent process exited before this background work reported back. It will not report back on its own, so check or restart what you still need and wait for its result:"
+      : "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
     ...work.slice(0, MAX_NOTE_ENTRIES).map((entry) => `- ${entry.kind}: ${entry.label}`),
     ...(omitted > 0 ? [`- and ${omitted} more`] : []),
   ].join("\n");

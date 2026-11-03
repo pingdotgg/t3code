@@ -494,7 +494,8 @@ it.effect.each(deliveries)(
     ),
 );
 
-const exitWhileIdle = (awaited: boolean) =>
+// SIGKILL ends the stream without a frame. SIGTERM makes the CLI stop its tasks first.
+const exitWhileIdle = (awaited: boolean, signal: "SIGKILL" | "SIGTERM") =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("claude-idle-exit-awaited-task");
@@ -638,17 +639,48 @@ const exitWhileIdle = (awaited: boolean) =>
           [[taskId, awaited ? true : undefined]],
         );
 
-        const cleared = yield* watch(
-          (event) =>
-            event.type === "provider-thread.updated" &&
-            event.payload.pendingBackgroundTasks?.length === 0,
-        );
+        const recorded = yield* watch((event) => event.type === "run.background-work-cancelled");
         const woken = yield* watch(
           (event) => event.type === "run.updated" && event.payload.id !== firstRun.id,
         );
-        // The CLI exits (SIGTERM) while the thread is idle; the T3 server keeps running.
+        if (signal === "SIGTERM") {
+          const stopped = yield* watch(
+            (event) =>
+              event.type === "provider-thread.updated" &&
+              event.payload.pendingBackgroundTasks?.length === 0,
+          );
+          yield* Queue.offerAll(firstProcess, [
+            frame({
+              type: "system",
+              subtype: "task_notification",
+              task_id: taskId,
+              status: "stopped",
+              output_file: "",
+              summary: "sleep 180",
+              uuid: "stopped",
+              session_id: sessionId,
+            }),
+            frame({
+              type: "system",
+              subtype: "task_updated",
+              task_id: taskId,
+              patch: { status: "killed", end_time: 1 },
+              uuid: "killed",
+              session_id: sessionId,
+            }),
+            frame({
+              type: "system",
+              subtype: "background_tasks_changed",
+              tasks: [],
+              uuid: "roster-empty",
+              session_id: sessionId,
+            }),
+          ]);
+          yield* Fiber.join(stopped);
+        }
+        // The CLI exits while the thread is idle; the T3 server keeps running.
         yield* Queue.shutdown(firstProcess);
-        yield* Fiber.join(cleared);
+        yield* Fiber.join(recorded);
         yield* worker.drain();
 
         const afterExit = yield* orchestrator.getThreadProjection(threadId);
@@ -700,9 +732,13 @@ const exitWhileIdle = (awaited: boolean) =>
   );
 
 it.effect("wakes the agent when Claude's process exits while it awaits background work", () =>
-  exitWhileIdle(true),
+  exitWhileIdle(true, "SIGKILL"),
+);
+
+it.effect("wakes the agent when Claude stops awaited background work before exiting", () =>
+  exitWhileIdle(true, "SIGTERM"),
 );
 
 it.effect("records but does not wake for an unawaited shell lost when Claude's process exits", () =>
-  exitWhileIdle(false),
+  exitWhileIdle(false, "SIGKILL"),
 );
