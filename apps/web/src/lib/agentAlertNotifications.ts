@@ -75,7 +75,9 @@ export const layer = Layer.effectDiscard(
       Stream.fromEffect(SubscriptionRef.get(registry.entries)),
       SubscriptionRef.changes(registry.entries),
     ).pipe(
-      Stream.runForEach((next) => Ref.set(entries, new Map(next)).pipe(Effect.andThen(sync()))),
+      Stream.runForEach((next) =>
+        Ref.set(entries, new Map(next)).pipe(Effect.andThen(Queue.offer(refresh, undefined))),
+      ),
       Effect.forkScoped,
     );
     yield* Stream.fromQueue(refresh).pipe(
