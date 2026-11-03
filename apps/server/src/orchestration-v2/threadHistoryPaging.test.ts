@@ -66,6 +66,26 @@ function makeRow(
   };
 }
 
+function makeTurnStart(
+  index: number,
+  createdBy: "user" | "agent",
+): OrchestrationV2ProjectedTurnItem {
+  const row = makeRow(index);
+  return {
+    ...row,
+    item: {
+      ...row.item,
+      type: "user_message",
+      createdBy,
+      creationSource: "provider",
+      inputIntent: "turn_start",
+      messageId: MessageId.make(`prompt-${index}`),
+      text: `Prompt ${index}`,
+      attachments: [],
+    },
+  } as OrchestrationV2ProjectedTurnItem;
+}
+
 function interruptItem(
   id: string,
   type: "run_interrupt_request" | "run_interrupt_result",
@@ -448,6 +468,65 @@ describe("threadHistoryPaging", () => {
         items.map((row) => row.sourceItemId),
       );
     }
+  });
+
+  it.each([
+    {
+      name: "item ceiling",
+      items: Array.from({ length: 5 }, (_, index) => makeRow(index)),
+      policy: { maxItems: 3, maxEncodedBytes: 1_000 },
+      admitted: 3,
+      measured: 3,
+    },
+    {
+      name: "user turn ceiling",
+      items: [makeRow(0), makeTurnStart(1, "user"), makeRow(2)],
+      policy: { maxUserTurns: 1, maxItems: 100, maxEncodedBytes: 1_000 },
+      admitted: 2,
+      measured: 2,
+    },
+    {
+      name: "raw turn ceiling",
+      items: [
+        makeTurnStart(0, "user"),
+        ...Array.from({ length: 151 }, (_, index) => makeTurnStart(index + 1, "agent")),
+      ],
+      policy: { maxUserTurns: 10, maxItems: 1_000, maxEncodedBytes: 1_000_000 },
+      admitted: 150,
+      measured: 150,
+    },
+    {
+      name: "byte budget, which still admits an exact fit",
+      items: Array.from({ length: 5 }, (_, index) => makeRow(index)),
+      policy: { maxItems: 100, maxEncodedBytes: 20 },
+      admitted: 2,
+      measured: 3,
+    },
+    {
+      name: "byte budget, which still admits an oversized first row",
+      items: Array.from({ length: 5 }, (_, index) => makeRow(index)),
+      policy: { maxItems: 100, maxEncodedBytes: 5 },
+      admitted: 1,
+      measured: 2,
+    },
+  ])("measures only the rows needed to stop at the $name", (testCase) => {
+    const measured: OrchestrationV2ProjectedTurnItem[] = [];
+    const page = selectRecentTimelineWindow({
+      items: testCase.items,
+      snapshotSequence: 1,
+      policy: testCase.policy,
+      rowEncodedBytes: (row) => {
+        measured.push(row);
+        return 10;
+      },
+    });
+
+    expect(page.items.map((row) => row.sourceItemId)).toEqual(
+      testCase.items.slice(-testCase.admitted).map((row) => row.sourceItemId),
+    );
+    expect(measured).toHaveLength(testCase.measured);
+    expect(page.hasMoreHistory).toBe(true);
+    expect(decodeThreadHistoryCursor(page.nextCursor!).si).toBe(page.items[0]?.sourceItemId);
   });
 
   it("recovers identity-miss cursors when position is past a shrunken timeline", () => {
