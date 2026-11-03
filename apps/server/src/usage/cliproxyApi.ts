@@ -26,6 +26,12 @@ import {
 } from "../provider/claudeResetCredits.ts";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 
+/** A hub with its management key already read from wherever the setting keeps it. */
+export interface CliproxyHub {
+  readonly url: UsageLimitSourceConfig["url"];
+  readonly managementKey: string;
+}
+
 const AuthFile = Schema.Struct({
   id: Schema.String,
   auth_index: Schema.String,
@@ -189,7 +195,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
   const resetCreditCoordinator = yield* ResetCreditCoordinator.make;
 
   const management = Effect.fn("CliproxyApi.management")(function* (
-    config: UsageLimitSourceConfig,
+    hub: CliproxyHub,
     path: string,
     body?: unknown,
   ) {
@@ -197,13 +203,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
       try: () =>
         new URL(
           `v0/management/${path}`,
-          config.url.endsWith("/") ? config.url : `${config.url}/`,
+          hub.url.endsWith("/") ? hub.url : `${hub.url}/`,
         ).toString(),
       catch: () => new UsageLimitSourceError({ detail: "The hub URL is not valid." }),
     });
     const request = (
       body === undefined ? HttpClientRequest.get(url) : HttpClientRequest.post(url)
-    ).pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${config.managementKey}`));
+    ).pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${hub.managementKey}`));
     const response = yield* client
       .execute(body === undefined ? request : request.pipe(HttpClientRequest.bodyJsonUnsafe(body)))
       .pipe(
@@ -217,13 +223,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return response;
   });
 
-  const authFiles = Effect.fn("CliproxyApi.authFiles")(function* (config: UsageLimitSourceConfig) {
-    const response = yield* management(config, "auth-files");
+  const authFiles = Effect.fn("CliproxyApi.authFiles")(function* (hub: CliproxyHub) {
+    const response = yield* management(hub, "auth-files");
     return (yield* decodeAuthFiles(response)).files;
   });
 
   const apiCall = Effect.fn("CliproxyApi.apiCall")(function* (
-    config: UsageLimitSourceConfig,
+    hub: CliproxyHub,
     account: typeof AuthFile.Type,
     url: string,
     data?: unknown,
@@ -248,7 +254,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
             // reports banked reset grants only to CLI versions from 2.1.280 on.
             "User-Agent": "claude-cli/2.1.312 (external, cli)",
           };
-    const raw = yield* management(config, "api-call", {
+    const raw = yield* management(hub, "api-call", {
       auth_index: account.auth_index,
       method: data === undefined ? "GET" : "POST",
       url,
@@ -268,10 +274,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
   });
 
   const credits = Effect.fn("CliproxyApi.credits")(function* (
-    config: UsageLimitSourceConfig,
+    hub: CliproxyHub,
     account: typeof AuthFile.Type,
   ) {
-    const body = yield* apiCall(config, account, CREDIT_URL);
+    const body = yield* apiCall(hub, account, CREDIT_URL);
     const response = yield* decodeCreditList(body);
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     return response.credits
@@ -285,7 +291,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
   });
 
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
-    config: UsageLimitSourceConfig,
+    hub: CliproxyHub,
     account: typeof AuthFile.Type,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -299,11 +305,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
-        const body = yield* apiCall(
-          config,
-          account,
-          `${CLAUDE_BASE}/api/oauth/usage?cedar_ember=1`,
-        );
+        const body = yield* apiCall(hub, account, `${CLAUDE_BASE}/api/oauth/usage?cedar_ember=1`);
         const usage = yield* decodeClaudeUsage(body);
         const resetCredits = claudeResetCreditsToContract(
           usage.cedar_ember,
@@ -342,7 +344,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
           },
         };
       }
-      const body = yield* apiCall(config, account, `${CODEX_BASE}/usage`);
+      const body = yield* apiCall(hub, account, `${CODEX_BASE}/usage`);
       const usage = yield* decodeCodexUsage(body);
       const toWindow = (window: typeof CodexWindow.Type | null | undefined) =>
         window
@@ -354,7 +356,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
                 : { windowDurationMins: window.limit_window_seconds / 60 }),
             }
           : null;
-      const available = yield* credits(config, account).pipe(Effect.orElseSucceed(() => undefined));
+      const available = yield* credits(hub, account).pipe(Effect.orElseSucceed(() => undefined));
       const next = available?.[0];
       const planType =
         usage.plan_type ?? account.id_token?.plan_type ?? account.id_token?.chatgpt_plan_type;
@@ -399,9 +401,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
   });
 
   const readAccounts = Effect.fn("CliproxyApi.readAccounts")(function* (
-    config: UsageLimitSourceConfig,
+    hub: CliproxyHub,
   ): Effect.fn.Return<ReadonlyArray<UsageLimitSourceAccount>, UsageLimitSourceError> {
-    const accounts = yield* authFiles(config).pipe(
+    const accounts = yield* authFiles(hub).pipe(
       Effect.mapError((error) =>
         isUsageLimitSourceError(error)
           ? error
@@ -413,17 +415,17 @@ export const makeCliproxyApi = Effect.gen(function* () {
         (account) =>
           !account.disabled && (account.provider === "codex" || account.provider === "claude"),
       ),
-      (account) => readAccount(config, account),
+      (account) => readAccount(hub, account),
       { concurrency: 4 },
     );
   });
 
   const redeemCodexCredit = Effect.fn("CliproxyApi.redeemCodexCredit")(function* (
-    config: UsageLimitSourceConfig,
+    hub: CliproxyHub,
     account: typeof AuthFile.Type,
     creditId: string,
   ) {
-    const body = yield* apiCall(config, account, `${CREDIT_URL}/consume`, {
+    const body = yield* apiCall(hub, account, `${CREDIT_URL}/consume`, {
       redeem_request_id: yield* creditRedeemRequestId(
         account.id_token?.chatgpt_account_id ?? account.id,
         creditId,
@@ -444,7 +446,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
   // Same claim the Claude CLI sends; request_id is the idempotency key, so a retry
   // addresses the claim already made.
   const claimClaudeGrant = Effect.fn("CliproxyApi.claimClaudeGrant")(function* (
-    config: UsageLimitSourceConfig,
+    hub: CliproxyHub,
     account: typeof AuthFile.Type,
     grantId: string,
   ) {
@@ -452,7 +454,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
       return yield* new UsageLimitSourceError({ detail: "The Claude reset grant is not valid." });
     }
     const profile = yield* decodeClaudeProfile(
-      yield* apiCall(config, account, `${CLAUDE_BASE}/api/oauth/profile`),
+      yield* apiCall(hub, account, `${CLAUDE_BASE}/api/oauth/profile`),
     );
     const organization = profile.organization?.uuid.trim();
     if (!organization) {
@@ -467,11 +469,11 @@ export const makeCliproxyApi = Effect.gen(function* () {
       detail: "The Claude hub account needs to sign in again.",
     });
     return yield* resetCreditCoordinator.redeem(
-      yield* encodeJson([config.url, organization, grantId]),
+      yield* encodeJson([hub.url, organization, grantId]),
       (requestId) =>
         Effect.gen(function* () {
           const body = yield* apiCall(
-            config,
+            hub,
             account,
             `${CLAUDE_BASE}/api/organizations/${encodeURIComponent(organization)}/reset_rate_limits`,
             { program: CLAUDE_RESET_PROGRAM, grant_id: grantId, request_id: requestId },
@@ -497,12 +499,12 @@ export const makeCliproxyApi = Effect.gen(function* () {
   });
 
   const consume = Effect.fn("CliproxyApi.consume")(function* (
-    config: UsageLimitSourceConfig,
+    hub: CliproxyHub,
     accountId: string,
     creditId: string,
   ): Effect.fn.Return<ProviderConsumeResetCreditResult, UsageLimitSourceError> {
     const operation = Effect.gen(function* () {
-      const account = (yield* authFiles(config)).find((account) => account.id === accountId);
+      const account = (yield* authFiles(hub)).find((account) => account.id === accountId);
       if (
         !account ||
         account.disabled ||
@@ -514,11 +516,11 @@ export const makeCliproxyApi = Effect.gen(function* () {
       }
       const outcome =
         account.provider === "claude"
-          ? yield* claimClaudeGrant(config, account, creditId)
-          : yield* redeemCodexCredit(config, account, creditId);
+          ? yield* claimClaudeGrant(hub, account, creditId)
+          : yield* redeemCodexCredit(hub, account, creditId);
 
       if (outcome !== "reset" && outcome !== "alreadyRedeemed") return { outcome };
-      const cleared = yield* management(config, "reset-quota", {
+      const cleared = yield* management(hub, "reset-quota", {
         auth_index: account.auth_index,
       }).pipe(Effect.result);
       return {
