@@ -262,9 +262,7 @@ export function isMiseCommandPath(commandPath: string, env?: NodeJS.ProcessEnv):
       : []),
     env?.MISE_INSTALLS_DIR,
     env?.MISE_INSTALL_STORE_DIR,
-    env?.MISE_SHIMS_DIR,
     env?.MISE_SYSTEM_INSTALLS_DIR,
-    env?.MISE_SYSTEM_SHIMS_DIR,
   ];
   return (
     normalized.includes("/mise/installs/") ||

@@ -170,7 +170,6 @@ it.layer(maintenanceLayer)("fx maintenance", (it) => {
           managedPath: "/opt/store/fx-abc/bin/fx",
           env: { MISE_INSTALL_STORE_DIR: "/opt/store" },
         },
-        { managedPath: "/opt/dispatch/fx", env: { MISE_SHIMS_DIR: "/opt/dispatch" } },
         {
           managedPath: "/opt/system/installs/fx/0.0.15/bin/fx",
           env: { MISE_SYSTEM_DATA_DIR: "/opt/system" },
@@ -178,10 +177,6 @@ it.layer(maintenanceLayer)("fx maintenance", (it) => {
         {
           managedPath: "/opt/system-installs/fx/0.0.15/bin/fx",
           env: { MISE_SYSTEM_INSTALLS_DIR: "/opt/system-installs" },
-        },
-        {
-          managedPath: "/opt/system-shims/fx",
-          env: { MISE_SYSTEM_SHIMS_DIR: "/opt/system-shims" },
         },
       ]) {
         for (const paths of [
@@ -220,12 +215,22 @@ it.layer(maintenanceLayer)("fx maintenance", (it) => {
           resolvedCommandPath: wrapperPath,
           realCommandPath: wrapperPath,
           platform: "linux",
-          env: {},
+          env: { MISE_SHIMS_DIR: directory, MISE_SYSTEM_SHIMS_DIR: directory },
         });
         expect(managed.update).toBeNull();
         expect(managed.installPath).toBe(wrapperPath);
         expect(yield* managed.lookupLatestVersion!).toBe("0.0.15");
       }
+      yield* fs.writeFileString(wrapperPath, "#!/bin/sh\nexit 0\n");
+      expect(
+        (yield* resolver.resolve({
+          binaryPath: wrapperPath,
+          resolvedCommandPath: wrapperPath,
+          realCommandPath: wrapperPath,
+          platform: "linux",
+          env: { MISE_SHIMS_DIR: directory, MISE_SYSTEM_SHIMS_DIR: directory },
+        })).update,
+      ).not.toBeNull();
       const outsideMise = "/opt/tools-extra/installs/fx/0.0.15/bin/fx";
       expect(
         (yield* resolver.resolve({
