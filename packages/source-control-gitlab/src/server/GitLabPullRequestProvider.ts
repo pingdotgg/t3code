@@ -336,8 +336,9 @@ export const make = Effect.gen(function* () {
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
         Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => {
+          const botLogins = new Set([...awards.botLogins].map((login) => login.toLowerCase()));
           const withBotFlag = (author: PullRequestActor | null) =>
-            author !== null && awards.botLogins.has(author.login)
+            author !== null && botLogins.has(author.login.toLowerCase())
               ? { ...author, isBot: true }
               : author;
           return {

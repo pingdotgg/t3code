@@ -600,7 +600,7 @@ describe("optional activity reads", () => {
               Effect.succeed({
                 reactions: [],
                 reactionsByNoteId: new Map(),
-                botLogins: new Set([bot.login]),
+                botLogins: new Set([bot.login.toUpperCase()]),
               }),
           }),
         ),
