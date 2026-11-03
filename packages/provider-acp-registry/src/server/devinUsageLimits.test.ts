@@ -1,7 +1,9 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -127,7 +129,7 @@ describe("readDevinUsageLimits", () => {
         "https://server.codeium.com/exa.seat_management_pb.SeatManagementService/GetUserStatus",
       );
       expect(captured[0]?.apiKey).toBe("stored-key");
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect.each(["XDG_DATA_HOME", "APPDATA"])(
@@ -149,7 +151,7 @@ describe("readDevinUsageLimits", () => {
         expect(captured).toHaveLength(1);
       }).pipe(
         Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provide(NodeServices.layer),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
   );
 
@@ -166,7 +168,7 @@ describe("readDevinUsageLimits", () => {
         reason: "unsupported",
         message: "Sign in to Devin to see usage limits.",
       });
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("prefers WINDSURF_API_KEY and the default server URL over stored credentials", () =>
@@ -192,7 +194,7 @@ api_server_url = "http://insecure.example"
         "https://server.codeium.com/exa.seat_management_pb.SeatManagementService/GetUserStatus",
       );
       expect(captured[0]?.apiKey).toBe("env-key");
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("reports unsupported without credentials and never calls the API", () =>
@@ -208,6 +210,6 @@ api_server_url = "http://insecure.example"
         message: "Sign in to Devin to see usage limits.",
       });
       expect(limits.windows).toEqual([]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });

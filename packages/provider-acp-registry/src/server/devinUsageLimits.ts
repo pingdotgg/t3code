@@ -154,7 +154,7 @@ export const readDevinUsageLimits = Effect.fn("readDevinUsageLimits")(function* 
     // Unkeyed hashes match across environments; random API keys resist offline guessing.
     const credentialFingerprint = yield* digest
       .digest(
-        "SHA-256",
+        Digest.sha256,
         new TextEncoder().encode(userId ? `devin-account\0${userId}` : `devin\0${apiKey}`),
       )
       .pipe(Effect.map(Hex.encode), Effect.orDie);
