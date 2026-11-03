@@ -94,11 +94,13 @@ export function SettingsTabNotch({
 export function SettingsPaneHeader({
   trailingEdge: trailingEdgeOverride,
   modal = false,
+  transparent = false,
   className,
   children,
 }: {
   trailingEdge?: boolean;
   modal?: boolean;
+  transparent?: boolean;
   className?: string;
   children: ReactNode;
 }) {
@@ -112,7 +114,7 @@ export function SettingsPaneHeader({
       collapsedSidebarInset={leadingEdge && !modal}
       className={cn("relative z-10 md:pl-0", className)}
       data-pane-header=""
-      data-floating-pane-header=""
+      data-floating-pane-header={transparent ? undefined : ""}
     >
       <div className="flex w-full min-w-0 items-center gap-3 self-stretch">{children}</div>
     </WorkspacePageHeader>
