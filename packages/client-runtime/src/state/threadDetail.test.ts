@@ -197,6 +197,42 @@ describe("quietThreadAtom", () => {
   });
 });
 
+describe("timelineVisibleTurnItemsAtom", () => {
+  const ref = { environmentId: EnvironmentId.make("environment-1"), threadId: v2ThreadId };
+
+  it("holds through streamed assistant text while the message reads its own text", () => {
+    const stateAtom = Atom.make(
+      AsyncResult.success({
+        ...EMPTY_ENVIRONMENT_THREAD_STATE,
+        data: Option.some<OrchestrationV2ThreadProjection>(withItem(assistant)),
+      }),
+    );
+    const details = createEnvironmentThreadDetailAtoms(() => stateAtom);
+    const timelineAtom = details.timelineVisibleTurnItemsAtom(ref);
+    const textAtom = details.assistantMessageTextAtom(ref, assistant.id);
+    const registry = AtomRegistry.make();
+    registry.mount(timelineAtom);
+    registry.mount(textAtom);
+    const push = (item: OrchestrationV2TurnItem) =>
+      registry.set(
+        stateAtom,
+        AsyncResult.success({
+          ...EMPTY_ENVIRONMENT_THREAD_STATE,
+          data: Option.some(withItem(item, later)),
+        }),
+      );
+    const first = registry.get(timelineAtom);
+
+    push({ ...assistant, text: "Hello", updatedAt: later });
+    expect(registry.get(timelineAtom)).toBe(first);
+    expect(registry.get(textAtom)).toBe("Hello");
+
+    push({ ...assistant, text: "Hello", streaming: false, status: "completed" });
+    expect(registry.get(timelineAtom)[0]?.item).toMatchObject({ text: "Hello", streaming: false });
+    registry.dispose();
+  });
+});
+
 it("only compares replaced entries in a streamed reducer delta", () => {
   const size = 100;
   let slotReads = 0;
