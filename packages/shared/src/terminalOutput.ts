@@ -444,9 +444,7 @@ class Terminal {
           this.settledHead = "";
           this.settledTail = "";
         } else {
-          this.lines = [[]];
-          this.row = 0;
-          this.col = 0;
+          this.lines = this.lines.map(() => []);
         }
         return;
       }
@@ -630,15 +628,23 @@ export function appendTerminalOutput(
 export function terminalOutputResumeText(state: TerminalOutputState): string {
   const { screen } = state;
   const lastRow = screen.lines.length - 1;
-  // Moves are relative to the last line, and a viewer only holds the lines in `text`.
-  let reachable = 0;
+  // Cleared rows still carry cursor geometry even when the bounded tail omits them.
+  const text = screen.lines.every((line) => lineLength(line) === 0)
+    ? screen.settled.join("") + "\n".repeat(lastRow)
+    : state.text;
+  let shownRows = 0;
   let cursor = 0;
-  while (reachable < LIVE_LINES - 1) {
-    const newline = state.text.indexOf("\n", cursor);
+  while (shownRows < LIVE_LINES - 1) {
+    const newline = text.indexOf("\n", cursor);
     if (newline === -1) break;
-    reachable += 1;
+    shownRows += 1;
     cursor = newline + 1;
   }
+  let omittedRows = 0;
+  while (omittedRows < lastRow - shownRows && lineLength(screen.lines[omittedRows]!) === 0) {
+    omittedRows += 1;
+  }
+  const reachable = Math.min(LIVE_LINES - 1, shownRows + omittedRows);
   const up = (row: number) => Math.min(lastRow - row, reachable);
   const goTo = (row: number, col: number) =>
     (up(row) > 0 ? `${ESC}[${up(row)}A` : "") + `${ESC}[${col + 1}G`;
@@ -655,7 +661,7 @@ export function terminalOutputResumeText(state: TerminalOutputState): string {
     suffix += goTo(screen.row, screen.col);
   }
   if (screen.pen !== "") suffix += sgr(screen.pen);
-  return state.text + suffix + state.pending;
+  return "\n".repeat(omittedRows) + text + suffix + state.pending;
 }
 
 export function normalizeTerminalOutput(
