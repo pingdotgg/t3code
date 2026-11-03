@@ -86,6 +86,18 @@ describe("GitLab change request URLs", () => {
       }),
     ).toBe("https://gitlab.com/group/sub/project/-/merge_requests/4");
   });
+
+  it("links authors, bots included, to their profile on the repository's host", () => {
+    expect(definition.authorProfileUrl("TonybynMp4", "https://gitlab.com/group/sub/project")).toBe(
+      "https://gitlab.com/TonybynMp4",
+    );
+    expect(
+      definition.authorProfileUrl(
+        "project_278964_bot_89f97e2c",
+        "http://gitlab.internal:8080/team/app/-/merge_requests/5",
+      ),
+    ).toBe("http://gitlab.internal:8080/project_278964_bot_89f97e2c");
+  });
 });
 
 describe("GitLab remotes", () => {
