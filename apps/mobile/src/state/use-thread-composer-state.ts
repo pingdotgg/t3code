@@ -557,7 +557,9 @@ export function useThreadComposerState() {
     if (text.length === 0 && attachments.length === 0) {
       return null;
     }
+    // A redirect's text answers its approval, so /clear there is that text, not the command.
     if (
+      beforeDispatch === undefined &&
       selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.freshContext === true &&
       thread.latestRun != null &&
       attachments.length === 0 &&

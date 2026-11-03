@@ -238,8 +238,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       {queuedRuns.map(({ run, text, attachments, context, message }, index) => {
         const controls = resolveThreadQueueRowControls({
           busy: busyRunId !== null,
-          // A fresh message starts its own turn; steering would put it in the session it leaves.
-          canPromoteToSteer: (workflow?.canPromoteToSteer ?? false) && run.freshContext !== true,
+          // A fresh message starts its own turn: it may skip compaction, but not steer into a turn.
+          canPromoteToSteer:
+            (workflow?.canPromoteToSteer ?? false) &&
+            (run.freshContext !== true || workflow?.promoteSkipsCompaction === true),
           canSendNow: workflow?.canSendNow ?? false,
           editBlocked: editBlockedReason !== null,
           isEditing: editing?.runId === run.id,
