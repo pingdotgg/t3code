@@ -900,11 +900,11 @@ function ThreadDetailBody(
     ) ||
     (props.historyControls?.hasMoreHistory === true &&
       props.selectedThread.latestUserMessageAt !== null);
-  const composerOverlapHeight =
-    composerHeight ??
+  const collapsedComposerHeight =
     COMPOSER_COLLAPSED_CHROME +
-      (!isProviderSubagent && (deviceType === "pad" || hasSidebarTabBar) ? 14 : 0) +
-      composerBottomInset;
+    (!isProviderSubagent && (deviceType === "pad" || hasSidebarTabBar) ? 14 : 0) +
+    composerBottomInset;
+  const composerOverlapHeight = composerHeight ?? collapsedComposerHeight;
   // The last collapse toggle; it only applies to the request it was made on.
   const [userInputToggle, setUserInputToggle] = useState<{
     readonly requestId: RuntimeRequestId;
@@ -1474,6 +1474,10 @@ function ThreadDetailBody(
                   ? 0
                   : estimatedOverlayHeight +
                     (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
+              }
+              placeholderBottomInset={
+                collapsedComposerHeight +
+                (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
               }
               contentMaxWidth={contentMaxWidth}
               historyControls={props.historyControls}
