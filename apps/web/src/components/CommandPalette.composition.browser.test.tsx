@@ -7,6 +7,12 @@ import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
 
+const addProject = vi.hoisted(() => ({
+  inspection: undefined as unknown,
+  createdRoots: [] as string[],
+  createGate: Promise.resolve(),
+}));
+
 vi.mock("@effect/atom-react", async (original) => ({
   ...(await original<typeof import("@effect/atom-react")>()),
   useAtomValue: (atom: unknown) =>
@@ -39,10 +45,19 @@ vi.mock("../hooks/useHandleNewThread", () => ({
 vi.mock("../hooks/useOpenPanelPullRequestUrl", () => ({ useOpenPanelPullRequestUrl: () => null }));
 vi.mock("../connection/useDesktopLocalBootstraps", () => ({ useDesktopLocalBootstraps: () => [] }));
 vi.mock("../state/use-atom-command", () => ({
-  useAtomCommand: () => async () => ({ _tag: "Success", value: undefined }),
+  useAtomCommand: () => async (args?: { input?: { workspaceRoot?: string } }) => {
+    if (args?.input?.workspaceRoot !== undefined) {
+      addProject.createdRoots.push(args.input.workspaceRoot);
+      await addProject.createGate;
+    }
+    return { _tag: "Success", value: undefined };
+  },
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
-  useAtomQueryRunner: () => async () => ({ _tag: "Success", value: undefined }),
+  useAtomQueryRunner: () => async (args?: { input?: { path?: string } }) => ({
+    _tag: "Success",
+    value: args?.input?.path === undefined ? undefined : addProject.inspection,
+  }),
 }));
 vi.mock("../state/environments", async (original) => ({
   ...(await original<typeof import("../state/environments")>()),
@@ -54,7 +69,10 @@ vi.mock("../state/environments", async (original) => ({
         connection: { phase: "connected" },
         entry: { target: { _tag: "PrimaryConnectionTarget" } },
         serverConfig: {
-          environment: { platform: { os: "linux" }, capabilities: { projectCloneTracking: true } },
+          environment: {
+            platform: { os: "linux" },
+            capabilities: { projectCloneTracking: true, projectCheckoutInspection: true },
+          },
           settings: { addProjectBaseDirectory: "/workspace/" },
         },
       },
@@ -131,5 +149,43 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
       await userEvent.keyboard("{Enter}");
       await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
     }
+  });
+});
+
+describe("add-project checkout choice", () => {
+  it("sends one create when chosen again while the first is pending", async () => {
+    let finishCreate = () => {};
+    addProject.createGate = new Promise((resolve) => {
+      finishCreate = resolve;
+    });
+    addProject.createdRoots = [];
+    addProject.inspection = {
+      projectId: null,
+      checkout: {
+        selectedPath: "/workspace/repo/apps",
+        root: "/workspace/repo",
+        rootProjectId: null,
+        branch: "main",
+        isLinkedWorktree: false,
+      },
+    };
+    using _fixture = {
+      [Symbol.dispose]() {
+        addProject.inspection = undefined;
+        addProject.createGate = Promise.resolve();
+      },
+    };
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByText("Local folder", { exact: true }).click();
+    await page.getByRole("combobox").fill("/workspace/repo/apps");
+    await userEvent.keyboard("{Enter}");
+
+    const addRoot = page.getByText("Add repository root", { exact: true });
+    await addRoot.click();
+    await addRoot.click();
+    await act(() => finishCreate());
+
+    expect(addProject.createdRoots).toEqual(["/workspace/repo"]);
   });
 });
