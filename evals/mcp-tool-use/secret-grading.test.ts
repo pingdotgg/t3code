@@ -1099,6 +1099,15 @@ it.each<[string, Run["calls"], boolean]>([
     true,
   ],
   [
+    "a heredoc in a dead && branch, then a run",
+    [
+      saved(),
+      bash(`false && cat > /tmp/acmeqa/login2.mjs <<'EOF'\n${login()}EOF`),
+      bash("cd /tmp/acmeqa && node run.mjs login2.mjs"),
+    ],
+    false,
+  ],
+  [
     "a script written and never run",
     [saved(), write("/tmp/acmeqa/login2.mjs", login()), bash("cat /tmp/acmeqa/login2.mjs")],
     false,
@@ -1343,6 +1352,33 @@ it("credits an inline program's consume only at the statement that receives the 
         `import subprocess; secret = open('${F}').read(); subprocess.run(['other-command'], input=secret) # adb pair\n`,
       ),
       bash("python3 /tmp/other.py"),
+    ]),
+  );
+  // The language comes from the script's extension or shebang, not only the command's first word.
+  for (const [path, source, command] of [
+    ["/tmp/other.py", "", "env python3 /tmp/other.py"],
+    ["/tmp/other", "#!/usr/bin/env python3\n", "/tmp/other"],
+    ["/tmp/other.py", "", "sudo -E python3 /tmp/other.py"],
+  ])
+    assert.isFalse(
+      consumed([
+        saved(),
+        write(
+          path,
+          `${source}import subprocess; secret = open('${F}').read(); subprocess.run(['other-command'], input=secret) # adb pair\n`,
+        ),
+        bash(command),
+      ]),
+      command,
+    );
+  assert.isFalse(
+    consumed([
+      saved(),
+      write(
+        "/tmp/other.mjs",
+        `import { execFileSync } from 'node:child_process'; import { readFileSync } from 'node:fs'; const secret = readFileSync('${F}', 'utf8'); execFileSync('other-command', [secret]); // adb pair\n`,
+      ),
+      bash("env node /tmp/other.mjs"),
     ]),
   );
   assert.deepEqual(
