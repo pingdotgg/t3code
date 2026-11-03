@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { toolOutputImages } from "@t3tools/shared/toolOutput";
+import {
+  MAX_TOOL_OUTPUT_IMAGES,
+  MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH,
+  toolOutputImages,
+} from "@t3tools/shared/toolOutput";
 
 import { openCodeToolOutput } from "./toolItems.ts";
 
@@ -21,5 +25,19 @@ describe("openCodeToolOutput", () => {
       ],
     });
     expect(openCodeToolOutput("Text result")).toBe("Text result");
+    const oversized = "A".repeat(MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH + 4);
+    const bounded = openCodeToolOutput(
+      "Preview complete",
+      Array.from({ length: MAX_TOOL_OUTPUT_IMAGES + 2 }, (_, index) => ({
+        uri: `data:image/png;base64,${index === 0 ? oversized : "AQ=="}`,
+        mime: "image/png",
+      })),
+    );
+    expect(typeof bounded === "object" ? bounded.content.length : 0).toBe(
+      MAX_TOOL_OUTPUT_IMAGES + 1,
+    );
+    const images = toolOutputImages(bounded);
+    expect(images[0]?.data?.length).toBe(oversized.length);
+    expect(images[1]?.data).toBe("AQ==");
   });
 });

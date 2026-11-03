@@ -1,18 +1,25 @@
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
-import { readToolOutputImage, type ToolOutputImage } from "@t3tools/shared/toolOutput";
+import {
+  MAX_TOOL_OUTPUT_IMAGES,
+  readToolOutputImage,
+  type ToolOutputImage,
+} from "@t3tools/shared/toolOutput";
 
 export function openCodeToolOutput(
   output: string | undefined,
   files: ReadonlyArray<{ readonly uri: string; readonly mime: string }> = [],
 ) {
-  const images = files.flatMap((file): ReadonlyArray<ToolOutputImage & { type: "image" }> => {
+  const images: Array<ToolOutputImage & { type: "image" }> = [];
+  for (const file of files) {
     const match = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(file.uri);
-    if (match?.[1]?.toLowerCase() !== file.mime.toLowerCase()) return [];
+    if (match?.[1]?.toLowerCase() !== file.mime.toLowerCase()) continue;
     const image = readToolOutputImage({ type: "image", mimeType: file.mime, data: match?.[2] });
-    return image === null ? [] : [{ type: "image", ...image }];
-  });
+    if (image === null) continue;
+    images.push({ type: "image", ...image });
+    if (images.length === MAX_TOOL_OUTPUT_IMAGES) break;
+  }
   return images.length === 0
     ? output
     : { content: [...(output ? [{ type: "text", text: output }] : []), ...images] };
