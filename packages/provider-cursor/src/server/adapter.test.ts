@@ -1689,8 +1689,8 @@ describe("CursorAdapterV2", () => {
           cause: sendFailure,
         }),
       }).message;
-      assert.match(message, /sandbox/i);
-      assert.notMatch(message, /could not start this turn/);
+      assert.match(message, /^Cursor could not start its command sandbox/);
+      assert.match(message, /switch this thread to Full access/);
     }).pipe(
       Effect.scoped,
       Effect.provide(

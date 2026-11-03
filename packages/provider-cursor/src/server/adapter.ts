@@ -68,7 +68,7 @@ import {
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
-import { isCursorSdkError } from "./sdk.ts";
+import { cursorSandboxUnsupported, isCursorSdkError } from "./sdk.ts";
 export { cursorSdkModelSelection } from "./sdkModel.ts";
 
 const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
@@ -333,13 +333,26 @@ class CursorModelUnavailableError extends Schema.TaggedError<CursorModelUnavaila
   }
 }
 
-// Uncoded SDK model rejections are identifiable only by message prefix.
-const classifyCursorModelRejection =
-  (modelSelection: ModelSelection) => (error: CursorAgentSdk.CursorAgentSdkRunnerError) =>
-    isCursorSdkError(error.cause, "ConfigurationError") &&
-    error.cause.message.startsWith("Cannot use this model:")
-      ? new CursorModelUnavailableError({ model: modelSelection.model, cause: error.cause })
+class CursorSandboxUnavailableError extends Schema.TaggedError<CursorSandboxUnavailableError>()(
+  "CursorSandboxUnavailableError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Cursor could not start its command sandbox on this machine, which Supervised, Auto-accept edits and Auto threads use. On Linux (Ubuntu 23.10 and newer), AppArmor blocks Cursor's bundled cursorsandbox helper until a profile lets it create user namespaces; the Cursor guide in T3 Code's docs shows how to add one. Otherwise, switch this thread to Full access.";
+  }
+}
+
+// Uncoded SDK configuration rejections are identifiable only by message text.
+const classifyCursorConfigurationError =
+  (modelSelection: ModelSelection) => (error: CursorAgentSdk.CursorAgentSdkRunnerError) => {
+    if (!isCursorSdkError(error.cause, "ConfigurationError")) return error;
+    if (error.cause.message.startsWith("Cannot use this model:")) {
+      return new CursorModelUnavailableError({ model: modelSelection.model, cause: error.cause });
+    }
+    return cursorSandboxUnsupported(error.cause)
+      ? new CursorSandboxUnavailableError({ cause: error.cause })
       : error;
+  };
 
 function stableJson(value: unknown): string {
   try {
@@ -2258,7 +2271,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               threadId: openInput.threadId,
               providerSessionId: input.providerSessionId,
             })
-            .pipe(Effect.mapError(classifyCursorModelRejection(openInput.modelSelection)));
+            .pipe(Effect.mapError(classifyCursorConfigurationError(openInput.modelSelection)));
           const next = {
             nativeThreadId: sdkSession.agentId,
             session: sdkSession,
@@ -2407,7 +2420,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   return handleInteractionUpdate(context, update);
                 },
               })
-              .pipe(Effect.mapError(classifyCursorModelRejection(turnInput.modelSelection)));
+              .pipe(Effect.mapError(classifyCursorConfigurationError(turnInput.modelSelection)));
             yield* Ref.set(told, {
               agent: agent.nativeThreadId,
               orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),

@@ -113,6 +113,7 @@ function curatedCauseMessages(cause: unknown): {
         case "ClaudeMcpRegistrationTimeoutError":
         case "ClaudeCodeRootRefusalError":
         case "CursorModelUnavailableError":
+        case "CursorSandboxUnavailableError":
         case "CodexGoalObjectiveTooLongError":
         case "ProviderSetupError":
           return { known: stringField(cause, "message"), category: categoryMessage() };

@@ -12,6 +12,7 @@ import * as TextGenerationOperations from "@t3tools/provider-core/server/textGen
 import { cursorSdkModelSelection } from "./sdkModel.ts";
 import type { CursorAuth } from "./auth.ts";
 import * as CursorSdk from "./CursorSdk.ts";
+import { cursorSandboxUnsupported } from "./sdk.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const CURSOR_TIMEOUT_MS = 180_000;
@@ -27,20 +28,6 @@ function cursorSdkResultDetail(result: RunResult): string {
     case "finished":
       return "Cursor SDK returned empty output.";
   }
-}
-
-// Sandboxing fails without cursorsandbox or after a process-wide unsupported result.
-function cursorSandboxUnsupported(cause: unknown): boolean {
-  const seen = new Set<object>();
-  let current = cause;
-  while (typeof current === "object" && current !== null && !seen.has(current)) {
-    seen.add(current);
-    if (current instanceof Error && current.message.includes("sandboxing is not supported")) {
-      return true;
-    }
-    current = Reflect.get(current, "cause");
-  }
-  return false;
 }
 
 export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(function* (
