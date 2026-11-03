@@ -48,7 +48,12 @@ function xml(source: string, odfSpaces = false, htmlEntities = false): XmlNode {
   });
   parser.on("closetag", () => {
     // Markup-compatibility fallbacks repeat their mc:Choice content, e.g. Word text boxes.
-    if (stack.pop()!.name === "Fallback") stack.at(-1)!.children.pop();
+    // Keep one when no Choice carries text, such as a chart with a VML caption.
+    if (stack.pop()!.name !== "Fallback") return;
+    const parent = stack.at(-1)!;
+    if (children(parent).some((child) => child.name === "Choice" && hasText(child))) {
+      parent.children.pop();
+    }
   });
   const text = (value: string) => {
     stack.at(-1)!.children.push(value);
@@ -61,6 +66,8 @@ function xml(source: string, odfSpaces = false, htmlEntities = false): XmlNode {
 
 const children = (node: XmlNode) =>
   node.children.filter((child): child is XmlNode => typeof child !== "string");
+const hasText = (node: XmlNode): boolean =>
+  node.children.some((child) => (typeof child === "string" ? child.trim() !== "" : hasText(child)));
 function* all(node: XmlNode, name: string | readonly string[]): Generator<XmlNode, void> {
   for (const child of children(node)) {
     if (typeof name === "string" ? child.name === name : name.includes(child.name)) yield child;
