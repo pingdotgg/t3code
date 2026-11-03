@@ -10,19 +10,77 @@ import {
   formatComposerContextReference,
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
+import { isClosingFence, parseOpeningFence } from "~/composer-rich-text-doc";
 
-// Fences, then code spans, as threadLinks reads them: a reference inside one is literal text.
-const MARKDOWN_CODE = /(`{3,}|~{3,})[\s\S]*?(?:\1|$)|(`+)[^\n]*?\2/g;
+/**
+ * Code ranges by the composer's rules: fences open and close only on their own line, and a
+ * backtick run spans to the next run of its length on that line. Linear in the text length.
+ */
+function markdownCodeRanges(text: string): Array<readonly [number, number]> {
+  const ranges: Array<readonly [number, number]> = [];
+  const lines = text.split("\n");
+  let lineStart = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    const opening = parseOpeningFence(line);
+    if (opening) {
+      const fenceStart = lineStart;
+      do {
+        lineStart += lines[index]!.length + 1;
+        index += 1;
+      } while (index < lines.length && !isClosingFence(lines[index]!, opening.fence));
+      ranges.push([fenceStart, Math.min(text.length, lineStart + (lines[index]?.length ?? 0))]);
+    } else {
+      pushCodeSpans(line, lineStart, ranges);
+    }
+    lineStart += (lines[index]?.length ?? 0) + 1;
+  }
+  return ranges;
+}
+
+function pushCodeSpans(line: string, offset: number, ranges: Array<readonly [number, number]>) {
+  const runs = Array.from(line.matchAll(/`+/g), (match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
+  // Run indexes by length, each with a cursor that only moves forward.
+  const byLength = new Map<number, { indexes: number[]; next: number }>();
+  runs.forEach((run, index) => {
+    const entry = byLength.get(run.end - run.start) ?? { indexes: [], next: 0 };
+    entry.indexes.push(index);
+    byLength.set(run.end - run.start, entry);
+  });
+  let codeEnd = 0;
+  for (let index = 0; index < runs.length; index += 1) {
+    const run = runs[index]!;
+    let backslashes = 0;
+    while (run.start - backslashes > codeEnd && line[run.start - backslashes - 1] === "\\") {
+      backslashes += 1;
+    }
+    // An escaped backtick is literal and the rest of its run may still open.
+    const start = run.start + (backslashes % 2);
+    const candidates = byLength.get(run.end - start);
+    if (!candidates) continue;
+    while (
+      candidates.next < candidates.indexes.length &&
+      candidates.indexes[candidates.next]! <= index
+    ) {
+      candidates.next += 1;
+    }
+    const closeIndex = candidates.indexes[candidates.next];
+    if (closeIndex === undefined) continue;
+    ranges.push([offset + start, offset + runs[closeIndex]!.end]);
+    codeEnd = runs[closeIndex]!.end;
+    index = closeIndex;
+  }
+}
 
 /** Whether an offset is inside code; call it with ascending offsets. */
 function codeOffsetTest(text: string): (offset: number) => boolean {
   let ranges: Array<readonly [number, number]> | null = null;
   let next = 0;
   return (offset) => {
-    ranges ??= Array.from(text.matchAll(MARKDOWN_CODE), (match) => [
-      match.index,
-      match.index + match[0].length,
-    ]);
+    ranges ??= markdownCodeRanges(text);
     while (next < ranges.length && ranges[next]![1] <= offset) next += 1;
     return next < ranges.length && ranges[next]![0] <= offset;
   };

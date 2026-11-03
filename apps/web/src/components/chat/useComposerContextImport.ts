@@ -92,8 +92,11 @@ export function useComposerContextImport(input: {
   readonly promptRef: RefObject<string>;
   readonly pendingThreadImportsRef: RefObject<Map<string, number>>;
   readonly addComposerFilesToDraft: (files: ComposerFileAttachment[]) => string[];
-  /** Attaches a thread's transcript, as dropping it does. */
-  readonly importThreadTranscript: (ref: ScopedThreadRef) => void;
+  /** Attaches a thread's transcript to a draft, as dropping it does. */
+  readonly importThreadTranscript: (
+    ref: ScopedThreadRef,
+    draftTarget: ChatComposerProps["composerDraftTarget"],
+  ) => void;
 }) {
   const {
     environmentId,
@@ -403,10 +406,10 @@ export function useComposerContextImport(input: {
             record.environmentId !== environmentId &&
             !linkedEnvironments.has(record.environmentId)
           ) {
-            importThreadTranscript({
-              environmentId: record.environmentId,
-              threadId: record.threadId,
-            });
+            importThreadTranscript(
+              { environmentId: record.environmentId, threadId: record.threadId },
+              threadDraftTarget,
+            );
             rewritten.set(record.contextId, null);
             break;
           }

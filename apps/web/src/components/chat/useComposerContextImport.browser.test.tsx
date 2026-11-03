@@ -269,6 +269,38 @@ it("imports a pasted thread from a machine this one does not link to as its tran
     );
   });
   expect(pasted).toBe("See Remote thread");
-  expect(importThreadTranscript).toHaveBeenCalledWith(ref);
+  expect(importThreadTranscript).toHaveBeenCalledWith(ref, target);
   expect(store.getComposerDraft(target)?.threadContexts ?? []).toEqual([]);
+});
+
+// A stash restores into the prompt behind an open question, not into the question's answer.
+it("imports a restored thread's transcript into the draft the restore names", async () => {
+  const target = DraftId.make("stash-unlinked-thread");
+  const question = DraftId.make("stash-unlinked-thread-question");
+  const ref = {
+    environmentId: EnvironmentId.make("unlinked-machine"),
+    threadId: ThreadId.make("remote"),
+  };
+  const importThreadTranscript = vi.fn();
+  let importer!: Importer;
+  await using _screen = await render(
+    <Harness
+      input={{
+        ...importInput(question, { current: "" }),
+        composerDraftTarget: target,
+        questionAttachmentTarget: question,
+        importThreadTranscript,
+      }}
+      ready={(value) => {
+        importer = value;
+      }}
+    />,
+  );
+  const rewritten = importer.importContextRecords(
+    [threadContextRecord(ref, "Remote thread")],
+    null,
+    target,
+  );
+  expect([...rewritten.values()]).toEqual([null]);
+  expect(importThreadTranscript).toHaveBeenCalledWith(ref, target);
 });

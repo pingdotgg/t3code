@@ -57,7 +57,6 @@ import {
   memo,
   use,
   useEffect,
-  useEffectEvent,
   useId,
   useImperativeHandle,
   useLayoutEffect,
@@ -1394,9 +1393,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
-    importThreadTranscript: (ref) => {
-      const targetKey = attachmentTargetKey;
-      void importDroppedThread(ref, () => attachmentTargetKeyRef.current === targetKey);
+    importThreadTranscript: (ref, draftTarget) => {
+      const targetKey = composerTargetKey(draftTarget);
+      void importThreadTranscript(
+        ref,
+        draftTarget,
+        () =>
+          attachmentTargetKeyRef.current === targetKey ||
+          composerDraftTargetKeyRef.current === targetKey,
+      );
     },
   });
 
@@ -2644,10 +2649,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
 
-  const attachDroppedThreadFile = useEffectEvent((file: File) => addComposerAttachments([file]));
-  const importDroppedThread = useEffectEvent(
-    async (ref: ScopedThreadRef, isActive: () => boolean) => {
-      const targetKey = attachmentTargetKey;
+  // The editor shows the attachment draft; a stash restore can name the draft behind a question.
+  const attachThreadTranscript = useStableCallback(
+    async (draftTarget: ChatComposerProps["composerDraftTarget"], file: File) =>
+      composerTargetKey(draftTarget) === attachmentTargetKey
+        ? addComposerAttachments([file])
+        : addComposerDraftFiles(
+            draftTarget,
+            [
+              {
+                type: "file",
+                id: randomUUID(),
+                name: file.name,
+                mimeType: file.type,
+                sizeBytes: file.size,
+                file,
+              },
+            ],
+            { appendReference: true },
+          ).length > 0,
+  );
+  const importThreadTranscript = useStableCallback(
+    async (
+      ref: ScopedThreadRef,
+      draftTarget: ChatComposerProps["composerDraftTarget"],
+      isActive: () => boolean,
+    ) => {
+      const targetKey = composerTargetKey(draftTarget);
       pendingDraftWork.begin(targetKey);
       const loadingToast = toastManager.add({
         type: "loading",
@@ -2671,7 +2699,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             return threadContextAttachment(ref.environmentId, result.value);
           },
           isActive,
-          attach: attachDroppedThreadFile,
+          attach: (file) => attachThreadTranscript(draftTarget, file),
           onLimitReached: () => {
             if (activeThreadId) {
               setThreadError(
@@ -2704,8 +2732,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // The agent reads a linked machine's thread itself, like the `@` picker's; any other
       // machine's comes in as its transcript.
       if (ref.environmentId !== environmentId && !linkedEnvironments.has(ref.environmentId)) {
-        void importDroppedThread(
+        void importThreadTranscript(
           ref,
+          attachmentDraftTarget,
           () => isActive() && attachmentTargetKeyRef.current === attachmentTargetKey,
         );
         return [];

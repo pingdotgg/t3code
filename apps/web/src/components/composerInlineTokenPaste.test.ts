@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   encodeComposerContextFragment,
@@ -53,6 +53,28 @@ describe("importPastedComposerText", () => {
     expect(importPastedComposerText(clipboard({ "text/plain": code }), importNothing)).toBe(
       `\`\`\`md\n${reference}\n\`\`\`\nInline \`${reference}\` and Source Thread Ready`,
     );
+  });
+
+  it("keeps a reference in a fence whose body holds a fence marker mid-line", () => {
+    const reference = formatComposerContextReference(sourceThread);
+    const code = `\`\`\`js\nconsole.log("\`\`\`");\n${reference}\n\`\`\``;
+    expect(importPastedComposerText(clipboard({ "text/plain": code }), importNothing)).toBe(code);
+  });
+
+  it("imports a reference between escaped backticks", () => {
+    const fragment = encodeComposerContextFragment({
+      version: 1,
+      source: { environmentId: sourceThread.environmentId },
+      records: [sourceThread],
+    });
+    const localId = ComposerContextId.make("thread-local");
+    const text = `\\\`${formatComposerContextReference(sourceThread)}\\\``;
+    expect(
+      importPastedComposerText(
+        clipboard({ "text/plain": text, [COMPOSER_CONTEXT_CLIPBOARD_MIME]: fragment ?? "" }),
+        () => new Map([[sourceThread.contextId, localId]]),
+      ),
+    ).toBe(`\\\`${formatComposerContextReference({ ...sourceThread, contextId: localId })}\\\``);
   });
 
   it("keeps a context reference whose record the draft already holds", () => {
