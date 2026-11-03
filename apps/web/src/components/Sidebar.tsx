@@ -3138,19 +3138,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               )}
                             </ProjectScopeRowIcon>
                             <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
-                            {project && showProjectEnvironments ? (
-                              <ProjectEnvironmentBadge
-                                group={project}
-                                primaryEnvironmentId={primaryEnvironmentId}
-                                machineByEnvironmentId={environmentMachineById}
-                              />
-                            ) : null}
                             {project && canPinProject(project) ? (
                               <ProjectPinButton
                                 name={project.displayName}
                                 pinned={project.pinned}
                                 shortcutLabel={shortcutLabelForCommand(keybindings, "thread.pin")}
                                 onToggle={() => toggleProjectGroupPin(project)}
+                              />
+                            ) : null}
+                            {project && showProjectEnvironments ? (
+                              <ProjectEnvironmentBadge
+                                group={project}
+                                primaryEnvironmentId={primaryEnvironmentId}
+                                machineByEnvironmentId={environmentMachineById}
                               />
                             ) : null}
                             {project ? (
