@@ -205,15 +205,15 @@ const readRemoteTimeoutMs = (detail: unknown): number | undefined => {
     : undefined;
 };
 
-const MAX_REASON_CHARS = 500;
+const readRemoteReason = (detail: unknown): string | undefined =>
+  typeof detail === "object" &&
+  detail !== null &&
+  "reason" in detail &&
+  typeof detail.reason === "string"
+    ? detail.reason
+    : undefined;
 
-const serverBrowserReason = (
-  context: PreviewAutomationRequestErrorContext,
-  error: NonNullable<PreviewAutomationResponse["error"]>,
-) =>
-  context.clientId === SERVER_BROWSER_AUTOMATION_CLIENT_ID
-    ? { reason: error.message.slice(0, MAX_REASON_CHARS) }
-    : {};
+const MAX_REASON_CHARS = 500;
 
 const classifyResponseError = (
   context: PreviewAutomationRequestErrorContext,
@@ -263,10 +263,13 @@ const classifyResponseError = (
       });
     case "PreviewAutomationTimeoutError": {
       const remoteTimeoutMs = readRemoteTimeoutMs(error.detail);
+      const remoteReason = readRemoteReason(error.detail);
       return new PreviewAutomationTimeoutError({
         ...context,
         ...remoteDiagnostics,
-        ...serverBrowserReason(context, error),
+        ...(context.clientId === SERVER_BROWSER_AUTOMATION_CLIENT_ID && remoteReason !== undefined
+          ? { reason: remoteReason.slice(0, MAX_REASON_CHARS) }
+          : {}),
         ...(remoteTimeoutMs === undefined
           ? {}
           : { timeoutMs: Math.min(context.timeoutMs, remoteTimeoutMs) }),
@@ -348,7 +351,9 @@ const classifyResponseError = (
       return new PreviewAutomationExecutionError({
         ...context,
         ...remoteDiagnostics,
-        ...serverBrowserReason(context, error),
+        ...(context.clientId === SERVER_BROWSER_AUTOMATION_CLIENT_ID
+          ? { reason: error.message.slice(0, MAX_REASON_CHARS) }
+          : {}),
       });
   }
 };

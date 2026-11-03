@@ -349,8 +349,8 @@ it.effect("names the click target that matched nothing when the server browser t
           ok: false,
           error: {
             _tag: "PreviewAutomationTimeoutError",
-            message:
-              'No element matches ".definitely-no-such-t3-target" after the timeout. The click may have happened and removed its target or navigated; check the page before retrying, then take a fresh snapshot and use its locator.',
+            message: "No element matches the target.",
+            detail: { reason: 'No element matches ".definitely-no-such-t3-target".' },
           },
         }),
       ).pipe(Effect.forkScoped);
@@ -365,8 +365,9 @@ it.effect("names the click target that matched nothing when the server browser t
         .pipe(Effect.flip);
 
       expect(error._tag).toBe("PreviewAutomationTimeoutError");
-      expect(error.message).toContain(".definitely-no-such-t3-target");
-      expect(error.message).toMatch(/no (element|match)|matched no|not found/i);
+      expect(error.message).toBe(
+        'Preview automation click timed out after 15000ms. No element matches ".definitely-no-such-t3-target".',
+      );
     }),
   ),
 );

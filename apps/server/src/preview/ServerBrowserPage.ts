@@ -73,6 +73,7 @@ export const toOperationError = (
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const TARGET_COUNT_MS = 250;
+const MAX_TARGET_CHARS = 200;
 
 const pageRefs = new WeakMap<Page, { generation: string; refs: Map<string, string> }>();
 // A compact runtime namespace prevents old refs from aliasing after a server restart.
@@ -654,7 +655,10 @@ const namedTargetTimeout = async (
   cause: unknown,
 ) => {
   if (!(cause instanceof Error && cause.name === "TimeoutError")) return cause;
-  const target = JSON.stringify(input.locator ?? input.selector);
+  const selector = JSON.stringify(input.locator ?? input.selector);
+  // The warning leads and the target is capped, so a reply cut short still carries the warning.
+  const target =
+    selector.length > MAX_TARGET_CHARS ? `${selector.slice(0, MAX_TARGET_CHARS)}...` : selector;
   // The host's reply must still beat the broker's short grace after the operation timeout.
   let timer: ReturnType<typeof setTimeout> | undefined;
   const matches = await Promise.race([
@@ -663,13 +667,16 @@ const namedTargetTimeout = async (
       timer = setTimeout(() => resolve(undefined), TARGET_COUNT_MS);
     }),
   ]).finally(() => clearTimeout(timer));
-  if (matches === undefined) return cause;
+  const reason =
+    matches === undefined
+      ? `The click may have happened; check the page before retrying. Whether ${target} still matches an element is unknown.`
+      : matches === 0
+        ? `The click may have happened and removed its target or navigated; check the page before retrying. No element matches ${target} after the timeout; take a fresh snapshot and use its locator.`
+        : `The click may have happened; check the page before retrying. ${target} still matches an element after the timeout.`;
   return new ServerBrowserOperationError(
     "PreviewAutomationTimeoutError",
-    matches === 0
-      ? `No element matches ${target} after the timeout. The click may have happened and removed its target or navigated; check the page before retrying, then take a fresh snapshot and use its locator.`
-      : `${target} still matches an element after the timeout. The click may have happened; check the page before retrying.`,
-    undefined,
+    reason,
+    { reason },
     { cause },
   );
 };

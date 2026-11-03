@@ -109,13 +109,13 @@ describe("server browser element refs", () => {
     const absent = await failure(".definitely-no-such-t3-target");
     expect(absent.tag).toBe("PreviewAutomationTimeoutError");
     expect(absent.message).toBe(
-      'No element matches ".definitely-no-such-t3-target" after the timeout. The click may have happened and removed its target or navigated; check the page before retrying, then take a fresh snapshot and use its locator.',
+      'The click may have happened and removed its target or navigated; check the page before retrying. No element matches ".definitely-no-such-t3-target" after the timeout; take a fresh snapshot and use its locator.',
     );
     expect(absent.cause).toMatchObject({ name: "TimeoutError" });
     const hidden = await failure("button");
     expect(hidden.tag).toBe("PreviewAutomationTimeoutError");
     expect(hidden.message).toBe(
-      '"button" still matches an element after the timeout. The click may have happened; check the page before retrying.',
+      'The click may have happened; check the page before retrying. "button" still matches an element after the timeout.',
     );
   });
 
