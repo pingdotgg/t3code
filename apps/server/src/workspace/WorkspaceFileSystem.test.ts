@@ -591,6 +591,23 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         if (supportsMode) {
           const stat = yield* Effect.promise(() => NodeFSP.stat(path.join(cwd, "src/main.ts")));
           expect(stat.mode & 0o777).toBe(0o700);
+
+          const native = yield* Effect.promise(() =>
+            vi.importActual<typeof NodeFSP>("node:fs/promises"),
+          );
+          const open = vi.mocked(NodeFSP.open).mockImplementation(async (file, flags, mode) => {
+            const handle = await native.open(file, flags, mode);
+            if (file === path.join(cwd, "src/main.ts")) handle.chmod = async () => {};
+            return handle;
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(() => open.mockImplementation(native.open)));
+          const written = yield* workspaceFileSystem.writeFile({
+            cwd,
+            relativePath: "src/main.ts",
+            contents: "export const edited = true;\n",
+            mode: 0o600,
+          });
+          expect(written.mode).toBe(0o700);
         }
       }).pipe(
         Effect.provide(

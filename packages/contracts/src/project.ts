@@ -522,7 +522,7 @@ export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
 export const ProjectWriteFileResult = Schema.Struct({
   relativePath: TrimmedNonEmptyString,
-  // Omitted when the destination cannot apply POSIX permissions.
+  // Observed POSIX permissions; omitted when the destination cannot report them.
   mode: Schema.optional(ProjectFileMode),
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;

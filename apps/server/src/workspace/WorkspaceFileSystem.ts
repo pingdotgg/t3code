@@ -567,7 +567,7 @@ export const make = Effect.gen(function* () {
       ),
     );
     const mode = (yield* HostProcess.Platform) === "win32" ? undefined : input.mode;
-    yield* Effect.tryPromise({
+    const writtenMode = yield* Effect.tryPromise({
       // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
       try: async () => {
         const handle = await NodeFSP.open(
@@ -580,7 +580,10 @@ export const make = Effect.gen(function* () {
         );
         try {
           await handle.writeFile(input.contents);
-          if (mode !== undefined) await handle.chmod(mode);
+          if (mode !== undefined) {
+            await handle.chmod(mode);
+            return (await handle.stat()).mode & 0o777;
+          }
         } finally {
           await handle.close();
         }
@@ -601,7 +604,10 @@ export const make = Effect.gen(function* () {
     if (!replacesFile) {
       yield* workspaceEntries.refresh(input.cwd);
     }
-    return { relativePath: target.relativePath, ...(mode !== undefined ? { mode } : {}) };
+    return {
+      relativePath: target.relativePath,
+      ...(writtenMode !== undefined ? { mode: writtenMode } : {}),
+    };
   });
 
   return WorkspaceFileSystem.of({ getMetadata, readFile, writeFile });
