@@ -187,7 +187,7 @@ import {
   filterSidebarProjectScopeItems,
   firstValidTimestampMs,
   belongsInSidebarWorkingShelf,
-  isSidebarEnvironmentDisconnected,
+  createSidebarDisconnectedEnvironmentIdsAtom,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -366,26 +366,10 @@ function scrollSidebarToTop(content: HTMLElement | null) {
   content?.closest("[data-slot=scroll-area-viewport]")?.scrollTo({ top: 0 });
 }
 
-const disconnectedEnvironmentIdsAtom = Atom.make((get) => {
-  const previous = Option.getOrNull(get.self<ReadonlySet<EnvironmentId>>());
-  const liveShellEnvironmentIds = get(liveShellEnvironmentIdsAtom);
-  const next = new Set(
-    get(environmentSummaries.environmentsAtom)
-      .filter((environment) =>
-        isSidebarEnvironmentDisconnected(
-          environment.connectionState,
-          liveShellEnvironmentIds.has(environment.environmentId),
-          previous?.has(environment.environmentId) ?? false,
-        ),
-      )
-      .map((environment) => environment.environmentId),
-  );
-  return previous !== null &&
-    next.size === previous.size &&
-    [...next].every((environmentId) => previous.has(environmentId))
-    ? previous
-    : next;
-}).pipe(Atom.withLabel("web-sidebar-disconnected-environment-ids"));
+export const disconnectedEnvironmentIdsAtom = createSidebarDisconnectedEnvironmentIdsAtom(
+  environmentSummaries.environmentsAtom,
+  liveShellEnvironmentIdsAtom,
+);
 
 function threadShellKey(thread: Pick<SidebarThreadSummary, "environmentId" | "id">): string {
   return scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));

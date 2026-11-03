@@ -24,7 +24,8 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
-import type { AsyncResult } from "effect/reactivity";
+import { Atom, type AsyncResult } from "effect/reactivity";
+import * as Option from "effect/Option";
 import {
   effectiveSnoozed,
   type ThreadSnoozeShell,
@@ -193,6 +194,37 @@ export function isSidebarEnvironmentDisconnected(
 ): boolean {
   if (phase === "connected" && shellIsLive) return false;
   return phase === "connecting" || phase === "connected" ? wasDisconnected : true;
+}
+
+export function createSidebarDisconnectedEnvironmentIdsAtom(
+  environmentsAtom: Atom.Atom<
+    ReadonlyArray<{
+      readonly environmentId: EnvironmentId;
+      readonly connectionState: EnvironmentConnectionPhase;
+    }>
+  >,
+  liveEnvironmentIdsAtom: Atom.Atom<ReadonlySet<EnvironmentId>>,
+) {
+  return Atom.make((get) => {
+    const previous = Option.getOrNull(get.self<ReadonlySet<EnvironmentId>>());
+    const liveShellEnvironmentIds = get(liveEnvironmentIdsAtom);
+    const next = new Set(
+      get(environmentsAtom)
+        .filter((environment) =>
+          isSidebarEnvironmentDisconnected(
+            environment.connectionState,
+            liveShellEnvironmentIds.has(environment.environmentId),
+            previous?.has(environment.environmentId) ?? false,
+          ),
+        )
+        .map((environment) => environment.environmentId),
+    );
+    return previous !== null &&
+      next.size === previous.size &&
+      [...next].every((environmentId) => previous.has(environmentId))
+      ? previous
+      : next;
+  }).pipe(Atom.keepAlive, Atom.withLabel("web-sidebar-disconnected-environment-ids"));
 }
 
 export function belongsInSidebarWorkingShelf<T extends { readonly environmentId: EnvironmentId }>(

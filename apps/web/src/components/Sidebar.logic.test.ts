@@ -5,7 +5,7 @@ import * as DateTime from "effect/DateTime";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
 import { describe, expect, it } from "vite-plus/test";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import {
   shouldCreateNewThreadInCurrentProject,
   deleteSelectedThreadEntries,
@@ -14,6 +14,7 @@ import {
   resolveSidebarRowThreadId,
   belongsInSidebarWorkingShelf,
   isSidebarEnvironmentDisconnected,
+  createSidebarDisconnectedEnvironmentIdsAtom,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
@@ -1079,6 +1080,52 @@ describe("Working shelf (beta)", () => {
         return disconnected;
       }),
     ).toEqual(expected);
+  });
+
+  it("tracks reconnects before the sidebar first reads and while its reader is unmounted", () => {
+    const registry = AtomRegistry.make();
+    try {
+      const environments = Atom.make<
+        ReadonlyArray<{
+          environmentId: EnvironmentId;
+          connectionState: EnvironmentConnectionPhase;
+        }>
+      >([{ environmentId: localEnvironmentId, connectionState: "connected" }]);
+      const live = Atom.make<ReadonlySet<EnvironmentId>>(new Set([localEnvironmentId]));
+      const disconnected = createSidebarDisconnectedEnvironmentIdsAtom(environments, live);
+      registry.mount(disconnected);
+
+      registry.set(environments, [
+        { environmentId: localEnvironmentId, connectionState: "reconnecting" },
+      ]);
+      registry.set(live, new Set());
+      registry.set(environments, [
+        { environmentId: localEnvironmentId, connectionState: "connected" },
+      ]);
+      const unmountSidebar = registry.mount(disconnected);
+      expect([...registry.get(disconnected)]).toEqual([localEnvironmentId]);
+      unmountSidebar();
+
+      registry.set(live, new Set([localEnvironmentId]));
+      const synchronized = registry.get(disconnected);
+      expect([...synchronized]).toEqual([]);
+      registry.set(live, new Set());
+      expect(registry.get(disconnected)).toBe(synchronized);
+      registry.set(live, new Set([localEnvironmentId]));
+      expect(registry.get(disconnected)).toBe(synchronized);
+      registry.set(environments, [
+        { environmentId: localEnvironmentId, connectionState: "offline" },
+      ]);
+      registry.set(live, new Set());
+      registry.set(environments, [
+        { environmentId: localEnvironmentId, connectionState: "connected" },
+      ]);
+      expect([...registry.get(disconnected)]).toEqual([localEnvironmentId]);
+      registry.set(live, new Set([localEnvironmentId]));
+      expect([...registry.get(disconnected)]).toEqual([]);
+    } finally {
+      registry.dispose();
+    }
   });
 
   it("lists a running thread outside the shelf while its environment is disconnected", () => {
