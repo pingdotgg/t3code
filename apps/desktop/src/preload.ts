@@ -52,7 +52,7 @@ if (clientPlatform === "darwin") {
   const syncWindowGeometry = () => {
     const rootStyle = document.documentElement.style;
     const zoomFactor = webFrame.getZoomFactor();
-    rootStyle.setProperty("--desktop-window-controls-inset", `${30 + 67 / zoomFactor}px`);
+    rootStyle.setProperty("--desktop-window-controls-inset", `${90 / zoomFactor}px`);
     // Measured from macOS 27 window captures; earlier releases draw other corners.
     if (macosMajorVersion >= 27) {
       rootStyle.setProperty("--desktop-window-corner-radius", `${31.5 / zoomFactor}px`);
