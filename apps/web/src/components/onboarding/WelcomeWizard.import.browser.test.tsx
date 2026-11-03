@@ -2,6 +2,12 @@ import { RegistryContext } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  DEFAULT_UNIFIED_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerConfig,
+  type ServerProvider,
+  type UnifiedSettings,
   EnvironmentId,
   ProjectId,
   type AgentSessionProjectCandidate,
@@ -31,6 +37,7 @@ const state = vi.hoisted(() => ({
   createProject: vi.fn(),
   importThreads: vi.fn(),
   refreshProviders: vi.fn(),
+  updateSettings: vi.fn(),
   connectPairing: vi.fn(),
   completeOnboarding: vi.fn(),
   onDone: vi.fn(),
@@ -82,6 +89,7 @@ vi.mock(import("../../state/server"), async (original) => {
       providersValueAtom: (() => state.providers) as never,
       configValueAtom: (() => state.config) as never,
       refreshProviders: "refreshProviders" as never,
+      updateSettings: "updateSettings" as never,
     },
   };
 });
@@ -123,7 +131,12 @@ vi.mock(import("../../connection/onboarding"), async (original) => ({
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: ((
-    command: "createProject" | "importThreads" | "refreshProviders" | "connectPairing",
+    command:
+      | "createProject"
+      | "importThreads"
+      | "refreshProviders"
+      | "connectPairing"
+      | "updateSettings",
   ) => state[command]) as never,
 }));
 vi.mock(import("../settings/ChatGptWelcomeCoordinator"), async (original) => ({
@@ -282,6 +295,17 @@ function setup() {
   state.importThreads
     .mockReset()
     .mockResolvedValue(AsyncResult.success({ importedCount: 1, skippedCount: 0 }));
+  state.updateSettings
+    .mockReset()
+    .mockImplementation(async ({ input }: { input: { patch: Partial<UnifiedSettings> } }) => {
+      const config = state.config as Atom.Writable<Pick<ServerConfig, "settings">>;
+      const current = appAtomRegistry.get(config);
+      appAtomRegistry.set(config, {
+        ...current,
+        settings: { ...current.settings, ...input.patch },
+      });
+      return AsyncResult.success(undefined);
+    });
   state.refreshProviders.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.connectPairing.mockReset().mockResolvedValue(AsyncResult.success(remoteId));
   state.completeOnboarding.mockReset().mockResolvedValue(undefined);
@@ -386,3 +410,85 @@ it("finishes setup without landing when the imported project never reaches the c
   await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
   expect(state.onDone).toHaveBeenCalledWith(undefined);
 });
+
+it.each([
+  { label: "missing", installed: false, authenticated: false },
+  { label: "signed out", installed: true, authenticated: false },
+  { label: "authenticated with an error", installed: true, authenticated: true },
+])(
+  "offers Codex setup recovery only when a choice is available ($label)",
+  async ({ installed, authenticated }) => {
+    using _now = setup();
+    const instanceId = ProviderInstanceId.make("codex");
+    const provider: ServerProvider = {
+      instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed,
+      version: installed ? "1.0.0" : null,
+      status: "error",
+      auth: { status: authenticated ? "authenticated" : "unauthenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    };
+    state.providers = Atom.make([provider]).pipe(Atom.keepAlive);
+    const settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [instanceId]: {
+          driver: provider.driver,
+          enabled: true,
+          config: { binaryPath: "/opt/codex", ...(authenticated ? { setupMode: "existing" } : {}) },
+        },
+      },
+    };
+    const config = Atom.make({ settings }).pipe(Atom.keepAlive);
+    state.config = config;
+    await using screen = await render(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <WelcomeWizard localAvailable resumeEnvironmentId={primaryId} onDone={state.onDone} />
+      </RegistryContext.Provider>,
+    );
+    if (authenticated) {
+      await expect
+        .element(screen.getByRole("button", { name: "Change setup method" }))
+        .not.toBeInTheDocument();
+      return;
+    }
+    await click("Use existing CLI");
+    expect(appAtomRegistry.get(config).settings.providerInstances[instanceId]?.config).toEqual({
+      binaryPath: "/opt/codex",
+      enabled: true,
+      setupMode: "existing",
+    });
+    await expect
+      .element(screen.getByRole("button", { name: installed ? "Sign in" : "Install", exact: true }))
+      .toBeVisible();
+    await click("Change setup method");
+    await expect
+      .element(screen.getByRole("button", { name: "Continue with ChatGPT" }))
+      .toBeVisible();
+    const saved = deferred<void>();
+    const saveSettings = state.updateSettings.getMockImplementation()!;
+    state.updateSettings.mockImplementationOnce(async (input) => {
+      await saved.promise;
+      return saveSettings(input);
+    });
+    await click("Continue with ChatGPT");
+    await expect
+      .element(screen.getByRole("button", { name: "Continue with ChatGPT" }))
+      .toBeVisible();
+    await act(async () => {
+      saved.resolve();
+      await saved.promise;
+    });
+    expect(appAtomRegistry.get(config).settings.providerInstances[instanceId]?.config).toEqual({
+      binaryPath: "/opt/codex",
+      enabled: true,
+      setupMode: "managed",
+    });
+    await expect.element(screen.getByRole("button", { name: "Open sign-in page" })).toBeVisible();
+  },
+);

@@ -905,6 +905,7 @@ function OnboardingCodexSetup({
   } | null;
   readonly onAutoStartConsumed: () => void;
 }) {
+  const [choosingSetupMethod, setChoosingSetupMethod] = useState(false);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const update = useAtomCommand(serverEnvironment.updateSettings, "Codex setup settings");
   const instanceId =
@@ -924,6 +925,7 @@ function OnboardingCodexSetup({
     "setupMode" in instance.config &&
     instance.config.setupMode === "existing";
   const changeMode = (setupMode: "managed" | "existing") => {
+    if (setupMode === "existing") setChoosingSetupMethod(false);
     void update({
       environmentId,
       input: {
@@ -945,14 +947,22 @@ function OnboardingCodexSetup({
       },
     });
   };
-  return existingChosen ? (
-    <AgentCard
-      driver="codex"
-      provider={provider}
-      terminalOpen={terminalOpen}
-      terminalAvailable={canOperateTerminal}
-      onOpenTerminal={onOpenTerminal}
-    />
+  const providerState = getOnboardingProviderState(provider);
+  return existingChosen && !choosingSetupMethod ? (
+    <div className="space-y-1.5">
+      <AgentCard
+        driver="codex"
+        provider={provider}
+        terminalOpen={terminalOpen}
+        terminalAvailable={canOperateTerminal}
+        onOpenTerminal={onOpenTerminal}
+      />
+      {providerState === "install" || providerState === "signIn" ? (
+        <Button size="xs" variant="ghost-muted" onClick={() => setChoosingSetupMethod(true)}>
+          Change setup method
+        </Button>
+      ) : null}
+    </div>
   ) : (
     <CodexSetupSection
       presentation="onboarding"
