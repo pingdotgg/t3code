@@ -612,14 +612,24 @@ export class OrchestrationEffectWorkerError extends Schema.TaggedError<Orchestra
 
 const isOrchestrationEffectWorkerError = Schema.is(OrchestrationEffectWorkerError);
 
-export interface OrchestrationEffectWorkerV2Shape {
+interface OrchestrationEffectWorkerLoop {
   readonly awaitWork: Effect.Effect<void>;
   readonly runOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
-  readonly runRecoveryOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
   readonly nextClaimableAt: Effect.Effect<
     Option.Option<DateTime.Utc>,
     OrchestrationEffectWorkerError
   >;
+}
+
+export interface OrchestrationEffectWorkerV2Shape extends OrchestrationEffectWorkerLoop {
+  /** Non-title variants keep claims, deadlines, and wakeups in agreement for the reserved worker. */
+  readonly awaitNonTitleWork: Effect.Effect<void>;
+  readonly runNonTitleOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
+  readonly nextNonTitleClaimableAt: Effect.Effect<
+    Option.Option<DateTime.Utc>,
+    OrchestrationEffectWorkerError
+  >;
+  readonly runRecoveryOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
   readonly drain: (maxEffects?: number) => Effect.Effect<number, OrchestrationEffectWorkerError>;
 }
 
@@ -739,9 +749,12 @@ export const layerWithOptions = (
 
       // The worker probes for work repeatedly, including when the outbox is empty.
       const runOnce = Effect.fnUntraced(
-        function* (excludeRestartContinuations = false) {
+        function* (
+          excludeRestartContinuations = false,
+          filter: EffectOutbox.EffectClaimFilter = {},
+        ) {
           const claimExit = yield* Effect.exit(
-            outbox.claimNext({ workerId, excludeRestartContinuations }),
+            outbox.claimNext({ ...filter, workerId, excludeRestartContinuations }),
           );
           yield* increment(orchestrationEffectClaimsTotal, {
             result: Exit.isFailure(claimExit)
@@ -841,7 +854,11 @@ export const layerWithOptions = (
           }
           return true;
         },
-        (effect, _excludeRestartContinuations?: boolean) =>
+        (
+          effect,
+          _excludeRestartContinuations?: boolean,
+          _filter?: EffectOutbox.EffectClaimFilter,
+        ) =>
           effect.pipe(
             Effect.mapError((cause) =>
               isOrchestrationEffectWorkerError(cause)
@@ -851,11 +868,8 @@ export const layerWithOptions = (
           ),
       );
 
-      return OrchestrationEffectWorkerV2.of({
-        awaitWork: outbox.awaitAvailable,
-        runOnce: runOnce(),
-        runRecoveryOnce: runOnce(true),
-        nextClaimableAt: outbox.nextClaimableAt.pipe(
+      const nextClaimableAt = (filter?: EffectOutbox.EffectClaimFilter) =>
+        outbox.nextClaimableAt(filter).pipe(
           Effect.mapError(
             (cause) =>
               new OrchestrationEffectWorkerError({
@@ -863,7 +877,17 @@ export const layerWithOptions = (
                 cause,
               }),
           ),
-        ),
+        );
+      const nonTitle = { excludeTitleGeneration: true };
+
+      return OrchestrationEffectWorkerV2.of({
+        awaitWork: outbox.awaitAvailable(),
+        runOnce: runOnce(),
+        nextClaimableAt: nextClaimableAt(),
+        awaitNonTitleWork: outbox.awaitAvailable(nonTitle),
+        runNonTitleOnce: runOnce(false, nonTitle),
+        nextNonTitleClaimableAt: nextClaimableAt(nonTitle),
+        runRecoveryOnce: runOnce(true),
         drain: Effect.fn("EffectWorker.drain")(function* (maxEffects = Number.MAX_SAFE_INTEGER) {
           let completed = 0;
           while (completed < maxEffects && (yield* runOnce())) {
@@ -899,9 +923,10 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
         ? Math.max(1, Math.floor(requestedLivenessPollIntervalMs))
         : DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS;
       // Notifications wake promptly; availableAt persists retry timing, and liveness polling recovers missed wakeups.
-      const runWorker = Effect.gen(function* () {
+      // A span here would cover the worker's whole lifetime.
+      const runWorker = Effect.fnUntraced(function* (lane: OrchestrationEffectWorkerLoop) {
         while (true) {
-          const outcome = yield* worker.runOnce.pipe(
+          const outcome = yield* lane.runOnce.pipe(
             Effect.map((worked) => (worked ? ("worked" as const) : ("idle" as const))),
             Effect.catchCause((cause) =>
               Effect.logWarning("Orchestration effect worker failed", cause).pipe(
@@ -919,7 +944,7 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
             continue;
           }
 
-          const nextClaimableAt = yield* worker.nextClaimableAt.pipe(
+          const nextClaimableAt = yield* lane.nextClaimableAt.pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning(
                 "Failed to read the next orchestration effect deadline",
@@ -936,14 +961,25 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
             },
           });
           yield* Effect.raceFirst(
-            worker.awaitWork.pipe(Effect.as("notified" as const)),
+            lane.awaitWork.pipe(Effect.as("notified" as const)),
             Effect.sleep(Duration.millis(sleepMs)).pipe(Effect.as("scheduled" as const)),
           );
         }
       });
 
+      // Slow title generation must not occupy every worker, so one keeps to non-title effects.
       return yield* Effect.all(
-        Array.from({ length: concurrency }, () => runWorker),
+        Array.from({ length: concurrency }, (_, index) =>
+          runWorker(
+            concurrency > 1 && index === 0
+              ? {
+                  awaitWork: worker.awaitNonTitleWork,
+                  runOnce: worker.runNonTitleOnce,
+                  nextClaimableAt: worker.nextNonTitleClaimableAt,
+                }
+              : worker,
+          ),
+        ),
         {
           concurrency: "unbounded",
           discard: true,
