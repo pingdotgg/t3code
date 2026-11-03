@@ -444,10 +444,6 @@ export const layer = Layer.effect(
     );
     const syncSemaphore = yield* Semaphore.make(1);
 
-    const getLiveSources: Effect.Effect<ReadonlyArray<ProviderSnapshotSource>> = Ref.get(
-      liveSubsRef,
-    ).pipe(Effect.map((map) => Array.from(map.values(), buildSnapshotSource)));
-
     const persistProvider = Effect.fn("ProviderRegistry.persistProvider")(function* (
       provider: ServerProvider,
     ) {
@@ -601,17 +597,18 @@ export const layer = Layer.effect(
       },
     );
 
-    const refreshOneSource = Effect.fn("refreshOneSource")(function* (
-      providerSource: ProviderSnapshotSource,
-    ) {
+    const refreshOneSource = Effect.fn("refreshOneSource")(function* (instance: ProviderInstance) {
+      const providerSource = buildSnapshotSource(instance);
       // Enrichment can publish a newer snapshot before refresh returns its pre-enrichment probe.
-      return yield* providerSource.refresh.pipe(
+      const nextProvider = yield* providerSource.refresh.pipe(
         Effect.andThen(providerSource.getSnapshot),
-        Effect.flatMap((nextProvider) =>
-          correlateSnapshotWithSource(providerSource, nextProvider).pipe(
-            Effect.flatMap(syncProvider),
-          ),
-        ),
+      );
+      // Settings can replace or remove the instance mid-probe; its late result is stale.
+      if ((yield* instanceRegistry.getInstance(instance.instanceId)) !== instance) {
+        return yield* Ref.get(providersRef);
+      }
+      return yield* correlateSnapshotWithSource(providerSource, nextProvider).pipe(
+        Effect.flatMap(syncProvider),
       );
     });
 
@@ -640,9 +637,9 @@ export const layer = Layer.effect(
         // Detach shared passes so the first caller's interruption cannot cancel other callers' work.
         // Syncing first keeps a refresh right after a rebuild from probing the replaced instance.
         yield* syncLiveSourcesAndContinue.pipe(
-          Effect.andThen(getLiveSources),
-          Effect.flatMap((sources) =>
-            Effect.forEach(sources, (source) => refreshOneSource(source), {
+          Effect.andThen(Ref.get(liveSubsRef)),
+          Effect.flatMap((instances) =>
+            Effect.forEach(instances.values(), (instance) => refreshOneSource(instance), {
               concurrency: "unbounded",
               discard: true,
             }),
@@ -663,27 +660,22 @@ export const layer = Layer.effect(
       if (provider === undefined) {
         return yield* refreshAll();
       }
-      const defaultInstanceId = defaultInstanceIdForDriver(provider);
-      const sources = yield* getLiveSources;
-      const providerSource = sources.find(
-        (candidate) => candidate.instanceId === defaultInstanceId,
-      );
-      if (!providerSource) {
+      const instance = (yield* Ref.get(liveSubsRef)).get(defaultInstanceIdForDriver(provider));
+      if (!instance) {
         return yield* Ref.get(providersRef);
       }
-      return yield* refreshOneSource(providerSource);
+      return yield* refreshOneSource(instance);
     });
 
     const refreshInstance = Effect.fn("refreshInstance")(function* (
       instanceId: ProviderInstanceId,
     ) {
       yield* syncLiveSourcesAndContinue;
-      const sources = yield* getLiveSources;
-      const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
-      if (!providerSource) {
+      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
+      if (!instance) {
         return yield* Ref.get(providersRef);
       }
-      return yield* refreshOneSource(providerSource);
+      return yield* refreshOneSource(instance);
     });
 
     const reloadSecretsAndRefresh = Effect.fn("reloadSecretsAndRefresh")(function* (
@@ -744,7 +736,7 @@ export const layer = Layer.effect(
       yield* Effect.forEach(
         instances.filter((instance) => !failedInstances.has(instance.instanceId)),
         (instance) =>
-          refreshOneSource(buildSnapshotSource(instance)).pipe(
+          refreshOneSource(instance).pipe(
             Effect.catchCause((cause) => recoverInstanceFailure(instance.instanceId, cause)),
           ),
         { concurrency: "unbounded", discard: true },
