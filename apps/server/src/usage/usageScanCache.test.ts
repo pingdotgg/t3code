@@ -249,7 +249,7 @@ describe("scan cache round trip", () => {
     },
   );
 
-  it("re-parses a v11 Codex entry that skipped records but resumes a clean one", () => {
+  it("re-parses a v11 Codex entry that skipped records and restarts a clean one when it grows", () => {
     const codex = (malformedRecords: number): CachedFile => ({
       size: 10,
       mtimeMs: 100,
@@ -273,7 +273,11 @@ describe("scan cache round trip", () => {
       size: -1,
       position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
     });
-    expect(restored.get("/clean-codex.jsonl")).toEqual(codex(0));
+    // Served while unchanged, but its state predates the latest snapshot time, so it cannot resume.
+    expect(restored.get("/clean-codex.jsonl")).toEqual({
+      ...codex(0),
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+    });
   });
 
   it("re-parses a Claude transcript cached before advisor usage was counted", () => {
