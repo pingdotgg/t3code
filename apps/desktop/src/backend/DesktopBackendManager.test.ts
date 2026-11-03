@@ -1,4 +1,5 @@
 import {
+  SERVER_EXIT_CODE_MANAGED_POLICY,
   SERVER_EXIT_CODE_STATE_DIR_OWNED,
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
@@ -623,56 +624,63 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
-  it.effect("reports a crash loop with the server output on the third restart", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const message = "Error: Cannot find module 'zod/v4' in /Users/René";
-        let exitCount = 0;
-        const firstExit = yield* Deferred.make<void>();
-        const reports = yield* Queue.unbounded<{
-          readonly exitCount: number;
-          readonly failure: DesktopBackendManager.BackendStartupFailure;
-        }>();
-        const instance = yield* makeTestInstance({
-          spawnerLayer: Layer.succeed(
-            ChildProcessSpawner.ChildProcessSpawner,
-            ChildProcessSpawner.make(() =>
-              Effect.succeed(
-                makeProcess({
-                  // "é" split across chunks must not decode as U+FFFD, and the 4,000-char cut
-                  // lands inside the emoji's surrogate pair.
-                  stderr: Stream.make(
-                    new TextEncoder().encode(
-                      `😀${"x".repeat(3_999 - message.length)}${message.slice(0, -1)}`,
+  // A policy refusal is reported on the first exit, since retrying cannot fix it.
+  it.effect.each([
+    { code: 1, exits: 3, managedPolicy: false },
+    { code: SERVER_EXIT_CODE_MANAGED_POLICY, exits: 1, managedPolicy: true },
+  ])(
+    "reports exit $code with the server output after $exits exits",
+    ({ code, exits, managedPolicy }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const message = "Error: Cannot find module 'zod/v4' in /Users/René";
+          let exitCount = 0;
+          const firstExit = yield* Deferred.make<void>();
+          const reports = yield* Queue.unbounded<{
+            readonly exitCount: number;
+            readonly failure: DesktopBackendManager.BackendStartupFailure;
+          }>();
+          const instance = yield* makeTestInstance({
+            spawnerLayer: Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make(() =>
+                Effect.succeed(
+                  makeProcess({
+                    // "é" split across chunks must not decode as U+FFFD, and the 4,000-char cut
+                    // lands inside the emoji's surrogate pair.
+                    stderr: Stream.make(
+                      new TextEncoder().encode(
+                        `😀${"x".repeat(3_999 - message.length)}${message.slice(0, -1)}`,
+                      ),
+                      new Uint8Array([0xc3]),
+                      new Uint8Array([0xa9]),
                     ),
-                    new Uint8Array([0xc3]),
-                    new Uint8Array([0xa9]),
-                  ),
-                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
-                }),
+                    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(code)),
+                  }),
+                ),
               ),
             ),
-          ),
-          httpClientLayer: layerHttpClient(() => Effect.never),
-          backendOutputLog: {
-            persistFailure: () => {
-              exitCount += 1;
-              return Deferred.succeed(firstExit, undefined).pipe(Effect.asVoid);
+            httpClientLayer: layerHttpClient(() => Effect.never),
+            backendOutputLog: {
+              persistFailure: () => {
+                exitCount += 1;
+                return Deferred.succeed(firstExit, undefined).pipe(Effect.asVoid);
+              },
             },
-          },
-          onStartupFailure: (failure) =>
-            Queue.offer(reports, { exitCount, failure }).pipe(Effect.asVoid),
-        });
-        yield* instance.start;
-        yield* Deferred.await(firstExit);
-        yield* TestClock.adjust(Duration.minutes(1));
-        const { exitCount: exitsWhenReported, failure } = yield* Queue.take(reports);
-        assert.equal(exitsWhenReported, 3);
-        assert.equal(failure.reason, "The server could not start (code=1).");
-        assert.isTrue(failure.output.endsWith(message));
-        assert.isTrue(failure.output.isWellFormed());
-      }).pipe(Effect.provide(TestClock.layer())),
-    ),
+            onStartupFailure: (failure) =>
+              Queue.offer(reports, { exitCount, failure }).pipe(Effect.asVoid),
+          });
+          yield* instance.start;
+          yield* Deferred.await(firstExit);
+          yield* TestClock.adjust(Duration.minutes(1));
+          const { exitCount: exitsWhenReported, failure } = yield* Queue.take(reports);
+          assert.equal(exitsWhenReported, exits);
+          assert.equal(failure.reason, `The server could not start (code=${code}).`);
+          assert.equal(failure.managedPolicy, managedPolicy);
+          assert.isTrue(failure.output.endsWith(message));
+          assert.isTrue(failure.output.isWellFormed());
+        }).pipe(Effect.provide(TestClock.layer())),
+      ),
   );
 
   it.effect("waits out a slow startup and reports one that never becomes ready", () =>

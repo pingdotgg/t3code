@@ -9,7 +9,7 @@ import type { KiroSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import type * as Crypto from "effect/Crypto";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -26,7 +26,6 @@ import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
-  DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   parseGenericCliVersion,
   buildSelectOptionDescriptor,
@@ -54,6 +53,7 @@ const KIRO_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 const KIRO_API_KEY_ENV = "KIRO_API_KEY";
+const VERSION_PROBE_TIMEOUT_MS = 10_000;
 
 /**
  * The agent picker is not a model trait, but the composer reads options per
@@ -360,7 +360,7 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   if (!settings.enabled) {
@@ -374,7 +374,7 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
   }
 
   const versionResult = yield* runKiroCli(settings, ["--version"], environment).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
     Effect.result,
   );
   if (Result.isFailure(versionResult) || Option.isNone(versionResult.success)) {
