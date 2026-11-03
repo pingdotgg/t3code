@@ -7060,6 +7060,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
               return false;
             };
+            if (options?.includeSubagents === true) {
+              for (const subagent of (yield* Ref.get(subagentThreads)).values()) {
+                if (subagent.task.status === "running" && owned(subagent.parentContext)) {
+                  return true;
+                }
+              }
+            }
             for (const context of contexts) {
               if (!owned(context)) continue;
               if (yield* turnHasRetainedBackgroundWork(context.nativeTurnId)) return true;
