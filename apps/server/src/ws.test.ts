@@ -1201,9 +1201,11 @@ it.effect("thread resume at its own high-water below the pruned boundary skips t
       Effect.provideService(ThreadManagement.ThreadManagementService, {
         ensureLegacyTranscript: () => Effect.void,
         getThreadSnapshot: () => Effect.die("snapshot"),
+        streamStoredEventsFrom: () => Stream.empty,
       } as unknown as ThreadManagement.ThreadManagementService["Service"]),
       Effect.exit,
     );
-    assert.notDeepEqual(Exit.isFailure(exit) ? Cause.squash(exit.cause) : "resumed", "snapshot");
+    // A snapshot load dies with "snapshot", so success means the resume replayed nothing.
+    assert.isTrue(Exit.isSuccess(exit));
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
