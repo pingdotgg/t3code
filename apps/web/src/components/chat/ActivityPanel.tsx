@@ -27,7 +27,6 @@ import {
   type ActivityPlan,
   type ActivitySummary,
 } from "@t3tools/client-runtime/work-log/activity-summary";
-import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 
@@ -352,9 +351,7 @@ export function ActivityPanel(props: {
   const runActive =
     structure !== null && threadRuntimeIsActive(deriveThreadStructureRuntime(structure.projection));
   const summary = deriveActivitySummary(
-    visibleItems
-      .map((visible) => visible.item)
-      .filter((item) => !turnItemIsWorkspacePreparation(item)),
+    visibleItems.map((visible) => visible.item),
     props.workspaceRoot ?? null,
     runActive,
   );

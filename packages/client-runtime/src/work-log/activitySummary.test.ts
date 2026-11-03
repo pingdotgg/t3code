@@ -1,4 +1,8 @@
-import { RunId, TurnItemId } from "@t3tools/contracts";
+import {
+  ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+  RunId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -273,6 +277,31 @@ describe("deriveActivitySummary", () => {
     ]);
 
     expect(summary.done).toEqual([]);
+  });
+
+  it("shows nothing for a new run that has only started preparing its workspace", () => {
+    const preparing = summarize([
+      command("old command", "completed", run1),
+      command("Preparing workspace", "running", run2),
+    ]);
+    expect(preparing.done).toEqual([]);
+    expect(preparing.now).toBeNull();
+
+    const cancelled = summarize([
+      command("old command", "completed", run1),
+      {
+        ...base(run2, "cancelled"),
+        type: "error",
+        failure: {
+          class: "unknown",
+          message: "Workspace setup cancelled",
+          code: ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+          retryable: null,
+        },
+      },
+    ]);
+    expect(cancelled.done).toEqual([]);
+    expect(cancelled.failedCount).toBe(0);
   });
 
   it("shows the plan only when the provider sent a todo list, with a completed count", () => {

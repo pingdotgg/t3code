@@ -1,4 +1,5 @@
 import type { ThreadStructureVisibleTurnItem } from "../state/models.ts";
+import { turnItemIsWorkspacePreparation } from "../state/turnItemPresentation.ts";
 import {
   isAbsolutePath,
   resolveWorkspaceFilePath,
@@ -43,8 +44,9 @@ const ACTIVITY_ITEM_TYPES: ReadonlySet<string> = new Set<ActivityItem["type"]>([
   "error",
 ]);
 
+// Setup the app does before the agent starts is not the agent's progress.
 const isActivityItem = (item: ActivityItem | OtherItem): item is ActivityItem =>
-  ACTIVITY_ITEM_TYPES.has(item.type);
+  ACTIVITY_ITEM_TYPES.has(item.type) && !turnItemIsWorkspacePreparation(item);
 
 export interface ActivityStep {
   readonly id: string;
@@ -200,7 +202,6 @@ function workspacePath(fileName: string, workspaceRoot: string | null) {
 /**
  * What the agent is doing and has done in the latest run, from items every provider produces.
  * Pass every item, not only the ones shown: a new run is latest even before it does any work.
- * Setup the app does before the agent starts is not the agent's progress; drop it first.
  */
 export function deriveActivitySummary(
   items: ReadonlyArray<ActivityItem | OtherItem>,
