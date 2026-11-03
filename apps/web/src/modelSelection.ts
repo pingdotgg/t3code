@@ -134,7 +134,7 @@ function applyInstanceModelPreferences(
   const hiddenModels = new Set(preferences.hiddenModels);
   return sortModelsForProviderInstance(
     options.map((option) =>
-      !option.isCustom && hiddenModels.has(option.slug) ? { ...option, isHidden: true } : option,
+      hiddenModels.has(option.slug) ? { ...option, isHidden: true } : option,
     ),
     { modelOrder: preferences.modelOrder },
   );
