@@ -80,7 +80,7 @@ const TOOL_CALL_VISIBILITY_LABELS: Record<ToolCallVisibility, string> = {
   showAll: "Show all",
   hideSuccessful: "Hide successful",
   hideAll: "Hide all",
-  finalAnswersOnly: "Final answers only",
+  zen: "Zen",
 };
 
 const isToolCallVisibility = Schema.is(ToolCallVisibility);
@@ -91,7 +91,7 @@ function ToolCallVisibilityRow() {
   return (
     <SettingsRow
       {...searchableSetting("tool-call-visibility")}
-      description="Hide the commands, edits, and searches agents run, so a thread reads like a conversation. Hide successful keeps calls that fail. Final answers only also hides the agent's in-between messages. Approvals, questions, and errors always show."
+      description="Hide the commands, edits, and searches agents run, so a thread reads like a conversation. Hide successful keeps calls that fail. Zen also hides the agent's in-between messages and shows only final answers. Approvals, questions, and errors always show."
       control={
         <div className="w-full sm:w-40">
           <Select
@@ -107,7 +107,7 @@ function ToolCallVisibilityRow() {
               <SelectItem value="showAll">Show all</SelectItem>
               <SelectItem value="hideSuccessful">Hide successful</SelectItem>
               <SelectItem value="hideAll">Hide all</SelectItem>
-              <SelectItem value="finalAnswersOnly">Final answers only</SelectItem>
+              <SelectItem value="zen">Zen</SelectItem>
             </SelectPopup>
           </Select>
         </div>

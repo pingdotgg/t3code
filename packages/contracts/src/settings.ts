@@ -332,12 +332,7 @@ export type ChatWidth = typeof ChatWidth.Type;
 export const EffortDisplay = Schema.Literals(["label", "bars"]);
 export type EffortDisplay = typeof EffortDisplay.Type;
 
-export const ToolCallVisibility = Schema.Literals([
-  "showAll",
-  "hideSuccessful",
-  "hideAll",
-  "finalAnswersOnly",
-]);
+export const ToolCallVisibility = Schema.Literals(["showAll", "hideSuccessful", "hideAll", "zen"]);
 export type ToolCallVisibility = typeof ToolCallVisibility.Type;
 
 export const ModelFavorite = Schema.Struct({

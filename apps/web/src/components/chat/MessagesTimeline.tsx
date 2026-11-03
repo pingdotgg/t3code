@@ -576,9 +576,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const preferredToolCallVisibility = useClientSettings((settings) => settings.toolCallVisibility);
   const toolCallVisibility =
-    findActive && preferredToolCallVisibility === "finalAnswersOnly"
-      ? "hideAll"
-      : preferredToolCallVisibility;
+    findActive && preferredToolCallVisibility === "zen" ? "hideAll" : preferredToolCallVisibility;
   const revealedMessageId = citationRequest?.citation.messageId ?? null;
   // Imported turns and post-steer work fold under synthetic keys, not the entries' run ids.
   const findFoldRunIds = findActive
@@ -1087,9 +1085,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     isPreparingWorktree,
     latestRunId: latestRun?.runId ?? null,
     liveAnswerPreview:
-      isWorking && toolCallVisibility === "finalAnswersOnly"
-        ? liveAnswerPreview(timelineEntries)
-        : null,
+      isWorking && toolCallVisibility === "zen" ? liveAnswerPreview(timelineEntries) : null,
   };
   // Mounted in both the empty and filled timeline so a thread's first turn
   // starts from a baseline instead of a fresh, silent region.
