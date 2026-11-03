@@ -86,6 +86,21 @@ export function desktopUpdateChannelOf(version: string): "latest" | "nightly" {
   return cliReleaseChannelOf(version) === "nightly" ? "nightly" : "latest";
 }
 
+/**
+ * The update feed file a desktop app on this platform reads, which an update mirror publishes at
+ * its root beside the release's CLI archives.
+ */
+export function updateFeedFileName(
+  channel: "latest" | "nightly",
+  platform: NodeJS.Platform,
+  arch: string,
+): string {
+  if (platform === "darwin") return `${channel}-mac.yml`;
+  if (platform === "linux")
+    return arch === "arm64" ? `${channel}-linux-arm64.yml` : `${channel}-linux.yml`;
+  return `${channel}.yml`;
+}
+
 /** Whether a track switch may install `found` after its database check cleared `checked`: any build
  * on the switch's track at least as new, since later releases only add migrations. */
 export function acceptsTrackSwitchRelease(
