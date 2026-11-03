@@ -229,6 +229,7 @@ export function awaitTitleRegenerationFailure(input: {
       if (shell.titleRegeneration?.requestId === input.requestId) pending = true;
       else if (pending) finish(null);
     };
+    // @effect-diagnostics-next-line globalTimers:off - Client UI waits on atoms, outside an Effect runtime.
     const timeout = globalThis.setTimeout(() => finish(null), input.timeoutMs ?? 180_000);
     unsubscribe = input.registry.subscribe(input.atom, inspect);
     if (settled) unsubscribe();

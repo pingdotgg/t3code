@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -52,13 +53,12 @@ type TitleOutcome =
   | { readonly type: "complete"; readonly title?: string; readonly failure?: string };
 
 const GENERIC_FAILURE = "The title could not be generated.";
+const isTextGenerationError = Schema.is(TextGenerationError);
 
 function failureMessage(cause: Cause.Cause<unknown>): string {
   const error = Cause.findErrorOption(cause);
   const detail =
-    Option.isSome(error) && error.value instanceof TextGenerationError
-      ? error.value.detail.trim()
-      : "";
+    Option.isSome(error) && isTextGenerationError(error.value) ? error.value.detail.trim() : "";
   return detail.length === 0 ? GENERIC_FAILURE : truncate(detail, 500);
 }
 
