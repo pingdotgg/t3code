@@ -16,6 +16,7 @@ import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { openAiUserId } from "../telemetry/Identify.ts";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Base64 from "effect/encoding/Base64";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import { codexAuthCallbackPage, codexAuthReturnUrl } from "./CodexAuthCallbackPage.ts";
@@ -95,6 +96,11 @@ const Discovery = Schema.Struct({
   revocation_endpoint: Schema.optionalKey(Schema.String),
 });
 const OAuthError = Schema.Struct({ error: Schema.String });
+const decodeTokenExpired = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({ error: Schema.Struct({ code: Schema.Literal("token_expired") }) }),
+  ),
+);
 const decodeSessions = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([Sessions, Record])),
 );
@@ -825,14 +831,22 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
       saved.value.expiresAt - now <= 60_000
     )
       return yield* access;
-    const rejected = yield* http
+    // OpenAI reports the code in the body or, as Codex also reads it, base64 JSON in x-error-json.
+    const rejected = yield* HttpClient.withScope(http)
       .execute(
         HttpClientRequest.get(`${resource}/models`).pipe(
           HttpClientRequest.bearerToken(accessToken),
         ),
       )
       .pipe(
-        Effect.map((response) => response.status === 401),
+        Effect.flatMap((response) => {
+          if (response.status !== 401) return Effect.succeed(false);
+          const header = Base64.decodeString(response.headers["x-error-json"] ?? "");
+          if (header._tag === "Success" && Option.isSome(decodeTokenExpired(header.success)))
+            return Effect.succeed(true);
+          return response.text.pipe(Effect.map((text) => Option.isSome(decodeTokenExpired(text))));
+        }),
+        Effect.scoped,
         Effect.timeout("10 seconds"),
         Effect.orElseSucceed(() => false),
       );

@@ -16,6 +16,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
+import * as Queue from "effect/Queue";
 import { subscribeChatGptHandoff } from "./CodexChatGptHandoff.ts";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
@@ -1670,7 +1671,11 @@ const makeRenewalBroker = (
     accessToken: "expired-access",
     expiresAt: 0,
   },
-  modelsStatus = 401,
+  models: () => Response = () =>
+    new Response(null, {
+      status: 401,
+      headers: { "x-error-json": btoa(JSON.stringify({ error: { code: "token_expired" } })) },
+    }),
 ) =>
   Effect.gen(function* () {
     const oauthEntered = yield* Deferred.make<void>();
@@ -1678,6 +1683,7 @@ const makeRenewalBroker = (
     let pauseOAuth = false;
     const refreshTokens: string[] = [];
     const probes: string[] = [];
+    const probed = yield* Queue.unbounded<void>();
     const credentials = {
       clientId: "oaiapp_broker",
       subject: "broker-user",
@@ -1705,7 +1711,8 @@ const makeRenewalBroker = (
         if (request.url === "https://api.openai.com/v1/models") {
           assert.equal(request.method, "GET");
           probes.push(request.headers.authorization!);
-          return HttpClientResponse.fromWeb(request, new Response(null, { status: modelsStatus }));
+          yield* Queue.offer(probed, undefined);
+          return HttpClientResponse.fromWeb(request, models());
         }
         assert.equal(request.url, "https://auth.openai.com/token");
         assert.equal(request.body._tag, "Uint8Array");
@@ -1744,6 +1751,7 @@ const makeRenewalBroker = (
         endpoint,
         refreshTokens,
         probes,
+        probed,
         request: {
           version: 1,
           instanceId,
@@ -1879,6 +1887,9 @@ it.effect("two launches rejecting the same unexpired token share one renewal", (
       const first = yield* Effect.forkChild(ask(requests[0]));
       yield* Deferred.await(h.oauthEntered);
       const second = yield* Effect.forkChild(ask(requests[1]));
+      // Both launches have probed the rejected token before the first renewal is saved.
+      yield* Queue.take(h.probed);
+      yield* Queue.take(h.probed);
       yield* Deferred.succeed(h.oauthRelease, undefined);
       assert.deepEqual(yield* Fiber.joinAll([first, second]), ["renewed-access", "renewed-access"]);
       assert.deepEqual(h.refreshTokens, ["single-use-refresh"]);
@@ -1887,24 +1898,29 @@ it.effect("two launches rejecting the same unexpired token share one renewal", (
 );
 
 // regression: #29927 Codex also reruns its helper for each new auth manager, with no 401 behind it.
-it.effect.each([200, 503])(
-  "a launch asking again keeps its token when the probe returns %i",
-  (status) =>
-    provideBroker(
-      Effect.gen(function* () {
-        const h = yield* makeRenewalBroker(
-          { accessToken: "accepted-access", expiresAt: 4_102_444_800_000 },
-          status,
-        );
-        const ask = Effect.scoped(
-          Effect.gen(function* () {
-            const client = yield* brokerClient(h.endpoint, h.request);
-            return JSON.parse(yield* Effect.promise(() => client.response)).token;
-          }),
-        );
-        assert.deepEqual([yield* ask, yield* ask], ["accepted-access", "accepted-access"]);
-        assert.deepEqual(h.probes, ["Bearer accepted-access"]);
-        assert.deepEqual(h.refreshTokens, []);
-      }),
-    ),
+it.effect.each([
+  { probe: "200", models: () => new Response(null, { status: 200 }) },
+  { probe: "503", models: () => new Response(null, { status: 503 }) },
+  {
+    probe: "a 401 that is not token_expired",
+    models: () => Response.json({ error: { code: "invalid_api_key" } }, { status: 401 }),
+  },
+])("a launch asking again keeps its token when the probe returns $probe", ({ models }) =>
+  provideBroker(
+    Effect.gen(function* () {
+      const h = yield* makeRenewalBroker(
+        { accessToken: "accepted-access", expiresAt: 4_102_444_800_000 },
+        models,
+      );
+      const ask = Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* brokerClient(h.endpoint, h.request);
+          return JSON.parse(yield* Effect.promise(() => client.response)).token;
+        }),
+      );
+      assert.deepEqual([yield* ask, yield* ask], ["accepted-access", "accepted-access"]);
+      assert.deepEqual(h.probes, ["Bearer accepted-access"]);
+      assert.deepEqual(h.refreshTokens, []);
+    }),
+  ),
 );

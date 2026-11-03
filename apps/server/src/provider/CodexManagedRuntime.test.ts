@@ -277,8 +277,8 @@ it.live.each(
     ),
 );
 
-// regression: #29927 Codex caches the first token and reruns the same helper command only after
-// a 401, so that rerun must renew even when the saved token has not reached its local expiry.
+// regression: #29927 Codex reruns the same helper command after a 401, so a rerun whose token the
+// API reports as token_expired must renew even before the saved token's local expiry.
 it.live("managed Codex helper renews a token the API rejected before its local expiry", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -379,7 +379,10 @@ it.live("managed Codex helper renews a token the API rejected before its local e
           Effect.sync(() => {
             if (request.url === "https://api.openai.com/v1/models") {
               assert.equal(request.headers.authorization, "Bearer rejected-access");
-              return HttpClientResponse.fromWeb(request, new Response(null, { status: 401 }));
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({ error: { code: "token_expired" } }, { status: 401 }),
+              );
             }
             if (request.url === "https://auth.openai.com/api/accounts/oauth/token") {
               renewals++;
