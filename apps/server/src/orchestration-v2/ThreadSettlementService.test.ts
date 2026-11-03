@@ -202,9 +202,9 @@ describe("resolveAutoSettlement", () => {
     settledAt,
     reason: { type: "inactive", days },
   });
-  const pullRequestWas = (state: "merged" | "closed", settledAt: DateTime.Utc) => ({
+  const pullRequestWas = (state: "merged" | "closed", settledAt: DateTime.Utc, number = 7) => ({
     settledAt,
-    reason: { type: "pull-request", state },
+    reason: { type: "pull-request", state, number },
   });
 
   it("keeps threads with a PR from inactivity settlement only when asked", () => {
@@ -234,7 +234,7 @@ describe("resolveAutoSettlement", () => {
     expect(
       ThreadSettlementService.resolveAutoSettlement({
         ...input,
-        pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
+        pullRequest: { number: 7, state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
       }),
     ).toEqual(pullRequestWas("merged", at(-4 * DAY_MS)));
   });
@@ -264,7 +264,7 @@ describe("resolveAutoSettlement", () => {
     expect(
       ThreadSettlementService.resolveAutoSettlement({
         ...input,
-        pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
+        pullRequest: { number: 7, state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
         autoSettleAfterDays: null,
       }),
     ).toBeNull();
@@ -364,6 +364,7 @@ describe("resolveAutoSettlement", () => {
     const input = {
       thread,
       pullRequest: {
+        number: 7,
         state: "merged" as const,
         mergedAt: DateTime.formatIso(at(-60 * 60 * 1_000)),
       },
@@ -380,14 +381,18 @@ describe("resolveAutoSettlement", () => {
     expect(
       ThreadSettlementService.resolveAutoSettlement({
         ...input,
-        pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-3 * 60 * 60 * 1_000)) },
+        pullRequest: {
+          number: 7,
+          state: "merged",
+          mergedAt: DateTime.formatIso(at(-3 * 60 * 60 * 1_000)),
+        },
       }),
     ).toBeNull();
     expect(
       ThreadSettlementService.resolveAutoSettlement({
         ...input,
         thread: shell(),
-        pullRequest: { state: "closed", closedAt: DateTime.formatIso(at(-1)) },
+        pullRequest: { number: 7, state: "closed", closedAt: DateTime.formatIso(at(-1)) },
         autoSettleOnMerge: false,
       }),
     ).toEqual(pullRequestWas("closed", shell().createdAt));
@@ -402,7 +407,11 @@ describe("resolveAutoSettlement", () => {
     });
     const input = {
       thread: woken,
-      pullRequest: { state: "merged" as const, mergedAt: DateTime.formatIso(at(-60 * 60 * 1_000)) },
+      pullRequest: {
+        number: 7,
+        state: "merged" as const,
+        mergedAt: DateTime.formatIso(at(-60 * 60 * 1_000)),
+      },
       nowMs: NOW_MS,
       autoSettleAfterDays: null,
       autoSettleOnMerge: true,
@@ -459,7 +468,7 @@ describe("resolveAutoSettlement", () => {
           pullRequests: [recorded, link(2, at(-90 * 60 * 1_000), at(-40 * 60 * 1_000))],
         },
       }),
-    ).toEqual(pullRequestWas("merged", at(-45 * 60 * 1_000)));
+    ).toEqual(pullRequestWas("merged", at(-45 * 60 * 1_000), 2));
   });
 });
 
@@ -834,7 +843,9 @@ describe("ThreadSettlementServiceV2 worker", () => {
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
           const commands = yield* Ref.get(fixture.commands);
           expect(commands.map((command) => command.threadId)).toEqual([thread.id]);
-          expect(commands[0]).toMatchObject({ reason: { type: "pull-request", state: "merged" } });
+          expect(commands[0]).toMatchObject({
+            reason: { type: "pull-request", state: "merged", number: 42 },
+          });
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -1495,7 +1506,7 @@ describe("isSnoozed", () => {
     expect(
       ThreadSettlementService.resolveAutoSettlement({
         thread,
-        pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
+        pullRequest: { number: 7, state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
         nowMs: NOW_MS,
         autoSettleAfterDays: null,
         autoSettleOnMerge: true,

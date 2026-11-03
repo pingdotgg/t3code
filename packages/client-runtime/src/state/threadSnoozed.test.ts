@@ -417,7 +417,7 @@ describe("settledThreadLabel", () => {
     },
     stack: null,
   });
-  const mergedByReason = { type: "pull-request", state: "merged" } as const;
+  const mergedByReason = { type: "pull-request", state: "merged", number: 12 } as const;
 
   it.each([
     [
@@ -439,11 +439,18 @@ describe("settledThreadLabel", () => {
       mergedByReason,
       [],
       "49m ago",
-      "Settled 49m ago: PR merged",
+      "Settled 49m ago: PR #12 merged",
+    ],
+    [
+      "the PR it settled on when a later merged PR is the current one",
+      mergedByReason,
+      [link("merged", "https://github.com/owner/repo/pull/13"), link("merged")],
+      "49m ago",
+      "Settled 49m ago: PR #12 merged · PR #13 merged",
     ],
     [
       "a GitLab merge request",
-      mergedByReason,
+      { ...mergedByReason, number: 7 },
       [link("merged", "https://gitlab.com/owner/repo/-/merge_requests/7")],
       null,
       "Settled: MR #7 merged",

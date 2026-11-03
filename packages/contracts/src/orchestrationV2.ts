@@ -446,6 +446,7 @@ export const OrchestrationV2ThreadSettleReason = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("pull-request"),
     state: Schema.Literals(["merged", "closed"]),
+    number: PositiveInt,
   }),
   Schema.Struct({ type: Schema.Literal("inactive"), days: Schema.Number }),
 ]);

@@ -37,6 +37,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 export interface SettlementPullRequest {
+  readonly number: number;
   readonly state: "open" | "closed" | "merged";
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
@@ -215,6 +216,7 @@ export function resolveAutoSettlement(input: {
       latest.snapshot === null
         ? null
         : {
+            number: latest.number,
             state: latest.snapshot.state,
             mergedAt: latest.snapshot.mergedAt ?? null,
             closedAt: latest.snapshot.closedAt ?? null,
@@ -234,6 +236,7 @@ export function resolveAutoSettlement(input: {
       reason: {
         type: "pull-request",
         state: pullRequest.state === "merged" ? "merged" : "closed",
+        number: pullRequest.number,
       },
     };
   }
@@ -489,6 +492,7 @@ export const make = Effect.gen(function* () {
         }
         const summary = matchesMerge
           ? ({
+              number: mergedPullRequest.number,
               state: "merged",
               closedAt: null,
               mergedAt: mergedPullRequest.mergedAt,
@@ -502,6 +506,7 @@ export const make = Effect.gen(function* () {
               { recoverTransientFailure: false },
             );
         const terminal = {
+          number: reference.number,
           state: summary.state,
           closedAt: summary.closedAt ?? null,
           mergedAt: summary.mergedAt ?? null,

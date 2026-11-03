@@ -354,14 +354,10 @@ export function settledThreadLabel(
   const state = link?.snapshot?.state;
   const ended =
     link !== null && (state === "merged" || state === "closed")
-      ? { state, text: `${term} #${link.number} ${state}` }
+      ? `${term} #${link.number} ${state}`
       : null;
   const cause =
-    reason?.type === "pull-request"
-      ? ended?.state === reason.state
-        ? ended.text
-        : `${term} ${reason.state}`
-      : null;
+    reason?.type === "pull-request" ? `${term} #${reason.number} ${reason.state}` : null;
   const head =
     reason?.type === "inactive"
       ? `Settled after ${reason.days} idle ${reason.days === 1 ? "day" : "days"}`
@@ -371,7 +367,7 @@ export function settledThreadLabel(
           when === null ? "" : ` ${when}`,
           cause === null ? "" : `: ${cause}`,
         ].join("");
-  return ended === null || cause === ended.text ? head : `${head} · ${ended.text}`;
+  return ended === null || cause === ended ? head : `${head} · ${ended}`;
 }
 
 export type CustomSnoozeInput =
