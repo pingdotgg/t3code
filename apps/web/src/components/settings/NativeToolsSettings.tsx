@@ -12,7 +12,7 @@ import { SettingsPageContainer, SettingsSection, SettingsRow } from "./settingsL
 export function NativeToolsSettings() {
   const { environment } = useSettingsScope();
   const enabled = useScopedSettings((settings) => settings.nativeToolEnabled);
-  const update = useUpdateScopedSettings();
+  const update = useUpdateScopedSettings({ scope: "environment" });
   const canWrite = useScopedSettingsWriteAllowed();
   const [search, setSearch] = useState("");
   const tools = environment?.serverConfig?.nativeTools;
