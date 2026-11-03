@@ -763,18 +763,27 @@ it.effect("refuses too many files, too many bytes, and images that are not what 
 it.effect("caps the bytes of files waiting in one share", () =>
   Effect.gen(function* () {
     const { guestShares, session, shareId } = yield* joinedGuest;
-    const submit = (sizeBytes: number) =>
+    const submit = (sizeBytes: number, ...more: Parameters<typeof uploadsOf>[0]) =>
       Effect.gen(function* () {
         return guestShares.submit(
           session,
           { shareId, text: "Look" },
-          yield* uploadsOf([png("big.png", sizeBytes)]),
+          yield* uploadsOf([png("big.png", sizeBytes), ...more]),
         );
       }).pipe(Effect.flatten);
     yield* submit(9 * MIB);
     yield* submit(9 * MIB);
-    const error = yield* Effect.flip(submit(9 * MIB));
+    const before = yield* storedFiles;
+    const error = yield* Effect.flip(
+      submit(9 * MIB, {
+        name: "notes.rtf",
+        contentType: "application/rtf",
+        bytes: new TextEncoder().encode(String.raw`{\rtf1 Available}`),
+      }),
+    );
     assert.equal(error.reason, "files_busy");
+    // The refused message keeps neither its files nor their extracted text.
+    assert.deepEqual(yield* storedFiles, before);
     // Text alone still goes through.
     yield* guestShares.submit(session, { shareId, text: "One more thing" }, []);
     assert.equal((yield* waitingMessages).length, 3);
