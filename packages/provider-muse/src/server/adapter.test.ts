@@ -604,6 +604,107 @@ describe("MuseAdapterV2", () => {
     ),
   );
 
+  it.effect.each(["completed", "failed", "cancelled", "disconnect"] as const)(
+    "ends foreground work before reminders settle with %s",
+    (terminal) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const harness = yield* makeHarness(fake);
+        const first = yield* startConversation(harness, fake);
+        yield* fake.emit("item/completed", {
+          turnId: first.nativeId,
+          item: {
+            itemId: "answer",
+            turnId: first.nativeId,
+            kind: "agentMessage",
+            status: "completed",
+            revision: 1,
+            text: "Done",
+          },
+        });
+        yield* fake.emit("turn/started", { turnId: "joined-turn" });
+        yield* fake.emit("turn/foregroundCompleted", {
+          turnId: "joined-turn",
+          blockingAgents: ["goal-reminder"],
+        });
+        yield* fake.emit("session/contextUsage", { usedTokens: 1 });
+        yield* harness.takeEvent(
+          "provider_thread.updated",
+          (event) => event.providerThread.contextUsage?.usedTokens === 1,
+        );
+        assert.isFalse(harness.allEvents.some((event) => event.type === "turn.terminal"));
+
+        yield* fake.emit("turn/foregroundCompleted", {
+          turnId: first.nativeId,
+          blockingAgents: ["goal-reminder", "verify-reminder"],
+        });
+        yield* fake.emit("session/contextUsage", { usedTokens: 2 });
+        yield* harness.takeEvent(
+          "provider_thread.updated",
+          (event) => event.providerThread.contextUsage?.usedTokens === 2,
+        );
+        const completed = harness.allEvents.find((event) => event.type === "turn.terminal");
+        assert.strictEqual(completed?.status, "completed");
+        assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+        assert.isTrue(
+          harness.allEvents.some(
+            (event) => event.type === "background_work.updated" && event.pending,
+          ),
+        );
+        const idle = harness.allEvents
+          .filter((event) => event.type === "provider_thread.updated")
+          .at(-1);
+        assert.strictEqual(idle?.providerThread.status, "idle");
+        assert.strictEqual(fake.closeCount(), 0);
+
+        const next = yield* startConversation(harness, fake, 2);
+        assert.strictEqual(
+          fake.calls.filter((call) => call.method === "turn/start").at(-1)?.params.ifBusy,
+          "queue",
+        );
+        if (terminal === "disconnect") {
+          yield* fake.disconnect();
+          yield* Deferred.await(harness.eventsEnded);
+        } else {
+          yield* fake.emit("turn/completed", {
+            turnId: first.nativeId,
+            terminal,
+            ...(terminal === "failed" ? { error: { message: "Reminder failed" } } : {}),
+            usage: { inputTokens: 10, outputTokens: 4, cachedTokens: 2, reasoningTokens: 1 },
+          });
+          yield* harness.takeEvent("background_work.updated", (event) => !event.pending);
+          assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+          const settled = harness.allEvents
+            .filter((event) => event.type === "provider_turn.updated")
+            .filter((event) => event.providerTurn.nativeTurnRef?.nativeId === first.nativeId)
+            .at(-1);
+          assert.strictEqual(settled?.providerTurn.status, terminal);
+          assert.strictEqual(settled?.providerTurn.turnTokenUsage?.outputTokens, 4);
+          assert.strictEqual(settled?.providerTurn.tokenUsage?.usedTokens, 2);
+          if (terminal === "failed")
+            assert.isTrue(
+              harness.allEvents.some(
+                (event) =>
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "error" &&
+                  event.turnItem.failure.message === "Reminder failed",
+              ),
+            );
+          assert.strictEqual(
+            harness.allEvents.filter((event) => event.type === "turn.terminal").length,
+            1,
+          );
+          yield* fake.emit("turn/completed", { turnId: next.nativeId, terminal: "completed" });
+          yield* harness.takeEvent("turn.terminal");
+        }
+        assert.strictEqual(
+          harness.allEvents.filter((event) => event.type === "turn.terminal").length,
+          2,
+        );
+        assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("stops at a Meta usage limit until every exhausted window resets", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
