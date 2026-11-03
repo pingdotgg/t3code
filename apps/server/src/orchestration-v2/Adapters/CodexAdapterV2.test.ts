@@ -1,4 +1,5 @@
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   makeProviderTextDeltaCoalescer,
   type ProviderTextDeltaUpdate,
@@ -4064,6 +4065,58 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ],
   });
 
+  it.effect("wakes with well-formed text when the cuts split an emoji", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "codex-bg-wake-surrogate",
+            entries: [
+              ...backgroundExecTranscript.entries.slice(0, -1),
+              {
+                type: "emit_inbound",
+                label: "item/completed/command-late",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    item: {
+                      ...backgroundCommandItem("completed"),
+                      command: `${"c".repeat(199)}🚀`,
+                      aggregatedOutput: `🚀${"x".repeat(999)}\n`,
+                    },
+                    threadId: BG_NATIVE_THREAD,
+                    turnId: BG_NATIVE_TURN,
+                    completedAtMs: 1782622465500,
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-bg-wake-surrogate"),
+            text: BG_PROMPT,
+          }),
+        );
+        yield* harness.until(() => harness.continuationRequests.length > 0);
+        assert.isTrue(harness.continuationRequests[0]?.detail?.isWellFormed());
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([false, true])(
     "keeps commands interrupted after native thread closure (persistent tool: %s)",
     (retainContext) =>
@@ -8119,6 +8172,107 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         // The goal is set paused until its first turn starts; only the result shows.
         assert.notInclude(providerGoals(harness.events), "paused");
         assert.equal(providerGoals(harness.events).at(-1), "complete");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("rejects an oversized /goal objective before any goal request", () =>
+      Effect.gen(function* () {
+        const oversized = "x".repeat(4001);
+        const requests: string[] = [];
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({ scenario: "goal-oversized", entries: sessionStart }),
+          () => Effect.void,
+          (method) =>
+            Effect.sync(() => {
+              requests.push(method);
+            }),
+        );
+        const start = yield* harness.runtime
+          .startTurn(yield* goalTurnInput(harness, `/goal ${oversized}`))
+          .pipe(Effect.result);
+
+        assert.deepEqual(
+          requests.filter((method) => method.startsWith("thread/goal/") || method === "turn/start"),
+          [],
+        );
+        assert.equal(start._tag, "Failure");
+        if (start._tag === "Failure") {
+          const { message } = makeProviderFailure({ cause: start.failure });
+          assert.match(message, /4,?001/u);
+          assert.match(message, /4,?000/u);
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("sends a /goal objective at the 4000 character limit unchanged", () =>
+      Effect.gen(function* () {
+        const atLimit = "y".repeat(4000);
+        const goal = (status: string) => ({ ...codexGoal(status, 0), objective: atLimit });
+        const transcript = makeCodexReplayTranscript({
+          scenario: "goal-at-limit",
+          entries: [
+            ...sessionStart,
+            ...request(3, "thread/goal/get", { threadId: nativeThreadId }, { goal: null }),
+            ...request(
+              4,
+              "thread/goal/set",
+              { threadId: nativeThreadId, objective: atLimit, status: "paused" },
+              { goal: goal("paused") },
+            ),
+            ...withReplayRequestId(
+              codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "goal-turn-limit",
+                prompt: atLimit,
+                sentPrompt: `Start working toward this goal: ${atLimit}`,
+              }).slice(5),
+              5,
+            ),
+            ...request(
+              6,
+              "thread/goal/set",
+              { threadId: nativeThreadId, status: "active" },
+              { goal: goal("active") },
+            ),
+            notification("goal complete", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: "goal-turn-limit",
+              goal: goal("complete"),
+            }),
+            notification("turn done", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn-limit", status: "completed" }),
+            }),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(yield* goalTurnInput(harness, `/goal ${atLimit}`));
+        yield* harness.firstTerminal;
+
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed"],
+        );
       }).pipe(
         Effect.scoped,
         Effect.provide(
