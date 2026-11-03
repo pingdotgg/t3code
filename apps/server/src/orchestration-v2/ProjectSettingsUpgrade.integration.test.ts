@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { assert, it } from "@effect/vitest";
@@ -116,7 +117,7 @@ const unusedEnrichment = {
 
 const layerRuntime = (dbPath: string) => {
   const layerPlatform = Layer.merge(
-    NodeServices.layer,
+    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
     Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
       resolveLink: () => Effect.die("unused"),
     }),
@@ -190,5 +191,5 @@ it.live("keeps project settings through the V2 migrations and the first V2 boot"
         assert.equal(project._tag, "Some");
       }).pipe(Effect.provide(layerRuntime(dbPath)));
     }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
