@@ -770,6 +770,7 @@ function RightPanelTab(
 
 const PANE_BODY_SURFACE_CLASS: Partial<Record<RightPanelSurface["kind"], string>> = {
   "pull-request": "bg-(--code-surface)",
+  "pull-requests": "bg-transparent",
   file: "bg-(--code-surface)",
   terminal: "bg-(--terminal-background)",
 };
