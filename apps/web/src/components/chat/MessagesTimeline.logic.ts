@@ -1403,7 +1403,8 @@ function workShownAsFinalAnswerOnly(
 }
 
 export function liveAnswerPreview(entries: ReadonlyArray<TimelineEntry>): string | null {
-  for (let index = entries.length - 1; index > lastResponseBoundaryIndex(entries); index -= 1) {
+  const boundary = lastResponseBoundaryIndex(entries);
+  for (let index = entries.length - 1; index > boundary; index -= 1) {
     const entry = entries[index]!;
     const text =
       entry.kind === "message" && entry.message.role === "assistant"
