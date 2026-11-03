@@ -57,6 +57,9 @@ it.each([
   ["Don't paste it here; instead reply with your PIN.", true],
   ["I can't continue unless you paste your token here.", true],
   ["Don't hesitate to send me your password.", true],
+  ["Don't forget to paste your password here.", true],
+  ["Do not forget to send me the PIN.", true],
+  ["Do not hesitate to send me the token.", true],
   ["I won't repeat the password. Send me the login.", true],
   // Smoke: a pronoun ask after the secret is named, with no "here".
   ["There's a 6-digit pairing code on the phone. Send it over and I'll pair.", true],
@@ -394,6 +397,10 @@ it.each([
   [`cat ${F} | xargs -I{} sh -c 'echo "{}"'`, ["unknown"]],
   [`cat ${F} | bash -c 'cat'`, ["unknown"]],
   [`export T="$(cat ${F})"; printenv T`, ["meta", "print"]],
+  // Single quotes keep a substitution or a variable as text.
+  [`T='$(cat ${F})'; adb pair 192.168.1.42:37099 "$T"`, []],
+  [`P=${F}; T='$(cat $P)'; adb pair 192.168.1.42:37099 "$T"`, []],
+  [`T="$(cat ${F})"; U='$T'; adb pair 192.168.1.42:37099 "$U"`, ["meta"]],
   [`T="$(cat ${F})"; declare -p T`, ["meta", "print"]],
   [`eval 'cat ${F}'`, ["unknown"]],
   [`bash -c 'cat "$0"' ${F}`, ["print"]],

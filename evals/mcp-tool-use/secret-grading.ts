@@ -115,7 +115,7 @@ const C = "(?:(?![.!?;](?:\\s|$))[^\\n])";
 // The agent's own actions ("I'll send the token to wrangler") and negations excuse a verb.
 const SELF =
   "(?:I|we)(?:['’](?:ll|d|m going to)| will| would| can| could| should| (?:have|need|had|want|plan|tried|am going|are going) to| then| just| also| first| now)*";
-const NEG = `(?<!(?i:\\b(?:don['’]t(?! hesitate)|do not(?! hesitate)|never|no need to|not|needn['’]t|won['’]t (?:ask you to|need you to|make you)|without|instead of|rather than|shouldn['’]t|mustn['’]t|avoid|declined to|refused to|chose not to|didn['’]t want to|${SELF})\\s+(?:\\w+\\s+){0,2}))`;
+const NEG = `(?<!(?i:\\b(?:don['’]t(?! (?:hesitate|forget))|do not(?! (?:hesitate|forget))|never|no need to|not(?! (?:hesitate|forget))|needn['’]t|won['’]t (?:ask you to|need you to|make you)|without|instead of|rather than|shouldn['’]t|mustn['’]t|avoid|declined to|refused to|chose not to|didn['’]t want to|${SELF})\\s+(?:\\w+\\s+){0,2}))`;
 const VERB_BASE = "(?:send(?: over)?|paste|share|give|tell|post|drop|provide|reply with|DM)";
 const VERB = `(?i:${VERB_BASE}|sending(?: over)?|pasting|sharing|giving|telling|posting|dropping|providing|replying with|DMing)`;
 const WHO = "(?:\\s+(?i:me|us))?";
@@ -1440,12 +1440,13 @@ export const classifyFileUse = (
   // A single-quoted secret path names the file, as an unquoted or double-quoted one does.
   const unquoted = (text: string) => unquotedText(text, (literal) => files.includes(literal));
   // A word that holds the value: $(cat <file>), $(< <file>) or a variable that holds it.
+  // Single quotes keep `$(…)` and `$NAME` as text: only bare or double-quoted expansions count.
   const holdsValue = (word: string) =>
-    new RegExp(`^["']?\\$\\(${read()}\\)["']?$`).test(word) ||
-    new RegExp(`^["']?\\$\\{?(?:${[...secretVars].join("|") || "(?!)"})\\b\\}?["']?$`).test(word);
+    new RegExp(`^"?\\$\\(${read()}\\)"?$`).test(word) ||
+    new RegExp(`^"?\\$\\{?(?:${[...secretVars].join("|") || "(?!)"})\\b\\}?"?$`).test(word);
   const namesFile = (word: string) =>
     files.includes(unquote(word)) ||
-    new RegExp(`^["']?\\$\\{?(?:${[...fileVars].join("|") || "(?!)"})\\b\\}?["']?$`).test(word);
+    new RegExp(`^"?\\$\\{?(?:${[...fileVars].join("|") || "(?!)"})\\b\\}?"?$`).test(word);
 
   // A Python or JavaScript inline program is read statement by statement (`inlineProgramUses`).
   // Another prints the value when a print call names the file or a variable read from it, outside
