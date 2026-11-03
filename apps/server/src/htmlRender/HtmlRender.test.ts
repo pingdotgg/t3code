@@ -351,16 +351,24 @@ fs.createReadStream(null, { fd: 3 }).on("end", quit).on("data", (chunk) => {
   for (const { id, method, sessionId } of messages.map((raw) => JSON.parse(raw))) {
     if (method === "Browser.close") quit();
     reply({ id, sessionId, result: results[method] ?? {} });
-    if (method === "Page.navigate") reply({ sessionId, method: "Page.loadEventFired", params: {} });
+    if (method === "Page.navigate") {
+      const value = "x" + "\u{1F600}".repeat(300);
+      const params = { type: "log", args: [{ type: "string", value }] };
+      reply({ sessionId, method: "Runtime.consoleAPICalled", params });
+      reply({ sessionId, method: "Page.loadEventFired", params: {} });
+    }
   }
 });
 `,
             { mode: 0o755 },
           );
 
-          yield* HtmlRender.HtmlRender.use((htmlRender) =>
+          const preview = yield* HtmlRender.HtmlRender.use((htmlRender) =>
             htmlRender.preview({ html: "<p>x</p>" }),
           ).pipe(Effect.provide(layerHtmlRender(executable)));
+          const logged = preview.consoleMessages[0]?.text ?? "";
+          expect(logged.isWellFormed()).toBe(true);
+          expect(logged).toHaveLength(500);
 
           const exitedBy = yield* fileSystem.readFileString(exitRecord).pipe(Effect.option);
           expect(Option.getOrElse(exitedBy, () => "killed by a signal")).toBe("asked to close");
