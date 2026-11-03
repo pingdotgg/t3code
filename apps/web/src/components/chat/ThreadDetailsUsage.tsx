@@ -14,7 +14,9 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { CalendarRangeIcon, GaugeIcon, Minimize2Icon, TimerIcon } from "lucide-react";
+import * as Schema from "effect/Schema";
 import type { ReactNode } from "react";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
@@ -22,9 +24,16 @@ import { formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Button } from "../ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import { ContextWindowMeter } from "./ContextWindowMeter";
+import { ContextWindowSegments } from "./ContextWindowMeter";
+import { contextWindowSegments } from "./ContextWindowMeter.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
+
+// The canvas reserves the same icon, label, meter, percent and trailing columns in every row.
+const USAGE_ROW_CLASS =
+  "grid grid-cols-[1rem_3.625rem_minmax(0,1fr)_1.875rem_2.75rem] items-center gap-x-2 ps-3 pe-2 text-meta";
 
 const PACE_LABEL: Record<LimitPace, string> = {
   ahead: "Ahead of pace",
@@ -82,6 +91,11 @@ export function ThreadDetailsContext({
   readonly compactDisabled?: boolean | undefined;
   readonly compactDisabledReason?: string | null | undefined;
 }) {
+  const [collapsed, setCollapsed] = useLocalStorage(
+    "thread-details:collapsed:Context breakdown",
+    true,
+    Schema.Boolean,
+  );
   if (!usage) {
     return (
       <ThreadDetailsSection title="Context window" variant="usage">
@@ -98,77 +112,83 @@ export function ThreadDetailsContext({
   }
   const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
   const used = maxTokens !== null ? Math.max(0, Math.min(100, usage.usedPercentage ?? 0)) : null;
-  const threshold = usage.autoCompactThreshold ?? null;
-  const tick =
-    maxTokens !== null && threshold !== null && threshold > 0 && threshold < maxTokens
-      ? (threshold / maxTokens) * 100
-      : null;
   const tokens =
     maxTokens !== null
       ? `${formatContextWindowTokens(usage.usedTokens)} / ${formatContextWindowTokens(maxTokens)}`
       : `${formatContextWindowTokens(usage.usedTokens)} tokens`;
   return (
     <ThreadDetailsSection title="Context window" variant="usage">
-      <div className="flex min-h-11 items-center gap-2 ps-3 pe-2 text-meta">
-        <ContextWindowMeter
-          usage={usage}
-          side="left"
-          onCompact={onCompact}
-          compactDisabled={compactDisabled}
-          compactDisabledReason={compactDisabledReason}
-          trigger={
-            <ThreadDetailsControl
-              part="heading"
-              aria-label={`Context: ${tokens}${maxTokens !== null ? " tokens" : ""}${used !== null ? `, ${Math.round(used)}% used` : " used"}`}
-            >
-              <GaugeIcon className="size-4 shrink-0" />
-              <span className="flex min-w-0 flex-1 flex-col gap-1 text-meta">
-                <span className="flex items-center justify-between gap-2 text-foreground">
-                  <span>Context</span>
-                  {used !== null ? (
-                    <span className="tabular-nums text-muted-foreground">{Math.round(used)}%</span>
-                  ) : null}
-                </span>
-                <span className="flex items-center gap-2">
-                  {used !== null ? (
-                    <span className="relative h-1 min-w-0 flex-1 rounded-full bg-muted-foreground/20">
+      <Collapsible open={!collapsed} onOpenChange={(open) => setCollapsed(!open)}>
+        {/* The trailing column shrinks to the compact button so it sits flush right. */}
+        <div
+          className={cn(
+            USAGE_ROW_CLASS,
+            "h-8 grid-cols-[1rem_3.625rem_minmax(0,1fr)_1.875rem_1.5rem]",
+          )}
+        >
+          <CollapsibleTrigger
+            render={<ThreadDetailsControl part="usage" />}
+            aria-label={`Context: ${tokens}${maxTokens !== null ? " tokens" : ""}${used !== null ? `, ${Math.round(used)}% used` : " used"}`}
+          >
+            <GaugeIcon className="size-4 shrink-0" />
+            <span className="flex h-6 items-center text-foreground">Context</span>
+            {used !== null ? <ContextWindowSegments usage={usage} minSegmentWidth={2} /> : <span />}
+            <span className="text-end tabular-nums text-muted-foreground">
+              {used !== null ? `${Math.round(used)}%` : ""}
+            </span>
+          </CollapsibleTrigger>
+          <span className="flex">
+            {onCompact ? (
+              <Button
+                size="icon-xs"
+                variant="secondary"
+                aria-label="Compact context"
+                disabled={compactDisabled}
+                onClick={onCompact}
+              >
+                <Minimize2Icon className="size-[13px]" />
+              </Button>
+            ) : null}
+          </span>
+        </div>
+        <CollapsiblePanel>
+          <div className="px-0.5 pb-0.5">
+            <div className="surface-composer rounded-lg p-0.5">
+              <dl className="text-meta">
+                {contextWindowSegments(usage).map((segment) => (
+                  <div
+                    key={segment.label}
+                    className="flex h-8 items-center justify-between gap-2 px-2.5"
+                  >
+                    <dt className="flex min-w-0 items-center gap-2">
                       <span
-                        className={cn(
-                          "absolute inset-y-0 left-0 rounded-full",
-                          used >= 90 ? "bg-error" : used >= 80 ? "bg-warning" : "bg-foreground/80",
-                        )}
-                        style={{ width: used > 0 ? `max(${used}%, 2px)` : "0%" }}
+                        aria-hidden
+                        className={cn("size-2 shrink-0 rounded-xs", segment.color)}
                       />
-                      {tick !== null ? (
-                        <span
-                          aria-hidden
-                          className="absolute -top-[3px] h-2.5 w-0.5 rounded-sm bg-muted-foreground"
-                          style={{ left: `${tick}%` }}
-                        />
-                      ) : null}
-                    </span>
-                  ) : null}
-                  <span className="shrink-0 text-caption tabular-nums text-muted-foreground">
-                    {tokens}
-                  </span>
-                </span>
-              </span>
-            </ThreadDetailsControl>
-          }
-        />
-        <span className="flex w-11 shrink-0 justify-end">
-          {onCompact ? (
-            <ThreadDetailsControl
-              part="icon"
-              aria-label="Compact context"
-              disabled={compactDisabled}
-              onClick={onCompact}
-            >
-              <Minimize2Icon className="size-3.5" />
-            </ThreadDetailsControl>
-          ) : null}
-        </span>
-      </div>
+                      {segment.label}
+                    </dt>
+                    <dd className="text-caption tabular-nums text-muted-foreground">
+                      {segment.tokens.toLocaleString("en-US")}
+                    </dd>
+                  </div>
+                ))}
+                <div className="flex min-h-8 items-center justify-between gap-2 px-2.5">
+                  <dt>{maxTokens !== null ? "Used / max" : "Used"}</dt>
+                  <dd className="text-caption tabular-nums text-muted-foreground">
+                    {usage.usedTokens.toLocaleString("en-US")}
+                    {maxTokens !== null ? ` / ${maxTokens.toLocaleString("en-US")}` : null}
+                  </dd>
+                </div>
+              </dl>
+              {compactDisabled && compactDisabledReason ? (
+                <p className="px-2.5 py-2 text-pretty text-caption text-muted-foreground">
+                  {compactDisabledReason}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </CollapsiblePanel>
+      </Collapsible>
     </ThreadDetailsSection>
   );
 }
@@ -250,18 +270,21 @@ function UsageRow({
 }) {
   return (
     <Tooltip>
-      <div className="flex h-8 items-center gap-2 ps-3 pe-2 text-meta">
+      <div className={cn(USAGE_ROW_CLASS, "h-8")}>
         <TooltipTrigger
           render={
             <div
               tabIndex={0}
               aria-label={`${label}: ${ariaValue}`}
-              className="flex min-w-0 flex-1 cursor-default items-center gap-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className={cn(
+                "grid min-w-0 cursor-default grid-cols-subgrid items-center gap-x-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                fill === null ? "col-span-5" : "col-span-4",
+              )}
             />
           }
         >
           <span className="shrink-0 text-muted-foreground [&>svg]:size-4">{icon}</span>
-          <span className="w-14.5 shrink-0 truncate">{label}</span>
+          <span className="truncate">{label}</span>
           {fill !== null ? (
             <span className="relative h-1 min-w-0 flex-1 rounded-full bg-muted-foreground/20">
               {fill > 0 ? (
@@ -285,13 +308,11 @@ function UsageRow({
                 />
               ) : null}
             </span>
-          ) : (
-            <span className="flex-1" />
-          )}
+          ) : null}
           <span
             className={cn(
-              "w-7.5 shrink-0 text-end tabular-nums text-muted-foreground",
-              fill === null && "w-auto",
+              "text-end tabular-nums text-muted-foreground",
+              fill === null && "col-span-3",
               tone === "error" && "text-error-foreground",
               tone === "warning" && "text-warning-foreground",
             )}
@@ -299,7 +320,7 @@ function UsageRow({
             {value}
           </span>
         </TooltipTrigger>
-        <span className="flex w-11 shrink-0 justify-end">{trailing}</span>
+        {fill !== null ? <span className="flex justify-end">{trailing}</span> : null}
       </div>
       <TooltipPopup side="left" sideOffset={16}>
         <div className="flex flex-col gap-0.5 text-muted-foreground">{tooltip}</div>
