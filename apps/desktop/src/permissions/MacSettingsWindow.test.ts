@@ -1,4 +1,5 @@
 import * as NodeEvents from "node:events";
+import * as NodeVM from "node:vm";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 import { watchMacSettingsWindow } from "./MacSettingsWindow.ts";
 
@@ -41,4 +42,30 @@ it("distinguishes unavailable tracking from a valid absent window", () => {
   expect(changed).not.toHaveBeenCalled();
   expect(unavailable).toHaveBeenCalledTimes(2);
   stop();
+});
+it("polls while its parent lives and stops after reparenting to launchd", () => {
+  watchMacSettingsWindow(vi.fn(), vi.fn())();
+  const script = mocks.spawn.mock.lastCall?.[1][3];
+  const imports = new Set<string>();
+  const writeData = vi.fn();
+  const poll = vi.fn(() => ({ count: 0 }));
+  const sleep = vi.fn(() => {
+    if (sleep.mock.calls.length > 2) throw new Error("tracker kept polling after parent exit");
+  });
+  const bridge = Object.assign((line: string) => ({ dataUsingEncoding: () => line }), {
+    getppid: () => {
+      if (!imports.has("unistd")) throw new Error("unistd bridge unavailable");
+      return sleep.mock.calls.length < 2 ? 42 : 1;
+    },
+    NSRunningApplication: { runningApplicationsWithBundleIdentifier: poll },
+    NSFileHandle: { fileHandleWithStandardOutput: { writeData } },
+    NSThread: { sleepForTimeInterval: sleep },
+    NSUTF8StringEncoding: 4,
+  });
+  NodeVM.runInNewContext(script + "\nrun();", {
+    ObjC: { import: (name: string) => imports.add(name) },
+    $: bridge,
+  });
+  expect(poll).toHaveBeenCalledTimes(2);
+  expect(writeData.mock.calls).toEqual([["null\n"]]);
 });
