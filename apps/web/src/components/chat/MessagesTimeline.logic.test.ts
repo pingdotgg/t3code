@@ -3553,6 +3553,7 @@ it.each([
     foldable: true,
     failureMessage: null,
     noticeMessage: null,
+    resetAt: null,
     runId: RunId.make("run"),
     createdAt: "2026-01-01T00:00:00Z",
     label: "Worked for 1m",
