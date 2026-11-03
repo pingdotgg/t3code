@@ -73,7 +73,9 @@ A profile cannot hold `null`, so use a policy file if a setting's value must be 
 central store, or import them into Intune. The policies appear under Computer Configuration >
 Administrative Templates > T3 Code. Set **Organization** whenever you set any other T3 Code policy.
 Locks and provider fields go in the two JSON policies, as the same objects a policy file would hold.
-A policy set to **Disabled** restricts nothing, the same as **Not Configured**.
+Setting **Allow T3 Connect**, **Allow webhook tasks**, **Allow importing browser cookies**, or
+**Allow usage data** to **Disabled** turns that feature off. Setting any other T3 Code policy to
+**Disabled** restricts nothing, the same as **Not Configured**.
 
 **Windows registry value.** Instead of the template, set the `Policy` value (`REG_SZ`) to the whole policy as one line of JSON,
 from Group Policy Preferences or an Intune script. T3 Code reads it through the Windows registry
