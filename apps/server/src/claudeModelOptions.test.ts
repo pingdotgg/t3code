@@ -3,6 +3,10 @@ import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 
 import { compileClaudeModelSelection } from "./claudeModelOptions.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  scopeClaudeModelCatalog,
+} from "./provider/ClaudeModelCatalog.ts";
 
 const selection = (
   model: string,
@@ -56,6 +60,34 @@ describe("compileClaudeModelSelection", () => {
       compileClaudeModelSelection(selection("claude-opus-5-5", [{ id: "effort", value: "high" }]))
         .settings,
     ).not.toHaveProperty("ultracode");
+  });
+
+  it("keeps Ultracode on at Extra High for a custom model that defaulted to the old Ultracode effort", () => {
+    const catalog = scopeClaudeModelCatalog(BUNDLED_CLAUDE_MODEL_CATALOG, [
+      {
+        slug: "claude-custom-tuned",
+        name: "Tuned",
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Reasoning",
+              type: "select",
+              currentValue: "ultracode",
+              options: [
+                { id: "high", label: "High" },
+                { id: "xhigh", label: "Extra High" },
+                { id: "ultracode", label: "Ultracode", isDefault: true },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+
+    expect(
+      compileClaudeModelSelection(selection("claude-custom-tuned", []), catalog),
+    ).toMatchObject({ effort: "xhigh", settings: { ultracode: true } });
   });
 
   it("uses the model default SDK effort alongside prompt-injected effort", () => {
