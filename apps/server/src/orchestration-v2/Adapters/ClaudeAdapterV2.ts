@@ -11385,6 +11385,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ),
                 Stream.filter((uuid): uuid is string => uuid?.startsWith(prefix) === true),
                 Stream.runHead,
+                // An unreadable copy must not hide a later readable one.
+                Effect.orElseSucceed(() => Option.none<string>()),
               );
               if (Option.isSome(persisted)) {
                 return persisted.value;
