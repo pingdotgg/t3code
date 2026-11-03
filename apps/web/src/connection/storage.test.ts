@@ -169,7 +169,7 @@ describe("IndexedDB that cannot be opened", () => {
         const fiber = yield* targets.list.pipe(Effect.forkChild);
         yield* TestClock.adjust("30 seconds");
         const result = fiber.pollUnsafe();
-        // Release the database lock the stuck open holds before the layer closes.
+        // Without a bounded open the fiber still holds the database lock; free it so the layer closes.
         yield* Fiber.interrupt(fiber);
         return result;
       }).pipe(Effect.provide(ConnectionStorage.layer));
