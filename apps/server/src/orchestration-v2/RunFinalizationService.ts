@@ -37,8 +37,14 @@ export class RunFinalizationObserver extends Context.Reference<{
     readonly threadId: ThreadId;
     readonly runId: RunId;
   }) => Effect.Effect<void, RunFinalizationRefreshError>;
+  /** A tracked repo's local Git status; its search index and PRs refresh with the thread root's. */
+  readonly refreshRepository: (cwd: string) => Effect.Effect<void>;
 }>("t3/orchestration-v2/RunFinalizationObserver", {
-  defaultValue: () => ({ refresh: () => Effect.void, refreshAfterTurn: () => Effect.void }),
+  defaultValue: () => ({
+    refresh: () => Effect.void,
+    refreshAfterTurn: () => Effect.void,
+    refreshRepository: () => Effect.void,
+  }),
 }) {}
 
 export class RunFinalizationService extends Context.Service<
@@ -75,26 +81,24 @@ const make = Effect.gen(function* () {
         ),
       );
     const cwd = projection.checkpointScopes.find((scope) => scope.id === input.scopeId)?.cwd;
-    // The agent may have edited every repo of a multi-repo thread, not just the root folder.
-    const cwds = new Set([
-      ...(cwd === undefined ? [] : [cwd]),
-      ...projection.checkpointScopes.flatMap((scope) =>
-        scope.kind === "repository" ? [scope.cwd] : [],
-      ),
-    ]);
+    if (cwd !== undefined) {
+      // Retrying a display refresh after the checkpoint is durable blocks the next turn.
+      yield* observer.refresh({ cwd, threadId: input.threadId, runId: input.runId }).pipe(
+        Effect.catchTags({
+          RunFinalizationRefreshError: (cause) =>
+            Effect.logWarning("Failed to refresh workspace after checkpoint capture", {
+              ...input,
+              cause,
+            }),
+        }),
+      );
+    }
+    // The agent may have edited every repo this run included, not just the root folder.
     yield* Effect.forEach(
-      cwds,
-      (refreshCwd) =>
-        // Retrying a display refresh after the checkpoint is durable blocks the next turn.
-        observer.refresh({ cwd: refreshCwd, threadId: input.threadId, runId: input.runId }).pipe(
-          Effect.catchTags({
-            RunFinalizationRefreshError: (cause) =>
-              Effect.logWarning("Failed to refresh workspace after checkpoint capture", {
-                ...input,
-                cause,
-              }),
-          }),
-        ),
+      projection.checkpointScopes.filter(
+        (scope) => scope.kind === "repository" && scope.runId === input.runId,
+      ),
+      (scope) => observer.refreshRepository(scope.cwd),
       { concurrency: 4, discard: true },
     );
   });
@@ -137,6 +141,18 @@ export const layerObserver = Layer.effect(
       );
     });
     return {
+      refreshRepository: Effect.fn("RunFinalizationService.refreshRepository")(function* (
+        cwd: string,
+      ) {
+        yield* vcsStatus.refreshLocalStatus(cwd).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to refresh repository status after run completion", {
+              cwd,
+              detail: error.message,
+            }),
+          ),
+        );
+      }),
       refreshAfterTurn: Effect.fn("RunFinalizationService.refreshAfterTurn")(function* (
         projectId: ProjectId,
       ) {

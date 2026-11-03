@@ -23,7 +23,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
 
-it.effect("completes finalization when the post-checkpoint workspace refreshes fail", () => {
+it.effect("completes finalization when the post-checkpoint workspace refresh fails", () => {
   const threadId = ThreadId.make("thread_refresh_failure");
   const runId = RunId.make("run_refresh_failure");
   const scopeId = CheckpointScopeId.make("scope_refresh_failure");
@@ -45,9 +45,16 @@ it.effect("completes finalization when the post-checkpoint workspace refreshes f
                 { id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" },
                 {
                   id: CheckpointScopeId.make("scope_api"),
-                  runId: null,
+                  runId,
                   kind: "repository" as const,
                   cwd: "/api",
+                },
+                // A repo an earlier run included but this one did not.
+                {
+                  id: CheckpointScopeId.make("scope_old"),
+                  runId: RunId.make("run_earlier"),
+                  kind: "repository" as const,
+                  cwd: "/old",
                 },
               ],
               checkpoints: [],
@@ -63,6 +70,7 @@ it.effect("completes finalization when the post-checkpoint workspace refreshes f
               });
             }),
           refreshAfterTurn: () => Effect.void,
+          refreshRepository: (cwd) => Effect.sync(() => void captured.push(`repo:${cwd}`)),
         }),
       ),
     ),
@@ -70,8 +78,7 @@ it.effect("completes finalization when the post-checkpoint workspace refreshes f
   return Effect.gen(function* () {
     const service = yield* RunFinalization.RunFinalizationService;
     yield* service.finalize({ threadId, runId, scopeId });
-    // A failed refresh of one folder still refreshes the thread's other repos.
-    assert.sameMembers(captured, ["checkpoint", "refresh:/repo", "refresh:/api"]);
+    assert.deepEqual(captured, ["checkpoint", "refresh:/repo", "repo:/api"]);
   }).pipe(Effect.provide(layer));
 });
 
