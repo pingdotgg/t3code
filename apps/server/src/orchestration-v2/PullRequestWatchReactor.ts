@@ -24,6 +24,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 
 import {
@@ -43,6 +44,9 @@ import {
 /** Checks take minutes; faster sweeps waste the account's shared host quota. */
 const SWEEP_MINUTES = 2;
 const READ_FAILURE_LIMIT = 8;
+/** Group reads and thread tails in flight at once, inside the host's own request limit. */
+const GROUP_READS = 4;
+const TAIL_READS = 4;
 /** Without fingerprints, reread quiet PRs on snapshot changes or this interval to catch edits. */
 const QUIET_REREAD_MS = 10 * 60_000;
 /** Reread despite unchanged fingerprints; they miss review-thread comment edits. */
@@ -335,39 +339,48 @@ export const make = Effect.gen(function* () {
         paginated.every(
           (thread) => cached.tails.get(thread.id)?.count === (thread.commentCount ?? 0),
         );
+      // Each thread's cursor chain stays serial; separate threads page side by side.
+      const read = yield* Effect.forEach(
+        paginated,
+        (thread) =>
+          Effect.gen(function* () {
+            const count = thread.commentCount ?? 0;
+            const known = reuse ? cached.tails.get(thread.id) : undefined;
+            if (known !== undefined) return known;
+            let cursor = thread.nextCommentsCursor ?? null;
+            const comments = new Map<string, PullRequestComment>();
+            const cursors = new Set<string>();
+            while (cursor !== null) {
+              if (cursors.has(cursor)) return null;
+              cursors.add(cursor);
+              const page: PullRequestThreadCommentsResult = yield* pullRequests.threadComments({
+                ...reference,
+                threadId: thread.id,
+                cursor,
+              });
+              for (const comment of page.comments) {
+                comments.set(comment.id, {
+                  ...comment,
+                  kind: "review-comment",
+                  path: thread.path,
+                  reviewState: null,
+                });
+              }
+              cursor = page.nextCursor;
+            }
+            if (thread.comments.length + comments.size < count) return null;
+            return { count, comments: [...comments.values()] };
+          }),
+        { concurrency: TAIL_READS },
+      );
       const tails = new Map<
         string,
         { count: number; comments: ReadonlyArray<PullRequestComment> }
       >();
       const remarks = [...activity.comments];
-      for (const thread of paginated) {
-        let cursor = thread.nextCommentsCursor ?? null;
-        const count = thread.commentCount ?? 0;
-        let tail = reuse ? cached.tails.get(thread.id) : undefined;
-        if (tail === undefined) {
-          const comments = new Map<string, PullRequestComment>();
-          const cursors = new Set<string>();
-          while (cursor !== null) {
-            if (cursors.has(cursor)) return null;
-            cursors.add(cursor);
-            const page: PullRequestThreadCommentsResult = yield* pullRequests.threadComments({
-              ...reference,
-              threadId: thread.id,
-              cursor,
-            });
-            for (const comment of page.comments) {
-              comments.set(comment.id, {
-                ...comment,
-                kind: "review-comment",
-                path: thread.path,
-                reviewState: null,
-              });
-            }
-            cursor = page.nextCursor;
-          }
-          if (thread.comments.length + comments.size < count) return null;
-          tail = { count, comments: [...comments.values()] };
-        }
+      for (const [index, thread] of paginated.entries()) {
+        const tail = read[index];
+        if (tail == null) return null;
         tails.set(thread.id, tail);
         remarks.push(...tail.comments);
       }
@@ -626,22 +639,26 @@ export const make = Effect.gen(function* () {
         ),
       { discard: true },
     );
-    const fingerprints = yield* Effect.forEach(groups, fingerprintOf, {
-      concurrency: "unbounded",
-    });
+    // Every fingerprint is asked for at once so the host can batch them, and each group reads
+    // as soon as its own answer lands rather than waiting on the slowest host.
+    const reads = yield* Semaphore.make(GROUP_READS);
     yield* Effect.forEach(
       groups,
-      (group, index) => {
-        const fingerprint = fingerprints[index]!;
-        return fingerprint === "paused"
-          ? Effect.void
-          : readGroup(group, fingerprint).pipe(
-              Effect.catchCause(
-                logFailure("pull request watch check failed", { pullRequest: group.key }),
-              ),
-            );
-      },
-      { concurrency: 4, discard: true },
+      (group) =>
+        fingerprintOf(group).pipe(
+          Effect.flatMap((fingerprint) =>
+            fingerprint === "paused"
+              ? Effect.void
+              : reads.withPermit(
+                  readGroup(group, fingerprint).pipe(
+                    Effect.catchCause(
+                      logFailure("pull request watch check failed", { pullRequest: group.key }),
+                    ),
+                  ),
+                ),
+          ),
+        ),
+      { concurrency: "unbounded", discard: true },
     );
   }).pipe(
     Effect.catchCause(logFailure("pull request watch sweep failed", {})),
