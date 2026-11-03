@@ -961,11 +961,11 @@ export const layerWithOptions = (
           readonly providerSessionId: ProviderSessionId;
           readonly onlyIfIdleGeneration?: number;
           readonly keepIfBusyOtherThan?: ReadonlyArray<ProviderThreadId>;
-        }): Effect.fn.Return<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc]> {
+        }): Effect.fn.Return<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc, boolean]> {
           const key = sessionKey(input.providerSessionId);
           const candidate = (yield* Ref.get(sessions)).get(key);
           if (candidate === undefined) {
-            return [Option.none<LiveSessionEntry>(), yield* DateTime.now] as const;
+            return [Option.none<LiveSessionEntry>(), yield* DateTime.now, false] as const;
           }
           const removed = yield* Effect.gen(function* () {
             const latest = (yield* Ref.get(sessions)).get(key);
@@ -981,7 +981,7 @@ export const layerWithOptions = (
             // Unread updates still belong to this runtime. Save them before removal makes
             // subscription cleanup unable to find it, including on an event-stream failure.
             if (!(yield* persistPendingThreadUpdates(candidate, true))) {
-              return ["kept", yield* DateTime.now] as const;
+              return ["persist-failed", yield* DateTime.now] as const;
             }
             return yield* Effect.zip(
               Ref.modify(sessions, (current) => {
@@ -1017,6 +1017,7 @@ export const layerWithOptions = (
           return [
             outcome === "removed" ? Option.some(candidate) : Option.none<LiveSessionEntry>(),
             releasedAt,
+            outcome === "persist-failed",
           ] as const;
         },
       );
@@ -1068,7 +1069,19 @@ export const layerWithOptions = (
         readonly gracefulSubscribers?: boolean;
       }) =>
         Effect.acquireUseRelease(
-          removeLiveEntry(input),
+          removeLiveEntry(input).pipe(
+            Effect.flatMap(([entry, releasedAt, persistFailed]) =>
+              persistFailed && input.onlyIfIdleGeneration === undefined
+                ? Effect.fail(
+                    new ProviderSessionReleaseError({
+                      providerSessionId: input.providerSessionId,
+                      reason: input.reason,
+                      cause: "Pending provider-thread updates could not be saved before release.",
+                    }),
+                  )
+                : Effect.succeed([entry, releasedAt] as const),
+            ),
+          ),
           ([entry, releasedAt]) =>
             Option.match(entry, {
               onNone: () => Effect.void,

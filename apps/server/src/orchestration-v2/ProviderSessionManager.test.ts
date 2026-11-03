@@ -3810,7 +3810,11 @@ it.effect.each([
           ).pipe(Effect.andThen(Effect.die("simulated release save failure")));
         });
         yield* Ref.set(beforeUnchangedWrite, failWrite);
-        yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+        const release = manager.release({ providerSessionId, reason: "manual_shutdown" });
+        if (scenario === "persistent release failure") {
+          const error = yield* release.pipe(Effect.flip);
+          assert.equal(error._tag, "ProviderSessionReleaseError");
+        } else yield* release;
         if (scenario === "persistent release failure") {
           assert.equal(attempts, 3);
           assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
