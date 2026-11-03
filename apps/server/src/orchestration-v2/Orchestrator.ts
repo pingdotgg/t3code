@@ -4661,6 +4661,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         type: "fork",
       }),
     );
+    const sideChatRuntimeMode = command.sideChat
+      ? resolveProjectSettings(
+          yield* serverSettings.getSettings.pipe(mapDispatchError(command)),
+          sourceProjection.thread.projectId,
+        ).settings.sideChatRuntimeMode
+      : undefined;
+    const runtimeMode =
+      sideChatRuntimeMode === "inherit-parent"
+        ? sourceProjection.thread.runtimeMode
+        : sideChatRuntimeMode;
     const { targetThread, transfer } = yield* threadForkService
       .plan({
         sourceProjection,
@@ -4677,15 +4687,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         transferId,
         targetThreadId: command.targetThreadId,
         ...(command.title === undefined ? {} : { title: command.title }),
-        ...(command.sideChat
-          ? {
+        ...(runtimeMode === undefined
+          ? {}
+          : {
               sideChat: true,
-              sideChatRuntimeMode: resolveProjectSettings(
-                yield* serverSettings.getSettings.pipe(mapDispatchError(command)),
-                sourceProjection.thread.projectId,
-              ).settings.sideChatRuntimeMode,
-            }
-          : {}),
+              sideChatRuntimeMode:
+                runtimeModeCeiling !== undefined &&
+                isRuntimeModeAbove(runtimeMode, runtimeModeCeiling.maxRuntimeMode)
+                  ? runtimeModeCeiling.maxRuntimeMode
+                  : runtimeMode,
+            }),
         createdBy: command.createdBy,
         creationSource: command.creationSource,
         createdAt: now,

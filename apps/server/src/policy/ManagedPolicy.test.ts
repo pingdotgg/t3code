@@ -332,6 +332,23 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       }),
   );
 
+  it.effect.each([false, true])(
+    "allows inherited side-chat permissions under a ceiling, locked: %s",
+    (locked) =>
+      Effect.gen(function* () {
+        const policy = yield* loadFrom(
+          JSON.stringify({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            settings: { sideChatRuntimeMode: { value: "inherit-parent", locked } },
+            limits: { maxRuntimeMode: "auto-accept-edits" },
+          }),
+        );
+        const settings = policy.settings.applyLocks(policy.settings.defaults);
+        assert.equal(settings.sideChatRuntimeMode, "inherit-parent");
+      }),
+  );
+
   it.effect.each(["defaultRuntimeMode", "sideChatRuntimeMode"])(
     "refuses a default runtime mode above its own ceiling: %s",
     (key) =>

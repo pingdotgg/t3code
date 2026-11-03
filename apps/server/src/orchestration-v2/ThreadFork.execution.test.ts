@@ -14,7 +14,8 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
-  type ServerSettingsPatch,
+  RuntimeMode,
+  type ServerSettings,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -819,7 +820,7 @@ const writeImportedHistory = (threadId: ThreadId, text: string) =>
     });
   });
 
-const createParent = (threadId: ThreadId) =>
+const createParent = (threadId: ThreadId, runtimeMode: RuntimeMode = "full-access") =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     yield* orchestrator.dispatch({
@@ -829,7 +830,7 @@ const createParent = (threadId: ThreadId) =>
       projectId: ProjectId.make("side-chat-project"),
       title: "Side chat parent",
       modelSelection: forkCases[0]!.modelSelection,
-      runtimeMode: "full-access",
+      runtimeMode,
       interactionMode: "default",
       branch: null,
       worktreePath: null,
@@ -929,9 +930,49 @@ it.effect("resolves an explicit checkpoint fork to its source run", () =>
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
-it.effect.each([
+const sideChatPermissionCases: ReadonlyArray<{
+  settings: Partial<Pick<ServerSettings, "sideChatRuntimeMode" | "projectSettingsOverrides">>;
+  parentMode?: RuntimeMode;
+  ceiling?: RuntimeMode;
+  selectedMode?: RuntimeMode;
+  expected: string;
+}> = [
   { settings: {}, expected: "approval-required" },
   { settings: { sideChatRuntimeMode: "full-access" }, expected: "full-access" },
+  ...RuntimeMode.literals.map((parentMode) => ({
+    settings: { sideChatRuntimeMode: "inherit-parent" as const },
+    parentMode,
+    expected: parentMode,
+  })),
+  {
+    settings: { sideChatRuntimeMode: "inherit-parent" },
+    ceiling: "auto-accept-edits",
+    expected: "auto-accept-edits",
+  },
+  {
+    settings: { sideChatRuntimeMode: "inherit-parent" },
+    selectedMode: "auto-accept-edits",
+    expected: "full-access",
+  },
+  {
+    settings: {
+      sideChatRuntimeMode: "full-access",
+      projectSettingsOverrides: {
+        [ProjectId.make("side-chat-project")]: { sideChatRuntimeMode: "inherit-parent" },
+      },
+    },
+    parentMode: "auto",
+    expected: "auto",
+  },
+  {
+    settings: {
+      sideChatRuntimeMode: "inherit-parent",
+      projectSettingsOverrides: {
+        [ProjectId.make("side-chat-project")]: { sideChatRuntimeMode: "approval-required" },
+      },
+    },
+    expected: "approval-required",
+  },
   {
     settings: {
       sideChatRuntimeMode: "full-access",
@@ -950,25 +991,73 @@ it.effect.each([
     },
     expected: "auto",
   },
-] satisfies ReadonlyArray<{ settings: ServerSettingsPatch; expected: string }>)(
+];
+
+it.effect.each(sideChatPermissionCases)(
   "new side chats use their scoped permission default: %j",
-  ({ settings, expected }) =>
+  ({ settings, expected, parentMode = "full-access", ceiling, selectedMode }) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const parentId = ThreadId.make("side-chat-permissions-parent");
       const sideChatId = ThreadId.make("side-chat-permissions-child");
-      yield* createParent(parentId);
+      yield* createParent(parentId, ceiling === undefined ? parentMode : "approval-required");
+      if (ceiling !== undefined) {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const { thread } = yield* orchestrator.getThreadProjection(parentId);
+        const now = yield* DateTime.now;
+        // This parent predates the administrator's ceiling.
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("side-chat-permissions-existing-parent"),
+              type: "thread.runtime-mode-updated",
+              threadId: parentId,
+              occurredAt: now,
+              payload: { ...thread, runtimeMode: parentMode },
+            },
+          ],
+        });
+      }
       yield* forkSideChat("side-chat-permissions-fork", parentId, sideChatId);
       assert.equal((yield* orchestrator.getThreadShell(sideChatId))?.runtimeMode, expected);
-      assert.equal((yield* orchestrator.getThreadShell(parentId))?.runtimeMode, "full-access");
+      assert.equal((yield* orchestrator.getThreadShell(parentId))?.runtimeMode, parentMode);
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("side-chat-permissions-parent-change"),
+        threadId: parentId,
+        runtimeMode: parentMode === "approval-required" ? "auto-accept-edits" : "approval-required",
+      });
+      if (selectedMode !== undefined) {
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("side-chat-permissions-child-choice"),
+          threadId: sideChatId,
+          runtimeMode: selectedMode,
+        });
+      }
       yield* askSideChat(sideChatId, "side-chat-permissions-first-turn");
-      assert.equal((yield* orchestrator.getThreadShell(sideChatId))?.runtimeMode, expected);
+      assert.equal(
+        (yield* orchestrator.getThreadShell(sideChatId))?.runtimeMode,
+        selectedMode ?? expected,
+      );
     }).pipe(
       Effect.provide(
         ProviderReplayHarness.layerWithRegistry(
           { name: "side-chat-permissions" },
           ProviderAdapterRegistry.layerFromAdapters([forkCases[0]!.adapter]),
-          { runEffectWorker: false, settings },
+          {
+            runEffectWorker: false,
+            settings,
+            ...(ceiling === undefined
+              ? {}
+              : {
+                  managedPolicy: {
+                    schemaVersion: 1,
+                    organization: "Example Corp",
+                    limits: { maxRuntimeMode: ceiling },
+                  },
+                }),
+          },
         ),
       ),
     ),

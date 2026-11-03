@@ -302,7 +302,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/threads",
     scope: "project-defaults",
     searchTerms: [
-      "side chats /side /btw runtime mode supervised approvals auto accept edits full access",
+      "side chats /side /btw runtime mode supervised approvals auto accept edits full access inherit parent",
     ],
   },
   {

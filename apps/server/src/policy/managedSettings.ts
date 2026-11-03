@@ -5,6 +5,7 @@ import {
   ProjectSettingsOverrides,
   type RuntimeMode,
   ServerSettings,
+  type SideChatRuntimeMode,
   withIdleCompaction,
 } from "@t3tools/contracts";
 import * as Exit from "effect/Exit";
@@ -207,6 +208,11 @@ const lockTargets = (encoded: unknown, entry: Entry): ReadonlyArray<Segments> =>
   return [entry.segments, ...projectTargets];
 };
 
+const isDefaultRuntimeModeAbove = (
+  mode: SideChatRuntimeMode | undefined,
+  ceiling: RuntimeMode | undefined,
+) => mode !== undefined && mode !== "inherit-parent" && isRuntimeModeAbove(mode, ceiling);
+
 /**
  * A user's stored default runtime mode can sit above a ceiling deployed after it was chosen, and
  * the built-in default is the broadest mode. Every new thread would then be refused, so the
@@ -220,12 +226,11 @@ const clampDefaultRuntimeModes = (
   let effective = settings;
   for (const key of ["defaultRuntimeMode", "sideChatRuntimeMode"] as const) {
     const projectsAbove = Object.entries(effective.projectSettingsOverrides).filter(
-      ([, overrides]) =>
-        overrides[key] !== undefined && isRuntimeModeAbove(overrides[key], ceiling),
+      ([, overrides]) => isDefaultRuntimeModeAbove(overrides[key], ceiling),
     );
-    if (!isRuntimeModeAbove(effective[key], ceiling) && projectsAbove.length === 0) continue;
+    if (!isDefaultRuntimeModeAbove(effective[key], ceiling) && projectsAbove.length === 0) continue;
     effective = Object.assign({}, effective, {
-      [key]: isRuntimeModeAbove(effective[key], ceiling) ? ceiling : effective[key],
+      [key]: isDefaultRuntimeModeAbove(effective[key], ceiling) ? ceiling : effective[key],
       projectSettingsOverrides: Object.assign(
         {},
         effective.projectSettingsOverrides,
@@ -365,7 +370,7 @@ export function makeManagedSettings(
   for (const key of ["defaultRuntimeMode", "sideChatRuntimeMode"] as const) {
     if (
       all.some((entry) => entry.path === key) &&
-      isRuntimeModeAbove(decoded.value[key], maxRuntimeMode)
+      isDefaultRuntimeModeAbove(decoded.value[key], maxRuntimeMode)
     ) {
       return {
         _tag: "Invalid",
