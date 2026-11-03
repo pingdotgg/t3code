@@ -34,6 +34,7 @@ import {
   type VcsRef,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
+import { quoteGitPatchPath, unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
@@ -3044,7 +3045,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: 2 },
     );
     const stagedDeletions = new Set(stagedDeletionsStdout.split("\0").filter(Boolean));
-    const pathsToAdd = untrackedPaths.filter((relativePath) => !stagedDeletions.has(relativePath));
+    const pathsToAdd = untrackedPaths.filter(
+      (relativePath) => !stagedDeletions.has(relativePath.replace(/\/$/, "")),
+    );
     if (pathsToAdd.length === 0) return undefined;
 
     const indexPath = path.isAbsolute(indexValue.trim())
@@ -3429,17 +3432,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const paths = candidatePaths.filter((candidate) => configured.has(candidate));
     if (paths.length === 0) return [];
     // A revision without the path, or an unborn HEAD, has no pointer: the submodule is new.
-    const readPointers = Effect.fnUntraced(function* (revision: string) {
+    const readPointers = Effect.fnUntraced(function* (revision: string | null) {
       const listing = yield* executeGit(
         "GitVcsDriver.review.submodulePointers",
         range.cwd,
         [
           "--literal-pathspecs",
-          "ls-tree",
-          "-z",
-          "--full-tree",
-          "--end-of-options",
-          revision,
+          ...(revision === null
+            ? ["ls-files", "--stage", "-z"]
+            : ["ls-tree", "-z", "--full-tree", "--end-of-options", revision]),
           "--",
           ...paths,
         ],
@@ -3447,23 +3448,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout : "")));
       return new Map(
         listing.split("\0").flatMap((record) => {
-          const match = /^160000 commit (\S+)\t([\s\S]+)$/.exec(record);
+          const match = (
+            revision === null ? /^160000 (\S+) 0\t([\s\S]+)$/ : /^160000 commit (\S+)\t([\s\S]+)$/
+          ).exec(record);
           return match ? [[match[2]!, match[1]!] as const] : [];
         }),
       );
     });
     const [fromPointers, toPointers] = yield* Effect.all([
       readPointers(range.from),
-      range.to === null ? Effect.succeed(null) : readPointers(range.to),
+      readPointers(range.to),
     ]);
     const submodules = yield* Effect.forEach(paths, (submodulePath) =>
       Effect.gen(function* () {
         const cwd = path.join(range.cwd, submodulePath);
-        const to = toPointers === null ? null : toPointers.get(submodulePath);
+        if (!toPointers.has(submodulePath)) return [];
+        const contained = yield* Effect.all([
+          fileSystem.realPath(range.cwd),
+          fileSystem.realPath(cwd),
+        ]).pipe(
+          Effect.map(([root, target]) => target !== root && isPathWithinRoot(root, target)),
+          Effect.orElseSucceed(() => false),
+        );
+        if (!contained) return [];
+        const to = range.to === null ? null : toPointers.get(submodulePath)!;
         const checkedOut = yield* fileSystem
           .exists(path.join(cwd, ".git"))
           .pipe(Effect.orElseSucceed(() => false));
-        if (to === undefined || !checkedOut) return [];
+        if (!checkedOut) return [];
         const from = fromPointers.get(submodulePath) ?? (yield* readEmptyTreeHash(cwd));
         const submodule: ReviewRange = {
           cwd,
@@ -3527,7 +3539,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.map((stats) => [{ path: submodule.path, stats }]),
         Effect.catchTags({ GitCommandError: () => Effect.succeed([]) }),
       ),
-    ).pipe(Effect.map((entries) => entries.flat()));
+    ).pipe(Effect.map((entries) => entries.flat().filter(({ stats }) => stats.files.length > 0)));
     const expanded = new Map(submodules.map(({ path, stats }) => [path, stats.files]));
     return {
       range,
@@ -3562,8 +3574,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { maxOutputBytes, appendTruncationMarker: true, env: range.env },
     );
     let { stdout, stdoutTruncated } = patch;
+    if (range.prefix !== "") {
+      stdout = stdout.replace(
+        /^(rename (?:from|to)|copy (?:from|to)) (.+)$/gm,
+        (_, header: string, name: string) =>
+          `${header} ${quoteGitPatchPath(`${range.prefix}${unquoteGitPatchPath(name)}`)}`,
+      );
+      const bytes = new TextEncoder().encode(stdout);
+      if (bytes.byteLength > maxOutputBytes) {
+        stdout =
+          new TextDecoder().decode(bytes.subarray(0, maxOutputBytes)) + OUTPUT_TRUNCATED_MARKER;
+        stdoutTruncated = true;
+      }
+    }
     for (const { stats: submodule } of stats.submodules) {
-      if (stdoutTruncated || submodule.files.length === 0) continue;
+      if (stdoutTruncated) continue;
       const remaining = maxOutputBytes - new TextEncoder().encode(stdout).byteLength;
       if (remaining <= 0) {
         stdoutTruncated = true;

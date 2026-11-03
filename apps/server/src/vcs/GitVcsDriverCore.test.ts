@@ -2283,9 +2283,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           library,
           "libs/a",
         ]);
+        const added = (yield* driver.getReviewDiffPreview({ cwd })).sources[0]!;
+        assert.include(added.files?.map((file) => file.path) ?? [], "libs/a/lib.txt");
         yield* git(cwd, ["commit", "-m", "add submodule"]);
         yield* git(cwd, ["checkout", "-b", "feature/submodule"]);
         const submodule = pathService.join(cwd, "libs/a");
+        yield* git(submodule, ["config", "user.name", "Test"]);
+        yield* git(submodule, ["config", "user.email", "test@test.com"]);
         yield* writeTextFile(submodule, "lib.txt", "two\n");
         yield* git(submodule, [
           "-c",
@@ -2354,6 +2358,92 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           ),
           { oldContents: "one\n", newContents: "two\n" },
         );
+
+        yield* git(submodule, ["restore", "README.md"]);
+        yield* git(submodule, ["commit", "--allow-empty", "-m", "empty pointer bump"]);
+        yield* git(cwd, ["commit", "-am", "empty pointer bump"]);
+        const empty = (yield* driver.getReviewDiffPreview({
+          cwd,
+          commitSha: yield* git(cwd, ["rev-parse", "HEAD"]),
+        })).sources[0]!;
+        assert.deepStrictEqual(
+          empty.files?.map((file) => file.path),
+          ["libs/a"],
+        );
+        assert.include(empty.diff, "Subproject commit");
+
+        yield* git(submodule, ["mv", "lib.txt", "renamed\tlib.txt"]);
+        yield* git(submodule, ["commit", "-m", "rename library"]);
+        yield* git(cwd, ["commit", "-am", "renamed library"]);
+        const renamed = (yield* driver.getReviewDiffPreview({
+          cwd,
+          commitSha: yield* git(cwd, ["rev-parse", "HEAD"]),
+        })).sources[0]!;
+        assert.deepStrictEqual(renamed.files, [
+          {
+            path: "libs/a/renamed\tlib.txt",
+            previousPath: "libs/a/lib.txt",
+            additions: 0,
+            deletions: 0,
+          },
+        ]);
+        assert.include(renamed.diff, "rename from libs/a/lib.txt\n");
+        assert.include(renamed.diff, 'rename to "libs/a/renamed\\tlib.txt"\n');
+
+        yield* git(cwd, ["rm", "--cached", "libs/a"]);
+        yield* writeTextFile(submodule, "README.md", "# dirty retained checkout\n");
+        const removed = (yield* driver.getReviewDiffPreview({ cwd })).sources[0]!;
+        assert.deepStrictEqual(
+          removed.files?.map((file) => file.path),
+          ["libs/a"],
+        );
+        assert.include(removed.diff, "deleted file mode 160000");
+        yield* git(cwd, ["reset", "HEAD", "--", "libs/a"]);
+
+        if (symlinksSupported) {
+          const fs = yield* FileSystem.FileSystem;
+          const outside = yield* makeTmpDir("git-outside-");
+          yield* initRepoWithCommit(outside);
+          yield* git(outside, ["fetch", submodule, "HEAD"]);
+          yield* git(outside, ["reset", "--hard", "FETCH_HEAD"]);
+          yield* writeTextFile(outside, "outside-only.txt", "outside workspace\n");
+          yield* git(outside, ["add", "."]);
+          yield* git(outside, ["commit", "-m", "outside file"]);
+          yield* git(cwd, [
+            "config",
+            "--file",
+            ".gitmodules",
+            "submodule.external.path",
+            "external",
+          ]);
+          yield* fs.symlink(outside, pathService.join(cwd, "external"));
+          yield* git(cwd, ["add", ".gitmodules", "external"]);
+          const linked = (yield* driver.getReviewDiffPreview({ cwd })).sources[0]!;
+          assert.isTrue(linked.files?.some((file) => file.path === "external"));
+          assert.notInclude(linked.diff, "outside workspace");
+          const retained = pathService.join(yield* makeTmpDir(), "checkout");
+          yield* fs.rename(submodule, retained);
+          yield* fs.symlink(outside, submodule);
+          const headRef = yield* git(cwd, ["rev-parse", "HEAD"]);
+          const escaped = yield* driver
+            .getReviewDiffFileContents(
+              makeReviewDiffFileContentsInput(cwd, {
+                sourceKind: "commit",
+                changeType: "rename-pure",
+                baseRef: yield* git(cwd, ["rev-parse", "HEAD^"]),
+                headRef,
+                oldPath: "libs/a/lib.txt",
+                newPath: "libs/a/renamed\tlib.txt",
+              }),
+            )
+            .pipe(Effect.exit);
+          assert.isTrue(Exit.isFailure(escaped));
+          yield* fs.remove(submodule);
+          yield* fs.rename(retained, submodule);
+          yield* fs.remove(pathService.join(cwd, "external"));
+          yield* git(cwd, ["restore", "--staged", "--worktree", ".gitmodules"]);
+          yield* git(cwd, ["rm", "--cached", "external"]);
+        }
 
         yield* git(cwd, ["update-index", "--cacheinfo", `160000,${"1".repeat(40)},libs/a`]);
         yield* git(cwd, ["commit", "-m", "point at a missing commit"]);
