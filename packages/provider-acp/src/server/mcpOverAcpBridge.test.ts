@@ -298,6 +298,7 @@ describe("AcpMcpOverAcpBridge", () => {
         result: { protocolVersion: "2025-06-18" },
       });
       yield* message("tools/list", "mcp-4");
+      yield* bridge.dispose;
 
       expect(requests).toEqual([
         { verb: "POST", method: "initialize", sessionId: null },
@@ -305,6 +306,7 @@ describe("AcpMcpOverAcpBridge", () => {
         { verb: "DELETE", method: undefined, sessionId: "session-1" },
         { verb: "POST", method: "initialize", sessionId: null },
         { verb: "POST", method: "tools/list", sessionId: "session-2" },
+        { verb: "DELETE", method: undefined, sessionId: "session-2" },
       ]);
     }).pipe(Effect.scoped),
   );
