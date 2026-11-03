@@ -83,7 +83,14 @@ function claudeErrorResult(stdout: string): string | undefined {
   const messages: ReadonlyArray<unknown> = Array.isArray(output) ? output : [output];
   return messages
     .filter(isClaudeErrorResult)
-    .map((message) => (message.result ?? message.errors?.join("\n") ?? "").trim())
+    .map((message) =>
+      (
+        message.result ??
+        // error_during_execution mixes CLI telemetry into the list.
+        message.errors?.filter((error) => !error.startsWith("[ede_diagnostic]")).join("\n") ??
+        ""
+      ).trim(),
+    )
     .findLast((result) => result.length > 0);
 }
 

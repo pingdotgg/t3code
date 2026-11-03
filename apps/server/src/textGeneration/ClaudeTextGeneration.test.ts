@@ -471,6 +471,15 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
       structuredOutputError,
     ],
     [
+      "the errors list without CLI telemetry",
+      JSON.stringify({
+        ...structuredOutputFailure,
+        subtype: "error_during_execution",
+        errors: ["[ede_diagnostic] result_type=user last_content_type=n/a", apiError],
+      }),
+      apiError,
+    ],
+    [
       "the stdout error over a stderr notice",
       JSON.stringify({ is_error: true, api_error_status: 400, result: apiError }),
       apiError,
