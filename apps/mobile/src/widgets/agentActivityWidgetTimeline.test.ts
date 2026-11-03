@@ -7,9 +7,17 @@ import {
   AGENT_ACTIVITY_WIDGET_STALE_AFTER_MS,
   agentActivityWidgetTimeline,
 } from "./agentActivityWidgetTimeline";
+import type { AgentActivityWidgetProps } from "./AgentActivityWidget";
 import { publishAgentActivityWidget } from "./publishAgentActivityWidget.ios";
 
-const nativeWidget = vi.hoisted(() => ({ getTimeline: vi.fn(), updateTimeline: vi.fn() }));
+const nativeWidget = vi.hoisted(() => ({
+  getTimeline: vi.fn(),
+  updateTimeline: vi.fn(),
+  readUnsettled: vi.fn(() => [] as AgentActivityWidgetProps["activities"]),
+}));
+vi.mock("./readWidgetUnsettledRows.ios", () => ({
+  readWidgetUnsettledRows: nativeWidget.readUnsettled,
+}));
 vi.mock("expo", () => ({ requireOptionalNativeModule: () => ({}) }));
 vi.mock("expo-linking", () => ({ createURL: () => "t3code-dev:///" }));
 vi.mock("./AgentActivityWidget", () => ({ default: nativeWidget }));
@@ -45,19 +53,33 @@ function aggregate(activities: ReadonlyArray<Row>): RelayAgentActivityAggregateS
 describe("agentActivityWidgetTimeline", () => {
   it("persists the snapshot owner and clears rows on sign-out", async () => {
     nativeWidget.updateTimeline.mockClear();
+    const supplemental = [{ ...row("completed", "Done"), threadId: "local" }];
+    nativeWidget.readUnsettled.mockReturnValueOnce(supplemental);
     await publishAgentActivityWidget(
       { kind: "snapshot", aggregate: aggregate([row("running", "Working")]) },
       "user-a",
     );
     expect(nativeWidget.updateTimeline).toHaveBeenLastCalledWith([
-      expect.objectContaining({ props: expect.objectContaining({ accountId: "user-a" }) }),
-      expect.objectContaining({ props: expect.objectContaining({ accountId: "user-a" }) }),
+      expect.objectContaining({
+        props: expect.objectContaining({
+          accountId: "user-a",
+          supplementalActivities: supplemental,
+          activeCount: 1,
+        }),
+      }),
+      expect.objectContaining({
+        props: expect.objectContaining({
+          accountId: "user-a",
+          supplementalActivities: supplemental,
+          activeCount: 1,
+        }),
+      }),
     ]);
 
     await publishAgentActivityWidget({ kind: "signed-out" }, null);
     expect(nativeWidget.updateTimeline).toHaveBeenLastCalledWith([
       expect.objectContaining({
-        props: expect.objectContaining({ activities: [] }),
+        props: expect.objectContaining({ activities: [], supplementalActivities: [] }),
       }),
     ]);
     expect(nativeWidget.updateTimeline.mock.lastCall?.[0][0].props).not.toHaveProperty("accountId");
@@ -108,14 +130,27 @@ describe("agentActivityWidgetTimeline", () => {
     const cached = agentActivityWidgetTimeline(
       { kind: "snapshot", aggregate: aggregate([row("running", "Working")]) },
       now,
-    ).map((entry) => ({ ...entry, props: { ...entry.props, accountId: "user-a" } }));
+    ).map((entry) => ({
+      ...entry,
+      props: {
+        ...entry.props,
+        accountId: "user-a",
+        supplementalActivities: entry.props.activities,
+      },
+    }));
     nativeWidget.getTimeline.mockResolvedValue(cached);
     nativeWidget.updateTimeline.mockClear();
 
     await publishAgentActivityWidget({ kind: "loading" }, "user-a");
     await publishAgentActivityWidget({ kind: "unavailable" }, "user-a");
 
-    expect(nativeWidget.updateTimeline).not.toHaveBeenCalled();
+    const refreshed = cached.map((entry) => ({
+      ...entry,
+      props: { ...entry.props, supplementalActivities: [] },
+    }));
+    expect(nativeWidget.updateTimeline).toHaveBeenLastCalledWith(refreshed);
+    nativeWidget.getTimeline.mockResolvedValue(refreshed);
+    nativeWidget.updateTimeline.mockClear();
 
     await Promise.all([
       publishAgentActivityWidget(
@@ -202,6 +237,13 @@ describe("agentActivityWidgetTimeline", () => {
     const [entry] = agentActivityWidgetTimeline({ kind: "snapshot", aggregate: null }, now);
 
     expect(entry?.props).toMatchObject({ subtitle: "No active agents", activities: [] });
+    const local = agentActivityWidgetTimeline({ kind: "snapshot", aggregate: null }, now, [
+      row("stale", "Ready"),
+    ]);
+    expect(local).toHaveLength(2);
+    expect(local[0]?.props.activeCount).toBe(0);
+    expect(local[1]?.date.getTime()).toBe(now + AGENT_ACTIVITY_WIDGET_STALE_AFTER_MS);
+    expect(local[1]?.props.supplementalActivities).toMatchObject([{ status: "Out of date" }]);
   });
 
   it("asks the user to sign in instead of showing a previous account's agents", () => {

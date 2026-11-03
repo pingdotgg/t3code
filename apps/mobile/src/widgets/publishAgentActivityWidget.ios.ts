@@ -26,16 +26,47 @@ export function publishAgentActivityWidget(
     if (accountId && (source.kind === "loading" || source.kind === "unavailable")) {
       const cached = await widget.getTimeline().catch(() => []);
       if (generation !== accountGeneration) return;
-      if (cached.some(({ props }) => props?.accountId === accountId && props.activities?.length)) {
+      if (
+        cached.some(
+          ({ props }) =>
+            props?.accountId === accountId &&
+            (props.activities?.length || props.supplementalActivities?.length),
+        )
+      ) {
+        const { readWidgetUnsettledRows } = await import("./readWidgetUnsettledRows.ios");
+        if (generation !== accountGeneration) return;
+        const supplementalActivities = readWidgetUnsettledRows(cached[0]?.props.activities ?? []);
+        if (
+          cached.some(
+            ({ props }) =>
+              JSON.stringify(props.supplementalActivities ?? []) !==
+              JSON.stringify(supplementalActivities),
+          )
+        ) {
+          widget.updateTimeline(
+            cached.map((entry) => ({
+              ...entry,
+              props: { ...entry.props, supplementalActivities },
+            })),
+          );
+        }
         return;
       }
     }
+    const supplementalActivities =
+      source.kind === "snapshot" && accountId
+        ? (await import("./readWidgetUnsettledRows.ios")).readWidgetUnsettledRows(
+            source.aggregate?.activities ?? [],
+          )
+        : [];
+    if (generation !== accountGeneration) return;
     widget.updateTimeline(
-      agentActivityWidgetTimeline(source, Date.now()).map((entry) => ({
+      agentActivityWidgetTimeline(source, Date.now(), supplementalActivities).map((entry) => ({
         ...entry,
         props: {
           ...entry.props,
           source: source.kind,
+          supplementalActivities: entry.props.supplementalActivities ?? [],
           baseUrl: Linking.createURL("/"),
           ...(source.kind === "snapshot" && accountId ? { accountId } : {}),
         },

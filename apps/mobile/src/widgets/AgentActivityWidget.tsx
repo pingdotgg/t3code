@@ -1,4 +1,4 @@
-import { HStack, Image, Link, Spacer, Text, VStack } from "@expo/ui/swift-ui";
+import { Divider, HStack, Image, Link, Spacer, Text, VStack } from "@expo/ui/swift-ui";
 import {
   fixedSize,
   font,
@@ -27,6 +27,7 @@ export interface AgentActivityWidgetProps {
       | "deepLink"
     >
   >;
+  readonly supplementalActivities?: AgentActivityWidgetProps["activities"];
   readonly baseUrl?: string;
   readonly freshUntil?: number;
   readonly updatedAt?: string;
@@ -39,7 +40,21 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
   "widget";
   const now = Math.max(environment.date?.getTime() ?? 0, Date.now());
   const expired = (props.freshUntil ?? Infinity) <= now;
-  const rows = (props.activities ?? []).map((row) =>
+  const large = environment.widgetFamily === "systemLarge";
+  const activityRows = [...(props.activities ?? [])];
+  if (large && props.source === "snapshot") {
+    for (const row of props.supplementalActivities ?? []) {
+      if (
+        !activityRows.some(
+          (existing) =>
+            existing.environmentId === row.environmentId && existing.threadId === row.threadId,
+        )
+      ) {
+        activityRows.push(row);
+      }
+    }
+  }
+  const rows = activityRows.map((row) =>
     expired && row.phase !== "completed" && row.phase !== "failed"
       ? { ...row, phase: "stale" as const, status: "Out of date" }
       : row,
@@ -48,8 +63,7 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
   const activeCount = props.activeCount ?? 0;
   const accessory = environment.widgetFamily === "accessoryRectangular";
   const small = environment.widgetFamily === "systemSmall";
-  const large = environment.widgetFamily === "systemLarge";
-  const roomier = !small && !accessory;
+  const listLayout = !small && !accessory;
   const textSize = environment.dynamicTypeSize ?? "large";
   const accessibility = textSize.startsWith("accessibility");
   const enlarged = textSize === "xxxLarge";
@@ -60,12 +74,16 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
         ? 3
         : textSize === "xLarge" || textSize === "xxLarge"
           ? 4
-          : 5
-    : accessibility || enlarged
+          : 7
+    : accessibility
       ? 1
-      : 2;
+      : enlarged
+        ? 3
+        : textSize === "xLarge" || textSize === "xxLarge"
+          ? 4
+          : 5;
   const hero = rows[0];
-  const showRows = roomier && rows.length > 0;
+  const showRows = listLayout && rows.length > 0;
   const monochrome =
     environment.widgetRenderingMode !== "fullColor" || environment.isLuminanceReduced;
   const statusColor = (row: AgentActivityWidgetProps["activities"][number]) => {
@@ -102,7 +120,7 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
     const text = (
       <Text
         modifiers={[
-          font(roomier ? { textStyle: "caption2" } : { size: 11, weight: "medium" }),
+          font(listLayout ? { textStyle: "caption2" } : { size: 11, weight: "medium" }),
           foregroundStyle(color),
           lineLimit(1),
           ...(horizontal ? [layoutPriority(1)] : []),
@@ -126,20 +144,28 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
   return (
     <VStack
       alignment="leading"
-      spacing={accessory ? 5 : showRows ? 8 : 10}
+      spacing={accessory ? 5 : showRows ? (large ? 8 : 4) : 10}
       modifiers={[
         frame({ maxWidth: Infinity, maxHeight: Infinity, alignment: "topLeading" }),
         ...(props.baseUrl ? [widgetURL(`${props.baseUrl}${hero?.deepLink.slice(1) ?? ""}`)] : []),
       ]}
     >
       {showRows ? (
-        rows.slice(0, rowLimit).map((row) => {
+        rows.slice(0, rowLimit).flatMap((row, index) => {
           const content = (
-            <HStack key={`${row.environmentId}:${row.threadId}`} spacing={10} alignment="center">
+            <HStack
+              key={`${row.environmentId}:${row.threadId}`}
+              spacing={10}
+              alignment="center"
+              modifiers={large ? [] : [frame({ maxHeight: Infinity })]}
+            >
               {!accessibility ? (
                 <Image
                   systemName={statusSymbols[row.phase]}
-                  modifiers={[font({ textStyle: "body" }), foregroundStyle(statusColor(row))]}
+                  modifiers={[
+                    font({ textStyle: large ? "body" : "subheadline" }),
+                    foregroundStyle(statusColor(row)),
+                  ]}
                 />
               ) : null}
               <VStack alignment="leading" spacing={3}>
@@ -147,12 +173,12 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
                   modifiers={[
                     font({ textStyle: "subheadline", weight: "semibold" }),
                     foregroundStyle("primary"),
-                    lineLimit(large && !accessibility ? 2 : 1),
+                    lineLimit(large && rows.length <= 5 && !accessibility ? 2 : 1),
                   ]}
                 >
                   {row.threadTitle}
                 </Text>
-                {!accessibility || large ? (
+                {large ? (
                   <Text
                     modifiers={[
                       font({ textStyle: "caption2" }),
@@ -168,7 +194,7 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
               {renderStatus(row, true)}
             </HStack>
           );
-          return props.baseUrl ? (
+          const linked = props.baseUrl ? (
             <Link
               key={`${row.environmentId}:${row.threadId}`}
               destination={`${props.baseUrl}${row.deepLink.slice(1)}`}
@@ -178,6 +204,9 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
           ) : (
             content
           );
+          return large && index > 0 && index === (props.activities?.length ?? 0)
+            ? [<Divider key="activity-sections" />, linked]
+            : [linked];
         })
       ) : hero ? (
         <VStack alignment="leading" spacing={accessory ? 3 : 8}>
@@ -206,11 +235,11 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
           <Text
             modifiers={[
               font(
-                roomier
+                listLayout
                   ? { textStyle: "headline" }
                   : { size: accessory ? 13 : 17, weight: "semibold" },
               ),
-              lineLimit(accessory || (roomier && !large) ? 1 : 2),
+              lineLimit(accessory || (listLayout && !large) ? 1 : 2),
             ]}
           >
             {props.source === "loading"
@@ -223,10 +252,10 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
                     ? "Ready when you are"
                     : "Open T3 Code"}
           </Text>
-          {!(roomier && accessibility && !large) ? (
+          {!(listLayout && accessibility && !large) ? (
             <Text
               modifiers={[
-                font(roomier ? { textStyle: "caption2" } : { size: 12 }),
+                font(listLayout ? { textStyle: "caption2" } : { size: 12 }),
                 foregroundStyle("secondary"),
                 lineLimit(accessory ? 1 : 3),
               ]}
@@ -236,12 +265,12 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
           ) : null}
         </VStack>
       )}
-      {!accessory ? <Spacer minLength={0} /> : null}
+      {!accessory && !(showRows && !large) ? <Spacer minLength={0} /> : null}
       <HStack>
         <Spacer minLength={0} />
         <Text
           modifiers={[
-            font(roomier ? { textStyle: "caption2" } : { size: 11, weight: "medium" }),
+            font(listLayout ? { textStyle: "caption2" } : { size: 11, weight: "medium" }),
             foregroundStyle("secondary"),
             lineLimit(1),
             fixedSize({ horizontal: false, vertical: true }),
@@ -250,7 +279,7 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
         >
           {outOfDate
             ? "Out of date"
-            : activeCount > 0
+            : activeCount > 0 || (large && (props.supplementalActivities?.length ?? 0) > 0)
               ? `${activeCount} active`
               : rows.some((row) => row.phase === "failed")
                 ? "Failed"

@@ -113,10 +113,52 @@ it("embeds an Agent Activity Home Screen layout and initial data independently o
         status: "Working",
       })),
     };
+    for (const widgetFamily of ["systemSmall", "systemMedium", "systemLarge"]) {
+      const supplemented = JSON.stringify(
+        context.__expoWidgetRender(
+          {
+            ...aggregate,
+            supplementalActivities: [
+              aggregate.activities[0],
+              ...Array.from({ length: 7 }, (_, i) => ({
+                ...props.activities[0],
+                threadId: `local-${i}`,
+                threadTitle: `Local task ${i + 1}`,
+                phase: "completed",
+                status: "Done",
+                deepLink: `/threads/environment/local%3A${i + 1}`,
+              })),
+            ],
+          },
+          { widgetFamily, colorScheme: "light", widgetRenderingMode: "fullColor" },
+        ),
+      );
+      expect(supplemented).toContain("10 active");
+      if (widgetFamily === "systemLarge") {
+        expect(supplemented).toContain("Local task 2");
+        expect(supplemented).not.toContain("Local task 3");
+        expect(supplemented).toContain("t3code-dev:///threads/environment/local%3A2");
+      } else {
+        expect(supplemented).not.toContain("Local task");
+      }
+    }
+    const localOnly = JSON.stringify(
+      context.__expoWidgetRender(
+        {
+          ...props,
+          activeCount: 0,
+          activities: [],
+          supplementalActivities: [props.activities[0]],
+        },
+        { widgetFamily: "systemLarge", colorScheme: "light", widgetRenderingMode: "fullColor" },
+      ),
+    );
+    expect(localOnly).toContain("Review the task");
+    expect(localOnly).toContain("0 active");
     for (const [widgetFamily, dynamicTypeSize, visibleRows] of [
-      ["systemMedium", "large", 2],
-      ["systemMedium", "xxLarge", 2],
-      ["systemMedium", "xxxLarge", 1],
+      ["systemMedium", "large", 5],
+      ["systemMedium", "xxLarge", 4],
+      ["systemMedium", "xxxLarge", 3],
       ["systemMedium", "accessibility5", 1],
       ["systemLarge", "large", 5],
       ["systemLarge", "xLarge", 4],

@@ -195,7 +195,9 @@ Session, Weekly, or both for each provider. Reopen T3 to refresh expired reading
 ## Agent Activity widget
 
 Add **Agent Activity** from the iOS widget gallery to see agents from your T3 Connect account.
-Open T3 Code to refresh the snapshot. After 10 minutes, unfinished tasks show **Out of date**.
+The large widget fills spare rows with Unsettled threads loaded in the app. Its active count
+still comes from T3 Connect. Open T3 Code to refresh both sources. After 10 minutes,
+unfinished tasks show **Out of date**.
 Live Activities continue to receive updates separately.
 
 ## Keyboard shortcuts
