@@ -8,7 +8,11 @@ import {
 } from "@t3tools/provider-acp-registry/testing";
 import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
 import { AcpRegistryCatalog } from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
-import { decodeAcpReplayTranscript, makeAcpReplayRuntime } from "./AcpAdapterV2.testkit.ts";
+import {
+  decodeAcpReplayTranscript,
+  makeAcpReplayRuntime,
+  makeAcpReplayCompletenessAssertion,
+} from "./AcpAdapterV2.testkit.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 
@@ -1265,10 +1269,253 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.live.each([
+    {
+      activation: "startTurn",
+      runtimeMode: "full-access",
+      optionId: "allow-once",
+      switched: true,
+      rejectOption: true,
+    },
+    {
+      activation: "startTurn",
+      runtimeMode: "approval-required",
+      optionId: "reject-once",
+      switched: false,
+      rejectOption: true,
+    },
+    {
+      activation: "startTurn",
+      runtimeMode: "auto-accept-edits",
+      optionId: "reject-once",
+      switched: false,
+      rejectOption: true,
+    },
+    {
+      activation: "startTurn",
+      runtimeMode: "approval-required",
+      optionId: null,
+      switched: false,
+      rejectOption: false,
+    },
+    {
+      activation: "openSession",
+      runtimeMode: "full-access",
+      optionId: "allow-once",
+      switched: true,
+      rejectOption: true,
+    },
+  ] as const)(
+    "answers v1 set_model permissions during $activation and keeps the thread usable ($runtimeMode, reject=$rejectOption)",
+    ({ activation, runtimeMode, optionId, switched, rejectOption }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-model-permission-",
+        });
+        const statusPath = path.join(directory, "status.json");
+        const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+        const instanceId = ProviderInstanceId.make("acp-test-v1-model-permission");
+        const threadId = ThreadId.make("thread-acp-v1-model-permission");
+        const transcript = yield* decodeAcpReplayTranscript(
+          {
+            provider: ACP_TEST_DRIVER,
+            protocol: "acp.ndjson-jsonrpc",
+            version: "1",
+            scenario: "v1-model-permission",
+            entries: [
+              {
+                type: "expect_outbound",
+                frame: { kind: "request", method: "initialize", params: "<any>" },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  kind: "response",
+                  method: "initialize",
+                  result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                },
+              },
+              {
+                type: "expect_outbound",
+                frame: { kind: "request", method: "session/new", params: "<any>" },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  kind: "response",
+                  method: "session/new",
+                  result: {
+                    sessionId: "model-session",
+                    models: {
+                      currentModelId: "model-a",
+                      availableModels: [
+                        { modelId: "model-a", name: "Model A" },
+                        { modelId: "model-b", name: "Model B" },
+                      ],
+                    },
+                  },
+                },
+              },
+              {
+                type: "expect_outbound",
+                frame: {
+                  kind: "request",
+                  method: "session/set_model",
+                  params: { sessionId: "model-session", modelId: "model-b" },
+                },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  kind: "request",
+                  method: "session/request_permission",
+                  params: {
+                    sessionId: "model-session",
+                    toolCall: {
+                      toolCallId: "model-confirm",
+                      title: "Switch model?",
+                      kind: "other",
+                      status: "pending",
+                    },
+                    options: [
+                      { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+                      ...(rejectOption
+                        ? [{ optionId: "reject-once", name: "Reject", kind: "reject_once" }]
+                        : []),
+                    ],
+                  },
+                },
+              },
+              { type: "expect_outbound", frame: "<any>" },
+              {
+                type: "emit_inbound",
+                frame: {
+                  kind: "response",
+                  method: "session/set_model",
+                  ...(switched
+                    ? { result: {} }
+                    : { error: { code: -32603, message: "model_switch_cancelled" } }),
+                },
+              },
+              {
+                type: "expect_outbound",
+                frame: { kind: "request", method: "session/prompt", params: "<any>" },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  kind: "response",
+                  method: "session/prompt",
+                  result: { stopReason: "end_turn" },
+                },
+              },
+              { type: "runtime_exit", status: "success" },
+            ],
+          },
+          ACP_TEST_DRIVER,
+        );
+        const makeRuntime = makeAcpReplayRuntime({
+          transcript,
+          statusPath,
+          fileSystem,
+          scriptPath: yield* path.fromFileUrl(
+            new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+          ),
+          childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        });
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: (input) =>
+              makeRuntime({
+                ...input,
+                protocolLogging: {
+                  ...input.protocolLogging,
+                  logIncoming: true,
+                  logOutgoing: true,
+                  logger: (event) => Queue.offer(protocolEvents, event).pipe(Effect.asVoid),
+                },
+              }),
+          },
+          selfInvocation: yield* resolveSelfInvocation(),
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode,
+          interactionMode: "default",
+          cwd: directory,
+        });
+        const openedSelection = {
+          instanceId,
+          model: activation === "openSession" ? "model-b" : "model-a",
+        } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-model-permission"),
+          modelSelection: openedSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: openedSelection,
+          runtimePolicy,
+        });
+        const started = yield* Effect.exit(
+          runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              modelSelection: { instanceId, model: "model-b" },
+            }),
+          ),
+        );
+        assert.deepEqual(
+          rawProtocolOutgoingOutcomes(Array.from(yield* Queue.takeAll(protocolEvents))),
+          [optionId === null ? { outcome: "cancelled" } : { outcome: "selected", optionId }],
+        );
+        if (switched) {
+          assert.isTrue(Exit.isSuccess(started));
+        } else {
+          if (Exit.isSuccess(started)) assert.fail("the agent refused the switch");
+          assert.include(Cause.pretty(started.cause), "model_switch_cancelled");
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              ordinal: 2,
+              modelSelection: openedSelection,
+            }),
+          );
+        }
+        const terminal = yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+        );
+        assert.equal(Option.getOrThrow(terminal).status, "completed");
+        yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   // regression: #26852 a resumed session decides permission requests with the resumed policy
-  it.live(
-    "answers a permission request during a resumed model switch from the resumed policy",
-    () =>
+  it.live.each([
+    { activation: "resumeThread", failure: "none" },
+    { activation: "startTurn", failure: "none" },
+    { activation: "resumeThread", failure: "load" },
+    { activation: "startTurn", failure: "load" },
+    { activation: "resumeThread", failure: "configuration" },
+    { activation: "startTurn", failure: "configuration" },
+  ] as const)(
+    "binds idle permissions during $activation and recovery after $failure failure",
+    ({ activation, failure }) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const path = yield* Path.Path;
@@ -1278,27 +1525,89 @@ describe("AcpAdapterV2", () => {
         const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
         const instanceId = ProviderInstanceId.make("acp-test-permission-during-resume");
         const threadId = ThreadId.make("thread-acp-permission-during-resume");
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
+        let runtimeInput: AcpAdapterV2RuntimeInput | undefined;
+        const idleOutcomes: Array<EffectAcpSchema.RequestPermissionResponse["outcome"]> = [];
+        const requestIdlePermission = Effect.fn("test.requestIdlePermission")(function* (
+          sessionId: string,
+          requestId: string,
+          withReject = true,
+        ) {
+          if (requestPermission === undefined || runtimeInput?.onOutgoingResponse === undefined) {
+            return yield* Effect.die("ACP runtime must register permission response handlers");
+          }
+          const response = yield* requestPermission(
+            {
+              sessionId,
+              toolCall: { toolCallId: requestId, kind: "other", title: "Switch model?" },
+              options: [
+                { optionId: "allow-once", kind: "allow_once", name: "Allow once" },
+                ...(withReject
+                  ? [{ optionId: "reject-once", kind: "reject_once" as const, name: "Reject" }]
+                  : []),
+              ],
+            },
+            { requestId, method: "session/request_permission" },
+          );
+          idleOutcomes.push(response.outcome);
+          yield* runtimeInput.onOutgoingResponse(requestId);
+        });
+        const makeRuntime = makeMockRuntime({
+          childProcessSpawner,
+          mockAgentPath,
+          protocolEvents,
+          environment: {
+            T3_ACP_REQUEST_PERMISSION_ON_SET_MODEL: "composer-2",
+            ...(failure === "load" ? { T3_ACP_FAIL_LOAD_SESSION: "1" } : {}),
+          },
+          wrapRuntime: (runtime) => ({
+            ...runtime,
+            handleRequestPermission: (handler) => {
+              requestPermission = handler;
+              return runtime.handleRequestPermission(handler);
+            },
+            loadSession: (sessionId, options) =>
+              Effect.gen(function* () {
+                yield* requestIdlePermission("mock-session-1", "old-session-during-load");
+                yield* requestIdlePermission(sessionId, "incoming-session-during-load");
+                return yield* runtime.loadSession(sessionId, options);
+              }),
+            setConfigOption: (configId, value) =>
+              runtime
+                .setConfigOption(configId, value)
+                .pipe(
+                  Effect.andThen((response) =>
+                    failure === "configuration" && configId === "model" && value === "composer-2"
+                      ? Effect.fail(
+                          EffectAcpErrors.AcpRequestError.internalError(
+                            "Model configuration response failed after adoption",
+                          ),
+                        )
+                      : Effect.succeed(response),
+                  ),
+                ),
+          }),
+        });
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
             capabilities: AcpProviderCapabilitiesV2,
-            makeRuntime: makeMockRuntime({
-              childProcessSpawner,
-              mockAgentPath,
-              protocolEvents,
-              environment: { T3_ACP_REQUEST_PERMISSION_ON_SET_MODEL: "composer-2" },
-            }),
+            makeRuntime: (input) => {
+              runtimeInput = input;
+              return makeRuntime(input);
+            },
           },
           selfInvocation: yield* resolveSelfInvocation(),
         });
         const openedPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "approval-required",
+          runtimeMode: failure === "none" ? "approval-required" : "full-access",
           interactionMode: "default",
           cwd: process.cwd(),
         });
         const resumedPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "full-access",
+          runtimeMode: failure === "load" ? "approval-required" : "full-access",
           interactionMode: "default",
           cwd: process.cwd(),
         });
@@ -1316,26 +1625,90 @@ describe("AcpAdapterV2", () => {
         });
         yield* Queue.clear(protocolEvents);
 
+        const targetThread = {
+          ...providerThread,
+          nativeThreadRef: {
+            driver: ACP_TEST_DRIVER,
+            nativeId: "persisted-session",
+            strength: "strong" as const,
+          },
+        };
+        const switchedSelection = { instanceId, model: "composer-2" } as const;
         const resumed = yield* Effect.exit(
-          runtime.resumeThread({
-            providerThread: {
-              ...providerThread,
-              nativeThreadRef: {
-                driver: ACP_TEST_DRIVER,
-                nativeId: "persisted-session",
-                strength: "strong",
-              },
-            },
-            modelSelection: { instanceId, model: "composer-2" },
-            runtimePolicy: resumedPolicy,
-          }),
+          activation === "resumeThread"
+            ? runtime.resumeThread({
+                providerThread: targetThread,
+                modelSelection: switchedSelection,
+                runtimePolicy: resumedPolicy,
+              })
+            : runtime.startTurn(
+                makeTurnInput({
+                  threadId,
+                  providerThread: targetThread,
+                  instanceId,
+                  modelSelection: switchedSelection,
+                  runtimePolicy: resumedPolicy,
+                  now: yield* DateTime.now,
+                }),
+              ),
         );
+        if (failure !== "none") {
+          assert.isTrue(Exit.isFailure(resumed));
+          if (Exit.isFailure(resumed)) {
+            assert.include(
+              Cause.pretty(resumed.cause),
+              failure === "load"
+                ? "Mock load session failure"
+                : "Model configuration response failed after adoption",
+            );
+          }
+          const retainedThread = failure === "load" ? providerThread : targetThread;
+          const retainedSessionId = failure === "load" ? "mock-session-1" : "persisted-session";
+          yield* runtime.resumeThread({ providerThread: retainedThread });
+          yield* requestIdlePermission(retainedSessionId, "retained-policy-after-failure");
+          yield* requestIdlePermission(
+            failure === "load" ? "persisted-session" : "mock-session-1",
+            "foreign-session-after-failure",
+            false,
+          );
+          assert.deepEqual(idleOutcomes, [
+            { outcome: "selected", optionId: "reject-once" },
+            {
+              outcome: "selected",
+              optionId: failure === "load" ? "reject-once" : "allow-once",
+            },
+            { outcome: "selected", optionId: "allow-once" },
+            { outcome: "cancelled" },
+          ]);
+          return;
+        }
         assert.deepEqual(
           rawProtocolOutgoingOutcomes(Array.from(yield* Queue.takeAll(protocolEvents))),
           [{ outcome: "selected", optionId: "allow-once" }],
           "a permission request while resuming must be decided by the resumed policy",
         );
-        assert.isTrue(Exit.isSuccess(resumed), "resuming on the switched model must succeed");
+        assert.isTrue(Exit.isSuccess(resumed), "activating the switched model must succeed");
+        if (activation === "startTurn") {
+          yield* runtime.events.pipe(
+            Stream.filter((event) => event.type === "turn.terminal"),
+            Stream.runHead,
+          );
+        }
+        yield* runtime.resumeThread({ providerThread: targetThread, runtimePolicy: openedPolicy });
+        yield* requestIdlePermission("persisted-session", "same-session-tightened-policy");
+        yield* runtime.resumeThread({ providerThread: targetThread, runtimePolicy: resumedPolicy });
+        yield* requestIdlePermission("persisted-session", "same-session-full-access");
+        yield* runtime.resumeThread({ providerThread: targetThread });
+        yield* requestIdlePermission("persisted-session", "same-session-policy-omitted");
+        yield* requestIdlePermission("mock-session-1", "foreign-session-without-reject", false);
+        assert.deepEqual(idleOutcomes, [
+          { outcome: "selected", optionId: "reject-once" },
+          { outcome: "selected", optionId: "allow-once" },
+          { outcome: "selected", optionId: "reject-once" },
+          { outcome: "selected", optionId: "allow-once" },
+          { outcome: "selected", optionId: "allow-once" },
+          { outcome: "cancelled" },
+        ]);
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
