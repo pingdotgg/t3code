@@ -11,7 +11,7 @@ import type {
 import { useRef, useState } from "react";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { canPerformPullRequestAction } from "./pullRequestActions";
+import { canPerformPullRequestAction, pullRequestActionLabel } from "./pullRequestActions";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 
@@ -55,5 +55,13 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
         onPress: () => void perform(action),
       },
     ]);
-  return { available, perform, confirm, busy };
+  const confirmClose = () => {
+    const terminology = sourceControlClients.get(pr?.provider).changeRequest;
+    confirm(
+      "close",
+      pullRequestActionLabel("close", terminology),
+      `Close this ${terminology.singular} without merging its changes?`,
+    );
+  };
+  return { available, perform, confirm, confirmClose, busy };
 }
