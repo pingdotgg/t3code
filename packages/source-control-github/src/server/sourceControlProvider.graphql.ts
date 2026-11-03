@@ -43,7 +43,7 @@ export const PullRequestNode = Schema.Struct({
   /** Identifies if the pull request is a draft. */
   isDraft: Schema.Boolean,
   /** Indicates whether the pull request is in a merge queue */
-  isInMergeQueue: Schema.optionalKey(Schema.Boolean),
+  isInMergeQueue: Schema.Boolean,
   /** The date and time that the pull request was merged. */
   mergedAt: Schema.NullOr(Shared.DateTime),
   /** Identifies the date and time when the object was closed. */
@@ -81,14 +81,13 @@ export const PullRequestsByHead = GraphQL.query("PullRequestsByHead", {
       { name: "name", body: "String!" },
       { name: "head", body: "String!" },
       { name: "states", body: "[PullRequestState!]" },
-      { name: "first", body: "Int!" },
-      { name: "mergeQueue", body: "Boolean!" }
+      { name: "first", body: "Int!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequests(headRefName:$", "head", " states:$", "states", " first:$", "first", " orderBy:{field:CREATED_AT direction:DESC}){nodes{...", "PullRequestNode", "}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequests(headRefName:$", "head", " states:$", "states", " first:$", "first", " orderBy:{field:CREATED_AT direction:DESC}){nodes{...PullRequestNode}}}"] }
     ],
     fragments: [
-      { name: "PullRequestNode", body: ["on PullRequest{number title url baseRefName headRefName headRefOid state isDraft isInMergeQueue@include(if:$", "mergeQueue", ")mergedAt closedAt updatedAt isCrossRepository headRepository{name nameWithOwner}headRepositoryOwner{__typename login}}"] }
+      { name: "PullRequestNode", body: ["on PullRequest{number title url baseRefName headRefName headRefOid state isDraft isInMergeQueue mergedAt closedAt updatedAt isCrossRepository headRepository{name nameWithOwner}headRepositoryOwner{__typename login}}"] }
     ]
   },
   variables: {
@@ -96,8 +95,7 @@ export const PullRequestsByHead = GraphQL.query("PullRequestsByHead", {
     name: Schema.String,
     head: Schema.String,
     states: Schema.optional(Schema.NullOr(Schema.Array(Shared.PullRequestState))),
-    first: Shared.Int,
-    mergeQueue: Schema.Boolean
+    first: Shared.Int
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */
@@ -122,21 +120,19 @@ export const PullRequestByNumber = GraphQL.query("PullRequestByNumber", {
     variables: [
       { name: "owner", body: "String!" },
       { name: "name", body: "String!" },
-      { name: "number", body: "Int!" },
-      { name: "mergeQueue", body: "Boolean!" }
+      { name: "number", body: "Int!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){...", "PullRequestNode", "}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){...PullRequestNode}}"] }
     ],
     fragments: [
-      { name: "PullRequestNode", body: ["on PullRequest{number title url baseRefName headRefName headRefOid state isDraft isInMergeQueue@include(if:$", "mergeQueue", ")mergedAt closedAt updatedAt isCrossRepository headRepository{name nameWithOwner}headRepositoryOwner{__typename login}}"] }
+      { name: "PullRequestNode", body: ["on PullRequest{number title url baseRefName headRefName headRefOid state isDraft isInMergeQueue mergedAt closedAt updatedAt isCrossRepository headRepository{name nameWithOwner}headRepositoryOwner{__typename login}}"] }
     ]
   },
   variables: {
     owner: Schema.String,
     name: Schema.String,
-    number: Shared.Int,
-    mergeQueue: Schema.Boolean
+    number: Shared.Int
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */

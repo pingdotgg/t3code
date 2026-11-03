@@ -58,7 +58,6 @@ query PullRequestCore(
   $number: Int!
   $headRef: String!
   $required: Boolean!
-  $mergeQueue: Boolean!
   $requestedReviewers: Int!
 ) {
   repository(owner: $owner, name: $name) {
@@ -74,8 +73,7 @@ query PullRequestCore(
       body
       state
       isDraft
-      # Enterprise Server before 3.12 lacks this field, so it is asked for on github.com only.
-      isInMergeQueue @include(if: $mergeQueue)
+      isInMergeQueue
       mergeable
       mergeStateStatus
       reviewDecision

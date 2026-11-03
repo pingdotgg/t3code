@@ -562,7 +562,6 @@ export const make = Effect.gen(function* () {
           head: headRefName,
           states: GRAPHQL_STATES[input.state],
           first: ownerMatch ? OWNER_HEAD_SCAN_LIMIT : limit,
-          mergeQueue: locator.host.toLowerCase() === "github.com",
         },
         input.allowReserve ? interactiveHeadResolver : backgroundHeadResolver,
       ),
@@ -614,7 +613,6 @@ export const make = Effect.gen(function* () {
           owner: locator.owner,
           name: locator.name,
           number: parsed.number,
-          mergeQueue: locator.host.toLowerCase() === "github.com",
         }),
       );
       const node = result.repository?.pullRequest;

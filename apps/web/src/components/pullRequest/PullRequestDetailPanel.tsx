@@ -1166,6 +1166,7 @@ export function PullRequestDetailPanel({
       (!autoMergeArmed &&
         primaryAction !== "enable-auto-merge" &&
         !detail.isDraft &&
+        detail.isInMergeQueue !== true &&
         !conflicting &&
         can("enable-auto-merge") &&
         allowedMergeMethods.length > 0));

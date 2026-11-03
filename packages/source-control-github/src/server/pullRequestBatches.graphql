@@ -1,15 +1,8 @@
 # One pull request per operation. `GraphQLResolver.aliased` repeats each under an alias per
 # pull request, so a batch is one request and a missing pull request fails only its own slice.
 # `stacks` is false off github.com: Enterprise Server has no pull request stacks.
-# `mergeQueue` is false off github.com: Enterprise Server before 3.12 lacks `isInMergeQueue`.
 
-query PullRequestSummary(
-  $owner: String!
-  $name: String!
-  $number: Int!
-  $stacks: Boolean!
-  $mergeQueue: Boolean!
-) {
+query PullRequestSummary($owner: String!, $name: String!, $number: Int!, $stacks: Boolean!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       number
@@ -17,7 +10,7 @@ query PullRequestSummary(
       url
       state
       isDraft
-      isInMergeQueue @include(if: $mergeQueue)
+      isInMergeQueue
       mergeable
       reviewDecision
       additions

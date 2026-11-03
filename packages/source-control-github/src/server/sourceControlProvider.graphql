@@ -12,8 +12,7 @@ fragment PullRequestNode on PullRequest {
   headRefOid
   state
   isDraft
-  # Enterprise Server before 3.12 lacks this field, so it is asked for on github.com only.
-  isInMergeQueue @include(if: $mergeQueue)
+  isInMergeQueue
   mergedAt
   closedAt
   updatedAt
@@ -33,7 +32,6 @@ query PullRequestsByHead(
   $head: String!
   $states: [PullRequestState!]
   $first: Int!
-  $mergeQueue: Boolean!
 ) {
   repository(owner: $owner, name: $name) {
     # `gh pr list` orders the same way, so a head with more matches than the limit keeps the
@@ -51,7 +49,7 @@ query PullRequestsByHead(
   }
 }
 
-query PullRequestByNumber($owner: String!, $name: String!, $number: Int!, $mergeQueue: Boolean!) {
+query PullRequestByNumber($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       ...PullRequestNode

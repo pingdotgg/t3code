@@ -208,6 +208,9 @@ describe("pull request primary control", () => {
 
   it("offers no merge for a pull request the merge queue already holds", () => {
     expect(resolvePullRequestPrimaryControl({ ...open, isInMergeQueue: true })).toBeNull();
+    expect(
+      resolvePullRequestPrimaryControl({ ...open, isInMergeQueue: true, autoMergeEnabled: true }),
+    ).toBeNull();
   });
 });
 
