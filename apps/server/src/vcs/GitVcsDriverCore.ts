@@ -3144,12 +3144,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       readonly untrackedRoots: ReadonlyArray<string>;
     },
   ) {
-    const { baseRef, mergeBase } = yield* resolveReviewMergeBase(
+    const resolved = yield* resolveReviewMergeBase(
       cwd,
       branch,
       undefined,
       options?.knownOriginDefaultBranch ?? null,
     );
+    // A rename after `git status` read HEAD moves the base config away, so the base was guessed.
+    const { baseRef, mergeBase } =
+      branch === null || (yield* branchExists(cwd, branch))
+        ? resolved
+        : { baseRef: null, mergeBase: "HEAD" };
     const roots = options?.untrackedRoots ?? [];
     // Bound pathspec matching work and stay below Windows' command-line limit.
     const pathspecs =
