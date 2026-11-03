@@ -24,6 +24,7 @@ function deferred<T>() {
 }
 
 const state = vi.hoisted(() => ({
+  serverConfig: { shellThreadFamilies: false },
   scopes: new Map<string, Set<string>>(),
   threads: [] as {
     environmentId: EnvironmentId;
@@ -34,6 +35,10 @@ const state = vi.hoisted(() => ({
     lineage: { parentThreadId: ThreadId | null; sideChat?: boolean };
     session: { status: "ready" | "stopped" } | null;
     latestTurn: null;
+  }[],
+  familyThreads: [] as {
+    id: ThreadId;
+    lineage: { parentThreadId: ThreadId | null; sideChat?: boolean };
   }[],
   requests: [] as { action: string; environmentId: string; input: { threadId?: string } }[],
   localEffects: [] as string[],
@@ -71,15 +76,28 @@ vi.mock("../state/use-atom-command", () => ({
     },
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
-  useAtomQueryRunner: () => async (environmentId: string) =>
-    state.sessionLookupFails
-      ? AsyncResult.failure(Cause.fail(new Error("Session lookup failed")))
-      : AsyncResult.success({
-          authenticated: true,
-          scopes: [...(state.scopes.get(environmentId) ?? [])],
-          auth: { serverUpdateScope: "environment:maintain" },
-        }),
+  useAtomQueryRunner: (family: unknown) => async (environmentId: string) =>
+    family === "threadFamily"
+      ? AsyncResult.success({ threads: state.familyThreads })
+      : state.sessionLookupFails
+        ? AsyncResult.failure(Cause.fail(new Error("Session lookup failed")))
+        : AsyncResult.success({
+            authenticated: true,
+            scopes: [...(state.scopes.get(environmentId) ?? [])],
+            auth: { serverUpdateScope: "environment:maintain" },
+          }),
 }));
+vi.mock("../state/orchestration", () => ({
+  orchestrationEnvironment: { threadFamily: "threadFamily" },
+}));
+vi.mock("../state/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../state/server")>();
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...actual,
+    environmentServerConfigsAtom: Atom.make(new Map([["secondary", state.serverConfig]])),
+  };
+});
 vi.mock("../state/threads", () => ({
   threadEnvironment: Object.fromEntries(
     [
@@ -230,6 +248,8 @@ const operations = [
 ] as const;
 
 beforeEach(() => {
+  state.serverConfig.shellThreadFamilies = false;
+  state.familyThreads = [];
   state.scopes = new Map([
     [primary, new Set([AuthOrchestrationOperateScope])],
     [secondary, new Set<string>()],
@@ -312,6 +332,18 @@ describe("thread action permissions", () => {
   );
 
   it("deletes an archived thread only with its own environment's grant", async () => {
+    state.serverConfig.shellThreadFamilies = true;
+    state.familyThreads = [
+      {
+        id: ThreadId.make("side-chat"),
+        lineage: { parentThreadId: target.threadId, sideChat: true },
+      },
+      { id: ThreadId.make("fork"), lineage: { parentThreadId: target.threadId } },
+      {
+        id: ThreadId.make("other-side-chat"),
+        lineage: { parentThreadId: ThreadId.make("other-parent"), sideChat: true },
+      },
+    ];
     state.threads = [];
     seedThreadPanelState(target);
     const actions = useThreadActions();
@@ -324,6 +356,16 @@ describe("thread action permissions", () => {
       expect.objectContaining({ action: "delete", environmentId: secondary }),
     ]);
     expect(threadPanelStatePresence(target)).toEqual(panelStateCleared);
+    expect(state.localEffects).toEqual(
+      expect.arrayContaining([
+        "release-uploads:thread",
+        "clear-draft:thread",
+        "release-uploads:side-chat",
+        "clear-draft:side-chat",
+      ]),
+    );
+    expect(state.localEffects).not.toContain("clear-draft:fork");
+    expect(state.localEffects).not.toContain("clear-draft:other-side-chat");
   });
 
   it("stops before delete and local cleanup when permission is revoked during session stop", async () => {
