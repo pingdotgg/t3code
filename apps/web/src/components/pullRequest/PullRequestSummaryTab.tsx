@@ -171,6 +171,7 @@ interface CommentEditing {
   readonly onEdit: (comment: PullRequestComment | null) => void;
   readonly onSave: (comment: PullRequestComment, body: string) => void;
   readonly saveTasks: (comment: PullRequestComment, body: string) => Promise<boolean>;
+  readonly onRefresh: () => void;
 }
 
 function CommentBody({
@@ -185,6 +186,7 @@ function CommentBody({
   const tasks = usePullRequestTaskToggle(
     comment.body,
     editing.canEdit(comment) ? (body) => editing.saveTasks(comment, body) : null,
+    editing.onRefresh,
   );
   if (editing.editingId === comment.id) {
     return (
@@ -573,6 +575,7 @@ export function PullRequestSummaryTab({
       setCommentScope(null);
       onRefresh();
     },
+    onRefresh,
     saveTasks: async (comment, body) => {
       if (comment.kind === "review") return false;
       const result = await updateComment({
@@ -583,7 +586,6 @@ export function PullRequestSummaryTab({
         toastManager.add({ type: "error", title: "Could not update the task" });
         return false;
       }
-      onRefresh();
       return true;
     },
   };

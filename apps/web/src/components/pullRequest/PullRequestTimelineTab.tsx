@@ -75,6 +75,7 @@ function TimelineBody({
   environmentId,
   threadRef,
   saveTasks,
+  onRefresh,
 }: {
   body: string;
   markdown: boolean;
@@ -82,8 +83,9 @@ function TimelineBody({
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
   saveTasks: ((body: string) => Promise<boolean>) | null;
+  onRefresh: () => void;
 }) {
-  const tasks = usePullRequestTaskToggle(body, saveTasks);
+  const tasks = usePullRequestTaskToggle(body, saveTasks, onRefresh);
   return (
     <div className="mt-3">
       {markdown ? (
@@ -238,7 +240,6 @@ function ConversationCard({
       toastManager.add({ type: "error", title: "Could not update the task" });
       return false;
     }
-    reactions.onRefresh();
     return true;
   };
 
@@ -303,6 +304,7 @@ function ConversationCard({
             environmentId={reactions.environmentId}
             threadRef={reactions.threadRef}
             saveTasks={editable === null ? null : (toggled) => saveTasks(event.body ?? "", toggled)}
+            onRefresh={reactions.onRefresh}
           />
         </div>
       ) : null}
@@ -646,6 +648,7 @@ function ReviewVerdictEvent({
           environmentId={reactions.environmentId}
           threadRef={reactions.threadRef}
           saveTasks={null}
+          onRefresh={reactions.onRefresh}
         />
       ) : null}
     </div>
