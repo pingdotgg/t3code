@@ -1,4 +1,3 @@
-import { SettingsScopeSentence } from "./SettingsScopeSentence";
 import { SettingsGroup } from "./SettingsGroup";
 import {
   InfoIcon,
@@ -317,7 +316,7 @@ export function SettingsSection({
       ) : (
         <div data-settings-scroll-target className="flex items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-1.5">
-            <h2 className="flex items-center gap-2 text-title text-foreground">
+            <h2 className="flex items-center gap-2 text-title text-dim-foreground">
               {icon}
               {title}
             </h2>
@@ -954,7 +953,6 @@ export function SettingsPageContainer({
             className,
           )}
         >
-          <SettingsScopeSentence pathname={pathname} />
           {children}
         </WorkspacePageContainer>
       </div>
