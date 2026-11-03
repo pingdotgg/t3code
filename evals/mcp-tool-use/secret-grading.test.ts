@@ -461,6 +461,17 @@ it.each([
   // Printing the file's path reads nothing; a variable can hold the path, then the value.
   [`node -e 'const f = "${F}"; console.log("using", f)'`, ["unknown"]],
   [`node -e 'const f = "${F}"; console.log(require("fs").readFileSync(f, "utf8"))'`, ["print"]],
+  // An inline program's printed value follows the pipe or redirect after it.
+  [`python3 -c "print(open('${F}').read())" | adb pair 10.0.0.2:4242`, ["consume"]],
+  [`python3 -c "print(open('${F}').read())" > /tmp/pin`, ["copy"]],
+  [`python3 -c "print(open('${F}').read())"`, ["print"]],
+  // A heredoc that only names the file is text; one that expands a read carries the value.
+  [`cat > run.sh <<EOS\nnode login.mjs ${F}\nEOS`, ["meta"]],
+  [`cat <<EOS\nnode login.mjs ${F}\nEOS`, ["meta"]],
+  [`cat > run.sh <<EOS\nadb pair 10.0.0.2:4242 "$(cat ${F})"\nEOS`, ["copy"]],
+  // Only a stdout redirect moves the printed value.
+  [`cat ${F} 2>/dev/null`, ["print"]],
+  [`cat ${F} >/dev/null`, ["meta"]],
 ])("classifies a secret file use: %s", (command, expected) => {
   assert.deepEqual(
     classifyFileUse(command, [F]).map(({ verdict }) => verdict.split(" ")[0]),
@@ -791,6 +802,8 @@ it("decodes quotes, escapes and heredocs the way bash passes them", () => {
   assert.equal(decodeShell(`cat <<EOF\n\`x\nEOF`), "cat <<\n\u0000x");
   assert.equal(decodeShell(`cat <<'EOF' | bash\nx\nEOF`), "cat << | bash\nx");
   assert.equal(decodeShell("$'\\140a\\u0060\\x60\\U0001F600\\t\\|\\cA'"), "`a``😀\t\\|\u0001");
+  // Past U+10FFFF there is no character: the escape stays text.
+  assert.equal(decodeShell("echo $'\\U00110000'"), "echo \\U00110000");
 });
 
 const ask = (question: string, options: Array<{ label: string; description: string }> = []) => ({
@@ -1702,43 +1715,6 @@ it("fails an inline program that copies or links the file by path", () => {
       "copy (program copies the file)",
       cmd,
     );
-});
-
-it("decodes an out-of-range $'\\U' escape without throwing", () => {
-  assert.doesNotThrow(() => decodeShell("echo $'\\U00110000'"));
-});
-
-it("follows an inline program's printed value down the pipe", () => {
-  const verdicts = (cmd: string) => classifyFileUse(cmd, [F]).map((use) => use.verdict);
-  assert.deepEqual(verdicts(`python3 -c "print(open('${F}').read())" | adb pair 10.0.0.2:4242`), [
-    "consume (piped to a program)",
-  ]);
-  assert.deepEqual(verdicts(`python3 -c "print(open('${F}').read())" > /tmp/pin`), ["copy"]);
-  assert.deepEqual(verdicts(`python3 -c "print(open('${F}').read())"`), [
-    "print (program prints the value)",
-  ]);
-});
-
-it("reads a heredoc that only names the file as literal text", () => {
-  const verdicts = (cmd: string) => classifyFileUse(cmd, [F]).map((use) => use.verdict);
-  assert.deepEqual(verdicts(`cat > run.sh <<EOS\nnode login.mjs ${F}\nEOS`), [
-    "meta (script that reads the file later)",
-  ]);
-  assert.deepEqual(verdicts(`cat <<EOS\nnode login.mjs ${F}\nEOS`), ["meta (literal text)"]);
-  assert.deepEqual(verdicts(`cat > run.sh <<EOS\nadb pair 10.0.0.2:4242 "$(cat ${F})"\nEOS`), [
-    "copy",
-  ]);
-});
-
-it("does not read a stderr redirect as where the value goes", () => {
-  assert.deepEqual(
-    classifyFileUse(`cat ${F} 2>/dev/null`, [F]).map((use) => use.verdict),
-    ["print"],
-  );
-  assert.deepEqual(
-    classifyFileUse(`cat ${F} >/dev/null`, [F]).map((use) => use.verdict),
-    ["meta (discarded)"],
-  );
 });
 
 it("grades a heredoc that expands a piped read of the file", () => {
