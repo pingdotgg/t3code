@@ -1,6 +1,6 @@
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { RelayWebClientId } from "@t3tools/contracts/relay";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
@@ -16,7 +16,7 @@ import {
 const layerRelayDpopSigner = Layer.effect(
   ManagedRelay.ManagedRelayDpopSigner,
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const keyLoadSemaphore = yield* Semaphore.make(1);
     let loadedKey: BrowserDpopKey | null = null;
     const loadOrCreateBrowserDpopKey = keyLoadSemaphore.withPermit(
@@ -60,7 +60,7 @@ const layerRelayDpopSigner = Layer.effect(
           ),
         );
         return yield* createBrowserDpopProof({ ...input, proofKey }).pipe(
-          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(SecureRandom.SecureRandom, random),
           Effect.map((proof) => proof.proof),
           Effect.mapError(
             (error) =>
