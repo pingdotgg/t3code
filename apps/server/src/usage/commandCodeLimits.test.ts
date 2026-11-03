@@ -3,6 +3,10 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -285,12 +289,14 @@ describe("Command Code rolling quota windows", () => {
       try {
         const source = yield* readCommandCodeLimitSource({ authPath }).pipe(
           Effect.provideService(HttpClient.HttpClient, client),
-          Effect.provide(NodeServices.layer),
+          Effect.provide([NodeServices.layer, NodeCrypto.layer]),
         );
         assert.isNotNull(source);
         assert.strictEqual(source.kind, "cliproxy");
         assert.strictEqual(source.accounts[0]?.driver, "command-code");
         assert.isFalse("error" in source);
+        assert.equal(source.accounts[0]?.workspaceId, "org-for-test");
+        assert.match(source.accounts[0]?.usageLimits.credentialFingerprint ?? "", /^[a-f0-9]{64}$/);
         assert.deepStrictEqual(
           source.accounts[0]?.usageLimits.windows.map((w) => w.usedPercent),
           [(3 / 14) * 100, 20, 50],
@@ -307,40 +313,53 @@ describe("Command Code rolling quota windows", () => {
     }),
   );
 
-  it.effect("keeps rolling windows if the subscription endpoint fails", () =>
-    Effect.gen(function* () {
-      const dir = yield* Effect.promise(() =>
-        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-cmd-limits-")),
-      );
-      const authPath = NodePath.join(dir, "auth.json");
-      yield* Effect.promise(() =>
-        NodeFSP.writeFile(authPath, JSON.stringify({ apiKey: "test-key" }), { mode: 0o600 }),
-      );
-      const client = HttpClient.make((request) =>
-        Effect.sync(() => {
-          if (request.url.includes("whoami"))
-            return HttpClientResponse.fromWeb(request, Response.json({ success: true }));
-          if (request.url.includes("subscriptions"))
-            return HttpClientResponse.fromWeb(request, new Response(null, { status: 503 }));
-          return HttpClientResponse.fromWeb(
-            request,
-            Response.json({ windowLimits: { weekly: { used: 7, cap: 35 } } }),
+  it.effect(
+    "keeps rolling windows if optional billing times out after a slow identity request",
+    () =>
+      Effect.gen(function* () {
+        const dir = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-cmd-limits-")),
+        );
+        const authPath = NodePath.join(dir, "auth.json");
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(authPath, JSON.stringify({ apiKey: "test-key" }), { mode: 0o600 }),
+        );
+        const whoamiStarted = yield* Deferred.make<void>();
+        const billingStarted = yield* Deferred.make<void>();
+        const client = HttpClient.make((request) =>
+          request.url.includes("whoami")
+            ? Deferred.succeed(whoamiStarted, undefined).pipe(
+                Effect.andThen(Effect.sleep("5 seconds")),
+                Effect.as(HttpClientResponse.fromWeb(request, Response.json({ success: true }))),
+              )
+            : request.url.includes("subscriptions")
+              ? Deferred.succeed(billingStarted, undefined).pipe(Effect.andThen(Effect.never))
+              : Effect.sync(() => {
+                  return HttpClientResponse.fromWeb(
+                    request,
+                    Response.json({ windowLimits: { weekly: { used: 7, cap: 35 } } }),
+                  );
+                }),
+        );
+        try {
+          const pending = yield* readCommandCodeLimitSource({ authPath }).pipe(
+            Effect.provideService(HttpClient.HttpClient, client),
+            Effect.provide([NodeServices.layer, NodeCrypto.layer]),
+            Effect.forkScoped,
           );
-        }),
-      );
-      try {
-        const source = yield* readCommandCodeLimitSource({ authPath }).pipe(
-          Effect.provideService(HttpClient.HttpClient, client),
-          Effect.provide(NodeServices.layer),
-        );
-        assert.isNotNull(source);
-        assert.deepStrictEqual(
-          source.accounts[0]?.usageLimits.windows.map((w) => w.kind),
-          ["weekly"],
-        );
-      } finally {
-        yield* Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true }));
-      }
-    }),
+          yield* Deferred.await(whoamiStarted);
+          yield* TestClock.adjust("5 seconds");
+          yield* Deferred.await(billingStarted);
+          yield* TestClock.adjust("8 seconds");
+          const source = yield* Fiber.join(pending);
+          assert.isNotNull(source);
+          assert.deepStrictEqual(
+            source.accounts[0]?.usageLimits.windows.map((w) => w.kind),
+            ["weekly"],
+          );
+        } finally {
+          yield* Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true }));
+        }
+      }),
   );
 });

@@ -522,6 +522,15 @@ describe("UsageService", () => {
       assert.equal(buckets[0]?.totals.cachedInputTokens, 80);
       assert.equal(buckets[0]?.totals.outputTokens, 5);
       assert.equal(buckets[0]?.costUsd, 0.005);
+      yield* Effect.promise(() => NodeFSP.rm(NodePath.dirname(folder), { recursive: true }));
+      const cleaned = yield* service.readSummary(WINDOW);
+      assert.deepStrictEqual(cleaned.buckets, summary.buckets);
+      assert.deepStrictEqual(
+        cleaned.sources.find((source) => source.fingerprint.provider === "command-code")
+          ?.fingerprint,
+        summary.sources.find((source) => source.fingerprint.provider === "command-code")
+          ?.fingerprint,
+      );
       assert.equal(
         summary.sources.find((source) => source.fingerprint.provider === "command-code")
           ?.distinctSessions,

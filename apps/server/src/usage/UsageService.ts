@@ -384,7 +384,10 @@ export const make = Effect.gen(function* () {
     }
     const home = hostEnvironment.HOME ?? (yield* HostProcess.HomeDirectory);
     const commandCodeDir = path.join(home, ".commandcode", "projects");
-    if (yield* fileSystem.exists(commandCodeDir).pipe(Effect.orElseSucceed(() => false))) {
+    if (
+      sourceCache.has("command-code\0" + commandCodeDir) ||
+      (yield* fileSystem.exists(commandCodeDir).pipe(Effect.orElseSucceed(() => false)))
+    ) {
       yield* addSources("command-code", commandCodeUsageFormat, [{ dir: commandCodeDir }]);
     }
     return dirs;

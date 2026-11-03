@@ -6,6 +6,8 @@ import {
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
+import * as Digest from "effect/crypto/Digest";
+import * as Hex from "effect/encoding/Hex";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -181,8 +183,7 @@ export const readCommandCodeLimitSource = Effect.fn("readCommandCodeLimitSource"
         typeof organizationId === "string" && organizationId.length > 0
           ? "?orgId=" + encodeURIComponent(organizationId)
           : "";
-      // All three endpoints depend only on whoami; fetch together to keep
-      // the total refresh bounded even when optional billing data is slow.
+      // Each request is bounded independently so optional billing timeouts preserve rolling windows.
       const [credits, subscription, summary] = yield* Effect.all(
         [
           get(ORIGIN + "/alpha/billing/credits" + query),
@@ -193,11 +194,8 @@ export const readCommandCodeLimitSource = Effect.fn("readCommandCodeLimitSource"
         ],
         { concurrency: 3 },
       );
-      return { credits, subscription, summary };
-    }).pipe(
-      Effect.timeout("12 seconds"),
-      Effect.orElseSucceed(() => null),
-    );
+      return { credits, subscription, summary, organizationId };
+    }).pipe(Effect.orElseSucceed(() => null));
 
     if (response === null)
       return { ...base, accounts: [], error: "Command Code quota API is unavailable." };
@@ -216,13 +214,20 @@ export const readCommandCodeLimitSource = Effect.fn("readCommandCodeLimitSource"
       return null;
     if (windows.length === 0)
       return { ...base, accounts: [], error: "Command Code did not report rolling quota windows." };
+    const digest = yield* Digest.Digest;
+    const credentialFingerprint = yield* digest
+      .digest(Digest.sha256, new TextEncoder().encode(`command-code\0${apiKey}`))
+      .pipe(Effect.map(Hex.encode), Effect.orDie);
     return {
       ...base,
       accounts: [
         {
           id: "Command Code",
           driver: DRIVER,
-          usageLimits: { checkedAt, windows },
+          ...(typeof response.organizationId === "string" && response.organizationId.length > 0
+            ? { workspaceId: response.organizationId }
+            : {}),
+          usageLimits: { checkedAt, windows, credentialFingerprint },
         },
       ],
     } satisfies UsageLimitSourceSnapshot;

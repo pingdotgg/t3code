@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -81,6 +82,7 @@ function missingManagementKey(config: UsageLimitSourceConfig): string {
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
   const httpClient = yield* HttpClient.HttpClient;
+  const digest = yield* Digest.Digest;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const settingsService = yield* Settings.ServerSettingsService;
@@ -147,6 +149,7 @@ export const make = Effect.gen(function* () {
     const commandCode = commandCodeConfigured
       ? yield* readCommandCodeLimitSource().pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provideService(Digest.Digest, digest),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
         )
