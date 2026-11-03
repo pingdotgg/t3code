@@ -131,6 +131,99 @@ export function assetUrlStateFromResult(
   };
 }
 
+type AssetUrlTarget = {
+  readonly environmentId: EnvironmentId;
+  readonly input: { readonly resource: AssetResource };
+};
+
+const decodeRevisionedAssetUrlKey = Schema.decodeUnknownSync(
+  Schema.Tuple([EnvironmentId, AssetResource, Schema.NullOr(Schema.String)]),
+);
+
+const isSettled = (result: AsyncResult.AsyncResult<unknown, unknown>) =>
+  !AsyncResult.isInitial(result) && !result.waiting;
+
+const KEEP_URL_MIN_LIFE_MS = 5 * 60_000;
+
+/**
+ * A re-mint signs a new URL even when the file is unchanged, and a new URL reloads the image.
+ * Keep the shown URL while the server reports the same file revision and it has time left.
+ */
+function keepUnchangedFile(
+  shown: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>,
+  next: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>,
+  now: number,
+) {
+  return shown._tag === "Success" &&
+    next._tag === "Success" &&
+    !next.waiting &&
+    next.value.fileRevision !== undefined &&
+    next.value.fileRevision === shown.value.fileRevision &&
+    shown.value.expiresAt - now > KEEP_URL_MIN_LIFE_MS
+    ? AsyncResult.success(shown.value)
+    : next;
+}
+
+/**
+ * The URL is minted per resource and shared across revisions, so reading a
+ * different revision (even an earlier one after a revert) re-mints it. An
+ * in-flight mint is shared only on first read; after an edit the server must
+ * re-read the file, so the re-mint waits for that mint to settle.
+ */
+export function makeRevisionedAssetUrlFamily(
+  createUrl: (
+    target: AssetUrlTarget,
+  ) => Atom.Atom<AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>>,
+  now: () => number = Date.now,
+) {
+  // Outside the nodes: a node is dropped once unmounted, and the next read of
+  // its revision must still see the revisions minted since. Never pruned on
+  // purpose: pruning would forget the revision and re-mint on the next mount.
+  // It holds one short entry per file shown, and goes with the registry.
+  const mintedUnder = new WeakMap<AtomRegistry.AtomRegistry, Map<string, string | null>>();
+  const family = Atom.family((key: string) => {
+    const [environmentId, resource, revision] = decodeRevisionedAssetUrlKey(JSON.parse(key));
+    const resourceKey = JSON.stringify([environmentId, resource]);
+    const query = createUrl({ environmentId, input: { resource } });
+    return Atom.transform(
+      query,
+      (get) => {
+        let minted = mintedUnder.get(get.registry);
+        if (minted === undefined) {
+          minted = new Map();
+          mintedUnder.set(get.registry, minted);
+        }
+        const firstRead = !minted.has(resourceKey);
+        let pending = minted.get(resourceKey) !== revision;
+        const current = get.once(query);
+        if (pending && (firstRead || isSettled(current))) {
+          pending = false;
+          minted.set(resourceKey, revision);
+          if (isSettled(current)) get.refresh(query);
+        }
+        let shown = get.once(query);
+        const show = (value: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>) => {
+          shown = keepUnchangedFile(shown, value, now());
+          return shown;
+        };
+        get.subscribe(query, (value) => {
+          get.setSelf(show(value));
+          if (!pending || !isSettled(value)) return;
+          pending = false;
+          minted.set(resourceKey, revision);
+          get.refresh(query);
+        });
+        return shown;
+      },
+      { initialValueTarget: query },
+      // No idle TTL: each mount rebuilds the node, so a revision read again after
+      // another one is compared against the record instead of a cached node.
+    ).pipe(Atom.setIdleTTL(0));
+  });
+  return (target: AssetUrlTarget & { readonly revision: string | null }) =>
+    family(JSON.stringify([target.environmentId, target.input.resource, target.revision]));
+}
+
 export function createAssetEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
   localMediaEnvironment?: Atom.Atom<{
