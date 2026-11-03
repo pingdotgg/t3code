@@ -489,7 +489,7 @@ export function UsagePage() {
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {METRIC_OPTIONS.map((option) => (
               <SelectItem key={option.value} value={option.value} title={shortcutTitle(option)}>
-                {"shortLabel" in option ? option.shortLabel : option.label}
+                {option.label}
               </SelectItem>
             ))}
           </SelectPopup>
