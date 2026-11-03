@@ -115,10 +115,19 @@ function withoutRoot(text: string, workspaceRoot: string | null): string {
     : text.replaceAll(`${workspaceRoot.replace(/[\\/]+$/, "")}/`, "");
 }
 
+// Some providers title every tool call "Tool", which says nothing.
+function meaningfulTitle(title: string | null | undefined): string | null {
+  const trimmed = title?.trim();
+  return trimmed && trimmed.toLowerCase() !== "tool" ? trimmed : null;
+}
+
 function labelFor(item: ActivityItem, workspaceRoot: string | null): string | null {
   switch (item.type) {
     case "command_execution":
-      return trimLabel(withoutRoot(item.title ?? item.input, workspaceRoot)) || "Ran a command";
+      return (
+        trimLabel(withoutRoot(meaningfulTitle(item.title) ?? item.input, workspaceRoot)) ||
+        "Ran a command"
+      );
     case "file_change":
       return `Edited ${basename(item.fileName)}`;
     case "file_search":
@@ -129,11 +138,8 @@ function labelFor(item: ActivityItem, workspaceRoot: string | null): string | nu
     case "web_search":
       return item.title ?? "Searched the web";
     case "dynamic_tool": {
-      // Some providers title every tool call "Tool", which says nothing.
-      const title = item.title?.trim();
-      return title && title.toLowerCase() !== "tool"
-        ? withoutRoot(title, workspaceRoot)
-        : "Used a tool";
+      const title = meaningfulTitle(item.title);
+      return title ? withoutRoot(title, workspaceRoot) : "Used a tool";
     }
     case "subagent":
       return item.title ?? "Ran a subagent";

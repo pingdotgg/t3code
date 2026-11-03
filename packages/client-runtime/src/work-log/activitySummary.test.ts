@@ -152,9 +152,15 @@ describe("deriveActivitySummary", () => {
     const summary = summarize([
       { ...base(run1, "completed"), type: "dynamic_tool", title: "Tool" },
       { ...base(run1, "completed"), type: "dynamic_tool", title: "Fetch docs" },
+      // ACP updates that omit a title leave "Tool" on a command; its input says what ran.
+      { ...command("vp test run", "failed"), title: "Tool" },
     ]);
 
-    expect(summary.done.map((step) => step.label)).toEqual(["Used a tool", "Fetch docs"]);
+    expect(summary.done.map((step) => step.label)).toEqual([
+      "Used a tool",
+      "Fetch docs",
+      "vp test run",
+    ]);
   });
 
   it("keeps line counts unknown when the provider reports none, instead of showing zero", () => {
