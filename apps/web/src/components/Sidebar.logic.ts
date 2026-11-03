@@ -18,6 +18,7 @@ import {
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
+  COMPOSER_CONTEXT_MAX_RECORDS,
   isListedThreadLineage,
   type ContextMenuItem,
   type EnvironmentId,
@@ -660,6 +661,68 @@ export function buildBulkUnpinContextMenuItem(input: {
 }): ContextMenuItem<"unpin"> | null {
   if (input.pinnedCount === 0) return null;
   return { id: "unpin", label: `Unpin (${input.pinnedCount})` };
+}
+
+export type BulkThreadCopyAction =
+  | "copy-path"
+  | "copy-branch"
+  | "copy-thread"
+  | "copy-title"
+  | "copy-thread-id";
+
+export interface BulkThreadCopyEntry {
+  readonly id: string;
+  readonly title: string;
+  readonly branch: string | null;
+  readonly path: string | null;
+}
+
+export function buildBulkCopyContextMenuItem(
+  entries: readonly BulkThreadCopyEntry[],
+): ContextMenuItem<"copy" | BulkThreadCopyAction> {
+  return {
+    id: "copy",
+    label: `Copy (${entries.length})`,
+    separatorBefore: true,
+    children: [
+      ...(entries.some((entry) => entry.path)
+        ? [{ id: "copy-path" as const, label: "Paths" }]
+        : []),
+      ...(entries.some((entry) => entry.branch)
+        ? [{ id: "copy-branch" as const, label: "Branches" }]
+        : []),
+      // More records than this fail to decode on paste, so they would not come back as chips.
+      entries.length > COMPOSER_CONTEXT_MAX_RECORDS
+        ? {
+            id: "copy-thread" as const,
+            label: `Threads (up to ${COMPOSER_CONTEXT_MAX_RECORDS})`,
+            disabled: true,
+          }
+        : { id: "copy-thread" as const, label: "Threads" },
+      { id: "copy-title", label: "Titles" },
+      { id: "copy-thread-id", label: "Thread IDs" },
+    ],
+  };
+}
+
+const BULK_COPY_FIELDS = {
+  "copy-path": { field: "path", noun: "paths" },
+  "copy-branch": { field: "branch", noun: "branches" },
+  "copy-title": { field: "title", noun: "titles" },
+  "copy-thread-id": { field: "id", noun: "thread IDs" },
+} as const;
+
+/** One line per thread; branches and paths shared by several threads appear once. */
+export function bulkThreadCopyText(
+  entries: readonly BulkThreadCopyEntry[],
+  action: keyof typeof BULK_COPY_FIELDS,
+): { text: string; count: number; noun: string } | null {
+  const { field, noun } = BULK_COPY_FIELDS[action];
+  const values = entries.flatMap((entry) =>
+    field === "title" ? entry.title.replace(/\s*[\r\n]+\s*/g, " ") : (entry[field] ?? []),
+  );
+  const lines = field === "branch" || field === "path" ? [...new Set(values)] : values;
+  return lines.length === 0 ? null : { text: lines.join("\n"), count: lines.length, noun };
 }
 
 export interface ThreadStatusPill {
