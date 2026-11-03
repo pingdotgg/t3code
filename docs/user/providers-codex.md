@@ -12,6 +12,9 @@ Manage shared usage and credits in ChatGPT through **Manage usage** in T3 Code.
 If a request uses a feature that ChatGPT sharing does not support, use another
 provider for that request.
 
+Fast and Ultrafast speeds are unavailable with this connection. To use the speed
+options your account supports, [use an existing Codex login](#use-an-existing-codex-login).
+
 When reconnecting, choose the same account in T3 Code and on OpenAI's sign-in
 page. Disconnecting stops running threads but keeps their history and lets you
 reconnect later.
