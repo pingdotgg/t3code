@@ -251,7 +251,7 @@ describe("scan cache round trip", () => {
 
   it("re-parses a Claude transcript cached before advisor usage was counted", () => {
     const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
-    const v9 = { ...encodeScanCache(original), version: 9 };
+    const v9 = { ...JSON.parse(makeScanCacheWriter()(original, {})), version: 9 };
 
     const restored = decodeScanCache(JSON.parse(JSON.stringify(v9)), TEST_FORMAT_MAP);
     expect(restored.get("/claude.jsonl")).toEqual({

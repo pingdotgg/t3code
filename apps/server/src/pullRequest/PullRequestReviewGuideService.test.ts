@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -221,7 +222,7 @@ const layerBase = Layer.mergeAll(
     Layer.provideMerge(VcsProcess.layer),
   ),
   SqlitePersistence.layerMemory,
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 type Repositories = Effect.Success<typeof makeRepositories>;
 
@@ -462,6 +463,51 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         const result = yield* service.get(reference);
         assert.strictEqual(result.guide?.headSha, repositories.headSha);
         assert.deepStrictEqual(result.guide?.stops[0]?.files, [{ path: "feature.txt" }]);
+      }),
+    ),
+  );
+
+  it.effect("keeps excerpts of source lines a configured diff driver would convert away", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(
+          `${repositories.workspace}/.git/info/attributes`,
+          "feature.txt diff=blank\n",
+        );
+        yield* git(repositories.workspace, ["config", "diff.blank.textconv", "true"]);
+        const stored = yield* Deferred.make<void>();
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            stored,
+            generate: () =>
+              Effect.succeed({
+                stops: [
+                  {
+                    title: "The feature",
+                    summary: "The change.",
+                    attention: null,
+                    excerpts: [{ path: "feature.txt", side: "new", start: 1, end: 3, caption: "" }],
+                    files: [],
+                    notes: [],
+                    questions: [],
+                  },
+                ],
+              }),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        yield* service.generate(reference);
+        yield* Deferred.await(stored);
+        const result = yield* service.get(reference);
+        assert.deepStrictEqual(result.guide?.stops[0]?.excerpts, [
+          { path: "feature.txt", side: "new", start: 1, end: 3, caption: "" },
+        ]);
       }),
     ),
   );

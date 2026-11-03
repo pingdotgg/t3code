@@ -7,6 +7,7 @@ import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { dispatchPreviewAction, type PreviewAction } from "../components/preview/previewActionBus";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
+import { shouldCreateNewThreadInCurrentProject } from "../components/Sidebar.logic";
 import { createNewThreadHandler, resolveDefaultProjectRef } from "../hooks/useHandleNewThread";
 import { createScratchProjectActions } from "../hooks/useScratchProject";
 import { getClientSettings } from "../hooks/useSettings";
@@ -76,13 +77,15 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       handleNewThread,
     };
   };
-  const readProjectGroupCount = () =>
+  // Grouped like the sidebar, so the shortcut and the New thread button agree.
+  const readProjectGroups = () =>
     buildSidebarProjectSnapshots({
       projects: readProjects(),
+      groupScratchProjects: true,
       settings: selectProjectGroupingSettings(getClientSettings()),
       primaryEnvironmentId: appAtomRegistry.get(primaryEnvironmentIdAtom),
       resolveEnvironmentLabel: () => null,
-    }).length;
+    });
   const canOperatePreview = (environmentId: EnvironmentId) =>
     readEnvironmentScope(environmentId, AuthPreviewOperateScope);
 
@@ -93,7 +96,10 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
 
   const startNewLocal: CommandHandler = (event) => {
     claim(event);
-    void startNewThreadFromContext(readThreadContext());
+    // With no current or open project, such as when every project is archived, pick one.
+    void startNewThreadFromContext(readThreadContext()).then((started) => {
+      if (!started) openCommandPalette({ open: "new-thread-in" });
+    });
   };
 
   const previewCommand =
@@ -120,7 +126,16 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         // The boring sidebar's folders already show the context, so it starts in
         // the current project like the legacy sidebar did.
         const { boringSidebarEnabled, legacySidebarEnabled } = getClientSettings();
-        if (!boringSidebarEnabled && !legacySidebarEnabled && readProjectGroupCount() > 1) {
+        const groups = readProjectGroups();
+        if (
+          !boringSidebarEnabled &&
+          !legacySidebarEnabled &&
+          !shouldCreateNewThreadInCurrentProject(
+            false,
+            groups.filter((group) => !group.archived).length,
+            groups.length,
+          )
+        ) {
           claim(event);
           openCommandPalette({ open: "new-thread-in" });
           return;
