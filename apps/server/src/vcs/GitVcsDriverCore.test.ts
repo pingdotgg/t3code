@@ -4760,7 +4760,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       Effect.gen(function* () {
         const pathService = yield* Path.Path;
         const cwd = yield* makeTmpDir();
-        yield* initRepoWithCommit(cwd);
+        // Reftable also avoids Windows-invalid loose-ref lock paths during checkout.
+        yield* git(cwd, ["init", "--ref-format=reftable"]);
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
         const worktreesDirectory = yield* makeTmpDir("custom-worktrees-");
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const folders = new Set<string>();
@@ -4784,19 +4786,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           "LPT³",
           `nul.${"n".repeat(40)}`,
         ];
-        const commit = yield* git(cwd, ["rev-parse", "HEAD"]);
-        // Packed refs allow Windows-invalid filenames without requiring reftable support.
-        yield* writeTextFile(
-          cwd,
-          ".git/packed-refs",
-          branches
-            .toSorted()
-            .map((branch) => `${commit} refs/heads/${branch}\n`)
-            .join(""),
-        );
         for (const branch of branches) {
           const created = yield* driver.createWorktree(
-            { cwd, path: null, refName: branch },
+            { cwd, path: null, refName: initialBranch, newRefName: branch },
             { worktreesDirectory },
           );
           const folder = pathService.basename(created.worktree.path);
