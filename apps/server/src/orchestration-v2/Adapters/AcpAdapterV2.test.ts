@@ -758,7 +758,10 @@ describe("AcpAdapterV2", () => {
             Effect.sync(() => {
               watchedSessions.push(sessionId);
               const failed = watchedSessions.length === 1;
-              return () => Effect.succeed(failed ? quota : undefined);
+              return () =>
+                Effect.succeed(
+                  failed ? { failure: quota, threadDisposition: "reusable" as const } : undefined,
+                );
             }),
           makeRuntime: makeMockRuntime({
             childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
@@ -832,6 +835,8 @@ describe("AcpAdapterV2", () => {
       const failure = {
         class: "provider_error",
         message: "Antigravity stopped this turn because of an error.",
+        code: null,
+        retryable: null,
       } as const;
       const adapter = yield* makeAcpAdapterV2({
         instanceId,

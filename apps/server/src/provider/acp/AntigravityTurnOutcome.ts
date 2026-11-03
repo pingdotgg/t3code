@@ -19,6 +19,9 @@ const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // The Go harness's rendering of a Google API error, as the agent's api_errors.py reads it.
 const API_ERROR = /Error (\d{3}), Message: (.+?), Status: ([A-Z_]+)/s;
 const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
+// The runtime stores a failed context-summarization step and replays it on every later
+// prompt to that session, whatever first made it fail.
+const FAILED_CHECKPOINT = /\bcontext summarization: checkpoint step \d+ failed\b/;
 const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
 const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
 const GO_DURATION_PART = /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|h|m|s)/g;
@@ -89,7 +92,12 @@ function turnFailure(
   stopReason: EffectAcpSchema.StopReason,
   step: LastStep | undefined,
   now: DateTime.Utc,
-): OrchestrationV2ProviderFailure | undefined {
+):
+  | {
+      readonly failure: OrchestrationV2ProviderFailure;
+      readonly threadDisposition: "reusable" | "broken";
+    }
+  | undefined {
   const errorText =
     step?.type === ERROR_STEP_TYPE
       ? new TextDecoder().decode(step.payload ?? new Uint8Array())
@@ -98,29 +106,49 @@ function turnFailure(
   if (errorText === undefined && stopReason !== "refusal") return undefined;
   const text = errorText ?? "";
   const apiError = API_ERROR.exec(text);
+  const reusable = (failure: OrchestrationV2ProviderFailure) =>
+    ({ failure, threadDisposition: "reusable" }) as const;
+  if (FAILED_CHECKPOINT.test(text)) {
+    return {
+      failure: makeProviderFailure({
+        class: "provider_error",
+        message:
+          "Antigravity could not summarize this conversation, so its saved session can no longer continue. The next message starts a fresh Antigravity session with this thread's context.",
+        code: "CHECKPOINT_FAILED",
+        retryable: true,
+      }),
+      threadDisposition: "broken",
+    };
+  }
   if (stopReason === "refusal" || QUOTA_EXHAUSTED.test(text)) {
-    return makeProviderFailure({
-      class: "usage_limit",
-      message: "You have reached your Antigravity quota for this period.",
-      code: apiError?.[3] ?? "QUOTA_EXHAUSTED",
-      retryable: true,
-      resetAt: resetAtFrom(text, now) ?? null,
-    });
+    return reusable(
+      makeProviderFailure({
+        class: "usage_limit",
+        message: "You have reached your Antigravity quota for this period.",
+        code: apiError?.[3] ?? "QUOTA_EXHAUSTED",
+        retryable: true,
+        resetAt: resetAtFrom(text, now) ?? null,
+      }),
+    );
   }
   if (apiError === null) {
-    return makeProviderFailure({
-      class: "provider_error",
-      message: "Antigravity stopped this turn because of an error.",
-    });
+    return reusable(
+      makeProviderFailure({
+        class: "provider_error",
+        message: "Antigravity stopped this turn because of an error.",
+      }),
+    );
   }
   const [, httpStatus, message, status] = apiError;
   const rateLimited = httpStatus === "429" || status === "RESOURCE_EXHAUSTED";
-  return makeProviderFailure({
-    class: rateLimited ? "usage_limit" : "provider_error",
-    message: message!.trim(),
-    code: status ?? null,
-    retryable: rateLimited || Number(httpStatus) >= 500,
-  });
+  return reusable(
+    makeProviderFailure({
+      class: rateLimited ? "usage_limit" : "provider_error",
+      message: message!.trim(),
+      code: status ?? null,
+      retryable: rateLimited || Number(httpStatus) >= 500,
+    }),
+  );
 }
 
 const conversationSegments = ["antigravity-acp", "conversations"];
