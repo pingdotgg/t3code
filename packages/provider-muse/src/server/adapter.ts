@@ -395,7 +395,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         status: OrchestrationV2ProviderSession["status"],
         lastError: string | null = null,
       ) {
-        session = { ...session, status, lastError, updatedAt: yield* DateTime.now };
+        session = {
+          ...session,
+          status,
+          // lastError is the thread banner, so it gets the failure item's bounded, redacted text.
+          lastError:
+            lastError === null ? null : makeProviderFailure({ message: lastError }).message,
+          updatedAt: yield* DateTime.now,
+        };
         yield* emit({
           type: "provider_session.updated",
           driver: MUSE_PROVIDER,
