@@ -50,7 +50,7 @@ import * as RelayTracing from "../cloud/relayTracing.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ExternalLauncher from "../process/externalLauncher.ts";
-import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveCliCommand } from "./invocation.ts";
 import * as CliService from "./service.ts";
@@ -304,7 +304,8 @@ type LiveCloudActionResult =
 const runLiveCloudUnlink = Effect.fn("cloud.cli.run_live_unlink")(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
-  if (Option.isNone(runtimeState)) {
+  // A killed server leaves its record behind, and another process may own its port by now.
+  if (Option.isNone(runtimeState) || !isProcessAlive(runtimeState.value.pid)) {
     return { status: "not-running" } satisfies LiveCloudActionResult;
   }
 
