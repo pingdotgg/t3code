@@ -199,6 +199,8 @@ export function QuestionAttachments(props: {
           multiline={props.question.initialAnswer !== undefined}
           submitBehavior={props.question.initialAnswer !== undefined ? "newline" : undefined}
           editable={!props.disabled}
+          autoCorrect
+          spellCheck
           onChangeText={props.onChangeText}
           onFocus={() => {
             focusedRef.current = true;
