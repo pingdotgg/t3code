@@ -17,11 +17,19 @@ import {
   unwrapWindowsDpapiKey,
 } from "./ChromiumKeys.ts";
 import { LinuxBrowserSecretPath } from "./LinuxBrowserSecret.ts";
+import { BROWSER_IMPORT_SOURCES } from "./Sources.ts";
 
-const { getPassword } = vi.hoisted(() => ({ getPassword: vi.fn<() => string | null>() }));
+const { getPassword } = vi.hoisted(() => ({
+  getPassword: vi.fn<() => Promise<string | undefined>>(),
+}));
 
 vi.mock("@napi-rs/keyring", () => ({
   Entry: class {
+    getPassword() {
+      throw new Error("synchronous keychain read");
+    }
+  },
+  AsyncEntry: class {
     getPassword = getPassword;
   },
 }));
@@ -90,18 +98,24 @@ describe("macOS Chromium secrets", () => {
 
   it.effect("derives the cookie key from the keychain secret", () =>
     Effect.gen(function* () {
-      getPassword.mockReturnValue("macos-secret");
+      getPassword.mockResolvedValue("macos-secret");
       const keys = yield* resolveChromiumKeys(request);
       expect(keys.cbcV10?.toString("hex")).toBe("3df7306fb1eac353289565a2f6b64f74");
+    }).pipe(Effect.provide(layerNoProcesses)),
+  );
+
+  it.effect("reports a keychain entry the async read resolves as undefined", () =>
+    Effect.gen(function* () {
+      getPassword.mockResolvedValue(undefined);
+      const error = yield* resolveChromiumKeys(request).pipe(Effect.flip);
+      expect(error.reason).toBe("keychainItemMissing");
     }).pipe(Effect.provide(layerNoProcesses)),
   );
 
   it.effect("preserves a denied keychain approval", () =>
     Effect.gen(function* () {
       const denied = new Error("User denied access");
-      getPassword.mockImplementation(() => {
-        throw denied;
-      });
+      getPassword.mockRejectedValue(denied);
       const error = yield* resolveChromiumKeys(request).pipe(Effect.flip);
       expect(error.reason).toBe("needsKeychainApproval");
       expect(error.cause).toBe(denied);
@@ -146,12 +160,24 @@ describe("Linux Chromium secrets", () => {
     ),
   );
 
-  it.effect("preserves trailing whitespace in the stored secret", () =>
-    Effect.gen(function* () {
-      const secret = yield* readLinuxSecret("chrome");
-      expect(secret).toBe("linux-secret \t\n");
-    }).pipe(Effect.provide(layerHelper({ stdout: "linux-secret \t\n" }))),
-  );
+  it.effect("derives Vivaldi's Linux key while preserving whitespace in the stored secret", () => {
+    let captured: CapturedCommand | undefined;
+    return Effect.gen(function* () {
+      const source = BROWSER_IMPORT_SOURCES.find((source) => source.id === "vivaldi")!;
+      const keys = yield* resolveChromiumKeys({
+        platform: "linux",
+        keychainService: source.keychainService,
+        keychainAccount: source.keychainAccount,
+        linuxSecretApplication: source.linuxSecretApplication,
+      });
+      expect(captured?.args).toEqual(["chrome"]);
+      expect(keys.cbcV11?.toString("hex")).toBe("95aa769d6a5beca14d5d90ae655db112");
+    }).pipe(
+      Effect.provide(
+        layerHelper({ stdout: "linux-secret \t\n", capture: (value) => (captured = value) }),
+      ),
+    );
+  });
 
   it.effect("drains stdout and stderr concurrently", () =>
     Effect.gen(function* () {
