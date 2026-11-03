@@ -334,7 +334,13 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       );
 
       if (exitCode !== 0) {
-        const stderrDetail = stderr.trim();
+        // Codex echoes its banner and the whole prompt to stderr before reporting the error.
+        const stderrLines = stderr.trim().split("\n");
+        const lastErrorLine = stderrLines.findLastIndex((line) => line.startsWith("ERROR: "));
+        const stderrDetail =
+          lastErrorLine === -1
+            ? stderr.trim()
+            : stderrLines.slice(lastErrorLine).join("\n").slice("ERROR: ".length);
         const stdoutDetail = stdout.trim();
         const detail = stderrDetail.length > 0 ? stderrDetail : stdoutDetail;
         return yield* new TextGenerationError({
