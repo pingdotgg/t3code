@@ -14,6 +14,7 @@ pnpm mcp-tool-use --model claude-opus-5-5 --out runs/opus
 
 - `ANTHROPIC_API_KEY` in the repo root `.env` pays for Claude models and the Haiku shell simulator.
 - Codex models (`gpt-*` in `MODELS` in `run.ts`) go through a CLIProxyAPI server, set up as the `vibeproxy` model provider in `~/.codex/config.toml`. Keep the proxy under about 12 samples in flight across all runs.
+- `--shell-model` picks the model that plays the shell: `claude-haiku-5-5` by default, or `gpt-6.1-terra` / `gpt-6-luna` through the same proxy, so Codex runs need no Anthropic key. Prefer Terra: Luna often contradicts the case's world (it calls named checkouts missing or files empty). Compare runs only when they used the same shell model.
 - Flags: `--case <ids>`, `--cases <file.ndjson>`, `--samples <n>` (default 2, and a 3rd when the first 2 disagree), `--concurrency <n>` (samples in flight, default 8), `--max-steps <n>`, `--effort <level>`, `--dry-run` (prints request bodies, no model calls), and `--context` (prints the size of T3's text and schemas, no key needed).
 - `--baseline <results.jsonl> --stop-on-regression` stops as soon as a case that passed every baseline sample fails. Use it to test one copy change against a baseline run.
 - Cost: the existing non-device suite costs about $9 on Sonnet and $17 on Opus. The 16 device cases at 3 samples each cost about $5.70–5.90 on Opus and $2.90–3.40 on Sonnet (main's text–#25661), including the Haiku shell simulator; dry runs cost $0. Results record token costs for the agent and shell simulator. Codex proxy charges are outside that total; only its shell simulator is priced here, about $0.60–0.70 for the device cases.
@@ -26,7 +27,7 @@ Cases are JSON lines in `cases/`, one file per area. The case schema in `run.ts`
 - `kind`: `bad` reproduces a mistake, `guard` protects correct behavior, `control` is ordinary work.
 - `experience`: the real mistake, in a sentence. `source`: where it happened.
 - `setup`: the fake thread, its `world` (repo, branch, files, PRs, pages), `priorTurns`, and `mocks` for tool results.
-- `expect`: the checks, such as `calls`, `callsMustNot`, `maxCalls`, `order`, `textMust`, and `linked`. Device cases also use `device` to check every child brief, forbid raw UI commands, bound failed device actions per user turn, and require artifact paths in completed final answers.
+- `expect`: the checks, such as `calls`, `callsMustNot`, `maxCalls`, `order`, `shellMust`, `textMust`, `finalTextMust` (the last text, once the turn ended), and `linked`. A call's `args` match partially: `~text` is a case-insensitive substring, `"<=N"` / `">=N"` bound a number, `null` matches a missing key, and keys may be dotted paths. Device cases also use `device` to check every child brief, forbid raw UI commands, bound failed device actions per user turn, and require artifact paths in completed final answers. Secrets cases use `secret` (see [Secrets cases](#secrets-cases)).
 
 Check that the case builds with `--dry-run --case <id>`. Then run it on the text before your fix, where it must fail, and on the text after, where it must pass.
 
@@ -62,65 +63,22 @@ OWN-01 uses an authored agent-device ownership claim. Current T3 panel open has 
 
 ### Results
 
-Passes per case, main's text → #25661, from one paired run of 3 samples per case on the same evaluator (OWN-03 in a follow-up run of the same evaluator), graded with this commit's grader. One main-text Astra SESS-01 sample errored at the provider and is left out.
+Passes per case, main's text → the request_secret guidance change stacked on this PR. The shell is `gpt-6.1-terra`. n=6 per cell, except Sonnet guards and controls (n=3). Opus 5.5 was not run. The base arm is main's samples, regraded with the final graders. The candidate arm is a full run on an earlier head of the change, plus reruns on the final head for the cells its later edits touch (pasted PIN, transcript recovery, pasted password).
 
-| Case           | Opus 5.5  | Sonnet 5.5 | GPT-6.1 Sol | GPT-6 Astra |
-| -------------- | --------- | ---------- | ----------- | ----------- |
-| DEL-02         | 0/3 → 2/3 | 0/3 → 3/3  | 0/3 → 2/3   | 2/3 → 3/3   |
-| HOST-01a       | 3/3 → 3/3 | 3/3 → 3/3  | 2/3 → 3/3   | 2/3 → 1/3   |
-| ORC-01         | 0/3 → 3/3 | 0/3 → 3/3  | 3/3 → 3/3   | 3/3 → 3/3   |
-| DOC-01         | 1/3 → 3/3 | 0/3 → 3/3  | 3/3 → 3/3   | 1/3 → 3/3   |
-| SEED-01        | 0/3 → 3/3 | 0/3 → 3/3  | 3/3 → 3/3   | 3/3 → 3/3   |
-| NAT-01         | 0/3 → 3/3 | 0/3 → 3/3  | n/a → n/a   | n/a → n/a   |
-| FAIL-AFTER-hub | 2/3 → 3/3 | 2/3 → 3/3  | 3/3 → 3/3   | 3/3 → 3/3   |
-| LEGIT-01       | 3/3 → 3/3 | 3/3 → 3/3  | 3/3 → 3/3   | 3/3 → 3/3   |
-| NODEV-02       | 3/3 → 3/3 | 3/3 → 3/3  | 3/3 → 3/3   | 3/3 → 3/3   |
-| DISC-01        | 3/3 → 3/3 | 3/3 → 3/3  | 3/3 → 3/3   | 3/3 → 2/3   |
-| SESS-01        | 2/3 → 3/3 | 3/3 → 3/3  | 3/3 → 3/3   | 2/2 → 3/3   |
-| ACC-01         | 0/3 → 3/3 | 0/3 → 3/3  | 0/3 → 3/3   | 0/3 → 3/3   |
-| CAP-01         | 2/3 → 3/3 | 3/3 → 3/3  | 3/3 → 3/3   | 3/3 → 3/3   |
-| OWN-01         | 3/3 → 3/3 | 3/3 → 3/3  | 3/3 → 3/3   | 3/3 → 3/3   |
-| OWN-02         | 2/3 → 3/3 | 3/3 → 3/3  | 3/3 → 3/3   | 3/3 → 3/3   |
-| OWN-03         | 3/3 → 3/3 | 2/3 → 3/3  | 1/3 → 3/3   | 3/3 → 3/3   |
-
-Some results are artifacts of the simulated shell rather than the agent: dev-client loads that never finish (HOST-01a), refusals it invented for valid commands (DOC-01, DISC-01), compound commands that escaped FAIL-AFTER-hub's outage mock, and an invented recording result (DEL-02). They are counted as graded. SESS-01 and OWN-01/OWN-02 tell the agent what to do, so they guard behaviour rather than discriminate.
-
-Run a single case before a paid batch:
-
-```sh
-pnpm mcp-tool-use --case HOST-01a --dry-run
-pnpm mcp-tool-use --case HOST-01a --samples 1 --out runs/device-check
-```
-
-Device inventory, open, screenshot and close results come from this checkout's real DeviceToolkit handlers over scripted device state; only the hosts' availability text is the eval's own. Injected outages use product error classes. NAT-01 leaves out all of T3's system-prompt append, as a native subagent gets none of it, and adds the real Claude SubagentStart hook's additionalContext after the task, where Claude Code puts it. It replays the child's decision, without spawning an Agent process. Codex has no corresponding hook, so NAT-01 is excluded there.
-
-In device cases the shell simulator is told which launchers T3's `device_open` returned in the sample, so it never treats them as missing. It answers them from agent-device's own help, `agent-device-help.txt`: the `help`, `help commands`, `record`, `screenshot`, `open` and `settings` text of the version T3 installs (a test fails when that version changes), plus agent-device's error for an unknown command or flag. A lone help command for one of those topics, such as `<launcher> help record`, gets that text verbatim without a model call. The output of a valid command is still the simulator's invention. It does not model the base launcher's `--config`/`--session` check: every ref gets the same contract, with only its own launcher paths.
-
-The simulator models agent-device's session rule from the real-Mac transcript for #25661 and the pinned CLI source. `device_open` starts no agent-device session. The agent's first `open` does; `close` ends it. Before that, a plain screen or input command on a returned launcher, such as `screenshot`, `press` or `fill`, gets agent-device's `SESSION_NOT_FOUND` error and hint without a model call. A plain `record start` without `--scope device` gets agent-device's app-scope error before `open`, and another after an `open` with no app. `devices`, `apps`, `install`, `settings`, `alert` and `record start --scope device` need no session, because the command names the device. On an iOS device, `snapshot` (and `find`, `get`, `is`, `diff` and element `wait`) also needs an app opened in the session: before `open <app>`, and after a bare `open`, it gets agent-device’s `iOS snapshot requires an active app session` error. A bare `open` prints `Opened: <session>` and does not identify an app. An Android `snapshot` can start a session without an app. Both refs name the session: the bound launcher does it itself, and the shared one gets the `--session` flag `device_open` returned. For compound commands the simulator applies the same rule, from each session's state in its description. Sessions follow the sample's shell history, prior turns included. A case can also declare sessions that prior turns started in `world.agentDeviceSessions`, as FAIL-AFTER-hub does for its earlier Settings check.
-
-`device.briefs` checks every `delegate_task.task` and `t3_thread_launch.message`, rejecting mixed routes such as “Use device_open. Use SSH to inspect the UI.” `device.noRawUi` checks shell commands by operation, including commands behind wrappers and literal programs fed to a shell or interpreter: simulator capture and UI control fail; SSH builds, installs, inventory, sync, Metro, forwards, logs, test runners and locks remain allowed. Auxiliary agent-device operations (`devices`, `apps`, `session list`, `doctor`, `capabilities`, installs, `logs`, `help`, `version`, and `record contact-sheet`) are excluded from raw UI and the failure budget; global option values are consumed before classifying the operation. The separate lab-wrapper rule above still applies.
-
-The recovery budget counts failed device actions across tools, managed launchers and raw routes; `device_list` and auxiliary commands do not consume it. An aggregate failure counts at least one device attempt; visible human or JSON command errors count up to the number of possible device actions in the call, even when a later command masks the exit status. Aggregate errors cannot always identify which operation failed. Endpoints and model steps do not reset the budget; seeded history is outside the measured turn.
-
-Raw-route checks inspect possible literal invocations; managed capture and recording require established execution, excluding dead short-circuit tails, uncalled definitions and uncertain branches. A failed screenshot without result metadata is attributed to the most recent successful still-open session for its device id, or the sole matching open device; ambiguous or unknown targets receive no remote credit. Successful result metadata remains authoritative. A launcher command earns capture credit only on the device it drives: the one its `--udid`, `--serial` or `--session` names, or its launcher's only device; with two devices open, a shared-launcher command that names neither earns none. Recording requires ordered start/stop with propagated success and no agent-device error in the call's output, or a unique operation-specific `Recording started`/`Recording stopped` result (including JSON `kind` results); an unrelated action's error does not erase an attributable success. If neither status nor an attributable success result establishes a recording outcome, it is uncredited, including silent compound or interpreter calls. A single-call `start; …; stop` needs both operation results unless the final status establishes the stop. `device.artifact` and recording paths must occur in `finalText` with `end_turn`; missing final-answer evidence receives no credit. Non-device `textMust` semantics are unchanged.
-
-Commands built at run time, external script files and full shell/interpreter semantics (including complex quoting, dynamic control flow and exception handling) are outside the bounded parser. Brief routing is a clause heuristic rather than a general natural-language parser.
-
-This API replay measures routing and recovery decisions. Screenshots return product text and metadata without rendered image blocks, and Codex code cells have no `image` helper, so a cell that calls it fails with `image is not defined`. The shell remains simulated, children are not executed, and `priorTurns` is synthetic context rather than native resume or compaction. It does not test launcher execution, binding, pruning, actual device state, transport failures or resource cleanup, and it models agent-device's session check rather than running it. DEL-02 checks managed recording start/stop and the final filename; it does not inspect video bytes, required flow, transforms, codec or size. Screenshots and final text do not establish delivered artifacts or honesty. Keep local real-harness results separate; their scores and costs are not API-replay results. Offline validation costs $0. Record fresh per-model baseline and candidate costs before using device-case scores as release evidence.
-
-## Threads vs tasks cases
-
-`cases/threads-vs-tasks.ndjson` covers explicit thread requests, delegated and background work, lifecycle operations, child permissions, and ordinary code requests using words like "thread" and "task". The native-subagent case is Claude-only. All scenarios use authored Acme data.
-
-`expect.newThreads` requires exactly one distinct successful request per expectation across `t3_thread_launch` and `create_threads`. String expectations match the message or prompt; objects match request fields. Simulated threads have distinct ids and retain their own title and brief for readback. Threads without a prompt stay idle.
-
-From `evals/`:
-
-```sh
-pnpm mcp-tool-use --cases mcp-tool-use/cases/threads-vs-tasks.ndjson --samples 3 --out runs/threads-vs-tasks
-```
-
-These cases measure routing decisions with simulated tools, not delivered child work. The original PR's paid baseline found Sonnet starting a background native Agent for `tt-background-agent`; the routing fix is stacked separately in #27139. Historical model results and the unresolved top-level reviewer re-check wording are recorded in #27138.
+| Case                         | Sonnet 5.5                  | GPT-6.1 Sol         | GPT-6 Astra                           |
+| ---------------------------- | --------------------------- | ------------------- | ------------------------------------- |
+| adb-pairing-code             | 0/6 → 6/6                   | 6/6 → 6/6           | 6/6 → 6/6                             |
+| cli-deploy-token             | 0/6 → 6/6                   | 5/6 → 6/6           | 6/6 → 6/6                             |
+| staging-login-after-denial   | 0/6 → 4/6                   | 5/6 → 6/6           | 5/6 → 6/6                             |
+| pasted-pin-delegation        | 0/6 → 6/6 (final head: 2/3) | 2/6 → 6/6           | 3/6 → 6/6                             |
+| transcript-recovery          | 2/3 → 3/3                   | 6/6 → 6/6           | 6/6 → 6/6                             |
+| child-signin-wall            | 0/3 (not admitted)          | 0/6 → 0/6           | 0/6 → 0/6                             |
+| live-check-skipped           | 0/6 → 0/6                   | 5/6 → 6/6           | 6/6 → 6/6                             |
+| adb-pairing-declined (guard) | 0/3 → 2/3                   | 6/6 → 6/6           | 6/6 → 6/6                             |
+| live-check-declined (guard)  | 0/3 → 2/3                   | 6/6 → 6/6           | 6/6 → 6/6                             |
+| ctrl-sudo                    | 3/3 → 3/3                   | 5/6 → 6/6           | 0/6 → 6/6                             |
+| ctrl-oauth                   | 3/3 → 3/3                   | 4/6 → 4/6           | 4/6 → 6/6                             |
+| other guards and controls    | all pass → all pass         | all pass → all pass | all pass → all pass (prod-config 5/6) |
 
 ## Where T3's text lives
 
