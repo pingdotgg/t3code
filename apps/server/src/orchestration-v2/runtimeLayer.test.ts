@@ -5548,10 +5548,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* send("idle", "agent", true);
       yield* end("idle", "cancelled");
       yield* send(" /compact", "agent", true);
+      yield* send("witness", "agent", false);
+      assert.isTrue((yield* runFor("witness")).queueHeld);
       yield* end(" /compact", "completed", "", {
         restartContinuationOfRunId: (yield* runFor("idle")).id,
       });
+      // The listener releases the agent's message past the user's, which stays held.
+      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("witness")).id);
       assert.isTrue((yield* runFor("user")).queueHeld);
+      yield* end("witness", "completed");
       yield* send("cut", "agent", true);
       yield* end("cut", "cancelled", "", { restartHeldRunIds: [user.id] });
       yield* send("/compact", "agent", true);
