@@ -1,5 +1,10 @@
 import { expect, it } from "@effect/vitest";
-import { LOCAL_DEVICE_HOST_ID, ThreadId, type DeviceHostSummary } from "@t3tools/contracts";
+import {
+  DeviceHostUnavailableError,
+  LOCAL_DEVICE_HOST_ID,
+  ThreadId,
+  type DeviceHostSummary,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -145,6 +150,17 @@ it.effect("keeps hosts independent when serials collide and another host fails",
     expect((yield* service.state).sessions).toEqual([]);
     yield* service.agentReadinessIfSupported("a");
     expect((yield* service.state).hostStatuses.a?.status).toBe("ready");
+    const unavailable = new DeviceHostUnavailableError({
+      hostId: "a",
+      reason: "Host configuration changed. Retry the operation.",
+    });
+    hosts.set("a", {
+      ...host("a"),
+      ensureReady: () => Effect.fail(unavailable),
+      ensureAgentReady: () => Effect.fail(unavailable),
+    });
+    expect(yield* service.readiness("a").pipe(Effect.flip)).toBe(unavailable);
+    expect(yield* service.agentReadinessIfSupported("a").pipe(Effect.flip)).toBe(unavailable);
     yield* service.configure({ enabled: false });
     expect((yield* service.state).hostStatuses).toEqual({});
   }).pipe(

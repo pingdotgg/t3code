@@ -490,19 +490,20 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               host,
             ),
           ),
-          Effect.mapError(
-            (error) =>
-              new DeviceHostUnavailableError({
-                hostId: host.id,
-                hostLabel: host.label,
-                reason:
-                  error._tag === "NodeRuntimeUnavailableError"
-                    ? nodeRuntimeUnavailableMessage("Local device support")
-                    : error.step === "probe"
-                      ? sshProbeFailureMessage(error)
-                      : `Device support failed during ${error.step}.`,
-                cause: error,
-              }),
+          Effect.mapError((error) =>
+            error._tag === "DeviceHostUnavailableError"
+              ? error
+              : new DeviceHostUnavailableError({
+                  hostId: host.id,
+                  hostLabel: host.label,
+                  reason:
+                    error._tag === "NodeRuntimeUnavailableError"
+                      ? nodeRuntimeUnavailableMessage("Local device support")
+                      : error.step === "probe"
+                        ? sshProbeFailureMessage(error)
+                        : `Device support failed during ${error.step}.`,
+                  cause: error,
+                }),
           ),
           stopIfRevoked(host, false),
         );
@@ -561,23 +562,24 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               host,
             ),
           ),
-          Effect.mapError(
-            (error) =>
-              new DeviceHostUnavailableError({
-                hostId: host.id,
-                hostLabel: host.label,
-                reason:
-                  error._tag === "NodeRuntimeUnavailableError"
-                    ? nodeRuntimeUnavailableMessage("Local device support")
-                    : error._tag === "DeviceHostTimeoutError"
-                      ? `Agent tools did not start within ${error.timeoutMs} ms.`
-                      : error._tag === "AgentDeviceStartError"
-                        ? error.message
-                        : error.step === "probe"
-                          ? sshProbeFailureMessage(error)
-                          : `Device support failed during ${error.step}.`,
-                cause: error,
-              }),
+          Effect.mapError((error) =>
+            error._tag === "DeviceHostUnavailableError"
+              ? error
+              : new DeviceHostUnavailableError({
+                  hostId: host.id,
+                  hostLabel: host.label,
+                  reason:
+                    error._tag === "NodeRuntimeUnavailableError"
+                      ? nodeRuntimeUnavailableMessage("Local device support")
+                      : error._tag === "DeviceHostTimeoutError"
+                        ? `Agent tools did not start within ${error.timeoutMs} ms.`
+                        : error._tag === "AgentDeviceStartError"
+                          ? error.message
+                          : error.step === "probe"
+                            ? sshProbeFailureMessage(error)
+                            : `Device support failed during ${error.step}.`,
+                  cause: error,
+                }),
           ),
           stopIfRevoked(host, true),
         );

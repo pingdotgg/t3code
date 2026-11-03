@@ -201,7 +201,12 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     expect(retired._tag).toBe("Failure");
     expect(forwards).toBe(0);
     const modesAfterClose = [...modes];
-    expect((yield* host.ensureReady(() => Effect.void).pipe(Effect.result))._tag).toBe("Failure");
+    const unavailable = yield* host.ensureReady(() => Effect.void).pipe(Effect.flip);
+    expect(unavailable).toMatchObject({
+      _tag: "DeviceHostUnavailableError",
+      reason: "Host configuration changed. Retry the operation.",
+    });
+    expect(unavailable.cause).toBeUndefined();
     expect(modes).toEqual(modesAfterClose);
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

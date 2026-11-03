@@ -1,5 +1,6 @@
 import {
   type DeviceHostSummary,
+  DeviceHostUnavailableError,
   DevicePlatformAvailability,
   DeviceToolVersions,
   deviceToolInstallMessage,
@@ -160,10 +161,10 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
   const requireActive = Effect.suspend(() =>
     retired
       ? Effect.fail(
-          new DeviceHost.DeviceHostError({
+          new DeviceHostUnavailableError({
             hostId: config.id,
-            step: "starting retired host",
-            cause: new Error("Host configuration changed. Retry the operation."),
+            hostLabel: config.label,
+            reason: "Host configuration changed. Retry the operation.",
           }),
         )
       : Effect.void,
