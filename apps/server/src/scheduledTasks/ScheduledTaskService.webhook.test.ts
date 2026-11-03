@@ -1399,6 +1399,7 @@ it.effect("start failures release both replay keys and relay claims for redelive
         yield* Queue.take(launches);
         assert.equal((yield* sql`SELECT * FROM scheduled_task_webhook_replay_keys`).length, 0);
         assert.equal((yield* sql`SELECT * FROM scheduled_task_webhook_relay_deliveries`).length, 0);
+        assert.equal((yield* service.list()).tasks[0]!.lastRunError, "injected start failure");
         const retry = yield* waitForSpan(
           service.triggerWebhook(request),
           "ScheduledTaskService.runWebhookDelivery",
