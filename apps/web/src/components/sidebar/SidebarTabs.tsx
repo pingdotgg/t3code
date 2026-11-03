@@ -6,7 +6,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { Activity, type ReactNode, useState } from "react";
+import { Activity, type ReactNode, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
@@ -91,6 +91,8 @@ interface SwipeSession {
   gapTimer: ReturnType<typeof setTimeout> | undefined;
   settleTimer: ReturnType<typeof setTimeout> | undefined;
   landingTab: SidebarTab | null;
+  // The tab a pending landing leaves; picking any other tab meanwhile drops the landing.
+  landingFrom: SidebarTab | null;
 }
 
 // A two-finger horizontal swipe over the list drags it with the fingers and reveals the
@@ -109,16 +111,18 @@ export function SidebarSwipeArea(props: {
   const previous = tabs[index - 1]?.value;
   const next = tabs[index + 1]?.value;
   const [shownDirection, setShownDirection] = useState<1 | -1 | null>(null);
-  const [session] = useState<SwipeSession>(() => ({
+  const sessionRef = useRef<SwipeSession>({
     state: TAB_SWIPE_IDLE,
     direction: null,
     gapTimer: undefined,
     settleTimer: undefined,
     landingTab: null,
-  }));
+    landingFrom: null,
+  });
 
   const attachArea = (area: HTMLElement | null) => {
     if (area === null) return;
+    const session = sessionRef.current;
     const panel = area.querySelector<HTMLElement>(":scope > [data-sidebar-swipe-panel]")!;
     const previewOf = (direction: 1 | -1) =>
       area.querySelector<HTMLElement>(`:scope > [data-sidebar-swipe-preview="${direction}"]`);
@@ -152,11 +156,12 @@ export function SidebarSwipeArea(props: {
       }
     };
 
-    const finishSettle = () => {
+    const finishSettle = (land: boolean) => {
       clearTimeout(session.settleTimer);
       session.settleTimer = undefined;
-      const landing = session.landingTab;
+      const landing = land ? session.landingTab : null;
       session.landingTab = null;
+      session.landingFrom = null;
       if (landing !== null && viewport !== null) {
         // The neighbour was drawn at the top of the viewport; keep its rows where they were.
         const listTop =
@@ -165,11 +170,15 @@ export function SidebarSwipeArea(props: {
           viewport.getBoundingClientRect().top;
         viewport.scrollTop = Math.min(viewport.scrollTop, listTop);
       }
-      flushSync(() => {
-        if (landing !== null) onValueChange(landing);
-        session.direction = null;
+      session.direction = null;
+      if (landing === null) {
         setShownDirection(null);
-      });
+      } else {
+        flushSync(() => {
+          onValueChange(landing);
+          setShownDirection(null);
+        });
+      }
       panel.style.transition = "";
       panel.style.transform = "";
       panel.style.willChange = "";
@@ -186,8 +195,9 @@ export function SidebarSwipeArea(props: {
     const settle = (direction: 1 | -1 | null) => {
       const transition = `transform ${SETTLE_MS}ms ${SETTLE_EASING}`;
       session.landingTab = direction === null ? null : direction === 1 ? next! : previous!;
+      session.landingFrom = value;
       place(direction === null ? 0 : direction * panel.clientWidth, transition);
-      session.settleTimer = setTimeout(finishSettle, SETTLE_MS);
+      session.settleTimer = setTimeout(() => finishSettle(true), SETTLE_MS);
     };
 
     const handleWheel = (event: WheelEvent) => {
@@ -213,7 +223,7 @@ export function SidebarSwipeArea(props: {
       if (result.output.kind !== "hold" && session.settleTimer !== undefined) {
         // A new swipe began while the last one was landing. The tabs change under this
         // closure, so the swipe picks up from the next event.
-        finishSettle();
+        finishSettle(true);
         session.state = TAB_SWIPE_IDLE;
         return;
       }
@@ -227,6 +237,8 @@ export function SidebarSwipeArea(props: {
         settle(result.output.direction);
       }
     };
+
+    if (session.settleTimer !== undefined && session.landingFrom !== value) finishSettle(false);
 
     area.addEventListener("wheel", handleWheel, { passive: false });
     // Landing on a tab re-attaches with new neighbours mid-gesture; the session keeps the
