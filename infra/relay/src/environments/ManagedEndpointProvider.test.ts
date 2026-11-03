@@ -49,7 +49,11 @@ interface TunnelCall {
 }
 
 interface TunnelConfiguration {
-  readonly ingress: ReadonlyArray<{ readonly hostname?: string; readonly service: string }>;
+  readonly ingress: ReadonlyArray<{
+    readonly hostname?: string;
+    readonly path?: string;
+    readonly service: string;
+  }>;
 }
 
 interface DnsCall {
@@ -1242,6 +1246,22 @@ describe("ManagedEndpointProvider", () => {
         ingress: [
           { hostname: "*.t3code.test", service: "http://127.0.0.1:4711" },
           { hostname: expectedManagedHostname("env_ABC"), service: "http://127.0.0.1:3773" },
+          { service: "http_status:404" },
+        ],
+      };
+      expect(yield* reconcile).toBe("ready");
+      expect(configuration.current.ingress[0]).toEqual({
+        hostname: expectedManagedHostname("env_ABC"),
+        service: "http://127.0.0.1:3773",
+      });
+
+      configuration.current = {
+        ingress: [
+          {
+            hostname: expectedManagedHostname("env_ABC"),
+            path: "/api",
+            service: "http://127.0.0.1:3773",
+          },
           { service: "http_status:404" },
         ],
       };

@@ -270,6 +270,7 @@ export class ManagedEndpointTunnelClient extends Context.Service<
       {
         readonly ingress: ReadonlyArray<{
           readonly hostname?: string | null;
+          readonly path?: string | null;
           readonly service: string;
         }>;
       },
@@ -809,7 +810,8 @@ const make = Effect.gen(function* () {
             (candidate.startsWith("*.") && hostname.endsWith(candidate.slice(1)))
           );
         });
-        if (rule?.service === originService) {
+        // A path-restricted rule leaves other paths to later rules, so it cannot prove routing.
+        if (rule?.service === originService && !rule.path) {
           return "ready";
         }
       }
