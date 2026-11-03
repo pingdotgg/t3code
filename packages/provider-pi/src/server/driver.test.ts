@@ -169,6 +169,17 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
         ["--approve", "--skill", "extra skill", "--no-session"],
       );
       assert.equal(workspaceLaunch!.options.env?.PI_CODING_AGENT_DIR, "/isolated-pi");
+      // Discovery processes are stopped as soon as they answer, so neither may start Pi's
+      // network refresh at launch.
+      for (const cwd of ["/machine", "/first"]) {
+        const discovery = launches.find(
+          (launch) => launch.options.cwd === cwd && launch.args.includes("--mode"),
+        );
+        assert.deepEqual(
+          discovery?.args.filter((arg) => arg === "--offline"),
+          ["--offline"],
+        );
+      }
     }).pipe(Effect.scoped),
   );
 
