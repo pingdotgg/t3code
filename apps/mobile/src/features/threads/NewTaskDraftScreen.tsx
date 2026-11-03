@@ -969,6 +969,7 @@ export function NewTaskDraftScreen(props: {
         onResumeQueue={null}
         onSendMessage={handleStart}
         offersSideChat={false}
+        onSendCommand={async () => null}
         onReconnectEnvironment={() => onReconnectEnvironment(selectedProject.environmentId)}
         canSwitchThreadProvider
         onUpdateThreadInteractionMode={flow.planModeEnabled ? flow.setInteractionMode : undefined}
