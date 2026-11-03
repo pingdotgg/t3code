@@ -1,8 +1,10 @@
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
+import * as Hex from "effect/encoding/Hex";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as ExpoCrypto from "expo-crypto";
@@ -50,10 +52,10 @@ const DpopJwtPayloadJson = Schema.fromJsonString(
 const encodeDpopJwtHeaderJson = Schema.encodeEffect(DpopJwtHeaderJson);
 const encodeDpopJwtPayloadJson = Schema.encodeEffect(DpopJwtPayloadJson);
 
-function toExpoDigestAlgorithm(
-  algorithm: Crypto.DigestAlgorithm,
-): ExpoCrypto.CryptoDigestAlgorithm {
-  switch (algorithm) {
+function toExpoDigestAlgorithm(algorithm: Digest.Algorithm): ExpoCrypto.CryptoDigestAlgorithm {
+  switch (algorithm.name) {
+    case "MD5":
+      return ExpoCrypto.CryptoDigestAlgorithm.MD5;
     case "SHA-1":
       return ExpoCrypto.CryptoDigestAlgorithm.SHA1;
     case "SHA-256":
@@ -65,17 +67,23 @@ function toExpoDigestAlgorithm(
   }
 }
 
-export const layer = Layer.succeed(
-  Crypto.Crypto,
-  Crypto.make({
-    randomBytes: ExpoCrypto.getRandomBytes,
-    digest: (algorithm, data) =>
-      Effect.promise(async () => {
-        const input = new Uint8Array(data.length);
-        input.set(data);
-        return new Uint8Array(await ExpoCrypto.digest(toExpoDigestAlgorithm(algorithm), input));
-      }),
-  }),
+// Hermes has no SubtleCrypto, so Effect's WebCrypto layers cannot back these services.
+const digest = (algorithm: Digest.Algorithm, data: Uint8Array) =>
+  Effect.promise(async () => {
+    const input = new Uint8Array(data.length);
+    input.set(data);
+    return new Uint8Array(await ExpoCrypto.digest(toExpoDigestAlgorithm(algorithm), input));
+  });
+
+export const layer = Layer.mergeAll(
+  Layer.succeed(SecureRandom.SecureRandom, SecureRandom.make(ExpoCrypto.getRandomBytes)),
+  Layer.succeed(
+    Digest.Digest,
+    Digest.Digest.of({
+      digest,
+      digestHex: (algorithm, data) => Effect.map(digest(algorithm, data), Hex.encode),
+    }),
+  ),
 );
 
 type DpopPrivateJwk = typeof DpopPrivateJwkSchema.Type;
@@ -95,9 +103,9 @@ function base64UrlToBytes(value: string): Uint8Array {
 function sha256Digest(
   data: Uint8Array,
   message: string,
-): Effect.Effect<Uint8Array, CloudDpopError, Crypto.Crypto> {
-  return Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) => crypto.digest("SHA-256", data)),
+): Effect.Effect<Uint8Array, CloudDpopError, Digest.Digest> {
+  return Digest.Digest.pipe(
+    Effect.flatMap((service) => service.digest(Digest.sha256, data)),
     Effect.mapError(cloudDpopError(message)),
   );
 }
@@ -105,7 +113,7 @@ function sha256Digest(
 function base64UrlSha256(
   data: Uint8Array,
   message: string,
-): Effect.Effect<string, CloudDpopError, Crypto.Crypto> {
+): Effect.Effect<string, CloudDpopError, Digest.Digest> {
   return sha256Digest(data, message).pipe(Effect.map(Base64Url.encode));
 }
 
@@ -120,7 +128,7 @@ function dpopThumbprintInput(jwk: DpopPublicJwk): string {
 
 function computeDpopJwkThumbprintEffect(
   jwk: DpopPublicJwk,
-): Effect.Effect<string, CloudDpopError, Crypto.Crypto> {
+): Effect.Effect<string, CloudDpopError, Digest.Digest> {
   return base64UrlSha256(
     new TextEncoder().encode(dpopThumbprintInput(jwk)),
     "Could not hash the DPoP public key thumbprint.",
@@ -129,7 +137,7 @@ function computeDpopJwkThumbprintEffect(
 
 function computeDpopAccessTokenHashEffect(
   accessToken: string,
-): Effect.Effect<string, CloudDpopError, Crypto.Crypto> {
+): Effect.Effect<string, CloudDpopError, Digest.Digest> {
   return base64UrlSha256(
     new TextEncoder().encode(accessToken),
     "Could not hash the DPoP access token.",
@@ -139,9 +147,9 @@ function computeDpopAccessTokenHashEffect(
 function secureRandomBytes(
   byteCount: number,
   message: string,
-): Effect.Effect<Uint8Array, CloudDpopError, Crypto.Crypto> {
-  return Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) => crypto.randomBytes(byteCount)),
+): Effect.Effect<Uint8Array, CloudDpopError, SecureRandom.SecureRandom> {
+  return SecureRandom.SecureRandom.pipe(
+    Effect.flatMap((random) => random.randomBytes(byteCount)),
     Effect.mapError(cloudDpopError(message)),
   );
 }
@@ -166,7 +174,11 @@ function privateJwkFromPrivateKey(
 }
 
 export const generateDpopProofKeyPair = Effect.fn("dpop.generateDpopProofKeyPair")(
-  function* (): Effect.fn.Return<DpopProofKeyPair, CloudDpopError, Crypto.Crypto> {
+  function* (): Effect.fn.Return<
+    DpopProofKeyPair,
+    CloudDpopError,
+    SecureRandom.SecureRandom | Digest.Digest
+  > {
     let privateKey: Uint8Array;
     do {
       privateKey = yield* secureRandomBytes(
@@ -188,7 +200,11 @@ export const generateDpopProofKeyPair = Effect.fn("dpop.generateDpopProofKeyPair
 );
 
 export const loadOrCreateDpopProofKeyPair = Effect.fn("dpop.loadOrCreateDpopProofKeyPair")(
-  function* (): Effect.fn.Return<DpopProofKeyPair, CloudDpopError, Crypto.Crypto> {
+  function* (): Effect.fn.Return<
+    DpopProofKeyPair,
+    CloudDpopError,
+    SecureRandom.SecureRandom | Digest.Digest
+  > {
     const stored = yield* Effect.tryPromise({
       try: () => SecureStore.getItemAsync(DPOP_PROOF_KEY_STORAGE_KEY),
       catch: cloudDpopError("Could not read the DPoP proof key."),
@@ -243,7 +259,7 @@ export const createDpopProof = Effect.fn("dpop.createDpopProof")(function* (inpu
 }): Effect.fn.Return<
   { readonly proof: string; readonly thumbprint: string },
   CloudDpopError,
-  Crypto.Crypto
+  SecureRandom.SecureRandom | Digest.Digest
 > {
   const keyPair = input.proofKey ?? (yield* generateDpopProofKeyPair());
   const privateKey = yield* Effect.try({
@@ -251,8 +267,8 @@ export const createDpopProof = Effect.fn("dpop.createDpopProof")(function* (inpu
     catch: cloudDpopError("Could not import DPoP private key."),
   });
   const nowMs = yield* Clock.currentTimeMillis;
-  const jti = yield* Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) => crypto.randomUUIDv4()),
+  const jti = yield* SecureRandom.SecureRandom.pipe(
+    Effect.flatMap((random) => random.uuidV4()),
     Effect.mapError(cloudDpopError("Could not generate DPoP proof identifier.")),
   );
   const htu = yield* normalizeHtu(input.url);

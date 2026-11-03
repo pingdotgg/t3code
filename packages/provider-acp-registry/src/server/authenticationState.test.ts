@@ -1,4 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
@@ -10,7 +12,7 @@ import { makeAcpRegistryAuthenticationState } from "./authenticationState.ts";
 
 const settings = Schema.decodeSync(AcpRegistrySettings)({ agentId: "devin" });
 
-it.layer(NodeServices.layer)("ACP sign-in confirmation", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ACP sign-in confirmation", (it) => {
   it.effect("restores explicit sign-in across driver recreation and server restart", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
