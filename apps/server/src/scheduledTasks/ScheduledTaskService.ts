@@ -827,10 +827,11 @@ export const layer = Layer.effect(
     );
 
     // The run already started the thread, so a failed write only costs the binding.
-    const bindThread = (id: ScheduledTaskId, threadId: ThreadId) =>
+    const bindThread = (task: ScheduledTask, threadId: ThreadId) =>
       sql`
         UPDATE scheduled_tasks SET thread_id = ${threadId}
-        WHERE task_id = ${id} AND thread_id IS NULL AND thread_mode != 'new_thread'
+        WHERE task_id = ${task.id} AND created_at = ${task.createdAt}
+          AND thread_id IS NULL AND thread_mode != 'new_thread'
       `.pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Could not bind a scheduled task to its first thread.", cause),
@@ -989,7 +990,7 @@ export const layer = Layer.effect(
                   .pipe(
                     Effect.map((launched) => launched.threadId),
                     Effect.tap((threadId) =>
-                      threadMode === "new_thread" ? Effect.void : bindThread(active.id, threadId),
+                      threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
                     ),
                   ),
               )
