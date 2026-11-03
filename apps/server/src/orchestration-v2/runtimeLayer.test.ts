@@ -3119,20 +3119,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  // regression: #29898 settle on merge cancelled a watch wake queued behind the finished run
-  it.effect("automatic settlement leaves a queued pull request watch wake to run", () =>
+  // A thread watching a pull request, with a wake queued behind a running turn.
+  const queuedWatchWake = (prefix: string) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-      const threadId = ThreadId.make("pr-watch-queued-wake-auto-settle");
+      const threadId = ThreadId.make(`${prefix}-auto-settle`);
       yield* orchestrator.dispatch({
         type: "thread.create",
         createdBy: "user",
         creationSource: "web",
-        commandId: CommandId.make("pr-watch-queued-wake-create"),
+        commandId: CommandId.make(`${prefix}-create`),
         threadId,
-        projectId: ProjectId.make("pr-watch-queued-wake-project"),
+        projectId: ProjectId.make(`${prefix}-project`),
         title: "Queued watch wake",
         modelSelection,
         runtimeMode: "full-access",
@@ -3143,7 +3141,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
-        commandId: CommandId.make("pr-watch-queued-wake-start"),
+        commandId: CommandId.make(`${prefix}-start`),
         threadId,
         ...key,
         watching: true,
@@ -3151,23 +3149,22 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       const started = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
       assert.isDefined(started);
-      if (started === undefined) return;
       yield* orchestrator.dispatch({
         type: "message.dispatch",
         createdBy: "user",
         creationSource: "web",
-        commandId: CommandId.make("pr-watch-queued-wake-active"),
+        commandId: CommandId.make(`${prefix}-active`),
         threadId,
-        messageId: MessageId.make("pr-watch-queued-wake-active"),
+        messageId: MessageId.make(`${prefix}-active`),
         text: "Merge it",
         attachments: [],
         modelSelection,
         dispatchMode: { type: "start_immediately" },
       });
-      const wakeMessageId = MessageId.make("pr-watch-queued-wake");
+      const wakeMessageId = MessageId.make(prefix);
       yield* orchestrator.dispatch({
         type: "thread.pull-request-watch.sync",
-        commandId: CommandId.make("pr-watch-queued-wake-sync"),
+        commandId: CommandId.make(`${prefix}-sync`),
         threadId,
         ...key,
         startedAt: started.startedAt,
@@ -3185,13 +3182,76 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isDefined(wakeRun);
       assert.equal(wakeRun.status, "queued");
       assert.notEqual(wakeRun.queueHeld, true);
+      return { threadId, activeRun, wakeRun };
+    });
 
-      // Hold the completion reaction before it promotes the wake: the window the sweep races.
+  const failRunWith = (run: OrchestrationV2Run, failureClass: "usage_limit" | "provider_error") =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${run.id}:error`),
+            type: "turn-item.updated",
+            threadId: run.threadId,
+            runId: run.id,
+            ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`${run.id}:error`),
+              type: "error",
+              threadId: run.threadId,
+              runId: run.id,
+              nodeId: run.rootNodeId,
+              providerThreadId: run.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Provider failure",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: failureClass,
+                message: "Provider failed.",
+                code: "provider_failed",
+                retryable: null,
+              },
+            },
+          },
+          {
+            id: EventId.make(`${run.id}:failed`),
+            type: "run.updated",
+            threadId: run.threadId,
+            runId: run.id,
+            ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: { ...run, status: "failed", completedAt: now },
+          },
+        ],
+      });
+    });
+
+  // Completes `run`, then dispatches automatic settlement while the completion reaction waits
+  // before releasing and starting the queue: the window the settlement sweep races.
+  const autoSettleBeforeCompletionReaction = (run: OrchestrationV2Run, commandId: CommandId) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const threadId = run.threadId;
       const reactionReached = yield* Deferred.make<void>();
       const releaseReaction = yield* Deferred.make<void>();
       const promotionDone = yield* Deferred.make<void>();
       const withLock = executor.withLock;
       let reactionFiber: number | undefined;
+      // Relies on the reaction taking the thread lock twice: finalizeDelegatedCompletionDelivery,
+      // then releaseUnattendedHolds with startNextQueuedRun.
       const holdReaction: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
         lockKey,
         effect,
@@ -3212,44 +3272,38 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             : withLock(lockKey, effect);
         });
       const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(holdReaction);
-      yield* Effect.gen(function* () {
+      return yield* Effect.gen(function* () {
         const completedAt = yield* DateTime.now;
         yield* eventSink.write({
           events: [
             {
-              id: EventId.make("pr-watch-queued-wake-active-completed"),
+              id: EventId.make(`${run.id}:completed`),
               type: "run.updated",
               threadId,
-              runId: activeRun.id,
-              ...(activeRun.rootNodeId === null ? {} : { nodeId: activeRun.rootNodeId }),
-              providerInstanceId: activeRun.providerInstanceId,
+              runId: run.id,
+              ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+              providerInstanceId: run.providerInstanceId,
               occurredAt: completedAt,
-              payload: { ...activeRun, status: "completed", completedAt },
+              payload: { ...run, status: "completed", completedAt },
             },
           ],
         });
         yield* Deferred.await(reactionReached);
 
         const window = yield* orchestrator.getThreadProjection(threadId);
-        assert.equal(window.runs.find((run) => run.id === wakeRun.id)?.status, "queued");
         yield* orchestrator
           .dispatch({
             type: "thread.auto-settle",
-            commandId: CommandId.make("pr-watch-queued-wake-auto-settle"),
+            commandId,
             threadId,
             snapshotAt: window.thread.updatedAt,
           })
           .pipe(Effect.exit);
         const afterSettle = yield* orchestrator.getThreadProjection(threadId);
-        assert.isNull(
-          afterSettle.thread.settledAt,
-          "automatic settlement must wait for the queued pull request watch wake",
-        );
 
         yield* Deferred.succeed(releaseReaction, undefined);
         yield* Deferred.await(promotionDone);
-        const after = yield* orchestrator.getThreadProjection(threadId);
-        assert.equal(after.runs.find((run) => run.id === wakeRun.id)?.status, "starting");
+        return { window, afterSettle, after: yield* orchestrator.getThreadProjection(threadId) };
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => lockSpy.mockRestore()).pipe(
@@ -3258,6 +3312,68 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           ),
         ),
       );
+    });
+
+  // regression: #29898 settle on merge cancelled a watch wake queued behind the finished run
+  it.effect("automatic settlement leaves a queued pull request watch wake to run", () =>
+    Effect.gen(function* () {
+      const { activeRun, wakeRun } = yield* queuedWatchWake("pr-watch-queued-wake");
+      const { window, afterSettle, after } = yield* autoSettleBeforeCompletionReaction(
+        activeRun,
+        CommandId.make("pr-watch-queued-wake-auto-settle"),
+      );
+      assert.equal(window.runs.find((run) => run.id === wakeRun.id)?.status, "queued");
+      assert.isNull(
+        afterSettle.thread.settledAt,
+        "automatic settlement must wait for the queued pull request watch wake",
+      );
+      assert.equal(after.runs.find((run) => run.id === wakeRun.id)?.status, "starting");
+    }),
+  );
+
+  it.effect("automatic settlement waits for a held wake that a completed run releases", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const { threadId, activeRun, wakeRun } = yield* queuedWatchWake("pr-watch-released-wake");
+      const beforeFailure = yield* orchestrator.getThreadEventSequence(threadId);
+      yield* failRunWith(activeRun, "provider_error");
+      yield* eventSink
+        .stream({ threadId, afterSequence: beforeFailure, eventType: "run.updated" })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "run.updated" &&
+              stored.event.payload.id === wakeRun.id &&
+              stored.event.payload.queueHeld === true,
+          ),
+          Stream.runHead,
+        );
+      // The server's own message: a later completion releases the wake's hold.
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "agent",
+        creationSource: "server",
+        commandId: CommandId.make("pr-watch-released-wake-tick"),
+        threadId,
+        messageId: MessageId.make("pr-watch-released-wake-tick"),
+        text: "Scheduled tick",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const tickRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.status === "starting",
+      );
+      assert.isDefined(tickRun);
+
+      const { window, afterSettle, after } = yield* autoSettleBeforeCompletionReaction(
+        tickRun,
+        CommandId.make("pr-watch-released-wake-auto-settle"),
+      );
+      assert.equal(window.runs.find((run) => run.id === wakeRun.id)?.queueHeld, true);
+      assert.isNull(afterSettle.thread.settledAt);
+      assert.equal(after.runs.find((run) => run.id === wakeRun.id)?.status, "starting");
     }),
   );
 
@@ -3265,64 +3381,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
-      const threadId = ThreadId.make("pr-watch-held-wake-auto-settle");
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("pr-watch-held-wake-create"),
-        threadId,
-        projectId: ProjectId.make("pr-watch-held-wake-project"),
-        title: "Held watch wake",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: process.cwd(),
-      });
-      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
-      yield* orchestrator.dispatch({
-        type: "thread.pull-request.watch",
-        commandId: CommandId.make("pr-watch-held-wake-start"),
-        threadId,
-        ...key,
-        watching: true,
-        link: { url: "https://github.com/pingdotgg/t3code/pull/7", source: "agent" },
-      });
-      const started = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
-      assert.isDefined(started);
-      if (started === undefined) return;
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("pr-watch-held-wake-active"),
-        threadId,
-        messageId: MessageId.make("pr-watch-held-wake-active"),
-        text: "Merge it",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "start_immediately" },
-      });
-      const wakeMessageId = MessageId.make("pr-watch-held-wake");
-      yield* orchestrator.dispatch({
-        type: "thread.pull-request-watch.sync",
-        commandId: CommandId.make("pr-watch-held-wake-sync"),
-        threadId,
-        ...key,
-        startedAt: started.startedAt,
-        watch: { ...started, headSha: "merged", wakes: 1 },
-        wake: {
-          messageId: wakeMessageId,
-          text: "Update",
-          notification: { source: { kind: "monitor" }, outcome: "updated", summary: "#7 merged" },
-        },
-      });
-      const before = yield* orchestrator.getThreadProjection(threadId);
-      const activeRun = before.runs.find((run) => run.status === "starting");
-      const wakeRun = before.runs.find((run) => run.userMessageId === wakeMessageId);
-      assert.isDefined(activeRun);
-      assert.isDefined(wakeRun);
+      const { threadId, activeRun, wakeRun } = yield* queuedWatchWake("pr-watch-held-wake");
       const now = yield* DateTime.now;
       // A held queue waits on the user, so it must not keep the thread from settling.
       yield* eventSink.write({
@@ -3348,6 +3407,29 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         commandId: CommandId.make("pr-watch-held-wake-auto-settle"),
         threadId,
         snapshotAt: DateTime.add(now, { hours: 1 }),
+      });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNotNull(after.thread.settledAt);
+      assert.equal(after.runs.find((run) => run.id === wakeRun.id)?.status, "cancelled");
+    }),
+  );
+
+  it.effect("automatic settlement still settles a usage-limited thread with a queued wake", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { threadId, activeRun, wakeRun } = yield* queuedWatchWake("pr-watch-limited-wake");
+      yield* failRunWith(activeRun, "usage_limit");
+      const limited = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.id === wakeRun.id,
+      );
+      assert.equal(limited?.status, "queued");
+      assert.notEqual(limited?.queueHeld, true);
+      // Only the user, or opt-in auto-resume, starts a limited queue; manual settle semantics apply.
+      yield* orchestrator.dispatch({
+        type: "thread.auto-settle",
+        commandId: CommandId.make("pr-watch-limited-wake-auto-settle"),
+        threadId,
+        snapshotAt: DateTime.add(yield* DateTime.now, { hours: 1 }),
       });
       const after = yield* orchestrator.getThreadProjection(threadId);
       assert.isNotNull(after.thread.settledAt);
