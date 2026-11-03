@@ -302,3 +302,41 @@ export function listIndentForTab(
   }
   return { start: line.start, end: line.start, replacement: "  ", cursorAfter: start + 2 };
 }
+
+export function listOutdentForTab(
+  value: string,
+  start: number,
+  end: number,
+): ComposerListEdit | null {
+  if (!Number.isInteger(start) || start !== end || start < 0 || start > value.length) return null;
+  const line = currentLine(value, start);
+  const parsed = parseListMarker(line.text);
+  if (!parsed?.marker.indent) return null;
+  const tokens = inlineTokenRanges(value);
+  if (isInsideInlineToken(tokens, start)) return null;
+  const { marker } = parsed;
+  const parent = parentMarker(value, line.start, marker, tokens);
+  // With no parent above, undo one step of Tab's two-space fallback.
+  const indent = parent?.indent ?? marker.indent.replace(/^(?:\t| {1,2})/, "");
+  const continues =
+    parent?.kind === "ordered" &&
+    marker.kind === "ordered" &&
+    parent.delimiter === marker.delimiter;
+  const number = continues ? nestedNumber(marker, parent) : { replacedLength: 0, text: "" };
+  const replacedEnd = line.start + marker.indent.length + number.replacedLength;
+  const replacement = indent + number.text;
+  const cursorAfter =
+    start < replacedEnd
+      ? line.start + indent.length
+      : start - replacedEnd + line.start + replacement.length;
+  const renumbered = continues ? renumberFollowingItems(value, line.end, parent, tokens) : null;
+  if (renumbered) {
+    return {
+      start: line.start,
+      end: renumbered.end,
+      replacement: replacement + value.slice(replacedEnd, line.end) + renumbered.text,
+      cursorAfter,
+    };
+  }
+  return { start: line.start, end: replacedEnd, replacement, cursorAfter };
+}
