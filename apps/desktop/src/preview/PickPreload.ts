@@ -265,14 +265,13 @@ function unionRects(
 }
 
 function isAnnotationNode(element: Element): boolean {
-  return element instanceof Element && element.closest(`[${OVERLAY_ATTRIBUTE}]`) !== null;
+  return element?.nodeType === 1 && element.closest(`[${OVERLAY_ATTRIBUTE}]`) !== null;
 }
 
-function pickFromPoint(clientX: number, clientY: number): Element | null {
-  for (const candidate of document.elementsFromPoint(clientX, clientY)) {
-    if (!(candidate instanceof Element)) continue;
+function pickFromPoint(clientX: number, clientY: number, ownerDocument: Document): Element | null {
+  for (const candidate of ownerDocument.elementsFromPoint(clientX, clientY)) {
     if (isAnnotationNode(candidate) || candidate.hasAttribute(INPUT_LAYER_ATTRIBUTE)) continue;
-    if (candidate === document.documentElement || candidate === document.body) continue;
+    if (candidate === ownerDocument.documentElement || candidate === ownerDocument.body) continue;
     return candidate;
   }
   return null;
@@ -282,7 +281,7 @@ function describeRawElement(element: Element): string {
   const tag = element.tagName.toLowerCase();
   const id = element.id ? `#${element.id}` : "";
   const classes =
-    element instanceof HTMLElement && typeof element.className === "string"
+    typeof element.className === "string"
       ? element.className
           .trim()
           .split(/\s+/)
@@ -321,15 +320,57 @@ function positionBox(node: HTMLElement, rect: PreviewAnnotationRect): void {
   node.style.height = `${rect.height}px`;
 }
 
+// Frame coordinates are relative to the content viewport, inside the frame's border.
+function frameViewportRect(rect: PreviewAnnotationRect, frame: Element): PreviewAnnotationRect {
+  const bounds = frame.getBoundingClientRect();
+  const scaleX = bounds.width / (frame as HTMLElement).offsetWidth || 1;
+  const scaleY = bounds.height / (frame as HTMLElement).offsetHeight || 1;
+  return {
+    x: bounds.left + (frame.clientLeft + rect.x) * scaleX,
+    y: bounds.top + (frame.clientTop + rect.y) * scaleY,
+    width: rect.width * scaleX,
+    height: rect.height * scaleY,
+  };
+}
+
+function viewportRect(element: Element): PreviewAnnotationRect {
+  let rect = rectFromDomRect(element.getBoundingClientRect());
+  for (
+    let frame = element.ownerDocument.defaultView?.frameElement;
+    frame;
+    frame = frame.ownerDocument.defaultView?.frameElement
+  ) {
+    rect = frameViewportRect(rect, frame);
+  }
+  return rect;
+}
+
+function pointerPosition(event: PointerEvent): PreviewAnnotationPoint {
+  let rect = { x: event.clientX, y: event.clientY, width: 0, height: 0 };
+  for (
+    let frame = event.view?.frameElement;
+    frame;
+    frame = frame.ownerDocument.defaultView?.frameElement
+  ) {
+    rect = frameViewportRect(rect, frame);
+  }
+  return { x: rect.x, y: rect.y };
+}
+
+function isStylableElement(element: Element): element is HTMLElement | SVGElement {
+  return "style" in element;
+}
+
 function visibleElementRect(element: Element): PreviewAnnotationRect {
+  const ownerDocument = element.ownerDocument;
   const rect = element.getBoundingClientRect();
   let left = Math.max(0, rect.left);
   let top = Math.max(0, rect.top);
-  let right = Math.min(document.documentElement.clientWidth, rect.right);
-  let bottom = Math.min(document.documentElement.clientHeight, rect.bottom);
+  let right = Math.min(ownerDocument.documentElement.clientWidth, rect.right);
+  let bottom = Math.min(ownerDocument.documentElement.clientHeight, rect.bottom);
   if (getComputedStyle(element).position !== "fixed") {
     for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
-      if (ancestor === document.body || ancestor === document.documentElement) break;
+      if (ancestor === ownerDocument.body || ancestor === ownerDocument.documentElement) break;
       const style = getComputedStyle(ancestor);
       const bounds = ancestor.getBoundingClientRect();
       const clipLeft = bounds.left + ancestor.clientLeft;
@@ -344,6 +385,27 @@ function visibleElementRect(element: Element): PreviewAnnotationRect {
       }
     }
   }
+  const local = {
+    x: left,
+    y: top,
+    width: Math.max(0, right - left),
+    height: Math.max(0, bottom - top),
+  };
+  const frame = ownerDocument.defaultView?.frameElement;
+  if (!frame) return local;
+  let translated = frameViewportRect(local, frame);
+  for (
+    let parent = frame.ownerDocument.defaultView?.frameElement;
+    parent;
+    parent = parent.ownerDocument.defaultView?.frameElement
+  ) {
+    translated = frameViewportRect(translated, parent);
+  }
+  const clip = visibleElementRect(frame);
+  left = Math.max(translated.x, clip.x);
+  top = Math.max(translated.y, clip.y);
+  right = Math.min(translated.x + translated.width, clip.x + clip.width);
+  bottom = Math.min(translated.y + translated.height, clip.y + clip.height);
   return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
 }
 
@@ -409,8 +471,8 @@ const HTML_PREVIEW_MAX_CHARS = 500;
 /** Preserve the tag, HTML, and crop rect when React context lookup fails or stalls. */
 async function captureElement(element: Element): Promise<PickedElementPayload> {
   const base = {
-    pageUrl: location.href,
-    pageTitle: document.title?.trim() || null,
+    pageUrl: element.ownerDocument.URL,
+    pageTitle: element.ownerDocument.title?.trim() || null,
     tagName: element.tagName.toLowerCase(),
     pickedAt: new Date().toISOString(),
   };
@@ -918,7 +980,7 @@ function startAnnotation(
   };
 
   const removeSelected = (target: SelectedElement): void => {
-    if (target.element instanceof HTMLElement || target.element instanceof SVGElement) {
+    if (isStylableElement(target.element)) {
       for (const [property, baseline] of target.baselineStyles) {
         if (baseline) target.element.style.setProperty(property, baseline);
         else target.element.style.removeProperty(property);
@@ -965,8 +1027,7 @@ function startAnnotation(
 
   const setStyleForSelected = (property: string, value: string): void => {
     for (const target of selected.values()) {
-      if (!(target.element instanceof HTMLElement || target.element instanceof SVGElement))
-        continue;
+      if (!isStylableElement(target.element)) continue;
       if (!target.baselineStyles.has(property)) {
         target.baselineStyles.set(property, target.element.style.getPropertyValue(property));
       }
@@ -1371,8 +1432,8 @@ function startAnnotation(
 
   const removeTargetAtPoint = (x: number, y: number): boolean => {
     for (const target of Array.from(selected.values()).toReversed()) {
-      const rect = target.element.getBoundingClientRect();
-      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+      const rect = visibleElementRect(target.element);
+      if (x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height) {
         removeSelected(target);
         updateStatus();
         return true;
@@ -1408,29 +1469,38 @@ function startAnnotation(
   };
 
   const selectElementsInRect = (rect: PreviewAnnotationRect): number => {
-    const candidates = Array.from(document.querySelectorAll("body *"))
-      .filter((element) => !isAnnotationNode(element))
-      .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+    const candidates = Array.from(annotationDocuments.keys())
+      .flatMap((doc) => Array.from(doc.querySelectorAll("body *")))
+      .filter(
+        (element) =>
+          !isAnnotationNode(element) &&
+          !(element.localName === "iframe" && (element as HTMLIFrameElement).contentDocument),
+      )
+      .map((element) => ({
+        element,
+        rect:
+          element.ownerDocument === document ? viewportRect(element) : visibleElementRect(element),
+      }))
       .filter(({ rect: candidate }) => {
         if (candidate.width < 2 || candidate.height < 2) return false;
         return !(
-          candidate.right < rect.x ||
-          candidate.left > rect.x + rect.width ||
-          candidate.bottom < rect.y ||
-          candidate.top > rect.y + rect.height
+          candidate.x + candidate.width < rect.x ||
+          candidate.x > rect.x + rect.width ||
+          candidate.y + candidate.height < rect.y ||
+          candidate.y > rect.y + rect.height
         );
       })
       .filter(({ element, rect: candidate }) => {
-        const centerX = candidate.left + candidate.width / 2;
-        const centerY = candidate.top + candidate.height / 2;
+        const centerX = candidate.x + candidate.width / 2;
+        const centerY = candidate.y + candidate.height / 2;
         return (
           centerX >= rect.x &&
           centerX <= rect.x + rect.width &&
           centerY >= rect.y &&
           centerY <= rect.y + rect.height &&
           (element.children.length === 0 ||
-            element instanceof HTMLButtonElement ||
-            element instanceof HTMLAnchorElement ||
+            element.localName === "button" ||
+            element.localName === "a" ||
             element.getAttribute("role") === "button")
         );
       })
@@ -1447,29 +1517,28 @@ function startAnnotation(
   };
 
   const onPointerMove = (event: PointerEvent): void => {
+    const point = pointerPosition(event);
     if (isAnnotationNode(event.target as Element)) {
       clearHoverOutline();
       return;
     }
     if (tool === "select" && dragStart === null) {
-      const target = pickFromPoint(event.clientX, event.clientY);
+      const target = pickFromPoint(
+        event.clientX,
+        event.clientY,
+        (event.target as Element).ownerDocument,
+      );
       if (target) positionBox(hoverOutline, visibleElementRect(target));
       else clearHoverOutline();
       return;
     }
     clearHoverOutline();
     if (tool === "marquee" && dragStart) {
-      positionBox(
-        marqueeBox,
-        normalizeRect(dragStart.x, dragStart.y, event.clientX, event.clientY),
-      );
+      positionBox(marqueeBox, normalizeRect(dragStart.x, dragStart.y, point.x, point.y));
       return;
     }
     if (tool === "draw" && activeStroke) {
-      activeStroke.target.points = [
-        ...activeStroke.target.points,
-        { x: event.clientX, y: event.clientY },
-      ];
+      activeStroke.target.points = [...activeStroke.target.points, point];
       activeStroke.target.bounds = strokeBounds(
         activeStroke.target.points,
         activeStroke.target.width,
@@ -1480,18 +1549,24 @@ function startAnnotation(
 
   const onPointerDown = (event: PointerEvent): void => {
     if (event.button !== 0 || isAnnotationNode(event.target as Element)) return;
+    const point = pointerPosition(event);
     event.preventDefault();
     event.stopPropagation();
     if (tool === "select") {
-      const target = pickFromPoint(event.clientX, event.clientY);
+      const target = pickFromPoint(
+        event.clientX,
+        event.clientY,
+        (event.target as Element).ownerDocument,
+      );
       if (target) toggleSelected(target, event.shiftKey);
       return;
     }
     if (tool === "erase") {
-      removeTargetAtPoint(event.clientX, event.clientY);
+      removeTargetAtPoint(point.x, point.y);
       return;
     }
-    dragStart = { x: event.clientX, y: event.clientY };
+    if (event.isTrusted) (event.target as Element).setPointerCapture(event.pointerId);
+    dragStart = point;
     if (tool === "draw") {
       const stroke: PreviewAnnotationStrokeTarget = {
         id: nextId("stroke"),
@@ -1515,10 +1590,11 @@ function startAnnotation(
 
   const onPointerUp = (event: PointerEvent): void => {
     if (!dragStart) return;
+    const point = pointerPosition(event);
     event.preventDefault();
     event.stopPropagation();
     if (tool === "marquee") {
-      const rect = normalizeRect(dragStart.x, dragStart.y, event.clientX, event.clientY);
+      const rect = normalizeRect(dragStart.x, dragStart.y, point.x, point.y);
       marqueeBox.style.display = "none";
       if (isUsableRect(rect)) {
         const found = selectElementsInRect(rect);
@@ -1563,8 +1639,7 @@ function startAnnotation(
 
   const restoreStyles = (): void => {
     for (const target of selected.values()) {
-      if (!(target.element instanceof HTMLElement || target.element instanceof SVGElement))
-        continue;
+      if (!isStylableElement(target.element)) continue;
       for (const [property, baseline] of target.baselineStyles) {
         if (baseline) target.element.style.setProperty(property, baseline);
         else target.element.style.removeProperty(property);
@@ -1577,17 +1652,9 @@ function startAnnotation(
     finished = true;
     rootResizeObserver.disconnect();
     restoreStyles();
-    window.removeEventListener("pointermove", onPointerMove, true);
-    window.removeEventListener("pointerdown", onPointerDown, true);
-    window.removeEventListener("pointerup", onPointerUp, true);
-    window.removeEventListener("pointerout", onPointerOut, true);
-    window.removeEventListener("click", onClick, true);
-    window.removeEventListener("blur", onWindowBlur);
+    for (const dispose of annotationDocuments.values()) dispose();
+    annotationDocuments.clear();
     window.removeEventListener("focus", onWindowFocus);
-    window.removeEventListener("keydown", onKeyDown, true);
-    window.removeEventListener("keyup", onVoiceKeyUp, true);
-    window.removeEventListener("scroll", repaint, true);
-    window.removeEventListener("resize", repaint);
     dragHandle.removeEventListener("pointerdown", onEditorPointerDown);
     dragHandle.removeEventListener("pointermove", onEditorPointerMove);
     dragHandle.removeEventListener("pointerup", onEditorPointerUp);
@@ -1681,7 +1748,7 @@ function startAnnotation(
         return {
           id: target.id,
           element,
-          rect: rectFromDomRect(target.element.getBoundingClientRect()),
+          rect: viewportRect(target.element),
         };
       }),
     )
@@ -1732,17 +1799,77 @@ function startAnnotation(
     submitAnnotation(submission);
   });
 
-  window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
-  window.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
-  window.addEventListener("pointerup", onPointerUp, { capture: true, passive: false });
-  window.addEventListener("pointerout", onPointerOut, { capture: true, passive: true });
-  window.addEventListener("click", onClick, { capture: true, passive: false });
-  window.addEventListener("blur", onWindowBlur);
+  const annotationDocuments = new Map<Document, () => void>();
+  const refreshDocuments = (): void => {
+    const reachable = new Set<Document>();
+    const visit = (doc: Document): void => {
+      reachable.add(doc);
+      for (const frame of doc.querySelectorAll("iframe")) {
+        // contentDocument is null for cross-origin and sandboxed frames.
+        if (frame.contentDocument) visit(frame.contentDocument);
+      }
+    };
+    visit(document);
+    for (const [doc, dispose] of annotationDocuments) {
+      if (reachable.has(doc)) continue;
+      dispose();
+      annotationDocuments.delete(doc);
+      for (const target of selected.values()) {
+        if (target.element.ownerDocument === doc) removeSelected(target);
+      }
+    }
+    for (const doc of reachable) {
+      if (!annotationDocuments.has(doc)) {
+        const view = doc.defaultView;
+        if (!view) continue;
+        view.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
+        view.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
+        view.addEventListener("pointerup", onPointerUp, { capture: true, passive: false });
+        view.addEventListener("pointerout", onPointerOut, { capture: true, passive: true });
+        view.addEventListener("click", onClick, { capture: true, passive: false });
+        view.addEventListener("blur", onWindowBlur);
+        view.addEventListener("keydown", onKeyDown, { capture: true });
+        view.addEventListener("keyup", onVoiceKeyUp, { capture: true });
+        view.addEventListener("scroll", repaint, { capture: true, passive: true });
+        view.addEventListener("resize", repaint, { passive: true });
+        const onFrameLoad = (event: Event): void => {
+          if ((event.target as Element).localName === "iframe") refreshDocuments();
+        };
+        doc.addEventListener("load", onFrameLoad, true);
+        const observer = new MutationObserver((records) => {
+          if (
+            records.some((record) =>
+              [...record.addedNodes, ...record.removedNodes].some(
+                (node) =>
+                  node.nodeType === 1 &&
+                  ((node as Element).matches("iframe") ||
+                    (node as Element).querySelector("iframe")),
+              ),
+            )
+          )
+            refreshDocuments();
+        });
+        observer.observe(doc, { childList: true, subtree: true });
+        annotationDocuments.set(doc, () => {
+          observer.disconnect();
+          doc.removeEventListener("load", onFrameLoad, true);
+          view.removeEventListener("pointermove", onPointerMove, true);
+          view.removeEventListener("pointerdown", onPointerDown, true);
+          view.removeEventListener("pointerup", onPointerUp, true);
+          view.removeEventListener("pointerout", onPointerOut, true);
+          view.removeEventListener("click", onClick, true);
+          view.removeEventListener("blur", onWindowBlur);
+          view.removeEventListener("keydown", onKeyDown, true);
+          view.removeEventListener("keyup", onVoiceKeyUp, true);
+          view.removeEventListener("scroll", repaint, true);
+          view.removeEventListener("resize", repaint);
+        });
+      }
+    }
+    repaint();
+  };
+  refreshDocuments();
   window.addEventListener("focus", onWindowFocus);
-  window.addEventListener("keydown", onKeyDown, { capture: true });
-  window.addEventListener("keyup", onVoiceKeyUp, { capture: true });
-  window.addEventListener("scroll", repaint, { capture: true, passive: true });
-  window.addEventListener("resize", repaint, { passive: true });
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
   if (voice) ipcRenderer.on(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);
