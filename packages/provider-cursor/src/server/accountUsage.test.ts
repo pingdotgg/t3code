@@ -336,6 +336,44 @@ describe("readCursorAccountUsage", () => {
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("tells a rejected Cursor CLI login to run agent login on the server", () =>
+    Effect.gen(function* () {
+      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+      const { authPath } = yield* writeAuth(accessToken);
+      for (const status of [401, 403]) {
+        for (const credentialSource of [authPath, { kind: "keychain" } as const]) {
+          const result = yield* readAccountUsage(
+            credentialSource,
+            0,
+            1781000000000,
+            () => new Response(null, { status }),
+            Effect.succeed(accessToken),
+          );
+          assert.include(result.error ?? "", "agent login");
+        }
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("sends a rejected API key back to provider settings", () =>
+    Effect.gen(function* () {
+      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+      for (const status of [401, 403]) {
+        const result = yield* readAccountUsage(
+          { kind: "apiKey", apiKey: "api-key" },
+          0,
+          1781000000000,
+          ({ url }) =>
+            url.endsWith("/auth/exchange_user_api_key")
+              ? Response.json({ accessToken })
+              : new Response(null, { status }),
+        );
+        assert.include(result.error ?? "", "provider settings");
+        assert.notInclude(result.error ?? "", "agent login");
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("asks for Keychain approval when the prompt goes unanswered", () =>
     Effect.gen(function* () {
       const result = yield* readAccountUsage(
