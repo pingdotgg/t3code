@@ -6268,11 +6268,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         session.status !== "stopped" &&
         session.status !== "error",
     );
-    // Detaching ends the provider process, and background agents and shells
-    // run inside it. Refuse the switch while one still reports work. Ask the
-    // adapter even with an empty projected roster: Claude's native subagents
-    // never reach pendingBackgroundTasks, and only its session-wide probe sees
-    // them. A session shared across threads is checked per thread instead.
+    // Detaching kills background work running inside the provider process.
+    // Probe even with an empty roster: Claude's native subagents never reach
+    // pendingBackgroundTasks. Sessions shared across threads probe per thread.
     for (const detaching of sessionsToDetach) {
       const session = yield* providerSessions
         .get(detaching.id)
