@@ -7218,11 +7218,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   method: "item/completed",
                   params: {
                     item: {
-                      type: "subAgentActivity",
+                      type: "collabAgentToolCall",
                       id: "call-codex-grandchild-spawn",
-                      kind: "started",
-                      agentThreadId: grandchildThread,
-                      agentPath: "/root/resume_agent/grandchild",
+                      tool: "spawnAgent",
+                      status: "completed",
+                      senderThreadId: RESUME_CHILD_THREAD,
+                      receiverThreadIds: [grandchildThread],
+                      agentsStates: {
+                        [grandchildThread]: { status: "pendingInit", message: null },
+                      },
                     },
                     threadId: RESUME_CHILD_THREAD,
                     turnId: RESUME_CHILD_TURN_1,
@@ -7290,6 +7294,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* TestClock.adjust("30 seconds");
         yield* fenced("gpt-fence-child-settled");
         assert.include(harness.continuationRequests[0]?.detail, "CHILD_DONE");
+        assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "pending");
         assert.isTrue(yield* ownsRunningWork);
 
         yield* TestClock.adjust("30 seconds");

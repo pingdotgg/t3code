@@ -7062,7 +7062,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             };
             if (options?.includeSubagents === true) {
               for (const subagent of (yield* Ref.get(subagentThreads)).values()) {
-                if (subagent.task.status === "running" && owned(subagent.parentContext)) {
+                if (
+                  isOrchestrationV2WorkActive(subagent.task.status) &&
+                  owned(subagent.parentContext)
+                ) {
                   return true;
                 }
               }
