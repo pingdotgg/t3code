@@ -450,7 +450,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
               <TooltipPopup side="bottom">Close</TooltipPopup>
             </Tooltip>
           </div>
-          <MediaActions source={actionsSource}>
+          <MediaActions source={actionsSource} showTooltip={false}>
             <div className="max-w-[var(--media-width)]">
               {item.type === "video" ? (
                 <ExpandedVideo key={index} item={item} />

@@ -28,7 +28,7 @@ import {
   getProviderSlashCommandsForSlashMenu,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
-import { useProjects, useThreadShells } from "~/state/entities";
+import { useProjects, useVisibleThreadShells } from "~/state/entities";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
@@ -126,7 +126,7 @@ export function useComposerMenuItems({
   const isPathTrigger = composerTriggerKind === "path";
   // Both `@` and `#` offer thread matches, so subscribe while either menu is open.
   const isThreadTrigger = isPathTrigger || composerTriggerKind === "pull-request";
-  const environmentThreadShells = useThreadShells(isThreadTrigger);
+  const environmentThreadShells = useVisibleThreadShells(isThreadTrigger);
   // Mounts older settled threads matching the mention, which shells may leave out.
   useThreadSearch(
     isThreadTrigger ? [environmentId, ...linkedEnvironments.keys()] : [],

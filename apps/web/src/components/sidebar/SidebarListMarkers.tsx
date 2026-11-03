@@ -130,8 +130,6 @@ export function SidebarSectionHeader(props: {
       className={cn("relative mx-0.5 h-8", props.className)}
     >
       <CollapsibleSectionHeader
-        role="treeitem"
-        tabIndex={-1}
         data-sidebar-row={`shelf:${shelf}`}
         // A click must not focus the toggle: Chromium shows the focus ring on
         // a clicked button once any key is pressed, even a lone modifier.
