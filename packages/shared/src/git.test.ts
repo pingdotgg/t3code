@@ -66,10 +66,11 @@ describe("normalizeGitRemoteUrl", () => {
 });
 
 describe("isBareGitConfig", () => {
-  it("reads a continued bare value after a comment ending in a backslash", () => {
+  it("reads continued bare values after comments and at end of input", () => {
     const config = ["[core] bare = false # ignored backslash \\", 'bare = "tr\\', 'ue"'].join("\n");
 
     expect(isBareGitConfig(config)).toBe(true);
+    expect(isBareGitConfig("[core]\nbare = tr\\\nue\\")).toBe(true);
   });
 });
 

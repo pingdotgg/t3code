@@ -190,6 +190,7 @@ function* gitConfigLines(configText: string) {
     pending = "";
     quoted = false;
   }
+  if (pending.length > 0) yield pending;
 }
 
 function parseGitConfigValue(raw: string): string {
