@@ -173,6 +173,27 @@ describe("deriveActivitySummary", () => {
     ]);
   });
 
+  it("strips the workspace root only where a path starts, never inside another path", () => {
+    const labels = (input: string, root: string | null) =>
+      summarize([command(input, "completed")], root).done.map((step) => step.label);
+
+    expect(labels("cat /var/app/src/a.ts", "/app")).toEqual(["cat /var/app/src/a.ts"]);
+    expect(labels("cat /app/src/a.ts", "/app")).toEqual(["cat src/a.ts"]);
+    expect(labels("cat /app/a.ts /app/b.ts", "/app")).toEqual(["cat a.ts b.ts"]);
+    expect(labels("cd /a/b", "/")).toEqual(["cd /a/b"]);
+    expect(labels("cd /a/b", "")).toEqual(["cd /a/b"]);
+  });
+
+  it("does not offer to open a relative path that leaves the workspace", () => {
+    const opened = (fileName: string) =>
+      summarize([edit(fileName, 1, 0)], "/repo").touched[0]?.files[0]?.openable;
+
+    expect(opened("src/a.ts")).toBe(true);
+    expect(opened("../outside.md")).toBe(false);
+    expect(opened("src/../../outside.md")).toBe(false);
+    expect(opened("src/../b.ts")).toBe(true);
+  });
+
   it("turns absolute paths into workspace paths and flags files outside the workspace", () => {
     const summary = summarize(
       [edit("/repo/apps/web/a.ts", 1, 0), edit("/elsewhere/notes.md", 1, 0)],

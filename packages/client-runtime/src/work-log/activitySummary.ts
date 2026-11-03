@@ -1,5 +1,9 @@
 import type { ThreadStructureVisibleTurnItem } from "../state/models.ts";
-import { isAbsolutePath, workspaceRelativeFilePath } from "@t3tools/shared/path";
+import {
+  isAbsolutePath,
+  resolveWorkspaceFilePath,
+  workspaceRelativeFilePath,
+} from "@t3tools/shared/path";
 import * as DateTime from "effect/DateTime";
 
 type TurnItem = ThreadStructureVisibleTurnItem["item"];
@@ -110,9 +114,18 @@ function dirname(path: string): string {
 }
 
 function withoutRoot(text: string, workspaceRoot: string | null): string {
-  return workspaceRoot === null
-    ? text
-    : text.replaceAll(`${workspaceRoot.replace(/[\\/]+$/, "")}/`, "");
+  const trimmedRoot = workspaceRoot?.replace(/[\\/]+$/, "");
+  if (!trimmedRoot) return text;
+  const prefix = `${trimmedRoot}/`;
+  let result = "";
+  let from = 0;
+  for (let at = text.indexOf(prefix); at !== -1; at = text.indexOf(prefix, from)) {
+    result += text.slice(from, at);
+    from = at + prefix.length;
+    // `/var/app/x` contains `/app/` but is not inside the workspace `/app`.
+    if (/[\w./~-]/.test(text[at - 1] ?? "")) result += prefix;
+  }
+  return result + text.slice(from);
 }
 
 // Some providers title every tool call "Tool", which says nothing.
@@ -168,7 +181,16 @@ function addCount(current: number | null, next: number | undefined): number | nu
 }
 
 function workspacePath(fileName: string, workspaceRoot: string | null) {
-  if (!isAbsolutePath(fileName)) return { path: fileName, openable: true };
+  if (!isAbsolutePath(fileName)) {
+    // `../x` is not in the workspace, and the file service rejects it.
+    const inside =
+      workspaceRoot === null ||
+      workspaceRelativeFilePath(
+        resolveWorkspaceFilePath(fileName, workspaceRoot),
+        workspaceRoot,
+      ) !== null;
+    return { path: fileName, openable: inside };
+  }
   const relative = workspaceRelativeFilePath(fileName, workspaceRoot);
   return relative === null
     ? { path: fileName, openable: false }
