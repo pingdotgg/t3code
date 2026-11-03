@@ -364,6 +364,7 @@ export function DraftProjectRow(props: {
             <span className="min-w-0 truncate">{props.detail}</span>
           )}
         </span>
+        {props.badge}
         {props.shortcut ? <Kbd>{props.shortcut}</Kbd> : null}
       </button>
       {props.action ? (
@@ -373,7 +374,6 @@ export function DraftProjectRow(props: {
           {props.action}
         </div>
       ) : null}
-      <span className="flex shrink-0 pe-2.5 empty:hidden">{props.badge}</span>
     </div>
   );
 }
