@@ -1,10 +1,11 @@
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useCallback } from "react";
-import { BackHandler, Keyboard, Platform } from "react-native";
+import { BackHandler, Platform } from "react-native";
 import {
   resetAndroidWorkspace,
   returnToAndroidWorkspaceList,
 } from "../../lib/android-workspace-navigation";
+import { dismissOpenKeyboard } from "../keyboard/dismissOpenKeyboard";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { WorkspaceTab } from "./workspace-tabs-state";
 
@@ -39,8 +40,7 @@ export function useAndroidWorkspaceBack(tab: WorkspaceTab) {
       if (Platform.OS !== "android") return;
       dispatch?.({ type: "select", tab });
       const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-        if (Keyboard.isVisible()) Keyboard.dismiss();
-        else goBack();
+        if (!dismissOpenKeyboard()) goBack();
         return true;
       });
       return () => subscription.remove();
