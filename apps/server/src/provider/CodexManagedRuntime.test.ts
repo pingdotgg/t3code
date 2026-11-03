@@ -1,13 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off - checks the host's default Codex directory without writing to it.
-import * as NodeURL from "node:url";
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { CodexSettings, EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -26,9 +23,6 @@ import { codexAppServerArgs } from "./codexLaunchArgs.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeSettings = Schema.decodeSync(CodexSettings);
-const decodeCommand = Schema.decodeUnknownSync(
-  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.Array(Schema.String)])),
-);
 it.live.each(
   (["managed", "local"] as const).flatMap((source) =>
     (["primary", "additional"] as const).map((account) => ({ source, account })),
@@ -144,58 +138,13 @@ it.live.each(
           const provider = args.find((arg) =>
             arg.startsWith("model_providers.openai_token_sharing="),
           )!;
-          assert.include(provider, 'base_url="https://api.openai.com/v1"');
-          assert.include(provider, 'model_catalog_url="https://api.openai.com/v1/models"');
-          assert.notInclude(provider, "env_key");
-          assert.include(provider, "refresh_interval_ms=0");
-          // regression: #16132 Codex fetches each token through this helper, so a running
-          // session picks up renewals instead of keeping the token it launched with.
-          if (source === "managed" && account === "primary") {
-            const commandMatch = /auth=\{command=(.*),args=(\[.*\]),timeout_ms=/u.exec(provider);
-            assert.isNotNull(commandMatch);
-            const [command, helperArgs] = decodeCommand(
-              `[${commandMatch![1]},${commandMatch![2]}]`,
-            );
-            const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-            const runHelper = Effect.gen(function* () {
-              const child = yield* spawner.spawn(
-                ChildProcess.make(command, helperArgs, {
-                  extendEnv: false,
-                  env: effective.environment,
-                }),
-              );
-              const [stdout, stderr, code] = yield* Effect.all(
-                [
-                  child.stdout.pipe(Stream.decodeText(), Stream.mkString),
-                  child.stderr.pipe(Stream.decodeText(), Stream.mkString),
-                  child.exitCode,
-                ],
-                { concurrency: "unbounded" },
-              );
-              return { stdout, stderr, code: Number(code) };
-            }).pipe(Effect.scoped);
-            assert.deepEqual(yield* runHelper, {
-              stdout: "dummy-owned-access",
-              stderr: "",
-              code: 0,
-            });
-            const saved = Option.getOrThrow(yield* runtime.auth.read);
-            const expired = yield* encodeJson({ ...saved, expiresAt: 0 });
-            yield* store.set(new TextEncoder().encode(expired));
-            assert.deepEqual(yield* runHelper, { stdout: "renewed-access", stderr: "", code: 0 });
-            assert.equal(renewals, 1);
-            assert.equal(
-              Option.getOrThrow(yield* runtime.auth.read).refreshToken,
-              "renewed-refresh",
-            );
-            assert.equal((yield* runtime.resolve).revision, effective.revision);
-            const replaced = yield* encodeJson({ ...saved, subject: "replacement-user" });
-            yield* store.set(new TextEncoder().encode(replaced));
-            const refused = yield* runHelper;
-            assert.equal(refused.code, 1);
-            assert.equal(refused.stdout, "");
-            assert.isFalse(yield* fs.exists(ambient.T3CODE_HOME));
-          }
+          assert.include(provider, 'base_url="http://127.0.0.1:');
+          assert.include(provider, 'model_catalog_url="http://127.0.0.1:');
+          assert.include(provider, 'env_key="T3_CODEX_MANAGED_TOKEN"');
+          assert.isString(effective.environment.T3_CODEX_MANAGED_TOKEN);
+          assert.notInclude(provider, "auth={");
+          assert.equal((yield* runtime.resolve).revision, effective.revision);
+          assert.equal(renewals, 0);
           assert.include(args, "features.api_key_model_discovery=true");
           assert.include(args, "features.multi_agent=false");
           assert.include(args, "features.multi_agent_v2=false");
@@ -217,10 +166,6 @@ it.live.each(
         );
       }).pipe(
         Effect.provide(CodexManagedTokenBroker.layer),
-        Effect.provideService(HostProcess.Arguments, [
-          process.execPath,
-          NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url)),
-        ]),
         Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
         Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
           getEnvironmentId: Effect.succeed(
