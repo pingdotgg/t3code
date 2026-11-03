@@ -110,7 +110,11 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       }
 
       if (thinking !== undefined && isPiThinkingLevel(thinking)) {
-        yield* connection.request({ type: "set_thinking_level", level: thinking });
+        // Pi rejects xhigh/max for models without a thinkingLevelMap entry; a stale saved
+        // level falls back to Pi's default instead of failing the whole generation.
+        yield* connection
+          .request({ type: "set_thinking_level", level: thinking })
+          .pipe(Effect.catchTags({ PiRpcError: () => Effect.void }));
       }
 
       yield* connection.request({ type: "prompt", message: prompt });

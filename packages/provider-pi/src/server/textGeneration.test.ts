@@ -20,6 +20,7 @@ const makeFakePi = (
   setModelError?: string,
   turnEvents: ReadonlyArray<Record<string, unknown>> = [],
   version = "0.84.3",
+  thinkingError?: string,
 ) =>
   Effect.gen(function* () {
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
@@ -44,6 +45,8 @@ const makeFakePi = (
             yield* emit({ ...response, success: true, data: { text: reply } });
           } else if (record["type"] === "set_model" && setModelError !== undefined) {
             yield* emit({ ...response, success: false, error: setModelError });
+          } else if (record["type"] === "set_thinking_level" && thinkingError !== undefined) {
+            yield* emit({ ...response, success: false, error: thinkingError });
           } else {
             yield* emit({ ...response, success: true });
           }
@@ -225,4 +228,36 @@ it.effect.each([
         expected,
       );
     }),
+);
+
+it.effect("generates at Pi's default level when Pi rejects the saved thinking level", () =>
+  Effect.gen(function* () {
+    const pi = yield* makeFakePi(
+      JSON.stringify({ subject: "Update README", body: "" }),
+      undefined,
+      [],
+      "1.4.0",
+      'Thinking level "max" is not supported by demo/demo-model',
+    );
+    const textGeneration = yield* makePiTextGeneration(
+      { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
+      {},
+    ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner));
+
+    const result = yield* textGeneration.generateCommitMessage({
+      cwd: process.cwd(),
+      branch: "main",
+      stagedSummary: "M README.md",
+      stagedPatch: "diff --git a/README.md b/README.md",
+      modelSelection: createModelSelection(ProviderInstanceId.make("pi"), "demo/demo-model", [
+        { id: "thinking", value: "max" },
+      ]),
+    });
+
+    assert.equal(result.subject, "Update README");
+    assert.deepEqual(
+      pi.received.map((record) => record["type"]),
+      ["set_model", "set_thinking_level", "prompt", "get_last_assistant_text"],
+    );
+  }),
 );
