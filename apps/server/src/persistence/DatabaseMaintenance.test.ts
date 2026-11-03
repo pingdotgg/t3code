@@ -199,5 +199,37 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath, readonly: true })));
       }).pipe(Effect.scoped),
     );
+
+    it.effect("reports each compaction step as it starts", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-compact-steps-" });
+        const dbPath = path.join(baseDir, "userdata", "statev2.sqlite");
+        yield* Effect.flatMap(
+          ProjectionMaintenance.ProjectionMaintenanceV2,
+          (projections) => projections.rebuild,
+        ).pipe(
+          Effect.provide(
+            ProjectionMaintenance.layer.pipe(
+              Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
+              Layer.provideMerge(Sqlite.layerFromPath(dbPath)),
+            ),
+          ),
+        );
+
+        const steps: string[] = [];
+        yield* maintenance.compact(dbPath, (step) => Effect.sync(() => steps.push(step)));
+        assert.deepEqual(steps, [
+          "verify",
+          "compact-events",
+          "verify",
+          "vacuum",
+          "rebuild-search",
+          "checkpoint",
+        ]);
+      }).pipe(Effect.scoped),
+    );
   },
 );
