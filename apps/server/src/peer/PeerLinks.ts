@@ -12,8 +12,10 @@ import {
   type PeerLinkStatus,
   type PeerLinkSummary,
 } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -21,17 +23,24 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
+
+const PeerHttpApi = HttpApi.make(EnvironmentHttpApi.identifier)
+  .add(EnvironmentHttpApi.groups.metadata)
+  .add(EnvironmentHttpApi.groups.mcpOAuth)
+  .annotateMerge(EnvironmentHttpApi.annotations);
 
 /** The redirect registered for a link. Nothing ever listens there: the code comes back in the response. */
 const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
@@ -162,7 +171,8 @@ const linkLimitsHold = (peer: { readonly capabilities: ExecutionEnvironmentCapab
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -172,7 +182,7 @@ const make = Effect.gen(function* () {
   );
 
   /** A fresh name for one link's token; the row records it. */
-  const newSecretName = crypto.randomBytes(16).pipe(
+  const newSecretName = random.randomBytes(16).pipe(
     Effect.map((bytes) => `peer-link-${Hex.encode(bytes)}`),
     Effect.orDie,
   );
@@ -184,7 +194,7 @@ const make = Effect.gen(function* () {
   );
 
   const clientFor = (origin: string) =>
-    HttpApiClient.make(EnvironmentHttpApi, { baseUrl: origin }).pipe(
+    HttpApiClient.make(PeerHttpApi, { baseUrl: origin }).pipe(
       Effect.provideService(HttpClient.HttpClient, peerHttpClient),
     );
 
@@ -213,12 +223,13 @@ const make = Effect.gen(function* () {
 
   const readRows = sql<PeerLinkRow>`
     SELECT * FROM peer_environment_links ORDER BY label, environment_id
-  `.pipe(Effect.catch(failStorage));
+  `.pipe(NodeSqliteClient.readOnly, Effect.catch(failStorage));
 
   const readRow = (environmentId: EnvironmentId) =>
     sql<PeerLinkRow>`
       SELECT * FROM peer_environment_links WHERE environment_id = ${environmentId}
     `.pipe(
+      NodeSqliteClient.readOnly,
       Effect.catch(failStorage),
       Effect.map((rows) => Option.fromNullishOr(rows[0])),
     );
@@ -248,11 +259,11 @@ const make = Effect.gen(function* () {
             ),
           ),
         );
-      const verifier = Base64Url.encode(yield* crypto.randomBytes(32).pipe(Effect.orDie));
+      const verifier = Base64Url.encode(yield* random.randomBytes(32));
       const challenge = Base64Url.encode(
-        yield* crypto.digest("SHA-256", new TextEncoder().encode(verifier)).pipe(Effect.orDie),
+        yield* digest.digest(Digest.sha256, new TextEncoder().encode(verifier)).pipe(Effect.orDie),
       );
-      const state = Base64Url.encode(yield* crypto.randomBytes(16).pipe(Effect.orDie));
+      const state = Base64Url.encode(yield* random.randomBytes(16));
       const resource = `${origin}/mcp`;
       const decided = yield* client.mcpOAuth
         .decision({
@@ -263,7 +274,7 @@ const make = Effect.gen(function* () {
               redirect_uri: LINK_REDIRECT_URI,
               code_challenge: challenge,
               code_challenge_method: "S256",
-              state,
+              state: Redacted.make(state),
               resource,
             },
             decision: { _tag: "pairing-code", access: input.access, code: input.pairingCode },
@@ -297,10 +308,10 @@ const make = Effect.gen(function* () {
         .token({
           payload: {
             grant_type: "authorization_code",
-            code,
+            code: Redacted.make(code),
             redirect_uri: LINK_REDIRECT_URI,
             client_id: registered.client_id,
-            code_verifier: verifier,
+            code_verifier: Redacted.make(verifier),
             resource,
           },
         })

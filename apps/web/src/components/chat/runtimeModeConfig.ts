@@ -1,4 +1,8 @@
-import type { RuntimeMode } from "@t3tools/contracts";
+import {
+  managedRuntimeModeDenial,
+  type ManagedPolicySummary,
+  type RuntimeMode,
+} from "@t3tools/contracts";
 import {
   type LucideIcon,
   LockIcon,
@@ -46,4 +50,15 @@ export function resolveCompatibleRuntimeMode(
       ? runtimeModeOptions.filter((mode) => supportedRuntimeModes.includes(mode))
       : runtimeModeOptions;
   return { modes, mode: modes.includes(runtimeMode) ? runtimeMode : (modes[0] ?? runtimeMode) };
+}
+
+export function resolveRuntimeModeOptions(
+  modes: ReadonlyArray<RuntimeMode>,
+  managedPolicy: ManagedPolicySummary | undefined,
+) {
+  return modes.map((mode) => {
+    const option = { mode, ...runtimeModeConfig[mode] };
+    const disabledReason = managedRuntimeModeDenial(managedPolicy, mode);
+    return disabledReason === undefined ? option : { ...option, disabledReason };
+  });
 }

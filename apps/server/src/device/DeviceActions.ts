@@ -102,10 +102,8 @@ const textSizeFromIos = (category: string): DeviceTextSize | undefined => {
   );
   if (entry) return entry[0];
   if (category.startsWith("accessibility")) return "extra-large";
-  if (category.includes("extra")) return "large";
-  return category === "extra-small" || category === "small" || category === "medium"
-    ? "small"
-    : "default";
+  if (category === "extra-small" || category === "small" || category === "medium") return "small";
+  return category.includes("extra") ? "large" : "default";
 };
 
 const textSizeFromAndroid = (scale: number): DeviceTextSize => {
