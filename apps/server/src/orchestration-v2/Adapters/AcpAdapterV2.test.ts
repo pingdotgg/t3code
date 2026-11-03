@@ -3960,8 +3960,12 @@ describe("AcpAdapterV2", () => {
       yield* TestClock.adjust("10 minutes");
       yield* harness.emitUpdate(thought("mock-session-1"));
       yield* TestClock.adjust("5 minutes");
-      // Another session's progress must not extend this turn.
+      // Neither another session's progress nor this session's metadata extends this turn.
       yield* harness.emitUpdate(thought("foreign-session"));
+      yield* harness.emitUpdate({
+        sessionId: "mock-session-1",
+        update: { sessionUpdate: "available_commands_update", availableCommands: [] },
+      });
       yield* TestClock.adjust(Duration.millis(10 * 60_000 - 1));
       assert.isTrue(yield* harness.nextTurnRejected(2));
 
@@ -4058,24 +4062,35 @@ describe("AcpAdapterV2", () => {
     Effect.gen(function* () {
       const harness = yield* makePromptInactivityHarness({
         environment: (runtimeOrdinal) =>
-          runtimeOrdinal === 1 ? { T3_ACP_HANG_PROMPT_FOREVER: "1" } : {},
+          runtimeOrdinal === 1
+            ? { T3_ACP_EMIT_TOOL_CALLS: "1" }
+            : runtimeOrdinal === 2
+              ? { T3_ACP_HANG_PROMPT_FOREVER: "1" }
+              : {},
+        runtimeMode: "approval-required",
       });
       yield* harness.startTurn(1);
-      yield* harness.emitUpdate({
-        sessionId: "mock-session-1",
-        update: {
-          sessionUpdate: "agent_thought_chunk",
-          content: { type: "text", text: "Working." },
-        },
-      });
+      // The dying agent leaves an approval unanswered.
+      yield* harness.runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+        ),
+        Stream.runHead,
+      );
       yield* harness.natives[0]!.notify("_test/exit", {});
       const [exited] = yield* harness.terminals(1);
       assert.equal(exited?.status, "failed");
 
+      // The replacement's silent prompt still times out.
       yield* harness.startTurn(2);
-      const [next] = yield* harness.terminals(1);
+      yield* TestClock.adjust("15 minutes");
+      yield* harness.startTurn(3);
+      const [silent, next] = yield* harness.terminals(2);
+      assert.equal(silent?.status, "failed");
+      assert.notEqual(silent?.providerTurnId, exited?.providerTurnId);
       assert.equal(next?.status, "completed");
-      assert.notEqual(next?.providerTurnId, exited?.providerTurnId);
+      assert.lengthOf(harness.natives, 3);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
