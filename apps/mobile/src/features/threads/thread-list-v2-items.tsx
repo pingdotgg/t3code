@@ -74,6 +74,7 @@ import {
   resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
   type ThreadListV2Status,
+  type ThreadListV2ProjectFolderListItem,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
@@ -248,6 +249,74 @@ const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(prop
   readonly pane?: "screen" | "sidebar";
 }) {
   return <ThreadListV2Section {...props} />;
+});
+
+export const ThreadListV2ProjectFolder = memo(function ThreadListV2ProjectFolder(props: {
+  readonly item: ThreadListV2ProjectFolderListItem;
+  readonly pane?: "screen" | "sidebar";
+  readonly onToggle: (key: string) => void;
+}) {
+  const { item } = props;
+  const status = item.status === null ? undefined : STATUS_LABEL_BY_STATUS[item.status];
+  const hiddenStatus = !item.expanded
+    ? (status?.label ?? (item.unread ? "Unread completion" : null))
+    : null;
+  const sidebar = props.pane === "sidebar";
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${item.title}, ${item.count} ${item.count === 1 ? "thread" : "threads"}${hiddenStatus ? `, ${hiddenStatus}` : ""}`}
+      accessibilityHint={`${item.expanded ? "Collapses" : "Expands"} the project folder.`}
+      accessibilityState={{ expanded: item.expanded, disabled: item.disabled }}
+      disabled={item.disabled}
+      onPress={() => props.onToggle(item.projectKey)}
+      className={cn("mt-3 min-h-11 flex-row items-center gap-2.5 py-2", sidebar ? "px-3" : "px-5")}
+      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+    >
+      <ProjectFavicon
+        environmentId={item.project.environmentId}
+        projectTitle={item.title}
+        workspaceRoot={item.project.workspaceRoot}
+        faviconPath={item.project.faviconPath}
+        projectIcon={item.project.projectIcon}
+        open={item.expanded}
+        size={20}
+      />
+      <Text
+        numberOfLines={1}
+        className={cn(
+          "flex-1 text-sm font-t3-medium",
+          sidebar ? "text-drawer-foreground" : "text-foreground",
+        )}
+      >
+        {item.title}
+      </Text>
+      {!item.expanded && status ? (
+        <SymbolView
+          name={status.icon}
+          size={14}
+          tintColorClassName={status.iconTintClassName}
+          type="monochrome"
+        />
+      ) : !item.expanded && item.unread ? (
+        <View className="size-1.5 rounded-full bg-primary" />
+      ) : null}
+      <Text
+        className={cn(
+          "text-xs tabular-nums",
+          sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted",
+        )}
+      >
+        {item.count}
+      </Text>
+      <SymbolView
+        name={item.expanded ? "chevron.down" : "chevron.right"}
+        size={10}
+        tintColorClassName={sidebar ? "accent-drawer-foreground-muted" : "accent-foreground-muted"}
+        type="monochrome"
+      />
+    </Pressable>
+  );
 });
 
 type ThreadListV2ShelfHeaderProps = {

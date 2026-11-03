@@ -23,6 +23,7 @@ import {
   sortWorkingThreadsBySend,
 } from "@t3tools/client-runtime/state/thread-inbox";
 import {
+  getThreadSortTimestamp,
   sortActiveThreadsByOrderKey,
   resolveSettledThreadTimestamp,
   sortPinnedThreadsByOrderKey,
@@ -36,6 +37,7 @@ import type { ThreadMoveAvailability } from "./threadOrder";
 
 import { relativeTime } from "../../lib/time";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import type { HomeProjectScope } from "../home/homeThreadList";
 
 import {
   applyPendingThreadOrder,
@@ -386,9 +388,23 @@ export interface ThreadListV2SettledShelfListItem {
   readonly disabled: boolean;
 }
 
+export interface ThreadListV2ProjectFolderListItem {
+  readonly type: "v2-project-folder";
+  readonly key: string;
+  readonly projectKey: string;
+  readonly title: string;
+  readonly project: HomeProjectScope["representative"];
+  readonly count: number;
+  readonly expanded: boolean;
+  readonly disabled: boolean;
+  readonly status: ThreadListV2Status | null;
+  readonly unread: boolean;
+}
+
 export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
+  | ThreadListV2ProjectFolderListItem
   | ThreadListV2WorkingShelfListItem
   | ThreadListV2SnoozedShelfListItem
   | ThreadListV2SettledShelfListItem;
@@ -399,6 +415,7 @@ export function isThreadListV2ListItem(value: {
   return (
     value.type === "v2-thread" ||
     value.type === "v2-pending" ||
+    value.type === "v2-project-folder" ||
     value.type === "v2-working-shelf" ||
     value.type === "v2-snoozed-shelf" ||
     value.type === "v2-settled-shelf"
@@ -411,6 +428,18 @@ export function threadListV2ListItemsAreEqual(
   item: ThreadListV2ListItem,
 ): boolean {
   switch (item.type) {
+    case "v2-project-folder":
+      return (
+        previous.type === "v2-project-folder" &&
+        previous.key === item.key &&
+        previous.project === item.project &&
+        previous.title === item.title &&
+        previous.count === item.count &&
+        previous.expanded === item.expanded &&
+        previous.disabled === item.disabled &&
+        previous.status === item.status &&
+        previous.unread === item.unread
+      );
     case "v2-thread":
       return (
         previous.type === "v2-thread" &&
@@ -458,6 +487,90 @@ export function threadListV2ListItemsAreEqual(
         previous.disabled === item.disabled
       );
   }
+}
+
+export function groupThreadListV2ByProject(input: {
+  readonly items: ReadonlyArray<ThreadListV2ListItem>;
+  readonly scopes: ReadonlyArray<HomeProjectScope>;
+  readonly collapsedProjectKeys: ReadonlySet<string>;
+  readonly selectedThreadKey: string | null;
+  readonly disabled: boolean;
+}): ThreadListV2ListItem[] {
+  const folders = input.scopes.map((scope) => ({
+    scope,
+    rows: [] as ThreadListV2ThreadListItem[],
+  }));
+  const folderByProject = new Map(
+    folders.flatMap((folder) =>
+      folder.scope.projectRefs.map(
+        (ref) => [`${ref.environmentId}:${ref.projectId}`, folder] as const,
+      ),
+    ),
+  );
+  const leading: ThreadListV2ListItem[] = [];
+  const shelves: ThreadListV2ListItem[] = [];
+  for (const row of input.items) {
+    if (row.type === "v2-pending" || (row.type === "v2-thread" && row.item.pinned)) {
+      leading.push(row);
+    } else if (row.type === "v2-thread" && row.item.variant === "card" && !row.item.snoozed) {
+      const folder = folderByProject.get(
+        `${row.item.thread.environmentId}:${row.item.thread.projectId}`,
+      );
+      // Keep a thread reachable while its project's shell is unavailable.
+      if (folder === undefined) leading.push(row);
+      else folder.rows.push(row);
+    } else {
+      shelves.push(row);
+    }
+  }
+  const result = [...leading];
+  for (const { scope, rows } of folders) {
+    if (rows.length === 0) continue;
+    rows.sort(
+      (left, right) =>
+        getThreadSortTimestamp(right.item.thread, "updated_at") -
+          getThreadSortTimestamp(left.item.thread, "updated_at") ||
+        left.key.localeCompare(right.key),
+    );
+    const expanded = !input.collapsedProjectKeys.has(scope.key);
+    const statuses = new Set(rows.map((row) => resolveThreadListV2Status(row.item.thread)));
+    const status =
+      (["approval", "input", "request", "limited", "failed", "working"] as const).find(
+        (candidate) => statuses.has(candidate),
+      ) ?? null;
+    result.push({
+      type: "v2-project-folder",
+      key: `v2-project-folder:${scope.key}`,
+      projectKey: scope.key,
+      title: scope.title,
+      project: scope.representative,
+      count: rows.length,
+      expanded,
+      disabled: input.disabled,
+      status,
+      unread: rows.some(
+        (row) =>
+          resolveThreadListV2Status(row.item.thread) === "ready" &&
+          threadHasUnseenCompletion(row.item.thread),
+      ),
+    });
+    for (const row of rows) {
+      if (
+        expanded ||
+        `${row.item.thread.environmentId}:${row.item.thread.id}` === input.selectedThreadKey
+      ) {
+        result.push({ ...row, canMoveUp: false, canMoveDown: false });
+      }
+    }
+  }
+  result.push(...shelves);
+  return result.map((row, index) => {
+    if (row.type !== "v2-thread" && row.type !== "v2-pending") return row;
+    const next = result[index + 1];
+    const showTrailingDivider =
+      next?.type === "v2-thread" || (next?.type === "v2-pending" && !next.showPendingDivider);
+    return row.showTrailingDivider === showTrailingDivider ? row : { ...row, showTrailingDivider };
+  });
 }
 
 function resolveThreadListV2ItemTimeLabel(

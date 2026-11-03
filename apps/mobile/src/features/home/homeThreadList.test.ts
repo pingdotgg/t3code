@@ -7,7 +7,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { buildHomeProjectScopes, findHomeProjectScope } from "./homeThreadList";
 import { makeThreadShellFixture } from "../../test-fixtures";
-import { buildThreadListV2Items } from "../threads/threadListV2";
+import {
+  buildThreadListV2Items,
+  buildThreadListV2ListItems,
+  groupThreadListV2ByProject,
+} from "../threads/threadListV2";
 
 function makeProject(
   input: Partial<EnvironmentProject> & Pick<EnvironmentProject, "environmentId" | "id" | "title">,
@@ -43,6 +47,90 @@ function makeThread(
     ...input,
   });
 }
+
+describe("project folders in the thread list", () => {
+  it("keeps pins and shelves outside folders, respects host identity, and retains selected rows when collapsed", () => {
+    const local = EnvironmentId.make("local");
+    const remote = EnvironmentId.make("remote");
+    const projectId = ProjectId.make("same-id");
+    const projects = [local, remote].map((environmentId) =>
+      makeProject({ environmentId, id: projectId, title: "Project" }),
+    );
+    const scopes = buildHomeProjectScopes({
+      projects,
+      environmentId: null,
+      projectGroupingMode: "separate",
+    });
+    const thread = (id: string, patch: Partial<EnvironmentThreadShell> = {}) =>
+      makeThread({ environmentId: local, projectId, id: ThreadId.make(id), title: id, ...patch });
+    const now = "2026-06-02T00:00:00.000Z";
+    const threads = [
+      thread("old", { latestUserMessageAt: "2026-06-01T01:00:00.000Z" }),
+      thread("new", { latestUserMessageAt: "2026-06-01T02:00:00.000Z", hasPendingApprovals: true }),
+      thread("remote", { environmentId: remote }),
+      thread("pin", { pinnedAt: now }),
+      thread("settled", { settledOverride: "settled", settledAt: now }),
+      thread("snoozed", { snoozedAt: now, snoozedUntil: "2026-06-03T00:00:00.000Z" }),
+      thread("missing-project", { projectId: ProjectId.make("missing") }),
+    ];
+    const layout = buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now,
+      snoozedShelfExpanded: true,
+      settledShelfExpanded: true,
+    });
+    const items = buildThreadListV2ListItems({
+      ...layout,
+      pendingTasks: [],
+      snoozedShelfExpanded: true,
+      settledShelfExpanded: true,
+    });
+    const group = (
+      collapsedProjectKeys: ReadonlySet<string>,
+      selectedThreadKey: string | null = null,
+    ) =>
+      groupThreadListV2ByProject({
+        items,
+        scopes,
+        collapsedProjectKeys,
+        selectedThreadKey,
+        disabled: false,
+      });
+    const expanded = group(new Set());
+    const keys = (rows: typeof expanded) => rows.map((row) => row.key);
+    expect(keys(expanded)).toEqual([
+      "v2-thread:local:pin",
+      "v2-thread:local:missing-project",
+      `v2-project-folder:${scopes[0]!.key}`,
+      "v2-thread:local:new",
+      "v2-thread:local:old",
+      `v2-project-folder:${scopes[1]!.key}`,
+      "v2-thread:remote:remote",
+      "v2-snoozed-shelf",
+      "v2-thread:local:snoozed",
+      "v2-settled-shelf",
+      "v2-thread:local:settled",
+    ]);
+    const collapsed = group(new Set([scopes[0]!.key]), "local:old");
+    expect(keys(collapsed)).not.toContain("v2-thread:local:new");
+    expect(keys(collapsed)).toContain("v2-thread:local:old");
+    expect(keys(collapsed)).toContain("v2-thread:remote:remote");
+    expect(collapsed.find((row) => row.type === "v2-project-folder")).toMatchObject({
+      count: 2,
+      expanded: false,
+      status: "approval",
+    });
+    const lastLocal = expanded.find((row) => row.key === "v2-thread:local:old");
+    expect(lastLocal).toMatchObject({
+      showTrailingDivider: false,
+      canMoveUp: false,
+      canMoveDown: false,
+    });
+    expect(group(new Set())).toEqual(expanded);
+  });
+});
 
 describe("home project scopes", () => {
   it("filters threads across both scratch hosts while retaining the selected environment boundary", () => {

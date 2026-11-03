@@ -42,10 +42,29 @@ export function SettingsLabsRouteScreen() {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        <BoringSidebarSettingsSection />
         <BetaSettingsSection />
         <LegacySettingsSection />
       </ScrollView>
     </SettingsScreen>
+  );
+}
+
+function BoringSidebarSettingsSection() {
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const loaded = AsyncResult.isSuccess(preferences);
+  return (
+    <SettingsSection title="Beta">
+      <SettingsSwitchRow
+        icon="folder"
+        label="Boring sidebar (group by project)"
+        subtitle="Group active threads into project folders on this device."
+        disabled={!loaded}
+        value={loaded && preferences.value.boringSidebarEnabled === true}
+        onValueChange={(value) => savePreferences({ boringSidebarEnabled: value })}
+      />
+    </SettingsSection>
   );
 }
 

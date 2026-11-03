@@ -68,6 +68,7 @@ import { createSidebarHeaderItems } from "./sidebar-native-header-items";
 import { SidebarNavigationShell } from "./sidebar-navigation-shell";
 import {
   ThreadListV2PendingRow,
+  ThreadListV2ProjectFolder,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
@@ -277,6 +278,9 @@ function ThreadNavigationSidebarPane(
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    boringSidebarEnabled,
+    collapsedProjectKeys,
+    toggleProjectFolder,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
@@ -323,6 +327,9 @@ function ThreadNavigationSidebarPane(
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey: props.selectedThreadKey ?? null,
+    folderScopes: boringSidebarEnabled ? projectScopes : undefined,
+    collapsedProjectKeys,
+    projectSortOrder: options.projectSortOrder,
   });
   const listItems: readonly SidebarListItem[] =
     settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
@@ -602,7 +609,9 @@ function ThreadNavigationSidebarPane(
             reorderSupported={
               item.item.pinned
                 ? pinReorderEnvironmentIds.has(thread.environmentId)
-                : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId)
+                : !boringSidebarEnabled &&
+                  !workingShelfEnabled &&
+                  activeReorderEnvironmentIds.has(thread.environmentId)
             }
             canMoveUp={item.canMoveUp}
             canMoveDown={item.canMoveDown}
@@ -619,6 +628,10 @@ function ThreadNavigationSidebarPane(
           />
         );
       }
+      case "v2-project-folder":
+        return (
+          <ThreadListV2ProjectFolder item={item} pane="sidebar" onToggle={toggleProjectFolder} />
+        );
       case "v2-working-shelf":
         return (
           <ThreadListV2WorkingShelfHeader

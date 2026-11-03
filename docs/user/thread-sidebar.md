@@ -156,6 +156,12 @@ needs you. Use the pen button on a folder, or right-click it, to start a thread 
 Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
 cannot drag threads, and the Working section is off. Each device keeps its own choice.
 
+On mobile, the same **Settings → Labs → Boring sidebar (group by project)** option groups active
+threads in both the Threads list and the tablet sidebar. Tap a project to expand or collapse it;
+the device remembers closed folders. Search still finds threads inside closed folders. Pinned
+threads stay above the folders, Snoozed and Settled stay below, and working threads stay in their
+projects. Turn the option off to restore the flat list and your previous Working section preference.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list
