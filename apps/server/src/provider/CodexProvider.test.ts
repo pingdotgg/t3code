@@ -158,18 +158,77 @@ it("ignores custom models that shadow a preferred slug", () => {
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
 });
 
-it("exempts loopback from the user's proxy so Codex reaches T3's MCP server", () => {
-  const environment = codexAppServerEnvironment({
-    HTTPS_PROXY: "http://proxy.corp.example:8080",
-    HTTP_PROXY: "http://proxy.corp.example:8080",
-    NO_PROXY: "intranet.corp.example",
-  });
-  const hosts = (value: string | undefined) => (value ?? "").split(",").map((host) => host.trim());
+const PROXY = "http://proxy.corp.example:8080";
+const LOOPBACK = "127.0.0.1,localhost,::1";
+const BLANK_SHELL_NO_PROXY = [
+  "-c",
+  'shell_environment_policy.set.NO_PROXY=""',
+  "-c",
+  'shell_environment_policy.set.no_proxy=""',
+];
 
-  for (const key of ["NO_PROXY", "no_proxy"]) {
-    for (const loopback of ["127.0.0.1", "localhost", "::1"]) {
-      assert.include(hosts(environment[key]), loopback, `${key} must exempt ${loopback}`);
-    }
-  }
-  assert.include(hosts(environment.NO_PROXY), "intranet.corp.example");
+it.each([
+  {
+    name: "extends each spelling the user set with only its own hosts",
+    platform: "linux",
+    environment: { HTTP_PROXY: PROXY, NO_PROXY: "intranet.example", no_proxy: "remote.example" },
+    expected: { NO_PROXY: `intranet.example,${LOOPBACK}`, no_proxy: `remote.example,${LOOPBACK}` },
+    configArgs: [],
+  },
+  {
+    name: "does not create NO_PROXY, which would shadow the user's no_proxy",
+    platform: "darwin",
+    environment: { no_proxy: "remote.example" },
+    expected: { NO_PROXY: undefined, no_proxy: `remote.example,${LOOPBACK}` },
+    configArgs: [],
+  },
+  {
+    name: "keeps a wildcard as the user wrote it",
+    platform: "linux",
+    environment: { HTTPS_PROXY: PROXY, NO_PROXY: "*" },
+    expected: { NO_PROXY: "*", no_proxy: undefined },
+    configArgs: [],
+  },
+  {
+    name: "creates both spellings when Codex already uses env proxies",
+    platform: "win32",
+    environment: { https_proxy: PROXY },
+    expected: { NO_PROXY: LOOPBACK, no_proxy: LOOPBACK },
+    configArgs: [],
+  },
+  {
+    name: "exempts loopback from a macOS system proxy without reaching agent shells",
+    platform: "darwin",
+    environment: {},
+    expected: { NO_PROXY: LOOPBACK, no_proxy: LOOPBACK },
+    configArgs: BLANK_SHELL_NO_PROXY,
+  },
+  {
+    name: "leaves Linux without env proxies unchanged",
+    platform: "linux",
+    environment: { NO_PROXY: "" },
+    expected: { NO_PROXY: "", no_proxy: undefined },
+    configArgs: [],
+  },
+  {
+    name: "keeps the Windows registry bypass list in charge without env proxies",
+    platform: "win32",
+    environment: {},
+    expected: { NO_PROXY: undefined, no_proxy: undefined },
+    configArgs: [],
+  },
+] satisfies ReadonlyArray<{
+  name: string;
+  platform: NodeJS.Platform;
+  environment: NodeJS.ProcessEnv;
+  expected: { NO_PROXY: string | undefined; no_proxy: string | undefined };
+  configArgs: ReadonlyArray<string>;
+}>)("$name", ({ platform, environment, expected, configArgs }) => {
+  const launch = codexAppServerEnvironment(environment, platform);
+
+  assert.deepStrictEqual(
+    { NO_PROXY: launch.env.NO_PROXY, no_proxy: launch.env.no_proxy },
+    expected,
+  );
+  assert.deepStrictEqual(launch.configArgs, configArgs);
 });
