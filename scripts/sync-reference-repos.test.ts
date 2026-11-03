@@ -31,7 +31,7 @@ it.layer(NodeServices.layer)("sync-reference-repos", (it) => {
     }),
   );
 
-  it.effect("plans an add for a missing subtree and a pull for an existing subtree", () =>
+  it.effect("plans a shallow, tagless clone of the resolved ref", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -43,19 +43,17 @@ it.layer(NodeServices.layer)("sync-reference-repos", (it) => {
         "catalog:\n  effect: 4.0.0-beta.73\n",
       );
 
-      const addPlan = yield* planReferenceRepoSync(effectSmol, rootDir, false);
-      assert.equal(addPlan.action, "add");
-      assert.deepStrictEqual(addPlan.args, [
-        "subtree",
-        "add",
-        "--prefix=.repos/effect-smol",
+      const plan = yield* planReferenceRepoSync(effectSmol, rootDir, false);
+      assert.equal(plan.ref, "effect@4.0.0-beta.73");
+      assert.deepStrictEqual(plan.cloneArgs, [
+        "clone",
+        "--quiet",
+        "--depth=1",
+        "--no-tags",
+        "--single-branch",
+        "--branch=effect@4.0.0-beta.73",
         "https://github.com/Effect-TS/effect.git",
-        "effect@4.0.0-beta.73",
-        "--squash",
       ]);
-
-      yield* fs.makeDirectory(path.join(rootDir, effectSmol.prefix), { recursive: true });
-      assert.equal((yield* planReferenceRepoSync(effectSmol, rootDir, false)).action, "pull");
     }),
   );
 });
