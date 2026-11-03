@@ -10,7 +10,11 @@ import * as Schema from "effect/Schema";
 export class WindowsTcpProbeError extends Schema.TaggedError<WindowsTcpProbeError>()(
   "WindowsTcpProbeError",
   { operation: Schema.Literals(["load", "listeners", "process-name"]), cause: Schema.Defect() },
-) {}
+) {
+  override get message(): string {
+    return `Windows TCP discovery failed during ${this.operation}.`;
+  }
+}
 
 /** Native Windows listener rows retain every owner until PortDiscovery resolves ownership. */
 export class WindowsTcpListeners extends Context.Service<
