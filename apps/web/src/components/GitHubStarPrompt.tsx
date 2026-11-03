@@ -15,8 +15,8 @@ const DISMISSED_KEY = "t3code:github-star-prompt:dismissed";
 const REPOSITORY = "pingdotgg/t3code";
 const PROMPTS_BEFORE_ASKING = 5;
 const IDLE_MS = 30_000;
-// Every user-driven action (send, navigate, type, scroll) starts with one of these.
-const ACTIVITY_EVENTS = ["pointerdown", "keydown", "wheel", "touchstart", "focus"] as const;
+// User-driven actions (send, navigate, type, scroll) start with one of these; touch fires pointerdown.
+const ACTIVITY_EVENTS = ["pointerdown", "keydown", "wheel", "focus"] as const;
 
 let shownThisSession = false;
 

@@ -6,7 +6,11 @@ import type { toastManager } from "./ui/toast";
 const { add, starred, page } = vi.hoisted(() => ({
   add: vi.fn<typeof toastManager.add>(),
   starred: { value: false, failed: false, duringCheck: () => {} },
-  page: { focused: true, events: new EventTarget() },
+  page: {
+    focused: true,
+    activeElement: null as { matches: (selector: string) => boolean } | null,
+    events: new EventTarget(),
+  },
 }));
 vi.mock("./ui/toast", () => ({ toastManager: { add, close: vi.fn() } }));
 vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
@@ -27,9 +31,15 @@ function setup({ sent = 0, writable = true, alreadyStarred = false } = {}) {
   starred.failed = false;
   starred.duringCheck = () => {};
   page.focused = true;
+  page.activeElement = null;
   page.events = new EventTarget();
   const store = new Map([["t3code:github-star-prompt:sent", String(sent)]]);
-  vi.stubGlobal("document", { hasFocus: () => page.focused, activeElement: null });
+  vi.stubGlobal("document", {
+    hasFocus: () => page.focused,
+    get activeElement() {
+      return page.activeElement;
+    },
+  });
   vi.stubGlobal("window", {
     addEventListener: page.events.addEventListener.bind(page.events),
     removeEventListener: page.events.removeEventListener.bind(page.events),
@@ -75,7 +85,13 @@ describe("recordPromptSent", () => {
     expect(add).not.toHaveBeenCalled();
 
     page.focused = true;
+    page.activeElement = { matches: (selector) => selector.includes("iframe") };
     page.events.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(IDLE_MS);
+    expect(add).not.toHaveBeenCalled();
+
+    page.activeElement = null;
+    page.events.dispatchEvent(new Event("pointerdown"));
     await vi.advanceTimersByTimeAsync(IDLE_MS);
     expect(add).toHaveBeenCalledOnce();
     vi.unstubAllGlobals();
