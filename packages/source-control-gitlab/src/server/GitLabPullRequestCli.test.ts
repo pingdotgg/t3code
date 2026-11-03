@@ -1056,6 +1056,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         cwd: "/w",
         repository: "acme/web",
         number: 7,
+        host: "gitlab.internal",
       });
 
       expect(detail.checks.map((check) => [check.name, check.status, check.url])).toEqual([
@@ -1063,6 +1064,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         ["deploy", "failure", "https://gitlab.com/bilal/web/-/pipelines/32"],
       ]);
       expect(argsOfCall(1)[1]).toBe("projects/12/pipelines/31/bridges?per_page=100");
+      expect(callAt(1).host).toBe("gitlab.internal");
     }),
   );
 
