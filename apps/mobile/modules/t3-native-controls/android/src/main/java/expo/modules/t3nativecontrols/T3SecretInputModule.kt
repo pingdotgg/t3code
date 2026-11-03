@@ -29,6 +29,10 @@ class T3SecretInputModule : Module() {
       Prop("placeholder") { view: T3SecretInputView, value: String ->
         view.input.hint = value
       }
+      // Not "accessibilityLabel": React Native applies that to the outer view, not the EditText.
+      Prop("inputLabel") { view: T3SecretInputView, value: String ->
+        view.input.contentDescription = value
+      }
       Prop("textColor") { view: T3SecretInputView, value: Int -> view.input.setTextColor(value) }
       Prop("placeholderColor") { view: T3SecretInputView, value: Int ->
         view.input.setHintTextColor(value)

@@ -6,6 +6,7 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { SecretTextInputProps } from "./SecretTextInput.types";
 
 interface NativeSecretInputProps extends ViewProps {
+  readonly inputLabel: string;
   readonly value: string;
   readonly placeholder: string;
   readonly textColor: number;
@@ -38,7 +39,7 @@ export function SecretTextInput(props: SecretTextInputProps) {
   return (
     <View className="min-h-13.5 justify-center rounded-2xl border border-input-border bg-input px-3.5">
       <NativeSecretInput
-        accessibilityLabel={props.accessibilityLabel}
+        inputLabel={props.accessibilityLabel}
         value={props.value}
         placeholder={props.placeholder}
         textColor={nativeColor(flattenThemeColor(theme["--color-foreground"], surface))}
