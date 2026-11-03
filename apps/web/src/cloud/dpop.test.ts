@@ -1,7 +1,7 @@
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { decodeJwt } from "jose";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import { createBrowserDpopProof, generateBrowserDpopKey } from "./dpop";
@@ -11,6 +11,7 @@ describe("browser DPoP proofs", () => {
   it.effect("signs relay resource proofs with an access-token hash", () =>
     Effect.gen(function* () {
       vi.stubGlobal("indexedDB", undefined);
+      yield* TestClock.setTime(1_700_000_000_000);
       const proofKey = yield* generateBrowserDpopKey;
       const proof = yield* createBrowserDpopProof({
         method: "POST",
@@ -18,8 +19,6 @@ describe("browser DPoP proofs", () => {
         accessToken: "relay-access-token",
         proofKey,
       }).pipe(Effect.provide(Dpop.layer));
-      const issuedAt = decodeJwt(proof.proof).iat;
-      expect(issuedAt).toBeTypeOf("number");
 
       expect(
         verifyDpopProof({
@@ -28,7 +27,7 @@ describe("browser DPoP proofs", () => {
           url: "https://relay.example.test/v1/environments/env-1/connect",
           expectedThumbprint: proof.thumbprint,
           expectedAccessToken: "relay-access-token",
-          nowEpochSeconds: issuedAt!,
+          nowEpochSeconds: 1_700_000_000,
         }),
       ).toMatchObject({ ok: true });
     }),

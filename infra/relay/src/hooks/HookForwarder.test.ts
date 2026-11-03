@@ -4,9 +4,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
 import * as EffectNodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
-import { RelayApi } from "@t3tools/contracts/relay";
+import { RelayApi, RelayHookDeliveryProofPayload } from "@t3tools/contracts/relay";
 import * as Deferred from "effect/Deferred";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -256,14 +255,13 @@ describe("HookForwarder", () => {
         }),
       );
       const sent = harness.sent[0]!;
-      const payload = yield* verifyRelayJwt({
+      const payload = yield* verifyRelayJwt(RelayHookDeliveryProofPayload, {
         publicKey: mintKeys.publicKey,
         token: sent.headers["x-t3-relay-delivery"]!,
         typ: RELAY_HOOK_DELIVERY_TYP,
         issuer: settings.relayIssuer,
         audience: `t3-env:${environmentId}`,
-        nowEpochSeconds: Math.floor((yield* Clock.currentTimeMillis) / 1_000),
-      });
+      }).pipe(Effect.provide(EffectNodeCrypto.layerSignature));
       expect(payload).toMatchObject({
         environmentId,
         hookId: "hook-1",

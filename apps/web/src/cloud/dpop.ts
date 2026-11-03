@@ -5,11 +5,14 @@ import {
 } from "@t3tools/shared/dpop";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Signature from "effect/crypto/Signature";
+import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Jwt from "effect/jose/Jwt";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { importJWK, SignJWT, type JWK } from "jose";
 
 export interface BrowserDpopKey {
   readonly privateKey: CryptoKey;
@@ -28,7 +31,9 @@ const DPOP_KEY_STORE_NAME = "keys";
 const DPOP_KEY_ID = "relay-dpop-proof-key";
 const decodeDpopPublicJwk = Schema.decodeUnknownEffect(DpopPublicJwk);
 
-export const layer = Layer.mergeAll(SecureRandom.layerWebCrypto, Digest.layerWebCrypto);
+export const layer = Layer.mergeAll(Digest.layerWebCrypto, Signature.layerWebCrypto).pipe(
+  Layer.provideMerge(SecureRandom.layerWebCrypto),
+);
 
 function dpopError(message: string, cause?: unknown) {
   return new BrowserDpopError({ message, ...(cause === undefined ? {} : { cause }) });
@@ -122,7 +127,10 @@ export const generateBrowserDpopKey = Effect.gen(function* () {
     ),
   );
   const privateKey = yield* Effect.tryPromise({
-    try: () => importJWK(privateJwk as JWK, "ES256", { extractable: false }) as Promise<CryptoKey>,
+    try: () =>
+      crypto.subtle.importKey("jwk", privateJwk, { name: "ECDSA", namedCurve: "P-256" }, false, [
+        "sign",
+      ]),
     catch: (cause) => dpopError("Could not import DPoP private key.", cause),
   });
   return {
@@ -140,7 +148,7 @@ export const createBrowserDpopProof = Effect.fn("dpop.createBrowserDpopProof")(f
 }): Effect.fn.Return<
   { readonly proof: string; readonly thumbprint: string },
   BrowserDpopError,
-  SecureRandom.SecureRandom
+  SecureRandom.SecureRandom | Signature.Signature
 > {
   const normalizedUrl = yield* Effect.try({
     try: () => new URL(input.url),
@@ -149,22 +157,24 @@ export const createBrowserDpopProof = Effect.fn("dpop.createBrowserDpopProof")(f
   normalizedUrl.search = "";
   normalizedUrl.hash = "";
   const jti = yield* SecureRandom.SecureRandom.pipe(Effect.flatMap((random) => random.uuidV4()));
-  const proof = yield* Effect.tryPromise({
-    try: () =>
-      new SignJWT({
-        htm: input.method.toUpperCase(),
-        htu: normalizedUrl.toString(),
-        jti,
-        ...(input.accessToken ? { ath: computeDpopAccessTokenHash(input.accessToken) } : {}),
-      })
-        .setProtectedHeader({
-          typ: "dpop+jwt",
-          alg: "ES256",
-          jwk: input.proofKey.publicJwk,
-        })
-        .setIssuedAt()
-        .sign(input.proofKey.privateKey),
-    catch: (cause) => dpopError("Could not sign DPoP proof.", cause),
-  });
+  const key = yield* Signature.privateKeyFromCryptoKey(
+    Signature.ecdsaP256,
+    input.proofKey.privateKey,
+  ).pipe(Effect.mapError((cause) => dpopError("Could not load DPoP proof key.", cause)));
+  const proof = yield* Jwt.sign(
+    Schema.Json,
+    {
+      htm: input.method.toUpperCase(),
+      htu: normalizedUrl.toString(),
+      jti,
+      iat: Math.floor((yield* Clock.currentTimeMillis) / 1_000),
+      ...(input.accessToken ? { ath: computeDpopAccessTokenHash(input.accessToken) } : {}),
+    },
+    { _tag: "PrivateKey", algorithm: "ES256", kid: undefined, key },
+    { typ: "dpop+jwt", jwk: input.proofKey.publicJwk },
+  ).pipe(
+    Effect.map(Redacted.value),
+    Effect.mapError((cause) => dpopError("Could not sign DPoP proof.", cause)),
+  );
   return { proof, thumbprint: input.proofKey.thumbprint };
 });

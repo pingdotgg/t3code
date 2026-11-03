@@ -44,6 +44,7 @@ import {
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Signature from "effect/crypto/Signature";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -374,9 +375,6 @@ function normalizePemForSignedPayload(value: string): string {
   return value.trim();
 }
 
-const decodeCloudHealthProof = Schema.decodeUnknownEffect(RelayCloudEnvironmentHealthProofPayload);
-const decodeCloudMintProof = Schema.decodeUnknownEffect(RelayCloudMintCredentialProofPayload);
-
 type ManagedTunnelRecoveryProofInput = {
   readonly environmentId: RelayManagedEndpointRecoveryProofPayload["environmentId"];
   readonly cloudUserId: string;
@@ -532,6 +530,7 @@ const make = Effect.gen(function* () {
   const httpServer = yield* HttpServer.HttpServer;
   const awarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
   const random = yield* SecureRandom.SecureRandom;
+  const signature = yield* Signature.Signature;
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -623,6 +622,7 @@ const make = Effect.gen(function* () {
       typ: RELAY_LINK_PROOF_TYP,
       payload,
     }).pipe(
+      Effect.provideService(Signature.Signature, signature),
       Effect.mapError(
         (cause) =>
           new EnvironmentAuth.ServerAuthCloudLinkJwtSigningError({
@@ -960,6 +960,7 @@ const make = Effect.gen(function* () {
       typ: RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
       payload,
     }).pipe(
+      Effect.provideService(Signature.Signature, signature),
       Effect.mapError(
         (cause) => new CloudLinkInternalError({ operation: "sign-recovery-proof", cause }),
       ),
@@ -1453,14 +1454,13 @@ const make = Effect.gen(function* () {
       const linkedCloudUserId = yield* readInstalledCloudUserId;
       const now = yield* DateTime.now;
       const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
-      const proofOption = yield* verifyRelayJwt({
+      const proofOption = yield* verifyRelayJwt(RelayCloudEnvironmentHealthProofPayload, {
         publicKey: cloudMintPublicKey,
         token: request.proof,
         typ: RELAY_HEALTH_REQUEST_TYP,
         issuer: normalizeRelayIssuer(relayIssuer),
         audience: `t3-env:${environmentId}`,
-        nowEpochSeconds: nowSeconds,
-      }).pipe(Effect.flatMap(decodeCloudHealthProof), Effect.option);
+      }).pipe(Effect.provideService(Signature.Signature, signature), Effect.option);
       if (
         Option.isNone(proofOption) ||
         proofOption.value.environmentId !== environmentId ||
@@ -1504,6 +1504,7 @@ const make = Effect.gen(function* () {
         typ: RELAY_HEALTH_RESPONSE_TYP,
         payload: responsePayload,
       }).pipe(
+        Effect.provideService(Signature.Signature, signature),
         Effect.mapError(
           (cause) =>
             new EnvironmentAuth.ServerAuthCloudHealthJwtSigningError({
@@ -1556,14 +1557,13 @@ const make = Effect.gen(function* () {
       const linkedCloudUserId = yield* readInstalledCloudUserId;
       const now = yield* DateTime.now;
       const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
-      const proofOption = yield* verifyRelayJwt({
+      const proofOption = yield* verifyRelayJwt(RelayCloudMintCredentialProofPayload, {
         publicKey: cloudMintPublicKey,
         token: request.proof,
         typ: RELAY_MINT_REQUEST_TYP,
         issuer: normalizeRelayIssuer(relayIssuer),
         audience: `t3-env:${environmentId}`,
-        nowEpochSeconds: nowSeconds,
-      }).pipe(Effect.flatMap(decodeCloudMintProof), Effect.option);
+      }).pipe(Effect.provideService(Signature.Signature, signature), Effect.option);
       if (
         Option.isNone(proofOption) ||
         proofOption.value.environmentId !== environmentId ||
@@ -1612,6 +1612,7 @@ const make = Effect.gen(function* () {
         typ: RELAY_MINT_RESPONSE_TYP,
         payload: responsePayload,
       }).pipe(
+        Effect.provideService(Signature.Signature, signature),
         Effect.mapError(
           (cause) =>
             new EnvironmentAuth.ServerAuthCloudMintJwtSigningError({
