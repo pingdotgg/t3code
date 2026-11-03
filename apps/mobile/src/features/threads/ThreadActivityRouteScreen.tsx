@@ -8,7 +8,8 @@ import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import { deriveThreadStructureRuntime } from "@t3tools/client-runtime/state/thread-execution";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { Platform, View } from "react-native";
+import { useEffect, useRef } from "react";
+import { AccessibilityInfo, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
@@ -132,6 +133,17 @@ function StatusBanner(props: { readonly summary: ActivitySummary }) {
     }
     if (touchedTotals.files > 0) details.push(`${plural(touchedTotals.files, "file")} changed`);
   }
+
+  // iOS has no live regions, so say when the run's state changes, not on every step.
+  const phaseKey = `${phase}:${summary.outcome}`;
+  const spoken = phase === "running" ? "Working" : title;
+  const announcedPhaseKey = useRef(phaseKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells VoiceOver about a change outside React
+  useEffect(() => {
+    if (announcedPhaseKey.current === phaseKey) return;
+    announcedPhaseKey.current = phaseKey;
+    if (Platform.OS === "ios") AccessibilityInfo.announceForAccessibility(spoken);
+  }, [phaseKey, spoken]);
 
   return (
     <View
