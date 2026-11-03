@@ -469,7 +469,9 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     ...(present.length > 0
       ? [command("format", ["fmt", "--check", "--no-error-on-unmatched-pattern", ...present])]
       : []),
-    ...(code.length > 0 ? [command("lint", ["lint", ...code])] : []),
+    ...(code.length > 0
+      ? [command("lint", ["lint", "--no-error-on-unmatched-pattern", ...code])]
+      : []),
     ...(runKnip
       ? knipPasses.map((args, index) => command(`knip ${index + 1}/${knipPasses.length}`, args))
       : []),
