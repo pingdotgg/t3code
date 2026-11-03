@@ -120,6 +120,8 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     /** `undefined` makes `loginctl show-user` fail, as when logind does not know the user. */
     linger: string | undefined;
     managerReachable: boolean;
+    /** The user bus is found only through `XDG_RUNTIME_DIR`, as without a login session. */
+    busNeedsRuntimeDir: boolean;
     lingerStartsManager: boolean;
     enabled: boolean;
     active: boolean;
@@ -127,6 +129,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     failCommand: undefined,
     linger: "yes",
     managerReachable: true,
+    busNeedsRuntimeDir: false,
     lingerStartsManager: true,
     enabled: true,
     active: true,
@@ -186,7 +189,8 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
           failed ||
             unitOutsideManager ||
             ((command === "systemctl --user show-environment" || input.command === "busctl") &&
-              !control.managerReachable) ||
+              (!control.managerReachable ||
+                (control.busNeedsRuntimeDir && input.env?.XDG_RUNTIME_DIR === undefined))) ||
             (input.command === "loginctl" &&
               input.args[0] === "show-user" &&
               control.linger === undefined) ||
@@ -374,6 +378,20 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         problem: "user-manager-unavailable",
       });
       expect(yield* fs.exists(statePath)).toBe(false);
+    }),
+  );
+
+  it.effect("does not reach a running root user manager under sudo", () =>
+    Effect.gen(function* () {
+      const { makeService, commands, control } = yield* makeHarness();
+      control.busNeedsRuntimeDir = true;
+      const service = yield* makeService(undefined, "1.2.3", undefined, false, undefined, true);
+
+      expect(yield* service.install().pipe(Effect.flip)).toMatchObject({
+        _tag: "BootServicePrerequisiteError",
+        problem: "user-manager-unavailable",
+      });
+      expect(commands).not.toContain("systemctl --user enable t3code.service");
     }),
   );
 

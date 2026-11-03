@@ -581,7 +581,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const xdgConfigHome = yield* Config.String("XDG_CONFIG_HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
   const xdgRuntimeDir = yield* Config.String("XDG_RUNTIME_DIR").pipe(Config.withDefault(""));
-  const sudoUser = yield* Config.String("SUDO_USER").pipe(Config.withDefault(""));
+  // Root under sudo must not reach or start a separate root service.
+  const rootUnderSudo =
+    uid === 0 && (yield* Config.String("SUDO_USER").pipe(Config.withDefault(""))) !== "";
   const runningInsideService =
     (yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
     BOOT_SERVICE_UNIT_FILE;
@@ -591,7 +593,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   // Without a login session nothing sets this, so `--user` commands cannot find the user bus.
   // The directory only appears once lingering starts the manager, so it need not exist yet.
   const userManagerEnv =
-    platform === "linux" && xdgRuntimeDir === "" && uid !== undefined
+    platform === "linux" && xdgRuntimeDir === "" && uid !== undefined && !rootUnderSudo
       ? { XDG_RUNTIME_DIR: `/run/user/${uid}` }
       : undefined;
   const runner: ProcessRunner.ProcessRunner["Service"] =
@@ -773,11 +775,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const firstProblem = problems[0];
     if (firstProblem === undefined) return;
     // Logind reports a user without a session, whose manager is not running yet, as linger-unavailable.
-    // Root under sudo has no session either, but must not get a separate root service.
     const withoutSession =
       problems.includes("linger-unavailable") &&
       problems.includes("user-manager-unavailable") &&
-      !(uid === 0 && sudoUser !== "");
+      !rootUnderSudo;
     const lingerDisabled = problems.includes("linger-disabled");
     if (!lingerDisabled && !withoutSession) {
       return yield* new BootServicePrerequisiteError({ problem: firstProblem });
