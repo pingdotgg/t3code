@@ -4106,11 +4106,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
-        ),
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),
