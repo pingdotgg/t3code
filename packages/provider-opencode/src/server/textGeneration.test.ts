@@ -456,6 +456,67 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
     ),
   );
 
+  it.effect(
+    "maps OpenCode prompt errors to fixed details and keeps provider text in the cause",
+    () =>
+      Effect.forEach(
+        [
+          {
+            error: {
+              name: "APIError",
+              data: {
+                message: "Org quota secret-org exceeded",
+                statusCode: 429,
+                isRetryable: true,
+              },
+            },
+            rawText: "secret-org",
+            detail: "The model provider's usage or rate limit was reached. Try again later.",
+          },
+          {
+            error: {
+              name: "APIError",
+              data: {
+                message: "<none>",
+                statusCode: 503,
+                isRetryable: true,
+                responseBody: "<title>Upstream gateway secret-host</title>",
+              },
+            },
+            rawText: "secret-host",
+            detail: "The model provider failed the request (HTTP 503).",
+          },
+          {
+            error: { name: "UnknownError", data: { message: "Provider stack trace secret-token" } },
+            rawText: "secret-token",
+            detail: "OpenCode could not generate the text.",
+          },
+        ],
+        (testCase) =>
+          withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+            Effect.gen(function* () {
+              runtimeMock.state.promptResult = {
+                data: { info: { error: testCase.error }, parts: [] },
+              };
+
+              const error = yield* textGeneration
+                .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+                .pipe(Effect.flip);
+
+              expect(error.detail).toBe(testCase.detail);
+              expect(error.message).not.toContain(testCase.rawText);
+              expect(error.cause).toMatchObject({
+                _tag: "OpenCodeTextGenerationPromptResponseError",
+                providerErrorName: testCase.error.name,
+                cause: testCase.error,
+              });
+              expect((error.cause as Error).message).not.toContain(testCase.rawText);
+            }),
+          ),
+        { discard: true },
+      ),
+  );
+
   it.effect("deletes the session when the prompt request rejects", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
