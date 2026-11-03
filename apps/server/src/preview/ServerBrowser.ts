@@ -1376,7 +1376,7 @@ const make = Effect.gen(function* () {
         if (opener.control.agentId === null) controller?.push({ _tag: "popup", tabId: tab.tabId });
       },
       async () => {
-        await popup.close().catch(constVoid);
+        if (opener.desktop === null) await popup.close().catch(constVoid);
       },
     );
   };

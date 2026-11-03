@@ -2244,12 +2244,17 @@ it.live("profiles reported by one client survive another client's report", () =>
 );
 
 it.live.each([
-  { budget: "agent", limit: 8 },
-  { budget: "server", limit: 32 },
-])("opens and popups reserve the $budget budget before session creation", ({ budget, limit }) =>
+  { budget: "agent", limit: 8, host: "server" },
+  { budget: "server", limit: 32, host: "server" },
+  { budget: "agent", limit: 8, host: "desktop" },
+  { budget: "server", limit: 32, host: "desktop" },
+])("reserves the $budget budget for opens and $host popups", ({ budget, limit, host }) =>
   Effect.scoped(
     Effect.gen(function* () {
+      desktopRendersNext = host === "desktop";
       const { broker, browser, tabId } = yield* ready;
+      const openerPage =
+        host === "desktop" ? desktopConnections[0]!.context.page : contexts[0]!.page;
       const manager = yield* Manager.PreviewManager;
       const open = (target = scope) =>
         broker.invoke<PreviewAutomationStatus>({
@@ -2293,7 +2298,7 @@ it.live.each([
         await launchGate.promise;
         return newCDPSession(target);
       };
-      contexts[0]!.page.emit("popup", popup.page);
+      openerPage.emit("popup", popup.page);
       const last = yield* open().pipe(Effect.result, Effect.forkScoped);
       const overflow = yield* open().pipe(Effect.result, Effect.forkScoped);
       // The host processes this after the opens, while manager creation is blocked.
@@ -2321,7 +2326,7 @@ it.live.each([
       // The same slots must stay reserved after publication, while pages are still opening.
       const duringLaunch = yield* open().pipe(Effect.result, Effect.forkScoped);
       const rejectedPopup = makeContext();
-      contexts[0]!.page.emit("popup", rejectedPopup.page);
+      openerPage.emit("popup", rejectedPopup.page);
       yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
       launchGate.resolve();
 
@@ -2333,13 +2338,13 @@ it.live.each([
           failure: { _tag: "PreviewAutomationControlInterruptedError", reason: "tabLimit" },
         });
       }
-      yield* Effect.promise(() => resized.promise);
+      if (host === "server") yield* Effect.promise(() => resized.promise);
       const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
       for (const session of sessions)
         yield* browser.attachViewer(viewerInput(session.tabId, false));
       expect(sessions).toHaveLength(limit);
       expect(popup.page.isClosed()).toBe(false);
-      expect(rejectedPopup.page.isClosed()).toBe(true);
+      expect(rejectedPopup.page.isClosed()).toBe(host === "server");
       const status = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         tabId,
