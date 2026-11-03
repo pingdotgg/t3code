@@ -1396,6 +1396,7 @@ function workShownAsFinalAnswerOnly(
       pendingApprovalRequestIds?.has(item.requestId) === true) ||
     work.questionAnswer !== undefined ||
     timelineEntryIsCompaction(entry) ||
+    timelineEntryStartsResponse(entry) ||
     work.tone === "error" ||
     work.sourceActivityKind === "runtime.error" ||
     (work.itemType === "error" && work.toolLifecycleStatus !== "completed")
@@ -1433,7 +1434,7 @@ function timelineRowEntries(
   const visibility = input.toolCallVisibility ?? "showAll";
   const entries = input.timelineEntries;
   let shown = entries;
-  if (visibility === "finalAnswersOnly") {
+  if (visibility === "zen") {
     const answering = input.isWorking && input.latestRun?.turnEnded !== true;
     const answeringRunId = answering
       ? deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null)
@@ -1752,11 +1753,14 @@ export function deriveMessagesTimelineRows(input: {
   const activeCompactionRunId = compactsOnReturn
     ? runningCompactionRunId
     : (resumeCompactionEntry?.entry.runId ?? null);
+  const endedRunId = input.latestRun?.turnEnded === true ? input.latestRun.runId : null;
+  const zenAnswerLanded =
+    input.toolCallVisibility === "zen" &&
+    endedRunId !== null &&
+    timelineEntries.findLastIndex((entry) => timelineEntryRunId(entry) === endedRunId) >=
+      activeTurnHeaderIndex;
   const appendWorkingRow = () => {
-    if (compactionOnlyRunFinished) return;
-    if (input.toolCallVisibility === "finalAnswersOnly" && input.latestRun?.turnEnded === true) {
-      return;
-    }
+    if (compactionOnlyRunFinished || zenAnswerLanded) return;
     if (runningCompactionRunId !== null && activeCompactionRunId === null) return;
     nextRows.push({
       kind: "working",

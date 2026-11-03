@@ -2734,20 +2734,18 @@ describe("v2 run and attempt history", () => {
       command("failed", "failed", 9),
       message("final", "assistant", 20),
     ];
+    const running = { runId, status: "running" as const, startedAt: at(0), completedAt: null };
+    const ended = { ...running, turnEnded: true };
     const rows = (
       timelineEntries: ReadonlyArray<TimelineEntry>,
-      toolCallVisibility: "hideSuccessful" | "hideAll" | "finalAnswersOnly",
-      isWorking = false,
+      toolCallVisibility: "hideSuccessful" | "hideAll" | "zen",
+      latestRun?: typeof ended | typeof running,
     ) =>
       deriveMessagesTimelineRows({
         timelineEntries,
         expandedRunIds: new Set([runId]),
-        isWorking,
-        ...(isWorking
-          ? {
-              latestRun: { runId, status: "running" as const, startedAt: at(0), completedAt: null },
-            }
-          : {}),
+        isWorking: latestRun !== undefined,
+        ...(latestRun ? { latestRun } : {}),
         turnDiffSummaries: [],
         supportsConversationRollback: false,
         toolCallVisibility,
@@ -2762,29 +2760,41 @@ describe("v2 run and attempt history", () => {
       "final",
     ]);
     expect(rows([user, failed, final], "hideAll")).toEqual(["user", "final"]);
-    expect(rows(turn, "finalAnswersOnly")).toEqual(["user", "final"]);
-    expect(rows([user, step, passed], "finalAnswersOnly", true)).toEqual([
+    expect(rows(turn, "zen")).toEqual(["user", "final"]);
+    expect(rows([user, step, passed], "zen", running)).toEqual([
       "user",
       "working-indicator-row",
       "live-activity-row",
     ]);
     expect(liveAnswerPreview([user, step, passed])).toBe("step");
-    expect(
-      deriveMessagesTimelineRows({
-        timelineEntries: turn,
-        isWorking: true,
-        latestRun: {
-          runId,
-          status: "running",
-          startedAt: at(0),
-          completedAt: null,
-          turnEnded: true,
-        },
-        turnDiffSummaries: [],
-        supportsConversationRollback: false,
-        toolCallVisibility: "finalAnswersOnly",
-      }).map((row) => row.id),
-    ).toEqual(["user", "final"]);
+    expect(rows(turn, "zen", ended)).toEqual(["user", "final"]);
+    const followUp = message("follow-up", "user", 30);
+    expect(rows([...turn, followUp], "zen", ended)).toEqual([
+      "user",
+      "final",
+      "follow-up",
+      "working-indicator-row",
+    ]);
+    const wake: TimelineEntry = {
+      id: "wake",
+      kind: "work",
+      createdAt: at(30),
+      entry: {
+        id: "wake",
+        createdAt: at(30),
+        runId: RunId.make("wake"),
+        label: "Task finished",
+        tone: "info",
+        itemType: "notification",
+      },
+    };
+    expect(rows([user, final, wake], "zen", { ...running, runId: RunId.make("wake") })).toEqual([
+      "user",
+      "final",
+      "wake",
+      "working-indicator-row",
+      "live-activity-row",
+    ]);
   });
   it("collapses only output from a superseded V2 attempt within the active logical run", () => {
     const runId = "run-steered" as never;
