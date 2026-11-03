@@ -62,7 +62,14 @@ const layerCheckpointRollbackService = CheckpointRollbackService.layer.pipe(
       NodeServices.layer,
       Layer.mock(ServerConfig.ServerConfig)({ worktreesDir: "/synthetic-worktrees" } as never),
       ServerSettings.layerTest(),
-      Layer.mock(GitWorkflow.GitWorkflowService)({}),
+      Layer.mock(GitWorkflow.GitWorkflowService)({
+        isRepository: (cwd) =>
+          FileSystem.FileSystem.pipe(
+            Effect.flatMap((fileSystem) => fileSystem.exists(`${cwd}/.git`)),
+            Effect.provide(NodeServices.layer),
+            Effect.orDie,
+          ),
+      }),
       Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeed(unrelatedProject) }),
     ),
   ),
@@ -758,7 +765,7 @@ const layerRealCheckpoints = CheckpointService.layer.pipe(
   ),
 );
 
-it.effect.each(["restores", "undo", "missing-ref", "plain-home"] as const)(
+it.effect.each(["restores", "undo", "missing-ref", "plain-home", "git-home-missing"] as const)(
   "rewinds every repo of a task folder, scenario=%s",
   (scenario) =>
     Effect.gen(function* () {
@@ -863,9 +870,12 @@ it.effect.each(["restores", "undo", "missing-ref", "plain-home"] as const)(
 
       // A plain home has no thread-start snapshot, so its earliest rewind target is turn 1.
       const targetOrdinal = scenario === "plain-home" ? 1 : 0;
-      const target = records.find(
+      const recorded = records.find(
         (record) => record.scopeId === rootScope.id && record.ordinalWithinScope === targetOrdinal,
       )!;
+      // A Git home whose baseline capture failed records it as missing.
+      const target =
+        scenario === "git-home-missing" ? { ...recorded, status: "missing" as const } : recorded;
       const thread = {
         id: threadId,
         projectId: ProjectId.make("rollback-task-folder-project"),
@@ -1053,6 +1063,10 @@ it.effect.each(["restores", "undo", "missing-ref", "plain-home"] as const)(
       }
       assert.equal(error.reason, "repository-checkpoint-unavailable");
       assert.deepEqual(calls, []);
+      if (scenario === "git-home-missing") {
+        assert.equal(error.repository, home);
+        return;
+      }
       assert.equal(
         CheckpointRollbackService.rollbackFailureClientMessage(error),
         "Cannot restore files: web has no checkpoint for that turn. Rewind the conversation without restoring files instead.",

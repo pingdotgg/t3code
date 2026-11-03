@@ -305,6 +305,16 @@ export const layer: Layer.Layer<
           ...details,
           ...(cause === undefined ? {} : { cause }),
         });
+      // Only a plain home lacks a root snapshot; skipping a Git home would restore the repos alone.
+      if (
+        input.restoreFiles !== false &&
+        checkpoint.status !== "ready" &&
+        (yield* gitWorkflow.isRepository(scope.cwd).pipe(Effect.orElseSucceed(() => true)))
+      ) {
+        return yield* rollbackError("repository-checkpoint-unavailable", {
+          repository: repositoryLabel(scope),
+        });
+      }
       // Checked and snapshotted before the provider rewinds, so a missing ref changes nothing.
       const repositoryRestores =
         input.restoreFiles === false || repositoryScopes.length === 0

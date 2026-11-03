@@ -1439,7 +1439,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
         const start = restore ? yield* store.getStepStartCheckpoint(run.id, input.stepIndex) : null;
         if (restore && start === null) {
           return yield* pipelineError(
-            "This step's starting files were not saved, so they cannot be restored (they are never saved for a workspace with several repos). Retry with the current files instead.",
+            "This step's starting files were not saved, so they cannot be restored. Retry with the current files instead.",
             { runId: run.id },
           );
         }
