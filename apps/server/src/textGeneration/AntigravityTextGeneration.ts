@@ -1,4 +1,4 @@
-import { type ProviderSetupError, TextGenerationError } from "@t3tools/contracts";
+import { ProviderSetupError, TextGenerationError } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -20,6 +20,7 @@ const ANTIGRAVITY_TIMEOUT_MS = 180_000;
 const MAX_OUTPUT_CHARS = 128_000;
 const isTextGenerationError = Schema.is(TextGenerationError);
 const isAcpRequestError = Schema.is(AcpRequestError);
+const isProviderSetupError = Schema.is(ProviderSetupError);
 const isNativeSessionId = Schema.is(Schema.String.check(Schema.isUUID(4)));
 const Configuration = Schema.Record(Schema.String, Schema.Unknown);
 const decodeConfiguration = Schema.decodeEffect(Schema.fromJsonString(Configuration));
@@ -323,9 +324,11 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
             ? cause
             : new TextGenerationError({
                 operation: input.operation,
-                detail: isAcpRequestError(cause)
-                  ? `Antigravity text generation failed: ${cause.errorMessage}`
-                  : "Antigravity text generation failed.",
+                detail: isProviderSetupError(cause)
+                  ? cause.detail
+                  : isAcpRequestError(cause)
+                    ? `Antigravity text generation failed: ${cause.errorMessage}`
+                    : "Antigravity text generation failed.",
                 cause,
               }),
         ),

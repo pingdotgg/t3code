@@ -572,6 +572,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         .generateThreadTitle(fixture.titleInput)
         .pipe(Effect.flip);
       expect(error._tag).toBe("TextGenerationError");
+      expect(error.detail).toBe("Sign in before starting Antigravity.");
       expect(fixture.state.workspaces).toEqual([]);
       yield* fixture.assertCleaned;
     }).pipe(Effect.scoped),
