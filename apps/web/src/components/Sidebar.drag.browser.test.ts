@@ -2,7 +2,12 @@ import "../index.css";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { SortingStrategy } from "@dnd-kit/sortable";
-import { createSidebarSortingStrategy, measureSidebarPinnedGrid } from "./Sidebar.drag";
+import {
+  createSidebarSortingStrategy,
+  measureSidebarPinnedGrid,
+  restrictSidebarDrag,
+  resolveSidebarDragSourceRect,
+} from "./Sidebar.drag";
 import { sidebarListItemId, type SidebarListItem } from "./Sidebar.logic";
 import { createSidebarListMotion } from "./Sidebar.motion";
 
@@ -21,6 +26,46 @@ function mountPinnedGrid(width: number, count: number) {
 }
 
 describe("pinned grid layout contract", () => {
+  it("keeps a full-width pin under the pointer in its compact destination cell", () => {
+    using mounted = mountPinnedGrid(244, 4);
+    const source = mounted.tiles[3]!;
+    source.dataset.threadItem = "wide-pin";
+    const bounds = source.getBoundingClientRect();
+    const activation = new PointerEvent("pointerdown", { clientX: bounds.left + bounds.width / 2 });
+    source.dispatchEvent(activation);
+    const from = resolveSidebarDragSourceRect(activation, null)!;
+    expect(from.width).toBe(bounds.width);
+    const target = mounted.tiles[2]!.getBoundingClientRect();
+    const pointerX = target.left + target.width / 2;
+    const widthRatio = target.width / from.width;
+    const transform = restrictSidebarDrag(
+      {
+        activatorEvent: null,
+        active: null,
+        activeNodeRect: from,
+        draggingNodeRect: from,
+        containerNodeRect: mounted.grid.getBoundingClientRect(),
+        over: null,
+        overlayNodeRect: null,
+        scrollableAncestors: [mounted.grid],
+        scrollableAncestorRects: [mounted.grid.getBoundingClientRect()],
+        transform: {
+          x: pointerX - (from.left + from.width / 2),
+          y: target.top - from.top,
+          scaleX: 1,
+          scaleY: 1,
+        },
+        windowRect: null,
+      },
+      { width: target.width, offsetX: (from.width / 2) * (1 - widthRatio) },
+    );
+    source.style.width = `${target.width}px`;
+    source.style.transform = `translate(${transform.x}px, ${transform.y}px)`;
+    const preview = source.getBoundingClientRect();
+    expect(preview.left).toBeCloseTo(target.left, 0);
+    expect(pointerX).toBeGreaterThanOrEqual(preview.left);
+    expect(pointerX).toBeLessThanOrEqual(preview.right);
+  });
   it("does not animate tiles from their old columns after the sidebar resizes", () => {
     using mounted = mountPinnedGrid(244, 5);
     const motion = createSidebarListMotion(mounted.list);
