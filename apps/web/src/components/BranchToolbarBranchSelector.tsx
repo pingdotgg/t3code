@@ -21,6 +21,7 @@ import {
   useEffect,
   useImperativeHandle,
   useOptimistic,
+  useRef,
   useState,
   useTransition,
   type MouseEvent as ReactMouseEvent,
@@ -69,6 +70,7 @@ import { MiddleTruncate } from "./ui/middle-truncate";
 import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 
+const MAX_SELECTED_REF_CONFIRM_PAGES = 10;
 export interface BranchToolbarBranchSelectorHandle {
   open: () => void;
 }
@@ -384,16 +386,33 @@ export function BranchToolbarBranchSelector({
   // The picker's list can predate a checkout an agent ran itself, so confirm a worktree
   // claim before skipping the switch. Unconfirmed claims fall back to a real checkout,
   // which Git refuses if the branch is checked out elsewhere.
+  const latestSelectionIdRef = useRef(0);
   const readSelectedRef = async (cwd: string, listedRef: VcsRef): Promise<VcsRef> => {
-    const result = await readRefs({
-      environmentId,
-      input: { cwd, query: listedRef.name, limit: 100, refresh: true },
-    });
-    return resolveConfirmedSelectedRef(listedRef, result._tag === "Success" ? result.value : null);
+    let cursor: number | undefined;
+    // Name matches aren't ranked, so page until the ref shows up or the list ends.
+    for (let page = 0; page < MAX_SELECTED_REF_CONFIRM_PAGES; page++) {
+      const result = await readRefs({
+        environmentId,
+        input: {
+          cwd,
+          query: listedRef.name,
+          refKind: listedRef.isRemote ? "remote" : "local",
+          limit: 100,
+          ...(cursor === undefined ? { refresh: true } : { cursor }),
+        },
+      });
+      if (result._tag !== "Success") return resolveConfirmedSelectedRef(listedRef, null);
+      const confirmed = resolveConfirmedSelectedRef(listedRef, result.value);
+      // It returns `listedRef` itself only when this page was truncated without the ref.
+      if (confirmed !== listedRef || result.value.nextCursor === null) return confirmed;
+      cursor = result.value.nextCursor;
+    }
+    return listedRef;
   };
 
   const selectBranch = async (listedRef: VcsRef) => {
     if (!canUpdateThreadBranch || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
+    const selectionId = ++latestSelectionIdRef.current;
 
     if (isSelectingWorktreeBase) {
       setThreadBranch(listedRef.name, null);
@@ -408,6 +427,8 @@ export function BranchToolbarBranchSelector({
     const refName = listedRef.worktreePath
       ? await readSelectedRef(branchCwd, listedRef)
       : listedRef;
+    // A later pick made while this one was confirming its worktree wins.
+    if (selectionId !== latestSelectionIdRef.current) return;
     const selectionTarget = resolveBranchSelectionTarget({
       activeProjectCwd,
       activeWorktreePath,
