@@ -75,8 +75,11 @@ export function useRightPanelSurfaceClose(input: {
     const sideChatRef = scopeThreadRef(ref.environmentId, surface.threadId);
     const shellIsLive = () =>
       appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live";
+    const sideChatShell = readThreadShell(sideChatRef);
     // Deleting and archiving both drop it from the live shell; an archived draft must survive.
-    if (shellIsLive() && readThreadShell(sideChatRef) === null) return;
+    if (shellIsLive() && sideChatShell === null) return;
+    // The server keeps a side chat with a run, so a later removal is an archive, not this delete.
+    const keptByServer = sideChatShell?.latestRun != null;
     if (!readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)) return;
     // The server keeps a side chat with a run or message. Reopen skips one it deleted.
     void deleteThread({
@@ -84,7 +87,8 @@ export function useRightPanelSurfaceClose(input: {
       input: { threadId: surface.threadId, onlyIfUnused: true },
     }).then(async (result) => {
       // Success also covers a kept side chat, whose draft must survive.
-      if (result._tag !== "Success" || !(await waitForThreadRemoval(sideChatRef))) return;
+      if (keptByServer || result._tag !== "Success") return;
+      if (!(await waitForThreadRemoval(sideChatRef))) return;
       if (shellIsLive()) useComposerDraftStore.getState().clearDraftThread(sideChatRef);
     });
   };

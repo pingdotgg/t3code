@@ -167,6 +167,12 @@ it.each([
     threadRemoved: false,
     cleared: false,
   },
+  {
+    name: "it has a run, so its removal can only be an archive",
+    sideChatShell: { latestRun: { runId: "run-1" } },
+    threadRemoved: true,
+    cleared: false,
+  },
 ])(
   "clears a closed side chat's draft only after deletion: $name",
   async ({
