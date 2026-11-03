@@ -49,9 +49,9 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 function fixture(
   options: {
     accounts?: Array<
-      (typeof accounts)[number] & {
+      Omit<(typeof accounts)[number], "id_token"> & {
         disabled?: boolean;
-        id_token: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
+        id_token?: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
       }
     >;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
@@ -312,36 +312,80 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect("maps Claude scoped windows without a scheduler plugin", () =>
+  it.effect(
+    "reports distinct Claude organizations sharing an email with their scoped windows",
+    () =>
+      Effect.gen(function* () {
+        const test = fixture({
+          accounts: [
+            {
+              id: "claude-personal.json",
+              auth_index: "personal",
+              provider: "claude",
+              email: "same@example.com",
+            },
+            {
+              id: "claude-team.json",
+              auth_index: "team",
+              provider: "claude",
+              email: "same@example.com",
+            },
+          ],
+          // The usage endpoint answers 429 to requests without a Claude Code user agent.
+          upstream: (request) => ({
+            status: request.header?.["User-Agent"]?.startsWith("claude-code/") ? 200 : 429,
+            body: request.url?.endsWith("/profile")
+              ? { organization: { uuid: `org-${request.auth_index}` } }
+              : {
+                  five_hour: { utilization: 10, resets_at: null },
+                  seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
+                  limits: [
+                    {
+                      kind: "weekly_scoped",
+                      percent: 80,
+                      resets_at: null,
+                      scope: { model: { display_name: "Fable" } },
+                    },
+                  ],
+                },
+          }),
+        });
+        const api = yield* test.api;
+        const result = yield* api.readAccounts(config);
+        expect(result.map((account) => [account.email, account.workspaceId])).toEqual([
+          ["same@example.com", "org-personal"],
+          ["same@example.com", "org-team"],
+        ]);
+        expect(
+          result[0]?.usageLimits.windows.map((window) => [window.id, window.usedPercent]),
+        ).toEqual([
+          ["five_hour", 10],
+          ["seven_day", 50],
+          ["seven_day_fable", 80],
+        ]);
+      }),
+  );
+
+  it.effect.each([
+    { status: 503, body: { token: "do-not-publish" } },
+    { status: 200, body: { account: { email: "same@example.com" } } },
+    { status: 200, body: { organization: { uuid: "  " } } },
+  ])("does not publish ambiguous Claude usage when organization lookup fails: %j", (profile) =>
     Effect.gen(function* () {
       const test = fixture({
-        accounts: [{ ...accounts[0]!, provider: "claude" }],
-        // The usage endpoint answers 429 to requests without a Claude Code user agent.
-        upstream: (request) => ({
-          status: request.header?.["User-Agent"]?.startsWith("claude-code/") ? 200 : 429,
-          body: {
-            five_hour: { utilization: 10, resets_at: null },
-            seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
-            limits: [
-              {
-                kind: "weekly_scoped",
-                percent: 80,
-                resets_at: null,
-                scope: { model: { display_name: "Fable" } },
-              },
-            ],
-          },
-        }),
+        accounts: [
+          { id: "claude.json", auth_index: "a", provider: "claude", email: "same@example.com" },
+        ],
+        upstream: (request) =>
+          request.url?.endsWith("/profile")
+            ? profile
+            : { status: 200, body: { five_hour: { utilization: 10, resets_at: null } } },
       });
       const api = yield* test.api;
-      const result = yield* api.readAccounts(config);
-      expect(
-        result[0]?.usageLimits.windows.map((window) => [window.id, window.usedPercent]),
-      ).toEqual([
-        ["five_hour", 10],
-        ["seven_day", 50],
-        ["seven_day_fable", 80],
-      ]);
+      const [account] = yield* api.readAccounts(config);
+      expect(account?.usageLimits.unavailable?.reason).toBe("probeFailed");
+      expect(account?.usageLimits.windows).toEqual([]);
+      expect(encodeJson(account)).not.toContain("do-not-publish");
     }),
   );
 
