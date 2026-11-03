@@ -19,7 +19,7 @@ import { listLinkedPullRequestThreads } from "../../pullRequest/linkedThreads.ts
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as LegacyV1ThreadImporter from "./LegacyV1ThreadImporter.ts";
-import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../testkit/ProjectionReplay.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 
 const layerDatabase = SqlitePersistence.layerMemory;
@@ -34,14 +34,14 @@ const layerEventSinkProvided = EventSink.layer.pipe(Layer.provide(layerStoresPro
 const layerImporterProvided = LegacyV1ThreadImporter.layer.pipe(
   Layer.provide(Layer.mergeAll(layerStoresProvided, layerEventSinkProvided)),
 );
-const layerProjectionMaintenanceProvided = ProjectionMaintenance.layer.pipe(
+const layerProjectionReplayProvided = ProjectionReplay.layer.pipe(
   Layer.provide(layerStoresProvided),
 );
 const layerTest = Layer.mergeAll(
   layerStoresProvided,
   layerEventSinkProvided,
   layerImporterProvided,
-  layerProjectionMaintenanceProvided,
+  layerProjectionReplayProvided,
 );
 
 const seedPendingTranscripts = Effect.gen(function* () {
@@ -220,7 +220,7 @@ it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const eventSink = yield* EventSink.EventSinkV2;
       const threadId = ThreadId.make("thread:legacy-import");
@@ -605,7 +605,7 @@ it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const eventSink = yield* EventSink.EventSinkV2;
       const threadId = ThreadId.make("thread:legacy-metadata-upgrade");

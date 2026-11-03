@@ -12,9 +12,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as DatabaseMaintenance from "./DatabaseMaintenance.ts";
 import * as Sqlite from "./Sqlite.ts";
-import * as EventStore from "../orchestration-v2/EventStore.ts";
-import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 
 it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))(
   "DatabaseMaintenance",
@@ -111,17 +108,8 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
         const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-compact-" });
         const dbPath = path.join(baseDir, "userdata", "statev2.sqlite");
-        yield* Effect.flatMap(
-          ProjectionMaintenance.ProjectionMaintenanceV2,
-          (projections) => projections.rebuild,
-        ).pipe(
-          Effect.provide(
-            ProjectionMaintenance.layer.pipe(
-              Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
-              Layer.provideMerge(Sqlite.layerFromPath(dbPath)),
-            ),
-          ),
-        );
+        // Opening the database migrates it.
+        yield* Effect.void.pipe(Effect.provide(Sqlite.layerFromPath(dbPath)));
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* sql`PRAGMA auto_vacuum = NONE`;
