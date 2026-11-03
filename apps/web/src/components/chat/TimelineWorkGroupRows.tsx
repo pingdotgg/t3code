@@ -489,7 +489,6 @@ function LiveActivityRow({
   toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean;
   active?: boolean;
-  interruptible?: boolean;
 }) {
   const { isWorking, pendingRequest, turnEnded } = use(TimelineRowActivityCtx);
   const animated = isWorking && active && !failed && !pendingRequest && !turnEnded;
@@ -990,12 +989,7 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
         ) : null}
         {shown.map(renderItem)}
         {showThinking ? (
-          <LiveActivityRow
-            label={liveAnswerPreview ?? "Thinking"}
-            iconName="brain"
-            active
-            interruptible
-          />
+          <LiveActivityRow label={liveAnswerPreview ?? "Thinking"} iconName="brain" active />
         ) : null}
       </div>
     </WorkGroupViewCtx>
