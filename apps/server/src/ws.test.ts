@@ -1384,7 +1384,11 @@ it.effect.each(["thread", "shell"] as const)(
       const gateReplayRead: Statement.Transformer = (statement) => {
         const [query] = statement.compile();
         // The paged replay read (readApplicationRows), not the stats or high-water queries.
-        if (!gated && /^\s*SELECT\s+sequence,\s+event_id,/.test(query)) {
+        if (
+          !gated &&
+          (/^\s*SELECT\s+sequence,\s+event_id,/.test(query) ||
+            /^\s*WITH RECURSIVE candidates AS MATERIALIZED/.test(query))
+        ) {
           gated = true;
           return Deferred.succeed(readStarted, undefined).pipe(
             Effect.andThen(Deferred.await(releaseRead)),
@@ -1403,6 +1407,7 @@ it.effect.each(["thread", "shell"] as const)(
         Effect.provideService(Statement.CurrentTransformer, gateReplayRead),
         Effect.provideService(ThreadManagement.ThreadManagementService, {
           ensureLegacyTranscript: () => Effect.void,
+          streamStoredEventsFrom: () => Stream.empty,
           getThreadSnapshot: () => Effect.die("snapshot"),
           listActiveShellIndex: () => Effect.die("snapshot"),
           readShellSnapshot: () => Effect.die("snapshot"),

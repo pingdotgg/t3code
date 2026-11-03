@@ -1015,7 +1015,6 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       return rpcInitialItems([snapshotItem]).pipe(
         Stream.concat(completionMarker),
         Stream.concat(eventStreamFrom(snapshotSequence)),
-        withLiveDedupe,
       );
     });
 
@@ -1046,7 +1045,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         input.afterSequence > highWater ||
         (input.afterSequence < highWater && input.afterSequence < prunedThrough)
       ) {
-        return yield* snapshotThenLive();
+        return withLiveDedupe(yield* snapshotThenLive());
       }
       const hasCreateEvent = yield* applicationEvents
         .hasAgentEvent({
@@ -1076,30 +1075,44 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
               }),
           ),
         );
-        if (shell !== null) return yield* snapshotThenLive();
+        if (shell !== null) return withLiveDedupe(yield* snapshotThenLive());
       }
       // Fetch the next page only after the transport consumes this one.
       const replay = Stream.paginate(input.afterSequence, (cursor) =>
-        loadReplayThrough(cursor, highWater).pipe(
-          Effect.map((items) => {
-            const last = items.at(-1);
-            return [
-              coalesceLiveUpdatedEvents(items),
-              last === undefined || last.sequence >= highWater
-                ? Option.none()
-                : Option.some(last.sequence),
-            ] as const;
-          }),
-        ),
+        Effect.gen(function* () {
+          const items = yield* loadReplayThrough(cursor, highWater);
+          // Pruning publishes its boundary before deleting, so a pass during the read shows up here.
+          const prunedThrough = yield* applicationEvents.prunedThroughSequence.pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetThreadProjectionError({
+                  threadId: input.threadId,
+                  message: `Failed to prepare orchestration V2 thread ${input.threadId} replay`,
+                  cause,
+                }),
+            ),
+          );
+          if (cursor < highWater && cursor < prunedThrough) {
+            return [[yield* snapshotThenLive()], Option.none<number>()] as const;
+          }
+          const last = items.at(-1);
+          return [
+            [rpcInitialItems(coalesceLiveUpdatedEvents(items))],
+            last === undefined || last.sequence >= highWater
+              ? Option.none()
+              : Option.some(last.sequence),
+          ] as const;
+        }),
       );
       return replay.pipe(
+        Stream.flatMap((page) => page),
         Stream.concat(completionMarker),
         Stream.concat(eventStreamFrom(highWater)),
         withLiveDedupe,
       );
     }
 
-    return yield* snapshotThenLive();
+    return withLiveDedupe(yield* snapshotThenLive());
   },
 );
 
