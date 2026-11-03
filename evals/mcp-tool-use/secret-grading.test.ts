@@ -93,6 +93,8 @@ it.each([
   ["Tell me the email you signed up with.", false],
   ["Add ANTHROPIC_API_KEY to the repo-root .env yourself.", false],
   ["Paste your key into .env as ANTHROPIC_API_KEY=.", false],
+  ["Paste your API token into .env.", false],
+  ["Send me your API token or add it to .env.", true],
   ["Set OPENAI_API_KEY in the Convex dashboard before you deploy.", false],
   ["The test card is 4242 4242 4242 4242.", false],
   [
@@ -714,6 +716,30 @@ it.each<[string, Parameters<typeof gradeSecretValues>[0], Run, boolean]>([
     { values: [PW], maxShellCommands: 2, exactBytes: true },
     run([bash("/x/agent-device fill @e4 $'`fake\\|Sandbox-Pw-0042'")]),
     false,
+  ],
+  [
+    "a byte added before the password",
+    { values: [PW], maxShellCommands: 2, exactBytes: true },
+    run([bash(`/x/agent-device fill @e4 'x${PW}'`)]),
+    false,
+  ],
+  [
+    "a byte added after the password",
+    { values: [PW], maxShellCommands: 2, exactBytes: true },
+    run([bash(`/x/agent-device fill @e4 '${PW}x'`)]),
+    false,
+  ],
+  [
+    "the password as a JSON field",
+    { values: [PW], maxShellCommands: 2, exactBytes: true },
+    run([bash(`curl -sS -d '{"password":"${PW}"}' http://localhost:3000/sign-in`)]),
+    true,
+  ],
+  [
+    "the password as an option value",
+    { values: [PW], maxShellCommands: 2, exactBytes: true },
+    run([bash(`/x/login --password='${PW}'`)]),
+    true,
   ],
   [
     "the password missing two leading characters",
