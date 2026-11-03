@@ -333,8 +333,14 @@ function ConversationGroup({
                 {events.length.toLocaleString()} {events.length === 1 ? "comment" : "comments"}
               </span>
               <span className="block truncate text-3xs text-muted-foreground">
-                {actors.length.toLocaleString()} {actors.length === 1 ? "author" : "authors"} ·{" "}
-                <RelativeTime timestamp={first.at} />
+                <Tooltip>
+                  <TooltipTrigger render={<span tabIndex={0} />}>
+                    <RelativeTime timestamp={first.at} />
+                  </TooltipTrigger>
+                  <TooltipPopup>
+                    {actors.length.toLocaleString()} {actors.length === 1 ? "author" : "authors"}
+                  </TooltipPopup>
+                </Tooltip>
               </span>
             </span>
             <ChevronDownIcon
@@ -415,15 +421,14 @@ function ReviewThreadEvent({
         {dismissed ? <span className="shrink-0 text-caption">Review dismissed</span> : null}
         {thread.isOutdated ? <span className="shrink-0 text-caption">Outdated</span> : null}
         {expanded ? null : (
-          <span className="shrink-0">
-            · {event.actor?.login ?? "ghost"}
-            {replyCount > 0 ? (
-              <>
-                {" "}
-                · {replyCount.toLocaleString()} {replyCount === 1 ? "reply" : "replies"}
-              </>
-            ) : null}
-          </span>
+          <Tooltip>
+            <TooltipTrigger render={<span tabIndex={0} />}>
+              {replyCount > 0
+                ? `${replyCount.toLocaleString()} ${replyCount === 1 ? "reply" : "replies"}`
+                : (event.actor?.login ?? "ghost")}
+            </TooltipTrigger>
+            <TooltipPopup>{event.actor?.login ?? "ghost"}</TooltipPopup>
+          </Tooltip>
         )}
         <ChevronDownIcon
           aria-hidden

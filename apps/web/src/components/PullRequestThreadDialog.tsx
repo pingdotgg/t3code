@@ -247,10 +247,12 @@ export function PullRequestThreadDialog({
                   <p className="truncate font-medium text-sm text-strong-foreground">
                     {resolvedPullRequest.title}
                   </p>
-                  <p className="truncate text-muted-foreground text-xs">
-                    #{resolvedPullRequest.number} · {resolvedPullRequest.headBranch} to{" "}
-                    {resolvedPullRequest.baseBranch}
-                  </p>
+                  <div className="text-muted-foreground text-meta">
+                    <p>#{resolvedPullRequest.number}</p>
+                    <p className="truncate">
+                      {resolvedPullRequest.headBranch} to {resolvedPullRequest.baseBranch}
+                    </p>
+                  </div>
                 </div>
                 <span className={cn("shrink-0 text-xs capitalize", statusTone)}>
                   {resolvedPullRequest.state}

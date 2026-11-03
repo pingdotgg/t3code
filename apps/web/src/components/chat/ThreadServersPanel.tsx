@@ -134,9 +134,7 @@ export function ThreadServersPanel(props: {
                       localhost:{server.port}
                     </span>
                     <span className="truncate text-caption text-dim-foreground">
-                      {[server.terminal === null ? "Agent" : "Terminal", server.processName]
-                        .filter(Boolean)
-                        .join(" · ")}
+                      {server.processName ?? (server.terminal === null ? "Agent" : "Terminal")}
                     </span>
                   </span>
                 </TooltipTrigger>

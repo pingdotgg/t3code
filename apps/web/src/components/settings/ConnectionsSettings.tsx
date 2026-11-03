@@ -1078,12 +1078,12 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
                   primaryServerUpdateState.status !== "idle" ? (
                     <ServerUpdateProgress state={primaryServerUpdateState} />
                   ) : (
-                    [
-                      primaryServerConfig?.environment.serverVersion ?? null,
-                      primaryEnvironment?.displayUrl ?? null,
-                    ]
-                      .filter((value): value is string => value !== null)
-                      .join(" · ") || "Loading…"
+                    <Tooltip>
+                      <TooltipTrigger render={<span tabIndex={0} />}>
+                        {primaryServerConfig?.environment.serverVersion ?? "Loading…"}
+                      </TooltipTrigger>
+                      <TooltipPopup>{primaryEnvironment?.displayUrl ?? "Loading…"}</TooltipPopup>
+                    </Tooltip>
                   )
                 }
                 control={
@@ -1153,10 +1153,11 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
             <FoldedSettingsSection
               id="authorized-clients"
               title="Authorized clients"
-              summary={summarizeAuthorizedClients(
-                desktopClientSessions,
-                visibleDesktopPairingLinks,
-              )}
+              summary={
+                <span className="whitespace-pre-line">
+                  {summarizeAuthorizedClients(desktopClientSessions, visibleDesktopPairingLinks)}
+                </span>
+              }
               control={
                 canWriteAccess ? (
                   <AuthorizedClientsHeaderAction

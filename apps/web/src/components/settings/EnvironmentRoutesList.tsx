@@ -170,10 +170,16 @@ function SortableRouteRow({
           ) : null}
         </p>
         {address !== null ? (
-          <p className="truncate text-caption text-muted-foreground">
-            {address}
-            {isLearned(route) ? " · found automatically" : ""}
-          </p>
+          <Tooltip>
+            <TooltipTrigger
+              render={<p tabIndex={0} className="truncate text-meta text-muted-foreground" />}
+            >
+              {address}
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {isLearned(route) ? "Found automatically" : address}
+            </TooltipPopup>
+          </Tooltip>
         ) : null}
       </div>
       <Button

@@ -190,8 +190,10 @@ function LimitRow({
           </span>
           {window.resetsAt && remainingMs > 0 ? (
             <span>
-              Resets in {formatDuration(remainingMs)} ·{" "}
-              {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
+              <span className="block">Resets in {formatDuration(remainingMs)}</span>
+              <span className="block">
+                {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
+              </span>
             </span>
           ) : null}
           {pace ? <span>{PACE_LABEL[pace]}</span> : null}

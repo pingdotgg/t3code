@@ -573,10 +573,22 @@ function ButtonsSection() {
       </Specimen>
       <Specimen label="Inline" source="<InlineButton tone>">
         <p className="text-sm text-muted-foreground">
-          Changes apply to <InlineButton tone="picker">this project</InlineButton>.{" "}
-          <InlineButton>Undo</InlineButton> · <InlineButton tone="muted">Details</InlineButton> ·{" "}
-          <InlineButton tone="destructive">Remove</InlineButton>
+          Changes apply to <InlineButton tone="picker">this project</InlineButton>.
         </p>
+        <div className="grid grid-cols-3 gap-6">
+          <div className="flex flex-col items-start gap-2">
+            <Caption>Default</Caption>
+            <InlineButton>Undo</InlineButton>
+          </div>
+          <div className="flex flex-col items-start gap-2">
+            <Caption>Muted</Caption>
+            <InlineButton tone="muted">Details</InlineButton>
+          </div>
+          <div className="flex flex-col items-start gap-2">
+            <Caption>Destructive</Caption>
+            <InlineButton tone="destructive">Remove</InlineButton>
+          </div>
+        </div>
       </Specimen>
     </Section>
   );

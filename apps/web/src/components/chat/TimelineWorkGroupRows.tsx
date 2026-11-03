@@ -46,6 +46,7 @@ import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import {
   memo,
   use,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -67,9 +68,10 @@ import {
   MessageCircleQuestionMarkIcon,
   RefreshCwIcon,
   ShieldQuestionMarkIcon,
+  ArrowDownIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
-import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
+import { getVirtualizedScrollFadeClassName, ScrollArea } from "../ui/scroll-area";
 import {
   liveWorkEntryLabel,
   resolveWorkGroupScrollIndex,
@@ -86,21 +88,16 @@ import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   SkillChipPopover,
   skillInstructionsOpener,
   skillPopoverDescription,
 } from "./SkillInlineText";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
-import { useAtomValue } from "@effect/atom-react";
-import { environmentThreadDetails } from "../../state/threads";
 import { useAssistantMessageText } from "../../state/entities";
 import { AssistantCitationSource } from "./AssistantCitationSource";
-import { EnvironmentSubagentAvatar } from "./V2LifecycleRow";
 import { presentSlashCommand } from "./timelineSlashCommands";
 import { commandRunsTests } from "@t3tools/shared/toolOutput";
-import { isActiveSubagentStatus } from "@t3tools/client-runtime/state/subagentRuntime";
 import { DiffStatBlocks } from "./DiffStatLabel";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 
@@ -442,19 +439,11 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   // A failed group keeps this disclosure while an approval waits, but nothing is thinking then.
   const live = ctx.pendingApprovals.size === 0;
   const { groupId } = row;
-  const activity = (
-    <LiveActivityRow
-      label="Thinking"
-      iconName="brain"
-      active={live}
-      interruptible={groupId === undefined}
-    />
-  );
+  const activity = <LiveActivityRow label="Thinking" iconName="brain" active={live} />;
   if (groupId === undefined) return activity;
   return (
     <LiveWorkToggle
       aria-expanded={row.expanded === true}
-      trailing={live ? <LiveWorkControls /> : undefined}
       onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
     >
       {activity}
@@ -465,12 +454,10 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
 /** A live activity row that is its work group's disclosure: the whole row toggles it. */
 function LiveWorkToggle({
   stacked = false,
-  trailing,
   ...props
 }: Omit<ComponentProps<"button">, "type" | "className"> & {
   /** Stacks a thought line above the status row. */
   stacked?: boolean;
-  trailing?: ReactNode;
 }) {
   return (
     <div className="flex w-full min-w-0 items-end gap-2.5">
@@ -482,29 +469,7 @@ function LiveWorkToggle({
         )}
         {...props}
       />
-      {trailing}
     </div>
-  );
-}
-
-/** Stop is a sibling of the fold toggle, so it never nests buttons or opens history. */
-function LiveWorkControls() {
-  const { onInterrupt } = use(TimelineRowCtx);
-  const { pendingRequest, turnEnded } = use(TimelineRowActivityCtx);
-  if (!onInterrupt || pendingRequest || turnEnded) return null;
-  return (
-    <span className="flex shrink-0 items-center gap-2.5 text-caption text-dim-foreground">
-      <Button
-        variant="ghost-muted"
-        size="xs"
-        onClick={(event) => {
-          event.stopPropagation();
-          onInterrupt();
-        }}
-      >
-        Stop
-      </Button>
-    </span>
   );
 }
 
@@ -514,14 +479,12 @@ function LiveActivityRow({
   toolIcon,
   failed = false,
   active = false,
-  interruptible = false,
 }: {
   label: ReactNode;
   iconName?: WorkEntryIconName;
   toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean;
   active?: boolean;
-  interruptible?: boolean;
 }) {
   const { isWorking, pendingRequest, turnEnded } = use(TimelineRowActivityCtx);
   const animated = isWorking && active && !failed && !pendingRequest && !turnEnded;
@@ -536,7 +499,6 @@ function LiveActivityRow({
         toolIcon={toolIcon}
         failed={failed}
         announceFailure={failed}
-        trailing={interruptible && animated ? <LiveWorkControls /> : undefined}
       />
       {animated ? (
         <ActivityShimmerOverlay>
@@ -554,7 +516,6 @@ function LiveActivityContent({
   failed = false,
   announceFailure = false,
   highlighted = false,
-  trailing,
 }: {
   label: ReactNode;
   iconName: WorkEntryIconName | undefined;
@@ -562,7 +523,6 @@ function LiveActivityContent({
   failed?: boolean;
   announceFailure?: boolean;
   highlighted?: boolean;
-  trailing?: ReactNode;
 }) {
   const showTrailingFailureMark =
     failed && iconName !== undefined && !toolIconAcceptsTint(toolIcon);
@@ -598,9 +558,7 @@ function LiveActivityContent({
       trailing={
         showTrailingFailureMark ? (
           <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
-        ) : (
-          trailing
-        )
+        ) : null
       }
     />
   );
@@ -628,11 +586,6 @@ export function LiveWorkEntryTimelineRow({
   return (
     <LiveWorkToggle
       stacked={thoughtLine !== ""}
-      trailing={
-        row.active && !failed && row.entry.itemType === "command_execution" ? (
-          <LiveWorkControls />
-        ) : undefined
-      }
       aria-label={
         failed
           ? `${thoughtLine ? `${thoughtLine} ` : ""}${threadLabel?.text ?? label}, tool call failed`
@@ -884,12 +837,10 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
   item,
   itemKey,
   current,
-  historyOpen,
 }: {
   item: WorkingWindowItem;
   itemKey: string;
   current: boolean;
-  historyOpen: boolean;
 }) {
   const ctx = use(TimelineRowCtx);
   if (item.kind === "text") {
@@ -908,7 +859,6 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
         label={liveWorkEntryLabel(entry, ctx.workspaceRoot, true)}
         iconName={workEntryIconName(entry)}
         toolIcon={entry.toolIcon ?? entry.toolSource?.icon}
-        interruptible={entry.itemType === "command_execution"}
         active={current}
       />
     );
@@ -921,7 +871,6 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
     <SimpleWorkEntryRow
       workEntry={entry}
       workspaceRoot={ctx.workspaceRoot}
-      expandable={historyOpen}
       severeFailure={failedTestRun}
     />
   );
@@ -931,24 +880,68 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree, turnEnded, pendingRequest } =
     use(TimelineRowActivityCtx);
-  const [full, setFull] = useState(false);
-  const observeHeight = (element: HTMLDivElement | null) => {
-    if (!element) return;
-    const update = () => {
-      const next = element.clientHeight >= WORKING_WINDOW_MAX_HEIGHT - 1;
-      setFull((current) => (current === next ? current : next));
+  const open = window.historyOpen;
+  const [history, setHistory] = useState<{ head: number; tailStart: number } | null>(null);
+  if (open && history === null) {
+    setHistory({
+      head: WORKING_HISTORY_BATCH,
+      tailStart: Math.max(0, window.items.length - WORKING_WINDOW_TAIL),
+    });
+  }
+  const windowRef = useRef<HTMLDivElement>(null);
+  const spacerRef = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- older items stay mounted until the collapse transition finishes clipping them
+  useEffect(() => {
+    if (open || history === null) return;
+    let cancelled = false;
+    void transitionsSettled(windowRef.current).then(() => {
+      if (!cancelled) setHistory(null);
+    });
+    return () => {
+      cancelled = true;
     };
-    update();
-    return observeResize(element, update);
-  };
+  }, [open, history]);
+  const head = history?.head;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts older items as the timeline scroll brings them near the viewport
+  useEffect(() => {
+    const spacer = spacerRef.current;
+    if (!open || head === undefined || !spacer) return;
+    let observer: IntersectionObserver | undefined;
+    let cancelled = false;
+    void transitionsSettled(windowRef.current).then(() => {
+      if (cancelled) return;
+      observer = new IntersectionObserver(
+        (entries) => {
+          if (!entries.some((entry) => entry.isIntersecting)) return;
+          setHistory(
+            (current) => current && { ...current, head: current.head + WORKING_HISTORY_BATCH },
+          );
+        },
+        { scrollMargin: "100% 0px" },
+      );
+      observer.observe(spacer);
+    });
+    return () => {
+      cancelled = true;
+      observer?.disconnect();
+    };
+  }, [open, head]);
   const { workGroupViewState, onToggleWorkEntry } = ctx;
   // Entries opened in the history keep their state, and toggling one keeps the bar in place.
   const groupView = (() => ({
     state: workGroupViewState,
     onToggleEntry: () => onToggleWorkEntry("working-indicator-row"),
   }))();
-  const open = window.historyOpen;
-  const shown = open ? window.items : window.items.slice(-WORKING_WINDOW_TAIL);
+  const headEnd = history ? Math.min(history.head, history.tailStart) : 0;
+  const unmounted = history ? history.tailStart - headEnd : 0;
+  const shown = history
+    ? window.items.slice(history.tailStart)
+    : window.items.slice(-WORKING_WINDOW_TAIL);
+  const renderItem = (item: WorkingWindowItem) => (
+    <div key={item.id} className="min-w-0">
+      <WorkingWindowItemView item={item} itemKey={itemKey} current={item === window.items.at(-1)} />
+    </div>
+  );
   const showThinking =
     !turnEnded &&
     !pendingRequest &&
@@ -957,75 +950,144 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
     !isPreparingWorktree &&
     !workingWindowHasActiveCompaction(window);
   if (shown.length === 0 && !showThinking) return null;
-  const openable = !open && shown.length > 0;
-  const thinking = showThinking ? (
-    <LiveActivityRow label="Thinking" iconName="brain" active interruptible />
-  ) : null;
   return (
     <WorkGroupViewCtx value={groupView}>
-      {/* The bar is the keyboard control; the window is a larger pointer target for it. */}
       <div
-        className={openable ? "cursor-pointer" : undefined}
-        data-working-window={openable ? "" : undefined}
-        onClick={openable ? () => ctx.onToggleWorkingHistory(window.key) : undefined}
+        ref={windowRef}
+        role="region"
+        aria-label="Work history"
+        className={cn(
+          // The gap under the bar sits inside the window, so its fade reaches the hairline.
+          "flex min-w-0 flex-col justify-end gap-1 overflow-clip pt-2 transition-[height] duration-200 ease-out motion-reduce:transition-none",
+          open
+            ? "[height:calc-size(auto,size)]"
+            : "[height:calc-size(auto,min(size,220px))] not-supports-[height:calc-size(auto,size)]:max-h-[220px]",
+        )}
       >
-        {open ? (
-          <LegendList
-            data={window.items}
-            keyExtractor={workingWindowItemKey}
-            renderItem={({ item }) => (
-              <div className="min-w-0">
-                <WorkingWindowItemView
-                  item={item}
-                  itemKey={itemKey}
-                  current={item === window.items.at(-1)}
-                  historyOpen={open}
-                />
-              </div>
-            )}
-            estimatedItemSize={compactWorkEntryHeight}
-            drawDistance={240}
-            recycleItems
-            maintainVisibleContentPosition
-            ListFooterComponent={thinking}
-            tabIndex={0}
-            role="region"
-            aria-label="Work history"
-            className="max-h-[min(18rem,50dvh)] min-w-0 overflow-x-hidden pt-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        {history === null ? (
+          <CollapsedWorkingWindow
+            key={window.key}
+            items={window.items}
+            itemKey={itemKey}
+            showThinking={showThinking}
           />
         ) : (
-          <div
-            ref={observeHeight}
-            className={cn(
-              // The gap under the bar sits inside the window, so its fade reaches the hairline.
-              "flex min-w-0 flex-col gap-1 pt-2",
-              !open && "max-h-[220px] justify-end overflow-hidden",
-              !open && full && "[mask-image:linear-gradient(to_bottom,transparent,black_36px)]",
-            )}
-          >
-            {shown.map((item) => (
+          <>
+            {history ? window.items.slice(0, headEnd).map(renderItem) : null}
+            {unmounted > 0 ? (
               <div
-                key={item.id}
-                inert={!open && !workingWindowItemIsLive(item)}
-                className="min-w-0"
-              >
-                <WorkingWindowItemView
-                  item={item}
-                  itemKey={itemKey}
-                  current={item === window.items.at(-1)}
-                  historyOpen={open}
-                />
-              </div>
-            ))}
-            {thinking}
-          </div>
+                ref={spacerRef}
+                aria-hidden
+                className="shrink-0"
+                style={{ height: unmounted * (compactWorkEntryHeight + 4) }}
+              />
+            ) : null}
+            {shown.map(renderItem)}
+            {showThinking ? <LiveActivityRow label="Thinking" iconName="brain" active /> : null}
+          </>
         )}
       </div>
     </WorkGroupViewCtx>
   );
 }
 
-const workingWindowItemKey = (item: WorkingWindowItem) => item.id;
+function CollapsedWorkingWindow({
+  items,
+  itemKey,
+  showThinking,
+}: {
+  items: WorkingWindow["items"];
+  itemKey: string;
+  showThinking: boolean;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const followRef = useRef(true);
+  const prependRef = useRef<{ height: number; top: number } | null>(null);
+  const [following, setFollowing] = useState(true);
+  const [start, setStart] = useState(() => Math.max(0, items.length - WORKING_WINDOW_TAIL));
+  const getViewport = () =>
+    rootRef.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+  // Following runs in ResizeObserver after layout; only a prepend needs correction before paint.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- preserves the visible offset when mounting an older batch
+  useLayoutEffect(() => {
+    const prepend = prependRef.current;
+    if (!prepend) return;
+    const viewport = getViewport();
+    if (!viewport) return;
+    viewport.scrollTop = prepend.top + viewport.scrollHeight - prepend.height;
+    prependRef.current = null;
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- content can grow between renders while markdown and command output stream
+  useLayoutEffect(() => {
+    const viewport = rootRef.current?.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    );
+    const content = contentRef.current;
+    if (!viewport || !content) return;
+    return observeResize([content, viewport], () => {
+      if (followRef.current) viewport.scrollTop = viewport.scrollHeight;
+    });
+  }, []);
+
+  return (
+    <div className="relative min-h-0 min-w-0 shrink-0">
+      <ScrollArea
+        ref={rootRef}
+        className="h-auto max-h-[212px]"
+        scrollFade
+        scrollFadePadding={false}
+        chainVerticalScroll
+        viewportTabIndex={0}
+        onScrollCapture={(event) => {
+          const viewport = getViewport();
+          if (!viewport || event.target !== viewport || prependRef.current) return;
+          const atEnd = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 2;
+          followRef.current = atEnd;
+          setFollowing(atEnd);
+          if (atEnd) {
+            setStart(Math.max(start, items.length - WORKING_WINDOW_TAIL));
+          } else if (viewport.scrollTop < 80 && start > 0) {
+            prependRef.current = { height: viewport.scrollHeight, top: viewport.scrollTop };
+            setStart(Math.max(0, start - WORKING_HISTORY_BATCH));
+          }
+        }}
+      >
+        <div ref={contentRef} className="flex min-w-0 flex-col gap-1">
+          {items.slice(start).map((item) => (
+            <div key={item.id} className="min-w-0">
+              <WorkingWindowItemView
+                item={item}
+                itemKey={itemKey}
+                current={item === items.at(-1)}
+              />
+            </div>
+          ))}
+          {showThinking ? <LiveActivityRow label="Thinking" iconName="brain" active /> : null}
+        </div>
+      </ScrollArea>
+      {!following ? (
+        <div className="pointer-events-none absolute end-2 bottom-1">
+          <div className="pointer-events-auto">
+            <Button
+              size="compact"
+              variant="secondary"
+              onClick={() => {
+                followRef.current = true;
+                setFollowing(true);
+                const viewport = getViewport();
+                if (viewport) viewport.scrollTop = viewport.scrollHeight;
+              }}
+            >
+              <ArrowDownIcon aria-hidden />
+              Jump to latest
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function workingWindowItemIsLive(item: WorkingWindowItem | undefined): boolean {
   if (item === undefined) return false;
@@ -1036,56 +1098,16 @@ function workingWindowItemIsLive(item: WorkingWindowItem | undefined): boolean {
   );
 }
 
-// Includes the 8px gap under the bar so the fade reaches its hairline.
-const WORKING_WINDOW_MAX_HEIGHT = 220;
-
 const WORKING_WINDOW_TAIL = 12;
 
-/** Running subagents outrank the diff; live statuses come from the thread's subagent roster. */
-function WorkingAgentsSlot({
-  groups,
-  fallback,
-}: {
-  groups: ReadonlyArray<Extract<TimelineRow, { kind: "event" }>>;
-  fallback: ReactNode;
-}) {
-  const ctx = use(TimelineRowCtx);
-  const members = groups.flatMap((group) =>
-    (group.subagents ?? [group.projectedItem]).flatMap(({ item }) =>
-      item.type === "subagent" ? [item] : [],
-    ),
-  );
-  const threadId = groups[0]!.projectedItem.item.threadId;
-  const liveAgents = useAtomValue(
-    environmentThreadDetails.threadAtom(scopeThreadRef(ctx.activeThreadEnvironmentId, threadId)),
-    (thread) => thread?.projection.subagents,
-  );
-  const running = members.filter((item) => {
-    const live = liveAgents?.find((agent) => agent.id === item.subagentId);
-    return live ? isActiveSubagentStatus(live.status) : subagentItemIsLive(item.status);
-  }).length;
-  if (running === 0) return fallback;
-  return (
-    <span className="inline-flex shrink-0 items-center gap-2.5 text-meta text-muted-foreground">
-      <span className="flex items-center -space-x-1" aria-hidden>
-        {members.slice(0, 3).map((item) => (
-          <EnvironmentSubagentAvatar
-            key={item.id}
-            className="size-[18px] border-0 bg-(--subagent-avatar-1,var(--muted)) ring-2 ring-background [&_svg]:size-2.5"
-            driver={item.driver}
-            environmentId={ctx.activeThreadEnvironmentId}
-            providerInstanceId={item.providerInstanceId}
-          />
-        ))}
-      </span>
-      {running} of {members.length} running
-    </span>
-  );
-}
+const WORKING_HISTORY_BATCH = 50;
+
+const transitionsSettled = (element: HTMLElement | null) =>
+  Promise.allSettled(element?.getAnimations().map((animation) => animation.finished) ?? []);
 
 /**
  * One item, most important first: needs you, reconnecting, failed tests,
- * running agents, then the diff. Empty until there is something to show.
+ * then the diff. Empty until there is something to show.
  */
 function WorkingBarSlot({
   window,
@@ -1128,7 +1150,10 @@ function WorkingBarSlot({
         >
           {content}
         </TooltipTrigger>
-        <TooltipPopup>{`${pendingRequest.label} · answer in the composer`}</TooltipPopup>
+        <TooltipPopup>
+          <span className="block">{pendingRequest.label}</span>
+          <span className="block">Answer in the composer</span>
+        </TooltipPopup>
       </Tooltip>
     );
   }
@@ -1136,7 +1161,7 @@ function WorkingBarSlot({
     return (
       <span className="inline-flex shrink-0 items-center gap-1.5 text-meta text-warning-foreground">
         <RefreshCwIcon aria-hidden className="size-3" />
-        Reconnecting · try {window.retryAttempt}
+        <span>Reconnecting</span>
       </span>
     );
   }
@@ -1149,20 +1174,9 @@ function WorkingBarSlot({
       </span>
     );
   }
-  const agentGroups = window.items.flatMap((item) => (item.kind === "agents" ? [item.row] : []));
-  const diff = window.diff ? (
+  return window.diff ? (
     <DiffStatBlocks additions={window.diff.additions} deletions={window.diff.deletions} />
   ) : null;
-  if (
-    agentGroups.some((group) =>
-      (group.subagents ?? [group.projectedItem]).some(({ item }) =>
-        subagentItemIsLive(item.status),
-      ),
-    )
-  ) {
-    return <WorkingAgentsSlot groups={agentGroups} fallback={diff} />;
-  }
-  return diff;
 }
 
 function subagentItemIsLive(status: OrchestrationV2TurnItem["status"]): boolean {

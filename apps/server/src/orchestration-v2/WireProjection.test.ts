@@ -298,6 +298,27 @@ describe("orchestration V2 wire projection", () => {
     ).not.toHaveProperty("failedTestCount");
   });
 
+  it("counts header-like changed lines inside each file's hunks", () => {
+    const diffStr = [
+      "diff --git a/a.sql b/a.sql",
+      "--- a/a.sql",
+      "+++ b/a.sql",
+      "@@ -1,2 +1 @@",
+      "--- comment",
+      "----",
+      "+++counter",
+      "diff --git a/b.txt b/b.txt",
+      "--- a/b.txt",
+      "+++ b/b.txt",
+      "@@ -1 +1 @@",
+      "--- old",
+      "+++new",
+    ].join("\n");
+    expect(
+      projectTurnItemForWire({ ...base, type: "file_change", fileName: "a.sql", diffStr }),
+    ).toMatchObject({ additions: 2, deletions: 3 });
+  });
+
   it("derives change counts from the diffs providers report", () => {
     const fileChange = { ...base, type: "file_change" as const, fileName: "src/main.ts" };
     expect(

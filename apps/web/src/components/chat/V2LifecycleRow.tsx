@@ -182,7 +182,7 @@ const STATUS_VISUALS: Record<
   pending: { dotClass: "bg-info", label: "Queued" },
   running: { dotClass: "bg-info", label: "Running" },
   waiting: { dotClass: "bg-info", label: "Waiting" },
-  idle: { dotClass: "bg-dim-foreground", label: "Idle · resumable" },
+  idle: { dotClass: "bg-dim-foreground", label: "Idle" },
   completed: { dotClass: "bg-success", label: "Completed" },
   failed: { dotClass: "bg-destructive", label: "Failed" },
   cancelled: { dotClass: "bg-dim-foreground", label: "Stopped" },
@@ -685,7 +685,6 @@ export function HandoffRow(props: {
     <TimelineSystemDivider
       label={props.pending ? "Context handoff pending" : "Context handoff"}
       icon={ArrowRightLeftIcon}
-      showDetailSeparator={false}
       tone={props.failed ? "danger" : "neutral"}
       detail={
         <span className="inline-flex min-w-0 flex-wrap items-center justify-center gap-1.5">
@@ -766,7 +765,8 @@ function HandoffEndpoint(props: {
         }
       />
       <TooltipPopup>
-        {entry?.displayName ?? props.instanceId} · {label}
+        <span className="block">{entry?.displayName ?? props.instanceId}</span>
+        <span className="block">{label}</span>
       </TooltipPopup>
     </Tooltip>
   );

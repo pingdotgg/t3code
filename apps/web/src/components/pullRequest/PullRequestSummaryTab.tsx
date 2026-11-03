@@ -120,8 +120,10 @@ function CommentIdentity({
           </time>
         </TooltipTrigger>
         <TooltipPopup>
-          {new Date(comment.createdAt).toLocaleString()}
-          {comment.url ? " · Open comment on host" : ""}
+          <span className="flex flex-col gap-0.5">
+            <span>{new Date(comment.createdAt).toLocaleString()}</span>
+            {comment.url ? <span>Open comment on host</span> : null}
+          </span>
         </TooltipPopup>
       </Tooltip>
     </div>

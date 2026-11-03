@@ -85,7 +85,7 @@ export function DeviceStreamView(props: {
   readonly platform: DevicePlatform;
   readonly deviceId: string;
   readonly deviceName?: string;
-  readonly deviceDescription?: string;
+  readonly deviceDescription?: ReactNode;
   readonly visible: boolean;
   readonly hostId: string;
   readonly allowPhoneView?: boolean;

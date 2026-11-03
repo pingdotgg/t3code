@@ -3,6 +3,7 @@ import { ChevronDownIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 const tones = {
+  shelf: { label: "text-(--sidebar-shelf-foreground)", line: "bg-sidebar-border" },
   muted: { label: "text-dim-foreground", line: "bg-sidebar-border" },
   settled: { label: "text-(--sidebar-settled-label)", line: "bg-sidebar-border" },
   info: { label: "text-info-foreground", line: "bg-info/20 dark:bg-info/15" },
@@ -37,12 +38,8 @@ export function CollapsibleSectionHeader({
       <span className="shrink-0">{children}</span>
       <span
         aria-hidden
-        // A collapsed header with a trailing count drops its rule so it doesn't read as a leader.
-        className={cn(
-          "h-px min-w-2 flex-1",
-          tones[tone].line,
-          accessory && !expanded && "invisible",
-        )}
+        // A header with a trailing count drops its rule so it doesn't read as a leader.
+        className={cn("h-px min-w-2 flex-1", tones[tone].line, accessory && "invisible")}
       />
       {accessory}
       <ChevronDownIcon

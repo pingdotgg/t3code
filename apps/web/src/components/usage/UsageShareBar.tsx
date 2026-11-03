@@ -46,7 +46,11 @@ export function UsageShareBar({
               }
             />
             <TooltipPopup>
-              {segment.label} · {format(segment.value)} · {formatPercent(segment.value / total)}
+              <div className="flex flex-col gap-0.5">
+                <span>{segment.label}</span>
+                <span>{format(segment.value)}</span>
+                <span>{formatPercent(segment.value / total)}</span>
+              </div>
             </TooltipPopup>
           </Tooltip>
         ))}

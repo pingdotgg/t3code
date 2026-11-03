@@ -184,7 +184,12 @@ function LinkRowImpl({
                 #{link.number}
               </TooltipTrigger>
               <TooltipPopup>
-                {SOURCE_LABELS[link.source]} · <RelativeTime timestamp={link.linkedAt} />
+                <span className="grid gap-1">
+                  <span>{SOURCE_LABELS[link.source]}</span>
+                  <span>
+                    <RelativeTime timestamp={link.linkedAt} />
+                  </span>
+                </span>
               </TooltipPopup>
             </Tooltip>
           }
@@ -473,15 +478,19 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
           className="min-h-0 flex-1 overscroll-contain p-1.5"
         />
         <footer className="flex items-center justify-between border-t border-border py-1.5 ps-4 pe-2.25 text-2xs text-muted-foreground">
-          <span>
-            {openCount} open · {linkCount} linked
-            {lastSynced ? (
-              <>
-                {" · synced "}
-                <RelativeTime timestamp={lastSynced} />
-              </>
-            ) : null}
-          </span>
+          <Tooltip>
+            <TooltipTrigger render={<span />}>{linkCount} linked</TooltipTrigger>
+            <TooltipPopup>
+              <span className="flex flex-col gap-0.5">
+                <span>{openCount} open</span>
+                {lastSynced ? (
+                  <span>
+                    synced <RelativeTime timestamp={lastSynced} />
+                  </span>
+                ) : null}
+              </span>
+            </TooltipPopup>
+          </Tooltip>
           {/* Borderless: the footer's 9px end padding puts its ink, 7px inside, on the 16px line. */}
           <Button size="xs" variant="ghost" onClick={openLinkDialog}>
             <PlusIcon className="size-3.5" />

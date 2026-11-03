@@ -22,7 +22,6 @@ import {
   MessagesSquareIcon,
   PencilRulerIcon,
   SearchXIcon,
-  SparklesIcon,
   TerminalIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -45,7 +44,10 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 
-export type ComposerCommandItem =
+export type ComposerCommandItem = {
+  readonly metadata?: string | undefined;
+  readonly environmentLabel?: string | undefined;
+} & (
   | {
       id: string;
       type: "path";
@@ -99,7 +101,8 @@ export type ComposerCommandItem =
       machine: EnvironmentMachineKind;
       label: string;
       description: string;
-    };
+    }
+);
 
 export interface ComposerCommandGroup {
   readonly key: string;
@@ -398,7 +401,7 @@ function ComposerCommandItemIcon(props: {
     case "provider-slash-command":
       return <TerminalIcon aria-hidden="true" className={iconClassName} />;
     case "skill":
-      return <SparklesIcon aria-hidden="true" className={iconClassName} />;
+      return <BoxIcon aria-hidden="true" className={iconClassName} />;
   }
 }
 
@@ -436,10 +439,10 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         resolvedTheme={props.resolvedTheme}
         isActive={props.isActive}
       />
-      <span className="flex min-w-0 flex-1 items-center gap-2.5">
+      <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
         <span
           className={cn(
-            "min-w-0 max-w-[45%] shrink-0 truncate text-label",
+            "min-w-0 max-w-full truncate text-label",
             props.item.type === "pull-request" ||
               (props.triggerKind === "slash-command" && !isSlashSkill)
               ? "font-mono text-meta [--type-meta:0.78125rem]"
@@ -457,8 +460,15 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         </span>
         <span className="min-w-0 flex-1 truncate text-left font-normal text-dim-foreground text-meta">
           {props.item.description}
+          {props.item.environmentLabel ? (
+            <span className="block">{props.item.environmentLabel}</span>
+          ) : null}
         </span>
       </span>
+
+      {props.item.metadata ? (
+        <span className="shrink-0 text-meta text-dim-foreground">{props.item.metadata}</span>
+      ) : null}
       {pullRequestPresentation ? (
         <Badge
           variant={

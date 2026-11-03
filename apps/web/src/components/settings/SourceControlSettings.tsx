@@ -172,7 +172,7 @@ function itemSummary({
               <RedactedAccount account={authAccount} />
             </>
           ) : null}
-          {authDetail ? <span>· {authDetail}</span> : null}
+          {authDetail ? <span className="basis-full">{authDetail}</span> : null}
         </>
       );
     }
@@ -372,7 +372,10 @@ export function SourceControlSettingsPanel() {
   const environmentId =
     environment?.connection.phase === "connected" ? environment.environmentId : null;
   const aggregate = scope.environmentIds.length !== 1 && connectedEnvironments.length > 1;
-  const environmentSuffix = aggregate && environment ? ` · ${environment.label}` : "";
+  const environmentContext =
+    aggregate && environment ? (
+      <span className="text-meta text-muted-foreground">{environment.label}</span>
+    ) : null;
   const discovery = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -475,10 +478,7 @@ export function SourceControlSettingsPanel() {
         </SettingsSection>
       ) : isInitialScanPending ? (
         <>
-          <SourceControlSectionSkeleton
-            title={`Version Control${environmentSuffix}`}
-            headerAction={scanButton}
-          />
+          <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />
           <SourceControlSectionSkeleton title="Source control providers" />
         </>
       ) : hasDiscoveryItems ? (
@@ -486,7 +486,8 @@ export function SourceControlSettingsPanel() {
           {hasVersionControlSystems ? (
             <SettingsSection
               id={searchableSetting("source-control").id}
-              title={`Version Control${environmentSuffix}`}
+              title="Version Control"
+              titleAction={environmentContext}
               headerAction={scanButton}
             >
               {result.versionControlSystems.map((item) => (
@@ -498,11 +499,8 @@ export function SourceControlSettingsPanel() {
           {result.sourceControlProviders.length > 0 ? (
             <SettingsSection
               id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
-              title={
-                hasVersionControlSystems
-                  ? "Source control providers"
-                  : `Source control providers${environmentSuffix}`
-              }
+              title="Source Control Providers"
+              titleAction={hasVersionControlSystems ? null : environmentContext}
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (

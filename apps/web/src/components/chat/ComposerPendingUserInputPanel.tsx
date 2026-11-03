@@ -4,7 +4,10 @@ import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { type PendingUserInput } from "../../session-logic";
-import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
+import {
+  countPendingUserInputQuestions,
+  type PendingUserInputDraftAnswer,
+} from "@t3tools/client-runtime/state/pending-user-input";
 import { derivePendingUserInputProgress } from "../../pendingUserInput";
 import { CheckIcon, MessageCircleQuestionMarkIcon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -73,6 +76,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       key={activePrompt.requestId}
       actionsInComposer={actionsInComposer}
       prompt={activePrompt}
+      questionCount={countPendingUserInputQuestions(pendingUserInputs)}
       cwd={cwd}
       threadRef={threadRef}
       disabled={disabled}
@@ -94,6 +98,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
 const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard({
   actionsInComposer,
   prompt,
+  questionCount,
   cwd,
   threadRef,
   disabled,
@@ -111,6 +116,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 }: {
   actionsInComposer: boolean;
   prompt: PendingUserInput;
+  questionCount: number;
   cwd: string | undefined;
   threadRef: ScopedThreadRef;
   disabled: boolean;
@@ -303,11 +309,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         }
         trailing={
           <>
-            {prompt.questions.length > 1 ? (
-              <ComposerRequestCard.Counter
-                index={questionIndex + 1}
-                total={prompt.questions.length}
-              />
+            {questionCount > 1 ? (
+              <ComposerRequestCard.Counter index={questionIndex + 1} total={questionCount} />
             ) : null}
             <ComposerBanner.ToggleIcon expanded={!isCollapsed} />
             {prompt.dismissible ? (

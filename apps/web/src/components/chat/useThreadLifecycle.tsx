@@ -406,10 +406,6 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   // The interrupt path also accepts a completed run while its provider still
   // has background work.
   const activeBackgroundTasks = !isWorking && activeThread ? pendingBackgroundTasks : [];
-  const timelineBackgroundTaskLabel =
-    activeBackgroundTasks.length === 0
-      ? null
-      : activeBackgroundTasks.map((task) => task.description || task.taskId).join(", ");
   const [backgroundWorkStops, setBackgroundWorkStops] = useState<
     Record<string, BackgroundWorkStopRequest | undefined>
   >({});
@@ -683,7 +679,6 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     },
   } satisfies ChatShortcutCommands;
   return {
-    timelineBackgroundTaskLabel,
     shortcuts,
     acknowledgeActiveThreadWoke,
     activeBranchMismatchKey,

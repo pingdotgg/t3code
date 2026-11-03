@@ -31,9 +31,6 @@ export function TriageDraftHero(props: {
             posts anything.
           </TooltipPopup>
         </Tooltip>
-        <span aria-hidden className="text-muted-foreground">
-          ·
-        </span>
         <Tooltip>
           <TooltipTrigger
             render={

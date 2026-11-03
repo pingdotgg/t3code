@@ -1137,11 +1137,26 @@ export function ThemeEditorPanel({
           </h2>
           {isMinimized ? null : (
             <p className="truncate text-xs text-muted-foreground">
-              {isInspecting
-                ? "Select an element · Esc to cancel"
-                : selectedRole
-                  ? `${isAdvanced ? (getThemeEditorColorFamily(selectedRole)?.label ?? getThemeRoleLabel(selectedRole)) : getThemeRoleLabel(selectedRole)} · ${usageCount ?? 0} ${usageCount === 1 ? "use" : "uses"}`
-                  : "Select a color below"}
+              {isInspecting ? (
+                <Tooltip>
+                  <TooltipTrigger render={<span tabIndex={0} />}>Select an element</TooltipTrigger>
+                  <TooltipPopup>Esc to cancel</TooltipPopup>
+                </Tooltip>
+              ) : selectedRole ? (
+                <Tooltip>
+                  <TooltipTrigger render={<span tabIndex={0} />}>
+                    {isAdvanced
+                      ? (getThemeEditorColorFamily(selectedRole)?.label ??
+                        getThemeRoleLabel(selectedRole))
+                      : getThemeRoleLabel(selectedRole)}
+                  </TooltipTrigger>
+                  <TooltipPopup>
+                    {usageCount ?? 0} {usageCount === 1 ? "use" : "uses"}
+                  </TooltipPopup>
+                </Tooltip>
+              ) : (
+                "Select a color below"
+              )}
             </p>
           )}
         </div>

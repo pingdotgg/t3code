@@ -83,7 +83,12 @@ export function DeviceWorkspace(props: {
             environmentId={props.environmentId}
             platform={props.device.platform}
             deviceName={props.device.name}
-            deviceDescription={`${props.hostLabel} · ${props.device.version}`}
+            deviceDescription={
+              <span className="flex flex-col items-center gap-0.5">
+                <span>{props.hostLabel}</span>
+                <span>{props.device.version}</span>
+              </span>
+            }
             deviceId={props.device.id}
             hostId={props.device.hostId}
             visible={props.visible}

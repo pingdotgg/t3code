@@ -18,7 +18,9 @@ function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRe
           className="min-w-0 border-border border-b pb-2 last:border-b-0 last:pb-0"
           key={request.requestId}
         >
-          <div className="wrap-break-word font-medium text-strong-foreground">{request.tag}</div>
+          <div className="whitespace-pre-line wrap-break-word font-medium text-strong-foreground">
+            {request.tag}
+          </div>
           <div className="mt-0.5 text-3xs text-dim-foreground">
             Started {new Date(request.startedAt).toLocaleTimeString()}
           </div>

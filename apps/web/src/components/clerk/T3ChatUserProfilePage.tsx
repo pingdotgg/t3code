@@ -23,12 +23,20 @@ const upgradeLink = (
 function planLabel(link: RelayT3ChatLink): ReactNode {
   switch (link.plan) {
     case "premier":
-      return `Premier · up to ${T3CHAT_PLAN_TUNNEL_LIMITS.premier} tunnels`;
+      return (
+        <>
+          <span className="block">Premier</span>
+          <span className="block">Up to {T3CHAT_PLAN_TUNNEL_LIMITS.premier} tunnels</span>
+        </>
+      );
     case "pro":
       return (
         <>
-          Pro · up to {T3CHAT_PLAN_TUNNEL_LIMITS.pro} tunnels. {upgradeLink} to Premier for{" "}
-          {T3CHAT_PLAN_TUNNEL_LIMITS.premier}.
+          <span className="block">Pro</span>
+          <span className="block">
+            Up to {T3CHAT_PLAN_TUNNEL_LIMITS.pro} tunnels. {upgradeLink} to Premier for{" "}
+            {T3CHAT_PLAN_TUNNEL_LIMITS.premier}.
+          </span>
         </>
       );
     case "free":

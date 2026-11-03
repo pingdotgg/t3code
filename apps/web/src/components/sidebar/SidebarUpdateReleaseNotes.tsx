@@ -84,9 +84,10 @@ export function SidebarUpdateReleaseNotes({
             </div>
             {state.availableVersion ? (
               <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
-                {releasedAt
-                  ? `${state.availableVersion} · ${formatReleaseAge(releasedAt, now)}`
-                  : state.availableVersion}
+                <span className="flex flex-col items-start gap-0.5">
+                  <span>{state.availableVersion}</span>
+                  {releasedAt ? <span>{formatReleaseAge(releasedAt, now)}</span> : null}
+                </span>
               </div>
             ) : null}
           </div>
@@ -110,9 +111,12 @@ export function SidebarUpdateReleaseNotes({
               {generated ? (
                 releaseNote.version !== state.availableVersion && (
                   <h3 className="mb-1 text-meta text-muted-foreground">
-                    {releaseNote.releasedAt
-                      ? `${releaseNote.version} · ${formatReleaseAge(releaseNote.releasedAt, now)}`
-                      : releaseNote.version}
+                    <span className="flex flex-col items-start gap-0.5">
+                      <span>{releaseNote.version}</span>
+                      {releaseNote.releasedAt ? (
+                        <span>{formatReleaseAge(releaseNote.releasedAt, now)}</span>
+                      ) : null}
+                    </span>
                   </h3>
                 )
               ) : (

@@ -159,8 +159,12 @@ export function PullRequestStackMenu({
             }
           />
           <TooltipPopup>
-            View stack #{stack.number}, layer {position} of {stack.layers.length}
-            {notice ? ` · ${notice}` : null}
+            <span className="flex flex-col gap-0.5">
+              <span>
+                View stack #{stack.number}, layer {position} of {stack.layers.length}
+              </span>
+              {notice ? <span>{notice}</span> : null}
+            </span>
           </TooltipPopup>
         </Tooltip>
         <MenuPopup align="start">

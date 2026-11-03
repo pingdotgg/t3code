@@ -24,6 +24,7 @@ import {
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
 import { ProjectPinButton } from "./ProjectPinButton";
 import { SearchMatchHintLine, ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 type CommandPaletteResultItem = CommandPaletteActionItem | CommandPaletteSubmenuItem;
 
@@ -179,13 +180,29 @@ function ThreadRowContext({
 }) {
   if (!item.threadSearch || !(item.threadContentMatch || item.matchHint)) return null;
   // A "Project: …" hint already names the project.
-  const context = [item.threadSearch.projectTitle, item.threadSearch.environmentLabel]
-    .filter((part) => part && part !== item.matchHint?.text)
-    .join(" · ");
-  return context ? (
-    <span className="max-w-[45%] shrink-0 truncate text-dim-foreground text-caption">
-      {context}
-    </span>
+  const context = [item.threadSearch.projectTitle, item.threadSearch.environmentLabel].filter(
+    (part) => part && part !== item.matchHint?.text,
+  );
+  return context.length > 0 ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            tabIndex={0}
+            className="max-w-[45%] shrink-0 truncate text-dim-foreground text-caption"
+          />
+        }
+      >
+        {context[0]}
+      </TooltipTrigger>
+      <TooltipPopup>
+        {context.map((part) => (
+          <span className="block" key={part}>
+            {part}
+          </span>
+        ))}
+      </TooltipPopup>
+    </Tooltip>
   ) : null;
 }
 

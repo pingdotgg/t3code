@@ -169,7 +169,14 @@ export function SimlockDeviceHostEditor(props: {
                   environmentId={environment.environmentId}
                   hostId={props.isNew ? null : props.host.id}
                   gatewayUrl={checkUrl}
-                  label={several ? `Agent token · ${environment.label}` : "Agent token"}
+                  label={
+                    <span className="grid gap-1">
+                      <span>Agent token</span>
+                      {several ? (
+                        <span className="text-meta text-muted-foreground">{environment.label}</span>
+                      ) : null}
+                    </span>
+                  }
                   token={tokens.get(environment.environmentId) ?? { kind: "cleared" }}
                   hasSaved={savedToken(environment)}
                   busy={props.busy}

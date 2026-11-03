@@ -24,10 +24,10 @@ import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown from "../ChatMarkdown";
 import { EnvironmentContextChip } from "../EnvironmentContextChip";
 import { ThreadContextChip } from "../ThreadContextChip";
-import { AtSignIcon, MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
+import { MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
 import type { ComposerContextId, KnownComposerContextRecord } from "@t3tools/contracts";
 import { buildExpandedImagePreview } from "./ExpandedImagePreview";
-import { WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
+import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -81,7 +81,12 @@ function UserMessageMentionChip(props: {
                 useRightPanelStore.getState().openFile(ctx.threadRef, props.record.path);
             }}
           >
-            <AtSignIcon aria-hidden="true" />
+            <WorkspaceEntryIcon
+              path={props.record.path}
+              environmentId={ctx.activeThreadEnvironmentId}
+              cwd={ctx.workspaceRoot}
+              theme={ctx.resolvedTheme}
+            />
             <ContextChipLabel>{props.record.label}</ContextChipLabel>
           </ContextChip>
         }
@@ -547,7 +552,8 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
           {formatWorkspaceRelativePath(comment.filePath, ctx.workspaceRoot)}
         </div>
         <div className="text-2xs text-muted-foreground">
-          {comment.sectionTitle} · {comment.rangeLabel}
+          <span className="block">{comment.rangeLabel}</span>
+          <span className="block">{comment.sectionTitle}</span>
         </div>
       </div>
       {comment.text.length > 0 && (

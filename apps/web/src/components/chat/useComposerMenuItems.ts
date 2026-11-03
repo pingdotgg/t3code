@@ -56,15 +56,13 @@ const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<Pull
   [];
 
 /** Describes thread matches during render without retaining the composer's render scope. */
-function makeComposerThreadDescription(projects: ReturnType<typeof useProjects>, nowMs: number) {
+function makeComposerThreadDescription(projects: ReturnType<typeof useProjects>) {
   return (shell: ReturnType<typeof useVisibleThreadShells>[number]) => {
     const project = projects.find(
       (candidate) =>
         candidate.environmentId === shell.environmentId && candidate.id === shell.projectId,
     );
-    return [project?.title, formatRelativeTimeLabel(shell.updatedAt, nowMs)]
-      .filter(Boolean)
-      .join(" · ");
+    return project?.title ?? "Thread";
   };
 }
 
@@ -144,10 +142,24 @@ export function useComposerMenuItems({
   const environmentProjects = useProjects();
   const nowMinute = useNowMinute();
   // Thread rows read "project · 2h ago", like the sidebar.
-  const describeComposerThread = makeComposerThreadDescription(
-    environmentProjects,
-    Date.parse(`${nowMinute}:00.000Z`),
-  );
+  const describeComposerThread = makeComposerThreadDescription(environmentProjects);
+  const withThreadAge = (item: Extract<ComposerCommandItem, { type: "thread" }>) => {
+    const shell = environmentThreadShells.find(
+      (shell) =>
+        shell.id === item.thread.threadId && shell.environmentId === item.thread.environmentId,
+    );
+    return {
+      ...item,
+      description: shell ? describeComposerThread(shell) : "Thread",
+      environmentLabel:
+        item.thread.environmentId === environmentId
+          ? undefined
+          : linkedEnvironments.get(item.thread.environmentId),
+      metadata: shell
+        ? formatRelativeTimeLabel(shell.updatedAt, Date.parse(`${nowMinute}:00.000Z`))
+        : undefined,
+    };
+  };
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: isPathTrigger ? gitCwd : null,
@@ -224,7 +236,7 @@ export function useComposerMenuItems({
           query: composerTrigger.query,
           now,
           describe: describeComposerThread,
-        }),
+        }).map(withThreadAge),
         // An answer to an agent's question carries thread links, not machines.
         ...(questionAttachmentTarget === null && offersMachines
           ? matchComposerEnvironmentItems({
@@ -351,7 +363,7 @@ export function useComposerMenuItems({
         allowEmptyQuery: true,
         now,
         describe: describeComposerThread,
-      });
+      }).map(withThreadAge);
       if (pullRequestProjectId === null || pullRequestRepository === null) return threadItems;
       const exactPullRequest =
         exactPullRequestLookup.data?.number === pullRequestTriggerNumber
@@ -403,10 +415,11 @@ export function useComposerMenuItems({
           isDraft: pullRequest.isDraft,
         },
         label: `#${pullRequest.number}`,
-        description:
+        description: pullRequest.title,
+        metadata:
           pullRequest.repository.trim().toLowerCase() === pullRequestRepository.trim().toLowerCase()
-            ? pullRequest.title
-            : `${pullRequest.repository} · ${pullRequest.title}`,
+            ? undefined
+            : pullRequest.repository,
       }));
       return [...pullRequestItems, ...threadItems];
     }

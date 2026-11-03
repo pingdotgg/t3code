@@ -127,10 +127,20 @@ function countTextLines(text: string): number {
 function countPatchLines(lines: ReadonlyArray<unknown>): LineCounts {
   let additions = 0;
   let deletions = 0;
+  let inHunk = false;
   for (const line of lines) {
     if (typeof line !== "string") continue;
-    if (line.startsWith("+") && !line.startsWith("+++")) additions += 1;
-    else if (line.startsWith("-") && !line.startsWith("---")) deletions += 1;
+    if (line.startsWith("diff ")) {
+      inHunk = false;
+      continue;
+    }
+    if (line.startsWith("@@")) {
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk && (line.startsWith("+++") || line.startsWith("---"))) continue;
+    if (line.startsWith("+")) additions += 1;
+    else if (line.startsWith("-")) deletions += 1;
   }
   return { additions, deletions };
 }

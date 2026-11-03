@@ -16,6 +16,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Switch } from "../ui/switch";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
 import { searchableSetting } from "./settingsSearch";
@@ -95,13 +96,16 @@ export function UsageProviderSettings({
             return (
               <SettingsRow
                 key={id}
-                title={label}
-                description={
-                  <span className="break-all">
-                    CLI Proxy{source.enabled ? "" : " · Disabled"}
-                    {label !== source.url ? ` · ${source.url}` : ""}
-                  </span>
+                title={
+                  <Tooltip>
+                    <TooltipTrigger render={<span tabIndex={0} />}>{label}</TooltipTrigger>
+                    <TooltipPopup>
+                      <span className="block">CLI Proxy</span>
+                      {label !== source.url ? <span className="block">{source.url}</span> : null}
+                    </TooltipPopup>
+                  </Tooltip>
                 }
+                description={source.enabled ? "CLI Proxy" : "Disabled"}
                 control={
                   !readOnly ? (
                     <RemoveUsageProviderButton

@@ -284,7 +284,11 @@ export function ThreadDetailsPrRow({
                   }
                 />
                 <div className="min-w-0 truncate text-foreground/75">
-                  {describePullRequestChecks(detail.checks)}
+                  {describePullRequestChecks(detail.checks).map((fact) => (
+                    <span className="block" key={fact}>
+                      {fact}
+                    </span>
+                  ))}
                 </div>
               </div>
             ) : null}

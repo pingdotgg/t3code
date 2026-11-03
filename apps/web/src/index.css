@@ -1612,12 +1612,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
 }
 
 @layer components {
-  .context-chip {
-    border-radius: 0.5em;
-    padding-inline: 0.5em;
-    font-size: 0.86em;
-  }
-
   /* AnimatedHeight owns resizing for its contents. Nested collapsibles must
      expose their final layout immediately, otherwise each animation frame
      restarts the parent's transition and the dialog trails behind its content. */
@@ -2168,7 +2162,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --table-row-rule: #00000005;
   --composer-icon: #525252;
   --pill-icon: var(--composer-icon);
-  --context-reference-fill: #0000000a;
   --selection-neutral: #00000006;
   --selection-subtle: #00000009;
   --model-picker-rail: #0000001a;
@@ -2310,7 +2303,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --table-row-rule: #ffffff08;
   --composer-icon: #9e9e9e;
   --pill-icon: var(--composer-icon);
-  --context-reference-fill: #ffffff10;
   --selection-neutral: #ffffff0a;
   --selection-subtle: #ffffff0f;
   --model-picker-rail: #00000033;
@@ -2359,6 +2351,8 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
    sidebar implementations (default and legacy) read these, including the
    portaled mobile sheets and the settings navigation. */
 [data-app-sidebar] {
+  --sidebar-thread-title-foreground: var(--app-theme-text, #18181b);
+  --sidebar-shelf-foreground: var(--app-theme-sidebar-muted-foreground, #71717a);
   --sidebar-status-done: #047857;
   --sidebar-status-input: #4f46e5;
   --sidebar-status-approval: #b45309;
@@ -2372,6 +2366,8 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --sidebar-muted-foreground: var(--muted-foreground);
 
   @variant dark {
+    --sidebar-thread-title-foreground: var(--app-theme-text, #f1f3f7);
+    --sidebar-shelf-foreground: var(--app-theme-sidebar-muted-foreground, #a3a3a3);
     --sidebar-status-done: #6ee7b7;
     --sidebar-status-input: #a5b4fc;
     --sidebar-status-approval: #fcd34d;
@@ -4872,49 +4868,57 @@ body {
   }
 }
 
-/* Markdown tables fit their lane with row separators and horizontal overflow.
-   Word-boundary wrapping keeps columns at least as wide as their longest word. */
+/* Unwrapped tables keep links bounded by their markdown column. */
 .chat-markdown table {
   width: 100%;
   border-collapse: collapse;
   overflow-wrap: normal;
   word-break: normal;
-  font-size: 0.75rem;
 }
 
-/* The rich-answer table (FC7yK) keeps 12px insets, including its outer cells.
-   Top alignment keeps wrapped rows on the same first line. */
-.chat-markdown th,
-.chat-markdown td {
+/* Only the renderer's scroll well can contain a table wider than its lane. */
+.chat-markdown-table-container {
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.chat-markdown-table-container table {
+  width: max-content;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+/* Bound prose at word boundaries without splitting identifiers to fit the lane. */
+.chat-markdown-table-container :is(th, td) {
+  @apply text-body text-foreground;
   padding: 0.5rem 0.75rem;
   text-align: start;
   vertical-align: top;
-}
-
-.chat-markdown thead th {
-  color: var(--contrast-muted-foreground);
-  border-bottom: 1px solid var(--table-row-rule);
-  background: var(--table-header-fill);
-  font-weight: 500;
-}
-
-.chat-markdown tbody td {
-  color: var(--contrast-muted-foreground);
-  border-bottom: 1px solid var(--table-row-rule);
-}
-
-.chat-markdown tbody tr:last-child td {
-  border-bottom: none;
-}
-
-/* Caps a long path, URL, or chip at 24rem; text past the cap wraps. */
-.chat-markdown :is(th, td) {
   max-width: 24rem;
-  overflow-wrap: break-word;
+  overflow-wrap: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-markdown-table-container thead th {
+  @apply text-label;
+  border-bottom: 1px solid var(--border);
+  /* The table token stays neutral when selection surfaces turn blue or glossy. */
+  background: var(--table-header-fill);
+}
+
+.chat-markdown-table-container tbody tr:not(:last-child) td {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.chat-markdown-table-container :is(th, td):not(:last-child) {
+  border-inline-end: 1px solid var(--hairline);
 }
 
 /* Formula cells keep their natural width and scroll with the table. */
-.chat-markdown :is(th, td):has([data-markdown-math]) {
+.chat-markdown-table-container :is(th, td):has([data-markdown-math]) {
   max-width: none;
 }
 
@@ -5081,6 +5085,31 @@ body {
    widgets while the caret is on styled text. */
 .composer-tiptap {
   position: relative;
+}
+
+.composer-prompt-body {
+  grid-template-areas: "attachments" "prompt";
+}
+
+/* Reserve only the first line beside the actions. Following lines use the
+   full width, so native wrapping never switches the composer to an empty row. */
+.composer-prompt-body [data-testid="composer-editor"]::before {
+  content: "";
+  float: inline-end;
+  width: calc(var(--composer-actions-width, 100px) + 6px);
+  height: 1lh;
+}
+
+.composer-prompt-body[data-composer-scrolling] {
+  grid-template-areas: "attachments" "prompt" "actions";
+}
+
+[data-composer-scrolling] .composer-prompt-editor {
+  padding-block: 0;
+}
+
+[data-composer-scrolling] [data-chat-composer-actions="right"] {
+  grid-area: actions;
 }
 
 .composer-tiptap p {
@@ -5262,12 +5291,11 @@ body {
   --timeline-working-rule: var(--border);
 }
 
-/* Rich answers (board FC7yK): a 15px h3, and 12.5px inline code and table text. */
+/* Rich answers (board FC7yK): a 15px h3 and 12.5px inline code. */
 .chat-markdown h3 {
   font-size: 0.9375rem;
 }
 
-.chat-markdown :not(pre) > code,
-.chat-markdown table {
+.chat-markdown :not(pre) > code {
   font-size: 0.78125rem;
 }

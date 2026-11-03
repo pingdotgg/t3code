@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -90,11 +91,13 @@ export function ConnectionDiagnosisSummary({
   return (
     <div className="text-meta">
       <p className="text-destructive-foreground">{diagnosis.headline}</p>
-      <p className="flex flex-wrap items-center gap-1 text-muted-foreground">
-        {retryAt !== null ? <RetryCountdown retryAt={retryAt} /> : null}
-        {retryAt !== null && attempt > 0 ? <span aria-hidden>·</span> : null}
-        {attempt > 0 ? <span>attempt {attempt}</span> : null}
-        {retryAt !== null || attempt > 0 ? <span aria-hidden>·</span> : null}
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
+        <Tooltip>
+          <TooltipTrigger render={<span tabIndex={0} />}>
+            {retryAt !== null ? <RetryCountdown retryAt={retryAt} /> : "Retry paused"}
+          </TooltipTrigger>
+          <TooltipPopup side="top">Attempt {attempt}</TooltipPopup>
+        </Tooltip>
         <InlineButton tone="muted" type="button" aria-expanded={expanded} onClick={onToggle}>
           Details
           <ChevronRightIcon

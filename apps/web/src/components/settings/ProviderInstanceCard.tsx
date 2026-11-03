@@ -84,7 +84,7 @@ function ProviderStatusDiagnostic({
   detail,
   children,
 }: {
-  detail: string | null;
+  detail: ReactNode;
   children: ReactElement;
 }) {
   if (!detail) return children;
@@ -732,7 +732,7 @@ export function ProviderInstanceCard({
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
   const summary = enabled
     ? getProviderSummary(effectiveProvider)
-    : { headline: "Disabled", detail: null };
+    : { headline: "Disabled", detail: null, authLabel: null };
   const authEmail = liveProvider?.auth.email?.trim();
   const isAuthenticated = enabled && liveProvider?.auth.status === "authenticated";
   const authLabel =
@@ -930,7 +930,19 @@ export function ProviderInstanceCard({
       <span className={cn("size-1.5 shrink-0 rounded-full", statusStyle.dot)} aria-hidden />
     ) : null;
   const needsAttention = statusKey === "warning" || statusKey === "error";
-  const statusDiagnostic = hasCompatibilityWarning && needsAttention ? summary.detail : null;
+  const statusDiagnostic = (
+    <>
+      {authLabel || summary.authLabel ? (
+        <span className="block">{authLabel ?? summary.authLabel}</span>
+      ) : null}
+      {hasCompatibilityWarning && needsAttention && summary.detail ? (
+        <span className="block">{summary.detail}</span>
+      ) : null}
+    </>
+  );
+  const hasStatusDiagnostic = Boolean(
+    authLabel || summary.authLabel || (hasCompatibilityWarning && needsAttention && summary.detail),
+  );
   const inlineStatusDetail = hasCompatibilityWarning
     ? compatibility?.status === "broken"
       ? "Incompatible"
@@ -944,9 +956,8 @@ export function ProviderInstanceCard({
         {needsAttention ? statusDotNode : null}
         <span>Authenticated as</span>
         <ProviderAuthEmail email={authEmail} />
-        {authLabel ? <span>· {authLabel}</span> : null}
         {inlineStatusDetail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
+          <span className="min-w-0 basis-full [overflow-wrap:anywhere]">{inlineStatusDetail}</span>
         ) : null}
       </>
     ) : (
@@ -954,7 +965,7 @@ export function ProviderInstanceCard({
         {statusDotNode}
         <span>{summary.headline}</span>
         {inlineStatusDetail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
+          <span className="min-w-0 basis-full [overflow-wrap:anywhere]">{inlineStatusDetail}</span>
         ) : null}
       </>
     );
@@ -1116,11 +1127,16 @@ export function ProviderInstanceCard({
                   className="pointer-events-auto line-clamp-2 [overflow-wrap:anywhere]"
                 >
                   {updateProgress ? (
-                    `Updating · ${updateProgress}`
+                    <>
+                      <span>Updating</span>
+                      <span className="block">{updateProgress}</span>
+                    </>
                   ) : (
                     <>
                       {summary.headline}
-                      {needsAttention && inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
+                      {needsAttention && inlineStatusDetail ? (
+                        <span className="block">{inlineStatusDetail}</span>
+                      ) : null}
                     </>
                   )}
                 </span>
@@ -1192,9 +1208,9 @@ export function ProviderInstanceCard({
   // Provider status gets its own row instead of hanging under the name field.
   const statusContent = (
     <>
-      <ProviderStatusDiagnostic detail={statusDiagnostic}>
+      <ProviderStatusDiagnostic detail={hasStatusDiagnostic ? statusDiagnostic : null}>
         <div
-          tabIndex={statusDiagnostic ? 0 : undefined}
+          tabIndex={hasStatusDiagnostic ? 0 : undefined}
           className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"
         >
           {editorStatusNode}

@@ -460,7 +460,7 @@ export function ComposerAttachmentFileList({
                   ? "Attach again"
                   : "Remove to send"
                 : upload?.status === "uploading"
-                  ? `Uploading · ${formatAttachmentUploadProgress(upload.progress)}`
+                  ? formatAttachmentUploadProgress(upload.progress)
                   : formatAttachmentSize(file.sizeBytes)}
             </span>
             {!needsReattach && upload?.status === "failed" ? (

@@ -8,6 +8,7 @@ import {
 import { formatModelSlugName } from "@t3tools/shared/model";
 import { createContext, memo, type ReactNode, useRef, useState } from "react";
 import { ChevronDownIcon } from "lucide-react";
+import { Kbd } from "../ui/kbd";
 import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -233,13 +234,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const allModelNames = selectedEntries
     ? selectedEntries.map((selection) => selection.fullLabel).join(", ") || "Choose models"
     : undefined;
-  const triggerTooltipContent = [
-    props.triggerLabel ?? allModelNames ?? triggerLabel,
-    props.triggerDetail,
-    shortcutLabel,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const triggerTooltipContent = (
+    <span className="flex flex-col gap-1">
+      <span>{props.triggerLabel ?? allModelNames ?? triggerLabel}</span>
+      {props.triggerDetail ? <span>{props.triggerDetail}</span> : null}
+      {shortcutLabel ? <Kbd>{shortcutLabel}</Kbd> : null}
+    </span>
+  );
 
   const triggerText = props.triggerLabel ?? multipleLabel ?? triggerTitle;
   const triggerTextProps = {

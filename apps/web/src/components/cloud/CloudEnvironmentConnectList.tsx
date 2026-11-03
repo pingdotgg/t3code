@@ -352,19 +352,18 @@ export function CloudEnvironmentConnectRows({
       : "Not added";
     const statusText =
       unsupported && !savedEnvironment
-        ? `T3 Connect · ${notAdded} · Client not supported`
+        ? "Client not supported"
         : offlineReason !== null
           ? offlineReason
           : savedConnection
             ? savedConnection.statusText
             : availability === "online"
-              ? `T3 Connect · ${notAdded} · Relay online`
+              ? "Relay online"
               : availability === "offline"
-                ? `T3 Connect · ${notAdded} · Relay offline`
+                ? "Relay offline"
                 : availability === "checking"
-                  ? `T3 Connect · ${notAdded} · Checking relay status…`
-                  : (Option.getOrNull(error)?.message ??
-                    `T3 Connect · ${notAdded} · Relay status unavailable`);
+                  ? "Checking relay status…"
+                  : (Option.getOrNull(error)?.message ?? "Relay status unavailable");
     if (selection) {
       return (
         <label
@@ -417,7 +416,10 @@ export function CloudEnvironmentConnectRows({
                         ? "Unavailable"
                         : "Checking…"))}
             </TooltipTrigger>
-            <TooltipPopup>{unsupportedDetail ?? statusText}</TooltipPopup>
+            <TooltipPopup>
+              <span className="block">{unsupportedDetail ?? statusText}</span>
+              {!savedEnvironment ? <span className="block">{notAdded}</span> : null}
+            </TooltipPopup>
           </Tooltip>
         </label>
       );
@@ -469,7 +471,8 @@ export function CloudEnvironmentConnectRows({
                   : "text-muted-foreground",
               )}
             >
-              {statusText}
+              <span className="block">{statusText}</span>
+              {!savedEnvironment ? <span className="block">{notAdded}</span> : null}
             </p>
           </div>
           {unsupported && !savedEnvironment ? (

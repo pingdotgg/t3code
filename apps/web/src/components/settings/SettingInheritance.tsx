@@ -188,10 +188,10 @@ export function SettingInheritance({
   const key = keys[0];
   if (!key || targets.length === 0) return null;
   const hasMultipleEnvironments = new Set(targets.map((target) => target.environmentId)).size > 1;
-  const overrideSummary =
+  const overrideCount =
     overridingProjects.length > 0
-      ? `${summary} · ${overridingProjects.length} project ${overridingProjects.length === 1 ? "override" : "overrides"}`
-      : summary;
+      ? `${overridingProjects.length} project ${overridingProjects.length === 1 ? "override" : "overrides"}`
+      : null;
   const chains = targets.flatMap((target) => {
     const environment = environments.find(
       (candidate) => candidate.environmentId === target.environmentId,
@@ -201,17 +201,20 @@ export function SettingInheritance({
     const path = scopeContext?.scope.members.find(
       (member) => member.environmentId === target.environmentId && member.id === target.projectId,
     )?.workspaceRoot;
-    const secondary = [labels.secondary, path?.split(/[\\/]/).filter(Boolean).slice(-2).join("/")]
-      .filter(Boolean)
-      .join(" · ");
+    const secondary = [
+      path?.split(/[\\/]/).filter(Boolean).slice(-2).join("/"),
+      labels.secondary,
+    ].filter(Boolean);
     const layers = settingInheritanceLayers(target, environment.serverConfig.settings, key);
     const winningLayer = layers.find((layer) => layer.effective);
     return [
       {
         id: `${target.environmentId}:${target.projectId ?? ""}`,
         target,
-        label: [labels.primary, secondary].filter(Boolean).join(" · "),
-        machineLabel: [labels.primary, labels.secondary].filter(Boolean).join(" · "),
+        label: labels.primary,
+        secondary,
+        machineLabel: labels.primary,
+        machineDetail: labels.secondary,
         overrides: environment.serverConfig.settings.projectSettingsOverrides,
         machine: resolveEnvironmentMachineKind(environment.serverConfig),
         layers,
@@ -230,8 +233,17 @@ export function SettingInheritance({
         target.environmentId === scopeContext?.target?.environmentId &&
         target.projectId === scopeContext?.target?.projectId,
     ) ?? chains[0];
-  const machineLabelFor = (environmentId: string) =>
-    chains.find((entry) => entry.target.environmentId === environmentId)?.machineLabel ?? "";
+  const machineLabelFor = (environmentId: string) => {
+    const chain = chains.find((entry) => entry.target.environmentId === environmentId);
+    return (
+      <>
+        <span className="block truncate">{chain?.machineLabel}</span>
+        {chain?.machineDetail ? (
+          <span className="block truncate">{chain.machineDetail}</span>
+        ) : null}
+      </>
+    );
+  };
   const groups: (typeof chains)[] = [];
   for (const chain of hasMultipleEnvironments && primary
     ? [primary, ...chains.filter((entry) => entry !== primary)]
@@ -252,7 +264,7 @@ export function SettingInheritance({
                 <Button
                   size="icon-micro"
                   variant="ghost-muted"
-                  aria-label={`${overrideSummary}. Show where this value comes from`}
+                  aria-label={`${summary}${overrideCount ? `. ${overrideCount}` : ""}. Show where this value comes from`}
                 />
               }
             />
@@ -266,7 +278,10 @@ export function SettingInheritance({
             )}
           />
         </TooltipTrigger>
-        <TooltipPopup side="top">{overrideSummary}</TooltipPopup>
+        <TooltipPopup side="top">
+          <span className="block">{summary}</span>
+          {overrideCount ? <span className="block">{overrideCount}</span> : null}
+        </TooltipPopup>
       </Tooltip>
       <PopoverPopup align="start" width="md" padding="none">
         <div className="divide-y divide-divider">
@@ -372,7 +387,17 @@ export function SettingInheritance({
                                 kind={member.machine}
                                 className="size-3 shrink-0"
                               />
-                              <span className="truncate">{member.label}</span>
+                              <span className="min-w-0">
+                                <span className="block truncate">{member.label}</span>
+                                {member.secondary.map((detail) => (
+                                  <span
+                                    key={detail}
+                                    className="block truncate text-meta text-muted-foreground"
+                                  >
+                                    {detail}
+                                  </span>
+                                ))}
+                              </span>
                             </span>
                           ))}
                         </span>

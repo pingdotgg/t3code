@@ -2,6 +2,7 @@ import { definePlugin } from "@oxlint/plugins";
 
 import namespaceNodeImports from "./rules/namespace-node-imports.ts";
 import noDomTestEnvironment from "./rules/no-dom-test-environment.ts";
+import noDotSeparatedText from "./rules/no-dot-separated-text.ts";
 import noEmDashCopy from "./rules/no-em-dash-copy.ts";
 import noFrameWaitsInBrowserTests from "./rules/no-frame-waits-in-browser-tests.ts";
 import noGlobalProcessRuntime from "./rules/no-global-process-runtime.ts";
@@ -43,6 +44,7 @@ export default definePlugin({
   rules: {
     "namespace-node-imports": namespaceNodeImports,
     "no-dom-test-environment": noDomTestEnvironment,
+    "no-dot-separated-text": noDotSeparatedText,
     "no-em-dash-copy": noEmDashCopy,
     "no-frame-waits-in-browser-tests": noFrameWaitsInBrowserTests,
     "no-global-process-runtime": noGlobalProcessRuntime,

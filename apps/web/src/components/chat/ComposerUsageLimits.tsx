@@ -38,13 +38,12 @@ function accountLabel(account: UsageLimitsReport["accounts"][number]): string {
   const instance =
     account.displayName?.trim() ||
     (String(account.instanceId) !== String(account.driver) ? account.instanceId : "");
-  return instance && instance.toLowerCase() !== driver.toLowerCase()
-    ? `${driver} · ${instance}`
-    : driver;
+  return instance && instance.toLowerCase() !== driver.toLowerCase() ? String(instance) : driver;
 }
 
 function AccountSummary({ account }: { readonly account: UsageLimitsReport["accounts"][number] }) {
   const label = accountLabel(account);
+  const driver = providerClients.get(account.driver)?.label ?? String(account.driver);
   return (
     <>
       {label.includes("@") ? (
@@ -59,6 +58,7 @@ function AccountSummary({ account }: { readonly account: UsageLimitsReport["acco
       ) : (
         label
       )}
+      {account.instanceId && label !== driver ? <span className="block">{driver}</span> : null}
       {account.plan ? (
         <span className="ms-1.5 font-normal text-dim-foreground">{account.plan}</span>
       ) : null}
@@ -146,7 +146,12 @@ export function modelFallbackBannerItem({
     variant: "info",
     icon: <GaugeIcon />,
     title: `Using ${fallbackModelName}`,
-    description: `${defaultProviderName} is out of usage${resetsAt ? ` · resets ${formatUpcomingTimestamp(resetsAt, timestampFormat)}` : ""}`,
+    description: (
+      <span className="inline-flex flex-col">
+        <span>{defaultProviderName} is out of usage</span>
+        {resetsAt ? <span>Resets {formatUpcomingTimestamp(resetsAt, timestampFormat)}</span> : null}
+      </span>
+    ),
     actions: (
       <Button size="xs" variant="ghost" onClick={onUseDefault}>
         Use {defaultModelName}
@@ -342,9 +347,15 @@ export function isLowLimitDismissed(key: string): boolean {
 function LowLimitTiming({ window }: { readonly window: ServerProviderUsageWindow }) {
   const minute = useNowMinute();
   const now = Date.parse(`${minute}:00.000Z`);
-  return [formatResetsIn(window, now), formatRunsOutIn(window, now)]
-    .filter((part) => part !== null)
-    .join(" · ");
+  return (
+    <span className="inline-flex flex-col">
+      {[formatResetsIn(window, now), formatRunsOutIn(window, now)]
+        .filter((part) => part !== null)
+        .map((part) => (
+          <span key={part}>{part}</span>
+        ))}
+    </span>
+  );
 }
 
 export interface LimitsSource {

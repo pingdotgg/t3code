@@ -196,9 +196,6 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
               </span>
               {onRespondToApproval ? (
                 <>
-                  <span aria-hidden className="text-muted-foreground">
-                    ·
-                  </span>
                   {hasDiff ? (
                     <InlineButton
                       tone="muted"

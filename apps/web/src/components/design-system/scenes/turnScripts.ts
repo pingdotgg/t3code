@@ -102,7 +102,7 @@ function say(key: string, ...paragraphs: string[]): Step[] {
 export const turnScripts: ReadonlyArray<TurnScript> = [
   {
     id: "codex-edit",
-    title: "Codex · read, edit, test",
+    title: "Read, edit, and test with Codex",
     steps: [
       { kind: "turn", prompt: "Tighten the composer footer so the controls stay in one strip." },
       ...think(
@@ -138,7 +138,7 @@ export const turnScripts: ReadonlyArray<TurnScript> = [
   },
   {
     id: "claude-tools",
-    title: "Claude · Read, Grep, Edit",
+    title: "Read, grep, and edit with Claude",
     steps: [
       { kind: "turn", prompt: "Why does the pressed sidebar row look selected?" },
       ...think(
@@ -282,7 +282,7 @@ export const turnScripts: ReadonlyArray<TurnScript> = [
   },
   {
     id: "approval",
-    title: "Approval · command",
+    title: "Command approval",
     steps: [
       { kind: "turn", prompt: "Clear the build output and rebuild." },
       ...think(
@@ -315,7 +315,7 @@ export const turnScripts: ReadonlyArray<TurnScript> = [
   },
   {
     id: "approval-file",
-    title: "Approval · file change",
+    title: "File change approval",
     steps: [
       { kind: "turn", prompt: "Rename the pressed token." },
       ...run("read", claudeTool("Read", { file_path: `${ROOT}/apps/web/src/index.css` })),
@@ -350,7 +350,7 @@ export const turnScripts: ReadonlyArray<TurnScript> = [
   },
   {
     id: "question",
-    title: "Question · two steps",
+    title: "Two-step question",
     steps: [
       { kind: "turn", prompt: "Split the composer into smaller files." },
       ...run(
@@ -436,7 +436,7 @@ export const turnScripts: ReadonlyArray<TurnScript> = [
   },
   {
     id: "sparse",
-    title: "Sparse · one tool, short answer",
+    title: "Short answer with one tool",
     steps: [
       { kind: "turn", prompt: "What branch am I on?" },
       ...run("branch", codexCommand("git branch --show-current"), {
@@ -448,7 +448,7 @@ export const turnScripts: ReadonlyArray<TurnScript> = [
   },
   {
     id: "overflow",
-    title: "Overflow · long output and paths",
+    title: "Long output and paths",
     steps: [
       {
         kind: "turn",

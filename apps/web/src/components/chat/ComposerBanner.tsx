@@ -183,15 +183,7 @@ function Content({ className, ...props }: ComponentProps<"span">) {
 }
 
 function Separator() {
-  return (
-    <span
-      aria-hidden
-      data-slot="composer-banner-separator"
-      className="mx-1 inline-block flex-none text-muted-foreground/40"
-    >
-      ·
-    </span>
-  );
+  return null;
 }
 
 function Actions({ className, ...props }: ComponentProps<"span">) {

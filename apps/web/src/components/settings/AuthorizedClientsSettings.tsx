@@ -281,14 +281,13 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             />
             <h3 className="text-sm font-medium text-strong-foreground">{primaryLabel}</h3>
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="grid justify-items-start gap-1 text-meta text-muted-foreground">
             <Tooltip>
               <TooltipTrigger render={<span />}>
                 {formatExpiresInLabel(pairingLink.expiresAt, nowMs)}
               </TooltipTrigger>
               <TooltipPopup side="top">{expiresAbsolute}</TooltipPopup>
             </Tooltip>
-            <span aria-hidden> · </span>
             <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
           </p>
           {!credential ? (
@@ -507,6 +506,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
     : lastConnectedAt
       ? `Last connected at ${formatAccessTimestamp(lastConnectedAt)}`
       : "Not connected yet.";
+  const lastSeen = lastConnectedAt ? formatAccessTimestamp(lastConnectedAt) : null;
   const deviceInfoBits = [
     clientSession.client.deviceType !== "unknown"
       ? clientSession.client.deviceType[0]?.toUpperCase() + clientSession.client.deviceType.slice(1)
@@ -517,8 +517,9 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
   ].filter((value): value is string => value !== null);
   const primaryLabel =
     clientSession.client.label ??
-    ([clientSession.client.os, clientSession.client.browser].filter(Boolean).join(" · ") ||
-      clientSession.subject);
+    clientSession.client.browser ??
+    clientSession.client.os ??
+    clientSession.subject;
 
   return (
     <div className={ITEM_ROW_CLASSNAME}>
@@ -537,15 +538,23 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
               </span>
             ) : null}
           </div>
-          <p className="text-xs text-muted-foreground">
-            {deviceInfoBits.length > 0 ? (
-              <>
-                {deviceInfoBits.join(" · ")}
-                <span aria-hidden> · </span>
-              </>
-            ) : null}
+          <div className="grid justify-items-start gap-1 text-meta text-muted-foreground">
+            <Tooltip>
+              <TooltipTrigger render={<span tabIndex={0} />}>
+                {lastSeen ?? "Not connected yet"}
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                <span className="grid gap-1">
+                  {deviceInfoBits
+                    .filter((detail) => detail !== lastSeen)
+                    .map((detail) => (
+                      <span key={detail}>{detail}</span>
+                    ))}
+                </span>
+              </TooltipPopup>
+            </Tooltip>
             <AccessScopeSummary scopes={clientSession.scopes} label="Client scopes" />
-          </p>
+          </div>
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
           {!clientSession.current ? (

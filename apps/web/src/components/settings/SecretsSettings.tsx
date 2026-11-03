@@ -137,8 +137,8 @@ function EnvironmentSecretProviders({
                 }
                 description={
                   classified.kind === "one_password" && kind ? (
-                    <span className="flex min-w-0 items-center gap-1">
-                      <span className="shrink-0">{kind.name} ·</span>
+                    <span className="grid min-w-0 justify-items-start gap-1">
+                      <span className="shrink-0">{kind.name}</span>
                       <RedactedSensitiveText
                         value={classified.account}
                         ariaLabel="Toggle account visibility"

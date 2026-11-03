@@ -87,7 +87,10 @@ function LicenseNoticeRow({
               ) : null}
             </span>
             <span className="max-w-[42%] shrink-0 truncate rounded-row bg-badge-neutral text-xs font-medium text-muted-foreground">
-              {entry.license} · {formatLicenseBundles(entry.bundles)}
+              <Tooltip>
+                <TooltipTrigger render={<span tabIndex={0} />}>{entry.license}</TooltipTrigger>
+                <TooltipPopup>{formatLicenseBundles(entry.bundles)}</TooltipPopup>
+              </Tooltip>
             </span>
           </CollapsibleTrigger>
           {entry.sourceUrl ? (

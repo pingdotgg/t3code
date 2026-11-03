@@ -599,15 +599,22 @@ function ManagedCodexSetup({
   }, [clientCallback, url]);
 
   const runtimeDescription =
-    installation?.phase === "downloading"
-      ? `Downloading ${(installation.downloadedBytes / 1_000_000).toFixed(1)}${installation.totalBytes === null ? "" : ` of ${(installation.totalBytes / 1_000_000).toFixed(1)}`} MB.`
-      : installation?.phase === "extracting"
-        ? "Installing Codex."
-        : installation?.phase === "verifying"
-          ? "Checking Codex."
-          : installed
-            ? `${installation?.source === "local" ? "Using your installed Codex" : "Managed by T3 Code"}${installation?.installedVersion ? ` · v${installation.installedVersion}` : ""}.`
-            : (installation?.message ?? "T3 Code downloads and manages Codex for you.");
+    installation?.phase === "downloading" ? (
+      `Downloading ${(installation.downloadedBytes / 1_000_000).toFixed(1)}${installation.totalBytes === null ? "" : ` of ${(installation.totalBytes / 1_000_000).toFixed(1)}`} MB.`
+    ) : installation?.phase === "extracting" ? (
+      "Installing Codex."
+    ) : installation?.phase === "verifying" ? (
+      "Checking Codex."
+    ) : installed ? (
+      <span className="flex flex-col gap-0.5">
+        <span>
+          {installation?.source === "local" ? "Using your installed Codex." : "Managed by T3 Code."}
+        </span>
+        {installation?.installedVersion ? <span>v{installation.installedVersion}</span> : null}
+      </span>
+    ) : (
+      (installation?.message ?? "T3 Code downloads and manages Codex for you.")
+    );
   const accountDescription = finishingSignIn ? (
     "Finishing sign-in..."
   ) : installActive ? (

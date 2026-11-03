@@ -123,9 +123,7 @@ function UserFileCard({
   readonly copyMarkdown: string | undefined;
 }) {
   const ctx = use(TimelineRowCtx);
-  const pastedText = file.source?._tag === "pasted-text";
   const label = userMessageFileLabel(file);
-  const extension = /\.([a-z0-9]{1,8})$/i.exec(file.name)?.[1]?.toUpperCase() ?? "File";
   const identity = (
     <>
       <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-background/60">
@@ -134,14 +132,7 @@ function UserFileCard({
       <span className="min-w-0 flex-1">
         <span className="block truncate text-body group-hover/file:underline">{label}</span>
         <span className="block text-caption text-dim-foreground tabular-nums">
-          {file.downloadable === false ? (
-            "Sending…"
-          ) : (
-            <>
-              {!pastedText && `${extension} · `}
-              {formatBytes(file.sizeBytes)}
-            </>
-          )}
+          {file.downloadable === false ? "Sending…" : <>{formatBytes(file.sizeBytes)}</>}
         </span>
       </span>
     </>
@@ -311,7 +302,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const promptLink = promptLinkFor(text);
   // Find reads the DOM, so a folded prompt stays mounted but hidden while find is open.
   const bodyMounted = expanded || ctx.findActive;
-  const userMessageMeta = resolveUserMessageMeta(row.message.inputIntent, row.steerOffsetMs);
+  const userMessageMeta = resolveUserMessageMeta(row.message.inputIntent);
 
   return (
     <div
@@ -808,7 +799,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       </div>
     ) : null;
 
-  const userMessageMeta = resolveUserMessageMeta(row.message.inputIntent, row.steerOffsetMs);
+  const userMessageMeta = resolveUserMessageMeta(row.message.inputIntent);
   // Touch shows actions all the time, and narrow lanes have no room beside the
   // bubble, so both keep the actions on their own line.
   const floatActions = row.groupedWithNext === true && !coarsePointer;
@@ -1068,7 +1059,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       {!folded || expanded ? (
         <div
           className={cn(
-            "absolute end-0 bottom-full z-10 flex items-center justify-end whitespace-nowrap pointer-coarse:static has-[button]:-me-1.5",
+            "flex w-full max-w-[80%] justify-end pe-1",
             floatActions && "@min-[37rem]:hidden",
             ACTIONS_REVEAL_CLASS_NAME,
           )}
@@ -1081,7 +1072,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 }
 
 const ACTIONS_REVEAL_CLASS_NAME =
-  "items-center text-meta tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/user-row:opacity-100";
+  "items-center text-meta tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 group-focus-within/user-row:opacity-100 group-hover/user-row:opacity-100";
 
 function RevertUserMessageButton({
   turnCount,
@@ -1262,24 +1253,9 @@ function UserMessageMeta({
   );
 }
 
-function formatTurnOffset(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = String(totalSeconds % 60).padStart(2, "0");
-  return hours > 0
-    ? `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`
-    : `${minutes}:${seconds}`;
-}
-
-/** Meta under a prompt: steers carry the moment they landed in the turn. */
 function resolveUserMessageMeta(
   intent: ChatMessage["inputIntent"],
-  steerOffsetMs: number | undefined,
 ): { intent: "steer" | "promoted_queued_to_steer"; label: string } | null {
   if (intent !== "steer" && intent !== "promoted_queued_to_steer") return null;
-  return {
-    intent,
-    label: steerOffsetMs === undefined ? "steer" : `steer · at ${formatTurnOffset(steerOffsetMs)}`,
-  };
+  return { intent, label: "steer" };
 }

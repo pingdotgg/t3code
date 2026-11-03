@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   type LinkedPrompt,
   parseNewThreadLink,
@@ -140,7 +141,18 @@ function HostedPromptLinkLanding({
           {prompt.text}
         </pre>
       ) : null}
-      <p className="mt-3 text-meta text-muted-foreground">{details.join(" · ")}</p>
+      <div className="mt-3 text-meta text-muted-foreground">
+        <Tooltip disabled={details.length < 2}>
+          <TooltipTrigger render={<span tabIndex={0} />}>{details[0]}</TooltipTrigger>
+          <TooltipPopup>
+            {details.slice(1).map((detail) => (
+              <span className="block" key={detail}>
+                {detail}
+              </span>
+            ))}
+          </TooltipPopup>
+        </Tooltip>
+      </div>
       <div className="mt-6 flex flex-wrap gap-2">
         <Button render={<a href={deepLink} />} onClick={() => onChoose("app", remember)}>
           {onPhone ? "Open in app" : "Open in desktop app"}

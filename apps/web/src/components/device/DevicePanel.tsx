@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
 import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import type {
   DevicePlatform,
@@ -253,9 +254,17 @@ export function DevicePanel(props: {
             <DeviceLoadingView
               name={pendingDevice?.name ?? "Devices"}
               description={
-                pendingDevice
-                  ? `${state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ?? "Device host"} · ${pendingDevice.version}`
-                  : ""
+                pendingDevice ? (
+                  <span className="flex flex-col items-center gap-0.5">
+                    <span>
+                      {state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ??
+                        "Device host"}
+                    </span>
+                    <span>{pendingDevice.version}</span>
+                  </span>
+                ) : (
+                  ""
+                )
               }
               stage="opening"
               message={
@@ -319,7 +328,22 @@ export function DevicePanel(props: {
                                   {device.name}
                                 </span>
                                 <span className="truncate text-xs text-muted-foreground">
-                                  {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? "Running" : "Stopped"}`}
+                                  <Tooltip>
+                                    <TooltipTrigger render={<span tabIndex={0} />}>
+                                      {device.version}
+                                    </TooltipTrigger>
+                                    <TooltipPopup>
+                                      <span className="grid gap-1">
+                                        <span>
+                                          {
+                                            state.hosts.find((host) => host.id === device.hostId)
+                                              ?.label
+                                          }
+                                        </span>
+                                        <span>{device.booted ? "Running" : "Stopped"}</span>
+                                      </span>
+                                    </TooltipPopup>
+                                  </Tooltip>
                                 </span>
                               </div>
                               <Button
@@ -412,7 +436,9 @@ function DeviceDiscoveryWarning(props: { readonly label: string; readonly detail
   if (dismissed) return null;
   return (
     <DeviceNotice tone="warning" onDismiss={() => setDismissed(true)}>
-      <p className="text-meta">Device discovery warning · {props.label}</p>
+      <p className="text-meta">
+        Device discovery warning<span className="block">{props.label}</span>
+      </p>
       {props.detail}
     </DeviceNotice>
   );

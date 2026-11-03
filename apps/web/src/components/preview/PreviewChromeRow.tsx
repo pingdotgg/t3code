@@ -257,7 +257,10 @@ export function PreviewChromeRow({
               ) : null}
             </TooltipTrigger>
             <TooltipPopup>
-              {recording ? "Stop recording" : "Screenshot · Shift-click to record"}
+              <span className="flex flex-col gap-0.5">
+                <span>{recording ? "Stop recording" : "Screenshot"}</span>
+                {!recording ? <span>Shift-click to record</span> : null}
+              </span>
             </TooltipPopup>
           </Tooltip>
         ) : null}

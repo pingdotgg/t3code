@@ -149,7 +149,6 @@ export function ComposerPendingApprovalActions({
                 <span className="max-w-40 truncate">
                   {designLabels && decline.label === "Deny" ? "Decline" : decline.label}
                 </span>
-                {designLabels && showShortcutHints ? <Kbd aria-hidden>esc</Kbd> : null}
               </Button>,
             )
           : null}

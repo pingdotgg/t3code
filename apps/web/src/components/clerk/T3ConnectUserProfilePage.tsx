@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
@@ -55,11 +56,14 @@ function T3ConnectEnvironmentRow(props: {
       <Collapsible open={props.confirmationOpen} onOpenChange={props.onConfirmationChange}>
         <div className="flex items-start gap-4">
           <div className="min-w-0 flex-1">
-            <h3 className="truncate text-sm leading-4.5 font-medium text-strong-foreground">
-              {environment.label}
-            </h3>
-            <p className="mt-1 text-xs leading-4.5 text-muted-foreground">
-              {linkedAtLabel(environment.linkedAt)} · {endpointLabel(environment)}
+            <h3 className="truncate text-label text-strong-foreground">{environment.label}</h3>
+            <p className="mt-1 text-meta text-muted-foreground">
+              <Tooltip>
+                <TooltipTrigger render={<span tabIndex={0} />}>
+                  {endpointLabel(environment)}
+                </TooltipTrigger>
+                <TooltipPopup>{linkedAtLabel(environment.linkedAt)}</TooltipPopup>
+              </Tooltip>
             </p>
           </div>
           <CollapsibleTrigger

@@ -103,9 +103,16 @@ export function useAutoBalanceUpdateBanner(
     icon: <ComposerServerUpdateIcon status={status} />,
     title,
     description:
-      manual > 0 && manual < machines.length
-        ? `${machineNames} · ${manual} ${manual === 1 ? "needs" : "need"} a manual update`
-        : machineNames,
+      manual > 0 && manual < machines.length ? (
+        <span className="inline-flex flex-col">
+          <span>
+            {manual} {manual === 1 ? "needs" : "need"} a manual update
+          </span>
+          <span>{machineNames}</span>
+        </span>
+      ) : (
+        machineNames
+      ),
     actions: (
       <>
         {showMachineList ? (

@@ -333,9 +333,11 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                   <Label className="flex-1">Copy ignored files</Label>
                   {copyable.length > 0 ? (
                     <>
-                      <span className="text-muted-foreground text-meta">
-                        {selectedFiles.size} of {files.length}
-                        {selectedBytes > 0 ? ` · ${formatBytes(selectedBytes)}` : ""}
+                      <span className="flex flex-col items-end gap-0.5 text-muted-foreground text-meta">
+                        <span>
+                          {selectedFiles.size} of {files.length}
+                        </span>
+                        {selectedBytes > 0 ? <span>{formatBytes(selectedBytes)}</span> : null}
                       </span>
                       <Button
                         type="button"

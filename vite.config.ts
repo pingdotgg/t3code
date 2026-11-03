@@ -334,6 +334,10 @@ export default defineConfig({
         rules: { "t3code/no-spaced-caps": "error" },
       },
       {
+        files: ["apps/web/src/**"],
+        rules: { "t3code/no-dot-separated-text": "error" },
+      },
+      {
         // A <button>, <a> or <input> with appearance classes is a hand-built control that
         // skips the components/ui variants; shadcn/no-restyle cannot see it because it only
         // checks ui components. components/ui builds the primitives from raw elements.

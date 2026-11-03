@@ -248,9 +248,12 @@ export function SourceControlAppSignInSettings({
               Copy code & open GitHub
               <ExternalLinkIcon aria-hidden className="size-3.5" />
             </Button>
-            <p className="flex items-center gap-1.5 text-meta text-muted-foreground">
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
               <span aria-hidden className="size-1.5 rounded-full bg-warning" />
-              Waiting for approval · code expires at {expiryTime(waiting.expiresAt)}
+              <span className="grid gap-1">
+                <span>Waiting for approval</span>
+                <span>Code expires at {expiryTime(waiting.expiresAt)}</span>
+              </span>
             </p>
           </div>
         </div>

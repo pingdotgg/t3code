@@ -8,6 +8,7 @@ import {
   endThreadContextDrag,
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
+import { appearanceFontStack } from "../appearanceFonts";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useAtomValue } from "@effect/atom-react";
@@ -28,6 +29,7 @@ import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-
 import {
   canSnooze,
   effectiveSnoozed,
+  snoozeWakeLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
@@ -216,12 +218,7 @@ import {
 } from "./Sidebar.drag";
 import { SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
-import {
-  pickSnoozePreset,
-  resolveSnoozePresets,
-  snoozeWakeShortLabel,
-  type SnoozePreset,
-} from "./Sidebar.snooze";
+import { pickSnoozePreset, resolveSnoozePresets, type SnoozePreset } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -949,30 +946,6 @@ function revealSidebarRow(viewport: HTMLElement, row: HTMLElement) {
   if (target !== scrollTop) viewport.scrollTop = Math.min(maxScroll, Math.max(0, target));
 }
 
-// Shortens the thread list's viewport so its bottom edge lands between rows
-// instead of slicing one above the footer. The last row snaps to the end of
-// the content, so it never ends under the fade. Spare height, less than one
-// row, collects above the footer.
-function fitSidebarViewportToRows(viewport: HTMLElement, list: HTMLElement) {
-  const available = viewport.parentElement?.clientHeight ?? 0;
-  const { scrollTop, scrollHeight } = viewport;
-  let height = available;
-  if (scrollHeight - scrollTop > available) {
-    const listTop =
-      list.getBoundingClientRect().top - viewport.getBoundingClientRect().top + scrollTop;
-    const rows = [...list.children].filter(
-      (row): row is HTMLElement => row instanceof HTMLElement && row.offsetHeight > 0,
-    );
-    const edges = rows
-      .slice(0, -1)
-      .map((row) => listTop + row.offsetTop + row.offsetHeight - scrollTop);
-    edges.push(scrollHeight - scrollTop);
-    height = Math.max(0, ...edges.filter((edge) => edge <= available)) || available;
-  }
-  const next = height < available ? `${height}px` : "";
-  if (viewport.style.height !== next) viewport.style.height = next;
-}
-
 export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
   const {
     projects,
@@ -989,6 +962,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const sidebarFontFamily = useClientSettings((s) => s.fontFamilySans);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -2159,21 +2133,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       for (const type of userInput) viewport.removeEventListener(type, release);
     };
   }, [isSearchingThreads, routeRowRendered, routeRowThreadKey]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Resize observers align the scroll viewport to real row boundaries.
-  useEffect(() => {
-    if (isSearchingThreads) return;
-    const list = threadListRef.current;
-    const viewport = list?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
-    const root = viewport?.parentElement;
-    if (!list || !viewport || !root) return;
-    const stopObserving = observeResize([root, list], () =>
-      fitSidebarViewportToRows(viewport, list),
-    );
-    return () => {
-      stopObserving();
-      viewport.style.height = "";
-    };
-  }, [isSearchingThreads]);
   const draggedThreadKey = dragState?.activeKey;
   const draggedFromSection = dragState?.activeSection;
   const dragActivationY = dragState?.activationY;
@@ -3271,19 +3230,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               )}
                             </ProjectScopeRowIcon>
                             <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
-                            {project && showProjectEnvironments ? (
-                              <ProjectEnvironmentBadge
-                                group={project}
-                                primaryEnvironmentId={primaryEnvironmentId}
-                                machineByEnvironmentId={environmentMachineById}
-                              />
-                            ) : null}
                             {project && canPinProject(project) ? (
                               <ProjectPinButton
                                 name={project.displayName}
                                 pinned={project.pinned}
                                 shortcutLabel={shortcutLabelForCommand(keybindings, "thread.pin")}
                                 onToggle={() => toggleProjectGroupPin(project)}
+                              />
+                            ) : null}
+                            {project && showProjectEnvironments ? (
+                              <ProjectEnvironmentBadge
+                                group={project}
+                                primaryEnvironmentId={primaryEnvironmentId}
+                                machineByEnvironmentId={environmentMachineById}
                               />
                             ) : null}
                             {project ? (
@@ -3425,12 +3384,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               >
                 <SortableContext items={sortableIds} strategy={sidebarSortingStrategy}>
                   <ul
+                    style={{
+                      fontFamily: appearanceFontStack(
+                        sidebarFontFamily,
+                        '-apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif',
+                      ),
+                    }}
                     ref={attachTreeRef}
                     // Presentation flattens VoiceOver's list interaction boundary while preserving descendant
                     // controls.
                     role="presentation"
                     className={cn(
-                      "relative flex flex-col gap-0.5",
+                      "relative flex flex-col gap-px",
                       sidebarListItems.length > 0 && "flex-1",
                       actionSweep !== null && "**:pointer-events-none",
                     )}
@@ -3499,11 +3464,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }
                             snoozeWakeLabelText={
                               section === "snoozed" && thread.snoozedUntil != null
-                                ? `Until ${snoozeWakeShortLabel(
-                                    thread.snoozedUntil,
-                                    new Date(),
-                                    timestampFormat,
-                                  )}`
+                                ? snoozeWakeLabel(thread.snoozedUntil, {
+                                    now: new Date().toISOString(),
+                                  })
                                 : null
                             }
                             wokeAt={threadWokeAt(thread, { now: snoozeNow })}
@@ -3690,6 +3653,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 )}
                                 label="Settled"
                                 count={settledCount}
+                                concealed={settledCount === 0 && from === null}
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
                                 toggle={{

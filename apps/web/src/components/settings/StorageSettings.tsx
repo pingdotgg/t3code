@@ -47,7 +47,7 @@ import {
   useScopedSettingsMixed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
-import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
+import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 
 export function WorktreesDirectoryRow() {
   const { connectedEnvironments, targets } = useSettingsScope();
@@ -188,7 +188,15 @@ function lastRunSummary(
   if (entries.length === machineCount && entries.every((entry) => entry.counts === first.counts)) {
     return `${first.counts} on every machine`;
   }
-  return entries.map((entry) => `${entry.label}: ${entry.counts}`).join(" · ");
+  return (
+    <span className="grid gap-1">
+      {entries.map((entry) => (
+        <span key={entry.label}>
+          {entry.label}: {entry.counts}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 function CleanupResults({
@@ -245,15 +253,13 @@ function CleanupResults({
             control={
               (entry.outcome === "removed" ||
                 (entry.outcome === "kept" && entry.bytes !== null)) && (
-                <span className="text-meta text-muted-foreground">
-                  {[
-                    entry.kind !== "worktree" && entry.files !== null
-                      ? `${entry.files.toLocaleString()} ${entry.files === 1 ? "file" : "files"}`
-                      : null,
-                    entry.bytes !== null ? formatBytes(entry.bytes) : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
+                <span className="grid justify-items-end gap-1 text-meta text-muted-foreground">
+                  {entry.kind !== "worktree" && entry.files !== null ? (
+                    <span>
+                      {entry.files.toLocaleString()} {entry.files === 1 ? "file" : "files"}
+                    </span>
+                  ) : null}
+                  {entry.bytes !== null ? <span>{formatBytes(entry.bytes)}</span> : null}
                 </span>
               )
             }
@@ -331,7 +337,8 @@ function CleanupSection() {
     return {
       environment,
       report,
-      label: settingsScopeEnvironmentLabel(environment, connectedEnvironments),
+      label: settingsScopeEnvironmentLabels(environment, connectedEnvironments).primary,
+      secondary: settingsScopeEnvironmentLabels(environment, connectedEnvironments).secondary,
       counts: report
         ? `${report.counts.removed} removed, ${report.counts.kept} kept${report.counts.failed > 0 ? `, ${report.counts.failed} failed` : ""}`
         : "",
@@ -381,9 +388,14 @@ function CleanupSection() {
             <span>
               {!hasRules
                 ? "Turn on a cleanup rule to use this."
-                : summaries.map(({ environment, label, description }) => (
+                : summaries.map(({ environment, label, secondary, description }) => (
                     <span key={environment.environmentId} className="block">
-                      {supported.length > 1 ? `${label}: ` : ""}
+                      {supported.length > 1 ? (
+                        <span className="block">
+                          {label}
+                          {secondary ? <span className="block">{secondary}</span> : null}
+                        </span>
+                      ) : null}
                       {description}
                     </span>
                   ))}

@@ -495,7 +495,12 @@ export function DeviceSourcesSettings(props: {
         shared: true,
         title: host.label,
         kind: "Simlock",
-        description: `${host.gatewayUrl.replace(/^https?:\/\//, "")} · ${simlockLeaseLimits(host)}`,
+        description: (
+          <span className="grid gap-1">
+            <span>{host.gatewayUrl.replace(/^https?:\/\//, "")}</span>
+            <span>{simlockLeaseLimits(host)}</span>
+          </span>
+        ),
         environments: active.map((member) => {
           const held = (member.settings?.simlockDeviceHosts ?? []).find(
             (candidate) => candidate.id === host.id,

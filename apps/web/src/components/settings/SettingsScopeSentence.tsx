@@ -105,7 +105,9 @@ function ScopeOptionLabel({ option }: { option: ScopeOption }) {
       <span className="min-w-0 flex-1">
         <span className="block truncate">{option.label}</span>
         {option.secondary ? (
-          <span className="block truncate text-xs text-muted-foreground">{option.secondary}</span>
+          <span className="block whitespace-pre-line text-meta text-muted-foreground">
+            {option.secondary}
+          </span>
         ) : null}
       </span>
       {option.offline ? (
@@ -330,12 +332,12 @@ function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsSco
               ? group.workspaceRoot
               : ""
             : sameName.some((other) => other.machines === machines)
-              ? `${machines} · ${group.workspaceRoot}`
+              ? `${machines}\n${group.workspaceRoot}`
               : machines;
         return {
           value: group.projectKey,
           label: group.displayName,
-          secondary: group.archived ? ["Archived", location].filter(Boolean).join(" · ") : location,
+          secondary: group.archived ? ["Archived", location].filter(Boolean).join("\n") : location,
           icon: <ProjectFavicon project={group} className="size-3.5 shrink-0" />,
         };
       })}

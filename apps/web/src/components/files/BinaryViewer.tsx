@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 /* oxlint-disable react/no-array-index-key -- Read-only cells retain their database row and column positions. */
 import {
   decodeFilePreviewText,
@@ -211,8 +212,14 @@ export default function BinaryViewer(props: {
             {selectedPath ?? (folder || "Archive contents")}
           </span>
           <span className="shrink-0 text-muted-foreground">
-            {archive.entries.length.toLocaleString()} entries
-            {sizeBytes !== null ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}
+            <Tooltip>
+              <TooltipTrigger render={<span tabIndex={0} />}>
+                {archive.entries.length.toLocaleString()} entries
+              </TooltipTrigger>
+              <TooltipPopup>
+                {sizeBytes !== null ? formatAttachmentSize(sizeBytes) : "Size unavailable"}
+              </TooltipPopup>
+            </Tooltip>
           </span>
         </div>
       ) : null}
@@ -261,11 +268,20 @@ export default function BinaryViewer(props: {
             </FileSurfaceAction>
           </div>
           <div
-            className="border-b border-border/60 px-3 py-2 text-meta text-muted-foreground tabular-nums"
+            className="flex flex-wrap gap-x-3 border-b border-border/60 px-3 py-2 text-meta text-muted-foreground tabular-nums"
             role="status"
           >
-            {table.count.toLocaleString()} rows · {rows?.columns.length ?? "…"} columns
-            {sizeBytes !== null ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}
+            <Tooltip>
+              <TooltipTrigger render={<span tabIndex={0} />}>
+                {table.count.toLocaleString()} rows
+              </TooltipTrigger>
+              <TooltipPopup>
+                <span className="block">{rows?.columns.length ?? "…"} columns</span>
+                {sizeBytes !== null ? (
+                  <span className="block">{formatAttachmentSize(sizeBytes)}</span>
+                ) : null}
+              </TooltipPopup>
+            </Tooltip>
           </div>
           <FileSurfaceNotice>
             Read-only. Up to 50 columns and 1,024 characters per cell. Blob contents are omitted.

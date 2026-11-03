@@ -831,6 +831,10 @@ function OpenCommandPaletteDialog(props: {
         locationByEnvironmentId: projectEnvironmentLocationById,
         pin: projectPin,
         runProject: async (project) => {
+          if (props.openIntent?.kind === "new-thread-in" && props.openIntent.onSelectProject) {
+            props.openIntent.onSelectProject(project);
+            return;
+          }
           const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
           const contextualRefBelongsToGroup =
             contextualProjectRef !== null &&
@@ -1687,7 +1691,7 @@ function OpenCommandPaletteDialog(props: {
     value: `setting:${item.id}`,
     searchTerms: [item.title, SETTINGS_SECTION_LABELS[item.to], ...(item.searchTerms ?? [])],
     title: item.title,
-    description: `Settings · ${SETTINGS_SECTION_LABELS[item.to]}`,
+    description: SETTINGS_SECTION_LABELS[item.to],
     ...(item.secondary ? { secondary: true } : {}),
     icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
     run: async () => {

@@ -99,7 +99,7 @@ export function ContextWindowMeter(props: {
             {usage.maxTokens !== null && usedPercentage ? (
               <div className="text-secondary-label text-2xs tabular-nums">
                 <span>{usedPercentage}</span>
-                <span className="mx-1">·</span>
+                <br />
                 <span>
                   {formatContextWindowTokens(usage.usedTokens)}/
                   {formatContextWindowTokens(usage.maxTokens ?? null)}

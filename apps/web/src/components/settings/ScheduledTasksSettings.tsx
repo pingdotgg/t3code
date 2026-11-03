@@ -763,9 +763,9 @@ function ScheduledTaskRow({
       title={task.title}
       description={<span className="line-clamp-2">{task.prompt}</span>}
       status={
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="grid gap-1">
+          <span>{scheduleLabel(task.schedule)}</span>
           <span>
-            {scheduleLabel(task.schedule)} ·{" "}
             {task.blockedByPolicy !== undefined ? (
               task.blockedByPolicy
             ) : !task.enabled ? (
@@ -882,8 +882,10 @@ function WebhookDeliveriesDialog({
     >
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Deliveries · {task.title}</DialogTitle>
-          <DialogDescription>Recent requests to this task's webhook URL.</DialogDescription>
+          <DialogTitle>Deliveries</DialogTitle>
+          <DialogDescription>
+            {task.title}. Recent requests to this task's webhook URL.
+          </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -901,8 +903,11 @@ function WebhookDeliveriesDialog({
                 >
                   {webhookDeliveryLabel(selected)}
                 </Badge>
-                <span>
-                  {selected.method} · <ScheduledRelativeLabel value={selected.receivedAt} />
+                <span className="grid gap-1">
+                  <span>{selected.method}</span>
+                  <span>
+                    <ScheduledRelativeLabel value={selected.receivedAt} />
+                  </span>
                 </span>
                 {selected.signatureVerified ? (
                   <span className="text-muted-foreground">Signature verified</span>

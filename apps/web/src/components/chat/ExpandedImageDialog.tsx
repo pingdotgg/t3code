@@ -278,13 +278,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     naturalSize && naturalSize.src === item.src
       ? `${naturalSize.width.toLocaleString()} × ${naturalSize.height.toLocaleString()}`
       : null;
-  const meta = [
-    imageCount > 1 ? `${index + 1} of ${imageCount}` : null,
-    item.type === "video" ? null : dimensions,
-    item.sizeBytes !== undefined ? formatAttachmentSize(item.sizeBytes) : null,
-  ]
-    .filter((part) => part !== null)
-    .join(" · ");
+  const meta = item.type === "video" ? null : dimensions;
   const zoomPercent = view ? `${Math.round(view.scale * 100)}%` : "100%";
 
   return (
@@ -344,10 +338,25 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                 {imageCount > 1 ? ` (${index + 1}/${imageCount})` : ""}
               </span>
             </span>
-            {meta ? (
-              <span className="shrink-0 text-meta text-dim-foreground tabular-nums max-sm:hidden">
-                {meta}
-              </span>
+            {meta || item.sizeBytes !== undefined ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      tabIndex={0}
+                      className="shrink-0 text-meta text-dim-foreground tabular-nums max-sm:hidden"
+                    />
+                  }
+                >
+                  {meta ?? formatAttachmentSize(item.sizeBytes!)}
+                </TooltipTrigger>
+                <TooltipPopup>
+                  {meta ? <span className="block">{meta}</span> : null}
+                  {item.sizeBytes !== undefined ? (
+                    <span className="block">{formatAttachmentSize(item.sizeBytes)}</span>
+                  ) : null}
+                </TooltipPopup>
+              </Tooltip>
             ) : null}
             <span className="flex-1" />
             {accessibilityDetails && item.source ? (

@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ExternalLinkIcon, PackagePlusIcon, PaletteIcon, SearchIcon } from "lucide-react";
@@ -416,10 +417,18 @@ export function ThemeSearchSection({
                       <h4 className="truncate text-sm font-medium text-strong-foreground">
                         {extension.name}
                       </h4>
-                      <p className="truncate text-muted-foreground text-xs">
-                        {extension.publisher} · {DOWNLOAD_FORMAT.format(extension.downloadCount)}{" "}
-                        downloads
-                      </p>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <p tabIndex={0} className="truncate text-meta text-muted-foreground" />
+                          }
+                        >
+                          {extension.publisher}
+                        </TooltipTrigger>
+                        <TooltipPopup side="top">
+                          {DOWNLOAD_FORMAT.format(extension.downloadCount)} downloads
+                        </TooltipPopup>
+                      </Tooltip>
                     </div>
                   </div>
                   <p className="line-clamp-2 min-h-8 text-muted-foreground text-xs leading-4">

@@ -22,7 +22,7 @@ import {
 
 interface ScopeChoice {
   label: string;
-  secondary?: string;
+  secondary?: readonly string[];
   icon: ReactNode;
   search: SettingsScopeSearch;
 }
@@ -71,7 +71,7 @@ export function SettingsScopeNotice({
               };
           return {
             label: primary,
-            secondary: [secondary, member.workspaceRoot].filter(Boolean).join(" · "),
+            secondary: [member.workspaceRoot, secondary].filter(Boolean),
             icon: environmentIcon(environment),
             search: {
               project: group.projectKey,
@@ -89,10 +89,12 @@ export function SettingsScopeNotice({
                 (other) =>
                   other.projectKey !== group.projectKey && other.displayName === group.displayName,
               )
-                ? settingsScopeProjectMachines(group, environments)
+                ? settingsScopeProjectMachines(group, environments).flatMap(
+                    ({ primary, secondary }) => [primary, secondary].filter(Boolean),
+                  )
                 : []),
               group.workspaceRoot,
-            ].join(" · "),
+            ].filter(Boolean),
             icon: <ProjectFavicon project={group} className="size-4 shrink-0" />,
             search: { project: group.projectKey },
           }))
@@ -107,7 +109,7 @@ export function SettingsScopeNotice({
                 const { primary, secondary } = settingsScopeEnvironmentLabels(entry, environments);
                 return {
                   label: primary,
-                  secondary: secondary || settingsScopeEnvironmentAddress(entry),
+                  secondary: [secondary || settingsScopeEnvironmentAddress(entry)],
                   icon: environmentIcon(entry),
                   search: { machine: entry.environmentId },
                 };
@@ -144,15 +146,17 @@ export function SettingsScopeNotice({
             {choice.icon}
             <span className="min-w-0 flex-1">
               <span className="block truncate text-label">{choice.label}</span>
-              {choice.secondary ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<span className="block truncate text-caption text-muted-foreground" />}
-                  >
-                    {choice.secondary}
-                  </TooltipTrigger>
-                  <TooltipPopup>{choice.secondary}</TooltipPopup>
-                </Tooltip>
+              {choice.secondary?.length ? (
+                <span className="flex min-w-0 flex-col text-meta text-muted-foreground">
+                  {choice.secondary.map((detail) => (
+                    <Tooltip key={detail}>
+                      <TooltipTrigger render={<span className="block truncate" />}>
+                        {detail}
+                      </TooltipTrigger>
+                      <TooltipPopup>{detail}</TooltipPopup>
+                    </Tooltip>
+                  ))}
+                </span>
               ) : null}
             </span>
             <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />

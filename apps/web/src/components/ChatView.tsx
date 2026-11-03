@@ -10,7 +10,6 @@ import { announcedRun, isDetailBehindShell } from "./chat/threadActivityAnnounce
 import {
   deriveAvailableRevertTurnCounts,
   deriveThreadPendingBackgroundTasks,
-  deriveWorkspaceMutationId,
   presentThreadShellFromProjection,
 } from "./ChatView.logic";
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
@@ -94,6 +93,7 @@ import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
   codexFeedbackMessage,
+  deriveWorkspaceMutationId,
   isCompleteTurnItemRow,
   shouldShowLoadEarlierControl,
   type CodexFeedbackSubmission,
@@ -112,6 +112,7 @@ import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
 import { type SetStateAction, use, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
+import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -2418,7 +2419,6 @@ export default function ChatView(props: ChatViewProps) {
     setBranchMismatchDismissTick,
     showBranchMismatchBanner,
     threadStatusLine,
-    timelineBackgroundTaskLabel,
     shortcuts: threadLifecycleShortcuts,
   } = useThreadLifecycle({
     environmentId,
@@ -3266,10 +3266,10 @@ export default function ChatView(props: ChatViewProps) {
         message.inputIntent === "queued_turn" &&
         !serverProjection?.messages.some((committed) => committed.id === message.id),
     );
-  const scrollToEndSummary =
-    [childInputNow?.waitingLabel ?? null, queuedRunCount === 0 ? null : `${queuedRunCount} queued`]
-      .filter((part) => part !== null)
-      .join(" · ") || null;
+  const scrollToEndSummary = [
+    childInputNow?.waitingLabel ?? null,
+    queuedRunCount === 0 ? null : `${queuedRunCount} queued`,
+  ].filter((part) => part !== null);
   // The end of the timeline holds the thread's present and next turns: what it is doing now,
   // its lifecycle status, guest messages awaiting you, then your queued messages.
   const timelineFooter =
@@ -3524,6 +3524,7 @@ export default function ChatView(props: ChatViewProps) {
               {...conversationArea}
               className="relative flex min-h-0 flex-1 flex-col bg-background"
             >
+              <WorkspaceMutationIdContext value={workspaceMutationId}>
               <ThreadTimeline
                 pendingApprovals={pendingApprovals}
                 heldApprovalRequestIds={heldApprovalRequestIds}
@@ -3546,11 +3547,9 @@ export default function ChatView(props: ChatViewProps) {
                 runlessWorkActive={runlessWorkStartedAt !== null}
                 isCompacting={isCompacting}
                 pendingRequest={timelinePendingRequest}
-                backgroundTaskLabel={timelineBackgroundTaskLabel}
                 usageLimit={timelineUsageLimit}
                 threadErrorMessage={timelineThreadError}
                 onFocusComposer={focusComposerAtEndStable}
-                onInterrupt={canInterruptRunningThread ? onInterruptStable : null}
                 awaitingUser={
                   activePendingApproval !== null
                     ? "approval"
@@ -3629,6 +3628,7 @@ export default function ChatView(props: ChatViewProps) {
                   ? {}
                   : { historyControls: threadHistoryControls })}
               />
+              </WorkspaceMutationIdContext>
 
               {showScrollToBottom && !isThreadFindActive && (
                 <ScrollToEndButton

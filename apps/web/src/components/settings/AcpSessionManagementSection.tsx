@@ -522,13 +522,13 @@ export function AcpSessionManagementSection(props: {
                   <div key={provider.providerId} className="grid gap-2 py-3">
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-xs font-medium text-strong-foreground">
+                        <p className="truncate text-label text-strong-foreground">
                           {provider.providerId}
                         </p>
-                        <p className="text-3xs text-muted-foreground">
-                          {provider.current === null ? "Disabled" : "Configured"}
-                          {provider.required ? " · Required" : ""}
-                        </p>
+                        <div className="flex flex-col gap-0.5 text-meta text-muted-foreground">
+                          <span>{provider.current === null ? "Disabled" : "Configured"}</span>
+                          {provider.required ? <span>Required</span> : null}
+                        </div>
                       </div>
                       <div className="flex items-center gap-1">
                         <Button

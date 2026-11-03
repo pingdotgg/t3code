@@ -428,7 +428,10 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
                   }
                 />
                 <TooltipPopup side="top">
-                  {detail} · {statusText}
+                  <span className="grid gap-1">
+                    <span>{detail}</span>
+                    <span>{statusText}</span>
+                  </span>
                 </TooltipPopup>
               </Tooltip>
             );

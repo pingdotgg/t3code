@@ -82,8 +82,10 @@ export function UsageModelDialog({
             <DialogTitle>{model.model}</DialogTitle>
           </div>
           <DialogDescription>
-            {presentation.label}
-            {costUnknown ? "" : ` · ${formatPercent(model.costShare)} of cost`}
+            <span className="block">{presentation.label}</span>
+            {costUnknown ? null : (
+              <span className="block">{formatPercent(model.costShare)} of cost</span>
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

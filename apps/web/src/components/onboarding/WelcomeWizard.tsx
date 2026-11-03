@@ -996,7 +996,9 @@ function AgentCard({
         <span className="block text-sm font-medium text-foreground">{displayName}</span>
         <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
           {providerState === "ready" ? "Ready to code." : summary.headline}
-          {providerState !== "ready" && summary.detail ? ` · ${summary.detail}` : ""}
+          {providerState !== "ready" && summary.detail ? (
+            <span className="block">{summary.detail}</span>
+          ) : null}
         </p>
       </div>
       <div className="shrink-0">

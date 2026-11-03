@@ -213,14 +213,11 @@ export function SavedBackendListRow({
       (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
   );
   const routeCount = connectionRoutes(environment.entry).length;
-  const subtitleText = [
-    environmentTransportLabel(environment, connectedTarget),
-    // The headline below names the failure in full.
-    diagnosis ? null : resumingServerUpdate ? "Restarting" : status.text,
-    enabled && versionMismatch ? serverVersion : null,
-  ]
-    .filter((value): value is string => value !== null)
-    .join(" · ");
+  const subtitleText = diagnosis
+    ? environmentTransportLabel(environment, connectedTarget)
+    : resumingServerUpdate
+      ? "Restarting"
+      : status.text;
 
   const showUpdateAction =
     enabled &&
@@ -228,7 +225,8 @@ export function SavedBackendListRow({
     versionMismatch !== null &&
     (serverUpdateState.status === "idle" || serverUpdateState.status === "failed");
 
-  const statusTooltip = `${
+  const statusTooltip = `${environmentTransportLabel(environment, connectedTarget)}
+${serverVersion ? `Version ${serverVersion}\n` : ""}${
     unsupported
       ? (environment.connection.error ?? connectionStatusText(environment.connection))
       : enabled
@@ -246,7 +244,7 @@ export function SavedBackendListRow({
       label={environment.label}
       dimmed={!enabled}
       subtitle={
-        <span className="flex min-w-0 items-center gap-1">
+        <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
           <Tooltip>
             {/* The status can change while the tooltip is open, and base-ui only
                 re-measures the popup when the trigger's payload changes. */}
@@ -271,9 +269,6 @@ export function SavedBackendListRow({
               {statusTooltip}
             </TooltipPopup>
           </Tooltip>
-          <span aria-hidden className="shrink-0">
-            ·
-          </span>
           <InlineButton
             tone="muted"
             aria-expanded={routesOpen}
@@ -288,9 +283,6 @@ export function SavedBackendListRow({
               )}
             />
           </InlineButton>
-          <span aria-hidden className="shrink-0">
-            ·
-          </span>
           <InlineButton
             tone="muted"
             aria-expanded={permissionsOpen}

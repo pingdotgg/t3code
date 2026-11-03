@@ -1,3 +1,4 @@
+import { Kbd } from "./ui/kbd";
 import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
@@ -143,8 +144,10 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           />
         </TooltipTrigger>
         <TooltipPopup>
-          {autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}
-          {shortcutLabel ? ` · ${shortcutLabel}` : null}
+          <span className="flex items-center gap-2">
+            <span>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</span>
+            {shortcutLabel ? <Kbd>{shortcutLabel}</Kbd> : null}
+          </span>
         </TooltipPopup>
       </Tooltip>
       <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>

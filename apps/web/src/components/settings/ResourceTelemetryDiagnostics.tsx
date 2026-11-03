@@ -224,7 +224,7 @@ function IconStat({
   icon: ReactNode;
   label: string;
   value: string;
-  detail?: string | undefined;
+  detail?: ReactNode;
   tone?: "default" | "warning" | "danger";
 }) {
   return (
@@ -1023,7 +1023,12 @@ function ResourceTelemetryDiagnosticsBody({
               label="Process count"
               value={allT3 ? String(allT3.processCount) : "..."}
               detail={
-                allT3 ? `${allT3.processStarts} starts · ${allT3.processExits} exits` : undefined
+                allT3 ? (
+                  <span className="grid gap-1">
+                    <span>{allT3.processStarts} starts</span>
+                    <span>{allT3.processExits} exits</span>
+                  </span>
+                ) : undefined
               }
             />
             <IconStat
@@ -1121,14 +1126,16 @@ function ResourceTelemetryDiagnosticsBody({
                 />
                 <DetailRow
                   label="Idle"
-                  value={`${booleanStateLabel(snapshot.power.idle, {
-                    true: "Idle",
-                    false: "Active",
-                  })}${
-                    snapshot.power.idleSeconds === null
-                      ? ""
-                      : ` · ${Math.round(snapshot.power.idleSeconds)}s`
-                  }`}
+                  value={
+                    <span className="grid justify-items-end gap-1">
+                      <span>
+                        {booleanStateLabel(snapshot.power.idle, { true: "Idle", false: "Active" })}
+                      </span>
+                      {snapshot.power.idleSeconds === null ? null : (
+                        <span>{Math.round(snapshot.power.idleSeconds)}s</span>
+                      )}
+                    </span>
+                  }
                 />
                 <DetailRow
                   label="Session"
@@ -1194,14 +1201,16 @@ function ResourceTelemetryDiagnosticsBody({
                 />
                 <DetailRow
                   label="Sidecar"
-                  value={Option.match(snapshot.health.sidecarVersion, {
-                    onNone: () => "Unavailable",
-                    onSome: (version) =>
-                      `${version}${Option.match(snapshot.health.sidecarPid, {
-                        onNone: () => "",
-                        onSome: (pid) => ` · PID ${pid}`,
-                      })}`,
-                  })}
+                  value={
+                    <span className="grid justify-items-end gap-1">
+                      <span>
+                        {Option.getOrElse(snapshot.health.sidecarVersion, () => "Unavailable")}
+                      </span>
+                      {Option.isSome(snapshot.health.sidecarPid) ? (
+                        <span>PID {snapshot.health.sidecarPid.value}</span>
+                      ) : null}
+                    </span>
+                  }
                 />
                 <DetailRow label="Restarts" value={String(snapshot.health.restartCount)} />
               </>

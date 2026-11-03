@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomValue } from "@effect/atom-react";
 import { linkRequestFailureMessage } from "@t3tools/client-runtime/link-request";
 import {
@@ -64,7 +65,12 @@ export function LinkedEnvironmentsSettings({
   return (
     <SettingsSection
       {...(isSearchTarget ? { id: search.id } : {})}
-      title={environmentLabel === null ? search.title : `${search.title} · ${environmentLabel}`}
+      title={search.title}
+      titleAction={
+        environmentLabel === null ? null : (
+          <span className="text-meta text-muted-foreground">{environmentLabel}</span>
+        )
+      }
       headerAction={canLink ? <LinkEnvironmentAction environmentId={environmentId} /> : null}
     >
       {links.error ? (
@@ -103,7 +109,7 @@ function LinkedEnvironmentRow({
   const [busy, setBusy] = useState(false);
   const forget = async () => {
     const confirmed = await (requestConfirmDialog(
-      `Forget ${link.label}? Agents here stop working there. Revoke "T3 Code · …" in ${link.label}'s Connections to end the session there too.`,
+      `Forget ${link.label}? Agents here stop working there. Revoke the T3 Code connection in ${link.label}'s Connections to end the session there too.`,
       { variant: "destructive" },
     ) ?? Promise.resolve(false));
     if (!confirmed) return;
@@ -144,9 +150,12 @@ function LinkedEnvironmentRow({
             />
             <h3 className="text-label text-foreground">{link.label}</h3>
           </div>
-          <p className="text-meta text-muted-foreground">
-            {accessConfig[link.access].label} · {status}
-          </p>
+          <Tooltip>
+            <TooltipTrigger render={<p tabIndex={0} className="text-meta text-muted-foreground" />}>
+              {status}
+            </TooltipTrigger>
+            <TooltipPopup side="top">{accessConfig[link.access].label}</TooltipPopup>
+          </Tooltip>
           <p className="truncate text-meta text-muted-foreground/80">{link.urls.join(", ")}</p>
         </div>
         {canUnlink ? (

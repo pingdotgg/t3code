@@ -132,15 +132,18 @@ function UpdateEverythingDialogContent({
           {title ?? `Update ${updating.length} ${updating.length === 1 ? "machine" : "machines"}?`}
         </AlertDialogTitle>
         <AlertDialogDescription>
-          {version !== null ? (
-            <>
-              T3 Code <span className="font-mono text-meta">{version}</span>
-            </>
-          ) : null}
-          {version !== null && providerCount > 0 ? " · " : null}
-          {providerCount > 0
-            ? `${providerCount} provider ${providerCount === 1 ? "update" : "updates"}`
-            : null}
+          <span className="flex flex-col gap-1">
+            {version !== null ? (
+              <span>
+                T3 Code <span className="font-mono text-meta">{version}</span>
+              </span>
+            ) : null}
+            {providerCount > 0 ? (
+              <span>
+                {providerCount} provider {providerCount === 1 ? "update" : "updates"}
+              </span>
+            ) : null}
+          </span>
         </AlertDialogDescription>
       </AlertDialogHeader>
       <ScrollArea scrollFade>

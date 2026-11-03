@@ -149,7 +149,10 @@ function TurnPlayer({ script }: { script: TurnScript }) {
 
         <div className="flex min-h-0 flex-1 flex-col gap-1">
           <Text variant="caption" tone="muted">
-            Steps · {cursor}/{steps.length}
+            Steps
+            <span className="block">
+              {cursor}/{steps.length}
+            </span>
           </Text>
           <ol className="flex min-h-0 flex-col overflow-x-hidden overflow-y-auto">
             {steps.map((step, index) => (

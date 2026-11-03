@@ -28,23 +28,6 @@ function loadPreferenceForWeight(weight: number | undefined): LoadPreference {
   return weight < 50 ? 25 : 100;
 }
 
-function preferenceLabel(preference: LoadPreference): string {
-  return preferences.find((entry) => entry.value === preference)!.label;
-}
-
-function summarizeLoadPreferences(
-  environments: ReadonlyArray<Pick<EnvironmentPresentation, "environmentId" | "label">>,
-  weights: Readonly<Record<string, number>>,
-): string | null {
-  const parts = environments.flatMap((environment) => {
-    const preference = loadPreferenceForWeight(weights[environment.environmentId]);
-    return preference === 50
-      ? []
-      : [`${environment.label} ${preferenceLabel(preference).toLowerCase()}`];
-  });
-  return parts.length === 0 ? null : parts.join(" · ");
-}
-
 export function LoadBalancingSettings({
   environments,
 }: {
@@ -63,11 +46,7 @@ export function LoadBalancingSettings({
     <FoldedSettingsSection
       id={id}
       title={title}
-      summary={
-        settings.loadBalancingEnabled
-          ? summarizeLoadPreferences(environments, settings.loadBalancingWeights)
-          : "Off"
-      }
+      summary={settings.loadBalancingEnabled ? "On" : "Off"}
       control={
         <Switch
           aria-label="Automatically balance load"

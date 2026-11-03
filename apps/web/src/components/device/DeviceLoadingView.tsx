@@ -5,7 +5,7 @@ import { Spinner } from "~/components/ui/spinner";
 
 export function DeviceLoadingView(props: {
   readonly name: string;
-  readonly description?: string;
+  readonly description?: ReactNode;
   readonly stage: "opening" | "stream";
   readonly message: string;
   readonly error?: boolean;

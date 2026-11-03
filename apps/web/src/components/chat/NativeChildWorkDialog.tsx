@@ -112,9 +112,11 @@ function NativeChildStep(props: { readonly step: OrchestrationV2NativeChildStep 
   const { step } = props;
   return (
     <li className="flex min-w-0 flex-col gap-1">
-      <span className="text-caption text-muted-foreground">
+      <span className="flex flex-col gap-0.5 text-caption text-muted-foreground">
         {stepLabel(step.type)}
-        {step.status !== null && step.status !== "DONE" ? ` · ${stepLabel(step.status)}` : ""}
+        {step.status !== null && step.status !== "DONE" ? (
+          <span>{stepLabel(step.status)}</span>
+        ) : null}
       </span>
       {step.toolCalls.length === 0 ? null : (
         <code className="whitespace-pre-wrap break-all text-meta text-foreground">

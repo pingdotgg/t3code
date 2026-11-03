@@ -34,12 +34,16 @@ export const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBann
 }) {
   const [expanded, setExpanded] = useState(false);
   useRequestCardEnterShortcut(disabled ? null : onBuild);
-  const sub = [
-    stepCount > 0 ? `${stepCount} ${stepCount === 1 ? "step" : "steps"}` : null,
-    planTitle,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const sub = (
+    <span className="inline-flex min-w-0 flex-col">
+      <span className="truncate">{planTitle}</span>
+      {stepCount > 0 ? (
+        <span>
+          {stepCount} {stepCount === 1 ? "step" : "steps"}
+        </span>
+      ) : null}
+    </span>
+  );
   return (
     <ComposerRequestCard.Root data-chat-composer-request-card="plan">
       <ComposerRequestCard.Header

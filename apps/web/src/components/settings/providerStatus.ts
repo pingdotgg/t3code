@@ -69,13 +69,14 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
   if (provider.auth.status === "unauthenticated") {
     const authLabel = provider.auth.label ?? provider.auth.type;
     return {
-      headline: authLabel ? `Not authenticated · ${authLabel}` : "Not authenticated",
+      headline: "Not authenticated",
+      authLabel,
       detail: provider.message ?? null,
     };
   }
   if (isAntigravitySignInUnchecked(provider)) {
     return {
-      headline: "Installed · Sign-in not checked",
+      headline: "Sign-in not checked",
       detail: provider.message ?? null,
     };
   }
@@ -95,7 +96,8 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
   if (provider.auth.status === "authenticated") {
     const authLabel = provider.auth.label ?? provider.auth.type;
     return {
-      headline: authLabel ? `Authenticated · ${authLabel}` : "Authenticated",
+      headline: "Authenticated",
+      authLabel,
       detail: provider.message ?? null,
     };
   }

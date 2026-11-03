@@ -9,7 +9,6 @@ export function TimelineSystemDivider(props: {
   readonly detail?: ReactNode | null;
   readonly tone?: "neutral" | "danger";
   readonly icon?: LucideIcon;
-  readonly showDetailSeparator?: boolean;
   readonly wrapDetail?: boolean;
   readonly actionLabel?: string;
   readonly onAction?: () => void;
@@ -18,19 +17,20 @@ export function TimelineSystemDivider(props: {
   const content = (
     <>
       {Icon ? <Icon className="size-3 shrink-0" /> : null}
-      <span className="font-medium">{props.label}</span>
-      {props.detail ? (
-        <span
-          className={cn(
-            "inline-flex min-w-0 items-center text-dim-foreground",
-            typeof props.detail === "string" &&
-              (props.wrapDetail ? "max-w-80 whitespace-pre-wrap" : "max-w-80 truncate"),
-          )}
-        >
-          {props.showDetailSeparator === false ? null : "·\u00a0"}
-          {props.detail}
-        </span>
-      ) : null}
+      <span className="flex min-w-0 flex-col items-center gap-0.5">
+        <span className="text-meta">{props.label}</span>
+        {props.detail ? (
+          <span
+            className={cn(
+              "inline-flex min-w-0 items-center text-dim-foreground",
+              typeof props.detail === "string" &&
+                (props.wrapDetail ? "max-w-80 whitespace-pre-wrap" : "max-w-80 truncate"),
+            )}
+          >
+            {props.detail}
+          </span>
+        ) : null}
+      </span>
     </>
   );
 

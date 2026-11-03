@@ -14,6 +14,7 @@ const buttonVariants = cva(
     },
     variants: {
       size: {
+        chip: "h-5 gap-1 rounded-md px-[6px] text-meta before:rounded-md [&_svg:not([class*='size-'])]:size-3",
         compact:
           "h-7 gap-1 rounded-md px-[calc(--spacing(2)-1px)] text-meta before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
         default: "h-9 px-[calc(--spacing(3)-1px)] sm:h-8",
@@ -33,6 +34,10 @@ const buttonVariants = cva(
         "sm-multiline":
           "min-h-8 gap-1.5 px-[calc(--spacing(2.5)-1px)] py-[calc(--spacing(1)-1px)] whitespace-normal sm:min-h-7",
         xs: "h-7 gap-1 px-[calc(--spacing(2)-1px)] text-meta sm:h-6 [&_svg:not([class*='size-'])]:size-4 sm:[&_svg:not([class*='size-'])]:size-3.5",
+        "xs-pill":
+          "h-5.5 gap-1 rounded-full px-[6px] text-meta before:rounded-full [&_svg:not([class*='size-'])]:size-3.5",
+        "icon-xs-pill":
+          "size-5.5 rounded-full p-0 before:rounded-full [&_svg:not([class*='size-'])]:size-3.5",
       },
       variant: {
         // Primary: the lit recipe.
@@ -67,6 +72,8 @@ const buttonVariants = cva(
         // Secondary: the raised recipe.
         secondary:
           "surface-raised focus-visible:[--surface-rim:var(--surface-fill)] text-foreground [:hover,[data-pressed]]:surface-raised-hover",
+        "success-outline":
+          "surface-tint [--surface-tint:var(--success-foreground)] text-success-foreground [:hover,[data-pressed]]:[--surface-tint:color-mix(in_srgb,var(--success-foreground),var(--foreground)_20%)]",
         "warning-outline":
           "surface-tint [--surface-tint:var(--warning-foreground)] text-warning-foreground [:hover,[data-pressed]]:[--surface-tint:color-mix(in_srgb,var(--warning-foreground),var(--foreground)_20%)]",
       },

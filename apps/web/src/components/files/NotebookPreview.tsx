@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 /* oxlint-disable react/no-array-index-key -- Notebook cells and outputs retain their saved source order. */
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { useEffect, useRef, useState } from "react";
@@ -95,13 +96,22 @@ export default function NotebookPreview(props: {
   return (
     <>
       <div
-        className="border-b border-border/60 px-3 py-2 text-meta text-muted-foreground tabular-nums"
+        className="flex flex-wrap gap-x-3 border-b border-border/60 px-3 py-2 text-meta text-muted-foreground tabular-nums"
         role="status"
       >
-        {props.notebook.cells.length.toLocaleString()} cells · {props.notebook.language}
-        {props.sizeBytes !== undefined
-          ? ` · ${props.sizeBytes === 0 ? "0 bytes" : formatAttachmentSize(props.sizeBytes)}`
-          : ""}
+        <Tooltip>
+          <TooltipTrigger render={<span tabIndex={0} />}>
+            {props.notebook.cells.length.toLocaleString()} cells
+          </TooltipTrigger>
+          <TooltipPopup>
+            <span className="block">{props.notebook.language}</span>
+            {props.sizeBytes !== undefined ? (
+              <span className="block">
+                {props.sizeBytes === 0 ? "0 bytes" : formatAttachmentSize(props.sizeBytes)}
+              </span>
+            ) : null}
+          </TooltipPopup>
+        </Tooltip>
       </div>
       <FileSurfaceNotice>Saved outputs only. Code is never executed.</FileSurfaceNotice>
       <div ref={scroll} className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
@@ -112,8 +122,13 @@ export default function NotebookPreview(props: {
               aria-label={`Cell ${index + 1}`}
               className="min-w-0 overflow-hidden rounded-md border border-border/60"
             >
-              <div className="border-b border-border/60 bg-muted/30 px-3 py-1.5 text-meta text-muted-foreground">
-                {cell.kind === "code" ? props.notebook.language : cell.kind} · {index + 1}
+              <div className="flex items-center gap-3 border-b border-border/60 bg-muted/30 px-3 py-1.5 text-meta text-muted-foreground">
+                <Tooltip>
+                  <TooltipTrigger render={<span tabIndex={0} />}>Cell {index + 1}</TooltipTrigger>
+                  <TooltipPopup>
+                    {cell.kind === "code" ? props.notebook.language : cell.kind}
+                  </TooltipPopup>
+                </Tooltip>
               </div>
               {cell.kind === "markdown" ? (
                 <ChatMarkdown

@@ -333,11 +333,17 @@ export function ProviderModelsSection({
             </Button>
           ) : null}
           <span className="text-xs text-muted-foreground">
-            {models.length} model{models.length === 1 ? "" : "s"}
-            {favoriteCount > 0
-              ? ` · ${favoriteCount} favorite${favoriteCount === 1 ? "" : "s"}`
-              : ""}
-            {hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""}
+            <Tooltip>
+              <TooltipTrigger render={<span tabIndex={0} />}>
+                {models.length} model{models.length === 1 ? "" : "s"}
+              </TooltipTrigger>
+              <TooltipPopup>
+                <span className="grid gap-1">
+                  <span>{favoriteCount} favorites</span>
+                  <span>{hiddenCount} hidden</span>
+                </span>
+              </TooltipPopup>
+            </Tooltip>
           </span>
         </div>
         {driverKind !== "antigravity" && !isAdding ? (
@@ -535,7 +541,18 @@ function ProviderModelRow({
       </span>
       <span className="text-2xs text-dim-foreground">
         {capLabels.length > 0 ? (
-          <span className="hidden sm:inline">{capLabels.join(" · ")}</span>
+          <span className="hidden sm:inline">
+            <Tooltip>
+              <TooltipTrigger render={<span tabIndex={0} />}>{capLabels[0]}</TooltipTrigger>
+              <TooltipPopup>
+                <span className="grid gap-1">
+                  {capLabels.map((label) => (
+                    <span key={label}>{label}</span>
+                  ))}
+                </span>
+              </TooltipPopup>
+            </Tooltip>
+          </span>
         ) : null}
       </span>
       <span className="flex shrink-0 items-center justify-end gap-0.5">

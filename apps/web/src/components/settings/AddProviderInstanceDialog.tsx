@@ -26,6 +26,7 @@ import { normalizeProviderAccentColor } from "../../providerInstances";
 import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
 import { Dialog } from "../ui/dialog";
 import { Badge } from "../ui/badge";
@@ -594,12 +595,17 @@ export function AddProviderInstanceDialog({
               {isAcpRegistry && wizardStep === 1 && selectedAcp ? (
                 <div className="mb-4 flex items-start justify-between gap-3 border-b border-divider pb-3">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-strong-foreground">
-                      {selectedAcp.name}
-                    </p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      v{selectedAcp.version} · {selectedAcp.distribution}
-                    </p>
+                    <p className="truncate text-label text-strong-foreground">{selectedAcp.name}</p>
+                    <div className="mt-0.5">
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={<span tabIndex={0} className="text-meta text-muted-foreground" />}
+                        >
+                          v{selectedAcp.version}
+                        </TooltipTrigger>
+                        <TooltipPopup>{selectedAcp.distribution}</TooltipPopup>
+                      </Tooltip>
+                    </div>
                   </div>
                   <div className="flex shrink-0 gap-2 text-2xs">
                     {selectedAcp.website ? (

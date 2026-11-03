@@ -135,13 +135,13 @@ export function SubagentTooltipContent(props: {
         ) : (
           <BotIcon className="size-3 shrink-0" />
         )}
-        <span className="inline-flex min-w-0 items-center gap-1 text-muted-foreground">
+        <span className="inline-flex min-w-0 flex-col items-start gap-1 text-muted-foreground">
           <span className="min-w-0 truncate">
-            {showInstanceBadge ? `${modelLabel} · ${entry.displayName}` : modelLabel}
+            <span>{modelLabel}</span>
+            {showInstanceBadge ? <span className="block">{entry.displayName}</span> : null}
           </span>
           {effort || speed?.speedIcon ? (
             <span className="inline-flex shrink-0 items-center gap-1">
-              {effort ? " · " : null}
               {speed?.speedIcon && provider ? (
                 <TraitsSpeedIcon provider={provider.driver} speedIcon={speed.speedIcon} size="xs" />
               ) : null}

@@ -164,7 +164,6 @@ export interface ThreadPullRequestBadgePresentation {
   readonly more: number;
 }
 
-/** Composer footers use a state glyph; sidebar rows use a mono PR number and folded-link count. */
 export type ThreadPullRequestBadgeAppearance = "glyph" | "number";
 
 function resolveThreadPullRequestBadgePresentation({
@@ -297,26 +296,20 @@ function PullRequestBadge({
   return (
     <Tooltip key={opensList ? "list" : "link"}>
       <TooltipTrigger render={control}>
-        {appearance === "number" && number !== undefined ? (
-          <span
-            className={cn(
-              "contents font-mono font-normal text-xs tabular-nums",
-              numberToneClassName(presentation.toneClassName),
-            )}
-          >
-            <span>#{number}</span>
-            {presentation.more > 0 ? (
-              <span className="ml-0.5 opacity-60">+{presentation.more}</span>
-            ) : null}
+        <span
+          className={cn(
+            "contents tabular-nums",
+            appearance === "number" ? "text-meta" : "font-normal text-xs",
+            appearance === "number"
+              ? sidebarPullRequestToneClassName(presentation.toneClassName)
+              : presentation.toneClassName,
+          )}
+        >
+          <presentation.Icon aria-hidden className="size-3 shrink-0" />
+          <span className={appearance === "number" ? "text-secondary-label" : undefined}>
+            {presentation.text}
           </span>
-        ) : (
-          <span
-            className={cn("contents font-normal text-xs tabular-nums", presentation.toneClassName)}
-          >
-            <presentation.Icon aria-hidden className="size-3 shrink-0" />
-            <span>{presentation.text}</span>
-          </span>
-        )}
+        </span>
       </TooltipTrigger>
       <TooltipPopup
         side="top"
@@ -347,11 +340,20 @@ function PullRequestBadge({
   );
 }
 
-// Sidebar rows draw open PRs a shade darker in light mode than the shared success foreground.
-function numberToneClassName(toneClassName: string): string {
-  return toneClassName === "text-success-foreground"
-    ? "text-(--sidebar-pr-open,var(--success-foreground))"
-    : toneClassName;
+// Sidebar state glyphs keep main's subdued palette; counts stay secondary labels.
+function sidebarPullRequestToneClassName(toneClassName: string): string {
+  switch (toneClassName) {
+    case "text-success-foreground":
+      return "text-emerald-600 dark:text-emerald-300/90";
+    case "text-dim-foreground":
+      return "text-zinc-500 dark:text-zinc-400/80";
+    case "text-error-foreground":
+      return "text-red-600 dark:text-red-300/90";
+    case "text-merged-foreground":
+      return "text-violet-600 dark:text-violet-300/90";
+    default:
+      return toneClassName;
+  }
 }
 
 export function ThreadPullRequestsMiniList({
@@ -387,9 +389,7 @@ export function ThreadPullRequestsMiniList({
             onOpenPullRequest={onOpenPullRequest}
           >
             {line.stack ? (
-              <span className="ml-auto shrink-0 pl-1 text-3xs">
-                {line.stack.kind === "native" ? "stack" : "chain"} · {line.stack.size}
-              </span>
+              <span className="ml-auto shrink-0 pl-1 text-3xs">{line.stack.size}</span>
             ) : null}
           </ThreadPullRequestMiniListItem>
         );
@@ -629,7 +629,7 @@ export function ThreadWorktreeIndicator({
           />
         }
       >
-        <FolderGit2Icon className="size-3 text-dim-foreground" />
+        <FolderGit2Icon className="size-3.5 shrink-0 text-icon-muted" />
       </TooltipTrigger>
       <TooltipPopup side="top">{tooltip}</TooltipPopup>
     </Tooltip>

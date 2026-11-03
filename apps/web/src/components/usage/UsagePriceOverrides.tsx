@@ -577,11 +577,16 @@ export function UsagePriceOverrides({
                           : "text-muted-foreground"
                       }
                     >
-                      {result?.status === "failed"
-                        ? `Not saved · ${result.error}`
-                        : result?.status === "saved"
-                          ? "Saved"
-                          : "Saving…"}
+                      {result?.status === "failed" ? (
+                        <>
+                          <span className="block">Not saved</span>
+                          <span className="block">{result.error}</span>
+                        </>
+                      ) : result?.status === "saved" ? (
+                        "Saved"
+                      ) : (
+                        "Saving…"
+                      )}
                     </span>
                   </div>
                 );

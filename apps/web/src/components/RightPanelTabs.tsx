@@ -1575,9 +1575,9 @@ function DeviceTabTooltip(props: {
     <div className="flex flex-col gap-0.5">
       <span>{props.title}</span>
       {target ? (
-        <span className="text-muted-foreground">
-          {host?.label ?? "Device host"} ·{" "}
-          {device?.version ?? (target.platform === "ios" ? "iOS" : "Android")}
+        <span className="flex flex-col gap-0.5 text-muted-foreground">
+          <span>{host?.label ?? "Device host"}</span>
+          <span>{device?.version ?? (target.platform === "ios" ? "iOS" : "Android")}</span>
         </span>
       ) : null}
     </div>

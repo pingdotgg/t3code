@@ -30,14 +30,20 @@ function summarizePullRequestRouting(
     readonly label: string;
     readonly permission: PullRequestRoutingPermission;
   }>,
-): string | null {
+) {
   const groups = (["read-write", "read"] as const).flatMap((permission) => {
     const labels = entries.filter((entry) => entry.permission === permission);
     return labels.length === 0
       ? []
       : [`${labels.map((entry) => entry.label).join(", ")} ${summaryLabels[permission]}`];
   });
-  return groups.length === 0 ? null : groups.join(" · ");
+  return groups.length === 0 ? null : (
+    <span className="grid gap-1">
+      {groups.map((group) => (
+        <span key={group}>{group}</span>
+      ))}
+    </span>
+  );
 }
 
 export function PullRequestRoutingSettings({

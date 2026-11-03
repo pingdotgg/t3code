@@ -31,7 +31,8 @@ import {
   ADD_TO_MACHINE_LABEL_CLASS,
   type EnvMode,
   type EnvironmentOption,
-  resolveContextStripLabelsCompact,
+  resolveContextStripCompaction,
+  type ContextStripCompaction,
   resolveCurrentWorkspaceLabel,
   resolveEnvModeLabel,
   resolveLockedWorkspaceLabel,
@@ -71,6 +72,11 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { ComposerSurface } from "./chat/ComposerSurface";
+import { measureRestingComposerControls } from "./chat/restingComposerControlsMeasurement";
+import {
+  resolveRestingComposerControlsMinimumWidth,
+  resolveRestingComposerControlsNaturalWidth,
+} from "./composerFooterLayout";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import { cn } from "~/lib/utils";
 import { observeResize } from "~/lib/observeResize";
@@ -707,6 +713,12 @@ const RunContextSelector = memo(function RunContextSelector({
 const COMPOSER_CONTEXT_MOTION_DURATION_MS = 180;
 const COMPOSER_CONTEXT_MOTION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const COMPOSER_CONTEXT_LABEL_SELECTOR = "[data-composer-label]";
+const RESTING_CONTROLS_SELECTOR = '[data-chat-composer-resting-controls="true"]';
+
+function readStripCompaction(strip: HTMLElement): ContextStripCompaction {
+  const value = strip.dataset.compact;
+  return value === "labels" || value === "branch" ? value : "none";
+}
 
 /** A hidden or squeezed label's scrollWidth loses its tail, causing label/icon flapping. */
 function labelTextWidth(label: HTMLElement, range: Range): number {
@@ -757,15 +769,15 @@ function animateLabelWidths(
 }
 
 /**
- * Whether the strip's labels must collapse to icons. The strip is measured when
+ * How far the strip collapses: labels to icons, then the branch. The strip is measured when
  * it, a control group or a hosted control resizes, when its text or children
  * change, and when fonts load, which covers everything the widths depend on.
  */
-function useLabelsOverflow(): readonly [
+function useStripCompaction(): readonly [
   attach: (element: HTMLDivElement | null) => (() => void) | undefined,
-  overflows: boolean,
+  compaction: ContextStripCompaction,
 ] {
-  const [overflows, setOverflows] = useState(false);
+  const [compaction, setCompaction] = useState<ContextStripCompaction>("none");
 
   const attach = (current: HTMLDivElement | null) => {
     if (!current) return;
@@ -773,7 +785,7 @@ function useLabelsOverflow(): readonly [
 
     const measure = () => {
       // The committed attribute, not render state, so a stale closure cannot misread it.
-      const compact = current.hasAttribute("data-compact");
+      const compact = readStripCompaction(current);
       const stripWidth = current.clientWidth;
       if (stripWidth === 0) return;
       const stripStyle = getComputedStyle(current);
@@ -804,28 +816,39 @@ function useLabelsOverflow(): readonly [
       let groups = 0;
       for (const child of current.children) {
         if (!(child instanceof HTMLElement)) continue;
-        const width = contentWidth(child);
+        const controls = child.querySelector<HTMLElement>(RESTING_CONTROLS_SELECTOR);
+        const controlsMeasurement = controls ? measureRestingComposerControls(controls) : null;
+        if (controlsMeasurement) {
+          child.style.minWidth = `${resolveRestingComposerControlsMinimumWidth(controlsMeasurement)}px`;
+        }
+        const width = controlsMeasurement
+          ? resolveRestingComposerControlsNaturalWidth(controlsMeasurement)
+          : contentWidth(child);
         if (width <= 1) continue;
         groups += 1;
         needed += width;
       }
       needed += stripGap * Math.max(0, groups - 1);
       const range = document.createRange();
-      for (const label of current.querySelectorAll<HTMLElement>("[data-composer-label]")) {
-        needed += Math.max(0, labelTextWidth(label, range) - label.getBoundingClientRect().width);
+      let labelsSavedWidth = 0;
+      for (const label of current.querySelectorAll<HTMLElement>(COMPOSER_CONTEXT_LABEL_SELECTOR)) {
+        const textWidth = labelTextWidth(label, range);
+        needed += Math.max(0, textWidth - label.getBoundingClientRect().width);
+        if (label.dataset.composerLabel === "hide") labelsSavedWidth += textWidth;
       }
-      const nextOverflows = resolveContextStripLabelsCompact({
-        compact,
+      const nextCompaction = resolveContextStripCompaction({
+        current: compact,
         neededWidth: needed,
         availableWidth: available,
+        labelsSavedWidth,
       });
-      if (nextOverflows === compact) return;
+      if (nextCompaction === compact) return;
       const previousRects = new Map(
         Array.from(current.querySelectorAll<HTMLElement>(COMPOSER_CONTEXT_LABEL_SELECTOR)).map(
           (label) => [label, label.getBoundingClientRect()] as const,
         ),
       );
-      flushSync(() => setOverflows(nextOverflows));
+      flushSync(() => setCompaction(nextCompaction));
       animateLabelWidths(previousRects, labelAnimations);
     };
 
@@ -862,7 +885,7 @@ function useLabelsOverflow(): readonly [
     };
   };
 
-  return [attach, overflows] as const;
+  return [attach, compaction] as const;
 }
 
 export const BranchToolbar = memo(function BranchToolbar({
@@ -959,7 +982,7 @@ export const BranchToolbar = memo(function BranchToolbar({
     activeEnvironment: activeEnvironmentOption,
     canPickEnvironment: hasMultipleEnvironments,
   });
-  const [attachStrip, labelsOverflow] = useLabelsOverflow();
+  const [attachStrip, stripCompaction] = useStripCompaction();
 
   if (!activeProject) return null;
 
@@ -1045,7 +1068,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   return (
     <ComposerSurface.ContextStrip
       ref={attachStrip}
-      data-compact={labelsOverflow ? "" : undefined}
+      data-compact={stripCompaction === "none" ? undefined : stripCompaction}
       data-composer-context-control
     >
       {showMachineChip ? (

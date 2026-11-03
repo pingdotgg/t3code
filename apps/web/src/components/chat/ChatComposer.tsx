@@ -114,6 +114,7 @@ import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
+import { observeComposerPromptLayout } from "./observeComposerPromptLayout";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
   reconcileAttachmentContextReferences,
@@ -1068,6 +1069,16 @@ export function ChatComposer(props: ChatComposerProps) {
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
   const [hasWrappedPrompt, observeWrappedPrompt] = useComposerMultilinePrompt();
   const hasMultilinePrompt = prompt.includes("\n") || hasWrappedPrompt;
+  const attachComposerBody = useStableCallback((node: HTMLDivElement | null) => {
+    setComposerMenuAnchor(node);
+    const stopLayout = node ? observeComposerPromptLayout(node) : undefined;
+    const stopObserving = observeWrappedPrompt(node);
+    return () => {
+      setComposerMenuAnchor(null);
+      stopObserving?.();
+      stopLayout?.();
+    };
+  });
   // A pending question stays expanded: its card moves into the banner dock,
   // so collapsing would leave the surface empty and squashed beneath it.
   const isComposerCollapsedMobile =
@@ -3427,18 +3438,10 @@ export function ChatComposer(props: ChatComposerProps) {
             ) : null}
 
             <div
-              ref={(node) => {
-                setComposerMenuAnchor(node);
-                const stopObserving = observeWrappedPrompt(node);
-                return () => {
-                  setComposerMenuAnchor(null);
-                  stopObserving?.();
-                };
-              }}
+              ref={attachComposerBody}
               data-chat-composer-body="true"
               className={cn(
-                "relative flex min-h-12 flex-wrap items-center gap-1.5 py-2 ps-3.5 pe-2",
-                hasMultilinePrompt && "flex-col items-stretch",
+                "composer-prompt-body relative grid min-h-12 grid-cols-1 items-center py-2 ps-3.5 pe-2",
                 isComposerCollapsedMobile && "hidden",
               )}
             >
@@ -3494,24 +3497,21 @@ export function ChatComposer(props: ChatComposerProps) {
                 </ComposerCommandMenuLayer>
               )}
 
-              {!isComposerCollapsedMobile &&
-                pendingUserInputs.length === 0 &&
-                editingQueuedAttachments !== null &&
-                editingQueuedAttachments.length > 0 && (
-                  <ComposerQueuedAttachmentRow
-                    attachments={editingQueuedAttachments}
-                    onRemove={onRemoveEditingQueuedAttachment}
-                  />
-                )}
-
-              <div className="w-full empty:hidden">
+              <div className="mb-1.5 w-full [grid-area:attachments] empty:hidden">
+                {!isComposerCollapsedMobile &&
+                  pendingUserInputs.length === 0 &&
+                  editingQueuedAttachments !== null &&
+                  editingQueuedAttachments.length > 0 && (
+                    <ComposerQueuedAttachmentRow
+                      attachments={editingQueuedAttachments}
+                      onRemove={onRemoveEditingQueuedAttachment}
+                    />
+                  )}
                 {composerAttachmentMediaRow}
                 {composerAttachmentFileList}
               </div>
 
-              <div
-                className={cn("relative min-w-0 flex-1", hasMultilinePrompt && "w-full flex-none")}
-              >
+              <div className="composer-prompt-editor relative min-w-0 py-1.5 [grid-area:prompt]">
                 {previewFile ? (
                   <ComposerFilePreviewDialog
                     file={previewFile}
@@ -3593,7 +3593,7 @@ export function ChatComposer(props: ChatComposerProps) {
               <div
                 data-chat-composer-actions="right"
                 data-chat-composer-transition-actions="true"
-                className="flex shrink-0 items-center justify-end gap-1.5 self-end"
+                className="z-1 flex w-max max-w-full items-center justify-end gap-1.5 self-start justify-self-end [grid-area:prompt]"
               >
                 {composerAttachButton}
                 <ComposerFooterPrimaryActions

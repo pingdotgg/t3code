@@ -163,11 +163,11 @@ function ThreadLineageGroup(props: {
       <MenuTrigger render={<ThreadDetailsControl part="choice" aria-label="Previous agents" />}>
         <HistoryIcon />
         <MenuItemLabel className="min-w-0 flex-1">{props.label}</MenuItemLabel>
-        <span className={THREAD_DETAILS_PANEL_META_CLASS}>
+        <span className={`${THREAD_DETAILS_PANEL_META_CLASS} inline-flex flex-col items-end`}>
           {failedCount > 0 ? (
-            <span className="text-destructive-foreground">{failedCount} failed ·</span>
+            <span className="text-destructive-foreground">{failedCount} failed</span>
           ) : null}
-          {props.rows.length}
+          <span>{props.rows.length} total</span>
         </span>
       </MenuTrigger>
       <MenuPopup side="right" align="start" className="w-75">
@@ -291,7 +291,10 @@ function RemoteSubagentRow(props: {
           <span
             className={`shrink-0 text-caption ${failed ? "text-destructive-foreground" : "text-dim-foreground"}`}
           >
-            on {remoteChild.label} · {threadRelationshipStatusLabel(status)}
+            <span className="inline-flex flex-col">
+              <span>on {remoteChild.label}</span>
+              <span>{threadRelationshipStatusLabel(status)}</span>
+            </span>
           </span>
         </TooltipTrigger>
         <TooltipPopup side="left">
@@ -743,11 +746,11 @@ export function ThreadRelationshipsPanel(props: {
         )}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-meta">{threadTitle}</span>
-          <span className="truncate text-caption text-muted-foreground">
-            {relationship}
-            {node?.thread?.modelSelection.model
-              ? ` · ${formatModelSlugName(node.thread.modelSelection.model)}`
-              : ""}
+          <span className="flex min-w-0 flex-col text-caption text-muted-foreground">
+            <span>{relationship}</span>
+            {node?.thread?.modelSelection.model ? (
+              <span>{formatModelSlugName(node.thread.modelSelection.model)}</span>
+            ) : null}
           </span>
         </span>
         <span className={`${THREAD_DETAILS_PANEL_META_CLASS} ${trailingVisibilityClass}`}>
@@ -960,7 +963,7 @@ export function ThreadRelationshipsPanel(props: {
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="truncate text-meta">{currentThread.title}</span>
                 <span className="truncate text-caption text-muted-foreground">
-                  This thread · {formatModelSlugName(currentThread.modelSelection.model)}
+                  {formatModelSlugName(currentThread.modelSelection.model)}
                 </span>
               </span>
             </div>

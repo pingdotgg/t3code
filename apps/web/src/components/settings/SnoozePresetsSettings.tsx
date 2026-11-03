@@ -306,9 +306,20 @@ function SnoozePresetList(props: {
           </div>
         );
       })}
-      <p className="text-meta text-muted-foreground">
-        {menuOrder.length === 0 ? "Menus offer only Custom…" : `Menu now: ${menuOrder.join(" · ")}`}
-      </p>
+      <div className="text-meta text-muted-foreground">
+        {menuOrder.length === 0 ? (
+          "Menus offer only Custom…"
+        ) : (
+          <>
+            <p>Menu now</p>
+            <ol className="mt-1 grid gap-1">
+              {menuOrder.map((label) => (
+                <li key={label}>{label}</li>
+              ))}
+            </ol>
+          </>
+        )}
+      </div>
       <div>
         <Button
           variant="ghost-muted"

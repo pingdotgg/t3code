@@ -704,12 +704,16 @@ function UsageOverview({
               {metric === "cost" ? formatUsd(merged.costUsd) : formatTokens(merged.totalTokens)}
             </span>
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-              <span>
-                <span className={figureClass(loadingPartial)}>
-                  {formatCount(merged.sessions)} sessions
-                </span>
-                {metric === "cost" && " · API estimate"}
-              </span>
+              <Tooltip>
+                <TooltipTrigger render={<span tabIndex={0} />}>
+                  <span className={figureClass(loadingPartial)}>
+                    {formatCount(merged.sessions)} sessions
+                  </span>
+                </TooltipTrigger>
+                <TooltipPopup>
+                  {metric === "cost" ? "API cost estimate" : "Sessions with processed tokens"}
+                </TooltipPopup>
+              </Tooltip>
               {metric === "cost" && merged.costQuality.unpricedShare > 0 && (
                 <Popover>
                   <PopoverTrigger
@@ -796,14 +800,21 @@ function UsageOverview({
                 </div>
                 <span
                   className={cn(
-                    "text-xs text-muted-foreground",
+                    "text-meta text-muted-foreground",
                     figureClass(providerLoading),
                     awaitingData && "invisible",
                   )}
                 >
-                  {metric === "cost"
-                    ? `${formatPercent(share)} of cost · ${formatTokens(totals?.totalTokens ?? 0)} tokens`
-                    : `${formatPercent(share)} of tokens · ${formatUsd(totals?.costUsd ?? 0)}`}
+                  <Tooltip>
+                    <TooltipTrigger render={<span tabIndex={0} />}>
+                      {formatPercent(share)} of {metric === "cost" ? "cost" : "tokens"}
+                    </TooltipTrigger>
+                    <TooltipPopup>
+                      {metric === "cost"
+                        ? `${formatTokens(totals?.totalTokens ?? 0)} tokens`
+                        : formatUsd(totals?.costUsd ?? 0)}
+                    </TooltipPopup>
+                  </Tooltip>
                 </span>
               </div>
             );
@@ -1155,7 +1166,12 @@ function CursorEnableRow({
           style={{ backgroundColor: PROVIDER_PRESENTATION.cursor.color }}
         />
         <ProviderMark provider="cursor" className="size-4" />
-        <span className="truncate">Cursor{showEnvironment ? ` · ${label}` : ""}</span>
+        <Tooltip disabled={!showEnvironment}>
+          <TooltipTrigger render={<span tabIndex={showEnvironment ? 0 : undefined} />}>
+            Cursor
+          </TooltipTrigger>
+          <TooltipPopup>{label}</TooltipPopup>
+        </Tooltip>
       </span>
       <CursorEnableButton
         environmentId={environmentId}

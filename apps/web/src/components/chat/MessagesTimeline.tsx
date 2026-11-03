@@ -133,7 +133,7 @@ import {
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
-import { TooltipScrollDismissArea, Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
@@ -260,14 +260,11 @@ interface MessagesTimelineProps {
   /** Which request is waiting, so a second one of the same kind is announced too. */
   awaitingRequestId?: string | null;
   pendingRequest?: TimelinePendingRequest | null;
-  backgroundTaskLabel?: string | null;
   usageLimit?: TimelineUsageLimit | null;
   /** The composer banner's error; a failed fold does not repeat it. */
   threadErrorMessage?: string | null;
   /** Takes the user to a pending question in the composer. */
   onFocusComposer?: () => void;
-  /** Uses the same turn interrupt as the composer and keybinding. */
-  onInterrupt?: TimelineRowSharedState["onInterrupt"];
 
   footer?: ReactNode;
 
@@ -385,11 +382,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   awaitingUser = null,
   awaitingRequestId = null,
   pendingRequest: pendingRequestProp = null,
-  backgroundTaskLabel = null,
   usageLimit = null,
   threadErrorMessage = null,
   onFocusComposer,
-  onInterrupt,
 
   listRef,
   timelineEntries,
@@ -567,12 +562,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
       return next;
     });
   };
-  // Opening keeps a followed timeline at its end, so the history lands above
-  // the composer instead of under it. Closing behaves like any collapsing
-  // disclosure.
   const onToggleWorkingHistory = (key: string) => {
     // Either way the bar holds still: the history grows and shrinks below it.
     suspendEndScrollMaintenanceForDisclosure("working-indicator-row");
+    const list = listRef.current;
+    if (list) void list.scrollToOffset({ offset: list.getState().scroll, animated: false });
     setWorkingHistoryKey((current) => (current === key ? null : key));
   };
   const onToggleAttemptFold = (attemptId: RunAttemptId) => {
@@ -680,6 +674,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     windowlessCitation,
     activeFindEntryId,
   });
+  const workingHistoryOpen = rows.some(
+    (row) => row.kind === "working" && row.window?.historyOpen === true,
+  );
   // Opens whatever hides a cited response. False when nothing does, so the citation stops waiting.
   const revealCitedEntry = (entryId: string, runId: RunId | null) => {
     const fold = timelineTurnFoldRunIdsByEntryId({
@@ -1146,7 +1143,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
     onToggleWorkingHistory,
     onFocusComposer: onFocusComposer ?? null,
-    onInterrupt: onInterrupt ?? null,
     workGroupViewState,
   };
   const compactionAwaitingRow =
@@ -1174,7 +1170,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     isPreparingWorktree,
     latestRunId: latestRun?.runId ?? null,
     pendingRequest: isWorking ? pendingRequest : null,
-    backgroundTaskLabel,
     usageLimit,
     threadErrorMessage,
   };
@@ -1440,7 +1435,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 anchoredEndSpace ||
                 !liveFollowEnabled ||
                 fullscreenAppRowId !== null ||
-                disclosureToggleSettling
+                disclosureToggleSettling ||
+                workingHistoryOpen
                   ? false
                   : isWorking && !prefersReducedMotion && settlingListIdentity === null
                     ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
@@ -1657,24 +1653,24 @@ function ContextCompactionTimelineRow({
       ? row.title + row.label.slice("Context compacted".length)
       : row.label;
   const content = (
-    <span className="flex min-w-0 items-center gap-1.5">
-      {row.failed ? (
-        <CircleAlertIcon aria-hidden="true" className="size-3 shrink-0" />
-      ) : (
-        <Minimize2Icon aria-hidden="true" className="size-3" />
-      )}
-      {row.tokenCounts ? (
-        <>
-          {row.title ?? "Context compacted"} {row.tokenCounts.before}
-          <ArrowRightIcon aria-hidden="true" className="size-3" />
-          {row.tokenCounts.after} tokens
-        </>
-      ) : (
-        label
-      )}
-      {row.failure ? (
-        <span className="min-w-0 truncate opacity-80">&middot; {row.failure}</span>
-      ) : null}
+    <span className="flex min-w-0 flex-col items-center gap-1.5">
+      <span className="inline-flex items-center gap-1.5">
+        {row.failed ? (
+          <CircleAlertIcon aria-hidden="true" className="size-3 shrink-0" />
+        ) : (
+          <Minimize2Icon aria-hidden="true" className="size-3" />
+        )}
+        {row.tokenCounts ? (
+          <>
+            {row.title ?? "Context compacted"} {row.tokenCounts.before}
+            <ArrowRightIcon aria-hidden="true" className="size-3" />
+            {row.tokenCounts.after} tokens
+          </>
+        ) : (
+          label
+        )}
+      </span>
+      {row.failure ? <span className="min-w-0 truncate opacity-80">{row.failure}</span> : null}
     </span>
   );
   return (
@@ -1759,8 +1755,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   const { loading, error, toggle } = useDeferredWorkLoading(row, () =>
     ctx.onToggleTurnFold(row.runId),
   );
-  const { backgroundTaskLabel, usageLimit, latestRunId, threadErrorMessage } =
-    use(TimelineRowActivityCtx);
+  const { usageLimit, latestRunId, threadErrorMessage } = use(TimelineRowActivityCtx);
   const isLatestRun = latestRunId === row.runId;
   // One line says why the run failed: its error, unless the composer banner
   // already does, then the provider notice that carries the limit's reset.
@@ -1769,7 +1764,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
       ? row.failureMessage
       : row.noticeMessage;
   const labelClassName = cn(
-    "flex min-w-0 items-center gap-2 self-stretch text-label tabular-nums",
+    "flex shrink-0 items-center gap-2 self-stretch text-label whitespace-nowrap tabular-nums",
     row.ending === "failed"
       ? "text-error-foreground"
       : row.ending === "limited"
@@ -1779,9 +1774,9 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   const labelContent = (
     <>
       {row.ending === "failed" ? <CircleAlertIcon aria-hidden className="size-3 shrink-0" /> : null}
-      <span className="truncate">
+      <span>
         {row.label}
-        {error ? ` · ${error}` : ""}
+        {error ? <span className="block text-error-foreground">{error}</span> : null}
       </span>
     </>
   );
@@ -1810,18 +1805,6 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
           <span className={labelClassName}>{labelContent}</span>
         )}
         <span className="min-w-0 flex-1" />
-        {isLatestRun && backgroundTaskLabel ? (
-          <Tooltip>
-            <TooltipTrigger render={<span className="flex min-w-0 shrink items-center gap-1.5" />}>
-              <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-success" />
-              <span className="sr-only">Still running:</span>
-              <span className="min-w-0 truncate font-mono text-meta text-muted-foreground">
-                {backgroundTaskLabel}
-              </span>
-            </TooltipTrigger>
-            <TooltipPopup>Still running: {backgroundTaskLabel}</TooltipPopup>
-          </Tooltip>
-        ) : null}
         {limit?.resetAt ? (
           <TurnFoldUsageLimit limit={limit} timestampFormat={ctx.timestampFormat} />
         ) : null}
@@ -1866,7 +1849,7 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
         />
         <span className="text-xs font-medium text-foreground">
           {row.label}
-          {error ? ` · ${error}` : ""}
+          {error ? <span className="block text-error-foreground">{error}</span> : null}
         </span>
         <span className="text-2xs text-muted-foreground">Cut off by a steer</span>
       </button>

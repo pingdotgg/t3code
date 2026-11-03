@@ -41,7 +41,8 @@ export function SecretRequestCard(props: {
         icon={<Icon className="size-3.5 text-icon-muted" aria-hidden />}
         label={
           <>
-            {item.label} · {display.label}
+            {item.label}
+            <span className="block text-meta text-muted-foreground">{display.label}</span>
           </>
         }
       />

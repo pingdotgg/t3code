@@ -1,7 +1,7 @@
 import DOMPurify from "dompurify";
 import { MinusIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
 import { FileSurfaceAction } from "./fileSurfaceChrome";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTheme } from "~/hooks/useTheme";
 import { observeResize } from "~/lib/observeResize";
 
@@ -74,7 +74,7 @@ export default function DocumentPages(props: {
   readonly html: string;
   readonly name: string;
   readonly output?: boolean;
-  readonly details?: string;
+  readonly details?: ReactNode;
 }) {
   const { theme, resolvedTheme, themeHalves } = useTheme();
   const [colors, setColors] = useState(documentColors);

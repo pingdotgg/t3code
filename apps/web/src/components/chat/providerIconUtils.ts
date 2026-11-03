@@ -47,7 +47,7 @@ export function getProviderRowLabel(
   if (provider && new RegExp(`^${escapeRegExp(provider)}\\s+\\S`, "i").test(sub)) {
     return sub;
   }
-  return `${providerDisplayName} · ${sub}`;
+  return sub;
 }
 
 export function getTriggerDisplayModelName(

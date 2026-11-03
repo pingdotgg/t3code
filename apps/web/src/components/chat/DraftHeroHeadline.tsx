@@ -11,7 +11,7 @@ import {
   PinOffIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { type ReactNode, useRef } from "react";
+import { type KeyboardEventHandler, type ReactNode, useRef } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { shortcutLabelForCommand } from "~/keybindings";
@@ -40,6 +40,7 @@ import {
   useEnvironmentProviders,
 } from "~/state/environments";
 import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
+import { isProjectPinShortcut } from "../ProjectPinButton";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -81,7 +82,15 @@ export function DraftHeroHeadline({
   const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const openAddProject = () => openCommandPalette({ open: "add-project" });
-  const openAllProjects = () => openCommandPalette({ open: "new-thread-in" });
+  const openAllProjects = () =>
+    openCommandPalette({
+      open: "new-thread-in",
+      onSelectProject: (project) =>
+        selectProject(
+          project,
+          deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
+        ),
+    });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
   const openProjectDraft = useNewThreadHandler();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -123,7 +132,6 @@ export function DraftHeroHeadline({
           ),
         ) ?? null);
   const activeProjectKey = activeProjectGroup?.projectKey ?? "";
-  const activeProjectDisplayName = activeProjectGroup?.displayName ?? activeProjectTitle;
   const hasResolvedProject = activeProjectTitle !== null;
   const canChooseProject = projectPickerEntries.length > 0;
   // The project that hosts threads without a project appears once, as the
@@ -234,7 +242,6 @@ export function DraftHeroHeadline({
   const recentEntries = unpinnedEntries.filter(
     ({ group }, index) => index < RECENT_PROJECT_LIMIT || group.projectKey === activeProjectKey,
   );
-  const hiddenProjectCount = menuEntries.length - pinnedEntries.length - recentEntries.length;
   const chooseEntry = (entry: (typeof menuEntries)[number]) => {
     if (entry.group.projectKey === activeProjectKey && !isScratchDraft) return;
     selectProject(entry.targetProject, entry.group.projectKey);
@@ -248,8 +255,8 @@ export function DraftHeroHeadline({
       <DraftProjectRow
         key={group.projectKey}
         selected={!isScratchDraft && group.projectKey === activeProjectKey}
-        icon={<ProjectFavicon project={group} className="size-4 shrink-0" />}
-        label={group.displayName}
+        icon={<ProjectFavicon project={targetProject} className="size-4 shrink-0" />}
+        label={targetProject.title}
         badge={
           showProjectEnvironments ? (
             <ProjectEnvironmentBadge
@@ -262,6 +269,12 @@ export function DraftHeroHeadline({
         detail={formatProjectRootForDisplay(targetProject.workspaceRoot)}
         detailIsPath
         onSelect={() => chooseEntry(entry)}
+        onKeyDown={(event) => {
+          if (!canPinProjectGroup(group) || !isProjectPinShortcut(event, keybindings)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          toggleProjectGroupPin(group);
+        }}
         action={
           canPinProjectGroup(group) ? (
             <Tooltip>
@@ -290,7 +303,7 @@ export function DraftHeroHeadline({
   const headingLabel = isScratchDraft
     ? "What should we work on?"
     : hasResolvedProject
-      ? `What should we build in ${activeProjectDisplayName}?`
+      ? `What should we build in ${activeProjectTitle}?`
       : canChooseProject
         ? "Choose a project to start"
         : "Add a project to start";
@@ -327,7 +340,7 @@ export function DraftHeroHeadline({
             {recentEntries.map(renderProjectRow)}
           </>
         ) : null}
-        {hiddenProjectCount > 0 ? (
+        {menuEntries.length > 0 ? (
           <DraftProjectRow
             icon={<FoldersIcon className="size-4 shrink-0 text-muted-foreground" />}
             label="All projects…"
@@ -386,10 +399,12 @@ export function DraftProjectRow(props: {
   readonly selected?: boolean;
   readonly action?: ReactNode;
   readonly onSelect: () => void;
+  readonly onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
 }) {
   return (
     <div
       role="listitem"
+      onKeyDown={props.onKeyDown}
       data-selected={props.selected ? "" : undefined}
       className="group/row relative flex h-8.5 shrink-0 items-center rounded-item hover:surface-ghost-hover has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-ring data-selected:surface-selected-soft"
     >
@@ -403,7 +418,6 @@ export function DraftProjectRow(props: {
         <span className="min-w-0 shrink truncate font-medium text-label text-foreground group-data-selected/row:text-strong-foreground">
           <DraftProjectName value={props.label} singleLine />
         </span>
-        {props.badge}
         {/* Paths keep their folder name; the rest of the row's width goes to it. */}
         <span className="flex min-w-0 flex-1 justify-end text-dim-foreground text-meta">
           {props.detailIsPath ? (
@@ -421,6 +435,7 @@ export function DraftProjectRow(props: {
           {props.action}
         </div>
       ) : null}
+      {props.badge}
     </div>
   );
 }

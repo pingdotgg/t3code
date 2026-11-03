@@ -20,7 +20,7 @@ import {
   UserRoundIcon,
   UserRoundXIcon,
 } from "lucide-react";
-import { Children, type CSSProperties, isValidElement, type ReactNode, useState } from "react";
+import { type CSSProperties, type ReactNode, useState } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -471,7 +471,6 @@ export function PullRequestActorLabel({
       </TooltipTrigger>
       <TooltipPopup side="top">
         {actor?.name && actor.name !== login ? `${actor.name} (@${login})` : login}
-        {profileUrl ? " · Open profile" : ""}
       </TooltipPopup>
     </Tooltip>
   );
@@ -497,10 +496,6 @@ export function PullRequestDiffStat({
   );
 }
 
-function separatorKey(segment: ReactNode): string {
-  return `separator:${isValidElement(segment) ? String(segment.key) : String(segment)}`;
-}
-
 export function PullRequestMetaLine({
   children,
   className,
@@ -508,24 +503,8 @@ export function PullRequestMetaLine({
   children: ReactNode;
   className?: string;
 }) {
-  const segments = Children.toArray(children);
   return (
-    <span className={cn("flex min-w-0 items-center gap-1.5", className)}>
-      {segments.flatMap((segment, index) =>
-        index === 0
-          ? segment
-          : [
-              <span
-                aria-hidden
-                className="shrink-0 text-dim-foreground"
-                key={separatorKey(segment)}
-              >
-                ·
-              </span>,
-              segment,
-            ],
-      )}
-    </span>
+    <span className={cn("flex min-w-0 flex-col items-start gap-1", className)}>{children}</span>
   );
 }
 
