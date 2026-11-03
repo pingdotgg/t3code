@@ -1740,6 +1740,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ProviderAdapter.ProviderAdapterEventStreamError
         >();
         const initialized = yield* Ref.make(false);
+        // After a timeout the session is retiring; waiters must not re-send to the hung app-server.
+        const initializeTimeout = yield* Ref.make<
+          ProviderAdapter.ProviderAdapterEventStreamError | undefined
+        >(undefined);
         // Codex rejects a second initialize on the shared app-server.
         const initializePermit = yield* Semaphore.make(1);
         const ensureInitialized = initializePermit.withPermit(
@@ -1748,6 +1752,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (alreadyInitialized) {
               return;
             }
+            const timedOut = yield* Ref.get(initializeTimeout);
+            if (timedOut !== undefined) return yield* timedOut;
 
             const userAgent = yield* client
               .request("initialize", {
@@ -1774,7 +1780,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       providerSessionId: input.providerSessionId,
                       cause: `Codex app-server did not answer initialize within ${CODEX_INITIALIZE_TIMEOUT}.`,
                     });
-                    return Queue.fail(events, error).pipe(Effect.andThen(Effect.fail(error)));
+                    return Ref.set(initializeTimeout, error).pipe(
+                      Effect.andThen(Queue.fail(events, error)),
+                      Effect.andThen(Effect.fail(error)),
+                    );
                   },
                 }),
               );

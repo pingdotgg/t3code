@@ -1131,9 +1131,15 @@ describe("CodexAdapterV2 session initialize", () => {
         .ensureThread("thread-initialize-hung")
         .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
       yield* Deferred.await(initializeAwaitingResponse);
+      const waiting = yield* session
+        .ensureThread("thread-initialize-hung-waiting")
+        .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
       yield* TestClock.adjust("30 seconds");
 
       assert.equal((yield* Fiber.join(ensured))._tag, "ProviderAdapterEnsureThreadError");
+      // A waiter fails at once instead of re-sending initialize to the hung app-server.
+      assert.equal((yield* Fiber.join(waiting))._tag, "ProviderAdapterEnsureThreadError");
+      assert.equal(session.initializeRequests(), 1);
       // The session manager retires a session whose event stream fails.
       const exit = yield* Fiber.join(eventsExit);
       assert.isTrue(Exit.isFailure(exit));
