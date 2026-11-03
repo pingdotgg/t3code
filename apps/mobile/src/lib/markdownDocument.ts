@@ -438,7 +438,7 @@ const isSpace = (node: MarkdownNode) =>
 // Native Markdown sizes an image as a block only when it is its paragraph's only child.
 function markdownWithImageParagraphs(markdown: string): string {
   // Skips the extra parse unless an image starts a line.
-  if (!/\n[ \t]*!\[/.test(markdown)) return markdown;
+  if (!/[\r\n][ \t]*!\[/.test(markdown)) return markdown;
   const edits: MarkdownEdit[] = [];
   for (const block of parser.parse(markdown).children) {
     if (

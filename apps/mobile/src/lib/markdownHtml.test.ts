@@ -264,6 +264,9 @@ describe("file embeds in native thread and file Markdown", () => {
     expect(markdownForNativeParsing("![a](./a.png)\r\n![b](./b.png)")).toBe(
       "![a](./a.png)\r\n\r\n![b](./b.png)",
     );
+    expect(markdownForNativeParsing("![a](./a.png)\r![b](./b.png)")).toBe(
+      "![a](./a.png)\r\r![b](./b.png)",
+    );
   });
 
   it("retains standalone audio players and image/video embeds in threads", () => {
