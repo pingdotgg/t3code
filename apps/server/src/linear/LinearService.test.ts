@@ -19,6 +19,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PipelineService from "../pipelines/PipelineService.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { computeLinearActivity } from "./LinearActivity.ts";
 import * as LinearLinkStore from "./LinearLinkStore.ts";
@@ -150,6 +151,7 @@ const makeLayer = (harness: Harness) => {
   );
   const settings = ServerSettings.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer),
+    Layer.provide(ManagedPolicy.layerTest()),
     Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
     Layer.provideMerge(
       Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-linear-test-" })),
