@@ -33,6 +33,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/http";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
@@ -1088,6 +1089,86 @@ it.effect.each(["thread", "shell"] as const)(
         } as ProjectEnrichment.ProjectEnrichmentService["Service"]),
         Effect.exit,
       );
+      assert.deepEqual(Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit, "snapshot");
+    }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
+
+// A prune pass can delete replayed rows after the boundary check; the read must not be trusted.
+it.effect.each(["thread", "shell"] as const)(
+  "%s resume loads a snapshot when pruning advances during the replay read",
+  (scope) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-10-13T00:00:00.000Z";
+      const threadId = ThreadId.make("thread:prune-race");
+      const insert = (version: number) => sql<{ sequence: number }>`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type,
+          occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+        ) VALUES (
+          ${`prune-race:${version}`}, 'thread', ${threadId}, ${version}, 'provider-session.detached',
+          ${now}, 'server', ${JSON.stringify({ providerSessionId: "session:race", detachedAt: now })},
+          '{}', 2
+        ) RETURNING sequence
+      `;
+      const [first] = yield* insert(0);
+      const [second] = yield* insert(1);
+      yield* insert(2);
+
+      const readStarted = yield* Deferred.make<void>();
+      const releaseRead = yield* Deferred.make<void>();
+      let gated = false;
+      const gateReplayRead: Statement.Transformer = (statement) => {
+        const [query] = statement.compile();
+        // The paged replay read (readApplicationRows), not the stats or high-water queries.
+        if (!gated && /^\s*SELECT\s+sequence,\s+event_id,/.test(query)) {
+          gated = true;
+          return Deferred.succeed(readStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseRead)),
+            Effect.as(statement),
+          );
+        }
+        return Effect.succeed(statement);
+      };
+      const subscription = Effect.gen(function* () {
+        const stream =
+          scope === "thread"
+            ? yield* subscribeOrchestrationV2Thread({ threadId, afterSequence: first!.sequence })
+            : yield* subscribeOrchestrationV2Shell({ afterSequence: first!.sequence });
+        return stream;
+      }).pipe(
+        Effect.provideService(Statement.CurrentTransformer, gateReplayRead),
+        Effect.provideService(ThreadManagement.ThreadManagementService, {
+          ensureLegacyTranscript: () => Effect.void,
+          getThreadSnapshot: () => Effect.die("snapshot"),
+          listActiveShellIndex: () => Effect.die("snapshot"),
+          readShellSnapshot: () => Effect.die("snapshot"),
+          listActiveSubagentThreadIds: () => Effect.succeed([]),
+        } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+        Effect.provideService(ProjectStore.ProjectStoreV2, {
+          listShells: () => Effect.succeed([]),
+        } as unknown as ProjectStore.ProjectStoreV2["Service"]),
+        Effect.provideService(
+          ProjectService.ProjectService,
+          {} as ProjectService.ProjectService["Service"],
+        ),
+        Effect.provideService(ProjectEnrichment.ProjectEnrichmentService, {
+          subscribeChanges: PubSub.subscribe(yield* PubSub.unbounded()),
+        } as ProjectEnrichment.ProjectEnrichmentService["Service"]),
+        Effect.exit,
+        Effect.forkChild,
+      );
+      const fiber = yield* subscription;
+      yield* Deferred.await(readStarted);
+      // A pass publishes its boundary, then deletes the rows it covers.
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_metadata (
+          projection_name, schema_version, last_sequence, updated_at
+        ) VALUES (${OrchestrationEventStore.EVENT_LOG_PRUNED_THROUGH}, 2, ${second!.sequence}, ${now})
+      `;
+      yield* sql`DELETE FROM orchestration_events WHERE sequence = ${second!.sequence}`;
+      yield* Deferred.succeed(releaseRead, undefined);
+      const exit = yield* Fiber.join(fiber);
       assert.deepEqual(Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit, "snapshot");
     }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );

@@ -66,8 +66,10 @@ stream's newest event (high-water marks, stream versions, snapshot sequences), `
 (the legacy importer's marker), every `running` run update (Codex usage history reads the first
 of each attempt), and prompt anchors that retained subagent rows reference. A client whose cursor
 is below both its thread's newest event and the recorded pruned-through sequence missed pruned
-events, so it resumes from a snapshot; an idle thread's cursor resumes without one. Command receipts stay for idempotency; a
-retry older than the retained history can find its events gone and must answer from projections.
+events, so it resumes from a snapshot; an idle thread's cursor resumes without one. Resumes
+recheck that sequence after reading the replay, since a pass can prune during the read. Command
+receipts stay for idempotency: a retry older than the retained history is still deduplicated,
+but its replay comes back without the pruned events.
 
 Retained events must remain decodable on replay. Changing a schema affects old environments at
 startup as well as live RPC traffic. Compatibility work must account for stored history, not just
