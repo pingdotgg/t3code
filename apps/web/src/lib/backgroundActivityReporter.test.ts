@@ -111,4 +111,29 @@ describe("layer", () => {
       expect(calls).toBe(2);
     }).pipe(Effect.scoped),
   );
+
+  it.effect("keeps reporting after a report never settles", () =>
+    Effect.gen(function* () {
+      const entries = yield* SubscriptionRef.make(
+        new Map([[EnvironmentId.make("environment-reporter-test"), {}]]),
+      );
+      let calls = 0;
+      const registry = EnvironmentRegistry.EnvironmentRegistry.of({
+        entries,
+        run: () => {
+          calls += 1;
+          return calls === 1 ? Effect.never : Effect.void;
+        },
+      } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+
+      yield* Layer.build(
+        layer.pipe(Layer.provide(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, registry))),
+      );
+      yield* TestClock.adjust("1 second");
+      expect(calls).toBe(1);
+
+      yield* TestClock.adjust("25 seconds");
+      expect(calls).toBe(2);
+    }).pipe(Effect.scoped),
+  );
 });

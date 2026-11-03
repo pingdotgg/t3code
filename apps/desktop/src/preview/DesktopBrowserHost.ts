@@ -438,7 +438,7 @@ export const make = Effect.gen(function* () {
       focusReleasing: false,
       screencasts: new Set(),
       onMessage: (_event, method, params, sessionId) => {
-        if (method === "Browser.downloadWillBegin") {
+        if (method === "Page.downloadWillBegin") {
           const guid = (params as { guid?: unknown } | undefined)?.guid;
           tab.pendingDownloadGuid = typeof guid === "string" ? guid : null;
         }

@@ -16,12 +16,15 @@ import { CLOUD_ENDPOINT_RUNTIME_CONFIG, CLOUD_LINK_REVOKED } from "../cloud/conf
 import { hasCloudPublicConfig } from "../cloud/publicConfig.ts";
 import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
+import * as ManagedLimits from "../policy/managedLimits.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import {
   connectSubcommands,
   disconnectCloud,
   headlessFlag,
   linkEnvironmentForConnect,
+  requireConnectAllowed,
   runCloudCommand,
   waitForReachability,
 } from "./connect.ts";
@@ -235,6 +238,13 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
         before.connect === null ? "--lan" : "--connect or --lan"
       }, or use --yes for the default. See \`t3 up --help\`.`,
     });
+  }
+  if (routes.connect && !current.connect) yield* requireConnectAllowed;
+  if (routes.lan && !current.lan) {
+    const policy = yield* ManagedPolicy.ManagedPolicy;
+    if (!ManagedLimits.allowsRemoteClients(policy)) {
+      return yield* ManagedLimits.refuseRemoteClients(policy);
+    }
   }
   // Nothing to run in the background, but a route left on still gets turned off.
   if (!before.service.installed && !routes.connect && !routes.lan) {
