@@ -21,6 +21,7 @@ import {
   docReaderTests,
   gitLines,
   runSteps,
+  splitTests,
   type Step,
 } from "./check-changed.ts";
 import { decide, readWorkspace } from "../.github/scripts/ci-changes.cjs";
@@ -142,6 +143,24 @@ describe("check:changed", () => {
     }),
   );
 
+  it("runs the .github/scripts node:test files with node --test, not vitest", () => {
+    assert.deepStrictEqual(
+      splitTests([
+        "apps/server/src/ws.test.ts",
+        ".github/scripts/ci-changes.test.cjs",
+        ".github\\scripts\\thread-transfer-report.test.cjs",
+        "scripts/check-changed.test.ts",
+      ]),
+      {
+        vitestTests: ["apps/server/src/ws.test.ts", "scripts/check-changed.test.ts"],
+        nodeTests: [
+          ".github/scripts/ci-changes.test.cjs",
+          ".github\\scripts\\thread-transfer-report.test.cjs",
+        ],
+      },
+    );
+  });
+
   it.effect("fails instead of returning an empty file list when git exits nonzero", () => {
     const spawner = (exitCode: number) =>
       ChildProcessSpawner.make(() =>
@@ -177,6 +196,13 @@ describe("check:changed", () => {
         "check:changed: git ls-files exited with 128: fatal: index file corrupt",
       );
     });
+  });
+
+  it.each([
+    "packages/shared/src/testing/longTempDir.ts",
+    "packages/shared/src/testing/providerEnv.ts",
+  ])("tests every package when the shared test setup file %s changes", (file) => {
+    assert.strictEqual(decide([file], readWorkspace(), false).outputs.test_packages, "");
   });
 });
 
@@ -371,7 +397,7 @@ it("checks changed source paths through the Windows launcher", () => {
   expect(result.status, result.stdout + result.stderr).toBe(0);
   const calls = project.calls();
   expect(calls.find(({ args }) => args[0] === "lint")).toEqual({
-    args: ["lint", project.source],
+    args: ["lint", "--no-error-on-unmatched-pattern", project.source],
     cwd: project.root,
   });
   expect(calls.some(({ args }) => args[0] === "fmt" && args.includes(project.source))).toBe(true);
@@ -379,6 +405,21 @@ it("checks changed source paths through the Windows launcher", () => {
   expect(calls.some(({ args }) => args[0] === "install")).toBe(false);
   expect(result.stdout).toContain("fixture stdout: lint");
   expect(result.stdout).toContain("fixture stderr: lint");
+});
+
+it("lints an Astro component and runs knip when only it changed", () => {
+  using project = launcherFixture();
+  const page = "packages/example/Page.astro";
+  project.write(page, "---\nconst title = 1;\n---\n<h1>{title}</h1>\n");
+  const result = project.run();
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+  const calls = project.calls();
+  expect(calls.find(({ args }) => args[0] === "lint")?.args).toEqual([
+    "lint",
+    "--no-error-on-unmatched-pattern",
+    page,
+  ]);
+  expect(calls.some(({ args }) => args[0] === "exec" && args[1] === "knip")).toBe(true);
 });
 
 it.each(["install", "lint"])("reports a failing %s step with its output", (step) => {
