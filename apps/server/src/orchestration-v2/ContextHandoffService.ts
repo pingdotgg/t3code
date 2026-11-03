@@ -109,7 +109,9 @@ function compactText(text: string, maxLength = 240): string {
   if (compacted.length <= maxLength) {
     return compacted;
   }
-  return `${compacted.slice(0, maxLength - 3)}...`;
+  const end = maxLength - 3;
+  const last = compacted.charCodeAt(end - 1);
+  return `${compacted.slice(0, last >= 0xd800 && last <= 0xdbff ? end - 1 : end)}...`;
 }
 
 export function visibleDeltaRunOrdinals(

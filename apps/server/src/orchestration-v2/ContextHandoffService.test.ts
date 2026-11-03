@@ -169,12 +169,12 @@ it.effect("caps the side chat context block without summarizing discarded parent
       ...importedItem({
         role: index % 2 === 0 ? "user" : "assistant",
         id: `parent-${index}`,
-        text: `item-${index} ${"x".repeat(300)}`,
+        text: `item-${index} ${"x".repeat(228)}😀${"x".repeat(70)}`,
         ordinal: index,
       }),
       get text() {
         summarizedItems++;
-        return `item-${index} ${"x".repeat(300)}`;
+        return `item-${index} ${"x".repeat(228)}😀${"x".repeat(70)}`;
       },
     }));
     const service = yield* ContextHandoffService.ContextHandoffServiceV2;
@@ -197,6 +197,7 @@ it.effect("caps the side chat context block without summarizing discarded parent
     assert.notInclude(context, "item-0 ");
     assert.include(context, "- Assistant: item-59 ");
     assert.isAtMost(context.length, 8_000);
+    assert.isTrue(context.isWellFormed());
     assert.isTrue(
       context.endsWith(
         `Use t3_thread_read on thread ${parentThreadId} to see the main thread's live state.`,
