@@ -1137,12 +1137,13 @@ export const layerWithOptions = (
           }
           // Capture runtime identity before yielding; replacements can reuse the session id.
           const probedRuntime = entry.runtime;
+          // A child's late result can archive it only while this session lives, so it pins like work.
           const hasPendingWork =
-            probedRuntime.hasPendingBackgroundWork === undefined
+            (probedRuntime.hasPendingBackgroundWork === undefined
               ? false
               : yield* probedRuntime.hasPendingBackgroundWork.pipe(
                   Effect.catchCause(() => Effect.succeed(false)),
-                );
+                )) || (yield* delegatedChildAwaitsDelivery(entry));
           if (hasPendingWork) {
             const now = yield* Clock.currentTimeMillis;
             const pinnedSinceMs = entry.pinnedSinceMs ?? now;
@@ -1575,13 +1576,11 @@ export const layerWithOptions = (
       );
 
       /**
-       * The provider thread of an app-owned delegated child whose latest task completed and whose
-       * result its parent took, once nothing in the child runs or waits. Provider clients list
-       * these as ordinary threads; T3 keeps their history and resume unarchives them.
+       * An app-owned delegated child is ready to archive once its latest task completed, its parent
+       * took the result, and nothing in the child runs or waits. Provider clients list these as
+       * ordinary threads; T3 keeps their history and resume unarchives them.
        */
-      const settledDelegatedChildProviderThread = Effect.fn(
-        "ProviderSessionManager.settledDelegatedChildProviderThread",
-      )(
+      const delegatedChildArchive = Effect.fn("ProviderSessionManager.delegatedChildArchive")(
         function* (entry: LiveSessionEntry, threadId: ThreadId) {
           const thread = yield* projectionStore.getThread(threadId);
           const parentThreadId = thread.lineage.parentThreadId;
@@ -1635,17 +1634,22 @@ export const layerWithOptions = (
           if (
             task?.origin !== "app_owned" ||
             task.childThreadId !== threadId ||
-            task.status !== "completed" ||
-            (delivery !== "delivered" && delivery !== "acknowledged")
+            task.status !== "completed"
           ) {
             return undefined;
           }
+          if (delivery === "pending" || delivery === "claimed") {
+            return { state: "awaiting_delivery" } as const;
+          }
+          if (delivery !== "delivered" && delivery !== "acknowledged") return undefined;
           // Codex archive also archives the native subagents this thread spawned.
           const pendingWork =
             entry.runtime.hasPendingBackgroundWorkForThread === undefined
               ? false
-              : yield* entry.runtime.hasPendingBackgroundWorkForThread(providerThread);
-          return pendingWork ? undefined : providerThread;
+              : yield* entry.runtime.hasPendingBackgroundWorkForThread(providerThread, {
+                  includeSubagents: true,
+                });
+          return pendingWork ? undefined : { state: "ready" as const, providerThread };
         },
         (effect) => effect.pipe(Effect.orElseSucceed(() => undefined)),
       );
@@ -1687,6 +1691,22 @@ export const layerWithOptions = (
         },
       );
 
+      const delegatedChildAwaitsDelivery = Effect.fn(
+        "ProviderSessionManager.delegatedChildAwaitsDelivery",
+      )(function* (entry: LiveSessionEntry) {
+        if (
+          !entry.supportsMultipleProviderThreads ||
+          entry.exposedRuntime.archiveThread === undefined
+        )
+          return false;
+        for (const threadId of entry.attachedThreadIds) {
+          if (entry.archivedThreadIds.has(threadId)) continue;
+          if ((yield* delegatedChildArchive(entry, threadId))?.state === "awaiting_delivery")
+            return true;
+        }
+        return false;
+      });
+
       // Archives children whose result reached the parent after their own idle unload.
       const archiveSettledDelegatedChildren = Effect.fn(
         "ProviderSessionManager.archiveSettledDelegatedChildren",
@@ -1707,8 +1727,9 @@ export const layerWithOptions = (
               threadAttachmentKey({ providerSessionId, threadId }),
               Effect.gen(function* () {
                 if (entry.archivedThreadIds.has(threadId)) return;
-                const providerThread = yield* settledDelegatedChildProviderThread(entry, threadId);
-                if (providerThread === undefined) return;
+                const child = yield* delegatedChildArchive(entry, threadId);
+                if (child?.state !== "ready") return;
+                const { providerThread } = child;
                 const claimed = yield* Ref.modify(sessions, (current) => {
                   const latest = current.get(key);
                   if (
@@ -1771,10 +1792,12 @@ export const layerWithOptions = (
                       .hasPendingBackgroundWorkForThread(pending.providerThread)
                       .pipe(Effect.catchCause(() => Effect.succeed(false)));
               if (hasPendingWork) return "deferred" as const;
+              const child =
+                entry.exposedRuntime.archiveThread === undefined
+                  ? undefined
+                  : yield* delegatedChildArchive(entry, input.threadId);
               const archivable =
-                entry.exposedRuntime.archiveThread !== undefined &&
-                (yield* settledDelegatedChildProviderThread(entry, input.threadId))?.id ===
-                  pending.providerThread.id;
+                child?.state === "ready" && child.providerThread.id === pending.providerThread.id;
               const unloading = yield* Ref.modify(sessions, (current) => {
                 const latest = current.get(key);
                 if (
