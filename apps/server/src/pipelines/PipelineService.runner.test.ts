@@ -49,6 +49,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { TaskFolderStore } from "../workspace/TaskFolders.ts";
 import * as PipelineService from "./PipelineService.ts";
 import * as PipelineStore from "./PipelineStore.ts";
 import { beforeRestoreRef } from "./pipelineWorkspace.ts";
@@ -141,6 +142,8 @@ const makeHarness = Effect.gen(function* () {
     restoreFails: false,
     /** Threads run in a task folder: a repository scope sits under the root scope. */
     repositoryScopes: false,
+    /** Threads run in a task folder with tracked repos, whether or not their scopes were recorded. */
+    taskFolderRepos: false,
     /** A completed settle first hands off the thread's reply, as a step agent would. */
     autoHandoff: true,
   };
@@ -354,6 +357,17 @@ const makeHarness = Effect.gen(function* () {
   };
 
   const layer = Layer.mergeAll(
+    Layer.mock(TaskFolderStore)({
+      findContaining: (cwd) =>
+        Effect.succeed(
+          behavior.taskFolderRepos
+            ? Option.some({
+                root: cwd,
+                repositories: [{ kind: "home" }, { kind: "repository" }],
+              } as never)
+            : Option.none(),
+        ),
+    }),
     Layer.mock(ThreadLaunchService.ThreadLaunchService)({
       launch: (input) => {
         const threadId = decodeThreadId(`thread-of:${input.commandId}`);
@@ -1290,31 +1304,34 @@ it.effect(
     ),
 );
 
-it.effect("a task folder with several repos never offers or performs a start restore", () =>
-  withService(
-    Effect.fn(function* (harness, service, store) {
-      harness.behavior.worktreeRoot = MANAGED_ROOT;
-      harness.behavior.repositoryScopes = true;
-      const { run } = yield* service.start(startInput("cmd-multi-repo"));
-      const first = yield* Queue.take(harness.launches);
-      yield* harness.settle(first.threadId, "failed");
-      const failed = yield* awaitRun(service, run.id, (current) => current.status === "paused");
-      assert.isFalse(failed.steps[0]?.canRestoreWorkspace);
-      assert.isNull(yield* store.getStepStartCheckpoint(run.id, 0));
-      const refused = yield* Effect.flip(
-        service.retryStep({ runId: run.id, stepIndex: 0, restoreWorkspace: true }),
-      );
-      assert.include(refused.message, "several repos");
-      assert.deepStrictEqual(
-        harness.checkpointOps.filter((entry) => entry.op !== "has"),
-        [],
-      );
+it.effect.each(["recorded scopes", "task folder alone"] as const)(
+  "a task folder with several repos never offers or performs a start restore (%s)",
+  (signal) =>
+    withService(
+      Effect.fn(function* (harness, service, store) {
+        harness.behavior.worktreeRoot = MANAGED_ROOT;
+        if (signal === "recorded scopes") harness.behavior.repositoryScopes = true;
+        else harness.behavior.taskFolderRepos = true;
+        const { run } = yield* service.start(startInput("cmd-multi-repo"));
+        const first = yield* Queue.take(harness.launches);
+        yield* harness.settle(first.threadId, "failed");
+        const failed = yield* awaitRun(service, run.id, (current) => current.status === "paused");
+        assert.isFalse(failed.steps[0]?.canRestoreWorkspace);
+        assert.isNull(yield* store.getStepStartCheckpoint(run.id, 0));
+        const refused = yield* Effect.flip(
+          service.retryStep({ runId: run.id, stepIndex: 0, restoreWorkspace: true }),
+        );
+        assert.include(refused.message, "were not saved");
+        assert.deepStrictEqual(
+          harness.checkpointOps.filter((entry) => entry.op !== "has"),
+          [],
+        );
 
-      yield* service.retryStep({ runId: run.id, stepIndex: 0 });
-      const retried = yield* Queue.take(harness.launches);
-      assert.strictEqual(retried.input.commandId, `pipeline-run:${run.id}:plan:2`);
-    }),
-  ),
+        yield* service.retryStep({ runId: run.id, stepIndex: 0 });
+        const retried = yield* Queue.take(harness.launches);
+        assert.strictEqual(retried.input.commandId, `pipeline-run:${run.id}:plan:2`);
+      }),
+    ),
 );
 
 it.effect("a failed restore or an agent that is still stopping leaves the run paused", () =>
