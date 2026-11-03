@@ -6,6 +6,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -14,28 +15,24 @@ import * as CommandLine from "effect/process/CommandLine";
 
 // libuv blocks the parent until the forked child has run chdir(cwd) and execvp,
 // so a hung mount under the cwd, PATH or the binary freezes the event loop. This
-// spawner only ever execs /bin/sh natively; the shell does the chdir and search.
+// spawner only ever execs a trampoline natively, without a cwd; the trampoline
+// does the chdir and the PATH search in the child.
 
-// libuv's _PATH_DEFPATH when the child environment has no PATH. Assigning it in
-// the shell does not export it.
+// libuv's _PATH_DEFPATH when the child environment has no PATH.
 const DEFAULT_PATH = "/usr/bin:/bin";
 
 type SearchFailure = "ENOENT" | "EACCES";
 
-// Mirrors execvp's result when every candidate fails: EACCES if any candidate
-// exists but cannot be executed, otherwise ENOENT.
-const findExecutable = async (candidates: ReadonlyArray<string>): Promise<void> => {
-  let denied = false;
-  for (const candidate of candidates) {
-    try {
-      await NodeFSP.access(candidate, NodeFS.constants.X_OK);
-      if ((await NodeFSP.stat(candidate)).isFile()) return;
-      denied = true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EACCES") denied = true;
-    }
+// "file", "directory" or "other" when the path passes execvp's X_OK test,
+// otherwise the errno code.
+const probe = async (path: string): Promise<string> => {
+  try {
+    await NodeFSP.access(path, NodeFS.constants.X_OK);
+    const stats = await NodeFSP.stat(path);
+    return stats.isFile() ? "file" : stats.isDirectory() ? "directory" : "other";
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code ?? "ENOENT";
   }
-  throw denied ? "EACCES" : "ENOENT";
 };
 
 const unwrap = (value: string | Redacted.Redacted<string>) =>
@@ -74,22 +71,88 @@ const spawnFailure = (command: ChildProcess.StandardCommand, code: SearchFailure
   });
 };
 
+// GNU env passes the environment through untouched and execvp's the command.
+// It reads any operand containing `=` as an assignment, even after `--`.
+const viaEnv = (command: ChildProcess.StandardCommand, cwd: string | undefined) =>
+  ChildProcess.make(
+    "/usr/bin/env",
+    [...(cwd === undefined ? [] : ["-C", cwd]), "--", command.command, ...command.args],
+    { ...command.options, cwd: undefined },
+  );
+
+// Fallback without `env -C` (busybox): dash drops environment entries whose
+// names are not identifiers and sets PWD.
+const viaShell = (command: ChildProcess.StandardCommand, cwd: string | undefined) => {
+  const script = [
+    childPath(command.options) === undefined ? `PATH=${DEFAULT_PATH}; ` : "",
+    cwd === undefined ? "" : 'cd -- "$1" && shift && ',
+    'exec "$@"',
+  ].join("");
+  return ChildProcess.make(
+    "/bin/sh",
+    [
+      "-c",
+      script,
+      command.command,
+      ...(cwd === undefined ? [] : [cwd]),
+      command.command,
+      ...command.args,
+    ],
+    { ...command.options, cwd: undefined },
+  );
+};
+
 const make = Effect.gen(function* () {
   const native = yield* ChildProcessSpawner.ChildProcessSpawner;
   if ((yield* HostProcess.Platform) !== "linux") return native;
   const fileSystem = yield* FileSystem.FileSystem;
-  // Spawns of one command share the lookup in flight, so a hung directory holds
-  // one threadpool thread per command rather than one per spawn or retry.
-  const lookups = new Map<string, Promise<void>>();
-  const lookup = (candidates: ReadonlyArray<string>) => {
-    const key = candidates.join("\0");
-    let pending = lookups.get(key);
-    if (pending === undefined) {
-      pending = findExecutable(candidates).finally(() => lookups.delete(key));
-      lookups.set(key, pending);
-    }
-    return pending;
+  const path = yield* Path.Path;
+  const envChdir = yield* native
+    .exitCode(ChildProcess.make("/usr/bin/env", ["-C", "/", "--", "/bin/sh", "-c", ":"]))
+    .pipe(
+      Effect.map((code) => code === 0),
+      Effect.orElseSucceed(() => false),
+    );
+
+  // At most one check runs per directory and checks of one path share it, so a
+  // hung directory holds one of libuv's four threadpool threads, which also
+  // compress every WebSocket frame.
+  const inFlight = new Map<string, Promise<string>>();
+  const queues = new Map<string, Promise<unknown>>();
+  const check = (directory: string, target: string) => {
+    const pending = inFlight.get(target);
+    if (pending !== undefined) return pending;
+    const result = (queues.get(directory) ?? Promise.resolve()).then(() => probe(target));
+    queues.set(directory, result);
+    inFlight.set(target, result);
+    void result.then(() => {
+      inFlight.delete(target);
+      if (queues.get(directory) === result) queues.delete(directory);
+    });
+    return result;
   };
+
+  // Mirrors execvp's result when every candidate fails: EACCES if any candidate
+  // exists but cannot be executed, otherwise ENOENT.
+  const findExecutable = async (candidates: ReadonlyArray<readonly [string, string]>) => {
+    let denied = false;
+    for (const [directory, candidate] of candidates) {
+      const kind = await check(directory, candidate);
+      if (kind === "file") return;
+      if (kind === "EACCES" || kind === "directory" || kind === "other") denied = true;
+    }
+    throw denied ? "EACCES" : "ENOENT";
+  };
+
+  // Resolved lexically, as the native spawner does.
+  const enter = Effect.fnUntraced(function* (command: ChildProcess.StandardCommand, cwd: string) {
+    const directory = path.resolve(cwd);
+    const kind = yield* Effect.promise(() => check(directory, directory));
+    if (kind === "EACCES") return yield* spawnFailure(command, "EACCES");
+    // The native spawner's own check, for its exact error.
+    if (kind !== "directory") yield* fileSystem.access(cwd);
+    return directory;
+  });
 
   // Runs inside the NonBlockingSpawner.spawn span.
   const prepareStandard = Effect.fnUntraced(function* (command: ChildProcess.StandardCommand) {
@@ -101,36 +164,22 @@ const make = Effect.gen(function* () {
     ) {
       return command;
     }
-    if (cwd !== undefined) yield* fileSystem.access(cwd);
-    const workingDirectory = cwd === undefined ? undefined : under(process.cwd(), cwd);
+    const workingDirectory = cwd === undefined ? undefined : yield* enter(command, cwd);
     const base = workingDirectory ?? process.cwd();
-    const searchPath = childPath(command.options);
+    const explicit = under(base, command.command);
     const candidates = command.command.includes("/")
-      ? [under(base, command.command)]
-      : (searchPath ?? DEFAULT_PATH)
-          .split(":")
-          .map((entry) => `${under(base, entry)}/${command.command}`);
+      ? [[explicit.slice(0, explicit.lastIndexOf("/")) || "/", explicit] as const]
+      : (childPath(command.options) ?? DEFAULT_PATH).split(":").map((entry) => {
+          const directory = under(base, entry);
+          return [directory, `${directory}/${command.command}`] as const;
+        });
     yield* Effect.tryPromise({
-      try: () => lookup(candidates),
+      try: () => findExecutable(candidates),
       catch: (code) => spawnFailure(command, code as SearchFailure),
     });
-    const script = [
-      searchPath === undefined ? `PATH=${DEFAULT_PATH}; ` : "",
-      workingDirectory === undefined ? "" : 'cd -P -- "$1" && shift && ',
-      'exec "$@"',
-    ].join("");
-    return ChildProcess.make(
-      "/bin/sh",
-      [
-        "-c",
-        script,
-        command.command,
-        ...(workingDirectory === undefined ? [] : [workingDirectory]),
-        command.command,
-        ...command.args,
-      ],
-      { ...command.options, cwd: undefined },
-    );
+    return envChdir && !command.command.includes("=")
+      ? viaEnv(command, workingDirectory)
+      : viaShell(command, workingDirectory);
   });
 
   const prepare = (
