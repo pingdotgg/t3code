@@ -330,6 +330,25 @@ describe("Markdown markers around styled text", () => {
       marks: { italic: ["bold"] },
     },
     {
+      name: "backspacing from the closing edge keeps italic",
+      value: "**bold** after",
+      caret: 1,
+      keys: async (editor: Editor) => {
+        await userEvent.keyboard("{Delete}");
+        await vi.waitFor(() => expect(editor.state.doc.textContent).toBe("*bold** after"));
+        for (let position = 2; position <= 8; position += 1) {
+          await userEvent.keyboard("{ArrowRight}");
+          await vi.waitFor(() => expect(editor.state.selection.from).toBe(position));
+        }
+        await userEvent.keyboard("{Backspace}");
+        await vi.waitFor(() =>
+          expect(serializeEditorDoc(editor.state.doc).value).toBe("*bold* after"),
+        );
+      },
+      expected: "*bold* after",
+      marks: { italic: ["bold"] },
+    },
+    {
       name: "retyping deleted closing markers restores bold",
       value: "**bold** after",
       caret: 3,
@@ -366,7 +385,9 @@ describe("Markdown markers around styled text", () => {
     const { editor } = screen;
     // Position 1 is the start of the styled word; 3 is two characters into it (5 in a list item).
     await focusAt(editor, caret);
-    await userEvent.keyboard(`${keys}{End}`);
+    if (typeof keys === "string") await userEvent.keyboard(keys);
+    else await keys(editor);
+    await userEvent.keyboard("{End}");
     await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(expected));
     for (const name of ["bold", "italic", "code"] as const) {
       expect(textWithMark(editor, name)).toEqual(marks[name as keyof typeof marks] ?? []);

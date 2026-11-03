@@ -490,7 +490,7 @@ export const ComposerMarkdownSourceExtension = TiptapMark.create({
   priority: 1001,
   inclusive: false,
   parseHTML() {
-    return [];
+    return [{ tag: "span.composer-markdown-source" }];
   },
   renderHTML() {
     return ["span", { class: "composer-markdown-source" }, 0];
