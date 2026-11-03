@@ -2769,6 +2769,22 @@ describe("v2 run and attempt history", () => {
       "live-activity-row",
     ]);
     expect(liveAnswerPreview([user, step, passed])).toBe("step");
+    expect(
+      deriveMessagesTimelineRows({
+        timelineEntries: turn,
+        isWorking: true,
+        latestRun: {
+          runId,
+          status: "running",
+          startedAt: at(0),
+          completedAt: null,
+          turnEnded: true,
+        },
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+        toolCallVisibility: "finalAnswersOnly",
+      }).map((row) => row.id),
+    ).toEqual(["user", "final"]);
   });
   it("collapses only output from a superseded V2 attempt within the active logical run", () => {
     const runId = "run-steered" as never;

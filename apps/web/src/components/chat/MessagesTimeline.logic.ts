@@ -1753,6 +1753,9 @@ export function deriveMessagesTimelineRows(input: {
     : (resumeCompactionEntry?.entry.runId ?? null);
   const appendWorkingRow = () => {
     if (compactionOnlyRunFinished) return;
+    if (input.toolCallVisibility === "finalAnswersOnly" && input.latestRun?.turnEnded === true) {
+      return;
+    }
     if (runningCompactionRunId !== null && activeCompactionRunId === null) return;
     nextRows.push({
       kind: "working",
