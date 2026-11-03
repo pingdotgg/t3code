@@ -1382,14 +1382,59 @@ function toolCallIsHidden(entry: TimelineEntry, visibility: ToolCallVisibility):
   );
 }
 
+function shownAsFinalAnswerOnly(
+  entry: TimelineEntry,
+  terminalAssistantMessageIds: ReadonlySet<string>,
+  answeringRunId: RunId | null,
+  pendingApprovalRequestIds: ReadonlySet<RuntimeRequestId> | undefined,
+): boolean {
+  if (entry.kind === "message") {
+    return (
+      entry.message.role !== "assistant" ||
+      (terminalAssistantMessageIds.has(entry.message.id) &&
+        (answeringRunId === null || entry.message.runId !== answeringRunId))
+    );
+  }
+  if (entry.kind === "event") return entry.projectedItem.item.type !== "subagent";
+  if (entry.kind !== "work") return true;
+  const work = entry.entry;
+  const item = work.projectedItem?.item;
+  return (
+    (item?.type === "approval_request" &&
+      pendingApprovalRequestIds?.has(item.requestId) === true) ||
+    work.questionAnswer !== undefined ||
+    work.tone === "error" ||
+    work.sourceActivityKind === "runtime.error" ||
+    (work.itemType === "error" && work.toolLifecycleStatus === "failed")
+  );
+}
+
 function timelineRowEntries(
-  entries: ReadonlyArray<TimelineEntry>,
-  toolCallVisibility: ToolCallVisibility = "showAll",
+  input: Pick<
+    MessagesTimelineRowsInput,
+    | "timelineEntries"
+    | "toolCallVisibility"
+    | "isWorking"
+    | "latestRun"
+    | "runningRunId"
+    | "pendingApprovalRequestIds"
+  >,
 ) {
-  const shown =
-    toolCallVisibility === "showAll"
-      ? entries
-      : entries.filter((entry) => !toolCallIsHidden(entry, toolCallVisibility));
+  const visibility = input.toolCallVisibility ?? "showAll";
+  const entries = input.timelineEntries;
+  let shown = entries;
+  if (visibility === "finalAnswersOnly") {
+    const answeringRunId =
+      input.isWorking && input.latestRun?.turnEnded !== true
+        ? deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null)
+        : null;
+    const terminalIds = deriveTerminalAssistantMessageIds(entries);
+    shown = entries.filter((entry) =>
+      shownAsFinalAnswerOnly(entry, terminalIds, answeringRunId, input.pendingApprovalRequestIds),
+    );
+  } else if (visibility !== "showAll") {
+    shown = entries.filter((entry) => !toolCallIsHidden(entry, visibility));
+  }
   return withoutSubagentDelegationRows(settleSupersededReasoning(shown));
 }
 
@@ -1404,7 +1449,7 @@ function deriveTimelineTurnFolds(
     | "toolCallVisibility"
   >,
 ) {
-  const timelineEntries = timelineRowEntries(input.timelineEntries, input.toolCallVisibility);
+  const timelineEntries = timelineRowEntries(input);
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   const activeVisualResponseRunIds = deriveActiveVisualResponseRunIds({
@@ -1442,7 +1487,7 @@ export function deriveMessagesTimelineRows(input: {
   worktreeSetup?: WorktreeSetupSnapshot | null;
   toolCallVisibility?: ToolCallVisibility;
 }): MessagesTimelineRow[] {
-  const timelineEntries = timelineRowEntries(input.timelineEntries, input.toolCallVisibility);
+  const timelineEntries = timelineRowEntries(input);
   const isPendingApproval = (entry: WorkLogEntry) => {
     const item = entry.projectedItem?.item;
     return (

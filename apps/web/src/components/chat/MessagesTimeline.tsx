@@ -573,7 +573,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
   }
 
-  const toolCallVisibility = useClientSettings((settings) => settings.toolCallVisibility);
+  const preferredToolCallVisibility = useClientSettings((settings) => settings.toolCallVisibility);
+  const toolCallVisibility =
+    findActive && preferredToolCallVisibility === "finalAnswersOnly"
+      ? "hideAll"
+      : preferredToolCallVisibility;
   // Imported turns and post-steer work fold under synthetic keys, not the entries' run ids.
   const findFoldRunIds = findActive
     ? timelineTurnFoldRunIdsByEntryId({

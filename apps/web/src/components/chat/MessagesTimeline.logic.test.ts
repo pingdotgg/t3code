@@ -2734,7 +2734,7 @@ describe("v2 run and attempt history", () => {
     const final = message("final", "assistant", "2026-01-01T00:00:20Z");
     const rowIds = (
       timelineEntries: ReadonlyArray<TimelineEntry>,
-      toolCallVisibility: "hideSuccessful" | "hideAll",
+      toolCallVisibility: "hideSuccessful" | "hideAll" | "finalAnswersOnly",
     ) =>
       deriveMessagesTimelineRows({
         timelineEntries,
@@ -2752,6 +2752,19 @@ describe("v2 run and attempt history", () => {
       "final-entry",
     ]);
     expect(rowIds([user, failed, final], "hideAll")).toEqual(["user-entry", "final-entry"]);
+    expect(rowIds([user, commentary, passed, failed, final], "finalAnswersOnly")).toEqual([
+      "user-entry",
+      "final-entry",
+    ]);
+    const answering = deriveMessagesTimelineRows({
+      timelineEntries: [user, commentary, passed],
+      latestRun: { runId, status: "running", startedAt: user.createdAt, completedAt: null },
+      isWorking: true,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      toolCallVisibility: "finalAnswersOnly",
+    });
+    expect(answering.map((row) => row.kind)).toEqual(["message", "working", "thinking"]);
 
     const steer = message("steer", "user", "2026-01-01T00:00:10Z", "steer");
     const steeredCommentary = message("commentary", "assistant", "2026-01-01T00:00:12Z");

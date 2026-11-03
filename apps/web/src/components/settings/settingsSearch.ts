@@ -469,7 +469,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "tool-call-visibility",
     title: "Tool calls in chat",
     to: "/settings/labs",
-    searchTerms: ["beta hide tool calls commands edits searches work log activity quiet chat"],
+    searchTerms: [
+      "beta hide tool calls commands edits searches work log activity quiet chat zen final answers only",
+    ],
   },
   {
     id: "guest-links",
