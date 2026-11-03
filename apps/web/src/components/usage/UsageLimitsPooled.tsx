@@ -632,7 +632,7 @@ export function UsageLimitsPooled({
 function LimitNotices({ notices }: { readonly notices: readonly string[] }) {
   if (notices.length === 0) return null;
   return (
-    <ul className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+    <ul role="alert" className="flex flex-col gap-1.5 text-xs text-muted-foreground">
       {notices.map((notice) => (
         <li key={notice} className="flex min-w-0 gap-2">
           <AlertTriangleIcon className="mt-px size-3.5 shrink-0" aria-hidden />
