@@ -1,3 +1,7 @@
+import {
+  claudeProxyCooldownEnvironment,
+  makeClaudeProxyCooldownBridge,
+} from "./claudeProxyCooldown.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
@@ -981,7 +985,7 @@ export const layerQueryRunner: Layer.Layer<
           const queryOptions = {
             ...sdkOptions,
             env: {
-              ...(sdkOptions.env ?? hostEnvironment),
+              ...(claudeProxyCooldownEnvironment(sdkOptions.env) ?? hostEnvironment),
               [PortScanner.AGENT_THREAD_ENV]: input.threadId,
             },
           };
@@ -1131,10 +1135,15 @@ export const layerQueryRunner: Layer.Layer<
             ),
           );
 
+          const bridgeCooldown = makeClaudeProxyCooldownBridge(
+            input.options.env?.ANTHROPIC_AUTH_TOKEN ?? "",
+            () => DateTime.toEpochMillis(DateTime.nowUnsafe()),
+          );
           return {
             messages: Stream.fromAsyncIterable(claudeQueryMessages(queryRuntime), (cause) =>
               queryRunnerError(cause, "fromAsyncIterable"),
             ).pipe(
+              Stream.flatMap((message) => Stream.fromIterable(bridgeCooldown(message))),
               Stream.tap((message) =>
                 logProtocolEvent({
                   direction: "incoming",
