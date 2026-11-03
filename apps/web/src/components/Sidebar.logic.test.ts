@@ -970,20 +970,18 @@ describe("Working shelf (beta)", () => {
   });
 
   it.each([
-    ["connected", true, false],
-    ["connected", false, true],
-    ["connecting", false, false],
-    ["reconnecting", false, true],
-    ["offline", false, true],
-    ["error", false, true],
-    ["unsupported", false, true],
-    ["available", false, true],
-  ] as const)(
-    "lists threads outside the shelf on a %s environment: %s",
-    (phase, shellIsLive, disconnected) => {
-      expect(isSidebarEnvironmentDisconnected(phase, shellIsLive)).toBe(disconnected);
-    },
-  );
+    // Returning to the window resyncs the shell on a healthy connection, so a
+    // connected environment holds its rows in the shelf whatever the shell is doing.
+    ["connected", false],
+    ["connecting", false],
+    ["reconnecting", true],
+    ["offline", true],
+    ["error", true],
+    ["unsupported", true],
+    ["available", true],
+  ] as const)("lists threads outside the shelf on a %s environment: %s", (phase, disconnected) => {
+    expect(isSidebarEnvironmentDisconnected(phase)).toBe(disconnected);
+  });
 
   it("lists a running thread outside the shelf while its environment is disconnected", () => {
     const thread = { ...idle, runtime, environmentId: localEnvironmentId };
