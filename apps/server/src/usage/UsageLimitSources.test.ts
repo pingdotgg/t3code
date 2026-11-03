@@ -153,6 +153,7 @@ const makeHubTest = Effect.fn("test.makeHubTest")(function* (failed: string[] = 
     files: hubFiles,
     percent: 40,
     settingsFailed: false,
+    resolvedKey: "test-key",
   });
   const sources = yield* UsageLimitSources.make.pipe(
     Effect.provide([
@@ -165,7 +166,8 @@ const makeHubTest = Effect.fn("test.makeHubTest")(function* (failed: string[] = 
         }),
       }),
       Layer.succeed(SecretResolver.SecretResolver, {
-        read: (references) => Effect.succeed(references.map(() => undefined)),
+        read: (references) =>
+          Ref.get(mode).pipe(Effect.map((current) => references.map(() => current.resolvedKey))),
         invalidate: () => Effect.void,
       }),
       Layer.mock(BackgroundPolicy.BackgroundPolicy)({
@@ -245,7 +247,7 @@ const provideHubTest = <A, E>(
 it.effect("retains last good accounts through source and account failures, then recovers", () =>
   provideHubTest(
     Effect.gen(function* () {
-      const { sources, mode } = yield* makeHubTest();
+      const { sources, settings, mode } = yield* makeHubTest();
       const good = (yield* sources.current)[0]!;
       expect(good.accounts).toHaveLength(2);
       expect(good.accounts[0]?.usageLimits.resetCredits?.availableCount).toBe(1);
@@ -285,6 +287,22 @@ it.effect("retains last good accounts through source and account failures, then 
         good.accounts[0]?.usageLimits.checkedAt,
       );
       expect(recovered.accounts[0]?.usageLimits.windows[0]?.usedPercent).toBe(80);
+      yield* settings.updateSettings({
+        usageLimitSources: {
+          [hubId]: {
+            ...hubConfig,
+            managementKey: { provider: SecretProviderId.make("homelab"), reference: "hub-key" },
+          },
+        },
+      });
+      yield* sources.refresh;
+      expect((yield* sources.current)[0]?.accounts).toHaveLength(2);
+      yield* Ref.update(mode, (m) => ({ ...m, listFailed: true }));
+      yield* sources.refresh;
+      expect((yield* sources.current)[0]?.accounts).toHaveLength(2);
+      yield* Ref.update(mode, (m) => ({ ...m, resolvedKey: "rotated-key" }));
+      yield* sources.refresh;
+      expect((yield* sources.current)[0]?.accounts).toEqual([]);
     }),
   ),
 );
