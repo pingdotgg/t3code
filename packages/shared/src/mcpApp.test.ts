@@ -7,7 +7,6 @@ import {
   injectMcpAppCookieBootstrap,
   mcpAppContentSecurityPolicy,
   mcpAppToolCallableByApp,
-  mcpAppToolResourceUri,
   readMcpAppCsp,
   readMcpAppReference,
 } from "./mcpApp.ts";
@@ -141,9 +140,6 @@ describe("tool metadata", () => {
     expect(mcpAppToolCallableByApp(undefined)).toBe(true);
     expect(mcpAppToolCallableByApp({ ui: { visibility: ["model"] } })).toBe(false);
     expect(mcpAppToolCallableByApp({ ui: { visibility: ["model", "app"] } })).toBe(true);
-    expect(mcpAppToolResourceUri({ ui: { resourceUri: "ui://a/app" } })).toBe("ui://a/app");
-    expect(mcpAppToolResourceUri({ "ui/resourceUri": "ui://a/app" })).toBe("ui://a/app");
-    expect(mcpAppToolResourceUri({ ui: { resourceUri: "https://a/app" } })).toBeUndefined();
   });
 });
 
