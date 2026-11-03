@@ -42,6 +42,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { isImageAttachment, type ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
+import { AttachmentImage } from "../media/AttachmentImage";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { GuestMessageName } from "./guestMessageStyle";
@@ -548,6 +549,7 @@ function QueuedMessage(props: {
           }
         : null;
   const bodyVisible = fold === null || expanded;
+  const thumbnail = props.thumbnails[0];
 
   return (
     <>
@@ -560,7 +562,7 @@ function QueuedMessage(props: {
       {/* Dashed: a turn that has not been sent yet. */}
       <div
         className={cn(
-          "min-w-0 flex-1 text-meta",
+          "min-w-0 flex-1 text-body",
           props.isEditing
             ? "border-primary/60 text-foreground"
             : attribution === "guest"
@@ -586,16 +588,14 @@ function QueuedMessage(props: {
               fold !== null && "max-h-96 overflow-auto px-3 pb-2",
             )}
           >
-            {props.thumbnails.length > 0 ? (
-              <span className="flex flex-wrap items-center gap-1">
-                {props.thumbnails.map((thumbnail) => (
-                  <span
-                    key={thumbnail.key}
-                    className="size-8 overflow-hidden rounded-md border border-border/70 bg-background"
-                  >
+            {thumbnail ? (
+              <Tooltip>
+                <TooltipTrigger render={<span className="flex shrink-0 items-center gap-1" />}>
+                  <span className="size-[1lh] shrink-0 overflow-hidden rounded-md border border-border/70 bg-background">
                     {thumbnail.url ? (
-                      <img
+                      <AttachmentImage
                         src={thumbnail.url}
+                        name={thumbnail.name}
                         alt={thumbnail.name}
                         className="size-full object-cover"
                       />
@@ -603,8 +603,12 @@ function QueuedMessage(props: {
                       <span aria-label={thumbnail.name} className="block size-full bg-muted/60" />
                     )}
                   </span>
-                ))}
-              </span>
+                  {props.thumbnails.length > 1 ? <span>+{props.thumbnails.length - 1}</span> : null}
+                </TooltipTrigger>
+                <TooltipPopup className="whitespace-pre-wrap">
+                  {props.thumbnails.map((image) => image.name).join("\n")}
+                </TooltipPopup>
+              </Tooltip>
             ) : null}
             {/* In full, like a sent turn: a queued message is read before it is sent. */}
             {props.previewText ? (
