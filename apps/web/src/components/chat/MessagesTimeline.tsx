@@ -53,7 +53,13 @@ import {
 import { type PendingApproval, type TimelineEntry } from "../../session-logic";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import { type ChatFileAttachment, type TurnDiffSummary } from "../../types";
-import { ArrowRightIcon, BotIcon, CircleAlertIcon, Minimize2Icon } from "lucide-react";
+import {
+  ArrowRightIcon,
+  BotIcon,
+  CircleAlertIcon,
+  MessagesSquareIcon,
+  Minimize2Icon,
+} from "lucide-react";
 import { ChevronDown, ChevronRight } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { Skeleton } from "../ui/skeleton";
@@ -251,9 +257,14 @@ interface MessagesTimelineProps {
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
   renderHtmlRender?: TimelineRowSharedState["renderHtmlRender"];
   turnItemSource?: TimelineRowSharedState["turnItemSource"];
-  /** The thread this one is a subagent of; `open` is absent when it cannot be opened from here. */
+  /**
+   * The thread this one is a subagent or side chat of; `open` is absent when it cannot be
+   * opened from here.
+   */
   parentThreadLink?: {
     readonly title: string;
+    /** A side chat's inherited rows collapse into this link. */
+    readonly sideChat?: boolean;
     /** Where it runs, when that is another environment. */
     readonly environmentLabel?: string;
     readonly open?: () => void;
@@ -459,13 +470,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const normalizedFindQuery = findQuery.trim();
   const findActive = findExpanded;
 
-  const disclosurePinsEndRef = useRef(false);
-  const pinDisclosureToEnd = () => {
-    if (!disclosurePinsEndRef.current) return;
-    const element = listRef.current?.getScrollableNode();
-    if (element) element.scrollTop = element.scrollHeight;
-  };
-
   const scheduleDisclosureSettle = () => {
     if (disclosureSettleFrameRef.current !== null) {
       cancelAnimationFrame(disclosureSettleFrameRef.current);
@@ -474,10 +478,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
     }
     disclosureSettleFrameRef.current = requestAnimationFrame(() => {
-      pinDisclosureToEnd();
       disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
-        pinDisclosureToEnd();
-        disclosurePinsEndRef.current = false;
         disclosureAnchorKeyRef.current = null;
         setDisclosureToggleSettling(false);
         disclosureSettleFrameRef.current = null;
@@ -488,13 +489,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string) => {
     disclosureAnchorKeyRef.current = anchorKey;
-    disclosurePinsEndRef.current = resolveTimelineIsAtEnd(listRef.current?.getState()) === true;
     setDisclosureToggleSettling(true);
     scheduleDisclosureSettle();
   };
 
   const shouldRestoreVisibleContentPosition = (row: MessagesTimelineRow) => {
-    if (disclosurePinsEndRef.current) return false;
     const disclosureAnchorKey = disclosureAnchorKeyRef.current;
     return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
   };
@@ -944,8 +943,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
 
   const handleItemSizeChanged = () => {
-    if (disclosurePinsEndRef.current) {
-      queueMicrotask(pinDisclosureToEnd);
+    if (disclosureAnchorKeyRef.current !== null) {
       scheduleDisclosureSettle();
     }
     scheduleMinimapRefresh();
@@ -1098,13 +1096,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
       <div className="messages-timeline-row-frame">
         <div className="chat-content-lane pt-1 sm:pt-2">
           <TimelineSystemDivider
-            label="Subagent of"
+            label={parentThreadLink.sideChat ? "Context from" : "Subagent of"}
             detail={
               parentThreadLink.environmentLabel === undefined
                 ? parentThreadLink.title
                 : `${parentThreadLink.title} on ${parentThreadLink.environmentLabel}`
             }
-            icon={BotIcon}
+            icon={parentThreadLink.sideChat ? MessagesSquareIcon : BotIcon}
             {...(parentThreadLink.open === undefined
               ? {}
               : { actionLabel: "Open parent thread", onAction: parentThreadLink.open })}
