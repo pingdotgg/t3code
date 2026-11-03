@@ -1,4 +1,5 @@
 import type { StackHeaderConfigProps, StackHeaderMenuElementIOS } from "react-native-screens";
+import { verticalBarGroupsFitAboveTabBar, type NativeLayoutMetrics } from "../lib/reserved-regions";
 
 export type HeaderItem = NonNullable<
   NonNullable<StackHeaderConfigProps["ios"]>["leadingItems"]
@@ -57,4 +58,34 @@ export function fitVerticalBarItems(
     foldIntoMoreMenu(folded),
     ...items.filter((item) => item.type === "item" && !foldable(item)),
   ];
+}
+
+/**
+ * Fits a column's trailing items between Back and its leading items above, and compose and the
+ * keyboard dismiss below. A collapsed split draws Back on every detail screen; an expanded
+ * split's detail column is its own stack, so only its first screen has none.
+ */
+export function fitColumnVerticalBarItems(
+  metrics: NativeLayoutMetrics,
+  tabCount: number,
+  bar: {
+    readonly backButtonVisible: boolean;
+    readonly detailRoot: boolean;
+    readonly leading: readonly HeaderItem[];
+    readonly trailing: readonly HeaderItem[];
+    readonly compose: boolean;
+    readonly keyboardVisible: boolean;
+  },
+) {
+  const back =
+    bar.backButtonVisible && (metrics.horizontalSizeClass === "compact" || !bar.detailRoot);
+  const leadingGroupSizes = [back ? 1 : 0, ...verticalBarGroupSizes(bar.leading)];
+  return fitVerticalBarItems(bar.trailing, (groupSizes) =>
+    verticalBarGroupsFitAboveTabBar(metrics, tabCount, [
+      ...leadingGroupSizes,
+      ...groupSizes,
+      bar.compose ? 1 : 0,
+      bar.keyboardVisible ? 1 : 0,
+    ]),
+  );
 }

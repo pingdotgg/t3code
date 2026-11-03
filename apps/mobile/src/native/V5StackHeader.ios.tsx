@@ -7,13 +7,12 @@ import { isValidElement, useEffect, useRef } from "react";
 import { StyleSheet } from "react-native";
 import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
 import { isDuoDevice } from "../lib/device-type";
-import { verticalBarGroupsFitAboveTabBar } from "../lib/reserved-regions";
 import { useEnabledNavigationTabs } from "../features/workspace/navigation-tabs";
 import { nativeWorkspaceTabCount } from "../features/workspace/workspace-tabs-state";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
 import { useDeviceType, useNativeLayoutMetrics } from "../native/native-layout-metrics";
 import { HeaderItemsWidthContext } from "./header-items-width";
-import { fitVerticalBarItems, type HeaderItem } from "./vertical-bar-items";
+import { fitColumnVerticalBarItems, type HeaderItem } from "./vertical-bar-items";
 import {
   SearchBar,
   Stack,
@@ -156,6 +155,8 @@ export function V5StackHeader(props: {
   readonly canGoBack: boolean;
   /** Workspace split columns share the vertical bar with the workspace tab bar. */
   readonly column?: "primary" | "detail";
+  /** The first screen of the detail column, which an expanded split shows without Back. */
+  readonly detailRoot?: boolean;
   /** The workspace's compose action, shown as its own group in this column's bar. */
   readonly onCompose?: () => void;
 }) {
@@ -238,13 +239,14 @@ export function V5StackHeader(props: {
     nativeMetrics.verticalBarEdge !== "none" &&
     (props.column !== "primary" || nativeMetrics.horizontalSizeClass === "compact");
   if (sharesVerticalBar) {
-    const fitted = fitVerticalBarItems(trailing, (groupSizes) =>
-      verticalBarGroupsFitAboveTabBar(nativeMetrics, workspaceTabCount, [
-        ...groupSizes,
-        props.onCompose ? 1 : 0,
-        keyboardVisible ? 1 : 0,
-      ]),
-    );
+    const fitted = fitColumnVerticalBarItems(nativeMetrics, workspaceTabCount, {
+      backButtonVisible: props.canGoBack && options.headerBackVisible !== false,
+      detailRoot: props.detailRoot === true,
+      leading,
+      trailing,
+      compose: Boolean(props.onCompose),
+      keyboardVisible,
+    });
     trailing.splice(0, trailing.length, ...fitted);
   }
   if (props.onCompose) {
