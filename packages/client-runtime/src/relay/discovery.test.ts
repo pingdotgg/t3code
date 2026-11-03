@@ -549,7 +549,9 @@ describe("RelayEnvironmentDiscovery", () => {
         expect(inFlight.length).toBeGreaterThan(0);
         for (const state of inFlight) {
           expect(state.listed).toBe(true);
-          expect(state.environments.has(environments[0]!.environmentId)).toBe(true);
+          expect(state.environments.get(environments[0]!.environmentId)?.availability).toBe(
+            "online",
+          );
         }
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),

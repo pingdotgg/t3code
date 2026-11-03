@@ -105,6 +105,17 @@ function validateStatus(
   return Effect.succeed(status);
 }
 
+function sameEndpoint(
+  left: RelayClientEnvironmentRecord,
+  right: RelayClientEnvironmentRecord,
+): boolean {
+  return (
+    left.endpoint.httpBaseUrl === right.endpoint.httpBaseUrl &&
+    left.endpoint.wsBaseUrl === right.endpoint.wsBaseUrl &&
+    left.endpoint.providerKind === right.endpoint.providerKind
+  );
+}
+
 function relayAccountId(clerkToken: string): Option.Option<string> {
   try {
     return Option.fromNullishOr(decodeRelayJwt(clerkToken).sub).pipe(
@@ -275,20 +286,25 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
     if ((yield* Ref.get(accountGeneration)) !== generation) {
       return;
     }
-    const next = new Map<string, RelayDiscoveredEnvironment>();
-    for (const environment of environments) {
-      next.set(environment.environmentId, {
-        environment,
-        availability: "checking",
-        status: Option.none(),
-        error: Option.none(),
-      });
-    }
-    yield* SubscriptionRef.update(state, (current) => ({
-      ...current,
-      environments: next,
-      listed: true,
-    }));
+    yield* SubscriptionRef.update(state, (current) => {
+      const next = new Map<string, RelayDiscoveredEnvironment>();
+      for (const environment of environments) {
+        const previous = current.environments.get(environment.environmentId);
+        // A re-listed row keeps its last status until the new lookup answers.
+        next.set(
+          environment.environmentId,
+          previous !== undefined && sameEndpoint(previous.environment, environment)
+            ? { ...previous, environment }
+            : {
+                environment,
+                availability: "checking",
+                status: Option.none(),
+                error: Option.none(),
+              },
+        );
+      }
+      return { ...current, environments: next, listed: true };
+    });
 
     yield* Effect.forEach(
       environments,
