@@ -532,18 +532,13 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   });
 
   // Each capture opens one page per browser, so this note belongs to that page alone.
-  const fakeIpNote = (): ReadonlyArray<ConsoleMessage> => {
-    if (proxy.fakeIpHosts.size === 0) return [];
-    const hosts = [...proxy.fakeIpHosts].map(([host, address]) => `${host} (${address})`);
-    return [
-      {
-        level: "warning",
-        text: clipConsoleText(
-          `DNS returned blocked 198.18.0.0/15 addresses, which may come from Clash or Mihomo fake-IP DNS. Inline the resource, add its host to fake-ip-filter, or switch DNS to redir-host. Affected hosts: ${hosts.join(", ")}`,
-        ),
-      },
-    ];
-  };
+  const fakeIpNote = (): ReadonlyArray<ConsoleMessage> =>
+    [...proxy.fakeIpHosts].map(([host, address]) => ({
+      level: "warning",
+      text: clipConsoleText(
+        `DNS returned blocked 198.18.0.0/15 addresses, which may come from Clash or Mihomo fake-IP DNS. Inline the resource, add its host to fake-ip-filter, or switch DNS to redir-host. Affected host: ${host} (${address})`,
+      ),
+    }));
 
   return { openPage, fakeIpNote };
 });
