@@ -47,7 +47,15 @@ const run = Effect.fn("test.run")(function* (
   return { stdout, stderr, exitCode };
 }, Effect.scoped);
 
-const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (root: string) {
+const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (
+  root: string,
+  executable = `#!/bin/sh
+if [ -n "$T3CODE_TEST_CALLS" ]; then echo "$*|$T3CODE_NPM_LAUNCHER_PATH" >> "$T3CODE_TEST_CALLS"; fi
+if [ "$1" = "--version" ]; then echo "${VERSION}"; exit 0; fi
+echo "stub $* launcher=$T3CODE_NPM_LAUNCHER_PATH"
+exit 7
+`,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const key = `${yield* HostProcess.Platform}-${yield* HostProcess.Architecture}`;
@@ -56,10 +64,7 @@ const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (root: str
   yield* fs.makeDirectory(path.join(root, "release", stem, "node_modules/native"), {
     recursive: true,
   });
-  yield* fs.writeFileString(
-    path.join(root, "release", stem, "t3"),
-    '#!/bin/sh\necho "stub $* launcher=$T3CODE_NPM_LAUNCHER_PATH"\nexit 7\n',
-  );
+  yield* fs.writeFileString(path.join(root, "release", stem, "t3"), executable);
   yield* fs.chmod(path.join(root, "release", stem, "t3"), 0o755);
   const tar = yield* run("tar", ["-czf", archiveName, stem], {
     cwd: path.join(root, "release"),
@@ -136,6 +141,7 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         const env = {
           PATH: process.env.PATH,
           T3CODE_HOME: home,
+          T3CODE_TEST_CALLS: path.join(root, "calls"),
           T3CODE_RELEASE_BASE_URL: release.baseUrl,
         };
         const launcher = path.join(packageDir, "bin/t3.mjs");
@@ -145,6 +151,10 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         });
         assert.equal(first.stdout.trim(), `stub serve a b launcher=${launcher}`, first.stderr);
         assert.equal(first.exitCode, 7);
+        assert.deepStrictEqual(
+          (yield* fs.readFileString(env.T3CODE_TEST_CALLS)).trim().split("\n"),
+          ["--version|", `serve a b|${launcher}`],
+        );
         const versionDir = path.join(home, "runtime/versions", VERSION);
         assert.equal(
           (yield* fs.readFileString(path.join(versionDir, ".install-complete"))).trim(),
@@ -158,8 +168,12 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
 
         const requestsAfterFirst = release.requests.length;
         const second = yield* run(process.execPath, [launcher, "--version"], { cwd: root, env });
-        assert.equal(second.exitCode, 7);
+        assert.equal(second.exitCode, 0);
         assert.equal(release.requests.length, requestsAfterFirst);
+        assert.deepStrictEqual(
+          (yield* fs.readFileString(env.T3CODE_TEST_CALLS)).trim().split("\n"),
+          ["--version|", `serve a b|${launcher}`, `--version|${launcher}`],
+        );
 
         const ipcServer = path.join(home, "runtime/versions", VERSION, "t3");
         yield* fs.writeFileString(
@@ -189,8 +203,8 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           env: { ...env, T3CODE_HOME: raceHome },
         });
         const [one, two] = yield* Effect.all([launch, launch], { concurrency: "unbounded" });
-        assert.equal(one.exitCode, 7, one.stderr);
-        assert.equal(two.exitCode, 7, two.stderr);
+        assert.equal(one.exitCode, 0, one.stderr);
+        assert.equal(two.exitCode, 0, two.stderr);
         assert.deepStrictEqual(yield* fs.readDirectory(path.join(raceHome, "runtime/versions")), [
           VERSION,
         ]);
@@ -296,12 +310,8 @@ fs.readFileSync = (file, ...rest) => {
           cwd: root,
           env: { ...env, T3CODE_HOME: staleOnlyHome },
         });
-        assert.equal(
-          replaced.stdout.trim(),
-          `stub --version launcher=${launcher}`,
-          replaced.stderr,
-        );
-        assert.equal(replaced.exitCode, 7);
+        assert.equal(replaced.stdout.trim(), VERSION, replaced.stderr);
+        assert.equal(replaced.exitCode, 0);
         assert.deepStrictEqual(
           yield* fs.readDirectory(path.join(staleOnlyHome, "runtime/versions")),
           [VERSION],
@@ -318,6 +328,61 @@ fs.readFileSync = (file, ...rest) => {
           yield* fs.readDirectory(path.join(root, "other-home/runtime/versions")),
           [],
         );
+      }),
+  );
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "does not publish an unusable release or redownload a complete unusable cache",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        for (const executable of [
+          "#!/t3-test-missing-loader\n",
+          '#!/bin/sh\necho "runtime loader failed" >&2\nexit 42\n',
+          "#!/bin/sh\nkill -TERM $$\n",
+        ]) {
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-validation-test-" });
+          const output = yield* buildNpmLauncher({
+            version: VERSION,
+            outputDir: path.join(root, "out"),
+          });
+          const release = yield* serveFakeRelease(root, executable);
+          const home = path.join(root, "home");
+          const dir = path.join(home, "runtime/versions", VERSION);
+          const env = {
+            PATH: process.env.PATH,
+            T3CODE_HOME: home,
+            T3CODE_RELEASE_BASE_URL: release.baseUrl,
+          };
+          const launcher = path.join(output.packageDir, "bin/t3.mjs");
+          const failed = yield* run(process.execPath, [launcher, "serve"], { cwd: root, env });
+          assert.equal(failed.exitCode, 1, failed.stderr);
+          assert.deepStrictEqual(yield* fs.readDirectory(path.dirname(dir)), [], failed.stderr);
+          assert.include(failed.stderr, "could not run");
+          if (executable.includes("exit 42")) {
+            assert.include(failed.stderr, "runtime loader failed");
+          }
+          if ((yield* HostProcess.Platform) === "linux") {
+            assert.include(failed.stderr, "glibc");
+            assert.include(failed.stderr, "musl");
+          }
+
+          yield* fs.makeDirectory(dir);
+          yield* fs.writeFileString(path.join(dir, "t3"), "#!/t3-test-missing-loader\n");
+          yield* fs.chmod(path.join(dir, "t3"), 0o755);
+          yield* fs.writeFileString(path.join(dir, ".install-complete"), `${VERSION}\n`);
+          const requests = release.requests.length;
+          for (const _attempt of [1, 2]) {
+            const cached = yield* run(process.execPath, [launcher, "serve"], { cwd: root, env });
+            assert.equal(cached.exitCode, 1, cached.stderr);
+            assert.include(cached.stderr, "could not run");
+            assert.equal(release.requests.length, requests);
+            assert.equal(
+              yield* fs.readFileString(path.join(dir, ".install-complete")),
+              `${VERSION}\n`,
+            );
+          }
+        }
       }),
   );
 });
