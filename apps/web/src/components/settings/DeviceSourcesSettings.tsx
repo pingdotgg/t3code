@@ -357,7 +357,7 @@ export function DeviceSourcesSettings(props: {
   const anyLocalEnabled = active.some(localEnabled);
   const setLocalEnabled = async (enabled: boolean) => {
     await write(
-      active.map((member) => ({
+      members.map((member) => ({
         environmentId: member.environmentId,
         patch: { localDevicesEnabled: enabled },
       })),
