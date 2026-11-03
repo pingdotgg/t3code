@@ -18,6 +18,7 @@ import {
 import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import {
+  type ChangeRequestTerminology,
   currentChangeRequestTerms,
   formatChangeRequestText,
   sourceControlClients,
@@ -171,7 +172,8 @@ function workEntryToolOutput(
 function resolveT3McpToolPresentation(
   definition: T3McpToolDefinition | null,
   status: string | undefined,
-  data?: unknown,
+  data: unknown,
+  terms: ChangeRequestTerminology,
 ) {
   if (!definition) return null;
   const [action, running, completed, detail] = definition.labels;
@@ -202,7 +204,7 @@ function resolveT3McpToolPresentation(
   const urlTarget =
     typeof input?.url === "string" ? sourceControlClients.parseChangeRequestUrl(input.url) : null;
   const number = urlTarget?.link.number ?? input?.number;
-  const { shortLabel } = currentChangeRequestTerms();
+  const { shortLabel } = terms;
   const target =
     actionKind !== undefined &&
     actionKind !== "list-prs" &&
@@ -210,7 +212,7 @@ function resolveT3McpToolPresentation(
     Number.isSafeInteger(number) &&
     number > 0
       ? `${shortLabel} #${number}`
-      : formatChangeRequestText(detail);
+      : formatChangeRequestText(detail, terms);
   return {
     displayName: `${verb} ${target}`,
     icon: definition.icon,
@@ -232,6 +234,7 @@ export function resolveWorkEntryToolPresentation(
     "label" | "toolTitle" | "toolData" | "toolLifecycleStatus" | "structuredPayload"
   >,
   fallbackStatus?: "inProgress" | "completed",
+  terms = currentChangeRequestTerms(),
 ) {
   const definition = resolveT3McpToolDefinition(
     workEntryToolName(entry),
@@ -242,6 +245,7 @@ export function resolveWorkEntryToolPresentation(
     definition,
     definition && t3ToolResultIndicatesFailure(workEntryToolOutput(entry)) ? "failed" : status,
     entry.toolData,
+    terms,
   );
 }
 

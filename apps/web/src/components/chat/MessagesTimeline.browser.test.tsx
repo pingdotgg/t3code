@@ -1,3 +1,5 @@
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import { __setClientSettingsForTests, persistClientSettingsPatch } from "~/hooks/useSettings";
 import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
 import { cdp, page } from "vite-plus/test/browser";
@@ -217,6 +219,38 @@ const TASK_ID = ScheduledTaskId.make("task-1");
 const AUTOMATION_PROMPT = "Triage the inbox\n\nLabel every new issue and close duplicates.";
 
 describe("MessagesTimeline work rows", () => {
+  it("updates completed tool labels when terminology changes without remounting", async () => {
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    using _settingsCleanup = {
+      [Symbol.dispose]() {
+        __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+      },
+    };
+    const entries = [
+      work("linked-review", {
+        tone: "tool",
+        label: "T3-code.link_pull_request",
+        toolLifecycleStatus: "completed",
+        toolData: { arguments: { url: "https://github.com/acme/web/pull/7" } },
+      }),
+      work("listed-reviews", {
+        tone: "tool",
+        label: "T3-code.list_thread_pull_requests",
+        toolLifecycleStatus: "completed",
+      }),
+    ];
+    await using screen = await renderTimeline(entries);
+    const group = screen.getByRole("button", { name: /Linked 1 pull request/ });
+    await expect.element(group).toBeVisible();
+    await act(() => persistClientSettingsPatch({ mergeRequestTerminology: true }, async () => {}));
+    const updatedGroup = screen.getByRole("button", { name: /Linked 1 merge request/ });
+    await expect.element(updatedGroup).toBeVisible();
+    await updatedGroup.click();
+    await expect.element(screen.getByText("Linked MR #7", { exact: true })).toBeVisible();
+    await act(() => persistClientSettingsPatch({ mergeRequestTerminology: false }, async () => {}));
+    await expect.element(screen.getByText("Linked PR #7", { exact: true })).toBeVisible();
+  });
+
   it("keeps the worked-for heading in place when expanded at the bottom", async () => {
     const props = baseProps();
     const runId = RunId.make("completed-run");

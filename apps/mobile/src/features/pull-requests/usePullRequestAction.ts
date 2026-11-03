@@ -56,7 +56,7 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
       },
     ]);
   const confirmClose = () => {
-    const terminology = sourceControlClients.get(pr?.provider).changeRequest;
+    const terminology = currentChangeRequestTerms();
     confirm(
       "close",
       pullRequestActionLabel("close", terminology),
