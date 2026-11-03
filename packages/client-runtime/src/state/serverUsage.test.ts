@@ -300,3 +300,30 @@ it.effect("keeps the cached usage summary when the awaited refresh fails", () =>
     }),
   ),
 );
+
+it.effect("follows partial scan updates until all usage sources finish", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let phase = 0;
+      const harness = yield* makeHarness(
+        (request) =>
+          Effect.sync(() => {
+            phase = request;
+          }),
+        () => [cursorSource(phase < 3)],
+      );
+      const summary = harness.summary();
+      const unmount = harness.registry.mount(summary);
+      const completed = yield* settledSummary(harness.registry, summary);
+      expect(completed.sources).toEqual([cursorSource(false)]);
+      expect(harness.requests()).toBe(3);
+      expect(
+        harness
+          .inputs()
+          .slice(1)
+          .every((input) => input.awaitRefresh === true),
+      ).toBe(true);
+      unmount();
+    }),
+  ),
+);
