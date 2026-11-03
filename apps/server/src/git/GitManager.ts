@@ -924,12 +924,8 @@ export const make = Effect.gen(function* () {
 
   const readRepositoryInstructions = Effect.fn("GitManager.readRepositoryInstructions")(
     function* (cwd: string, fileName: string) {
-      const root = yield* fileSystem.realPath(cwd);
-      const instructionPath = yield* fileSystem.realPath(path.join(root, fileName));
-      const relative = path.relative(root, instructionPath);
-      if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
-        return "";
-      }
+      // Worktrees can share instructions through symlinks to files outside the project.
+      const instructionPath = yield* fileSystem.realPath(path.join(cwd, fileName));
       const info = yield* fileSystem.stat(instructionPath);
       if (info.type !== "File" || info.size > ByteSize.bytes(20_000)) {
         return "";
