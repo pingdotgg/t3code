@@ -28,6 +28,11 @@ describe("Usage page preferences", () => {
     saveUsagePagePreferences({ metric: "cost", windowDays: 7, hiddenProviders: ["codex"] });
     expect(readUsagePagePreferences().hiddenProviders).toEqual(["codex"]);
 
+    for (const windowDays of ["mtd", "ytd"] as const) {
+      saveUsagePagePreferences({ metric: "tokens", windowDays });
+      expect(readUsagePagePreferences()).toEqual({ metric: "tokens", windowDays });
+    }
+
     values.set(key, '{"metric":"tokens","windowDays":30}');
     expect(readUsagePagePreferences()).toEqual({ metric: "tokens", windowDays: 30 });
   });

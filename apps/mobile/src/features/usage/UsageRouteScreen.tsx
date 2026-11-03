@@ -27,6 +27,7 @@ import {
   formatUsageContractMismatch,
   formatUsd,
   makeWindow,
+  type UsageWindow,
   usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
 import { useRef, useState, type ReactNode } from "react";
@@ -67,6 +68,8 @@ const WINDOW_OPTIONS = [
   { value: 7, label: "7d", accessibilityLabel: "Past 7 days" },
   { value: 30, label: "30d", accessibilityLabel: "Past 30 days" },
   { value: 90, label: "90d", accessibilityLabel: "Past 90 days" },
+  { value: "mtd", label: "MTD", accessibilityLabel: "Month to Date" },
+  { value: "ytd", label: "YTD", accessibilityLabel: "Year to Date" },
 ] as const;
 
 const CHART_HEIGHT = 180;
@@ -102,7 +105,7 @@ function UsageScreen(props: {
   const [width, setWidth] = useState(0);
   const wide = width >= WIDE_WIDTH;
   const [windowSelection, setWindowSelection] = useState(() => ({
-    days: 30,
+    days: 30 as UsageWindow,
     window: makeWindow(30),
   }));
   const { days: windowDays, window } = windowSelection;
@@ -149,7 +152,7 @@ function UsageScreen(props: {
     refreshing: refreshingUsage,
     providerLabel,
   });
-  const selectWindow = (days: number) => {
+  const selectWindow = (days: UsageWindow) => {
     setWindowSelection({
       days,
       window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),

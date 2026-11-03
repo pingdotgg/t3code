@@ -161,6 +161,27 @@ describe("hourly usage formatting", () => {
     expect(window.untilTime).toBe("2026-08-11T12:37:00.000Z");
   });
 
+  it.each([
+    ["mtd", "2026-11-03T21:00:00Z", "America/Los_Angeles", "2026-11-01", "2026-11-03"],
+    ["ytd", "2026-11-03T21:00:00Z", "America/Los_Angeles", "2026-01-01", "2026-11-03"],
+    ["mtd", "2026-01-01T00:30:00Z", "America/Los_Angeles", "2025-12-01", "2025-12-31"],
+    ["ytd", "2026-01-01T00:30:00Z", "America/Los_Angeles", "2025-01-01", "2025-12-31"],
+    ["ytd", "2025-12-31T12:30:00Z", "Pacific/Auckland", "2026-01-01", "2026-01-01"],
+    ["mtd", "2024-02-29T12:00:00Z", "UTC", "2024-02-01", "2024-02-29"],
+    ["mtd", "2026-03-31T12:00:00Z", "America/New_York", "2026-03-01", "2026-03-31"],
+  ] as const)("builds %s at %s in %s", (period, instant, timeZone, sinceDay, untilDay) => {
+    const resolved = new Intl.DateTimeFormat().resolvedOptions();
+    using _zone = vi
+      .spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions")
+      .mockReturnValue({ ...resolved, timeZone });
+    expect(makeWindow(period, new Date(instant))).toEqual({
+      sinceDay,
+      untilDay,
+      timeZone,
+      resolution: "day",
+    });
+  });
+
   it("degrades an unknown resolved zone to UTC instead of crashing", () => {
     const resolved = new Intl.DateTimeFormat().resolvedOptions();
     const resolvedOptions = vi
@@ -172,6 +193,8 @@ describe("hourly usage formatting", () => {
 
       expect(makeWindow(1, now, "hour").timeZone).toBe("UTC");
       expect(makeWindow(30, now).timeZone).toBe("UTC");
+      expect(makeWindow("mtd", now).sinceDay).toBe("2026-08-01");
+      expect(makeWindow("ytd", now).sinceDay).toBe("2026-01-01");
     } finally {
       resolvedOptions.mockRestore();
     }

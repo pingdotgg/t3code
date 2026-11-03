@@ -111,7 +111,7 @@ function isUsageMetric(value: string | null | undefined): value is UsageMetric {
   return METRIC_OPTIONS.some((option) => option.value === value);
 }
 
-function isUsageWindowDays(value: number): value is UsagePagePreferences["windowDays"] {
+function isUsageWindowDays(value: number | string): value is UsagePagePreferences["windowDays"] {
   return WINDOW_OPTIONS.some((option) => option.days === value);
 }
 
@@ -181,6 +181,7 @@ export function UsagePage() {
   const shortcutTitle = (
     option: (typeof METRIC_OPTIONS)[number] | (typeof WINDOW_OPTIONS)[number],
   ) => {
+    if (option.command === null) return option.label;
     const shortcut = shortcutLabelForCommand(keybindings, option.command, {
       context: { usagePageOpen: true },
     });
@@ -238,7 +239,8 @@ export function UsagePage() {
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
   };
-  const selectWindow = (days: number) => {
+  const selectWindow = (value: number | string) => {
+    const days = value === "mtd" || value === "ytd" ? value : Number(value);
     if (!isUsageWindowDays(days)) return;
     updatePreferences({ windowDays: days });
     setWindowSelection({
@@ -282,7 +284,9 @@ export function UsagePage() {
 
     const command = resolveUsageShortcut(event, keybindings);
     const metricOption = METRIC_OPTIONS.find((option) => option.command === command);
-    const periodOption = WINDOW_OPTIONS.find((option) => option.command === command);
+    const periodOption = WINDOW_OPTIONS.find(
+      (option) => option.command !== null && option.command === command,
+    );
     if (!metricOption && !periodOption) return;
 
     event.preventDefault();
@@ -404,12 +408,12 @@ export function UsagePage() {
             value={[String(windowDays)]}
             onValueChange={(next) => {
               const value = next[0];
-              if (value) selectWindow(Number(value));
+              if (value) selectWindow(value);
             }}
           >
             {WINDOW_OPTIONS.map((option) => (
               <Toggle key={option.days} value={String(option.days)} title={shortcutTitle(option)}>
-                {option.label}
+                {"shortLabel" in option ? option.shortLabel : option.label}
               </Toggle>
             ))}
           </ToggleGroup>
@@ -442,7 +446,7 @@ export function UsagePage() {
       </div>
       <div className="ms-auto flex shrink-0 items-center justify-end gap-1 @4xl/usage-header:hidden">
         {showingLimits ? null : (
-          <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
+          <Select value={String(windowDays)} onValueChange={(value) => selectWindow(value ?? "")}>
             <SelectTrigger
               aria-label="Usage period"
               size="compact"
@@ -485,7 +489,7 @@ export function UsagePage() {
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {METRIC_OPTIONS.map((option) => (
               <SelectItem key={option.value} value={option.value} title={shortcutTitle(option)}>
-                {option.label}
+                {"shortLabel" in option ? option.shortLabel : option.label}
               </SelectItem>
             ))}
           </SelectPopup>
