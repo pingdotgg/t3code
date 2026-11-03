@@ -3,6 +3,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
+  isProviderNativeSubagentThread,
   ModelSelection,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
@@ -69,6 +70,12 @@ const WORKING_RUN_STATUSES: ReadonlySet<string> = new Set([
   "starting",
   "running",
   "waiting",
+]);
+const SETTLED_TASK_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
 ]);
 
 export const ProviderSessionReleaseReason = Schema.Literals([
@@ -233,6 +240,8 @@ interface LiveSessionEntry {
   readonly idleFiber: Fiber.Fiber<void, never> | null;
   readonly pinnedSinceMs: number | null;
   readonly idleThreadUnloads: ReadonlyMap<ThreadId, IdleThreadUnload>;
+  /** Archived natively since they last loaded, so a later idle release skips them. */
+  readonly archivedThreadIds: ReadonlySet<ThreadId>;
 }
 
 interface IdleThreadUnload {
@@ -1168,6 +1177,7 @@ export const layerWithOptions = (
               pinnedForMs: now - pinnedSinceMs,
             });
           }
+          yield* archiveSettledDelegatedChildren(input.providerSessionId);
           // Adapter probes yield; guard busyTurns and idleGeneration atomically when removing the entry.
           yield* releaseEntry({
             providerSessionId: input.providerSessionId,
@@ -1324,8 +1334,10 @@ export const layerWithOptions = (
           }
           const loadedProviderThreadKeyByThread = new Map(entry.loadedProviderThreadKeyByThread);
           loadedProviderThreadKeyByThread.set(input.threadId, input.providerThreadKey);
+          const archivedThreadIds = new Set(entry.archivedThreadIds);
+          archivedThreadIds.delete(input.threadId);
           const updated = new Map(current);
-          updated.set(key, { ...entry, loadedProviderThreadKeyByThread });
+          updated.set(key, { ...entry, loadedProviderThreadKeyByThread, archivedThreadIds });
           return updated;
         });
 
@@ -1562,6 +1574,172 @@ export const layerWithOptions = (
         },
       );
 
+      /**
+       * The provider thread of an app-owned delegated child whose latest task completed and whose
+       * result its parent took, once nothing in the child runs or waits. Provider clients list
+       * these as ordinary threads; T3 keeps their history and resume unarchives them.
+       */
+      const settledDelegatedChildProviderThread = Effect.fn(
+        "ProviderSessionManager.settledDelegatedChildProviderThread",
+      )(
+        function* (entry: LiveSessionEntry, threadId: ThreadId) {
+          const thread = yield* projectionStore.getThread(threadId);
+          const parentThreadId = thread.lineage.parentThreadId;
+          if (
+            thread.lineage.relationshipToParent !== "subagent" ||
+            parentThreadId === null ||
+            isProviderNativeSubagentThread(thread) ||
+            thread.deletedAt !== null
+          ) {
+            return undefined;
+          }
+          const child = yield* projectionStore.getThreadRecords(
+            threadId,
+            ["runs", "subagents", "providerThreads"],
+            {
+              runStatuses: ["preparing", "queued", "starting", "running", "waiting"],
+              includeLatestRun: true,
+            },
+          );
+          const latestRun = child.runs.reduce<(typeof child.runs)[number] | undefined>(
+            (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
+            undefined,
+          );
+          const taskId = latestRun?.delegatedTaskId;
+          const providerThread = child.providerThreads.find(
+            (candidate) =>
+              candidate.id === thread.activeProviderThreadId &&
+              candidate.providerSessionId === entry.runtime.providerSessionId &&
+              candidate.nativeThreadRef?.nativeId != null,
+          );
+          if (
+            taskId === undefined ||
+            providerThread === undefined ||
+            child.runs.some((run) => run.status !== "completed") ||
+            child.subagents.some(
+              (task) =>
+                !SETTLED_TASK_STATUSES.has(task.status) ||
+                task.completionDelivery?.state === "pending" ||
+                task.completionDelivery?.state === "claimed",
+            ) ||
+            ((yield* projectionStore.getThreadShell(threadId))?.pendingBackgroundTasks?.length ??
+              0) > 0
+          ) {
+            return undefined;
+          }
+          const parent = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
+            subagentIds: [taskId],
+          });
+          const task = parent.subagents.find((candidate) => candidate.id === taskId);
+          const delivery = task?.completionDelivery?.state;
+          if (
+            task?.origin !== "app_owned" ||
+            task.childThreadId !== threadId ||
+            task.status !== "completed" ||
+            (delivery !== "delivered" && delivery !== "acknowledged")
+          ) {
+            return undefined;
+          }
+          // Codex archive also archives the native subagents this thread spawned.
+          const pendingWork =
+            entry.runtime.hasPendingBackgroundWorkForThread === undefined
+              ? false
+              : yield* entry.runtime.hasPendingBackgroundWorkForThread(providerThread);
+          return pendingWork ? undefined : providerThread;
+        },
+        (effect) => effect.pipe(Effect.orElseSucceed(() => undefined)),
+      );
+
+      /** Callers hold the thread's attachment lock and have already dropped it from the loaded cache. */
+      const archiveProviderThread = Effect.fn("ProviderSessionManager.archiveProviderThread")(
+        function* (input: {
+          readonly entry: LiveSessionEntry;
+          readonly threadId: ThreadId;
+          readonly providerThread: OrchestrationV2ProviderThread;
+        }) {
+          const archiveThread = input.entry.exposedRuntime.archiveThread;
+          if (archiveThread === undefined) return false;
+          const archived = yield* archiveThread({ providerThread: input.providerThread }).pipe(
+            Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+            Effect.as(true),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("orchestration-v2.driver-session.archive-failed", {
+                providerSessionId: input.entry.runtime.providerSessionId,
+                threadId: input.threadId,
+                providerThreadId: input.providerThread.id,
+                cause,
+              }).pipe(Effect.as(false)),
+            ),
+          );
+          if (!archived) return false;
+          yield* Ref.update(sessions, (current) => {
+            const key = sessionKey(input.entry.runtime.providerSessionId);
+            const latest = current.get(key);
+            if (latest?.runtime !== input.entry.runtime) return current;
+            const updated = new Map(current);
+            updated.set(key, {
+              ...latest,
+              archivedThreadIds: new Set(latest.archivedThreadIds).add(input.threadId),
+            });
+            return updated;
+          });
+          return true;
+        },
+      );
+
+      // Archives children whose result reached the parent after their own idle unload.
+      const archiveSettledDelegatedChildren = Effect.fn(
+        "ProviderSessionManager.archiveSettledDelegatedChildren",
+      )(function* (providerSessionId: ProviderSessionId) {
+        const key = sessionKey(providerSessionId);
+        const entry = (yield* Ref.get(sessions)).get(key);
+        if (
+          entry === undefined ||
+          !entry.supportsMultipleProviderThreads ||
+          entry.exposedRuntime.archiveThread === undefined
+        ) {
+          return;
+        }
+        yield* Effect.forEach(
+          entry.attachedThreadIds,
+          (threadId) =>
+            threadAttachment.withLock(
+              threadAttachmentKey({ providerSessionId, threadId }),
+              Effect.gen(function* () {
+                if (entry.archivedThreadIds.has(threadId)) return;
+                const providerThread = yield* settledDelegatedChildProviderThread(entry, threadId);
+                if (providerThread === undefined) return;
+                const claimed = yield* Ref.modify(sessions, (current) => {
+                  const latest = current.get(key);
+                  if (
+                    latest?.runtime !== entry.runtime ||
+                    latest.busyTurns.size > 0 ||
+                    !latest.attachedThreadIds.has(threadId) ||
+                    latest.archivedThreadIds.has(threadId)
+                  ) {
+                    return [false, current] as const;
+                  }
+                  const loadedProviderThreadKeyByThread = new Map(
+                    latest.loadedProviderThreadKeyByThread,
+                  );
+                  loadedProviderThreadKeyByThread.delete(threadId);
+                  const idleThreadUnloads = new Map(latest.idleThreadUnloads);
+                  idleThreadUnloads.delete(threadId);
+                  const updated = new Map(current);
+                  updated.set(key, {
+                    ...latest,
+                    loadedProviderThreadKeyByThread,
+                    idleThreadUnloads,
+                  });
+                  return [true, updated] as const;
+                });
+                if (claimed) yield* archiveProviderThread({ entry, threadId, providerThread });
+              }),
+            ),
+          { discard: true },
+        );
+      });
+
       const unloadIdleThread = Effect.fn("ProviderSessionManager.unloadIdleThread")(
         function* (input: {
           readonly providerSessionId: ProviderSessionId;
@@ -1593,6 +1771,10 @@ export const layerWithOptions = (
                       .hasPendingBackgroundWorkForThread(pending.providerThread)
                       .pipe(Effect.catchCause(() => Effect.succeed(false)));
               if (hasPendingWork) return "deferred" as const;
+              const archivable =
+                entry.exposedRuntime.archiveThread !== undefined &&
+                (yield* settledDelegatedChildProviderThread(entry, input.threadId))?.id ===
+                  pending.providerThread.id;
               const unloading = yield* Ref.modify(sessions, (current) => {
                 const latest = current.get(key);
                 if (
@@ -1616,6 +1798,16 @@ export const layerWithOptions = (
                 return [true, updated] as const;
               });
               if (!unloading) return "skipped" as const;
+              if (
+                archivable &&
+                (yield* archiveProviderThread({
+                  entry,
+                  threadId: input.threadId,
+                  providerThread: pending.providerThread,
+                }))
+              ) {
+                return "unloaded" as const;
+              }
               yield* unloadThread({ providerThread: pending.providerThread }).pipe(
                 Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
                 Effect.catchCause((cause) =>
@@ -2253,6 +2445,7 @@ export const layerWithOptions = (
                 idleFiber: null,
                 pinnedSinceMs: null,
                 idleThreadUnloads: new Map(),
+                archivedThreadIds: new Set(),
               };
               yield* Ref.update(sessions, (current) => {
                 const updated = new Map(current);

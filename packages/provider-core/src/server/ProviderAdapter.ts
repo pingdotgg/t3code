@@ -674,6 +674,13 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly unloadThread?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /**
+   * Unloads the thread and hides it from the provider's own clients. `resumeThread` must
+   * restore it under the same native id.
+   */
+  readonly archiveThread?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly respondToRuntimeRequest: (
     input: ProviderAdapterV2RuntimeRequestResponseInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
