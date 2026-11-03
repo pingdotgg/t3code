@@ -288,7 +288,9 @@ describe("composerContextRecords", () => {
       text: `${"t".repeat(63_985)}${"😀".repeat(8)}`,
     });
     expect(terminal.text).toBe(`${"t".repeat(63_985)}\n… truncated …`);
-    expect(() => decodeMessageContext({ version: 1, records: [terminal] })).not.toThrow();
+    expect(decodeMessageContext({ version: 1, records: [terminal] }).records).toMatchObject([
+      { kind: "terminal", text: terminal.text },
+    ]);
   });
 
   it("finds the destination collision for different legacy terminal messages", () => {
