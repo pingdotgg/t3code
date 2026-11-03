@@ -158,9 +158,11 @@ jobs:
               shas="$(gh api "repos/$GITHUB_REPOSITORY/compare/$previous...$SHA" --paginate --jq '.commits[].sha')"
             fi
             # A pull request with a "## Release notes" section contributes that section; any
-            # other contributes its title.
+            # other contributes its title. The commits go in a file: after an upstream sync
+            # there are too many for a Windows command line.
+            printf '%s\n' "$shas" > release-commits.txt
             changes="$(gh pr list --state merged --base main --limit 200 --json number,title,body,mergeCommit |
-              jq -r --arg shas "$shas" '
+              jq -r --rawfile shas release-commits.txt '
                 ($shas | split("\n")) as $in
                 | sort_by(.number)[]
                 | select(.mergeCommit.oid as $oid | $in | index($oid))
