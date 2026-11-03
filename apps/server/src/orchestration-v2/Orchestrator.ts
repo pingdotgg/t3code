@@ -8476,9 +8476,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     )
       return;
     const remoteChild =
-      command.stoppedThere === undefined
-        ? task.remoteChild
-        : { ...task.remoteChild!, stoppedThere: true };
+      command.stoppedThere !== undefined
+        ? { ...task.remoteChild!, stoppedThere: true }
+        : command.stopLimits === undefined
+          ? task.remoteChild
+          : { ...task.remoteChild!, stopLimits: command.stopLimits };
     // The first result stands; a repeated follower report records nothing, which
     // the dispatcher refuses. A stop there after the result is still recorded, but
     // a run that ended by itself does not settle a stop the task here still owes.
@@ -8668,6 +8670,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     remoteChild: OrchestrationV2RemoteTaskChild,
   ) {
     const now = yield* DateTime.now;
+    // A new generation's ceiling is its own cancel's; a Stop here has none.
+    const { stopLimits: _previous, ...owed } = remoteChild;
     yield* emit(
       events,
       command,
@@ -8681,9 +8685,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: {
         ...task,
         remoteChild: {
-          ...remoteChild,
+          ...owed,
           stoppedThere: false,
           stopCount: (remoteChild.stopCount ?? 0) + 1,
+          ...(command.type === "delegated_task.remote.complete" && command.stopLimits !== undefined
+            ? { stopLimits: command.stopLimits }
+            : {}),
         },
         updatedAt: now,
       },

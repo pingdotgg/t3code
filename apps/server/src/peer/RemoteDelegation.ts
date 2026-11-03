@@ -29,6 +29,7 @@ import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import type { CallerLimits } from "../mcp/threadAccess.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import {
+  narrowestModes,
   resolveInteractionMode,
   resolveRuntimeMode,
   taskPrompt,
@@ -378,6 +379,7 @@ const make = Effect.gen(function* () {
     result: string,
     stoppedThere: "ran-out" | "stopped" | undefined,
     stopCount?: number,
+    stopLimits?: CallerLimits,
   ) {
     const attempt = yield* random.uuidV4();
     yield* threads
@@ -390,6 +392,7 @@ const make = Effect.gen(function* () {
         result,
         ...(stoppedThere === undefined ? {} : { stoppedThere }),
         ...(stopCount === undefined ? {} : { stopCount }),
+        ...(stopLimits === undefined ? {} : { stopLimits }),
       })
       .pipe(
         Effect.catch((error) =>
@@ -586,7 +589,15 @@ const make = Effect.gen(function* () {
           remote.stoppedThere !== true)
       ) {
         const key = remote.stopCount === undefined ? "stop" : `stop-${remote.stopCount}`;
-        yield* stopThere(scope, remote, key, undefined, yield* executionCeiling(task)).pipe(
+        const execution = yield* executionCeiling(task);
+        // Within the cancel's modes too, however the threads here have changed since.
+        const ceiling =
+          remote.stopLimits === undefined
+            ? execution
+            : execution === undefined
+              ? remote.stopLimits
+              : narrowestModes(execution, remote.stopLimits);
+        yield* stopThere(scope, remote, key, undefined, ceiling).pipe(
           // Its thread there now runs above what this side may touch, say
           // because the parent here was lowered since; no retry changes that.
           Effect.catchIf(isModeRefusal, (error) =>
@@ -774,6 +785,7 @@ const make = Effect.gen(function* () {
           : `${cancelled} It could not be stopped in ${remote.label} and may still run there: ${unstopped}`,
         unstopped === undefined ? "stopped" : undefined,
         remote.stopCount,
+        unstopped === undefined ? undefined : limits,
       ).pipe(
         Effect.tapError((cause) =>
           Effect.logWarning("remote-delegation.cancel-record-failed", { taskId: task.id, cause }),

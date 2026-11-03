@@ -1970,10 +1970,11 @@ const stoppedThere = (
   taskId: NodeId,
   // `null` for a cancel's stop, which carries no count.
   stopCount: number | null = 1,
+  listingThreadId = parentThreadId,
 ) =>
   laptopEnv.orchestrator
     .streamStoredEventsFrom({
-      threadId: parentThreadId,
+      threadId: listingThreadId,
       afterSequence: 0,
       eventType: "subagent.updated",
     })
@@ -2174,44 +2175,98 @@ it.effect("a parent stopped while the box is unreachable still stops its task th
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("a task cancelled while the box is unreachable is stopped there after a restart", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const thread = yield* makeBoxThread;
-      const b = yield* serveBox(thread);
-      const offers = yield* SubscriptionRef.make<
-        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-      >([]);
-      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      // Its links outlive the restart, so the box knows it as the same link session.
-      const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
-      // The laptop cancels while the box sleeps, then restarts before it wakes.
-      const delegated = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const before = yield* makeLaptop(database, offers, linking);
-          yield* linkTo(before.links, b, "full-access");
-          yield* seedParent(before);
-          const task = yield* delegateToBox(before);
-          yield* Ref.set(b.descriptor, descriptorOf("environment-elsewhere", "Elsewhere"));
-          yield* before.call("task_cancel", { taskId: task.taskId });
-          expect(yield* taskResult(before, task.taskId)).toMatchObject({ status: "cancelled" });
-          return task;
-        }),
-      );
-      expect(yield* Ref.get(thread.interrupted)).toBe(0);
+it.effect.each([
+  "its parent",
+  "a native caller",
+  "a native caller whose runtime was narrowed",
+  "the root, whose interaction was narrowed",
+] as const)(
+  "a task cancelled while the box is unreachable is stopped there after a restart by %s",
+  (cancelledBy) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        // Its links outlive the restart, so the box knows it as the same link session.
+        const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
+        const narrowed = cancelledBy.endsWith("narrowed");
+        // The laptop cancels while the box sleeps, then restarts before it wakes.
+        const { task: delegated, listingThreadId } = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const before = yield* makeLaptop(database, offers, linking);
+            yield* linkTo(before.links, b, "full-access");
+            yield* seedParent(before);
+            if (cancelledBy === "its parent") {
+              const task = yield* delegateToBox(before);
+              yield* Ref.set(b.descriptor, descriptorOf("environment-elsewhere", "Elsewhere"));
+              yield* before.call("task_cancel", { taskId: task.taskId });
+              expect(yield* taskResult(before, task.taskId)).toMatchObject({
+                status: "cancelled",
+              });
+              return { task, listingThreadId: parentThreadId };
+            }
+            yield* before.mcpSessions.set({
+              environmentId: laptop.environmentId,
+              threadId: parentThreadId,
+              providerSessionId: parentScope.thread!.providerSessionId,
+              providerInstanceId: instanceId,
+              endpoint: "http://127.0.0.1/mcp",
+              authorizationHeader: "Bearer token",
+              browserToolsAvailable: false,
+            });
+            const [caller] = yield* seedNativeSubagents(before, ["caller"]);
+            const task = yield* delegateToBox(before, caller!.scope);
+            // The cancel's narrower mode: its caller's runtime, or the root's interaction.
+            const narrow = (mode: "narrow" | "widen") =>
+              cancelledBy === "the root, whose interaction was narrowed"
+                ? before.orchestrator.dispatch({
+                    type: "thread.interaction-mode.set",
+                    commandId: CommandId.make(`command:${mode}:root-interaction`),
+                    threadId: parentThreadId,
+                    interactionMode: mode === "narrow" ? "plan" : "default",
+                  })
+                : before.orchestrator.dispatch({
+                    type: "thread.runtime-mode.set",
+                    commandId: CommandId.make(`command:${mode}:caller-runtime`),
+                    threadId: caller!.threadId,
+                    runtimeMode: mode === "narrow" ? "approval-required" : "full-access",
+                  });
+            if (narrowed) yield* narrow("narrow");
+            yield* Ref.set(b.descriptor, descriptorOf("environment-elsewhere", "Elsewhere"));
+            yield* before.call(
+              "task_cancel",
+              { taskId: task.taskId },
+              cancelledBy.startsWith("the root") ? parentScope : caller!.scope,
+            );
+            expect(yield* taskResult(before, task.taskId, caller!.threadId)).toMatchObject({
+              status: "cancelled",
+            });
+            // Widened again before the box wakes: the owed stop keeps the cancel's modes.
+            if (narrowed) yield* narrow("widen");
+            return { task, listingThreadId: caller!.threadId };
+          }),
+        );
+        expect(yield* Ref.get(thread.interrupted)).toBe(0);
 
-      yield* Ref.set(b.descriptor, box);
-      const after = yield* makeLaptop(database, offers, linking);
-      yield* after.remote.start();
-      yield* Deferred.await(thread.interruptedOnce);
-      // Once the stop is recorded, nothing is owed there any more.
-      yield* stoppedThere(after, delegated.taskId, null);
-      expect(yield* after.projections.getOpenRemoteDelegatedTasks).toEqual([]);
-      expect(yield* Ref.get(thread.stops)).toEqual(["thread.stop", "delegated-tasks"]);
-      // The result here is still the cancel's.
-      expect(yield* taskResult(after, delegated.taskId)).toMatchObject({ status: "cancelled" });
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        yield* Ref.set(b.descriptor, box);
+        const after = yield* makeLaptop(database, offers, linking);
+        yield* after.remote.start();
+        // Once the stop is recorded or refused for good, nothing is owed there any more.
+        yield* stoppedThere(after, delegated.taskId, null, listingThreadId);
+        expect(yield* after.projections.getOpenRemoteDelegatedTasks).toEqual([]);
+        expect(yield* Ref.get(thread.stops)).toEqual(
+          narrowed ? [] : ["thread.stop", "delegated-tasks"],
+        );
+        // The result here is still the cancel's.
+        expect(yield* taskResult(after, delegated.taskId, listingThreadId)).toMatchObject({
+          status: "cancelled",
+        });
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a task whose thread there has no run ends with its last reply", () =>

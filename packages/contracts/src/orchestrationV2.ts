@@ -860,6 +860,12 @@ const DedupedBodyMarker = Schema.optionalKey(Schema.Literal(true));
  * of in a child thread here: that environment and the ordinary thread it runs
  * as there. Such a task has no `childThreadId`.
  */
+/** The modes a stop owed to a task there is sent within: those of the cancel that owes it. */
+export const OrchestrationV2RemoteStopLimits = Schema.Struct({
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+});
+
 export const OrchestrationV2RemoteTaskChild = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
@@ -878,6 +884,11 @@ export const OrchestrationV2RemoteTaskChild = Schema.Struct({
    * one owed, so each reaches the thread there once however often it is sent.
    */
   stopCount: Schema.optional(NonNegativeInt),
+  /**
+   * The ceiling of the stop owed for `stopCount`, kept across retries and restarts so it never
+   * goes out above the cancel's modes. Absent: the listing and executing threads' current modes.
+   */
+  stopLimits: Schema.optional(OrchestrationV2RemoteStopLimits),
 });
 export type OrchestrationV2RemoteTaskChild = typeof OrchestrationV2RemoteTaskChild.Type;
 
@@ -3481,6 +3492,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     stoppedThere: Schema.optional(Schema.Literals(["ran-out", "stopped"])),
     /** The stop generation this report acknowledges; absent for the original unnumbered stop. */
     stopCount: Schema.optional(NonNegativeInt),
+    /** Without `stoppedThere`: the cancel's modes, which the stop it owes is sent within. */
+    stopLimits: Schema.optional(OrchestrationV2RemoteStopLimits),
   }),
   /**
    * Owes a stop to the thread there of a remote task that already has its result, as Stop on
