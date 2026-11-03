@@ -127,7 +127,6 @@ describe("useComposerSelection runtime mode persistence", () => {
 
   it("reverts the draft runtime mode and alerts when persisting to the server fails", async () => {
     using _cleanup = setup();
-    const toastSpy = vi.spyOn(toastManager, "add");
     const setThreadRuntimeMode = vi
       .fn()
       .mockResolvedValue(AsyncResult.failure(Cause.fail(new Error("Network disconnect"))));
@@ -141,15 +140,16 @@ describe("useComposerSelection runtime mode persistence", () => {
         }}
       />,
     );
+    using toastSpy = vi.spyOn(toastManager, "add");
 
     await act(async () => {
       hook.handleRuntimeModeChangeStable("approval-required");
     });
 
     await vi.waitFor(() => {
-      expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
-        "full-access",
-      );
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode ?? null,
+      ).toBeNull();
     });
 
     expect(toastSpy).toHaveBeenCalledWith(
@@ -157,6 +157,57 @@ describe("useComposerSelection runtime mode persistence", () => {
         type: "error",
         title: "Failed to update permission mode",
       }),
+    );
+  });
+
+  it("preserves newer runtime mode selection when an earlier change fails after a delay", async () => {
+    using _cleanup = setup();
+    let rejectFirst!: (res: unknown) => void;
+    const firstPromise = new Promise((resolve) => {
+      rejectFirst = resolve;
+    });
+    const setThreadRuntimeMode = vi
+      .fn()
+      .mockImplementationOnce(() => firstPromise)
+      .mockResolvedValueOnce(AsyncResult.success(undefined));
+    let hook!: ReturnType<typeof useComposerSelection>;
+
+    await using _screen = await render(
+      <TestHarness
+        setThreadRuntimeMode={setThreadRuntimeMode}
+        onReady={(h) => {
+          hook = h;
+        }}
+      />,
+    );
+    using toastSpy = vi.spyOn(toastManager, "add");
+
+    await act(() => {
+      hook.handleRuntimeModeChangeStable("approval-required");
+    });
+    await act(() => {
+      hook.handleRuntimeModeChangeStable("auto-accept-edits");
+    });
+
+    expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
+      "auto-accept-edits",
+    );
+
+    await act(async () => {
+      rejectFirst(AsyncResult.failure(Cause.fail(new Error("First call failed"))));
+    });
+
+    await vi.waitFor(() => {
+      expect(toastSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "error",
+          title: "Failed to update permission mode",
+        }),
+      );
+    });
+
+    expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
+      "auto-accept-edits",
     );
   });
 

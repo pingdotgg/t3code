@@ -119,7 +119,12 @@ export function useComposerSelection(input: ComposerSelectionInput) {
         },
       }).then((result) => {
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          setComposerDraftRuntimeMode(composerDraftTarget, activeThread.runtimeMode);
+          const currentDraftRuntimeMode = useComposerDraftStore
+            .getState()
+            .getComposerDraft(composerDraftTarget)?.runtimeMode;
+          if (currentDraftRuntimeMode === mode) {
+            setComposerDraftRuntimeMode(composerDraftTarget, null);
+          }
           const error = squashAtomCommandFailure(result);
           toastManager.add({
             type: "error",
