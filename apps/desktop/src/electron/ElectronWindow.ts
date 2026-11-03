@@ -26,8 +26,8 @@ function windowsForegroundFocusTarget(window: Electron.BrowserWindow) {
     windowId: window.id,
     processId: process.pid,
     title: window.getTitle(),
-    bounds: window.getBounds(),
-    contentBounds: window.getContentBounds(),
+    bounds: Electron.screen.dipToScreenRect(window, window.getBounds()),
+    contentBounds: Electron.screen.dipToScreenRect(window, window.getContentBounds()),
   };
 }
 

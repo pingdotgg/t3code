@@ -49,6 +49,7 @@ import {
   LinuxBrowserSecretHostError,
   MacPackagedAppMissingError,
   stageBrowserSecret,
+  stageLinuxCaptureHelper,
   validateMacPackagedPayload,
   validateWindowsPackagedPayload,
   verifyPackagedBundleIsSelfContained,
@@ -1827,4 +1828,50 @@ it.effect.skipIf(!symlinksSupported)("preserves relative links when replacing di
     assert.equal(yield* fs.readLink(path.join(output, app, "Current")), "New.plist");
     assert.equal(yield* fs.readFileString(path.join(output, app, "Current")), "rebuilt-app");
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("stages self-contained KDE helpers without reusing old glibc builds", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-linux-capture-stage-" });
+    for (const arch of ["arm64", "x64"] as const) {
+      const cpu = arch === "arm64" ? "aarch64" : "x86_64";
+      const output = path.join(root, arch);
+      const gnu = path.join(
+        root,
+        "native/kde-snap-shot/target",
+        `${cpu}-unknown-linux-gnu`,
+        "release",
+      );
+      const musl = path.join(
+        root,
+        "native/kde-snap-shot/target",
+        `${cpu}-unknown-linux-musl`,
+        "release",
+      );
+      yield* fs.makeDirectory(gnu, { recursive: true });
+      yield* fs.makeDirectory(musl, { recursive: true });
+      yield* fs.writeFileString(path.join(gnu, "t3-kde-snap-shot"), "old-glibc-build");
+      yield* fs.writeFileString(path.join(musl, "t3-kde-snap-shot"), `self-contained-${arch}`);
+      yield* stageLinuxCaptureHelper({
+        backend: "kde",
+        repoRoot: root,
+        stageResourcesDir: output,
+        arch,
+        verbose: false,
+      });
+      assert.equal(
+        yield* fs.readFileString(path.join(output, "kde-capture/t3-kde-snap-shot")),
+        `self-contained-${arch}`,
+      );
+    }
+  }).pipe(
+    Effect.provide(NodeServices.layer),
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnv({ env: { T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS: "true" } }),
+    ),
+    Effect.scoped,
+  ),
 );
