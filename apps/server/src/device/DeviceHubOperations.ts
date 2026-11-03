@@ -7,7 +7,7 @@ import {
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import type { DeviceHostReady, DeviceOperations, HostDevice } from "./DeviceHost.ts";
 
@@ -38,6 +38,21 @@ const HubActionResult = Schema.Struct({
     Schema.Array(Schema.Struct({ message: Schema.String, error: Schema.optional(Schema.String) })),
   ),
 });
+
+// Hub diagnostics can carry a whole stderr dump.
+const boundDiagnostics = (text: string) =>
+  text.length > 2_000 ? `${text.slice(0, 1_999)}…` : text;
+
+// The hub's `error` is a util.inspect of Node's exec error; the stack and the
+// inspected fields follow the first frame, so keep the lines before it.
+const errorHead = (error: string) => {
+  const lines = error.split(/\r?\n/);
+  const firstFrame = lines.findIndex((line) => /^\s+at /.test(line));
+  return (firstFrame === -1 ? lines : lines.slice(0, firstFrame))
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ");
+};
 
 const vendorPrefix = (platform: DevicePlatform) =>
   platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
@@ -109,7 +124,11 @@ export const makeDeviceHubOperations = (options: {
           /(?:^Error:\s*ENOENT:|\bcode:\s*['"]ENOENT['"])/.test(error.error ?? "")
         ),
     );
-    const details = warnings?.map((error) => error.message) ?? [];
+    const details =
+      warnings?.map((error) => {
+        const head = errorHead(error.error ?? "");
+        return boundDiagnostics(head ? `${error.message} ${head}` : error.message);
+      }) ?? [];
     let androidDiscoveryIncomplete = false;
     if (androidAvailable) {
       const avds = yield* run("emulator", ["-list-avds"]);
@@ -167,12 +186,7 @@ export const makeDeviceHubOperations = (options: {
           : /timed? out|timeout/i.test(diagnostics)
             ? "timeout"
             : "launch_failed",
-        ...(diagnostics
-          ? {
-              diagnostics:
-                diagnostics.length > 2_000 ? `${diagnostics.slice(0, 1_999)}…` : diagnostics,
-            }
-          : {}),
+        ...(diagnostics ? { diagnostics: boundDiagnostics(diagnostics) } : {}),
         cause: result,
       });
     }
@@ -239,7 +253,10 @@ export const makeDeviceHubOperations = (options: {
           (cause) =>
             new DeviceOperationError({
               operation: "screenshot",
-              reason: "request_failed",
+              reason:
+                HttpClientError.isHttpClientError(cause) && cause.reason._tag === "StatusCodeError"
+                  ? "hub_rejected"
+                  : "request_failed",
               cause,
             }),
         ),

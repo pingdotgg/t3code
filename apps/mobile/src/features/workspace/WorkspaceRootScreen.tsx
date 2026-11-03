@@ -128,10 +128,7 @@ function WorkspaceRootContent() {
 
   return (
     <WorkspaceTabsContext value={context}>
-      <View
-        className={`flex-1 ${sidebarPicker ? "bg-drawer" : surface.className}`}
-        style={sidebarPicker ? { paddingTop: insets.top } : undefined}
-      >
+      <View className={`flex-1 ${sidebarPicker ? "bg-drawer" : surface.className}`}>
         {Platform.OS === "ios" ? (
           <NativeStackScreenOptions
             optionsVersion={[
@@ -191,11 +188,7 @@ function WorkspaceRootContent() {
             ]}
           />
         )}
-        <SafeAreaInsetsContext
-          value={
-            sidebarPicker ? { ...insets, top: 0 } : compactTabs ? { ...insets, bottom: 0 } : insets
-          }
-        >
+        <SafeAreaInsetsContext value={compactTabs ? { ...insets, bottom: 0 } : insets}>
           {settingsOpen ? (
             <SettingsRouteScreen />
           ) : enabled.length === 0 ? (

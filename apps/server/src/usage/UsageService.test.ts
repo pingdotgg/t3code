@@ -5,9 +5,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
+import * as NodeZlib from "node:zlib";
 
 import { assert, describe, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
@@ -29,6 +31,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -66,12 +69,17 @@ const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unkno
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonString = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
 
-function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
+function claudeLine(
+  id: number,
+  outputTokens: number,
+  model = "claude-fable-5",
+  sessionId = "session-1",
+): string {
   return `${JSON.stringify({
     type: "assistant",
     timestamp: "2026-08-01T10:00:00Z",
     requestId: `req_${id}`,
-    sessionId: "session-1",
+    sessionId,
     message: {
       id: `msg_${id}`,
       model,
@@ -142,6 +150,8 @@ const layerService = (input: {
   ) => Effect.Effect<Response, HttpClientError.HttpClientError>;
   readonly environment?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
+  readonly hostname?: string;
+  readonly secretStore?: Partial<ServerSecretStore.ServerSecretStore["Service"]>;
 }) =>
   layerCursorUsageAccounts(
     CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer)),
@@ -151,12 +161,18 @@ const layerService = (input: {
     Layer.provideMerge(ProviderHostLive.layer),
     Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
-    Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
+    Layer.provideMerge(
+      Layer.mock(ServerSecretStore.ServerSecretStore)({
+        get: () => Effect.succeedNone,
+        ...input.secretStore,
+      }),
+    ),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), NodePath.join(input.home, input.prefix)),
     ),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(Layer.succeed(HostProcess.Platform, input.platform ?? "linux")),
+    Layer.provideMerge(Layer.succeed(HostProcess.Hostname, input.hostname ?? "usage-test-host")),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
     Layer.provideMerge(
       Layer.succeed(
@@ -231,10 +247,12 @@ function makeFakeCursor() {
     error: null as string | null,
     gate: undefined as Deferred.Deferred<void> | undefined,
     calls: [] as { readonly sinceMs: number; readonly untilMs: number }[],
+    credentials: [] as unknown[],
   };
-  const read = (_credential: unknown, sinceMs: number, untilMs: number) =>
+  const read = (credential: unknown, sinceMs: number, untilMs: number) =>
     Effect.gen(function* () {
       state.calls.push({ sinceMs, untilMs });
+      state.credentials.push(credential);
       if (state.gate !== undefined) yield* Deferred.await(state.gate);
       const { accountKey, error } = state;
       if (error !== null) return { accountKey, records: [], missing: false, error };
@@ -276,6 +294,10 @@ const writeCursorLogin = (home: string) =>
 
 function cursorSource(summary: { readonly sources: readonly UsageSource[] }) {
   return summary.sources.find((source) => source.fingerprint.provider === "cursor");
+}
+
+function cursorSources(summary: { readonly sources: readonly UsageSource[] }) {
+  return summary.sources.filter((source) => source.fingerprint.provider === "cursor");
 }
 
 const seedCodexHistory = (input: {
@@ -465,6 +487,160 @@ describe("Codex usage history", () => {
 });
 
 describe("UsageService", () => {
+  it.live("counts compressed Codex rollouts across refresh, rewrites, and cache restarts", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const sessions = NodePath.join(home, "codex", "sessions");
+      const compressedPath = NodePath.join(sessions, "compressed.jsonl.zst");
+      const usage = (output_tokens: number, timestamp = "2026-08-01T10:00:00Z") =>
+        encodeUnknownJsonString({
+          type: "event_msg",
+          timestamp,
+          payload: {
+            type: "token_count",
+            info: { last_token_usage: { input_tokens: 10, output_tokens } },
+          },
+        }) + "\n";
+      const rollout = (id: string, output: number) =>
+        [
+          { type: "session_meta", payload: { id } },
+          { type: "turn_context", payload: { model: "gpt-6-astra" } },
+        ]
+          .map((line) => encodeUnknownJsonString(line))
+          .join("\n") +
+        "\n" +
+        usage(output);
+      const compressed = rollout("compressed-session", 23);
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessions, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(sessions, "plain.jsonl"),
+          rollout("plain-session", 17),
+        );
+        await NodeFSP.writeFile(compressedPath, NodeZlib.zstdCompressSync(compressed));
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const first = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(first), 40);
+        assert.strictEqual(
+          first.sources.find((source) => source.fingerprint.provider === "codex")?.distinctSessions,
+          2,
+        );
+        assert.deepStrictEqual((yield* service.readSummary(WINDOW)).buckets, first.buckets);
+        yield* service.awaitPersisted;
+        // The same rollout may remain in a plain file while compression finishes.
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(NodePath.join(sessions, "copy.jsonl"), compressed),
+        );
+        assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 40);
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(
+            compressedPath,
+            NodeZlib.zstdCompressSync(compressed + usage(31, "2026-08-01T10:00:05Z")),
+          ),
+        );
+        const rewritten = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(rewritten), 71);
+        assert.deepStrictEqual((yield* service.readSummary(WINDOW)).buckets, rewritten.buckets);
+        yield* service.awaitPersisted;
+        const restarted = yield* UsageService.make;
+        assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, rewritten.buckets);
+        yield* restarted.awaitPersisted;
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerService({ prefix: "usage-compressed-codex", home, settings })),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps the first host identity across recreation and explicit override removal", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      for (const [hostname, override, expected] of [
+        ["container-a", undefined, "container-a"],
+        ["container-b", undefined, "container-a"],
+        ["container-c", "physical-host", "physical-host"],
+        ["container-d", undefined, "container-a"],
+      ] as const) {
+        const summary = yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          return yield* service.readSummary(WINDOW);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            layerService({
+              prefix: "usage-host-id",
+              home,
+              settings,
+              hostname,
+              environment: override === undefined ? {} : { T3CODE_HOST_ID: override },
+            }),
+          ),
+        );
+        const source = summary.sources.find((source) => source.fingerprint.provider === "claude");
+        assert.strictEqual(source?.fingerprint.hostId, expected);
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("concurrent initialization keeps one host identity across service recreation", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const prefix = "usage-host-id-race";
+      const hostIdPath = NodePath.join(home, prefix, "usage-host-id");
+      const bothRead = yield* Deferred.make<void>();
+      let reads = 0;
+      const summaries = yield* Effect.forEach(
+        ["container-a", "container-b"],
+        (hostname) =>
+          Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
+            let firstRead = true;
+            const service = yield* UsageService.make.pipe(
+              Effect.provideService(FileSystem.FileSystem, {
+                ...fileSystem,
+                readFileString: (path, encoding) =>
+                  Effect.gen(function* () {
+                    if (path !== hostIdPath || !firstRead) {
+                      return yield* fileSystem.readFileString(path, encoding);
+                    }
+                    firstRead = false;
+                    // Both instances observe the missing file before either can create it.
+                    const result = yield* Effect.exit(fileSystem.readFileString(path, encoding));
+                    reads += 1;
+                    if (reads === 2) yield* Deferred.succeed(bothRead, undefined);
+                    yield* Deferred.await(bothRead);
+                    return yield* result;
+                  }),
+              }),
+            );
+            return yield* service.readSummary(WINDOW);
+          }).pipe(
+            Effect.scoped,
+            Effect.provide(layerService({ prefix, home, settings, hostname })),
+          ),
+        { concurrency: "unbounded" },
+      );
+      const persisted = yield* Effect.promise(() => NodeFSP.readFile(hostIdPath, "utf8"));
+      const hostId = persisted.trim();
+      assert.include(["container-a", "container-b"], hostId);
+      const restarted = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        return yield* service.readSummary(WINDOW);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerService({ prefix, home, settings, hostname: "container-c" })),
+      );
+      for (const summary of [...summaries, restarted]) {
+        const source = summary.sources.find((source) => source.fingerprint.provider === "claude");
+        assert.strictEqual(source?.fingerprint.hostId, hostId);
+      }
+    }).pipe(Effect.scoped),
+  );
+
   it.live(
     "repairs initial Codex prices after unchanged-file retries, persists evidence and corrections, and honors later native tiers",
     () =>
@@ -1305,6 +1481,37 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("ignores a stale macOS Keychain login when Cursor is not installed", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const cursor = makeFakeCursor();
+      cursor.state.error = "Sign in to Cursor again to read account usage.";
+      const readCursorSource = Effect.gen(function* () {
+        const service = yield* makeWithCursor(cursor.read);
+        const summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        return cursorSource(summary);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-keychain-uninstalled",
+            home,
+            settings: { ...settings, cursorKeychainUsageEnabled: true },
+            platform: "darwin",
+            environment: {},
+          }),
+        ),
+      );
+
+      assert.isUndefined(yield* readCursorSource);
+      assert.lengthOf(cursor.state.calls, 0);
+
+      yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(home, ".cursor")));
+      const installed = yield* readCursorSource;
+      assert.strictEqual(installed?.message, "Sign in to Cursor again to read account usage.");
+      assert.lengthOf(cursor.state.calls, 1);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("ignores stale Cursor file logins when the active credential store differs", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
@@ -1317,11 +1524,6 @@ describe("UsageService", () => {
         {
           platform: "linux" as const,
           environment: { AGENT_CLI_CREDENTIAL_STORE: "memory" },
-          authPath: ["config", "cursor", "auth.json"],
-        },
-        {
-          platform: "linux" as const,
-          environment: { CURSOR_API_KEY: "different-account" },
           authPath: ["config", "cursor", "auth.json"],
         },
       ].entries()) {
@@ -1351,6 +1553,212 @@ describe("UsageService", () => {
         assert.isFalse(summary.buckets.some((bucket) => bucket.provider === "cursor"));
       }
     }).pipe(Effect.scoped),
+  );
+
+  it.live("reads the Cursor account of an API key or T3 sign-in instead of a CLI login", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const signIn = new TextEncoder().encode(
+        encodeUnknownJsonString({
+          version: 1,
+          backendUrl: "https://api2.cursor.sh",
+          apiKey: "signed-in-key",
+          createdAtMs: 0,
+        }),
+      );
+      for (const [index, testCase] of [
+        { environment: { CURSOR_API_KEY: "environment-key" }, stored: Option.none() },
+        { environment: {}, stored: Option.some(signIn) },
+      ].entries()) {
+        const cursor = makeFakeCursor();
+        const summary = yield* Effect.gen(function* () {
+          const service = yield* makeWithCursor(cursor.read);
+          return yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: `usage-service-cursor-api-key-${index}`,
+              home,
+              settings,
+              platform: "darwin",
+              environment: testCase.environment,
+              secretStore: { get: () => Effect.succeed(testCase.stored) },
+            }),
+          ),
+        );
+        assert.deepStrictEqual(cursor.state.credentials, [
+          { kind: "apiKey", apiKey: index === 0 ? "environment-key" : "signed-in-key" },
+        ]);
+        assert.strictEqual(cursorSource(summary)?.status, "ok");
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("does not show a previous Cursor account's history after the API key changes", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      let apiKey = "first-account-key";
+      const signIn = () =>
+        Option.some(
+          new TextEncoder().encode(
+            encodeUnknownJsonString({
+              version: 1,
+              backendUrl: "https://api2.cursor.sh",
+              apiKey,
+              createdAtMs: 0,
+            }),
+          ),
+        );
+      const cursor = makeFakeCursor();
+      cursor.state.events = [{ timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 7 }];
+      yield* Effect.gen(function* () {
+        const service = yield* makeWithCursor(cursor.read);
+        const first = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.isTrue(first.buckets.some((bucket) => bucket.provider === "cursor"));
+
+        apiKey = "second-account-key";
+        cursor.state.error = "Cursor account usage could not be read.";
+        const second = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.isFalse(second.buckets.some((bucket) => bucket.provider === "cursor"));
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-key-change",
+            home,
+            settings,
+            platform: "darwin",
+            environment: {},
+            secretStore: { get: () => Effect.sync(signIn) },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("keeps a new Cursor key's refresh visible beside a failing key", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const cursor = makeFakeCursor();
+      const started = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const context = yield* Layer.build(
+          layerCursorUsageAccounts(
+            Layer.succeed(CursorAccountReader.CursorAccountReader, {
+              read: (credential, sinceMs, untilMs) =>
+                (credential as { apiKey?: string }).apiKey === "failing-key"
+                  ? Effect.succeed({
+                      accountKey: null,
+                      records: [],
+                      missing: false,
+                      error: "Cursor account usage could not be read.",
+                    })
+                  : Deferred.succeed(started, undefined).pipe(
+                      Effect.andThen(Deferred.await(gate)),
+                      Effect.andThen(cursor.read(credential, sinceMs, untilMs)),
+                    ),
+            }),
+          ),
+        );
+        const accounts = Context.get(context, CursorUsageAccounts.CursorUsageAccounts);
+        const scan = (awaitRefresh: boolean) =>
+          accounts.scan({
+            instances: [
+              {
+                instanceId: ProviderInstanceId.make("cursor"),
+                environment: { CURSOR_API_KEY: "failing-key" },
+              },
+              {
+                instanceId: ProviderInstanceId.make("cursor-work"),
+                environment: { CURSOR_API_KEY: "new-key" },
+              },
+            ],
+            keychainUsageEnabled: false,
+            windowStartMs: 0,
+            retentionCutoffMs: 0,
+            awaitRefresh,
+          });
+        const first = yield* Effect.forkChild(scan(true));
+        yield* Deferred.await(started);
+        const sources = yield* scan(false);
+        assert.isTrue(sources.some((source) => source.refreshing === true));
+        yield* Deferred.succeed(gate, undefined);
+        yield* Fiber.join(first);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-new-key",
+            home,
+            settings,
+            platform: "linux",
+            environment: {},
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("reports one Cursor source when two API keys belong to the same account", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      const cursor = makeFakeCursor();
+      cursor.state.events = [{ timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 7 }];
+      let revoked = false;
+      yield* Effect.gen(function* () {
+        const service = yield* makeWithCursor((credential, sinceMs, untilMs) =>
+          revoked && (credential as { apiKey?: string }).apiKey === "second-key"
+            ? Effect.succeed({
+                accountKey: null,
+                records: [],
+                missing: false,
+                error: "Cursor account usage could not be read.",
+              })
+            : cursor.read(credential, sinceMs, untilMs),
+        );
+        const first = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.strictEqual(cursor.state.credentials.length, 2);
+        assert.deepStrictEqual(
+          cursorSources(first).map((source) => source.distinctSessions),
+          [1],
+        );
+
+        // The revoked key keeps its stale cache, which must not replace the working key's history.
+        revoked = true;
+        cursor.state.events.push({ timestampMs: CURSOR_NOW + 60 * 1000, outputTokens: 5 });
+        yield* TestClock.adjust(Duration.minutes(2));
+        const second = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.deepStrictEqual(
+          cursorSources(second).map((source) => source.status),
+          ["ok"],
+        );
+        assert.strictEqual(totalOutputTokens(second), 12);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-shared-account",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("cursor")]: {
+                  driver: ProviderDriverKind.make("cursor"),
+                  environment: [{ name: "CURSOR_API_KEY", value: "first-key", sensitive: true }],
+                },
+                [ProviderInstanceId.make("cursor-work")]: {
+                  driver: ProviderDriverKind.make("cursor"),
+                  environment: [{ name: "CURSOR_API_KEY", value: "second-key", sensitive: true }],
+                },
+              },
+            },
+            platform: "darwin",
+            environment: {},
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.live(
@@ -1889,6 +2297,111 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live("filters original model IDs before aliases, pricing, buckets and session counts", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          transcript,
+          claudeLine(1, 3, "orbit-1", "mixed") +
+            claudeLine(2, 5, "orbit-2", "mixed") +
+            claudeLine(3, 7, "drift-9", "mixed") +
+            claudeLine(4, 11, "drift-9", "excluded-only"),
+        ),
+      );
+      const rates = {
+        "orbit-1": { input_cost_per_token: 0.000001, output_cost_per_token: 0.00001 },
+        "orbit-2": { input_cost_per_token: 0.000002, output_cost_per_token: 0.00002 },
+      };
+      const include = {
+        // The codex selector must not match the Claude drift-9 records.
+        include: [
+          { provider: "claude", model: "orbit-1" },
+          { model: "orbit-2" },
+          { provider: "codex", model: "drift-9" },
+        ],
+      };
+      const exclude = { exclude: [{ model: "drift-9" }] };
+      const HOURLY: UsageSummaryInput = {
+        ...WINDOW,
+        resolution: "hour",
+        sinceTime: "2026-08-01T09:00:00Z",
+        untilTime: "2026-08-01T11:00:00Z",
+      };
+      const cells = (summary: UsageSummary) =>
+        summary.buckets.map(({ model, totals, costUsd, records, sessions }) => ({
+          model,
+          outputTokens: totals.outputTokens,
+          costUsd: Math.round(costUsd * 1e6),
+          records,
+          sessions,
+        }));
+
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        // Same service, concurrent reads: the in-flight key must keep these scans apart.
+        const [unfiltered, noOp, keepNothing, included, reordered, excluded, hourly] =
+          yield* Effect.all(
+            [
+              service.readSummary(WINDOW),
+              service.readSummary({ ...WINDOW, modelFilter: { exclude: [] } }),
+              service.readSummary({ ...WINDOW, modelFilter: { include: [] } }),
+              service.readSummary({ ...WINDOW, modelFilter: include }),
+              service.readSummary({
+                ...WINDOW,
+                modelFilter: { include: [...include.include].reverse() },
+              }),
+              service.readSummary({ ...WINDOW, modelFilter: exclude }),
+              service.readSummary({ ...HOURLY, modelFilter: include }),
+            ],
+            { concurrency: "unbounded" },
+          );
+
+        // Unfiltered keeps today's behavior: the alias folds drift-9 into orbit-1.
+        assert.deepStrictEqual(cells(unfiltered), [
+          { model: "orbit-1", outputTokens: 21, costUsd: 240, records: 3, sessions: 2 },
+          { model: "orbit-2", outputTokens: 5, costUsd: 120, records: 1, sessions: 1 },
+        ]);
+        assert.strictEqual(unfiltered.sources[0]?.distinctSessions, 2);
+        assert.strictEqual(unfiltered.modelFilter, undefined);
+        assert.strictEqual(noOp, unfiltered);
+        assert.deepStrictEqual(keepNothing.buckets, []);
+        assert.strictEqual(keepNothing.sources[0]?.distinctSessions, 0);
+
+        const kept = [
+          { model: "orbit-1", outputTokens: 3, costUsd: 40, records: 1, sessions: 1 },
+          { model: "orbit-2", outputTokens: 5, costUsd: 120, records: 1, sessions: 1 },
+        ];
+        assert.deepStrictEqual(cells(included), kept);
+        assert.deepStrictEqual(cells(excluded), kept);
+        assert.deepStrictEqual(cells(hourly), kept);
+        assert.strictEqual(hourly.buckets[0]?.hourStart, "2026-08-01T10:00:00.000Z");
+        for (const summary of [included, excluded, hourly]) {
+          assert.strictEqual(summary.sources[0]?.distinctSessions, 1);
+        }
+        // Equal filters share one scan and echo one canonical form.
+        assert.strictEqual(reordered, included);
+        assert.deepStrictEqual(included.modelFilter, {
+          include: [
+            { provider: "claude", model: "orbit-1" },
+            { provider: "codex", model: "drift-9" },
+            { model: "orbit-2" },
+          ],
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-model-filter-test",
+            home,
+            settings: { ...settings, usageModelAliases: { "drift-9": "orbit-1" } },
+            ratesDocument: rates,
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
@@ -2111,7 +2624,7 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live.each([4, 5, 6, 7, 8])(
+  it.live.each([4, 5, 6, 7, 8, 10])(
     "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts and the old file",
     (version) =>
       Effect.gen(function* () {
@@ -2178,7 +2691,7 @@ describe("UsageService", () => {
                 delete file.cs.lastCumulativeUsage;
                 delete file.cs.malformedRecords;
               }
-              if (version === 8 && path === livePath) {
+              if (version >= 8 && path === livePath) {
                 file.r = [];
                 file.mr = 1;
                 file.cs.malformedRecords = 1;
@@ -2210,7 +2723,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v9.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v11.json");
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,
@@ -2235,6 +2748,106 @@ describe("UsageService", () => {
           ),
         );
       }).pipe(Effect.scoped),
+  );
+
+  it.live("re-parses a clean v10 Codex rollout that grew after an interrupted request", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const sessions = NodePath.join(home, "codex", "sessions");
+      const live = NodePath.join(sessions, "live.jsonl");
+      const usage = (input: number, output: number) => ({
+        input_tokens: input,
+        output_tokens: output,
+        total_tokens: input + output,
+      });
+      const lines = (values: readonly unknown[]) =>
+        values.map((value) => `${encodeUnknownJsonString(value)}\n`).join("");
+      const request = (second: number, last: unknown) => ({
+        type: "token_usage_record",
+        timestamp: `2026-08-01T10:00:0${second}Z`,
+        payload: { usage: last },
+      });
+      const tokenCount = (second: number, last: unknown, total: unknown) => ({
+        type: "event_msg",
+        timestamp: `2026-08-01T10:00:0${second}Z`,
+        payload: {
+          type: "token_count",
+          info: { last_token_usage: last, total_token_usage: total },
+        },
+      });
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessions, { recursive: true });
+        await NodeFSP.writeFile(
+          live,
+          lines([
+            { type: "session_meta", payload: { id: "live" } },
+            { type: "turn_context", payload: { turn_id: "turn-1", model: "gpt-6-astra" } },
+            request(1, usage(100, 20)),
+            tokenCount(1, usage(100, 20), usage(100, 20)),
+            // Interrupted after this request finished: no token_count reports it.
+            request(2, usage(150, 10)),
+          ]),
+        );
+      });
+
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const tokens = (summary: UsageSummary) =>
+          summary.buckets.reduce((sum, bucket) => sum + totalTokens(bucket.totals), 0);
+        const first = yield* UsageService.make;
+        assert.strictEqual(tokens(yield* first.readSummary(WINDOW)), 120);
+        yield* first.awaitPersisted;
+
+        yield* Effect.promise(async () => {
+          const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<string, { cs: Record<string, unknown> }>;
+          };
+          // The v10 parser ignored `token_usage_record`, so its clean state held nothing pending.
+          for (const file of Object.values(document.files)) {
+            file.cs = Object.fromEntries(
+              Object.entries(file.cs).filter(([key]) => !key.startsWith("unreported")),
+            );
+          }
+          await NodeFSP.rm(cachePath);
+          await NodeFSP.writeFile(
+            NodePath.join(stateDir, "usage-scan-cache-v10.json"),
+            encodeUnknownJsonString({ ...document, version: 10 }),
+          );
+          await NodeFSP.appendFile(
+            live,
+            lines([
+              { type: "turn_context", payload: { turn_id: "turn-2", model: "gpt-6-astra" } },
+              request(5, usage(200, 30)),
+              tokenCount(5, usage(200, 30), usage(450, 60)),
+            ]),
+          );
+        });
+
+        const upgraded = yield* UsageService.make;
+        const summary = yield* upgraded.readSummary(WINDOW);
+        assert.deepStrictEqual(
+          {
+            tokens: tokens(summary),
+            malformedRecords: summary.sources.find(
+              (source) => source.fingerprint.provider === "codex",
+            )?.malformedRecords,
+          },
+          { tokens: 510, malformedRecords: 0 },
+        );
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cache-v10-interrupted-test",
+            home,
+            settings,
+            ratesDocument: {
+              "gpt-6-astra": { input_cost_per_token: 0, output_cost_per_token: 1 },
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.live("preserves saved tokens, costs and sessions after transcript cleanup and restart", () =>
@@ -2451,7 +3064,10 @@ describe("UsageService", () => {
 
   it.live("reports saved usage of a removed directory only for windows it reaches", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-08-12T00:00:00Z"));
       const { transcript, settings, home } = yield* setup;
+      // Saved usage is pruned after the retention window, so pin "now" near the write.
+      yield* TestClock.setTime(Date.parse("2026-08-15T00:00:00Z"));
       yield* Effect.promise(async () => {
         await NodeFSP.writeFile(transcript, claudeLine(1, 5));
         const lastWrite = Date.parse("2026-08-01T10:00:00Z") / 1000;
@@ -2477,7 +3093,7 @@ describe("UsageService", () => {
       assert.deepStrictEqual(later.buckets, []);
       assert.strictEqual(later.sources[0]?.status, "missing");
       assert.strictEqual(later.sources[0]?.scannedFiles, 0);
-    }).pipe(Effect.scoped),
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.live("does not share an in-flight scan after custom prices change", () =>
