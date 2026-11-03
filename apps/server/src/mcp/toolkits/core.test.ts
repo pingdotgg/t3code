@@ -2,20 +2,24 @@ import * as AssetSigner from "../../assets/AssetSigner.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   ChatImageAttachment,
   CommandId,
   EnvironmentId,
+  MessageId,
   NodeId,
   OrchestratorMcpThreadReadResult,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderInteractionMode,
   RunId,
   ScheduledTaskError,
   ScheduledTask,
   RuntimeRequestId,
+  type RuntimeMode,
   ThreadId,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
@@ -38,6 +42,13 @@ import {
 } from "../../orchestration-v2/Orchestrator.ts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import { CodexProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as CommandReceiptStore from "../../orchestration-v2/CommandReceiptStore.ts";
+import { DispatchModeLimit } from "../../orchestration-v2/DispatchModeLimit.ts";
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
+import * as ProviderReplayHarness from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as ProviderRegistryMock from "../../provider/testUtils/providerRegistryMock.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
@@ -871,6 +882,260 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
       ),
     ),
 );
+
+describe("a thread's own delegated child above its modes", () => {
+  const codex = ProviderDriverKind.make("codex");
+  const accountA = ProviderInstanceId.make("account-a");
+  const accountB = ProviderInstanceId.make("account-b");
+  const parentId = ThreadId.make("thread:own-child-parent");
+  const unrelatedId = ThreadId.make("thread:own-child-unrelated");
+  const layerDatabase = SqlitePersistence.layerMemory;
+  const layerSettings = ServerSettings.layerTest({
+    providerInstances: {
+      [accountA]: { driver: codex, enabled: true },
+      [accountB]: { driver: codex, enabled: true },
+    },
+  });
+  const layerAdapters = ProviderAdapterRegistry.layerFromAdapters(
+    [accountA, accountB].map((instanceId) => ({
+      instanceId,
+      driver: codex,
+      getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+      planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+      openSession: () => Effect.die("No provider process runs in these tests"),
+    })),
+  );
+  const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
+    { name: "mcp-own-child" },
+    layerAdapters,
+    { databaseLayer: layerDatabase, runEffectWorker: false },
+  );
+  const layerThreads = ThreadManagement.layer.pipe(
+    Layer.provide(layerOrchestrator),
+    Layer.provide(layerSettings),
+    Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+  );
+  const layerProviders = ProviderRegistryMock.layer(
+    [accountA, accountB].map((instanceId) => ({
+      instanceId,
+      driver: codex,
+      enabled: true,
+      installed: true,
+      version: "test",
+      status: "ready" as const,
+      auth: { status: "authenticated" as const },
+      checkedAt: "2026-11-03T00:00:00.000Z",
+      models: [{ slug: "gpt-5", name: "gpt-5", isCustom: false, capabilities: null }],
+      slashCommands: [],
+      skills: [],
+    })),
+  );
+
+  const callAsParent = (name: string, args: Record<string, unknown>) =>
+    McpServer.McpServer.pipe(
+      Effect.flatMap((server) => server.callTool({ name, arguments: args })),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        ...scope,
+        thread: {
+          threadId: parentId,
+          providerSessionId: "own-child",
+          providerInstanceId: accountA,
+        },
+      }),
+      Effect.provideService(McpSchema.McpServerClient, client),
+    );
+
+  /**
+   * A parent with a live run on account A, its Full-access/default delegated child stopped and
+   * snoozed there, and an unrelated Full-access/default thread. The user applies `narrow` to the
+   * parent once, after a tool's declaration read the parent and before the tool ran.
+   */
+  const withOwnChild = <A, E, R>(
+    parentRuntimeMode: RuntimeMode,
+    narrow: {
+      readonly runtimeMode?: RuntimeMode;
+      readonly interactionMode?: ProviderInteractionMode;
+    },
+    body: (childId: ThreadId) => Effect.Effect<A, E, R>,
+  ) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const real = yield* ThreadManagement.ThreadManagementService;
+      let commands = 0;
+      const commandId = () => CommandId.make(`own-child:${commands++}`);
+      const create = (threadId: ThreadId) =>
+        orchestrator.dispatch({
+          type: "thread.create",
+          commandId: commandId(),
+          threadId,
+          projectId: ProjectId.make("project:own-child"),
+          title: threadId,
+          modelSelection: { instanceId: accountA, model: "gpt-5" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+      const setParentModes = (modes: typeof narrow) =>
+        Effect.all([
+          modes.runtimeMode === undefined
+            ? Effect.void
+            : orchestrator.dispatch({
+                type: "thread.runtime-mode.set",
+                commandId: commandId(),
+                threadId: parentId,
+                runtimeMode: modes.runtimeMode,
+              }),
+          modes.interactionMode === undefined
+            ? Effect.void
+            : orchestrator.dispatch({
+                type: "thread.interaction-mode.set",
+                commandId: commandId(),
+                threadId: parentId,
+                interactionMode: modes.interactionMode,
+              }),
+        ]);
+      yield* create(parentId);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: commandId(),
+        threadId: parentId,
+        messageId: MessageId.make("message:own-child-parent"),
+        text: "Coordinate the child.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* create(unrelatedId);
+      const run = (yield* orchestrator.getThreadProjection(parentId)).runs.at(-1)!;
+      yield* orchestrator.dispatch({
+        type: "delegated_task.request",
+        commandId: commandId(),
+        parentThreadId: parentId,
+        parentRunId: run.id,
+        parentNodeId: run.rootNodeId!,
+        task: "Keep the delegated context.",
+        modelSelection: { instanceId: accountA, model: "gpt-5" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const childId = (yield* orchestrator.getThreadProjection(parentId)).subagents[0]!
+        .childThreadId!;
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: commandId(),
+        threadId: childId,
+        reason: "Account A reached its usage limit.",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: commandId(),
+        threadId: childId,
+        snoozedUntil: "2099-11-10T00:00:00.000Z",
+      });
+      yield* setParentModes({ runtimeMode: parentRuntimeMode });
+
+      let pending = Object.keys(narrow).length > 0;
+      const threads = ThreadManagement.ThreadManagementService.of({
+        ...real,
+        getThreadShell: (id) =>
+          real.getThreadShell(id).pipe(
+            Effect.tap(() => {
+              if (id !== parentId || !pending) return Effect.void;
+              pending = false;
+              return setParentModes(narrow).pipe(
+                Effect.provideService(DispatchModeLimit, undefined),
+                Effect.orDie,
+              );
+            }),
+          ),
+      });
+      return yield* body(childId).pipe(
+        // The declaration reads the caller through the calling context's service.
+        Effect.provideService(ThreadManagement.ThreadManagementService, threads),
+        Effect.provide(
+          Layer.mergeAll(layerThreadToolkit, layerOrchestratorToolkit).pipe(
+            Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+            Layer.provide(
+              Layer.mergeAll(
+                layerSettings,
+                layerAdapters,
+                layerProviders,
+                Layer.mock(ProjectService.ProjectService)({}),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+                Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+                Layer.mock(PeerForwarding.PeerForwarding)({}),
+                Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+                Layer.mock(PeerLinks.PeerLinks)({}),
+                NodeServices.layer,
+                NodeCrypto.layer,
+              ),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(Layer.merge(layerOrchestrator, layerThreads)));
+
+  it.effect("moves it to another account and resumes it at its own modes", () =>
+    withOwnChild("auto", {}, (childId) =>
+      Effect.gen(function* () {
+        const moved = yield* callAsParent("t3_thread_configure", {
+          threadId: childId,
+          modelSelection: { instanceId: accountB, model: "gpt-5" },
+        });
+        expect(moved.isError).toBe(false);
+        const resumed = yield* callAsParent("t3_thread_send", {
+          threadId: childId,
+          message: "Resume.",
+        });
+        expect(resumed.structuredContent).toMatchObject({ delivery: "started" });
+        const child = yield* (yield* Orchestrator.OrchestratorV2).getThreadProjection(childId);
+        expect(child.thread).toMatchObject({
+          providerInstanceId: accountB,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          snoozedUntil: null,
+          lineage: { parentThreadId: parentId, relationshipToParent: "subagent" },
+        });
+        expect(child.runs.at(-1)?.modelSelection.instanceId).toBe(accountB);
+      }),
+    ),
+  );
+
+  it.effect.each([
+    {
+      name: "an unrelated Full-access thread once its caller drops to Auto",
+      parentRuntimeMode: "full-access",
+      narrow: { runtimeMode: "auto" },
+      target: "unrelated",
+      code: "runtime_mode_escalation_denied",
+    },
+    {
+      name: "its own child once its caller drops to plan",
+      parentRuntimeMode: "auto",
+      narrow: { interactionMode: "plan" },
+      target: "child",
+      code: "interaction_mode_escalation_denied",
+    },
+  ] as const)("t3_thread_send refuses $name", ({ parentRuntimeMode, narrow, target, code }) =>
+    withOwnChild(parentRuntimeMode, narrow, (childId) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = target === "child" ? childId : unrelatedId;
+        const runs = (yield* orchestrator.getThreadProjection(threadId)).runs.length;
+        const sent = yield* callAsParent("t3_thread_send", { threadId, message: "Go." });
+        expect(declaredFailure(sent)).toMatchObject({ code });
+        expect((yield* orchestrator.getThreadProjection(threadId)).runs).toHaveLength(runs);
+      }),
+    ),
+  );
+});
 
 it.effect("discovers workflow stop targets and requires orchestration capability", () => {
   const threadId = ThreadId.make("workflow-parent");

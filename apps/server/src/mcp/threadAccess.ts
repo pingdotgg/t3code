@@ -120,6 +120,24 @@ export const assertTargetWithinLimits = (
     Effect.asVoid,
   );
 
+/** A thread the calling thread itself delegated here, as `delegate_task` records it on the caller. */
+export const isOwnDelegatedChild = Effect.fn("mcp.isOwnDelegatedChild")(function* (
+  threads: Pick<ThreadManagement.ThreadManagementService["Service"], "listAppOwnedChildThreadIds">,
+  callerThreadId: ThreadId | undefined,
+  target: Pick<OrchestrationV2ThreadShell, "id" | "lineage">,
+) {
+  if (
+    callerThreadId === undefined ||
+    target.lineage.parentThreadId !== callerThreadId ||
+    target.lineage.relationshipToParent !== "subagent"
+  )
+    return false;
+  const children = yield* threads
+    .listAppOwnedChildThreadIds(callerThreadId)
+    .pipe(Effect.mapError(unavailable));
+  return children.includes(target.id);
+});
+
 /** Background subagents retain credentials until provider exit; archived threads and other instances cannot act. */
 export const isLiveCallerShell = (
   shell: Pick<

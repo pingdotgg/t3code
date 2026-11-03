@@ -176,6 +176,7 @@ const handlers = {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
         return yield* service.sendToThread(scope, input);
       }),
+    { ownChildren: "at-their-runtime-mode" },
   ),
   t3_thread_wait: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
