@@ -369,10 +369,76 @@ const SHELL = new Set(["Bash", "Monitor", "exec"]);
 // The redirect and tee are read outside quotes and heredoc bodies, where a `>` is text.
 const REDIRECTS_TO_FILE =
   /(?:^|[^<>&\d=-])\d?>>?(?![>&=])(?!\s*(?:\/dev\/null(?![^\s;&|()<>])|&\d))\s*\S|&>>?(?!\s*\/dev\/null(?![^\s;&|()<>]))\s*\S|>&(?![\d-])(?!\s*\/dev\/null(?![^\s;&|()<>]))\s*\S|\btee\b/;
-const shellSyntax = (command: string) =>
-  command
-    .replace(new RegExp(HEREDOC.source, "g"), (_, _q, _tag, rest: string) => `<<${rest}`)
-    .replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, "''");
+/** The index just past the `"` that closes a double-quoted string whose text starts at `from`. */
+const quotedEnd = (text: string, from: number): number => {
+  for (let i = from; i < text.length;) {
+    if (text[i] === "\\") i += 2;
+    else if (text[i] === '"') return i + 1;
+    else if (text.startsWith("$(", i)) i = substitutionEnd(text, i + 2);
+    else i++;
+  }
+  return text.length;
+};
+/** The index just past the `)` that closes a `$(` whose command starts at `from`. */
+const substitutionEnd = (text: string, from: number): number => {
+  let depth = 1;
+  for (let i = from; i < text.length;) {
+    const c = text[i]!;
+    if (c === "\\") i += 2;
+    else if (c === "'") i = text.indexOf("'", i + 1) + 1 || text.length;
+    else if (c === '"') i = quotedEnd(text, i + 1);
+    else if (text.startsWith("$(", i)) i = substitutionEnd(text, i + 2);
+    else {
+      if (c === "(") depth++;
+      if (c === ")" && --depth === 0) return i + 1;
+      i++;
+    }
+  }
+  return text.length;
+};
+/**
+ * A command with its quoted text emptied and heredoc bodies dropped, so a `>` inside a string is not
+ * a redirect. The `$(…)` and backtick commands inside double quotes still run, so they are kept.
+ */
+const shellSyntax = (command: string): string => {
+  const text = command.replace(
+    new RegExp(HEREDOC.source, "g"),
+    (_, _q, _tag, rest: string) => `<<${rest}`,
+  );
+  let out = "";
+  for (let i = 0; i < text.length;) {
+    const c = text[i]!;
+    if (c === "\\") {
+      out += text.slice(i, i + 2);
+      i += 2;
+    } else if (c === "'") {
+      out += "''";
+      i = text.indexOf("'", i + 1) + 1 || text.length;
+    } else if (c === '"') {
+      const end = quotedEnd(text, i + 1);
+      const commands: Array<string> = [];
+      for (let j = i + 1; j < end;) {
+        if (text[j] === "\\") j += 2;
+        else if (text.startsWith("$(", j)) {
+          const close = substitutionEnd(text, j + 2);
+          commands.push(text.slice(j + 2, close - 1));
+          j = close;
+        } else if (text[j] === "`") {
+          const close = text.slice(j + 1).search(/(?<!\\)`/);
+          if (close === -1) break;
+          commands.push(text.slice(j + 1, j + 1 + close));
+          j += close + 2;
+        } else j++;
+      }
+      out += ["''", ...commands.map((inner) => `$(${shellSyntax(inner)})`)].join(" ");
+      i = end;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+};
 const WRITE_CALL_TEXT =
   /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|write_text|write_bytes)\b|\b(?:fd)?open\([^)]*,\s*["'][wax]b?\+?["']|\bFile\.write\b|\b(?:mkstemp|NamedTemporaryFile|mkdtemp)\(/;
 const encodings = (value: string) =>
