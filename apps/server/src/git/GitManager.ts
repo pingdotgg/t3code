@@ -792,7 +792,7 @@ export const make = Effect.gen(function* () {
       .execute({
         operation: "GitManager.readRecentCommitSubjects",
         cwd,
-        args: ["log", "-n", "20", "--no-merges", "--pretty=format:%s"],
+        args: ["log", "-n", "20", "--no-merges", "--no-show-signature", "--pretty=format:%s"],
       })
       .pipe(
         Effect.map((result) =>

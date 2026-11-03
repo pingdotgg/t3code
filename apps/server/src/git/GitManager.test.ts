@@ -2638,6 +2638,46 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("keeps signature output out of recent commit subjects", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const signingKey = NodePath.join(yield* makeTempDir("t3code-git-signing-key-"), "key");
+      NodeChildProcess.execFileSync("ssh-keygen", [
+        "-q",
+        "-t",
+        "ed25519",
+        "-N",
+        "",
+        "-f",
+        signingKey,
+      ]);
+      yield* runGit(repoDir, ["config", "gpg.format", "ssh"]);
+      // A global signer such as 1Password's cannot use the fixture's generated key.
+      yield* runGit(repoDir, ["config", "gpg.ssh.program", "ssh-keygen"]);
+      yield* runGit(repoDir, ["config", "user.signingkey", `${signingKey}.pub`]);
+      yield* runGit(repoDir, ["config", "log.showSignature", "true"]);
+      yield* runGit(repoDir, ["commit", "--amend", "-S", "--no-edit"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello again\n");
+      let commitInstructions: string | undefined;
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            commitInstructions = input.policy?.commitInstructions;
+            return Effect.succeed({ subject: "Update readme", body: "" });
+          },
+        },
+      });
+
+      yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+
+      expect(commitInstructions).toMatch(
+        /Recent commit subjects from this repository:\nInitial commit$/,
+      );
+    }),
+  );
+
   it.effect("falls back when the dedicated source control writer is unavailable", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

@@ -2942,7 +2942,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         runGitStdoutWithOptions(
           "GitVcsDriver.readRangeContext.log",
           cwd,
-          ["log", "--oneline", "--no-color", "--end-of-options", commitRange],
+          [
+            "log",
+            "--oneline",
+            "--no-color",
+            "--no-decorate",
+            "--no-show-signature",
+            "--end-of-options",
+            commitRange,
+          ],
           {
             maxOutputBytes: RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES,
             appendTruncationMarker: true,
