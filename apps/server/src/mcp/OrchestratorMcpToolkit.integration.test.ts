@@ -1,4 +1,5 @@
 import * as NodeURL from "node:url";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -94,22 +95,23 @@ const delegatedTaskStatusTranscriptFile = new URL(
   import.meta.url,
 );
 
-const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTranscript")(function* (
-  followupResult: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const text = yield* fs.readFileString(NodeURL.fileURLToPath(delegatedTaskStatusTranscriptFile));
-  const transcript = yield* decodeProviderReplayNdjson(
-    text.replaceAll(queuedFollowupResult, followupResult),
-  );
-  // The recording ends when the recorder closes the app-server while the parent
-  // turn is still open. This test keeps acting as that parent afterwards, and
-  // replaying the exit would kill the shared process and fail the parent run.
-  return {
-    ...transcript,
-    entries: transcript.entries.filter((entry) => entry.type !== "runtime_exit"),
-  };
-}, Effect.provide(NodeServices.layer));
+const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTranscript")(
+  function* (followupResult: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const text = yield* fs.readFileString(NodeURL.fileURLToPath(delegatedTaskStatusTranscriptFile));
+    const transcript = yield* decodeProviderReplayNdjson(
+      text.replaceAll(queuedFollowupResult, followupResult),
+    );
+    // The recording ends when the recorder closes the app-server while the parent
+    // turn is still open. This test keeps acting as that parent afterwards, and
+    // replaying the exit would kill the shared process and fail the parent run.
+    return {
+      ...transcript,
+      entries: transcript.entries.filter((entry) => entry.type !== "runtime_exit"),
+    };
+  },
+  Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
 
 function makeProviderSnapshot(input: {
   readonly instanceId: ProviderInstanceId;
@@ -195,6 +197,7 @@ describe("orchestrator MCP toolkit", () => {
   it.live.each([
     { label: "distinct", result: queuedFollowupResult, latestSummary: queuedFollowupResult },
     { label: "identical", result: delegatedResult, latestSummary: null },
+    { label: "emoji", result: "😀", latestSummary: "😀" },
   ])("reports $label child results", ({ result, latestSummary }) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -230,7 +233,7 @@ describe("orchestrator MCP toolkit", () => {
           }),
         ]);
         const layerTest = layerOrchestratorToolkit.pipe(
-          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provideMerge(layerOrchestration),
           Layer.provide(
             CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript).pipe(
@@ -251,7 +254,7 @@ describe("orchestrator MCP toolkit", () => {
             ),
           ),
           Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
-          Layer.provide(NodeServices.layer),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         );
 
         yield* Effect.gen(function* () {
@@ -605,14 +608,13 @@ describe("orchestrator MCP toolkit", () => {
               span.end = (endTime, exit) => {
                 end(endTime, exit);
                 const query = span.attributes.get("db.query.text");
+                if (typeof query !== "string") return;
                 if (
-                  typeof query === "string" &&
                   /SELECT[\s\S]*FROM orchestration_v2_projection_context_transfers/i.test(query)
                 ) {
                   transferReads.push(query);
                 }
                 if (
-                  typeof query === "string" &&
                   /SELECT\s+payload_json\s+FROM orchestration_v2_projection_messages/i.test(query)
                 ) {
                   messageReads.push(query);
@@ -660,7 +662,11 @@ describe("orchestrator MCP toolkit", () => {
           ).toHaveLength(1);
           const parentlessRead = yield* invoke(
             "t3_thread_read",
-            { threadId: delegated.childThreadId, limit: 100 },
+            {
+              threadId: delegated.childThreadId,
+              limit: 100,
+              maxCharsPerItem: result === "😀" ? 1 : 20_000,
+            },
             { ...invocation, thread: undefined },
           ).pipe(Effect.withTracer(tracer));
           expect(parentlessRead.isError).not.toBe(true);
@@ -674,6 +680,7 @@ describe("orchestrator MCP toolkit", () => {
           const read = yield* invoke("t3_thread_read", {
             threadId: delegated.childThreadId,
             limit: 100,
+            maxCharsPerItem: result === "😀" ? 1 : 20_000,
           }).pipe(Effect.withTracer(tracer));
           expect(read.isError).not.toBe(true);
           expect(transferReads.length).toBeGreaterThan(0);
@@ -683,6 +690,13 @@ describe("orchestrator MCP toolkit", () => {
             afterRead.subagents.find((task) => task.id === queuedFollowup.taskId)
               ?.completionDelivery?.state,
           ).toBe("acknowledged");
+
+          const messageReadsBeforeCapabilities = messageReads.length;
+          const capabilities = yield* invoke("orchestrator_capabilities", {}).pipe(
+            Effect.withTracer(tracer),
+          );
+          expect(capabilities.isError).not.toBe(true);
+          expect(messageReads).toHaveLength(messageReadsBeforeCapabilities);
         }).pipe(Effect.provide(layerTest));
       }),
     ),
