@@ -782,6 +782,7 @@ export const OrchestratorMcpListPipelinesResult = Schema.Struct({
           model: Schema.String,
           runtimeMode: RuntimeMode,
           pauseBefore: Schema.Boolean,
+          compactAfterHandoff: Schema.Boolean,
         }),
       ),
     }),

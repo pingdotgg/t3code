@@ -27,6 +27,7 @@ import * as ServerConfig from "../config.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PipelineService from "./PipelineService.ts";
 import * as PipelineStore from "./PipelineStore.ts";
@@ -67,6 +68,7 @@ const serviceLayer = (
         }),
         IdAllocator.layer,
         Layer.mock(CheckpointStore.CheckpointStore)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({}),
         // Only the worktrees directory is read, to tell managed worktrees from other folders.
         Layer.succeed(ServerConfig.ServerConfig, {
           worktreesDir: "/t3-test-worktrees",

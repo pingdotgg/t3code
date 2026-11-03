@@ -39,6 +39,7 @@ import type {
 } from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PipelineService from "./PipelineService.ts";
 import * as PipelineStore from "./PipelineStore.ts";
@@ -110,7 +111,15 @@ const makeHarness = Effect.gen(function* () {
   const launchGate = yield* Deferred.make<void>();
   const idleChecks = yield* Queue.unbounded<ThreadId>();
   const providerEnabled = yield* Ref.make(true);
+  const compactions =
+    yield* Queue.unbounded<Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }>>();
+  /** Launches and compactions in the order they happened. */
+  const trace: Array<string> = [];
+  /** What the projection reports about a step thread when a compaction decides; eligible by default. */
+  const compactionState = new Map<ThreadId, { usedTokens?: number | null; latestText?: string }>();
   const behavior = {
+    providerCompacts: true,
+    failCompactDispatch: false,
     holdStops: false,
     holdSends: false,
     holdLaunches: false,
@@ -217,6 +226,63 @@ const makeHarness = Effect.gen(function* () {
     };
   };
 
+  const compactionRecordsFor = (threadId: ThreadId, fields: ReadonlyArray<string>) => {
+    const state = compactionState.get(threadId) ?? {};
+    const runId = `run-of:${threadId}`;
+    if (fields.join() === "messages") {
+      return {
+        messages: [
+          {
+            id: "user-message",
+            runId,
+            role: "user",
+            text: state.latestText ?? "Do the work",
+            attachments: [],
+          },
+        ],
+      };
+    }
+    return {
+      thread: {
+        id: threadId,
+        projectId: "project-1",
+        providerInstanceId: "codex",
+        activeProviderThreadId: "provider-thread",
+        deletedAt: null,
+        archivedAt: archivedThreads.has(threadId) ? NOW : null,
+      },
+      runs: [
+        {
+          id: runId,
+          ordinal: 1,
+          status: "completed",
+          userMessageId: "user-message",
+          providerThreadId: "provider-thread",
+          providerInstanceId: "codex",
+        },
+      ],
+      providerThreads: [
+        {
+          id: "provider-thread",
+          providerInstanceId: "codex",
+          pendingBackgroundTasks: delegatedWork.get(threadId)?.backgroundTasks ?? [],
+        },
+      ],
+      providerTurns:
+        state.usedTokens === null
+          ? []
+          : [
+              {
+                providerThreadId: "provider-thread",
+                tokenUsage: { usedTokens: state.usedTokens ?? 120_000, updatedAt: NOW },
+              },
+            ],
+      runtimeRequests: [],
+      turnItems: [],
+      contextTransfers: [],
+    };
+  };
+
   const shellFor = (threadId: ThreadId) => {
     const recorded = threadId.startsWith("thread-of:") && !unrecordedWorkspaces.has(threadId);
     return {
@@ -233,6 +299,7 @@ const makeHarness = Effect.gen(function* () {
     Layer.mock(ThreadLaunchService.ThreadLaunchService)({
       launch: (input) => {
         const threadId = decodeThreadId(`thread-of:${input.commandId}`);
+        trace.push(`launch:${threadId}`);
         return Queue.offer(launches, { input, threadId }).pipe(
           Effect.andThen(behavior.holdLaunches ? Deferred.await(launchGate) : Effect.void),
           Effect.as({ threadId, projection: {} as never, resumed: false }),
@@ -245,7 +312,15 @@ const makeHarness = Effect.gen(function* () {
           if (command.type === "thread.create" && behavior.failParentCreate) {
             return yield* Effect.fail(new Error("parent boom") as never);
           }
+          if (command.type === "message.dispatch" && behavior.failCompactDispatch) {
+            trace.push(`compact-failed:${command.threadId}`);
+            return yield* Effect.fail(new Error("compact boom") as never);
+          }
           commands.push(command);
+          if (command.type === "message.dispatch") {
+            trace.push(`compact:${command.threadId}`);
+            yield* Queue.offer(compactions, command);
+          }
           if (command.type === "thread.stop") {
             yield* Queue.offer(stopStarted, command.threadId);
             if (behavior.holdStops) yield* Deferred.await(stopGate);
@@ -264,8 +339,12 @@ const makeHarness = Effect.gen(function* () {
           Effect.andThen(Deferred.await(waitFor(input.runId ?? input.threadId))),
           Effect.onInterrupt(() => Deferred.succeed(interrupted, input.threadId)),
         ),
-      getProjectThreadRecords: (input, _fields, filter) =>
-        Effect.succeed(recordsFor(input.threadId, filter?.messageRunIds?.[0])) as never,
+      getProjectThreadRecords: (input, fields, filter) =>
+        Effect.succeed(
+          fields.length === 0 || filter?.includeLatestRun === true || fields.join() === "messages"
+            ? compactionRecordsFor(input.threadId, fields)
+            : recordsFor(input.threadId, filter?.messageRunIds?.[0]),
+        ) as never,
       // A recovery sweep that reads a parent before the deletion watcher subscribed would wait forever.
       getThreadShell: (threadId) =>
         (threadId.startsWith("parent-") ? Deferred.await(subscribed) : Effect.void).pipe(
@@ -305,6 +384,17 @@ const makeHarness = Effect.gen(function* () {
         }),
       ),
     }),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({
+      getProviders: Effect.sync(
+        () =>
+          [
+            {
+              instanceId: "codex",
+              slashCommands: behavior.providerCompacts ? [{ name: "compact" }] : [],
+            },
+          ] as never,
+      ),
+    }),
     Layer.mock(CheckpointStore.CheckpointStore)({
       hasCheckpointRef: ({ cwd, checkpointRef }) =>
         Effect.sync(() => {
@@ -342,6 +432,9 @@ const makeHarness = Effect.gen(function* () {
     interrupted,
     providerEnabled,
     commands,
+    compactions,
+    compactionState,
+    trace,
     outputs,
     delegatedWork,
     settle,
@@ -1838,6 +1931,287 @@ it.effect("after chained revisions a later step gets every revised output it rea
       const shipPing = yield* Queue.take(harness.sentMessages);
       assert.strictEqual(shipPing.input.threadId, ship);
       assert.include(shipPing.input.text, "plan v2");
+    }),
+  ),
+);
+
+/** Takes waits until the step's own turn is awaited, so its launch and any compaction are over. */
+const awaitStepRunning = Effect.fn("awaitStepRunning")(function* (
+  harness: Effect.Success<typeof makeHarness>,
+  threadId: ThreadId,
+) {
+  while ((yield* Queue.take(harness.waitsStarted)) !== threadId) {
+    // Earlier waits belong to the feeding step.
+  }
+});
+
+const compactDispatches = (harness: Effect.Success<typeof makeHarness>) =>
+  commandOfType(harness.commands, "message.dispatch");
+
+it.effect("a step compacts once the next step has launched, never before", () =>
+  withService(
+    Effect.fn(function* (harness, service, store) {
+      yield* store.updateDefinition(definition(twoSteps({ pauseBefore: true })));
+      const { run } = yield* service.start(startInput("cmd-compact-1"));
+      const first = yield* Queue.take(harness.launches);
+      harness.outputs.set(first.threadId, { reply: "first reply" });
+      yield* harness.settle(first.threadId, "completed");
+
+      // Paused before the next step: the user may still refine this one, and the launch waits on it.
+      const paused = yield* awaitRun(service, run.id, (current) => current.status === "paused");
+      assert.strictEqual(paused.pauseReason, "awaiting_continue");
+      assert.strictEqual(compactDispatches(harness).length, 0);
+
+      yield* service.continueRun({ runId: run.id, stepIndex: 1 });
+      const second = yield* Queue.take(harness.launches);
+      const compact = yield* Queue.take(harness.compactions);
+      assert.deepStrictEqual(harness.trace, [
+        `launch:${first.threadId}`,
+        `launch:${second.threadId}`,
+        `compact:${first.threadId}`,
+      ]);
+      assert.strictEqual(compact.threadId, first.threadId);
+      assert.strictEqual(compact.text, "/compact");
+      assert.strictEqual(compact.createdBy, "agent");
+      assert.strictEqual(compact.creationSource, "server");
+      assert.strictEqual(compact.idleCompaction, "beforeCacheExpires");
+      assert.deepStrictEqual(compact.dispatchMode, { type: "start_immediately" });
+      const key = `${run.id}:plan:1:build:1`;
+      assert.strictEqual(compact.commandId, `server:pipeline-compact:${key}`);
+      assert.strictEqual(compact.messageId, `pipeline-compact:${key}`);
+    }),
+  ),
+);
+
+it.effect("a retried step builds on the feeding step's answer, not on its compaction", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      harness.behavior.autoHandoff = false;
+      const { run } = yield* service.start(startInput("cmd-compact-retry"));
+      const first = yield* Queue.take(harness.launches);
+      harness.outputs.set(first.threadId, { reply: "first reply" });
+      yield* harness.settle(first.threadId, "completed");
+      yield* awaitRun(service, run.id, (current) => current.pauseReason === "awaiting_handoff");
+      yield* service.continueRun({ runId: run.id, stepIndex: 0 });
+      const second = yield* Queue.take(harness.launches);
+      assert.strictEqual((yield* Queue.take(harness.compactions)).threadId, first.threadId);
+
+      // The compaction is now the feeding thread's latest run, and it answers with no real output.
+      harness.compactionState.set(first.threadId, { latestText: "/compact" });
+      harness.outputs.set(first.threadId, { reply: "compaction summary" });
+      harness.outputs.set(second.threadId, { error: "boom" });
+      yield* harness.settle(second.threadId, "failed");
+      yield* awaitRun(service, run.id, (current) => current.pauseReason === "step_failed");
+      yield* service.retryStep({ runId: run.id, stepIndex: 1 });
+      const retried = yield* Queue.take(harness.launches);
+      assert.strictEqual(promptBody(retried.input.initialMessage?.text), "Build from: first reply");
+    }),
+  ),
+);
+
+it.effect("a run that is paused awaiting a handoff compacts nothing", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      harness.behavior.autoHandoff = false;
+      const { run } = yield* service.start(startInput("cmd-compact-handoff"));
+      const first = yield* Queue.take(harness.launches);
+      harness.outputs.set(first.threadId, { reply: "no handoff" });
+      yield* harness.settle(first.threadId, "completed");
+      const paused = yield* awaitRun(service, run.id, (current) => current.status === "paused");
+      assert.strictEqual(paused.pauseReason, "awaiting_handoff");
+      assert.strictEqual(compactDispatches(harness).length, 0);
+    }),
+  ),
+);
+
+it.effect("the last step compacts when the run completes, if it is switched on", () =>
+  withService(
+    Effect.fn(function* (harness, service, store) {
+      yield* store.updateDefinition(definition(twoSteps({ compactAfterHandoff: true })));
+      const { run, first, second } = yield* completedRun(harness, service, "cmd-compact-2");
+      const stepCompaction = yield* Queue.take(harness.compactions);
+      assert.strictEqual(stepCompaction.threadId, first.threadId);
+      const lastCompaction = yield* Queue.take(harness.compactions);
+      assert.strictEqual(lastCompaction.threadId, second.threadId);
+      assert.strictEqual(
+        lastCompaction.commandId,
+        `server:pipeline-compact:${run.id}:build:1:completed`,
+      );
+    }),
+  ),
+);
+
+const leavesFirstStepAlone = (
+  title: string,
+  commandId: string,
+  configure: (harness: Effect.Success<typeof makeHarness>, firstThreadId: ThreadId) => void,
+  firstExtra: Record<string, unknown> = {},
+) =>
+  it.effect(title, () =>
+    withService(
+      Effect.fn(function* (harness, service, store) {
+        yield* store.updateDefinition(
+          definition([
+            step("plan", "{{input}}", firstExtra),
+            step("build", "Build from: {{previous.output}}"),
+          ]),
+        );
+        yield* service.start(startInput(commandId));
+        const first = yield* Queue.take(harness.launches);
+        configure(harness, first.threadId);
+        harness.outputs.set(first.threadId, { reply: "first reply" });
+        yield* harness.settle(first.threadId, "completed");
+        const second = yield* Queue.take(harness.launches);
+        yield* awaitStepRunning(harness, second.threadId);
+        assert.strictEqual(compactDispatches(harness).length, 0);
+      }),
+    ),
+  );
+
+leavesFirstStepAlone("a step switched off is not compacted", "cmd-compact-off", () => {}, {
+  compactAfterHandoff: false,
+});
+leavesFirstStepAlone(
+  "a provider that cannot compact never gets /compact",
+  "cmd-compact-no",
+  (h) => {
+    h.behavior.providerCompacts = false;
+  },
+);
+
+it.effect("a skipped step never feeds a compaction; the step before it does", () =>
+  withService(
+    Effect.fn(function* (harness, service, store) {
+      yield* store.updateDefinition(
+        definition([...twoSteps(), step("ship", "Ship: {{previous.output}}")]),
+      );
+      const { run } = yield* service.start(startInput("cmd-compact-skip"));
+      const first = yield* Queue.take(harness.launches);
+      harness.outputs.set(first.threadId, { reply: "approved plan" });
+      yield* harness.settle(first.threadId, "completed");
+      const second = yield* Queue.take(harness.launches);
+      assert.strictEqual((yield* Queue.take(harness.compactions)).threadId, first.threadId);
+      harness.outputs.set(second.threadId, { error: "boom" });
+      yield* harness.settle(second.threadId, "failed");
+      yield* awaitRun(service, run.id, (current) => current.pauseReason === "step_failed");
+      yield* service.skipStep({ runId: run.id, stepIndex: 1 });
+      yield* Queue.take(harness.launches);
+      const again = yield* Queue.take(harness.compactions);
+      assert.strictEqual(again.threadId, first.threadId);
+      assert.strictEqual(again.commandId, `server:pipeline-compact:${run.id}:plan:1:ship:1`);
+    }),
+  ),
+);
+
+it.effect("a last step switched on is not compacted when the run is cancelled", () =>
+  withService(
+    Effect.fn(function* (harness, service, store) {
+      yield* store.updateDefinition(definition(twoSteps({ compactAfterHandoff: true })));
+      const { run } = yield* service.start(startInput("cmd-compact-cancel"));
+      const first = yield* Queue.take(harness.launches);
+      harness.outputs.set(first.threadId, { reply: "approved plan" });
+      yield* harness.settle(first.threadId, "completed");
+      const second = yield* Queue.take(harness.launches);
+      harness.outputs.set(second.threadId, { error: "boom" });
+      yield* harness.settle(second.threadId, "failed");
+      yield* awaitRun(service, run.id, (current) => current.pauseReason === "step_failed");
+      yield* service.cancel({ runId: run.id });
+      yield* awaitRun(service, run.id, (current) => current.status === "cancelled");
+      assert.deepStrictEqual(
+        compactDispatches(harness).map((command) => command.threadId),
+        [first.threadId],
+      );
+    }),
+  ),
+);
+
+it.effect("a failed compaction never changes the run", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      harness.behavior.failCompactDispatch = true;
+      const { run, first, second } = yield* completedRun(harness, service, "cmd-compact-fail");
+      const done = yield* awaitRun(service, run.id, (current) => current.status === "completed");
+      assert.include(harness.trace, `compact-failed:${first.threadId}`);
+      assert.strictEqual(compactDispatches(harness).length, 0);
+      assert.strictEqual(done.steps[1]?.childThreadId, second.threadId);
+    }),
+  ),
+);
+
+it.effect("a revised step compacts again once the downstream step caught up", () =>
+  withService(
+    Effect.fn(function* (harness, service) {
+      const { run, first, second } = yield* completedRun(harness, service, "cmd-compact-revise");
+      assert.strictEqual((yield* Queue.take(harness.compactions)).threadId, first.threadId);
+      harness.behavior.autoHandoff = false;
+
+      yield* service.reviseStep({
+        runId: run.id,
+        stepIndex: 0,
+        feedback: "Cover dark mode too",
+        author: "user",
+      });
+      const feedback = yield* Queue.take(harness.sentMessages);
+      // The revision's own message is not a successor starting.
+      assert.strictEqual(compactDispatches(harness).length, 1);
+      harness.outputs.set(feedback.runId, { reply: "plan with dark mode" });
+      yield* harness.settle(first.threadId, "completed", feedback.runId);
+      yield* awaitRun(service, run.id, (current) => current.pauseReason === "awaiting_handoff");
+      yield* service.handoffStep({
+        runId: run.id,
+        threadId: first.threadId,
+        output: "plan with dark mode",
+      });
+      const ping = yield* Queue.take(harness.sentMessages);
+      assert.strictEqual(ping.input.threadId, second.threadId);
+
+      const again = yield* Queue.take(harness.compactions);
+      assert.strictEqual(again.threadId, first.threadId);
+      assert.strictEqual(again.commandId, `server:pipeline-compact:${run.id}:plan:2:build:2`);
+    }),
+  ),
+);
+
+it.effect("a later step catching up on a revision compacts the step that fed it", () =>
+  withService(
+    Effect.fn(function* (harness, service, store) {
+      yield* store.updateDefinition(
+        definition([...twoSteps(), step("ship", "Ship: {{previous.output}}")]),
+      );
+      const { run } = yield* service.start(startInput("cmd-compact-revise-chain"));
+      const first = yield* Queue.take(harness.launches);
+      harness.outputs.set(first.threadId, { reply: "approved plan" });
+      yield* harness.settle(first.threadId, "completed");
+      const second = yield* Queue.take(harness.launches);
+      harness.outputs.set(second.threadId, { reply: "built it" });
+      yield* harness.settle(second.threadId, "completed");
+      const third = yield* Queue.take(harness.launches);
+      harness.outputs.set(third.threadId, { reply: "shipped" });
+      yield* harness.settle(third.threadId, "completed");
+      yield* awaitRun(service, run.id, (current) => current.status === "completed");
+      assert.strictEqual((yield* Queue.take(harness.compactions)).threadId, first.threadId);
+      assert.strictEqual((yield* Queue.take(harness.compactions)).threadId, second.threadId);
+
+      yield* service.reviseStep({
+        runId: run.id,
+        stepIndex: 0,
+        feedback: "Cover dark mode too",
+        author: "user",
+      });
+      const feedback = yield* Queue.take(harness.sentMessages);
+      harness.outputs.set(feedback.runId, { reply: "plan with dark mode" });
+      yield* harness.settle(first.threadId, "completed", feedback.runId);
+      const buildPing = yield* Queue.take(harness.sentMessages);
+      assert.strictEqual(buildPing.input.threadId, second.threadId);
+      assert.strictEqual((yield* Queue.take(harness.compactions)).threadId, first.threadId);
+
+      harness.outputs.set(buildPing.runId, { reply: "built it again" });
+      yield* harness.settle(second.threadId, "completed", buildPing.runId);
+      const shipPing = yield* Queue.take(harness.sentMessages);
+      assert.strictEqual(shipPing.input.threadId, third.threadId);
+      const again = yield* Queue.take(harness.compactions);
+      assert.strictEqual(again.threadId, second.threadId);
+      assert.strictEqual(again.commandId, `server:pipeline-compact:${run.id}:build:2:ship:2`);
     }),
   ),
 );

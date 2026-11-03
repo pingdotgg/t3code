@@ -7,6 +7,7 @@ import {
   PipelineUpsertInput,
   pipelineDefinitionIssues,
   pipelineTemplateReferences,
+  resolvePipelineStepCompaction,
   resolvePipelineStepKey,
 } from "./pipeline.ts";
 
@@ -133,5 +134,31 @@ describe("pipeline template helpers", () => {
         { id: "b", name: "B", promptTemplate: "{{steps.a.output}}" },
       ]).map((issue) => issue.stepId),
     ).toEqual(["a"]);
+  });
+});
+
+describe("resolvePipelineStepCompaction", () => {
+  it("defaults on for every step but the last, and an explicit value wins", () => {
+    const steps = [{}, { compactAfterHandoff: false }, {}, { compactAfterHandoff: true }, {}];
+    expect(steps.map((_, index) => resolvePipelineStepCompaction(steps, index))).toEqual([
+      true,
+      false,
+      true,
+      true,
+      false,
+    ]);
+  });
+
+  it("decodes definitions saved before the field existed", () => {
+    const decoded = decodeDefinition({
+      id: "pipeline-1",
+      name: "Review",
+      steps: [step("plan", "{{input}}"), step("build", "{{previous.output}}")],
+      createdAt: "2026-10-28T10:00:00.000Z",
+      updatedAt: "2026-10-28T10:00:00.000Z",
+    });
+    expect(
+      decoded.steps.map((_, index) => resolvePipelineStepCompaction(decoded.steps, index)),
+    ).toEqual([true, false]);
   });
 });

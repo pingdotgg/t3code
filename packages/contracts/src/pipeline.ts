@@ -43,8 +43,21 @@ export const PipelineStep = Schema.Struct({
   skills: Schema.Array(PipelineSkillName).check(Schema.isMaxLength(PIPELINE_STEP_SKILLS_MAX)),
   promptTemplate: TrimmedNonEmptyString,
   pauseBefore: Schema.Boolean,
+  /** Absent means the position default; see `resolvePipelineStepCompaction`. */
+  compactAfterHandoff: Schema.optional(Schema.Boolean),
 });
 export type PipelineStep = typeof PipelineStep.Type;
+
+/**
+ * Whether a step's thread compacts once the next step has started (or, for the last step, the run
+ * completed). An explicit value wins; otherwise every step but the last compacts.
+ */
+export function resolvePipelineStepCompaction(
+  steps: ReadonlyArray<{ readonly compactAfterHandoff?: boolean | undefined }>,
+  index: number,
+): boolean {
+  return steps[index]?.compactAfterHandoff ?? index < steps.length - 1;
+}
 
 export type PipelineTemplateReference =
   | { readonly kind: "input" }

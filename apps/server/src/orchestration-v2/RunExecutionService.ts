@@ -3,6 +3,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
   CommandId,
+  idleCompactionOf,
   type EventId,
   type ModelSelection,
   type NodeId,
@@ -941,8 +942,10 @@ export const layer: Layer.Layer<
             ),
           );
           // Side chats share the parent's worktree; a snapshot would capture the parent's edits.
+          // So does a server compaction, which can run while another thread edits the worktree.
           yield* (
-            input.appThread.lineage.sideChat === true
+            input.appThread.lineage.sideChat === true ||
+            idleCompactionOf({ role: "user", ...input.message }) !== undefined
               ? Effect.void
               : checkpointService.captureBaseline({
                   scope: input.checkpointScope,

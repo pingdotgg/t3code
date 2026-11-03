@@ -18,6 +18,13 @@ Each step has a name, a provider and model, a prompt template, optional skills, 
 [permission mode](./permission-modes.md). Pipelines have no plan mode. The starter's steps use the
 default runtime mode from your settings. You can also make a step wait for you before it starts.
 
+Each step can compact its thread once the next step has started (**Compact after handoff**). It is
+on by default, except for the last step, which compacts when the run completes if you switch it
+on. Compacting while the provider's prompt cache is still warm makes coming back to a finished step
+much cheaper, whether to give it feedback or to chat in its thread. Steps with under 50,000 tokens
+of context, or on providers that cannot compact, are left alone. A compacted step keeps working
+from its summary, and the compaction appears in its thread like automatic compaction.
+
 ### Template variables
 
 Use these variables in a prompt template:

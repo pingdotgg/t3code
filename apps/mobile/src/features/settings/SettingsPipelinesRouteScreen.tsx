@@ -47,6 +47,7 @@ import {
 import { SettingsScreen } from "./components/SettingsScreen";
 import {
   describePipelineSteps,
+  draftStepCompaction,
   draftToUpsertInput,
   moveStep,
   newStepDraft,
@@ -472,6 +473,7 @@ function PipelineForm({
             key={step.key}
             stepId={stepIds[index]!}
             step={step}
+            compactAfterHandoff={draftStepCompaction(draft, index)}
             index={index}
             count={draft.steps.length}
             disabled={saving}
@@ -582,6 +584,7 @@ function StepSection(props: {
   readonly step: PipelineStepDraft;
   /** The id the step is saved under. */
   readonly stepId: string;
+  readonly compactAfterHandoff: boolean;
   readonly index: number;
   readonly count: number;
   readonly disabled: boolean;
@@ -726,7 +729,19 @@ function StepSection(props: {
         <ThemedSwitch
           accessibilityLabel={`Pause before step ${index + 1}`}
           value={step.pauseBefore}
+          disabled={props.disabled}
           onValueChange={(pauseBefore) => props.onChange({ pauseBefore })}
+        />
+      </View>
+      <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+        <Text textRole="body" className="min-w-0 flex-1 text-foreground">
+          Compact after handoff
+        </Text>
+        <ThemedSwitch
+          accessibilityLabel={`Compact step ${index + 1} after handoff`}
+          value={props.compactAfterHandoff}
+          disabled={props.disabled}
+          onValueChange={(compactAfterHandoff) => props.onChange({ compactAfterHandoff })}
         />
       </View>
     </SettingsSection>

@@ -1103,4 +1103,213 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       assert.equal(checkpoint?.status, "missing");
     }),
   );
+
+  it.effect(
+    "completes a server compaction run with a missing checkpoint and never captures the shared worktree",
+    () =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const compactionThreadId = ThreadId.make("thread:checkpoint-capture-server-compaction");
+        const compactionRunId = RunId.make("run:checkpoint-capture-server-compaction");
+        const compactionScopeId = CheckpointScopeId.make(
+          "scope:checkpoint-capture-server-compaction",
+        );
+        const compactionRootNodeId = NodeId.make("node:checkpoint-capture-server-compaction-root");
+        const compactionProviderThreadId = ProviderThreadId.make(
+          "provider-thread:checkpoint-capture-server-compaction",
+        );
+        const event = { threadId: compactionThreadId, occurredAt: now };
+        const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
+          {
+            ...event,
+            id: EventId.make("event:checkpoint-capture-server-compaction:thread"),
+            type: "thread.created",
+            payload: {
+              createdBy: "user",
+              creationSource: "web",
+              id: compactionThreadId,
+              projectId,
+              title: "Pipeline step",
+              providerInstanceId,
+              modelSelection,
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: "/repo",
+              activeProviderThreadId: null,
+              lineage: {
+                parentThreadId: threadId,
+                relationshipToParent: "fork",
+                rootThreadId: threadId,
+              },
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+          },
+          {
+            ...event,
+            id: EventId.make("event:checkpoint-capture-server-compaction:provider-thread"),
+            type: "provider-thread.updated",
+            driver,
+            providerInstanceId,
+            payload: {
+              id: compactionProviderThreadId,
+              driver,
+              providerInstanceId,
+              providerSessionId: null,
+              appThreadId: compactionThreadId,
+              ownerNodeId: null,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: 1,
+              lastRunOrdinal: 1,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            ...event,
+            id: EventId.make("event:checkpoint-capture-server-compaction:message"),
+            type: "message.updated",
+            payload: {
+              id: MessageId.make("message:checkpoint-capture-server-compaction"),
+              threadId: compactionThreadId,
+              runId: null,
+              nodeId: null,
+              role: "user",
+              text: "/compact",
+              attachments: [],
+              streaming: false,
+              createdBy: "agent",
+              creationSource: "server",
+              idleCompaction: "beforeCacheExpires",
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            ...event,
+            id: EventId.make("event:checkpoint-capture-server-compaction:run"),
+            type: "run.updated",
+            runId: compactionRunId,
+            payload: {
+              id: compactionRunId,
+              threadId: compactionThreadId,
+              ordinal: 1,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId: compactionProviderThreadId,
+              userMessageId: MessageId.make("message:checkpoint-capture-server-compaction"),
+              rootNodeId: compactionRootNodeId,
+              activeAttemptId: null,
+              status: "waiting",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+          {
+            ...event,
+            id: EventId.make("event:checkpoint-capture-server-compaction:node"),
+            type: "node.updated",
+            runId: compactionRunId,
+            nodeId: compactionRootNodeId,
+            payload: {
+              id: compactionRootNodeId,
+              threadId: compactionThreadId,
+              runId: compactionRunId,
+              parentNodeId: null,
+              rootNodeId: compactionRootNodeId,
+              kind: "root_turn",
+              status: "waiting",
+              countsForRun: true,
+              providerThreadId: compactionProviderThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: null,
+              checkpointScopeId: compactionScopeId,
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+          {
+            ...event,
+            id: EventId.make("event:checkpoint-capture-server-compaction:scope"),
+            type: "checkpoint-scope.created",
+            runId: compactionRunId,
+            nodeId: compactionRootNodeId,
+            payload: {
+              id: compactionScopeId,
+              threadId: compactionThreadId,
+              runId: compactionRunId,
+              nodeId: compactionRootNodeId,
+              parentScopeId: null,
+              providerThreadId: compactionProviderThreadId,
+              kind: "root_run",
+              ordinalWithinParent: 0,
+              advancesAppRunCount: true,
+              cwd: "/repo",
+              createdAt: now,
+            },
+          },
+        ];
+        yield* Effect.forEach(events, (candidate) => projectionStore.apply(candidate));
+        const gitUnavailable = () =>
+          Effect.die("a server compaction must not snapshot the shared worktree");
+        const layerCapture = CheckpointCaptureService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              CheckpointService.layer.pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    IdAllocator.layer,
+                    NodeCrypto.layer,
+                    Layer.mock(CheckpointStore.CheckpointStore)({
+                      isGitRepository: () => Effect.succeed(true),
+                      captureCheckpoint: gitUnavailable,
+                      hasCheckpointRef: () => Effect.succeed(false),
+                    }),
+                  ),
+                ),
+              ),
+              Layer.mock(EventSink.EventSinkV2)({
+                commitCommand: (input) =>
+                  Effect.forEach(input.events, (committed) =>
+                    projectionStore.apply(committed),
+                  ).pipe(Effect.as({ committed: true } as never), Effect.orDie),
+              }),
+            ),
+          ),
+        );
+
+        yield* CheckpointCaptureService.CheckpointCaptureServiceV2.use((service) =>
+          service.execute({
+            threadId: compactionThreadId,
+            runId: compactionRunId,
+            scopeId: compactionScopeId,
+          }),
+        ).pipe(Effect.provide(layerCapture));
+
+        const { checkpoints, runs } = yield* projectionStore.getThreadRecords(compactionThreadId, [
+          "runs",
+          "checkpoints",
+        ]);
+        assert.equal(runs[0]?.status, "completed");
+        const checkpoint = checkpoints.find((candidate) => candidate.id === runs[0]?.checkpointId);
+        assert.equal(checkpoint?.status, "missing");
+      }),
+  );
 });

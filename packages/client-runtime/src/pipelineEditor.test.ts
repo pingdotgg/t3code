@@ -13,6 +13,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   describePipelineSteps,
+  draftStepCompaction,
   draftToUpsertInput,
   emptyPipelineDraft,
   hasPipelineDraftChanges,
@@ -347,6 +348,12 @@ describe("helpers", () => {
     expect(
       hasPipelineDraftChanges(initial, {
         ...initial,
+        steps: [{ ...initial.steps[0]!, compactAfterHandoff: false }],
+      }),
+    ).toBe(true);
+    expect(
+      hasPipelineDraftChanges(initial, {
+        ...initial,
         steps: [
           {
             ...initial.steps[0]!,
@@ -355,6 +362,27 @@ describe("helpers", () => {
         ],
       }),
     ).toBe(true);
+  });
+
+  it("shows the position default until a step sets its own, and saves only what was set", () => {
+    const draft = draftOf([
+      step({ name: "Plan", modelSelection: codex }),
+      step({ name: "Build", modelSelection: codex, compactAfterHandoff: false }),
+      step({ name: "Review", modelSelection: codex, compactAfterHandoff: true }),
+      step({ name: "Ship", modelSelection: codex }),
+    ]);
+    expect([0, 1, 2, 3].map((index) => draftStepCompaction(draft, index))).toEqual([
+      true,
+      false,
+      true,
+      false,
+    ]);
+    expect(draftToUpsertInput(draft)?.steps.map((saved) => saved.compactAfterHandoff)).toEqual([
+      undefined,
+      false,
+      true,
+      undefined,
+    ]);
   });
 
   it("describes steps for a list row", () => {

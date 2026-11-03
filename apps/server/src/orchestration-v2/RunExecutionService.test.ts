@@ -84,22 +84,27 @@ const layerTurnItemPositionsTest = Layer.mock(TurnItemPositionStore.TurnItemPosi
   allocate: () => Effect.succeed(1),
 });
 
-const layerRunExecutionTest = RunExecutionService.layer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      McpAppModelContext.layerEmpty,
-      PreviewAgentActivity.layer,
-      Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
-      layerTurnItemPositionsTest,
-      mockEventSink({}),
-      IdAllocator.layer,
-      Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-        ingestNormalized: () => Effect.succeed([]),
-      }),
-      ServerSettings.layerTest(),
+const makeLayerRunExecutionTest = (
+  captureBaseline: CheckpointService.CheckpointServiceV2["Service"]["captureBaseline"] = () =>
+    Effect.void,
+) =>
+  RunExecutionService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        McpAppModelContext.layerEmpty,
+        PreviewAgentActivity.layer,
+        Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline }),
+        layerTurnItemPositionsTest,
+        mockEventSink({}),
+        IdAllocator.layer,
+        Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+          ingestNormalized: () => Effect.succeed([]),
+        }),
+        ServerSettings.layerTest(),
+      ),
     ),
-  ),
-);
+  );
+const layerRunExecutionTest = makeLayerRunExecutionTest();
 
 it.effect("routes shared-runtime events only to their owning root run", () =>
   Effect.gen(function* () {
@@ -1040,10 +1045,10 @@ it.effect("fails the run when its ownership check cannot be read before calling 
 
 it.effect(
   "dispatches only attachment-free compact commands through the native compaction path",
-  () =>
-    Effect.gen(function* () {
+  () => {
+    const calls: Array<string> = [];
+    return Effect.gen(function* () {
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
-      const calls: Array<string> = [];
       const attachment = ChatFileAttachment.make({
         type: "file",
         id: ChatAttachmentId.make("compact-file-12345678-1234-1234-1234-123456789abc"),
@@ -1051,10 +1056,14 @@ it.effect(
         mimeType: "text/plain",
         sizeBytes: 1,
       });
+      // A server compaction skips the baseline; it may run while another thread edits.
+      const user = { createdBy: "user", creationSource: "web" } as const;
+      const server = { createdBy: "agent", creationSource: "server" } as const;
       const cases = [
-        { text: " /compact ", attachments: [], expected: "compact" },
-        { text: "/compact", attachments: [attachment], expected: "prompt" },
-        { text: "Continue the work", attachments: [], expected: "prompt" },
+        { text: " /compact ", attachments: [], expected: ["baseline", "compact"], ...user },
+        { text: "/compact", attachments: [], expected: ["compact"], ...server },
+        { text: "/compact", attachments: [attachment], expected: ["baseline", "prompt"], ...user },
+        { text: "Continue the work", attachments: [], expected: ["baseline", "prompt"], ...user },
       ];
       for (const [index, testCase] of cases.entries()) {
         const threadId = ThreadId.make(`thread:compact-routing:${index}`);
@@ -1097,8 +1106,8 @@ it.effect(
             messageId: MessageId.make(`message:compact-routing:${index}`),
             text: testCase.text,
             attachments: testCase.attachments,
-            createdBy: "user",
-            creationSource: "web",
+            createdBy: testCase.createdBy,
+            creationSource: testCase.creationSource,
           },
           modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
           runtimePolicy: {
@@ -1116,9 +1125,18 @@ it.effect(
       }
       assert.deepEqual(
         calls,
-        cases.map((testCase) => testCase.expected),
+        cases.flatMap((testCase) => testCase.expected),
       );
-    }).pipe(Effect.provide(layerRunExecutionTest)),
+    }).pipe(
+      Effect.provide(
+        makeLayerRunExecutionTest(() =>
+          Effect.sync(() => {
+            calls.push("baseline");
+          }),
+        ),
+      ),
+    );
+  },
 );
 
 it.effect("starts the provider when checkpoint baseline capture fails", () =>

@@ -48,6 +48,7 @@ import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
 import type { DispatchModes } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makePipelineRunner, pipelineError } from "./pipelineRunner.ts";
@@ -132,6 +133,7 @@ export const layerWithStarters = (
   | IdAllocator.IdAllocatorV2
   | ServerSettings.ServerSettingsService
   | CheckpointStore.CheckpointStore
+  | ProviderRegistry.ProviderRegistry
   | ServerConfig.ServerConfig
   | FileSystem.FileSystem
   | Path.Path

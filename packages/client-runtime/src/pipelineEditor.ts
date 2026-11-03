@@ -12,6 +12,7 @@ import {
   type PipelineUpsertInput,
   type RuntimeMode,
   pipelineDefinitionIssues,
+  resolvePipelineStepCompaction,
 } from "@t3tools/contracts";
 
 /**
@@ -34,6 +35,8 @@ export interface PipelineStepDraft {
   readonly skills: ReadonlyArray<string>;
   readonly promptTemplate: string;
   readonly pauseBefore: boolean;
+  /** Undefined until the user sets it; the step then follows `resolvePipelineStepCompaction`. */
+  readonly compactAfterHandoff?: boolean | undefined;
 }
 
 export interface PipelineDraft {
@@ -112,6 +115,10 @@ export function newStepDraft(
   };
 }
 
+/** What the editor shows for a step: its explicit choice, else the position default. */
+export const draftStepCompaction = (draft: PipelineDraft, index: number): boolean =>
+  resolvePipelineStepCompaction(draft.steps, index);
+
 export function emptyPipelineDraft(
   defaults: PipelineStepDefaults,
   newId: () => string,
@@ -139,6 +146,9 @@ function stepsToDrafts(
     skills: step.skills,
     promptTemplate: step.promptTemplate,
     pauseBefore: step.pauseBefore,
+    ...(step.compactAfterHandoff === undefined
+      ? {}
+      : { compactAfterHandoff: step.compactAfterHandoff }),
   }));
 }
 
@@ -305,6 +315,9 @@ export function draftToUpsertInput(draft: PipelineDraft): PipelineUpsertInput | 
     skills: step.skills,
     promptTemplate: step.promptTemplate.trim(),
     pauseBefore: step.pauseBefore,
+    ...(step.compactAfterHandoff === undefined
+      ? {}
+      : { compactAfterHandoff: step.compactAfterHandoff }),
   }));
   return {
     ...(draft.editingId !== null
@@ -331,6 +344,7 @@ function draftSignature(draft: PipelineDraft): string {
       step.skills,
       step.promptTemplate,
       step.pauseBefore,
+      step.compactAfterHandoff ?? null,
     ]),
   ]);
 }

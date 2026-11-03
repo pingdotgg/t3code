@@ -4121,6 +4121,7 @@ describe("OrchestratorMcpService pipelines", () => {
                 model: "gpt-5",
                 runtimeMode: "approval-required",
                 pauseBefore: false,
+                compactAfterHandoff: true,
               },
               {
                 stepId: "build",
@@ -4129,6 +4130,7 @@ describe("OrchestratorMcpService pipelines", () => {
                 model: "gpt-5",
                 runtimeMode: "full-access",
                 pauseBefore: false,
+                compactAfterHandoff: false,
               },
             ],
           },

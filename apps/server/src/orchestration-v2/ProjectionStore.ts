@@ -266,6 +266,11 @@ export interface ProjectionCheckpointCaptureContext {
   readonly readyCheckpointOrdinals: ReadonlyArray<number>;
   /** Side chats share their parent's worktree and never snapshot it. */
   readonly sideChat: boolean;
+  /**
+   * The run is a `/compact` T3 Code sent on its own. It can run while another thread edits the
+   * same worktree, so it must not claim those edits.
+   */
+  readonly serverCompaction: boolean;
 }
 
 const RollbackTargetAttempts = Schema.Array(
@@ -5435,6 +5440,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               runRows[0] === undefined
                 ? undefined
                 : yield* decodeRunPayload(runRows[0].payload_json);
+            const userMessageRows =
+              run === undefined
+                ? []
+                : yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_messages
+            WHERE thread_id = ${threadId} AND message_id = ${run.userMessageId}`;
+            const userMessage =
+              userMessageRows[0] === undefined
+                ? undefined
+                : yield* decodeMessagePayload(userMessageRows[0].payload_json);
             const [nodeRows, scopeRows, providerRows, readyRows] = yield* Effect.all([
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_nodes
             WHERE thread_id = ${threadId} AND node_id = ${run?.rootNodeId ?? null}`,
@@ -5465,6 +5479,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   : yield* decodeProviderThreadPayload(providerRows[0].payload_json),
               readyCheckpointOrdinals: readyRows.map(({ ordinal }) => ordinal),
               sideChat: threadRows[0].side_chat === 1,
+              serverCompaction:
+                userMessage !== undefined && idleCompactionOf(userMessage) !== undefined,
             };
           }),
         )
