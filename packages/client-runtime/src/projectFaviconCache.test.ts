@@ -202,11 +202,19 @@ describe("project favicon image loader", () => {
     await expect(load(url, signal())).rejects.toThrow("too large");
     expect(pulled).toBeLessThan(PROJECT_FAVICON_MAX_SOURCE_BYTES / chunk.byteLength + 3);
     expect(downscale).not.toHaveBeenCalled();
+    let cancelled = false;
+    const declaredStream = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
     const declared = loader(
-      new Response("x", {
+      new Response(declaredStream, {
         headers: { "content-type": "image/png", "content-length": String(2 ** 40) },
       }),
     );
     await expect(declared.load(url, signal())).rejects.toThrow("too large");
+    expect(cancelled).toBe(true);
+    expect(declared.downscale).not.toHaveBeenCalled();
   });
 });

@@ -364,11 +364,22 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
 }) {
   const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, fontScale } = useWindowDimensions();
+  const titleTypography = useScaledTextRole("body");
+  const metadataTypography = useScaledTextRole("label");
+  const projectIconSize = titleTypography.fontSize * 1.25 * fontScale;
+  const machineIconSize = metadataTypography.fontSize * fontScale;
+  // Android's nonlinear system text scaling can differ from the fontScale estimate.
+  const [androidTitleLineHeight, setTitleLineHeight] = useState(
+    titleTypography.lineHeight * fontScale,
+  );
+  const titleLineHeight =
+    Platform.OS === "android" ? androidTitleLineHeight : titleTypography.lineHeight * fontScale;
   const dormant = useSwipeRowDormant(props.activationKey);
   const theme = useUniwindTheme();
   const sidebarPane = props.pane === "sidebar";
-  const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, props.selected ?? false);
+  const selected = props.selected ?? false;
+  const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
   const isDraft = pendingTask.kind === "draft";
   const deleteLabel = isDraft ? "Discard" : "Delete";
   const handleDelete = useCallback(
@@ -416,72 +427,112 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
     [onDeletePendingTask, pendingTask],
   );
 
+  const titleTextInset = props.project ? projectIconSize + 8 : 0;
   const rowContent = (
     <>
-      <View className="flex-row items-center gap-1.5">
+      <View className="flex-row items-start gap-2">
         {props.project ? (
-          <ProjectFavicon
-            environmentId={pendingTask.environmentId}
-            faviconPath={props.project.faviconPath}
-            projectIcon={props.project.projectIcon}
-            size={15}
-            projectTitle={props.project.title}
-            workspaceRoot={props.project.workspaceRoot}
-          />
+          <View className="justify-center" style={{ height: titleLineHeight }}>
+            <ProjectFavicon
+              environmentId={pendingTask.environmentId}
+              faviconPath={props.project.faviconPath}
+              projectIcon={props.project.projectIcon}
+              size={projectIconSize}
+              projectTitle={projectTitle}
+              workspaceRoot={props.project.workspaceRoot}
+            />
+          </View>
         ) : null}
         <Text
           className={cn(
-            "flex-1 text-sm font-t3-medium text-foreground-muted",
-            sidebarPane && "text-drawer-foreground-muted",
+            "flex-1 text-base font-t3-medium",
+            selected
+              ? selectedThreadRowColors.foregroundClassName
+              : rowAppearance.foregroundClassName,
           )}
-          numberOfLines={1}
+          numberOfLines={2}
+          onTextLayout={
+            Platform.OS === "android"
+              ? ({ nativeEvent }) => {
+                  const firstLine = nativeEvent.lines[0];
+                  if (firstLine && Math.abs(firstLine.height - titleLineHeight) > 0.5) {
+                    setTitleLineHeight(firstLine.height);
+                  }
+                }
+              : undefined
+          }
         >
-          {projectTitle}
+          {pendingTask.title}
         </Text>
         {isDraft ? (
-          <View className="flex-row items-center gap-1">
+          <View className="flex-row items-center gap-1" style={{ minHeight: titleLineHeight }}>
             <SymbolView
               name="square.and.pencil"
-              size={10}
-              tintColorClassName="accent-adaptive-amber-700-300"
+              size={13}
+              tintColorClassName={
+                selected
+                  ? selectedThreadRowColors.iconTintClassName
+                  : "accent-adaptive-amber-700-300"
+              }
               type="monochrome"
+              weight="semibold"
             />
-            <Text className="text-xs text-adaptive-amber-700-300">Draft</Text>
+            <Text
+              className={cn(
+                "text-xs font-t3-bold",
+                selected
+                  ? selectedThreadRowColors.foregroundClassName
+                  : "text-adaptive-amber-700-300",
+              )}
+            >
+              Draft
+            </Text>
           </View>
-        ) : (
+        ) : null}
+      </View>
+      {!isDraft ? (
+        <View className="mt-1" style={{ paddingLeft: titleTextInset }}>
           <Text
             className={cn(
-              "text-xs text-foreground-tertiary",
-              sidebarPane && "text-drawer-foreground-muted",
+              "text-xs",
+              selected
+                ? selectedThreadRowColors.foregroundClassName
+                : rowAppearance.tertiaryForegroundClassName,
             )}
           >
             Sends on reconnect
           </Text>
-        )}
-      </View>
-      <Text
-        className={cn(
-          "mt-1 text-base font-t3-medium text-foreground",
-          sidebarPane && "text-drawer-foreground",
-        )}
-        numberOfLines={1}
-      >
-        {pendingTask.title}
-      </Text>
+        </View>
+      ) : null}
       {branch || props.environmentLabel ? (
-        <View className="mt-1 flex-row items-center gap-1">
+        <View className="mt-1 flex-row items-center gap-1" style={{ paddingLeft: titleTextInset }}>
+          {props.environmentLabel && props.environmentMachine ? (
+            <EnvironmentMachineSymbol
+              kind={props.environmentMachine}
+              size={machineIconSize}
+              tintColorClassName={
+                selected
+                  ? selectedThreadRowColors.mutedIconTintClassName
+                  : rowAppearance.tertiaryIconTintClassName
+              }
+            />
+          ) : null}
           <Text
             className={cn(
               "shrink text-xs text-foreground-muted",
-              sidebarPane && "text-drawer-foreground-muted",
+              selected
+                ? selectedThreadRowColors.mutedForegroundClassName
+                : rowAppearance.mutedForegroundClassName,
             )}
             numberOfLines={1}
           >
             {branch ? (
               <Text
                 className={cn(
-                  "text-xs text-foreground-muted",
-                  sidebarPane && "text-drawer-foreground-muted",
+                  "text-xs",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.mutedForegroundClassName,
                 )}
                 style={{ fontFamily: MONO_FONT }}
               >
@@ -492,23 +543,16 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
             {props.environmentLabel ? (
               <Text
                 className={cn(
-                  "text-xs text-foreground-tertiary",
-                  sidebarPane && "text-drawer-foreground-muted",
+                  "text-xs",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.tertiaryForegroundClassName,
                 )}
               >
                 {props.environmentLabel}
               </Text>
             ) : null}
           </Text>
-          {props.environmentLabel && props.environmentMachine ? (
-            <EnvironmentMachineSymbol
-              kind={props.environmentMachine}
-              size={11}
-              tintColorClassName={
-                sidebarPane ? "accent-drawer-foreground-muted" : "accent-foreground-tertiary"
-              }
-            />
-          ) : null}
         </View>
       ) : null}
     </>
@@ -562,8 +606,8 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
                 rowContent
               ) : (
                 <View>
-                  <View className="px-5 py-2.5">{rowContent}</View>
-                  {props.showTrailingDivider !== false ? (
+                  <View className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}>{rowContent}</View>
+                  {THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider !== false ? (
                     <View className="ml-5 h-px bg-border-subtle" />
                   ) : null}
                 </View>
