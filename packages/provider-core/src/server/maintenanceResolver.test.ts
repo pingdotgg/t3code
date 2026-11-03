@@ -549,17 +549,15 @@ it.layer(
   );
 
   it.effect.skipIf(!symlinksSupported || readOnlyDirsUnenforced)(
-    "keeps one-click npm updates for a package executable launched outside a read-only prefix bin",
+    "stays manual-only when the package executable is launched directly and the prefix bin is read-only",
     () =>
       Effect.gen(function* () {
-        // With bin-links off npm never touches `<prefix>/bin`, so its mode does not matter.
-        const { tempDir, capabilities } = yield* resolveNpmInstallWithReadOnlyDir(["bin"], {
+        // npm still renames the package's existing bin link, however the CLI is launched.
+        const { capabilities } = yield* resolveNpmInstallWithReadOnlyDir(["bin"], {
           launchPackageExecutable: true,
         });
 
-        expect(capabilities.update?.command).toBe(
-          `npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
-        );
+        expect(capabilities.update).toBeNull();
       }),
   );
 
