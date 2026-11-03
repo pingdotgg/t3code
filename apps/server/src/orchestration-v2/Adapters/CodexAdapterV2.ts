@@ -1108,6 +1108,14 @@ function codexErrorInfoCode(value: unknown): string | null {
 
 type CodexErrorInfo = CodexSchema.ServerNotification__CodexErrorInfo;
 
+function codexFailureMessage(
+  message: string,
+  misalignment: CodexSchema.ServerNotification__MisalignmentErrorDetails | null | undefined,
+): string {
+  const explanation = misalignment?.detailedExplanation?.trim();
+  return explanation ? `${message}\n\n${explanation}` : message;
+}
+
 /**
  * Retry exhaustion only says why it failed through the last attempt's HTTP
  * status. Exhaustion on 429 is a usage or rate limit, so it keeps the Limited
@@ -4673,7 +4681,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeCode: notificationCode,
                 failure: withCodexManagedFailure(
                   makeProviderFailure({
-                    message: payload.error.additionalDetails?.trim() || payload.error.message,
+                    message: codexFailureMessage(
+                      payload.error.additionalDetails?.trim() || payload.error.message,
+                      payload.error.misalignment,
+                    ),
                     code: notificationCode,
                     class: codexUsageLimitError(notificationCode, payload.error.codexErrorInfo)
                       ? "usage_limit"
@@ -4696,10 +4707,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const additionalDetails = payload.error.additionalDetails?.trim();
             const failure = withCodexManagedFailure(
               makeProviderFailure({
-                message:
+                message: codexFailureMessage(
                   additionalDetails === undefined || additionalDetails.length === 0
                     ? payload.error.message
                     : additionalDetails,
+                  payload.error.misalignment,
+                ),
                 code,
                 class: codexUsageLimitError(code, payload.error.codexErrorInfo)
                   ? "usage_limit"
@@ -5760,6 +5773,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly status: OrchestrationV2ProviderTurn["status"];
             readonly failureMessage?: string;
             readonly failureErrorInfo?: CodexErrorInfo;
+            readonly failureMisalignment?: CodexSchema.ServerNotification__MisalignmentErrorDetails;
             readonly providerRetry?: ActiveCodexProviderRetry;
           }): Effect.fn.Return<CodexRootTerminalEvent> {
             const terminalStatus = providerTurnStatusToTerminal(input.status);
@@ -5785,7 +5799,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ? previousFailure.failure
                   : withCodexManagedFailure(
                       makeProviderFailure({
-                        message: input.failureMessage,
+                        message:
+                          input.failureMessage === undefined
+                            ? undefined
+                            : codexFailureMessage(input.failureMessage, input.failureMisalignment),
                         code: failureCode,
                         class: failureClass,
                       }),
@@ -5893,6 +5910,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly status: OrchestrationV2ProviderTurn["status"];
             readonly failureMessage?: string;
             readonly failureErrorInfo?: CodexErrorInfo;
+            readonly failureMisalignment?: CodexSchema.ServerNotification__MisalignmentErrorDetails;
             readonly providerRetry?: ActiveCodexProviderRetry;
             readonly goalHoldTurn?: OrchestrationV2ProviderTurn;
           }) {
@@ -6078,6 +6096,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly completedAt: DateTime.Utc;
           readonly failureMessage?: string;
           readonly failureErrorInfo?: CodexErrorInfo;
+          readonly failureMisalignment?: CodexSchema.ServerNotification__MisalignmentErrorDetails;
           readonly continueRun?: boolean;
         }) =>
           // Capacity continuation already holds the permit across finalization and restart.
@@ -6547,6 +6566,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ? {}
                 : {
                     failureMessage: payload.turn.error.message,
+                    ...(payload.turn.error.misalignment == null
+                      ? {}
+                      : { failureMisalignment: payload.turn.error.misalignment }),
                     ...(payload.turn.error.codexErrorInfo == null
                       ? {}
                       : { failureErrorInfo: payload.turn.error.codexErrorInfo }),

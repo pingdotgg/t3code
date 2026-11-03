@@ -5797,6 +5797,126 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect.each(["notification", "completion", "both", "retry", "empty", "long"] as const)(
+    "preserves Codex safety review details ($0)",
+    (scenario) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = `native-safety-${scenario}`;
+          const nativeTurnId = `turn-safety-${scenario}`;
+          const message =
+            "This request was blocked by our safety systems. Reason: Potentially unintended activity.";
+          const explanation =
+            scenario === "empty"
+              ? " \n "
+              : `Review earlier tool output for exposed credentials. api_key=fixture-secret${
+                  scenario === "long" ? " Review the conversation.".repeat(300) : ""
+                }`;
+          const error = {
+            message,
+            codexErrorInfo: "misalignmentPolicyViolation",
+            additionalDetails: null,
+          };
+          const detailedError = {
+            ...error,
+            misalignment: { detailedExplanation: explanation },
+          };
+          const transcript = makeCodexReplayTranscript({
+            scenario: `codex-safety-${scenario}`,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+              ...(scenario === "completion"
+                ? []
+                : [
+                    {
+                      type: "emit_inbound" as const,
+                      label: "error",
+                      frame: {
+                        method: "error",
+                        params: {
+                          threadId: nativeThreadId,
+                          turnId: nativeTurnId,
+                          willRetry: scenario === "retry",
+                          error: {
+                            ...detailedError,
+                            additionalDetails:
+                              scenario === "both" ? "Detailed notification evidence." : null,
+                          },
+                        },
+                      },
+                    },
+                  ]),
+              {
+                type: "emit_inbound",
+                label: "turn/completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: {
+                      ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
+                      error:
+                        scenario === "completion" || scenario === "both" ? detailedError : error,
+                    },
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              text: "Continue.",
+              attemptId: RunAttemptId.make(`attempt-safety-${scenario}`),
+            }),
+          );
+          yield* harness.firstTerminal;
+          const terminal = harness.terminalEvents()[0];
+          assert.equal(terminal?.status, "failed");
+          if (terminal?.status !== "failed") return;
+          assert.equal(terminal.failure.code, "misalignmentPolicyViolation");
+          assert.equal(terminal.failure.class, "provider_error");
+          assert.equal(terminal.threadDisposition, "reusable");
+          const expectedSummary = scenario === "both" ? "Detailed notification evidence." : message;
+          const expected = explanation.trim()
+            ? `${expectedSummary}\n\nReview earlier tool output for exposed credentials. api_key=[REDACTED]`
+            : message;
+          if (scenario === "long") {
+            assert.isAtMost(terminal.failure.message.length, 4_096);
+            assert.isTrue(terminal.failure.message.startsWith(expected));
+            assert.isTrue(terminal.failure.message.endsWith("…"));
+          } else {
+            assert.equal(terminal.failure.message, expected);
+          }
+          assert.notInclude(terminal.failure.message, "fixture-secret");
+          if (scenario === "retry") {
+            const retry = harness.events.find(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "error" &&
+                event.turnItem.status === "running",
+            );
+            assert.isDefined(retry);
+            if (retry?.type === "turn_item.updated" && retry.turnItem.type === "error") {
+              assert.equal(retry.turnItem.failure.message, expected);
+            }
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
   // regression: #28032 an unlisted codexErrorInfo dropped the failed turn/completed
   it.effect("fails the turn when Codex reports an error info the schema does not list", () =>
     Effect.scoped(
