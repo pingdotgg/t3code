@@ -48,12 +48,6 @@ The main sidebar, right panel, and terminal drawer open and close immediately by
 in your operating system. Moving between threads always snaps to the selected thread's panel state
 without replaying its transitions.
 
-## Accessibility
-
-**Inset scrollbars** is on by default in the web and desktop clients, moving vertical scrollbars
-a few pixels away from each pane's right edge so they are easier to grab without hitting the
-window's resize edge. Turn it off under **Settings → Appearance → Accessibility**.
-
 ## Custom themes
 
 On web and desktop, choose **Create theme** to adjust a palette, or import a T3 Code or VS Code

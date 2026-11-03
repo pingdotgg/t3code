@@ -115,7 +115,7 @@ export function ThreadDetailsCard({
   const card = (
     <div
       className={cn(
-        // Shifts with inset scrollbars so the card keeps its gap from the chat's scrollbar.
+        // Keeps the card's gap from the chat's inset scrollbar.
         "dropdown-glass relative right-(--app-scrollbar-edge-inset) isolate contain-paint grid max-h-full grid-rows-[minmax(0,1fr)] overflow-hidden rounded-2xl",
         mode === "popover" &&
           "max-h-[min(calc(100dvh-6.5rem),calc(var(--available-height,100dvh)-1rem))]",
