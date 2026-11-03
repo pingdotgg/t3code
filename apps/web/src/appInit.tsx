@@ -78,6 +78,13 @@ function startClientAppearance(): void {
     if (previous?.chatWidth !== settings.chatWidth) {
       root.dataset.chatWidth = settings.chatWidth;
     }
+    if (previous?.smoothActivityShimmer !== settings.smoothActivityShimmer) {
+      // 132 steps over 2.2s caps the opt-in cadence at 60 updates/s on high-refresh displays.
+      root.style.setProperty(
+        "--activity-shimmer-steps",
+        settings.smoothActivityShimmer ? "132" : "30",
+      );
+    }
     if (previous?.appearanceContrast !== settings.appearanceContrast) {
       applyAppearanceContrast(root, settings.appearanceContrast);
     }
