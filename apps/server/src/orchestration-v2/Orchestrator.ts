@@ -5418,6 +5418,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const failure = latestRootProviderFailure(run, projection.turnItems);
       const recovery = projection.thread.limitRecovery;
       const now = yield* DateTime.now;
+      const parentId =
+        projection.thread.lineage.relationshipToParent === "subagent"
+          ? projection.thread.lineage.parentThreadId
+          : null;
+      // The sweep may have read an open parent; resuming now would reopen a settled one.
+      const parentSettled =
+        parentId !== null &&
+        (yield* projectionStore
+          .getThreadShell(parentId)
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: parentId, cause }),
+            ),
+          ))?.settledOverride === "settled";
       if (
         run?.id !== command.usageLimitContinuationOfRunId ||
         failure?.class !== "usage_limit" ||
@@ -5430,6 +5444,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         projection.thread.settledOverride === "settled" ||
+        parentSettled ||
         projection.thread.providerInstanceId !== run.providerInstanceId ||
         projection.runtimeRequests.some((request) => request.status === "pending") ||
         (projection.thread.snoozedUntil != null &&
