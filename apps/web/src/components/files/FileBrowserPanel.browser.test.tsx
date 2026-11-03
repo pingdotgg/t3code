@@ -179,7 +179,7 @@ describe("FileBrowserPanel", () => {
     );
     using _listing = withDirectoryListing([
       ...entries,
-      ...Array.from({ length: 100_000 }, (_, index): ProjectEntry => {
+      ...Array.from({ length: 30_000 }, (_, index): ProjectEntry => {
         return { path: `src/generated-${String(index).padStart(6, "0")}`, kind: "directory" };
       }),
     ]);

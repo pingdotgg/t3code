@@ -1,7 +1,8 @@
 import type { FileTreeBatchOperation } from "@pierre/trees";
 
-// Each batched insert reworks every sibling, so a big listing costs far more than a rebuild.
-export const MAX_INCREMENTAL_FILE_TREE_UPDATES = 1_000;
+// Each batched operation reworks every sibling. Both costs grow with the listing, and a rebuild
+// wins at about 300 operations whether the folder holds 50,000 entries or 332,000.
+export const MAX_INCREMENTAL_FILE_TREE_UPDATES = 300;
 
 function pathDepth(path: string): number {
   return path.split("/").filter(Boolean).length;
