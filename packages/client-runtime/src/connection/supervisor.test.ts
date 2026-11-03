@@ -1906,6 +1906,7 @@ describe("EnvironmentSupervisor routes", () => {
         const discoveryStarted = yield* Deferred.make<void>();
         const finishDiscovery = yield* Deferred.make<void>();
         const lateAddress = "https://fixture.tail1234.ts.net/";
+        const reportedLabel = discovery === "late" ? "Renamed environment" : TARGET.label;
         const learned = yield* Ref.make<ReadonlyArray<string>>([]);
         const harness = yield* makeHarness({
           configEvents:
@@ -1927,7 +1928,7 @@ describe("EnvironmentSupervisor routes", () => {
                         version: 1 as const,
                         type: "snapshot" as const,
                         config: {
-                          environment: { label: TARGET.label },
+                          environment: { label: reportedLabel },
                           directEndpoints: [{ kind: "tailnet", httpBaseUrl: lateAddress }],
                         } as unknown as ServerConfig,
                       }),
@@ -2003,6 +2004,7 @@ describe("EnvironmentSupervisor routes", () => {
         expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
           "BearerConnectionTarget",
         );
+        expect((yield* Ref.get(current)).target.label).toBe(reportedLabel);
         expect(yield* Ref.get(learned)).toEqual([
           `learned:${TARGET.environmentId}:${discovery !== "initial" ? "https://fixture.tail1234.ts.net" : "http://192.168.1.10:3773"}`,
         ]);
