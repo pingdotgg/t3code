@@ -223,7 +223,7 @@ const decodeClaudeLaunchArgSettings = Schema.decodeUnknownEffect(
  * JSON, anything else is a file path relative to the cwd. makeClaudeQueryOptions
  * merges the result beneath T3's own settings.
  */
-export const readClaudeLaunchArgSettings = Effect.fn("readClaudeLaunchArgSettings")(
+export const readClaudeLaunchArgSettings = Effect.fn("ClaudeAdapterV2.readLaunchArgSettings")(
   function* (input: {
     readonly settings: Pick<ClaudeSettings, "launchArgs"> | undefined;
     readonly cwd: string | null;
