@@ -1363,7 +1363,7 @@ describe("OpenCodeAdapterV2", () => {
             return { stream: nativeEvents.stream };
           },
         },
-        command: { list: async () => ({ data: [{ name: "review" }] }) },
+        command: { list: async () => ({ data: [{ name: "git/review" }] }) },
         session: {
           create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
           command: async (input: {
@@ -1382,9 +1382,9 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
       });
-      const start = yield* harness.startTurn("/review staged changes").pipe(Effect.forkScoped);
+      const start = yield* harness.startTurn("/git/review staged changes").pipe(Effect.forkScoped);
       const call = yield* Queue.take(calls);
-      assert.equal(call.command, "review");
+      assert.equal(call.command, "git/review");
       assert.equal(call.arguments, "staged changes");
       assert.equal(call.model, "anthropic/claude-sonnet");
       yield* Effect.promise(() =>
