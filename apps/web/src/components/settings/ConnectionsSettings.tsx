@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { SessionPermissions } from "./SessionPermissions";
 import { useSearch } from "@tanstack/react-router";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
@@ -395,7 +396,7 @@ function ConnectionsSettingsContent({
   const canManageLocalBackend = isPrimaryAccess && !isLocalEnvironmentDisabled() && canMaintain;
   const showsAccess = view === "access";
   const authAccessChanges = useEnvironmentQuery(
-    showsAccess && canReadAccess && accessEnvironmentId !== null
+    canReadAccess && accessEnvironmentId !== null
       ? authEnvironment.accessChanges({
           environmentId: accessEnvironmentId,
           input: null,
@@ -410,10 +411,10 @@ function ConnectionsSettingsContent({
     reportFailure: false,
   });
   const desktopNetworkAccess = useEnvironmentQuery(
-    showsAccess && canManageLocalBackend && desktopBridge ? desktopNetworkAccessStateAtom : null,
+    canManageLocalBackend && desktopBridge ? desktopNetworkAccessStateAtom : null,
   );
   const desktopWsl = useEnvironmentQuery(
-    showsAccess && canManageLocalBackend && desktopBridge ? desktopWslStateAtom : null,
+    canManageLocalBackend && desktopBridge ? desktopWslStateAtom : null,
   );
   const desktopWslState = desktopWsl.data;
   const desktopWslError = desktopWslMutationError ?? desktopWsl.error;
@@ -1240,32 +1241,6 @@ function ConnectionsSettingsContent({
                 <ManagedByOrganization policy={accessServerConfig.managedPolicy} />
               </div>
             ) : null}
-            {canManageLocalBackend && desktopBridge ? (
-              <>
-                {renderReachableRow()}
-                {renderNetworkAccessRow()}
-                {renderEndpointRows()}
-                {renderTailscaleRow()}
-                {renderWslRow()}
-              </>
-            ) : canManageLocalBackend ? (
-              renderDisabledNetworkAccessRow()
-            ) : null}
-            {canReadRelay || canManageRelay ? (
-              <CloudLinkRow
-                environmentId={accessEnvironmentId}
-                canReadRelay={canReadRelay}
-                canManageRelay={canManageRelay}
-                connectDeviceApproval={
-                  accessServerConfig?.settings.requireConnectDeviceApproval === undefined
-                    ? null
-                    : {
-                        required: accessServerConfig.settings.requireConnectDeviceApproval,
-                        canManage: canWriteAccess,
-                      }
-                }
-              />
-            ) : null}
             {canManageLocalBackend ? (
               <SettingsRow
                 title="Version"
@@ -1309,7 +1284,52 @@ function ConnectionsSettingsContent({
                 }
               />
             ) : null}
-            {accessEnvironment ? (
+            {canManageLocalBackend && desktopBridge ? (
+              <>
+                {renderReachableRow()}
+                {renderNetworkAccessRow()}
+                {renderEndpointRows()}
+                {renderTailscaleRow()}
+                {renderWslRow()}
+              </>
+            ) : canManageLocalBackend ? (
+              renderDisabledNetworkAccessRow()
+            ) : null}
+            {canReadRelay || canManageRelay ? (
+              <CloudLinkRow
+                environmentId={accessEnvironmentId}
+                canReadRelay={canReadRelay}
+                canManageRelay={canManageRelay}
+                connectDeviceApproval={
+                  accessServerConfig?.settings.requireConnectDeviceApproval === undefined
+                    ? null
+                    : {
+                        required: accessServerConfig.settings.requireConnectDeviceApproval,
+                        canManage: canWriteAccess,
+                      }
+                }
+              />
+            ) : null}
+            {!showsAccess && (canReadAccess || canWriteAccess) ? (
+              <SettingsRow
+                title="Authorized clients"
+                description={
+                  desktopAccessManagementError
+                    ? desktopAccessManagementError
+                    : isLoadingDesktopAccessManagement
+                      ? "Loading authorized clients…"
+                      : canReadAccess
+                        ? `${desktopClientSessions.length} authorized ${desktopClientSessions.length === 1 ? "client" : "clients"}`
+                        : "Manage pairing links and client access."
+                }
+                control={
+                  <Button variant="secondary" size="sm" render={<Link to="/settings/access" />}>
+                    Manage
+                  </Button>
+                }
+              />
+            ) : null}
+            {showsAccess && accessEnvironment ? (
               <details className="group px-3 sm:px-4">
                 <summary className="flex min-h-11 cursor-pointer list-none items-center [&::-webkit-details-marker]:hidden">
                   <span className="text-label">Permissions</span>
@@ -1326,7 +1346,7 @@ function ConnectionsSettingsContent({
             ) : null}
           </SettingsSection>
 
-          {canReadAccess || canWriteAccess ? (
+          {showsAccess && (canReadAccess || canWriteAccess) ? (
             <>
               <SettingsSection
                 id="pairing"
@@ -1693,6 +1713,7 @@ function ConnectionsSettingsContent({
           <LocalEnvironmentSetting />
         </SettingsSection>
       ) : null}
+      {primarySettings}
       <SettingsSection
         {...searchableSetting("remote-environments")}
         title="Environments"
