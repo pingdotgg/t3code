@@ -1,10 +1,12 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
+  buildCommitUrl,
   changeRequestUrlBelow,
   defineSourceControl,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
+  parseCommitPath,
   projectChangeRequestHost,
 } from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
@@ -15,6 +17,7 @@ const CHANGE_REQUEST_REFERENCE =
 
 // Self-managed GitLab runs on any hostname and nests projects in groups.
 const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/merge_requests\/(\d+)(?:\/|$)/u;
+const COMMIT_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/commit\/([0-9a-f]+)\/?$/iu;
 
 const KIND = SourceControlProviderKind.make("gitlab");
 
@@ -40,6 +43,8 @@ export const definition = defineSourceControl({
       ? changeRequestUrlBelow(webUrl, `-/merge_requests/${number}`)
       : `https://${host}/${repository}/-/merge_requests/${number}`,
   parseChangeRequestUrl: (url) => parseChangeRequestPath(url, CHANGE_REQUEST_PATH),
+  commitUrl: (input) => buildCommitUrl(input, "-/commit"),
+  parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),
   changeRequestUrlFromReferenceAutolink: () => null,
   changeRequestActions: new Set([
     "merge",
