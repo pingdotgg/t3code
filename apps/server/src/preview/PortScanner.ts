@@ -24,6 +24,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 export class PortDiscovery extends Context.Service<
@@ -508,6 +509,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const hostPlatform = yield* HostProcess.Platform;
   const listenerDiscovery = (yield* HostProcess.Environment)[PORT_DISCOVERY_ENV] !== "0";
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
+  const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const stateRef = yield* Ref.make<ScannerState>({
     listeners: new Map(),
     terminalProcesses: new Map(),
@@ -962,9 +964,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     ),
   );
 
-  const pollIfRetained = Ref.get(stateRef).pipe(
-    Effect.flatMap((state) => (state.retainCount > 0 ? pollTick() : Effect.void)),
-  );
+  const pollIfRetained = Effect.gen(function* () {
+    if ((yield* Ref.get(stateRef)).retainCount === 0) return;
+    if (!(yield* backgroundPolicy.shouldRunOpportunisticWork)) return;
+    yield* pollTick();
+  });
   yield* Effect.forkScoped(pollIfRetained.pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));
 
   const acquireRetention = Effect.fn("PortDiscovery.retain")(function* () {

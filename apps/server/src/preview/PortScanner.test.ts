@@ -45,12 +45,18 @@ const processProbeFailure: ProcessRunner.ProcessRunner["Service"]["run"] = (inpu
 
 const layerNoProc = FileSystem.layerNoop({});
 
+const layerForeground = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+  shouldRunOpportunisticWork: Effect.succeed(true),
+});
+
+const layerScanner = PortScanner.layer.pipe(Layer.provide(layerForeground));
+
 const layerProbeFailure = (
   run: ProcessRunner.ProcessRunner["Service"]["run"],
   fetch: typeof globalThis.fetch = globalThis.fetch,
   fileSystem: Layer.Layer<FileSystem.FileSystem> = layerNoProc,
 ) =>
-  PortScanner.layer.pipe(
+  layerScanner.pipe(
     Layer.provide(
       Layer.mergeAll(
         fileSystem,
@@ -87,10 +93,12 @@ const layerLsofScanner = (input: {
   readonly pid: () => number;
   readonly fetch: typeof globalThis.fetch;
   readonly stdout?: () => string;
+  readonly backgroundPolicy?: Layer.Layer<BackgroundPolicy.BackgroundPolicy>;
 }) =>
   PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        input.backgroundPolicy ?? layerForeground,
         layerNoProc,
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: () =>
@@ -298,13 +306,10 @@ effectIt.effect("skips scheduled scans while no client is in the foreground", ()
       lsofRuns += 1;
       return `p1234\ncnode\nn*:${LSOF_TEST_PORT}\n`;
     },
-  }).pipe(
-    Layer.provide(
-      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-        shouldRunOpportunisticWork: Effect.sync(() => foreground),
-      }),
-    ),
-  );
+    backgroundPolicy: Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+      shouldRunOpportunisticWork: Effect.sync(() => foreground),
+    }),
+  });
 
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
@@ -546,7 +551,7 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
     requests.push(String(input));
     return Promise.resolve(new Response("hello", { headers: { "content-type": "text/html" } }));
   }) as typeof globalThis.fetch;
-  const layer = PortScanner.layer.pipe(
+  const layer = layerScanner.pipe(
     Layer.provide(
       Layer.mergeAll(
         layerNoProc,
@@ -655,7 +660,7 @@ effectIt.effect.each(["linux", "darwin", "win32"] as const)(
     const fileReads: string[] = [];
     const requests: string[] = [];
     const missing = FileSystem.makeNoop({});
-    const layer = PortScanner.layer.pipe(
+    const layer = layerScanner.pipe(
       Layer.provide(
         Layer.mergeAll(
           FileSystem.layerNoop({
@@ -722,7 +727,7 @@ effectIt.effect.each(["linux", "darwin"] as const)(
       "/proc/4242/environ": `PATH=/usr/bin\0${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`,
       "/proc/5000/environ": "PATH=/usr/bin\0",
     };
-    const layer = PortScanner.layer.pipe(
+    const layer = layerScanner.pipe(
       Layer.provide(
         Layer.mergeAll(
           FileSystem.layerNoop({
@@ -936,7 +941,7 @@ effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        PortScanner.layer.pipe(
+        layerScanner.pipe(
           Layer.provide(ProcessRunner.layer),
           Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
         ),
