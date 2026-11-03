@@ -512,7 +512,10 @@ it.effect("does not reuse a fresh session ID after MCP registration times out", 
   ),
 );
 
-it.effect("starts the MCP registration deadline after a slow CLI boot", () =>
+it.effect.each([
+  ["opens after a slow CLI boot", "120 seconds", true],
+  ["times out a CLI that never boots", "5 minutes", false],
+] as const)("%s", ([, bootWait, boots]) =>
   Effect.scoped(
     Effect.gen(function* () {
       const waiting = Promise.withResolvers<void>();
@@ -541,11 +544,11 @@ it.effect("starts the MCP registration deadline after a slow CLI boot", () =>
         .open({ ...resumedMcpQueryInput, options: { ...options, sessionId: resume } })
         .pipe(Effect.result, Effect.forkChild);
       yield* Effect.promise(() => waiting.promise);
-      yield* TestClock.adjust("120 seconds");
-      booted.resolve();
+      yield* TestClock.adjust(bootWait);
+      if (boots) booted.resolve();
       const result = yield* Fiber.join(opening);
 
-      assert.equal(result._tag, "Success");
+      assert.equal(result._tag, boots ? "Success" : "Failure");
       if (result._tag === "Success") yield* result.success.close;
     }).pipe(Effect.provide(realQueryRunner)),
   ),
