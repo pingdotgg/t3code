@@ -39,6 +39,13 @@ export function assistantCitationFromLocation(href: string) {
   }
 }
 
+/** Return paths drop the quote hash so going back does not reveal its source again. */
+export function withoutAssistantCitationHash(href: string) {
+  const hashIndex = href.indexOf("#");
+  if (hashIndex === -1 || !href.startsWith(CITATION_HASH_PREFIX, hashIndex + 1)) return href;
+  return href.slice(0, hashIndex);
+}
+
 /** A fresh activation lets the same link reveal its source again after dismissal. */
 export function assistantCitationNavigation(citation: AssistantCitation) {
   return {
