@@ -26,3 +26,18 @@ it("keeps keyboard focus on a sidebar row on window return, but not a clicked ro
   expect(document.activeElement).toBe(tabbed);
   expect(shouldRefocusComposerOnWindowFocus(document.activeElement)).toBe(false);
 });
+
+it("keeps keyboard focus on a side-chat Map node on window return", async () => {
+  const tree = document.createElement("div");
+  tree.setAttribute("role", "tree");
+  const node = document.createElement("button");
+  node.setAttribute("role", "treeitem");
+  node.textContent = "Side chat";
+  tree.append(node);
+  document.body.append(tree);
+  using _tree = { [Symbol.dispose]: () => tree.remove() };
+
+  await userEvent.tab();
+  expect(document.activeElement).toBe(node);
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement)).toBe(false);
+});
