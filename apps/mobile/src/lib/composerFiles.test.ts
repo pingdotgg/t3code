@@ -221,10 +221,10 @@ describe("composer file attachments", () => {
       const header = Buffer.alloc(24);
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header);
       header.write("IHDR", 12);
-      header.writeUInt32BE(1668, 16);
-      header.writeUInt32BE(2388, 20);
-      native.size = { width: 1668, height: 2388 };
-      // Native PNG encoding of the 2000px resample is larger than the 7 MB original.
+      header.writeUInt32BE(3336, 16);
+      header.writeUInt32BE(4776, 20);
+      native.size = { width: 3336, height: 4776 };
+      // Native PNG encoding of the 3000px resample is larger than the 7 MB original.
       native.encode = (size, format) => ({
         uri: `file:///cache/fitted-${size.width}x${size.height}.${format}`,
         base64: Buffer.alloc(size.width * size.height * 4).toString("base64"),
@@ -241,8 +241,8 @@ describe("composer file attachments", () => {
       expect(result.error).toBeNull();
       const [image] = result.images;
       const last = native.resizes.at(-1)!;
-      expect(native.resizes[0]).toEqual({ width: 1397, height: 2000 });
-      expect(Math.max(last.width, last.height)).toBeLessThan(2000);
+      expect(native.resizes[0]).toEqual({ width: 2095, height: 3000 });
+      expect(Math.max(last.width, last.height)).toBeLessThan(3000);
       expect(image).toEqual(
         expect.objectContaining({
           name: "IMG_9280.png",
@@ -252,7 +252,7 @@ describe("composer file attachments", () => {
         }),
       );
       expect(image!.sizeBytes).toBeLessThanOrEqual(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
-      expect(mocks.delete).toHaveBeenCalledWith("file:///cache/fitted-1397x2000.png");
+      expect(mocks.delete).toHaveBeenCalledWith("file:///cache/fitted-2095x3000.png");
       expect(mocks.delete).not.toHaveBeenCalledWith(image!.previewUri);
     });
 
@@ -619,7 +619,7 @@ describe("composer file attachments", () => {
 
       const result = await pickComposerFiles({ existingCount: 0 });
 
-      expect(resize).toHaveBeenCalledWith({ width: 2000, height: 1500 });
+      expect(resize).toHaveBeenCalledWith({ width: 3000, height: 2250 });
       expect(result).toEqual({
         files: [
           expect.objectContaining({
