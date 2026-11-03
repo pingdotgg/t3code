@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -36,9 +37,11 @@ import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -489,4 +492,201 @@ it.effect.each(deliveries)(
         ),
       ),
     ),
+);
+
+it.effect("wakes the agent when Claude's process exits while it awaits background work", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("claude-idle-exit-awaited-task");
+      const processes: Array<Queue.Queue<SDKMessage>> = [];
+      const offers: SDKUserMessage[] = [];
+      const taskId = "b8sleep180";
+      const registry = Layer.unwrap(
+        Effect.gen(function* () {
+          const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+            instanceId: modelSelection.instanceId,
+            settings,
+            environment: {},
+            attachmentsDir: cwd,
+            fileSystem: yield* FileSystem.FileSystem,
+            path: yield* Path.Path,
+            random: yield* SecureRandom.SecureRandom,
+            idAllocator: yield* IdAllocator.IdAllocatorV2,
+            continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
+            queryRunner: {
+              allocateSessionId: Effect.succeed(sessionId),
+              open: () =>
+                Effect.gen(function* () {
+                  const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+                  processes.push(sdkMessages);
+                  return {
+                    messages: Stream.fromQueue(sdkMessages),
+                    offer: (message: SDKUserMessage) =>
+                      Effect.sync(() => void offers.push(message)),
+                    setModel: () => Effect.void,
+                    applyFlagSettings: () => Effect.void,
+                    setPermissionMode: () => Effect.void,
+                    backgroundTasks: () => Effect.succeed(false),
+                    stopTask: () => Effect.void,
+                    interrupt: Effect.void,
+                    close: Queue.shutdown(sdkMessages),
+                  };
+                }),
+              forkSession: () => Effect.die("unused"),
+              subagentLaunchToolUseId: () => Effect.succeed(null),
+              assertComplete: Effect.void,
+            },
+          });
+          return ProviderAdapterRegistry.layerSingle(adapter);
+        }),
+      ).pipe(
+        Layer.provide(Layer.mergeAll(IdAllocator.layer, NodeServices.layer, NodeCrypto.layer)),
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const threadId = ThreadId.make("thread:idle-exit-awaited-task");
+        const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+          orchestrator.streamDomainEvents.pipe(
+            Stream.filter(predicate),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create"),
+          threadId,
+          projectId: ProjectId.make("project:idle-exit-awaited-task"),
+          title: "Idle exit",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const running = yield* watch(
+          (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+        );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("first"),
+          threadId,
+          messageId: MessageId.make("first"),
+          text: "Sleep 180 seconds in the background and wait for it.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+        yield* Fiber.join(running);
+        const firstProcess = processes[0]!;
+        const rostered = yield* watch(
+          (event) =>
+            event.type === "provider-thread.updated" &&
+            event.payload.pendingBackgroundTasks?.some((task) => task.taskId === taskId) === true,
+        );
+        yield* Queue.offer(
+          firstProcess,
+          frame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [{ task_id: taskId, task_type: "local_bash", description: "sleep 180" }],
+            uuid: "roster",
+            session_id: sessionId,
+          }),
+        );
+        yield* Fiber.join(rostered);
+        const records = yield* orchestrator.getThreadRecords(threadId, ["providerThreads"]);
+        const providerThread = records.providerThreads[0]!;
+        const runtime = yield* sessions.get(providerThread.providerSessionId!);
+        if (Option.isNone(runtime) || runtime.value.awaitBackgroundTasks === undefined) {
+          return yield* Effect.die("Claude runtime must accept background waits");
+        }
+        const awaited = yield* watch(
+          (event) =>
+            event.type === "provider-thread.updated" &&
+            event.payload.pendingBackgroundTasks?.some((task) => task.awaited === true) === true,
+        );
+        yield* runtime.value.awaitBackgroundTasks({
+          providerThread,
+          taskIds: [taskId],
+          awaited: true,
+        });
+        yield* Fiber.join(awaited);
+        const settled = yield* watch(
+          (event) =>
+            event.type === "run.updated" &&
+            (event.payload.status === "waiting" || event.payload.status === "completed"),
+        );
+        yield* Queue.offer(firstProcess, result("waiting-on-sleep", false));
+        yield* Fiber.join(settled);
+        yield* worker.drain();
+        const beforeExit = yield* orchestrator.getThreadProjection(threadId);
+        const firstRun = beforeExit.runs[0]!;
+        assert.deepEqual(
+          beforeExit.providerThreads[0]?.pendingBackgroundTasks?.map((task) => [
+            task.taskId,
+            task.awaited,
+          ]),
+          [[taskId, true]],
+        );
+
+        const cleared = yield* watch(
+          (event) =>
+            event.type === "provider-thread.updated" &&
+            event.payload.pendingBackgroundTasks?.length === 0,
+        );
+        const woken = yield* watch(
+          (event) => event.type === "run.updated" && event.payload.id !== firstRun.id,
+        );
+        // The CLI exits (SIGTERM) while the thread is idle; the T3 server keeps running.
+        yield* Queue.shutdown(firstProcess);
+        yield* Fiber.join(cleared);
+        yield* worker.drain();
+
+        const afterExit = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          afterExit.runs
+            .find((run) => run.id === firstRun.id)
+            ?.restartCancelledBackgroundWork?.map((work) => work.id),
+          [taskId],
+          "the run must record the awaited task the exited process took with it",
+        );
+        yield* Fiber.join(woken);
+        yield* worker.drain();
+        assert.isTrue(
+          offers.slice(1).some((offer) => JSON.stringify(offer.message).includes(taskId)),
+          "the agent must be woken with a note naming the lost task",
+        );
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).messages.filter(
+            (message) => message.createdBy === "user",
+          ).length,
+          1,
+        );
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "claude-idle-exit-awaited-task" },
+            registry,
+            { runEffectWorker: false, runContinuationWorker: true },
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  ),
 );
