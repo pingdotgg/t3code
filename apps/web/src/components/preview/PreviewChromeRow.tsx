@@ -79,6 +79,26 @@ export function PreviewChromeRow({
   const [draft, setDraft] = useState(url);
   const [inputFocused, setInputFocused] = useState(false);
 
+  const renderOpenInBrowserButton = (tabIndex?: number) => (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={onOpenInBrowser}
+            aria-label="Open in system browser"
+            type="button"
+            tabIndex={tabIndex}
+          />
+        }
+      >
+        <ExternalLink />
+      </TooltipTrigger>
+      <TooltipPopup>Open in system browser</TooltipPopup>
+    </Tooltip>
+  );
+
   const submit = (event?: FormEvent | KeyboardEvent) => {
     event?.preventDefault();
     const next = draft.trim();
@@ -185,28 +205,27 @@ export function PreviewChromeRow({
               }
             />
           </Tooltip>
-          {onOpenInBrowser ? (
+          {onOpenInBrowser && !inputFocused ? (
             <InputGroupAddon align="inline-end">
               {}
               <span className="pointer-events-none flex opacity-0 transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/address:pointer-events-auto group-hover/address:opacity-100">
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={onOpenInBrowser}
-                        aria-label="Open in system browser"
-                        type="button"
-                      />
-                    }
-                  >
-                    <ExternalLink />
-                  </TooltipTrigger>
-                  <TooltipPopup>Open in system browser</TooltipPopup>
-                </Tooltip>
+                {renderOpenInBrowserButton()}
               </span>
             </InputGroupAddon>
+          ) : null}
+          {onOpenInBrowser && inputFocused ? (
+            // Cancelling mousedown keeps the input focused, so this node stays mounted for the click.
+            <span
+              className="absolute inset-y-0.75 end-0.75 hidden items-center pointer-fine:flex pointer-events-none opacity-0 transition-opacity has-[:hover]:opacity-100"
+              aria-hidden
+              onMouseDown={(event) => event.preventDefault()}
+            >
+              <span className="pointer-events-auto h-full w-6 overflow-hidden rounded-sm bg-background">
+                <span className="flex size-full items-center justify-center bg-muted/40">
+                  {renderOpenInBrowserButton(-1)}
+                </span>
+              </span>
+            </span>
           ) : null}
         </InputGroup>
 
