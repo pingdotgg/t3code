@@ -4836,9 +4836,9 @@ it.each([
   const finalAnswer = original.filter(
     (row) =>
       (row.kind === "message" || row.kind === "assistant-meta") &&
-      row.message.runId === fixture.runId,
+      row.message.runId === fixture.runId &&
+      !row.message.streaming,
   );
-  expect(finalAnswer).toHaveLength(1);
   expect(collapsed.slice(1)).toEqual(finalAnswer);
   expect(collapsed[0]).toMatchObject({
     kind: "background-activity",

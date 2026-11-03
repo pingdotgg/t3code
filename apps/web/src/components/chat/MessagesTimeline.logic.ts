@@ -2998,14 +2998,16 @@ export function applyBackgroundActivityGroups(
       result.push(...groupRows);
     } else {
       const lastRunId = [...runIds].at(-1);
-      const workingAt = groupRows.findIndex((row) => row.kind === "working");
-      const finalAnswer = groupRows.findLast(
-        (row, at) =>
-          row.kind === "message" &&
-          row.message.role === "assistant" &&
-          row.message.runId === lastRunId &&
-          (activeRunId === lastRunId ? workingAt >= 0 && at > workingAt : !row.message.streaming),
-      );
+      const finalAnswer =
+        activeRunId === lastRunId
+          ? undefined
+          : groupRows.findLast(
+              (row) =>
+                row.kind === "message" &&
+                row.message.role === "assistant" &&
+                row.message.runId === lastRunId &&
+                !row.message.streaming,
+            );
       if (finalAnswer?.kind === "message") {
         result.push(
           ...groupRows.filter(
