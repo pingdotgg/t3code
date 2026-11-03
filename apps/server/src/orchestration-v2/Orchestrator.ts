@@ -180,6 +180,7 @@ import {
   endRunlessRootTurns,
   makeSubagentChildThread,
   subagentResultForRun,
+  delegatedRunOwners,
   delegatedTaskProgress,
   delegatedTaskRuns,
   subagentThreadTitle,
@@ -7996,14 +7997,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (task) => task.origin === "app_owned" && task.childThreadId === child.id,
     );
     const original = tasks.find((task) => task.id === originalId);
-    // Wakes and user turns join an open task, which resolves with their result; only the parent opens another.
-    if (
-      original === undefined ||
-      original.result === null ||
-      (command.senderThreadId !== parentThreadId &&
-        tasks.some((task) => task.result === null && task.completedAt === null))
-    )
-      return;
+    if (original === undefined || original.result === null) return;
+    if (command.senderThreadId !== parentThreadId) {
+      // A wake or user turn joins the open task that owns it, which resolves with its result.
+      const { runs } = yield* projectionStore.getThreadRecords(command.threadId, ["runs"]);
+      const runOwner = delegatedRunOwners(
+        [...runs.filter((row) => row.id !== run.id), run],
+        original.id,
+      ).get(run.id);
+      if (
+        tasks.some(
+          (task) => task.id === runOwner && task.result === null && task.completedAt === null,
+        )
+      )
+        return;
+    }
     const owner =
       parent.runs.filter(isActiveRun).toSorted((a, b) => b.ordinal - a.ordinal)[0] ??
       latestExecutedRun(parent.runs);
@@ -12403,6 +12411,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly settledContinuationOf?: RunId;
         readonly syncRunId?: RunId;
         readonly task: OrchestrationV2Subagent;
+        readonly owners: ReadonlyMap<RunId, NodeId>;
       },
     ) {
       const childThreadId = childControls.thread.id;
@@ -12414,7 +12423,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return;
       }
-      const taskRuns = delegatedTaskRuns(childControls.runs, options.task.id, forkedFrom.nodeId);
+      const taskRuns = delegatedTaskRuns(childControls.runs, options.task.id, options.owners);
       const taskRun = taskRuns.findLast((run) => run.delegatedTaskId === options.task.id);
       // A task resolves once the work it owns settles, including subagents and background work its runs started.
       const { state, resultRun } = delegatedTaskProgress({ ...childControls, runs: taskRuns });
@@ -12714,6 +12723,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "subagents",
       "contextTransfers",
     ]);
+    const owners = delegatedRunOwners(childControls.runs, childControls.thread.forkedFrom.nodeId);
     for (const task of parent.subagents) {
       if (
         task.origin !== "app_owned" ||
@@ -12725,7 +12735,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ))
       )
         continue;
-      yield* finalizeAppOwnedSubagentTask(childControls, { ...options, task });
+      yield* finalizeAppOwnedSubagentTask(childControls, { ...options, task, owners });
     }
 
     const progress = delegatedTaskProgress(childControls);
@@ -13989,7 +13999,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const runs =
         taskId === undefined || forkedFrom?.type !== "node"
           ? child.runs
-          : delegatedTaskRuns(child.runs, taskId, forkedFrom.nodeId);
+          : delegatedTaskRuns(
+              child.runs,
+              taskId,
+              delegatedRunOwners(child.runs, forkedFrom.nodeId),
+            );
       const progress = delegatedTaskProgress({ ...child, runs });
       if (progress.state !== "result_available") return true;
       if (progress.resultRun === undefined) return false;

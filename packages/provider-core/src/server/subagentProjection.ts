@@ -248,9 +248,8 @@ export function delegatedRunOwners(
 export function delegatedTaskRuns<Run extends TaskRun>(
   runs: ReadonlyArray<Run>,
   taskId: NodeId,
-  originalTaskId: NodeId,
+  owners: ReadonlyMap<TaskRun["id"], NodeId>,
 ): Array<Run> {
-  const owners = delegatedRunOwners(runs, originalTaskId);
   return runs
     .filter((run) => owners.get(run.id) === taskId)
     .toSorted((a, b) => a.ordinal - b.ordinal);

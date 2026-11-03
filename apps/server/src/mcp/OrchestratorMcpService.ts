@@ -497,17 +497,18 @@ function endsTaskWait(result: OrchestratorMcpDelegateTaskResult): boolean {
 const isApprovalRequestKind = Schema.is(ProviderRequestKind);
 
 function pendingTaskApproval(
-  child: Pick<OrchestrationV2ThreadProjection, "runs" | "nodes" | "runtimeRequests">,
+  child: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "nodes" | "runtimeRequests">,
   taskId: NodeId,
   originalRun: OrchestrationV2Run | undefined,
 ) {
+  const owners = runTaskIds(child);
   const taskRunIds = new Set(
     child.runs
       .filter(
         (run) =>
           !ThreadManagementService.isTerminalRunStatus(run.status) &&
-          (run.delegatedTaskId === taskId ||
-            // Legacy tasks own only their original run, not later turns in the child thread.
+          (owners.get(run.id) === taskId ||
+            // Threads not forked from a task node own only their original unbound run.
             (run.delegatedTaskId === undefined && run.id === originalRun?.id)),
       )
       .map((run) => run.id),
@@ -1511,7 +1512,11 @@ const make = Effect.gen(function* () {
     const { forkedFrom } = childControls.thread;
     const taskRuns =
       forkedFrom?.type === "node"
-        ? delegatedTaskRuns(childControls.runs, task.id, forkedFrom.nodeId)
+        ? delegatedTaskRuns(
+            childControls.runs,
+            task.id,
+            delegatedRunOwners(childControls.runs, forkedFrom.nodeId),
+          )
         : childControls.runs;
     const taskRun = taskRuns.findLast((run) => run.delegatedTaskId === task.id);
     const taskRunActive = taskRun !== undefined && !isTerminalTaskStatus(taskStatusForRun(taskRun));

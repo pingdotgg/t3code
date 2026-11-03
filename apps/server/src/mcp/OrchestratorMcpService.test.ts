@@ -1134,150 +1134,202 @@ describe("OrchestratorMcpService", () => {
     }),
   );
 
-  it.effect("credits a follow-up with the result of the wake run that joined it", () =>
-    Effect.gen(function* () {
-      const parentThreadId = ThreadId.make("thread:mcp-joined-parent");
-      const childThreadId = ThreadId.make("thread:mcp-joined-child");
-      const originalTaskId = NodeId.make("node:mcp-joined-original");
-      const followupTaskId = NodeId.make("node:mcp-joined-followup");
-      const resultTransferId = ContextTransferId.make("transfer:mcp-joined-result");
-      const now = DateTime.makeUnsafe("2026-11-03T20:00:00Z");
-      const shell = {
-        ...liveThreadShell(childThreadId, { activeRunId: null }),
-        forkedFrom: { type: "node" as const, nodeId: originalTaskId },
-        lineage: {
-          rootThreadId: parentThreadId,
-          parentThreadId,
-          relationshipToParent: "subagent" as const,
-        },
-      };
-      // The original run, the follow-up's own run, then the unbound wake that settled it.
-      const runs = [undefined, followupTaskId, undefined].map((delegatedTaskId, index) => ({
-        id: RunId.make(`run:mcp-joined:${index + 1}`),
-        threadId: childThreadId,
-        ordinal: index + 1,
-        status: "completed" as const,
-        modelSelection: shell.modelSelection,
-        providerInstanceId: shell.providerInstanceId,
-        requestedAt: now,
-        startedAt: now,
-        completedAt: now,
-        ...(delegatedTaskId === undefined ? {} : { delegatedTaskId }),
-      }));
-      const wakeRun = runs[2]!;
-      const messages = runs.map((run) => ({
-        id: MessageId.make(`message:${run.id}`),
-        threadId: childThreadId,
-        runId: run.id,
-        role: "assistant" as const,
-        text: run.id === wakeRun.id ? "CHILD_DONE" : "CHILD_WAITING",
-        createdAt: now,
-        updatedAt: now,
-      }));
-      const turnItems = messages.map((message, ordinal) => ({
-        id: `item:${message.runId}`,
-        type: "assistant_message" as const,
-        threadId: childThreadId,
-        runId: message.runId,
-        ordinal,
-        messageId: message.id,
-        text: message.text,
-        status: "completed" as const,
-        title: null,
-        updatedAt: now,
-      }));
-      const childProjection = {
-        ...idleThreadProjection(shell),
-        runs,
-        messages,
-        turnItems,
-      } as unknown as OrchestrationV2ThreadProjection;
-      const parentProjection = {
-        ...idleThreadProjection(liveThreadShell(parentThreadId)),
-        contextTransfers: [
-          {
-            id: resultTransferId,
-            type: "subagent_result",
-            sourceThreadId: childThreadId,
-            targetThreadId: parentThreadId,
-            sourcePoint: { runId: wakeRun.id },
-          },
-        ],
-        subagents: [originalTaskId, followupTaskId].map((id) => ({
+  // The original run, a follow-up's own run, then an unbound wake that joined the follow-up.
+  const joinedWakeFixture = (wake: "settled" | "awaiting_approval") => {
+    const parentThreadId = ThreadId.make("thread:mcp-joined-parent");
+    const childThreadId = ThreadId.make("thread:mcp-joined-child");
+    const originalTaskId = NodeId.make("node:mcp-joined-original");
+    const followupTaskId = NodeId.make("node:mcp-joined-followup");
+    const resultTransferId = ContextTransferId.make("transfer:mcp-joined-result");
+    const approvalNodeId = NodeId.make("node:mcp-joined-approval");
+    const now = DateTime.makeUnsafe("2026-11-03T20:00:00Z");
+    const settled = wake === "settled";
+    const shell = {
+      ...liveThreadShell(childThreadId, { activeRunId: null }),
+      forkedFrom: { type: "node" as const, nodeId: originalTaskId },
+      lineage: {
+        rootThreadId: parentThreadId,
+        parentThreadId,
+        relationshipToParent: "subagent" as const,
+      },
+    };
+    const runs = [undefined, followupTaskId, undefined].map((delegatedTaskId, index) => ({
+      id: RunId.make(`run:mcp-joined:${index + 1}`),
+      threadId: childThreadId,
+      ordinal: index + 1,
+      status: settled || index < 2 ? ("completed" as const) : ("running" as const),
+      modelSelection: shell.modelSelection,
+      providerInstanceId: shell.providerInstanceId,
+      requestedAt: now,
+      startedAt: now,
+      completedAt: settled || index < 2 ? now : null,
+      ...(delegatedTaskId === undefined ? {} : { delegatedTaskId }),
+    }));
+    const wakeRun = runs[2]!;
+    const messages = runs.map((run) => ({
+      id: MessageId.make(`message:${run.id}`),
+      threadId: childThreadId,
+      runId: run.id,
+      role: "assistant" as const,
+      text: run.id === wakeRun.id ? "CHILD_DONE" : "CHILD_WAITING",
+      createdAt: now,
+      updatedAt: now,
+    }));
+    const turnItems = messages.map((message, ordinal) => ({
+      id: `item:${message.runId}`,
+      type: "assistant_message" as const,
+      threadId: childThreadId,
+      runId: message.runId,
+      ordinal,
+      messageId: message.id,
+      text: message.text,
+      status: "completed" as const,
+      title: null,
+      updatedAt: now,
+    }));
+    const childProjection = {
+      ...idleThreadProjection(shell),
+      runs,
+      messages,
+      turnItems,
+      ...(settled
+        ? {}
+        : {
+            nodes: [{ id: approvalNodeId, runId: wakeRun.id }],
+            runtimeRequests: [
+              {
+                id: "request:mcp-joined-approval",
+                nodeId: approvalNodeId,
+                kind: "command",
+                status: "pending",
+                responseCapability: { type: "live" },
+                createdAt: now,
+              },
+            ],
+          }),
+    } as unknown as OrchestrationV2ThreadProjection;
+    const parentProjection = {
+      ...idleThreadProjection(liveThreadShell(parentThreadId)),
+      contextTransfers: settled
+        ? [
+            {
+              id: resultTransferId,
+              type: "subagent_result",
+              sourceThreadId: childThreadId,
+              targetThreadId: parentThreadId,
+              sourcePoint: { runId: wakeRun.id },
+            },
+          ]
+        : [],
+      subagents: [originalTaskId, followupTaskId].map((id) => {
+        const open = id === followupTaskId && !settled;
+        return {
           id,
           threadId: parentThreadId,
           childThreadId,
           origin: "app_owned",
-          status: "completed",
+          status: open ? "running" : "completed",
           driver: "codex",
-          result: id === followupTaskId ? "CHILD_DONE" : "original",
+          result: open ? null : id === followupTaskId ? "CHILD_DONE" : "original",
           completionDelivery: { state: id === followupTaskId ? "claimed" : "acknowledged" },
-        })),
-      } as unknown as OrchestrationV2ThreadProjection;
-      const acknowledged = yield* Ref.make<ReadonlyArray<NodeId>>([]);
-      const layerDependencies = Layer.mergeAll(
-        NodeServices.layer,
-        NodeCrypto.layer,
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadRecords: (threadId) =>
-            Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
-          getThreadShell: () => Effect.succeed(shell),
-          getProjectThreadRecords: () => Effect.succeed(childProjection),
-          getTimelinePage: () =>
-            Effect.succeed({
-              items: turnItems.map((item, position) => ({
-                position,
-                item,
-                sourceItemId: item.id,
-                sourceThreadId: childThreadId,
-                visibility: "visible",
-              })),
-              totalItems: turnItems.length,
-              hasMore: false,
-            } as never),
-          delegatedTaskResultPending: () => Effect.succeed(false),
-          dispatch: (command) =>
-            command.type === "delegated_task.completion-delivery.acknowledge"
-              ? Ref.update(acknowledged, (ids) => [...ids, command.taskId]).pipe(
-                  Effect.as({} as never),
-                )
-              : Effect.die("unexpected command"),
-        }),
-        ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
-          list: () => Effect.succeed([]),
-        }),
-        Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-      );
-      const scope: McpInvocationScope = {
-        environmentId: EnvironmentId.make("environment:mcp-joined"),
-        requestNamespace: "provider-session:mcp-joined",
-        thread: {
-          threadId: parentThreadId,
-          providerSessionId: "provider-session:mcp-joined",
-          providerInstanceId: shell.providerInstanceId,
-        },
-        client: undefined,
-        capabilities: new Set(["orchestration"]),
-        issuedAt: 1,
-      };
+        };
+      }),
+    } as unknown as OrchestrationV2ThreadProjection;
+    const acknowledged = Ref.makeUnsafe<ReadonlyArray<NodeId>>([]);
+    const layer = layerOrchestratorService.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: (threadId) =>
+              Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
+            getThreadShell: () => Effect.succeed(shell),
+            getProjectThreadRecords: () => Effect.succeed(childProjection),
+            getTimelinePage: () =>
+              Effect.succeed({
+                items: turnItems.map((item, position) => ({
+                  position,
+                  item,
+                  sourceItemId: item.id,
+                  sourceThreadId: childThreadId,
+                  visibility: "visible",
+                })),
+                totalItems: turnItems.length,
+                hasMore: false,
+              } as never),
+            delegatedTaskResultPending: () => Effect.succeed(false),
+            dispatch: (command) =>
+              command.type === "delegated_task.completion-delivery.acknowledge"
+                ? Ref.update(acknowledged, (ids) => [...ids, command.taskId]).pipe(
+                    Effect.as({} as never),
+                  )
+                : Effect.die("unexpected command"),
+          }),
+          ServerSettings.layerTest(),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+            list: () => Effect.succeed([]),
+          }),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        ),
+      ),
+    );
+    const scope: McpInvocationScope = {
+      environmentId: EnvironmentId.make("environment:mcp-joined"),
+      requestNamespace: "provider-session:mcp-joined",
+      thread: {
+        threadId: parentThreadId,
+        providerSessionId: "provider-session:mcp-joined",
+        providerInstanceId: shell.providerInstanceId,
+      },
+      client: undefined,
+      capabilities: new Set(["orchestration"]),
+      issuedAt: 1,
+    };
+    return {
+      childThreadId,
+      followupTaskId,
+      resultTransferId,
+      wakeRun,
+      acknowledged,
+      layer,
+      scope,
+    };
+  };
 
-      yield* Effect.gen(function* () {
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const status = yield* service.taskStatus(scope, followupTaskId);
-        assert.equal(status.summary, "CHILD_DONE");
-        assert.equal(status.resultContextTransferId, resultTransferId);
-        yield* Ref.set(acknowledged, []);
-        const read = yield* service.readThread(scope, { threadId: childThreadId, limit: 100 });
-        assert.isTrue(read.items.some((item) => item.text === "CHILD_DONE"));
-        assert.deepEqual(yield* Ref.get(acknowledged), [followupTaskId]);
-      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
-    }),
-  );
+  it.effect("credits a follow-up with the result of the wake run that joined it", () => {
+    const fixture = joinedWakeFixture("settled");
+    return Effect.gen(function* () {
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const status = yield* service.taskStatus(fixture.scope, fixture.followupTaskId);
+      assert.equal(status.summary, "CHILD_DONE");
+      assert.equal(status.resultContextTransferId, fixture.resultTransferId);
+      yield* Ref.set(fixture.acknowledged, []);
+      const read = yield* service.readThread(fixture.scope, {
+        threadId: fixture.childThreadId,
+        limit: 100,
+      });
+      assert.isTrue(read.items.some((item) => item.text === "CHILD_DONE"));
+      assert.deepEqual(yield* Ref.get(fixture.acknowledged), [fixture.followupTaskId]);
+    }).pipe(Effect.provide(fixture.layer));
+  });
+
+  it.effect("reports an approval on the wake run that joined an open follow-up", () => {
+    const fixture = joinedWakeFixture("awaiting_approval");
+    return Effect.gen(function* () {
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const status = yield* service.taskStatus(fixture.scope, fixture.followupTaskId);
+      assert.deepEqual(status.pendingApproval, {
+        requestId: "request:mcp-joined-approval",
+        kind: "command",
+        runId: fixture.wakeRun.id,
+      });
+    }).pipe(Effect.provide(fixture.layer));
+  });
 });
 
 describe("OrchestratorMcpService provider resolution", () => {
