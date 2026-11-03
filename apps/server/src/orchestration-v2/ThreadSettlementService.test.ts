@@ -197,15 +197,19 @@ describe("isAutoSettlementCandidate", () => {
   });
 });
 
+const PULL_REQUEST_7_URL = "https://example.test/owner/repo/pull/7";
+
 describe("resolveAutoSettlement", () => {
   const idleFor = (days: number, settledAt: DateTime.Utc) => ({
     settledAt,
     reason: { type: "inactive", days },
   });
-  const pullRequestWas = (state: "merged" | "closed", settledAt: DateTime.Utc, number = 7) => ({
-    settledAt,
-    reason: { type: "pull-request", state, number },
-  });
+  const pullRequestWas = (
+    state: "merged" | "closed",
+    settledAt: DateTime.Utc,
+    number = 7,
+    url = PULL_REQUEST_7_URL,
+  ) => ({ settledAt, reason: { type: "pull-request", state, number, url } });
 
   it("keeps threads with a PR from inactivity settlement only when asked", () => {
     const input = {
@@ -234,7 +238,12 @@ describe("resolveAutoSettlement", () => {
     expect(
       ThreadSettlementService.resolveAutoSettlement({
         ...input,
-        pullRequest: { number: 7, state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
+        pullRequest: {
+          number: 7,
+          url: PULL_REQUEST_7_URL,
+          state: "merged",
+          mergedAt: DateTime.formatIso(at(-1)),
+        },
       }),
     ).toEqual(pullRequestWas("merged", at(-4 * DAY_MS)));
   });
@@ -264,7 +273,12 @@ describe("resolveAutoSettlement", () => {
     expect(
       ThreadSettlementService.resolveAutoSettlement({
         ...input,
-        pullRequest: { number: 7, state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
+        pullRequest: {
+          number: 7,
+          url: PULL_REQUEST_7_URL,
+          state: "merged",
+          mergedAt: DateTime.formatIso(at(-1)),
+        },
         autoSettleAfterDays: null,
       }),
     ).toBeNull();
@@ -365,6 +379,7 @@ describe("resolveAutoSettlement", () => {
       thread,
       pullRequest: {
         number: 7,
+        url: PULL_REQUEST_7_URL,
         state: "merged" as const,
         mergedAt: DateTime.formatIso(at(-60 * 60 * 1_000)),
       },
@@ -383,6 +398,7 @@ describe("resolveAutoSettlement", () => {
         ...input,
         pullRequest: {
           number: 7,
+          url: PULL_REQUEST_7_URL,
           state: "merged",
           mergedAt: DateTime.formatIso(at(-3 * 60 * 60 * 1_000)),
         },
@@ -392,7 +408,12 @@ describe("resolveAutoSettlement", () => {
       ThreadSettlementService.resolveAutoSettlement({
         ...input,
         thread: shell(),
-        pullRequest: { number: 7, state: "closed", closedAt: DateTime.formatIso(at(-1)) },
+        pullRequest: {
+          number: 7,
+          url: PULL_REQUEST_7_URL,
+          state: "closed",
+          closedAt: DateTime.formatIso(at(-1)),
+        },
         autoSettleOnMerge: false,
       }),
     ).toEqual(pullRequestWas("closed", shell().createdAt));
@@ -409,6 +430,7 @@ describe("resolveAutoSettlement", () => {
       thread: woken,
       pullRequest: {
         number: 7,
+        url: PULL_REQUEST_7_URL,
         state: "merged" as const,
         mergedAt: DateTime.formatIso(at(-60 * 60 * 1_000)),
       },
@@ -468,7 +490,14 @@ describe("resolveAutoSettlement", () => {
           pullRequests: [recorded, link(2, at(-90 * 60 * 1_000), at(-40 * 60 * 1_000))],
         },
       }),
-    ).toEqual(pullRequestWas("merged", at(-45 * 60 * 1_000), 2));
+    ).toEqual(
+      pullRequestWas(
+        "merged",
+        at(-45 * 60 * 1_000),
+        2,
+        "https://example.test/owner/repository/pull/2",
+      ),
+    );
   });
 });
 
@@ -844,7 +873,12 @@ describe("ThreadSettlementServiceV2 worker", () => {
           const commands = yield* Ref.get(fixture.commands);
           expect(commands.map((command) => command.threadId)).toEqual([thread.id]);
           expect(commands[0]).toMatchObject({
-            reason: { type: "pull-request", state: "merged", number: 42 },
+            reason: {
+              type: "pull-request",
+              state: "merged",
+              number: 42,
+              url: "https://example.test/owner/repository/pull/42",
+            },
           });
         }).pipe(Effect.provide(fixture.layer));
       }),
@@ -1506,7 +1540,12 @@ describe("isSnoozed", () => {
     expect(
       ThreadSettlementService.resolveAutoSettlement({
         thread,
-        pullRequest: { number: 7, state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
+        pullRequest: {
+          number: 7,
+          url: PULL_REQUEST_7_URL,
+          state: "merged",
+          mergedAt: DateTime.formatIso(at(-1)),
+        },
         nowMs: NOW_MS,
         autoSettleAfterDays: null,
         autoSettleOnMerge: true,

@@ -348,16 +348,36 @@ export function settledThreadLabel(
 ): string {
   const reason = thread.settleReason ?? null;
   const link = resolveThreadCurrentPullRequestLink(thread.pullRequests);
-  const term =
+  const linkTerm =
     (link && sourceControlClients.findByChangeRequestUrl(link.url)?.changeRequest.shortLabel) ??
     "PR";
   const state = link?.snapshot?.state;
   const ended =
     link !== null && (state === "merged" || state === "closed")
-      ? `${term} #${link.number} ${state}`
+      ? { term: linkTerm, repository: link.repository, number: link.number, state }
       : null;
+  const settledBy = reason?.type === "pull-request" ? reason : null;
+  const settledByUrl =
+    settledBy?.url === undefined ? null : sourceControlClients.parseChangeRequestUrl(settledBy.url);
   const cause =
-    reason?.type === "pull-request" ? `${term} #${reason.number} ${reason.state}` : null;
+    settledBy === null
+      ? null
+      : {
+          term: settledByUrl?.definition.changeRequest.shortLabel ?? linkTerm,
+          repository: settledByUrl?.link.repository ?? null,
+          number: settledBy.number,
+          state: settledBy.state,
+        };
+  const sameChangeRequest =
+    cause !== null &&
+    ended !== null &&
+    (settledBy?.url === undefined || link === null
+      ? cause.number === ended.number && cause.state === ended.state
+      : sourceControlClients.isSameChangeRequest(settledBy.url, link.url));
+  // Two different pull requests with one number need their repositories to tell them apart.
+  const qualify = !sameChangeRequest && cause !== null && cause.number === ended?.number;
+  const describe = (pr: NonNullable<typeof cause>) =>
+    `${pr.term} ${qualify && pr.repository !== null ? pr.repository : ""}#${pr.number} ${pr.state}`;
   const head =
     reason?.type === "inactive"
       ? `Settled after ${reason.days} idle ${reason.days === 1 ? "day" : "days"}`
@@ -365,9 +385,9 @@ export function settledThreadLabel(
           "Settled",
           reason?.type === "user" ? " by you" : reason?.type === "agent" ? " by an agent" : "",
           when === null ? "" : ` ${when}`,
-          cause === null ? "" : `: ${cause}`,
+          cause === null ? "" : `: ${describe(cause)}`,
         ].join("");
-  return ended === null || cause === ended ? head : `${head} · ${ended}`;
+  return ended === null || sameChangeRequest ? head : `${head} · ${describe(ended)}`;
 }
 
 export type CustomSnoozeInput =

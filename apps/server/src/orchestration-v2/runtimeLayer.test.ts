@@ -2599,7 +2599,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         commandId: CommandId.make("runtime-layer-lifecycle-auto-settle"),
         threadId,
         snapshotAt: preAutoProjection.thread.updatedAt,
-        reason: { type: "pull-request", state: "merged", number: 128 },
+        reason: {
+          type: "pull-request",
+          state: "merged",
+          number: 128,
+          url: "https://github.com/acme/widgets/pull/128",
+        },
       });
       const autoSettledProjection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(autoSettledProjection.thread.settledOverride, "settled");
@@ -2608,6 +2613,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         type: "pull-request",
         state: "merged",
         number: 128,
+        url: "https://github.com/acme/widgets/pull/128",
       });
       yield* orchestrator.dispatch({
         type: "thread.unsettle",

@@ -447,6 +447,8 @@ export const OrchestrationV2ThreadSettleReason = Schema.Union([
     type: Schema.Literal("pull-request"),
     state: Schema.Literals(["merged", "closed"]),
     number: PositiveInt,
+    /** Names the host and repository; reasons recorded without it fall back to the current link. */
+    url: Schema.optional(TrimmedNonEmptyString),
   }),
   Schema.Struct({ type: Schema.Literal("inactive"), days: Schema.Number }),
 ]);

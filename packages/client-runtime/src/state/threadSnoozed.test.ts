@@ -399,7 +399,7 @@ describe("settledThreadLabel", () => {
     url = "https://github.com/owner/repo/pull/12",
   ): ThreadPullRequestLink => ({
     host: new URL(url).host,
-    repository: "owner/repo",
+    repository: new URL(url).pathname.split("/").slice(1, 3).join("/"),
     number: Number(url.split("/").at(-1)),
     url,
     source: "agent",
@@ -417,7 +417,12 @@ describe("settledThreadLabel", () => {
     },
     stack: null,
   });
-  const mergedByReason = { type: "pull-request", state: "merged", number: 12 } as const;
+  const mergedByReason = {
+    type: "pull-request",
+    state: "merged",
+    number: 12,
+    url: "https://github.com/owner/repo/pull/12",
+  } as const;
 
   it.each([
     [
@@ -449,8 +454,27 @@ describe("settledThreadLabel", () => {
       "Settled 49m ago: PR #12 merged · PR #13 merged",
     ],
     [
-      "a GitLab merge request",
-      { ...mergedByReason, number: 7 },
+      "a GitLab cause while the current link is on GitHub",
+      {
+        type: "pull-request",
+        state: "merged",
+        number: 7,
+        url: "https://gitlab.com/owner/repo/-/merge_requests/7",
+      } as const,
+      [link("merged")],
+      "49m ago",
+      "Settled 49m ago: MR #7 merged · PR #12 merged",
+    ],
+    [
+      "two repositories that share a number",
+      { ...mergedByReason, url: "https://github.com/acme/api/pull/12" },
+      [link("merged", "https://github.com/acme/web/pull/12")],
+      "49m ago",
+      "Settled 49m ago: PR acme/api#12 merged · PR acme/web#12 merged",
+    ],
+    [
+      "a GitLab merge request, from a reason recorded without its URL",
+      { type: "pull-request", state: "merged", number: 7 } as const,
       [link("merged", "https://gitlab.com/owner/repo/-/merge_requests/7")],
       null,
       "Settled: MR #7 merged",
