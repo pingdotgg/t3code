@@ -84,6 +84,8 @@ export function importPastedComposerText(
     fragment: ComposerContextClipboardFragment,
   ) => ReadonlyMap<string, string>,
 ): string {
+  const pastedLink = readPastedComposerLink(clipboardData);
+  if (pastedLink) return pastedLink;
   const pastedText = clipboardData.getData("text/plain");
   const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
   const rewrittenIds =

@@ -23,6 +23,8 @@ import {
   type ComposerPromptEditorProps,
 } from "./ComposerPromptEditorTiptap";
 
+import { importPastedComposerText } from "./composerInlineTokenPaste";
+
 const babysit: ServerProviderSkill = {
   name: "babysit",
   path: "/skills/babysit/SKILL.md",
@@ -284,6 +286,7 @@ it.each([
     const clipboardData = new DataTransfer();
     clipboardData.setData("text/plain", fixture.plain);
     clipboardData.setData("text/html", fixture.html);
+    expect(importPastedComposerText(clipboardData)).toBe(fixture.expected);
     editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe(fixture.expected);
