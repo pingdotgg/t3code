@@ -202,7 +202,10 @@ export function PullRequestsColumn({
         </PaneNotch>
       </SettingsPaneHeader>
 
-      <div ref={scrollRef} className="scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
+      <div
+        ref={scrollRef}
+        className="scrollbar-gutter-both min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
+      >
         <WorkspacePageContainer width="expanded" className="min-h-full gap-4">
           {listBody}
         </WorkspacePageContainer>
