@@ -56,57 +56,22 @@ it("resolves Auto only for models that can detect language", () => {
 it("finds an installed model across directories without reading its contents", async () => {
   const first = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-status-a-"));
   const second = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-status-b-"));
-  const sources = { directories: [first, second], huggingFaceCaches: [] };
   try {
     const speechModel = SPEECH_MODELS[0]!;
     const firstPath = NodePath.join(first, speechModel.filename);
     const secondPath = NodePath.join(second, speechModel.filename);
-    expect(await findInstalledSpeechModel(sources, speechModel)).toBeUndefined();
+    expect(await findInstalledSpeechModel([first, second], speechModel)).toBeUndefined();
     await NodeFSP.writeFile(secondPath, "");
     await NodeFSP.truncate(secondPath, speechModel.size);
-    expect(await findInstalledSpeechModel(sources, speechModel)).toBe(secondPath);
+    expect(await findInstalledSpeechModel([first, second], speechModel)).toBe(secondPath);
     await NodeFSP.writeFile(firstPath, "");
     await NodeFSP.truncate(firstPath, 1);
-    expect(await findInstalledSpeechModel(sources, speechModel)).toBe(secondPath);
+    expect(await findInstalledSpeechModel([first, second], speechModel)).toBe(secondPath);
     await NodeFSP.truncate(firstPath, speechModel.size);
-    expect(await findInstalledSpeechModel(sources, speechModel)).toBe(firstPath);
+    expect(await findInstalledSpeechModel([first, second], speechModel)).toBe(firstPath);
   } finally {
     await NodeFSP.rm(first, { recursive: true, force: true });
     await NodeFSP.rm(second, { recursive: true, force: true });
-  }
-});
-
-it("finds an installed model in the Hugging Face cache, preferring its pinned revision", async () => {
-  const cache = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-hf-cache-"));
-  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-status-own-"));
-  const sources = { directories: [directory], huggingFaceCaches: [cache] };
-  try {
-    const speechModel = SPEECH_MODELS[0]!;
-    const snapshots = NodePath.join(
-      cache,
-      `models--${speechModel.id.replaceAll("/", "--")}`,
-      "snapshots",
-    );
-    const otherRevision = "0".repeat(40);
-    const pinnedPath = NodePath.join(snapshots, speechModel.revision, speechModel.filename);
-    const otherPath = NodePath.join(snapshots, otherRevision, speechModel.filename);
-    await NodeFSP.mkdir(NodePath.dirname(otherPath), { recursive: true });
-    await NodeFSP.writeFile(otherPath, "");
-    await NodeFSP.truncate(otherPath, speechModel.size);
-    expect(await findInstalledSpeechModel(sources, speechModel)).toBe(otherPath);
-    await NodeFSP.mkdir(NodePath.dirname(pinnedPath), { recursive: true });
-    await NodeFSP.writeFile(pinnedPath, "");
-    await NodeFSP.truncate(pinnedPath, speechModel.size);
-    expect(await findInstalledSpeechModel(sources, speechModel)).toBe(pinnedPath);
-    await NodeFSP.truncate(pinnedPath, 1);
-    expect(await findInstalledSpeechModel(sources, speechModel)).toBe(otherPath);
-    const directoryPath = NodePath.join(directory, speechModel.filename);
-    await NodeFSP.writeFile(directoryPath, "");
-    await NodeFSP.truncate(directoryPath, speechModel.size);
-    expect(await findInstalledSpeechModel(sources, speechModel)).toBe(directoryPath);
-  } finally {
-    await NodeFSP.rm(cache, { recursive: true, force: true });
-    await NodeFSP.rm(directory, { recursive: true, force: true });
   }
 });
 

@@ -25,11 +25,10 @@ select a transcription model. Models vary in download size, supported languages,
 speed, and accuracy. If the selected environment is remote, the audio is sent to
 that machine for transcription.
 
-T3 Code reuses speech models another app already downloaded instead of
-downloading them again: Hex on Windows, Handy, or anything stored in the
-Hugging Face cache. Add your own folders under Settings, then Voice, then
-Model folders. T3 Code only reads these locations, so models found there can't
-be deleted from Voice settings.
+A model downloaded elsewhere, such as by Hex or Handy, can be reused instead
+of downloaded again: add its folder under Settings, then Voice, then
+Transcription models, then Model folders. T3 Code only reads those folders,
+so those models can't be deleted from Voice settings.
 
 Models marked Streaming show a live preview while you speak. The tentative ending
 may change as the model hears more. Stop recording to finish and insert the text;

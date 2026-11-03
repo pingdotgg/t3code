@@ -92,15 +92,10 @@ vi.mock("./model.ts", () => ({
   effectiveSpeechLanguage: (model: { languages: string[] }, intent: string) =>
     intent !== "auto" && model.languages.includes(intent) ? intent : "en",
   downloadSpeechModel: downloadModel,
-  findInstalledSpeechModel: async (
-    sources: { readonly directories: readonly string[] },
-    model: { id: string },
-  ) => {
-    if (readyModels.has(model.id)) return `${sources.directories[0]}/test.gguf`;
+  findInstalledSpeechModel: async (directories: readonly string[], model: { id: string }) => {
+    if (readyModels.has(model.id)) return `${directories[0]}/test.gguf`;
     const folder = folderModels.get(model.id);
-    return folder !== undefined && sources.directories.includes(folder)
-      ? `${folder}/test.gguf`
-      : undefined;
+    return folder !== undefined && directories.includes(folder) ? `${folder}/test.gguf` : undefined;
   },
   removeSpeechModel: async (_directory: string, model: { id: string }) => {
     readyModels.delete(model.id);

@@ -278,40 +278,18 @@ async function hasExpectedFile(
   }
 }
 
-export type SpeechModelSources = {
-  readonly directories: readonly string[];
-  readonly huggingFaceCaches: readonly string[];
-};
-
 const isInstalledFile = async (path: string, model: SpeechModel) => {
   const stat = await NodeFSP.stat(path).catch(() => null);
   return stat?.isFile() === true && stat.size === model.size;
 };
 
 export async function findInstalledSpeechModel(
-  sources: SpeechModelSources,
+  directories: readonly string[],
   model: SpeechModel,
 ): Promise<string | undefined> {
-  for (const directory of sources.directories) {
+  for (const directory of directories) {
     const candidate = speechModelPath(directory, model);
     if (await isInstalledFile(candidate, model)) return candidate;
-  }
-  for (const cache of sources.huggingFaceCaches) {
-    const snapshots = NodePath.join(
-      cache,
-      `models--${model.id.replaceAll("/", "--")}`,
-      "snapshots",
-    );
-    const revisions = await NodeFSP.readdir(snapshots).catch(() => undefined);
-    if (revisions === undefined) continue;
-    const ordered = [
-      model.revision,
-      ...revisions.filter((revision) => revision !== model.revision).sort(),
-    ];
-    for (const revision of ordered) {
-      const candidate = NodePath.join(snapshots, revision, model.filename);
-      if (await isInstalledFile(candidate, model)) return candidate;
-    }
   }
   return undefined;
 }
