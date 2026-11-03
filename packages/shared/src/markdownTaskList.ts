@@ -34,41 +34,59 @@ export function setMarkdownTaskChecked(
   return `${markdown.slice(0, markerOffset + 1)}${checked ? "x" : " "}${markdown.slice(markerOffset + 2)}`;
 }
 
+/** Hard breaks as U+2028, as iOS draws them; soft breaks stay "\n". */
 function plainText(node: Nodes): string {
   if (node.type === "text" || node.type === "inlineCode") return node.value;
+  if (node.type === "break" || (node.type === "html" && /^<br\b/i.test(node.value))) {
+    return "\u2028";
+  }
   return "children" in node ? node.children.map(plainText).join("") : "";
 }
 
 const lettersAndDigits = (text: string) => text.replace(/[^\p{L}\p{N}]/gu, "");
 
+/** iOS sends the first paragraph whole. Android cuts it at a hard break, or any break with hard breaks on. */
+function renderedTexts(item: ListItem): string[] {
+  const first = item.children[0];
+  const text = first?.type === "paragraph" ? plainText(first) : "";
+  return [text, text.replace(/\u2028[^]*$/, ""), text.replace(/[\u2028\n][^]*$/, "")].map(
+    lettersAndDigits,
+  );
+}
+
+// Native renderers give other top-level blocks (code, tables, quotes, media) their own views, and
+// each view numbers its tasks from 0. Lists, headings and rules share the text view around them.
+const sharedViewBlocks = new Set(["list", "heading", "thematicBreak"]);
+
 /**
- * Marker offset of the `index`th task item in document order, the order native renderers number
- * their checkboxes in. Null when `renderedText` shows the renderer counted a different item.
- * Android cuts that text at the item's first line break; iOS sends the whole paragraph.
+ * Marker offset of the task a native checkbox tap names. Null unless exactly one task has that
+ * text and state and could have that index under some split of the document into native views.
  */
 export function markdownTaskMarkerOffset(
   markdown: string,
   index: number,
   renderedText: string,
+  checked: boolean,
 ): number | null {
-  let seen = 0;
-  const find = (node: Nodes): ListItem | null => {
-    if (node.type === "listItem" && typeof node.checked === "boolean" && seen++ === index) {
-      return node;
-    }
-    if (!("children" in node)) return null;
-    for (const child of node.children) {
-      const item = find(child);
-      if (item !== null) return item;
-    }
-    return null;
+  const tasks: ListItem[] = [];
+  const collect = (node: Nodes) => {
+    if (node.type === "listItem" && typeof node.checked === "boolean") tasks.push(node);
+    if ("children" in node) node.children.forEach(collect);
   };
-  const item = find(parser.parse(markdown));
-  const start = item?.position?.start.offset;
-  if (item === null || start === undefined) return null;
-  const first = item.children[0];
+  const viewStarts = new Set([0]);
+  for (const block of parser.parse(markdown).children) {
+    const before = tasks.length;
+    collect(block);
+    if (sharedViewBlocks.has(block.type)) continue;
+    for (let count = before; count <= tasks.length; count++) viewStarts.add(count);
+  }
   const rendered = lettersAndDigits(renderedText);
-  const source = lettersAndDigits(first?.type === "paragraph" ? plainText(first) : "");
-  if (!rendered.startsWith(source) && !source.startsWith(rendered)) return null;
-  return taskListMarkerOffset(markdown, start);
+  const matches = tasks.filter(
+    (task, position) =>
+      task.checked === !checked &&
+      viewStarts.has(position - index) &&
+      renderedTexts(task).includes(rendered),
+  );
+  const start = matches.length === 1 ? matches[0]?.position?.start.offset : undefined;
+  return start === undefined ? null : taskListMarkerOffset(markdown, start);
 }

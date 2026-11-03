@@ -123,7 +123,12 @@ export function PullRequestMarkdown(props: {
             onTaskListItemPress={
               onTaskListChange
                 ? (event) => {
-                    const offset = markdownTaskMarkerOffset(segment.text, event.index, event.text);
+                    const offset = markdownTaskMarkerOffset(
+                      segment.text,
+                      event.index,
+                      event.text,
+                      event.checked,
+                    );
                     const kept =
                       offset !== null &&
                       onTaskListChange({
