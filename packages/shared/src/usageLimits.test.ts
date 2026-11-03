@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   type LimitAccount,
   collectProviderUsageLimits,
+  resolveProviderUsageLimits,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
   collectLimitAccounts,
@@ -56,6 +57,65 @@ function provider(overrides: Partial<ServerProvider>): ServerProvider {
     ...overrides,
   };
 }
+
+describe("selected provider usage limits", () => {
+  const native = provider({
+    auth: { status: "authenticated", email: "selected@example.com", workspaceId: "work" },
+    usageLimits: {
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [],
+      unavailable: { reason: "probeFailed" },
+    },
+  });
+  const limits = { checkedAt: "2026-09-03T11:30:00.000Z", windows: [window] };
+  const source = {
+    id: UsageLimitSourceId.make("hub"),
+    kind: "cliproxy" as const,
+    label: "Accounts",
+    checkedAt: limits.checkedAt,
+    accounts: [
+      {
+        id: "selected",
+        driver: native.driver,
+        email: "SELECTED@example.com",
+        workspaceId: "work",
+        usageLimits: limits,
+      },
+    ],
+  };
+
+  it("uses matching source limits when the native probe failed", () => {
+    expect(resolveProviderUsageLimits(native.instanceId, [native], [source])).toEqual(limits);
+  });
+
+  it("uses a fresher report from a duplicate login with another instance id", () => {
+    const duplicate = provider({
+      ...native,
+      instanceId: ProviderInstanceId.make("other-instance"),
+      usageLimits: limits,
+    });
+    expect(resolveProviderUsageLimits(native.instanceId, [native, duplicate], [])).toEqual(limits);
+  });
+
+  it("keeps other accounts and workspaces out of the selected login", () => {
+    for (const account of [
+      { ...source.accounts[0]!, email: "other@example.com" },
+      { ...source.accounts[0]!, workspaceId: "other" },
+    ]) {
+      expect(
+        resolveProviderUsageLimits(
+          native.instanceId,
+          [native],
+          [{ ...source, accounts: [account] }],
+        ),
+      ).toEqual(native.usageLimits);
+    }
+  });
+
+  it("keeps genuine failures when no matching source reports limits", () => {
+    expect(resolveProviderUsageLimits(native.instanceId, [native], [])).toEqual(native.usageLimits);
+  });
+});
 
 describe("new thread model fallback", () => {
   const selection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
