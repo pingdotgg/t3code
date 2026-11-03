@@ -1022,11 +1022,15 @@ function contextBoundaryOrdinal(
   return boundary;
 }
 
+/** Threads with no started run (imported, or reserved by another queued run) never cross it. */
 function providerThreadPredatesBoundary(
   providerThread: Pick<OrchestrationV2ProviderThread, "firstRunOrdinal">,
   boundary: number,
 ): boolean {
-  return providerThread.firstRunOrdinal !== null && providerThread.firstRunOrdinal < boundary;
+  return (
+    boundary > 0 &&
+    (providerThread.firstRunOrdinal === null || providerThread.firstRunOrdinal < boundary)
+  );
 }
 
 /** A provider that hosts one native thread per session keeps the old conversation alive otherwise. */
@@ -1874,11 +1878,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           !providerThreadPredatesBoundary(activeProviderThread, contextBoundary)
           ? activeProviderThread
           : rootProviderThreadsForProvider(projection, queuedRun.providerInstanceId)[0]
-        : storedProviderThread;
+        : freshContext &&
+            (storedProviderThread.firstRunOrdinal !== null ||
+              storedProviderThread.nativeThreadRef !== null)
+          ? undefined
+          : storedProviderThread;
       const queuedProviderThread: OrchestrationV2ProviderThread = targetProviderThread ?? {
         id: idAllocator.derive.providerThread({
           driver: targetAdapter.driver,
-          nativeThreadId: `pending:${queuedRun.id}`,
+          // The queue reserved `pending:<run>` for this run; another run may have taken it.
+          nativeThreadId: freshContext
+            ? `pending:${queuedRun.id}:fresh`
+            : `pending:${queuedRun.id}`,
         }),
         driver: targetAdapter.driver,
         providerInstanceId: queuedRun.providerInstanceId,

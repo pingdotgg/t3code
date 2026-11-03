@@ -2777,6 +2777,8 @@ describe("orchestration v2 provider switching", () => {
           const cwd = yield* checkpointWorkspace(`fresh-context-${key}`);
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
+          // A queued start has nobody to refuse, so a busy session must stay up.
+          const backgroundWork = yield* Ref.make(queued);
           const started = yield* Deferred.make<void>();
           const release = yield* Deferred.make<void>();
           const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
@@ -2788,6 +2790,7 @@ describe("orchestration v2 provider switching", () => {
               responseByRunOrdinal: {},
               capturedTurns,
               closedSessions,
+              backgroundWork,
               nativeThreadGeneration: yield* Ref.make(0),
               ...(queued
                 ? { holdFirstTurn: started, releaseFirstTurn: release, holdRunOrdinal: 2 }
@@ -2870,8 +2873,9 @@ describe("orchestration v2 provider switching", () => {
             }
             yield* worker.drain();
             yield* waitForIdle(freshThreadId);
-            // Claude hosts one native thread per session, so the old one is closed.
-            assert.deepEqual(yield* Ref.get(closedSessions), [firstSession.id]);
+            // Claude hosts one native thread per session, so an idle old one is closed.
+            assert.deepEqual(yield* Ref.get(closedSessions), queued ? [] : [firstSession.id]);
+            yield* Ref.set(backgroundWork, false);
             yield* send("delta", CODEX_MODEL_SELECTION);
             yield* worker.drain();
             yield* waitForIdle(freshThreadId);
@@ -2927,6 +2931,118 @@ describe("orchestration v2 provider switching", () => {
           );
         }),
       ),
+  );
+
+  it.live("keeps the thread a queued fresh run reserved for that run", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("fresh-context-reserved");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            nativeThreadGeneration: yield* Ref.make(0),
+            holdFirstTurn: started,
+            releaseFirstTurn: release,
+            holdRunOrdinal: 2,
+          }),
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            nativeThreadGeneration: yield* Ref.make(0),
+          }),
+        ]);
+        const reservedThreadId = ThreadId.make("thread:fresh-context-reserved");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const send = (
+            name: string,
+            modelSelection: ModelSelection,
+            options: { readonly freshContext?: boolean } = {},
+          ) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:fresh-context-reserved:${name}`),
+              threadId: reservedThreadId,
+              messageId: MessageId.make(`message:fresh-context-reserved:${name}`),
+              text: `Prompt ${name}`,
+              attachments: [],
+              modelSelection,
+              ...options,
+              dispatchMode: { type: "queue_after_active" },
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:fresh-context-reserved:create"),
+            threadId: reservedThreadId,
+            projectId: ProjectId.make("project:fresh-context-reserved"),
+            title: "Fresh context reserved",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* send("zero", CODEX_MODEL_SELECTION);
+          yield* worker.drain();
+          yield* waitForIdle(reservedThreadId);
+          yield* send("alpha", CLAUDE_MODEL_SELECTION);
+          yield* Deferred.await(started);
+          yield* worker.drain();
+          // Queued while no fresh run has started: gamma binds to zero's Codex thread, and
+          // delta reserves its own. Once beta starts, gamma must not take delta's thread.
+          yield* send("beta", CLAUDE_MODEL_SELECTION, { freshContext: true });
+          yield* send("gamma", CODEX_MODEL_SELECTION);
+          yield* send("delta", CODEX_MODEL_SELECTION, { freshContext: true });
+          yield* Deferred.succeed(release, undefined);
+          yield* worker.drain();
+          yield* waitForIdle(reservedThreadId);
+          yield* worker.drain();
+          const turns = yield* Ref.get(capturedTurns);
+          const turnFor = (name: string) =>
+            turns.find((turn) => turn.text.endsWith(`Prompt ${name}`))!;
+
+          assert.notEqual(turnFor("gamma").providerThreadId, turnFor("zero").providerThreadId);
+          assert.notEqual(turnFor("delta").providerThreadId, turnFor("gamma").providerThreadId);
+          assert.notEqual(turnFor("delta").nativeThreadId, turnFor("gamma").nativeThreadId);
+          assert.equal(turnFor("delta").text, "Prompt delta");
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "fresh-context-reserved",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+    ),
   );
 
   // regression: #21314 a queued PR update must follow the provider that took over the thread
