@@ -653,7 +653,7 @@ function delegatedTasksStopEffect(command: {
 }
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
-/** How long a queued turn may take to start after the run before it ends. */
+/** How long automatic settlement waits for a queued turn to start. */
 export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 const RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE =
   "T3 Code could not confirm that your answer reached the agent. If the run stays stuck, stop it and try again.";
@@ -13078,7 +13078,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (
           endedAt != null &&
           runs.some((run) => run.status === "queued") &&
-          DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(endedAt) <
+          Math.abs(DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(endedAt)) <
             QUEUED_TURN_START_GRACE_MS
         ) {
           return yield* new OrchestratorDispatchError({
