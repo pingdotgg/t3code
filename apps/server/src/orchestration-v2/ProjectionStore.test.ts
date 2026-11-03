@@ -32,6 +32,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -64,6 +65,7 @@ const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.U
 
 const traceSqlStatements = () => {
   const statements: Array<string> = [];
+  const queryTransactions: Array<string | null> = [];
   const tracer = Tracer.make({
     span(options) {
       const span = new Tracer.NativeSpan(options);
@@ -71,12 +73,19 @@ const traceSqlStatements = () => {
       span.end = (endTime, exit) => {
         end(endTime, exit);
         const query = span.attributes.get("db.query.text");
-        if (typeof query === "string") statements.push(query);
+        if (typeof query === "string") {
+          statements.push(query);
+          let parent = Option.getOrUndefined(span.parent);
+          while (parent?._tag === "Span" && parent.name !== "sql.transaction") {
+            parent = Option.getOrUndefined(parent.parent);
+          }
+          queryTransactions.push(parent?._tag === "Span" ? parent.spanId : null);
+        }
       };
       return span;
     },
   });
-  return { statements, tracer };
+  return { statements, tracer, queryTransactions };
 };
 
 /** The shell index flags every live shell and matches its shells on the fields subscriber trims read. */
@@ -3793,6 +3802,76 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           .filter((id) => id === readThreadId || id === laterThreadId);
 
       yield* createThread(readThreadId);
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.linkedPullRequest', json(${JSON.stringify({
+          projectId: "project:shell-read",
+          repository: "acme/project",
+          number: 42,
+          url: "https://github.com/acme/project/pull/42",
+        })})) WHERE thread_id = ${readThreadId}`;
+      const trace = traceSqlStatements();
+      const discovery = yield* projectionStore
+        .getPullRequestSnapshot({})
+        .pipe(Effect.withTracer(trace.tracer));
+      assert.deepEqual(
+        discovery.threads
+          .map((thread) => thread.id)
+          .filter((id) => id === readThreadId || id === laterThreadId),
+        [readThreadId],
+      );
+      assert.strictEqual(discovery.snapshotSequence, 0);
+      assert.strictEqual(trace.queryTransactions.length, 2);
+      assert.isNotNull(trace.queryTransactions[0]);
+      assert.strictEqual(new Set(trace.queryTransactions).size, 1);
+      assert.isFalse(
+        trace.statements.some((query) =>
+          /orchestration_v2_projection_(runs|messages|turn_items|provider_threads)/.test(query),
+        ),
+      );
+      const fullShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+        (thread) => thread.id === readThreadId,
+      )!;
+      const metadata = discovery.threads.find((thread) => thread.id === readThreadId)!;
+      for (const key of Object.keys(metadata) as Array<keyof typeof metadata>) {
+        assert.deepEqual(metadata[key], fullShell[key]);
+      }
+      const narrow = yield* projectionStore.getPullRequestSnapshot({ threadId: readThreadId });
+      assert.deepEqual(
+        narrow.threads,
+        discovery.threads.filter((thread) => thread.id === readThreadId),
+      );
+      const settledPayload = (settledAt: string | null, archivedAt: string | null) => sql`
+        UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.settledAt', ${settledAt}, '$.archivedAt', ${archivedAt})
+        WHERE thread_id = ${readThreadId}
+      `;
+      yield* settledPayload(DateTime.formatIso(now), null);
+      assert.isFalse(
+        (yield* projectionStore.getPullRequestSnapshot({ unsettledOnly: true })).threads.some(
+          (thread) => thread.id === readThreadId,
+        ),
+      );
+      assert.strictEqual(
+        (yield* projectionStore.getPullRequestSnapshot({ threadId: readThreadId })).threads.length,
+        1,
+      );
+      yield* settledPayload(null, DateTime.formatIso(now));
+      assert.isFalse(
+        (yield* projectionStore.getPullRequestSnapshot({})).threads.some(
+          (thread) => thread.id === readThreadId,
+        ),
+      );
+      assert.strictEqual(
+        (yield* projectionStore.getPullRequestSnapshot({ threadId: readThreadId })).threads.length,
+        1,
+      );
+      yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = '2026-11-03T00:00:00.000Z' WHERE thread_id = ${readThreadId}`;
+      assert.deepEqual(
+        (yield* projectionStore.getPullRequestSnapshot({ threadId: readThreadId })).threads,
+        [],
+      );
+      yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = NULL WHERE thread_id = ${readThreadId}`;
+      yield* settledPayload(null, null);
       const decode = yield* sql.withTransaction(projectionStore.readShellSnapshot());
       yield* createThread(laterThreadId);
 

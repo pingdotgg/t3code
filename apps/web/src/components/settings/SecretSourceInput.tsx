@@ -64,6 +64,10 @@ type SecretSourceInputProps = Omit<ComponentProps<typeof SecretInput>, "value" |
   readonly value: string | SecretReference;
   readonly sources: ReadonlyArray<SecretSource>;
   readonly onSecretChange: (secret: SecretReference | undefined) => void;
+  /** Called when a provider is picked, before a reference for it exists. */
+  readonly onProviderPick?: () => void;
+  /** Called when an edited reference is rejected, so the committed one no longer matches the field. */
+  readonly onReferenceReject?: () => void;
   /** Places the parts in the caller's layout; `source` is null when there is nothing to pick. */
   readonly children?: (parts: {
     readonly source: ReactNode;
@@ -76,6 +80,8 @@ export function SecretSourceInput({
   value,
   sources,
   onSecretChange,
+  onProviderPick,
+  onReferenceReject,
   children,
   ...rest
 }: SecretSourceInputProps) {
@@ -106,6 +112,7 @@ export function SecretSourceInput({
             return;
           }
           const next = value as SecretProviderId;
+          if (next !== secret?.provider) onProviderPick?.();
           setPendingProvider(next === secret?.provider ? null : next);
         }}
       >
@@ -159,6 +166,8 @@ export function SecretSourceInput({
               definition?.isReference(decoded.value.reference) === false
             ) {
               setRejectedReference(next);
+              if (onReferenceReject !== undefined) setPendingProvider(provider);
+              onReferenceReject?.();
               return;
             }
             setRejectedReference(null);

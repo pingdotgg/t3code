@@ -46,11 +46,11 @@ Every user on the machine can read the policy, so do not put credentials in it.
 
 Use one of these per machine:
 
-| OS      | Native policy                                                       | Policy file                                       |
-| ------- | ------------------------------------------------------------------- | ------------------------------------------------- |
-| macOS   | Configuration profile for `com.t3tools.t3code`                      | `/Library/Application Support/T3Code/policy.json` |
-| Windows | `Policy` string value under `HKLM\SOFTWARE\Policies\T3Tools\T3Code` | `C:\Program Files\T3Code\policy.json`             |
-| Linux   |                                                                     | `/etc/t3code/policy.json`                         |
+| OS      | Native policy                                                                                        | Policy file                                       |
+| ------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| macOS   | Configuration profile for `com.t3tools.t3code`                                                       | `/Library/Application Support/T3Code/policy.json` |
+| Windows | Group Policy template, or a `Policy` JSON value (both under `HKLM\SOFTWARE\Policies\T3Tools\T3Code`) | `C:\Program Files\T3Code\policy.json`             |
+| Linux   |                                                                                                      | `/etc/t3code/policy.json`                         |
 
 T3 Code does not merge sources. If a machine has both a native policy and a policy file, T3 Code
 refuses to start until you remove one.
@@ -62,14 +62,28 @@ administrators.
 `com.t3tools.t3code`. The payload's keys are the policy's top-level keys (`schemaVersion`,
 `organization`, `supportUrl`, `settings`, `limits`); JSON objects become dictionaries and lists
 become arrays. To make the payload from a policy file you checked, run
-`plutil -convert xml1 -o com.t3tools.t3code.plist policy.json` and upload the result. Install it as
+`plutil -convert xml1 -o com.t3tools.t3code.plist policy.json` and upload the result, or run
+`t3 policy templates <directory> --policy policy.json` to write a complete
+`macos/t3code.mobileconfig`. Install it as
 a device profile, since T3 Code ignores user profiles, and deploy only one profile for this domain.
 A profile cannot hold `null`, so use a policy file if a setting's value must be `null`.
 
-**Windows registry.** Set the `Policy` value (`REG_SZ`) to the whole policy as one line of JSON,
+**Windows Group Policy.** Run `t3 policy templates <directory>` and copy
+`windows/t3code.admx` and `windows/en-US/t3code.adml` into your `PolicyDefinitions` folder or
+central store, or import them into Intune. The policies appear under Computer Configuration >
+Administrative Templates > T3 Code. Set **Organization** whenever you set any other T3 Code policy.
+Locks and provider fields go in the two JSON policies, as the same objects a policy file would hold.
+Machines pick up a change at the next Group Policy refresh; run `gpupdate /target:computer /force`
+to apply it now, then restart T3 Code.
+Setting **Allow T3 Connect**, **Allow webhook tasks**, **Allow importing browser cookies**, or
+**Allow usage data** to **Disabled** turns that feature off. Setting any other T3 Code policy to
+**Disabled** restricts nothing, the same as **Not Configured**.
+
+**Windows registry value.** Instead of the template, set the `Policy` value (`REG_SZ`) to the whole policy as one line of JSON,
 from Group Policy Preferences or an Intune script. T3 Code reads it through the Windows registry
-API, so it works where registry tools such as `reg.exe` are blocked for users. In PowerShell, as an
-administrator:
+API, so it works where registry tools such as `reg.exe` are blocked for users. Use one or the other:
+T3 Code refuses to start when the key holds both a `Policy` value and the template's settings. In
+PowerShell, as an administrator:
 
 ```powershell
 $json = (Get-Content -Raw -Encoding UTF8 policy.json) -replace '\r?\n\s*', ''
@@ -92,7 +106,8 @@ reopen the desktop app, or run `t3 service restart` for the
 [background service](./background-service.md). Reconnecting a phone or browser does not reload the
 policy.
 
-To remove a policy, delete the file, remove the profile, or delete the registry value, then restart
+To remove a policy, delete the file, remove the profile, set the Group Policy settings to
+**Not Configured**, or delete the registry value, then restart
 the server. Users get back the settings they had chosen, since T3 Code never writes policy values
 into them.
 
@@ -104,7 +119,9 @@ version does not support, or a machine with both a native policy and a file. The
 the policy came from and what is wrong.
 
 `t3 policy check` catches the same problems in a JSON file. For a profile or registry value, check
-the JSON before you convert it. A policy written for a newer version can use keys an older one
+the JSON before you convert it. For the Group Policy template, check a complete policy file that
+holds the same settings, then paste its `settings` and `limits.providers.instances` objects into the
+two JSON policies. A policy written for a newer version can use keys an older one
 cannot enforce, so upgrade T3 Code before you deploy a policy that uses them.
 
 ## Settings

@@ -23,6 +23,7 @@ async function commitReference(screen: Screen, value: string) {
 describe("SecretSourceInput", () => {
   it("moves a reference to another provider only once one is committed for it", async () => {
     const onSecretChange = vi.fn();
+    const onProviderPick = vi.fn();
     await using screen = await render(
       <SecretSourceInput
         aria-label="API key"
@@ -30,12 +31,14 @@ describe("SecretSourceInput", () => {
         sources={sources}
         onCommit={() => {}}
         onSecretChange={onSecretChange}
+        onProviderPick={onProviderPick}
       />,
     );
 
     await userEvent.click(screen.getByRole("combobox", { name: "API key source" }));
     await userEvent.click(screen.getByRole("option", { name: "Work" }));
     expect(onSecretChange).not.toHaveBeenCalled();
+    expect(onProviderPick).toHaveBeenCalledOnce();
     await expect.element(reference(screen)).toHaveValue("");
 
     await commitReference(screen, "op://Shared/OpenAI/credential");
@@ -57,6 +60,8 @@ describe("SecretSourceInput", () => {
       />,
     );
 
+    await commitReference(screen, "invalid-reference");
+    await expect.element(reference(screen)).toHaveAttribute("aria-invalid", "true");
     await userEvent.clear(reference(screen));
     await userEvent.keyboard("{Enter}");
     expect(onSecretChange).toHaveBeenCalledExactlyOnceWith(undefined);
@@ -64,6 +69,7 @@ describe("SecretSourceInput", () => {
 
   it("rejects a reference 1Password cannot read", async () => {
     const onSecretChange = vi.fn();
+    const onReferenceReject = vi.fn();
     await using screen = await render(
       <SecretSourceInput
         aria-label="API key"
@@ -71,12 +77,29 @@ describe("SecretSourceInput", () => {
         sources={sources}
         onCommit={() => {}}
         onSecretChange={onSecretChange}
+        onReferenceReject={onReferenceReject}
       />,
     );
 
     await commitReference(screen, "Private/OpenAI/credential");
     expect(onSecretChange).not.toHaveBeenCalled();
+    expect(onReferenceReject).toHaveBeenCalledOnce();
+    await screen.rerender(
+      <SecretSourceInput
+        aria-label="API key"
+        value=""
+        sources={sources}
+        onCommit={() => {}}
+        onSecretChange={onSecretChange}
+        onReferenceReject={onReferenceReject}
+      />,
+    );
     await expect.element(reference(screen)).toHaveAttribute("aria-invalid", "true");
     await expect.element(reference(screen)).toHaveValue("Private/OpenAI/credential");
+    await commitReference(screen, "op://Private/OpenAI/corrected");
+    expect(onSecretChange).toHaveBeenCalledExactlyOnceWith({
+      provider: personal,
+      reference: "op://Private/OpenAI/corrected",
+    });
   });
 });
