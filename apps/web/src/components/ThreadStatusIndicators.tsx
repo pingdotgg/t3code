@@ -1,4 +1,3 @@
-import { pipe } from "effect/Function";
 import {
   scopeProjectRef,
   scopedThreadKey,
@@ -356,6 +355,8 @@ function sidebarPullRequestToneClassName(toneClassName: string): string {
   }
 }
 
+const THREAD_PULL_REQUEST_PREVIEW_LIMIT = 5;
+
 export function ThreadPullRequestsMiniList({
   pullRequests,
   onOpenPullRequest,
@@ -363,11 +364,10 @@ export function ThreadPullRequestsMiniList({
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenPullRequest?: (event: MouseEvent<HTMLAnchorElement>, url: string) => void;
 }) {
-  const lines = pipe(
-    visibleThreadPullRequests(pullRequests),
-    resolveThreadPullRequestChains,
-    pullRequestListLines,
-  );
+  const chains = resolveThreadPullRequestChains(pullRequests);
+  const lines = pullRequestListLines(chains, THREAD_PULL_REQUEST_PREVIEW_LIMIT);
+  const hiddenCount =
+    chains.reduce((count, chain) => count + chain.layers.length, 0) - lines.length;
   if (lines.length === 0) return null;
   return (
     // Interactive rows carry their own hover padding; static rows need the wider gap.
@@ -394,6 +394,7 @@ export function ThreadPullRequestsMiniList({
           </ThreadPullRequestMiniListItem>
         );
       })}
+      {hiddenCount > 0 ? <li className="text-muted-foreground">{hiddenCount} more</li> : null}
     </ul>
   );
 }
