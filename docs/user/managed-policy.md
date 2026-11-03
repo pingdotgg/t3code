@@ -178,8 +178,12 @@ config home, and the environment variables set on each provider. They come from
 [`providers.instances`](#providers) or T3 Code's defaults, and users cannot change them, because a
 wrapper script, a launch flag, or a variable such as `NODE_OPTIONS` could otherwise turn off the
 provider's approvals. Pin the variables your users need, such as a gateway URL, in
-`providers.instances`. Variables in the environment that starts T3 Code itself still reach
-providers.
+`providers.instances`.
+
+Variables in the environment that starts T3 Code itself still reach providers, and a default
+binary path such as `claude` is looked up on that environment's `PATH`. The desktop app takes both
+from the user's login shell, so a user could put their own `claude` earlier on their `PATH`. Pin an
+absolute `binaryPath` in `providers.instances` for each provider you allow.
 
 ACP agents' own mode menus have no effect under `maxRuntimeMode`, except Antigravity's, whose modes
 T3 Code can place under the limit. Users still choose which ACP Registry agent runs; leave
