@@ -285,7 +285,8 @@ const ansiEscape = (rest: string): [string, number] => {
   if (code) {
     const [whole, octal, hex, u4, u8] = code;
     const point = octal ? Number.parseInt(octal, 8) : Number.parseInt((hex ?? u4 ?? u8)!, 16);
-    return [String.fromCodePoint(point), whole.length];
+    // Past U+10FFFF there is no character, so keep the escape as text.
+    return [point > 0x10ffff ? `\\${whole}` : String.fromCodePoint(point), whole.length];
   }
   const control = /^c(.)/.exec(rest);
   if (control) return [String.fromCharCode(control[1]!.charCodeAt(0) & 31), 2];
@@ -1305,17 +1306,41 @@ export const classifyFileUse = (
   // A Python or JavaScript inline program is read statement by statement (`inlineProgramUses`).
   // Another prints the value when a print call names the file or a variable read from it, outside
   // string literals and not through a redaction; otherwise it is unknown.
-  const addProgram = (program: string, head: string, at: string) => {
+  // `after` is where the program's stdout goes: the pipe stages after it and a redirect.
+  const addProgram = (
+    program: string,
+    head: string,
+    at: string,
+    after: { readonly stages: ReadonlyArray<string>; readonly target?: string | undefined } = {
+      stages: [],
+    },
+  ) => {
+    if (
+      program
+        .split(/[;\n]/)
+        .some((statement) => COPY_CALL.test(statement) && new RegExp(fileRef()).test(statement))
+    ) {
+      add("copy (program copies the file)", at);
+      return;
+    }
+    const printed = (verdict: string, where: string) => {
+      if (
+        /^print \(program (?:prints|echoes) the value\)$/.test(verdict) &&
+        (after.stages.length > 0 || after.target !== undefined)
+      )
+        flow(after.stages, after.target, where);
+      else add(verdict, where);
+    };
     const language = programLanguage(head);
     if (language !== undefined) {
       for (const use of inlineProgramUses(program, language, (raw) =>
         new RegExp(fileRef()).test(raw),
       ))
-        add(use.verdict, use.at ?? at);
+        printed(use.verdict, use.at ?? at);
       return;
     }
     const use = programUse(program, (statement) => new RegExp(fileRef()).test(statement));
-    if (use.prints) add("print (program prints the value)", at);
+    if (use.prints) printed("print (program prints the value)", at);
     else
       add(
         use.redacts ? "unknown (inline program redacts the value)" : "unknown (inline program)",
@@ -1491,18 +1516,23 @@ export const classifyFileUse = (
         ? part.slice(0, heredoc.index) + heredoc[3] + part.slice(heredoc.index + heredoc[0].length)
         : part;
       const stages = splitPipe(outside);
-      const redirect = /(?:^|\s)\d?>>?\s*(&?\S+)/.exec(stages.at(-1) ?? "")?.[1];
+      const redirect = /(?:^|\s)(?:1|&)?>>?\s*(&?\S+)/.exec(stages.at(-1) ?? "")?.[1];
       const toFile = redirect?.startsWith("&") ? undefined : redirect;
       if (heredoc && touches(heredoc[4]!) && !touches(unquoted(outside))) {
         const head = withoutAssignments(stages[0] ?? "");
         const quoted = heredoc[1] !== "";
+        // An unquoted body that only names the file prints or writes the path, not the value.
+        const expands =
+          new RegExp(`\\$\\(${read()}\\)|\`${read()}\``).test(heredoc[4]!) ||
+          usesSecretVar(heredoc[4]!);
         const fedToShell =
           SHELLS.test(head) ||
           stages.slice(1).some((stage) => SHELLS.test(withoutAssignments(stage)));
         if (fedToShell && !SHELL_C.test(head))
           visit(quoted ? heredoc[4]! : decodeShell(`"${heredoc[4]}"`));
-        else if (INTERPRETERS.test(head)) addProgram(heredoc[4]!, head, part);
-        else if (quoted)
+        else if (INTERPRETERS.test(head))
+          addProgram(heredoc[4]!, head, part, { stages: stages.slice(1), target: toFile });
+        else if (quoted || !expands)
           add(toFile ? "meta (script that reads the file later)" : "meta (literal text)", part);
         else if (xtrace) add("print (xtrace echoes the expanded value)", part);
         else {
@@ -1534,7 +1564,8 @@ export const classifyFileUse = (
         add("print (sourcing runs the value as a command)", stage);
       else if (INTERPRETERS.test(head) && !substitution) {
         const inline = /\s-(?:e|c|p|-eval|-print)\s+("(?:\\.|[^"\\])*"|'[^']*')/.exec(head)?.[1];
-        if (inline && touches(inline)) addProgram(decodeShell(inline), head, stage);
+        if (inline && touches(inline))
+          addProgram(decodeShell(inline), head, stage, { stages: downstream, target });
         else if (stdin) add("consume (stdin of a program)", stage);
         else add("consume (path to a program)", stage);
       } else if (META.test(head) && !substitution) add("meta", stage);

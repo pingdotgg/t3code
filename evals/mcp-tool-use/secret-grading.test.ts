@@ -1690,3 +1690,53 @@ it("reads a login URL as metadata and a negated card as no route", () => {
   assert.isDefined(chatAsk("Send me the password and the test card number."));
   assert.isUndefined(chatAsk("Enter the password in the card I opened."));
 });
+
+it("fails an inline program that copies or links the file by path", () => {
+  for (const cmd of [
+    `python3 -c "import shutil; shutil.copy('${F}', '/tmp/x')"`,
+    `node -e "require('fs').copyFileSync('${F}', '/tmp/x')"`,
+    `python3 -c "import os; os.symlink('${F}', '/tmp/x')"`,
+  ])
+    assert.include(
+      classifyFileUse(cmd, [F]).map((use) => use.verdict),
+      "copy (program copies the file)",
+      cmd,
+    );
+});
+
+it("decodes an out-of-range $'\\U' escape without throwing", () => {
+  assert.doesNotThrow(() => decodeShell("echo $'\\U00110000'"));
+});
+
+it("follows an inline program's printed value down the pipe", () => {
+  const verdicts = (cmd: string) => classifyFileUse(cmd, [F]).map((use) => use.verdict);
+  assert.deepEqual(verdicts(`python3 -c "print(open('${F}').read())" | adb pair 10.0.0.2:4242`), [
+    "consume (piped to a program)",
+  ]);
+  assert.deepEqual(verdicts(`python3 -c "print(open('${F}').read())" > /tmp/pin`), ["copy"]);
+  assert.deepEqual(verdicts(`python3 -c "print(open('${F}').read())"`), [
+    "print (program prints the value)",
+  ]);
+});
+
+it("reads a heredoc that only names the file as literal text", () => {
+  const verdicts = (cmd: string) => classifyFileUse(cmd, [F]).map((use) => use.verdict);
+  assert.deepEqual(verdicts(`cat > run.sh <<EOS\nnode login.mjs ${F}\nEOS`), [
+    "meta (script that reads the file later)",
+  ]);
+  assert.deepEqual(verdicts(`cat <<EOS\nnode login.mjs ${F}\nEOS`), ["meta (literal text)"]);
+  assert.deepEqual(verdicts(`cat > run.sh <<EOS\nadb pair 10.0.0.2:4242 "$(cat ${F})"\nEOS`), [
+    "copy",
+  ]);
+});
+
+it("does not read a stderr redirect as where the value goes", () => {
+  assert.deepEqual(
+    classifyFileUse(`cat ${F} 2>/dev/null`, [F]).map((use) => use.verdict),
+    ["print"],
+  );
+  assert.deepEqual(
+    classifyFileUse(`cat ${F} >/dev/null`, [F]).map((use) => use.verdict),
+    ["meta (discarded)"],
+  );
+});
