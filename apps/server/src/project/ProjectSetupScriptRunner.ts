@@ -190,8 +190,10 @@ function wrapCommandForCompletion(
     case "fish":
       return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
     case "nushell": {
-      const escaped = command.replace(/["\\\x00-\x1f]/g, (char) =>
-        char === '"' || char === "\\" ? `\\${char}` : `\\u{${char.charCodeAt(0).toString(16)}}`,
+      const escaped = `cd $env.T3CODE_WORKTREE_PATH\n${command}`.replace(
+        /["\\\x00-\x1f]/g,
+        (char) =>
+          char === '"' || char === "\\" ? `\\${char}` : `\\u{${char.charCodeAt(0).toString(16)}}`,
       );
       // Nu's catch records vary across versions, and exit bypasses catch entirely.
       return `$env.LAST_EXIT_CODE = 0; try { ^$nu.current-exe --login --commands "${escaped}" } catch { if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } }; print $"\\n${sentinel}($env.LAST_EXIT_CODE)"`;

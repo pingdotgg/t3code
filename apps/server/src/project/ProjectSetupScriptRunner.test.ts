@@ -143,7 +143,7 @@ describe("ProjectSetupScriptRunner", () => {
         const sentinel = written.match(/__T3_SETUP_DONE___[0-9a-f]{32}:/)?.[0];
         expect(sentinel).toBeDefined();
         expect(written).toBe(
-          ` $env.LAST_EXIT_CODE = 0; try { ^$nu.current-exe --login --commands "${escaped}" } catch { if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } }; print $"\\n${sentinel}($env.LAST_EXIT_CODE)"\r`,
+          ` $env.LAST_EXIT_CODE = 0; try { ^$nu.current-exe --login --commands "cd $env.T3CODE_WORKTREE_PATH\\u{a}${escaped}" } catch { if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } }; print $"\\n${sentinel}($env.LAST_EXIT_CODE)"\r`,
         );
       }),
   );
