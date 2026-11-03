@@ -9,6 +9,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
+import { readableProviderErrorMessage } from "./providerErrorMessage.ts";
 
 const GENERATION_TIMEOUT = "3 minutes";
 
@@ -111,14 +112,15 @@ function getOpenCodePromptFailure(error: unknown): OpenCodePromptFailure | null 
     "name" in error && typeof error.name === "string" && error.name.trim().length > 0
       ? error.name.trim()
       : undefined;
+  const data = "data" in error && error.data && typeof error.data === "object" ? error.data : {};
   const message =
-    "data" in error &&
-    error.data &&
-    typeof error.data === "object" &&
-    "message" in error.data &&
-    typeof error.data.message === "string"
-      ? error.data.message.trim()
-      : "";
+    readableProviderErrorMessage(
+      "message" in data && typeof data.message === "string" ? data.message : undefined,
+      "statusCode" in data && typeof data.statusCode === "number" ? data.statusCode : undefined,
+      "responseBody" in data && typeof data.responseBody === "string"
+        ? data.responseBody
+        : undefined,
+    ) ?? "";
   if (message.length > 0) {
     return {
       ...(name ? { name } : {}),

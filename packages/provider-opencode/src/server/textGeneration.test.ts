@@ -456,6 +456,34 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("shows a readable message when OpenCode stores the provider error as <none>", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = {
+          data: {
+            info: {
+              error: {
+                name: "APIError",
+                data: {
+                  message: "<none>",
+                  statusCode: 503,
+                  responseBody: "<title>Service unavailable</title>",
+                },
+              },
+            },
+            parts: [],
+          },
+        };
+
+        const error = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.flip);
+
+        expect(error.detail).toBe("Service unavailable (HTTP 503).");
+      }),
+    ),
+  );
+
   it.effect("deletes the session when the prompt request rejects", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
