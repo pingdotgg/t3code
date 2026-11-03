@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Base64 from "effect/encoding/Base64";
+import * as Result from "effect/Result";
 import * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpSchemaV1 from "effect-acp/schema-v1";
 import {
@@ -11,6 +13,11 @@ import {
   mergeToolActivityData,
 } from "@t3tools/shared/toolActivity";
 import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
+import {
+  readToolOutputImage,
+  MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH,
+} from "@t3tools/shared/toolOutput";
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import type {
   OrchestrationV2ProviderThreadNativeMetadata,
   ThreadTokenUsageSnapshot,
@@ -314,6 +321,30 @@ const boundedContentUri = (value: string | null | undefined): string => {
   return uri.toLowerCase().startsWith("data:") ? "" : uri;
 };
 
+export function acpContentBlockImage(content: EffectAcpSchema.ContentBlock) {
+  if (content.type !== "image") return undefined;
+  const image = readToolOutputImage(
+    !content.data && content.uri?.startsWith("data:") ? { ...content, data: content.uri } : content,
+  );
+  if (image?.data === undefined) return undefined;
+  const prefix = `data:${image.mimeType};base64,`;
+  const data = image.data.startsWith(prefix) ? image.data.slice(prefix.length) : image.data;
+  if (data.length === 0 || data.length > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH) return undefined;
+  const decoded = Base64.decode(data);
+  if (
+    Result.isFailure(decoded) ||
+    decoded.success.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
+  ) {
+    return undefined;
+  }
+  return {
+    type: "image" as const,
+    mimeType: image.mimeType,
+    data,
+    sizeBytes: decoded.success.byteLength,
+  };
+}
+
 export function acpContentBlockDisplayText(
   content: EffectAcpSchema.ContentBlock,
 ): string | undefined {
@@ -356,7 +387,14 @@ function sanitizeAcpToolCallContent(
 ): ReadonlyArray<EffectAcpSchema.ToolCallContent> {
   return content.map((entry) => {
     switch (entry.type) {
-      case "content":
+      case "content": {
+        const image = acpContentBlockImage(entry.content);
+        if (image !== undefined) {
+          return {
+            type: "content",
+            content: { type: "image", mimeType: image.mimeType, data: image.data },
+          };
+        }
         return {
           type: "content",
           content: {
@@ -364,6 +402,7 @@ function sanitizeAcpToolCallContent(
             text: acpContentBlockDisplayText(entry.content) ?? "",
           },
         };
+      }
       case "diff":
         if ("changes" in entry) {
           return {
