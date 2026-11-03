@@ -3,7 +3,6 @@ import {
   buildCommitUrl,
   changeRequestUrlBelow,
   type ChangeRequestHostIdentity,
-  type ChangeRequestProjectIdentity,
   defineSourceControl,
   isChangeRequestAuthorityOfProject,
   isChangeRequestInProjectRepository,
@@ -31,8 +30,8 @@ const changeRequestHeadRef = (number: number) => `refs/pull/${number}/head`;
  * The repository's browser URL the server resolved from the signed-in account, which is the
  * only place a Forgejo mounted below a path says so.
  */
-function resolvedWebUrl(identity: ChangeRequestProjectIdentity): URL | null {
-  if (!identity.webUrl) return null;
+function resolvedWebUrl(identity: ChangeRequestHostIdentity): URL | null {
+  if (!identity?.webUrl) return null;
   try {
     const url = new URL(identity.webUrl);
     return url.protocol === "http:" || url.protocol === "https:" ? url : null;
@@ -41,8 +40,10 @@ function resolvedWebUrl(identity: ChangeRequestProjectIdentity): URL | null {
   }
 }
 
-/** A server's identity includes its port, which only an HTTP remote names. */
+/** A server's identity includes its port, which only its web URL or an HTTP remote names. */
 function changeRequestHost(identity: ChangeRequestHostIdentity): string {
+  const web = resolvedWebUrl(identity);
+  if (web) return web.host.toLowerCase();
   try {
     const remote = new URL(identity?.locator?.remoteUrl ?? "");
     if (remote.protocol === "http:" || remote.protocol === "https:") {

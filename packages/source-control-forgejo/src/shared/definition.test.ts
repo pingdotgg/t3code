@@ -127,5 +127,12 @@ describe("Forgejo change request host", () => {
     expect(
       definition.changeRequestHost?.(identity("ssh://git@forge.example:2222/git/team/repo.git")),
     ).toBe("forge.example");
+    expect(
+      definition.changeRequestHost?.(
+        identity("ssh://git@ssh.forge.example:2222/git/team/repo.git", {
+          webUrl: "http://forge.example:3000/git/team/repo",
+        }),
+      ),
+    ).toBe("forge.example:3000");
   });
 });
