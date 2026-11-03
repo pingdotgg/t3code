@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -63,7 +64,7 @@ const resolverLayer = (
   SecretResolver.layer({
     drivers: [driver],
     secretProviders: Effect.sync(secretProviders),
-  }).pipe(Layer.provide(NodeServices.layer));
+  }).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("SecretResolver", () => {
   it.effect("reads a reference once and holds it", () => {
