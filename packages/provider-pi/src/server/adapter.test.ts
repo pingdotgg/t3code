@@ -1548,7 +1548,11 @@ describe("PiAdapterV2", () => {
           method: "notify",
           message: "note",
         });
-        yield* fake.emit({ type: "extension_error", extensionPath: "/ext/a.ts", error: "boom" });
+        yield* fake.emit({
+          type: "extension_error",
+          extensionPath: "/ext/a/index.ts",
+          error: "boom",
+        });
         for (const prefix of ["notify:", "extension-error:"]) {
           const item = yield* takeEvent(
             (event) =>
@@ -1556,6 +1560,9 @@ describe("PiAdapterV2", () => {
               event.turnItem.nativeItemRef?.nativeId?.startsWith(prefix) === true,
           );
           if (item.type === "turn_item.updated") itemIds.add(item.turnItem.id);
+          if (item.type === "turn_item.updated" && prefix === "extension-error:") {
+            assert.equal(item.turnItem.title, "a");
+          }
         }
       }
       assert.equal(itemIds.size, 4);
