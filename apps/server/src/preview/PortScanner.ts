@@ -788,6 +788,23 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     return { discovered: servers.filter(isOwned), configured } satisfies WebProbeSnapshot;
   });
 
+  const queryTasklistProcessName = Effect.fn("PortDiscovery.queryTasklistProcessName")(
+    (pid: number) =>
+      processRunner
+        .run({
+          command: "tasklist.exe",
+          args: ["/FO", "CSV", "/NH", "/FI", `PID eq ${pid}`],
+          timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
+          maxOutputBytes: 64 * 1024,
+        })
+        .pipe(
+          Effect.map((result) =>
+            exitedWithError(result) ? [] : [parseTasklistProcessName(result.stdout, pid)],
+          ),
+          Effect.orElseSucceed(() => []),
+        ),
+  );
+
   // tasklist costs 200-300ms per PID; query visible servers with bounded concurrency and cache names.
   const withWindowsProcessNames = Effect.fn("PortDiscovery.withWindowsProcessNames")(function* (
     snapshot: WebProbeSnapshot,
@@ -811,22 +828,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
                 WindowsTcpProbeError: (error) =>
                   Effect.logDebug("preview native process name lookup failed", {
                     operation: error.operation,
-                  }).pipe(Effect.as([])),
+                  }).pipe(Effect.andThen(queryTasklistProcessName(pid))),
               }),
             )
-          : processRunner
-              .run({
-                command: "tasklist.exe",
-                args: ["/FO", "CSV", "/NH", "/FI", `PID eq ${pid}`],
-                timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
-                maxOutputBytes: 64 * 1024,
-              })
-              .pipe(
-                Effect.map((result) =>
-                  exitedWithError(result) ? [] : [parseTasklistProcessName(result.stdout, pid)],
-                ),
-                Effect.orElseSucceed(() => []),
-              )
+          : queryTasklistProcessName(pid)
         ).pipe(
           Effect.map((names) => names.map((name) => [pid, { name, expiresAtMillis }] as const)),
         ),

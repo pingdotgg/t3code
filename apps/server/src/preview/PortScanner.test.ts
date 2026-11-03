@@ -556,53 +556,72 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
   }).pipe(Effect.provide(layer));
 });
 
-effectIt.effect("filters native Windows ownership without probes and caches process names", () => {
-  const requests: string[] = [];
-  const nameLookups: number[] = [];
-  const layer = Layer.effect(PortScanner.PortDiscovery, PortScanner.make).pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        layerNoProc,
-        Layer.succeed(HostProcess.Platform, "win32"),
-        Layer.succeed(ProcessRunner.ProcessRunner, { run: processProbeFailure }),
-        Layer.succeed(WindowsTcpListeners.WindowsTcpListeners, {
-          scan: Effect.succeed([
-            { port: 5173, pid: 1234 },
-            { port: 5173, pid: 1234 },
-            { port: 5174, pid: 1234 },
-            { port: 5174, pid: 9999 },
-            { port: 5175, pid: 9999 },
-          ]),
-          processName: (pid) =>
-            Effect.sync(() => {
-              nameLookups.push(pid);
-              return "node";
-            }),
-        }),
-        FetchHttpClient.layer.pipe(
-          Layer.provide(
-            Layer.succeed(FetchHttpClient.Fetch, (input) => {
-              requests.push(String(input));
-              return Promise.resolve(new Response("app"));
-            }),
+effectIt.effect.each(["native", "tasklist"] as const)(
+  "filters native Windows ownership without probes and caches %s names",
+  (nameSource) => {
+    const requests: string[] = [];
+    const nameLookups: number[] = [];
+    const commands: string[] = [];
+    const layer = Layer.effect(PortScanner.PortDiscovery, PortScanner.make).pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          layerNoProc,
+          Layer.succeed(HostProcess.Platform, "win32"),
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) => {
+              commands.push(input.command);
+              return Effect.succeed(
+                processOutput('"node.exe","1234","Console","1","50,000 K"\r\n'),
+              );
+            },
+          }),
+          Layer.succeed(WindowsTcpListeners.WindowsTcpListeners, {
+            scan: Effect.succeed([
+              { port: 5173, pid: 1234 },
+              { port: 5173, pid: 1234 },
+              { port: 5174, pid: 1234 },
+              { port: 5174, pid: 9999 },
+              { port: 5175, pid: 9999 },
+            ]),
+            processName: (pid) =>
+              Effect.suspend(() => {
+                nameLookups.push(pid);
+                return nameSource === "native"
+                  ? Effect.succeed("node")
+                  : Effect.fail(
+                      new WindowsTcpListeners.WindowsTcpProbeError({
+                        operation: "process-name",
+                        cause: new Error("Native process name lookup unavailable"),
+                      }),
+                    );
+              }),
+          }),
+          FetchHttpClient.layer.pipe(
+            Layer.provide(
+              Layer.succeed(FetchHttpClient.Fetch, (input) => {
+                requests.push(String(input));
+                return Promise.resolve(new Response("app"));
+              }),
+            ),
           ),
         ),
       ),
-    ),
-  );
-  return Effect.gen(function* () {
-    const scanner = yield* ownedScanner();
-    const servers = yield* scanner.scan();
-    expect(servers).toMatchObject([{ port: 5173, pid: 1234, processName: "node" }]);
-    expect(servers).toHaveLength(1);
-    expect(yield* scanner.scan()).toEqual(servers);
-    expect(requests).toEqual([]);
-    const configuredUrl = "http://localhost:5173/docs";
-    expect(yield* scanner.scan([configuredUrl])).toMatchObject([{ url: configuredUrl }]);
-    expect(requests).toEqual([configuredUrl]);
-    expect(nameLookups).toEqual([1234]);
-  }).pipe(Effect.provide(layer));
-});
+    );
+    return Effect.gen(function* () {
+      const scanner = yield* ownedScanner();
+      const servers = yield* scanner.scan();
+      expect(servers).toMatchObject([{ port: 5173, pid: 1234, processName: "node" }]);
+      expect(servers).toHaveLength(1);
+      expect(yield* scanner.scan()).toEqual(servers);
+      expect(requests).toEqual([]);
+      const configuredUrl = "http://localhost:5173/docs";
+      expect(yield* scanner.scan([configuredUrl])).toMatchObject([{ url: configuredUrl }]);
+      expect(requests).toEqual([configuredUrl]);
+      expect(nameLookups).toEqual([1234]);
+      expect(commands).toEqual(nameSource === "native" ? [] : ["tasklist.exe"]);
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 effectIt.effect("rechecks the socket owner before stopping a Linux server without lsof", () => {
   let holder = "4242";
