@@ -15,14 +15,17 @@ import {
   AuthOrchestrationReadScope,
   MCP_PEER_LINK_SOFTWARE_ID,
   mcpClientScopes,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpServerRequest } from "effect/http";
@@ -40,6 +43,7 @@ import {
   signPayload,
   timingSafeEqualBase64Url,
 } from "./utils.ts";
+import { requestUrl } from "../requestUrl.ts";
 
 // Request-derived origins support loopback, Tailscale and tunnels.
 // Signed client metadata keeps unauthenticated registration stateless.
@@ -62,7 +66,7 @@ export interface McpOAuthUrls {
 }
 
 export const requestUrls = (request: HttpServerRequest.HttpServerRequest): McpOAuthUrls => {
-  const origin = Option.match(HttpServerRequest.toURL(request), {
+  const origin = Option.match(requestUrl(request), {
     onNone: () => "http://localhost",
     onSome: (url) => url.origin,
   });
@@ -162,7 +166,7 @@ export class McpOAuthRedirectError extends Schema.TaggedError<McpOAuthRedirectEr
     error: Schema.Literals(["invalid_request", "unsupported_response_type", "invalid_target"]),
     description: Schema.String,
     redirectUri: Schema.String,
-    state: Schema.optional(Schema.String),
+    state: Schema.optional(Schema.RedactedFromValue(Schema.String)),
   },
 ) {}
 
@@ -170,7 +174,7 @@ export interface AuthorizationRequest {
   readonly client: McpOAuthClient;
   readonly redirectUri: string;
   readonly codeChallenge: string;
-  readonly state: string | undefined;
+  readonly state: Redacted.Redacted<string> | undefined;
   readonly resource: string;
   readonly issuer: string;
 }
@@ -212,6 +216,10 @@ export class McpOAuth extends Context.Service<
       readonly decision: ApprovalDecision;
     }) => Effect.Effect<string, EnvironmentAuth.ServerAuthMcpApprovalCodeError | McpOAuthPageError>;
     readonly deny: (authorization: AuthorizationRequest) => string;
+    /** A managed policy's runtime-mode ceiling, shown on the approval page. */
+    readonly runtimeModeCeiling:
+      | { readonly organization: string; readonly maxRuntimeMode: RuntimeMode }
+      | undefined;
     readonly exchangeCode: (input: {
       readonly request: HttpServerRequest.HttpServerRequest;
       readonly urls: McpOAuthUrls;
@@ -220,10 +228,15 @@ export class McpOAuth extends Context.Service<
   }
 >()("t3/auth/McpOAuth") {}
 
-const redirectWith = (redirectUri: string, params: Record<string, string | undefined>) => {
+const redirectWith = (
+  redirectUri: string,
+  params: Record<string, string | Redacted.Redacted<string> | undefined>,
+) => {
   const url = new URL(redirectUri);
   for (const [name, value] of Object.entries(params)) {
-    if (value !== undefined) url.searchParams.set(name, value);
+    if (value !== undefined) {
+      url.searchParams.set(name, Redacted.isRedacted(value) ? Redacted.value(value) : value);
+    }
   }
   return url.toString();
 };
@@ -239,7 +252,8 @@ export const redirectForError = (error: McpOAuthRedirectError, issuer: string) =
 const make = Effect.gen(function* () {
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digester = yield* Digest.Digest;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const linksEnabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
@@ -283,7 +297,7 @@ const make = Effect.gen(function* () {
 
   const pkceVerifies = (verifier: string, challenge: string) =>
     CODE_VERIFIER_PATTERN.test(verifier)
-      ? crypto.digest("SHA-256", new TextEncoder().encode(verifier)).pipe(
+      ? digester.digest(Digest.sha256, new TextEncoder().encode(verifier)).pipe(
           Effect.orDie,
           Effect.map((digest) => timingSafeEqualBase64Url(base64UrlEncode(digest), challenge)),
         )
@@ -409,9 +423,7 @@ const make = Effect.gen(function* () {
     access: AuthMcpClientAccess,
   ) {
     const now = yield* Clock.currentTimeMillis;
-    const code = Buffer.from(yield* crypto.randomBytes(32).pipe(Effect.orDie)).toString(
-      "base64url",
-    );
+    const code = Buffer.from(yield* random.randomBytes(32)).toString("base64url");
     yield* Ref.update(codes, (current) => {
       const next = new Map(Array.from(current).filter(([, pending]) => pending.expiresAtMs > now));
       next.set(code, {
@@ -484,8 +496,9 @@ const make = Effect.gen(function* () {
       if (token.grant_type !== "authorization_code") {
         return yield* fail("unsupported_grant_type", "Only authorization_code is supported.");
       }
-      const { code, redirect_uri: redirectUri, client_id: clientId } = token;
-      const verifier = token.code_verifier;
+      const { redirect_uri: redirectUri, client_id: clientId } = token;
+      const code = token.code && Redacted.value(token.code);
+      const verifier = token.code_verifier && Redacted.value(token.code_verifier);
       if (!code || !redirectUri || !clientId || !verifier) {
         return yield* fail(
           "invalid_request",
@@ -540,7 +553,13 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const managedPolicy = serverSettings.managedPolicy;
+  const maxRuntimeMode = managedPolicy?.limits?.maxRuntimeMode;
   return McpOAuth.of({
+    runtimeModeCeiling:
+      managedPolicy === undefined || maxRuntimeMode === undefined
+        ? undefined
+        : { organization: managedPolicy.organization, maxRuntimeMode },
     register,
     validateAuthorization,
     approvingBrowserSession,

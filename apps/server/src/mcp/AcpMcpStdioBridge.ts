@@ -361,7 +361,7 @@ export async function runAcpMcpCliFastPath(
     process.exitCode = 2;
     return;
   }
-  const result = await Effect.runPromise(
+  let result = await Effect.runPromise(
     callAcpMcpTool({
       endpoint,
       authorization,
@@ -369,5 +369,30 @@ export async function runAcpMcpCliFastPath(
       arguments: parsed as Record<string, unknown>,
     }),
   );
+  // Terminal callers see both fields, unlike native MCP clients that choose one.
+  if (
+    typeof result === "object" &&
+    result !== null &&
+    "structuredContent" in result &&
+    result.structuredContent !== undefined &&
+    "content" in result &&
+    Array.isArray(result.content)
+  ) {
+    const encoded = JSON.stringify(result.structuredContent);
+    result = {
+      ...result,
+      content: result.content.filter(
+        (part: unknown) =>
+          !(
+            typeof part === "object" &&
+            part !== null &&
+            "type" in part &&
+            part.type === "text" &&
+            "text" in part &&
+            part.text === encoded
+          ),
+      ),
+    };
+  }
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
