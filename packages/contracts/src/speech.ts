@@ -63,6 +63,7 @@ export const EnvironmentSpeechModel = Schema.Struct({
   active: Schema.Boolean,
   state: EnvironmentSpeechModelState,
   downloaded: Schema.optionalKey(Schema.Finite),
+  shared: Schema.optionalKey(Schema.Boolean),
 });
 export type EnvironmentSpeechModel = typeof EnvironmentSpeechModel.Type;
 

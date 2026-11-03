@@ -25,6 +25,11 @@ select a transcription model. Models vary in download size, supported languages,
 speed, and accuracy. If the selected environment is remote, the audio is sent to
 that machine for transcription.
 
+T3 Code reuses speech models another app already downloaded instead of
+downloading them again: Hex on Windows, Handy, or anything stored in the
+Hugging Face cache. These models can't be deleted from Voice settings because
+the other app owns the file.
+
 Models marked Streaming show a live preview while you speak. The tentative ending
 may change as the model hears more. Stop recording to finish and insert the text;
 cancel to discard the preview without changing your draft. Other models transcribe

@@ -303,7 +303,7 @@ function ModelRow(props: {
               Selected
             </Button>
           )}
-          {model.state === "installed" ? (
+          {model.state === "installed" && !model.shared ? (
             <Button
               size="icon-sm"
               variant="ghost-destructive"

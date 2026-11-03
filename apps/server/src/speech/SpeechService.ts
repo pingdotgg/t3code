@@ -31,10 +31,10 @@ import {
   downloadSpeechModel,
   effectiveSpeechLanguage,
   getSpeechModel,
-  isSpeechModelReady,
+  findInstalledSpeechModel,
+  type SpeechModelSources,
   removeSpeechModel,
   SPEECH_MODELS,
-  speechModelPath,
 } from "./model.ts";
 import {
   applySpeechCustomWords,
@@ -223,6 +223,42 @@ export const make = Effect.gen(function* () {
   const now = () => Number(clock.monotonicTimeNanosUnsafe()) / 1_000_000;
   const unsupportedReason = supported(platform, architecture);
   const modelDirectory = path.join(config.stateDir, "speech", "models");
+  const environment = yield* HostProcess.Environment;
+  const home = environment.HOME ?? environment.USERPROFILE ?? "";
+  // Other apps ship or cache the same catalog models: Hex and Handy keep them
+  // in their data directories, Handy and hf-hub downloads land in the Hugging
+  // Face cache. T3 only ever reads these locations; its own downloads still
+  // write to modelDirectory.
+  const sharedDirectories: string[] = [];
+  if (platform === "win32") {
+    if (environment.APPDATA)
+      sharedDirectories.push(
+        path.join(environment.APPDATA, "hex", "models"),
+        path.join(environment.APPDATA, "com.pais.handy", "models"),
+      );
+  } else if (platform === "darwin") {
+    if (home)
+      sharedDirectories.push(
+        path.join(home, "Library", "Application Support", "com.pais.handy", "models"),
+      );
+  } else if (platform === "linux") {
+    const dataHome = environment.XDG_DATA_HOME || (home && path.join(home, ".local", "share"));
+    const configHome = environment.XDG_CONFIG_HOME || (home && path.join(home, ".config"));
+    if (dataHome) sharedDirectories.push(path.join(dataHome, "com.pais.handy", "models"));
+    if (configHome) sharedDirectories.push(path.join(configHome, "com.pais.handy", "models"));
+  }
+  const huggingFaceCache =
+    environment.HF_HUB_CACHE ||
+    (environment.HF_HOME ? path.join(environment.HF_HOME, "hub") : "") ||
+    (home && path.join(home, ".cache", "huggingface", "hub"));
+  const sharedModelSources: SpeechModelSources = {
+    directories: sharedDirectories,
+    huggingFaceCaches: huggingFaceCache ? [huggingFaceCache] : [],
+  };
+  const modelSources: SpeechModelSources = {
+    directories: [modelDirectory, ...sharedDirectories],
+    huggingFaceCaches: sharedModelSources.huggingFaceCaches,
+  };
   let model: LoadedModel | undefined;
   let loadedModelId: string | undefined;
   let loadedAcceleration: string | undefined;
@@ -322,6 +358,8 @@ export const make = Effect.gen(function* () {
   const download = async (modelId: string, signal = lifetime) => {
     const definition = getSpeechModel(modelId);
     if (!definition) throw new SpeechModelNotFoundError({ modelId });
+    const shared = await findInstalledSpeechModel(sharedModelSources, definition);
+    if (shared !== undefined) return shared;
     if (downloading) throw new SpeechBusyError({ operation: "model download" });
     const controller = new AbortController();
     const operation = { modelId, downloaded: 0, verifying: false, controller };
@@ -372,9 +410,7 @@ export const make = Effect.gen(function* () {
     // as is skips re-hashing gigabytes on every cold load, and does not wait
     // on the download slot a Settings download of another model holds.
     const installedOrDownloaded = async () =>
-      (await isSpeechModelReady(modelDirectory, definition))
-        ? speechModelPath(modelDirectory, definition)
-        : download(definition.id, signal);
+      (await findInstalledSpeechModel(modelSources, definition)) ?? download(definition.id, signal);
     const pending =
       loading ??
       installedOrDownloaded()
@@ -601,7 +637,7 @@ export const make = Effect.gen(function* () {
       state:
         activeTranscriptions > 0
           ? "transcribing"
-          : (await isSpeechModelReady(modelDirectory, definition))
+          : (await findInstalledSpeechModel(modelSources, definition)) !== undefined
             ? "ready"
             : "missing-model",
       modelId: definition.id,
@@ -625,7 +661,9 @@ export const make = Effect.gen(function* () {
     return {
       models: await Promise.all(
         SPEECH_MODELS.map(async (definition) => {
-          const ready = await isSpeechModelReady(modelDirectory, definition);
+          const installedPath = await findInstalledSpeechModel(modelSources, definition);
+          const ready = installedPath !== undefined;
+          const shared = ready && path.dirname(installedPath) !== modelDirectory;
           const operation = downloading?.modelId === definition.id ? downloading : undefined;
           return {
             id: definition.id,
@@ -648,6 +686,7 @@ export const make = Effect.gen(function* () {
                 ? ("installed" as const)
                 : ("downloadable" as const),
             ...(operation ? { downloaded: operation.downloaded } : {}),
+            ...(shared ? { shared } : {}),
           };
         }),
       ),
@@ -1089,7 +1128,7 @@ export const make = Effect.gen(function* () {
               SPEECH_MODELS.filter((candidate) => candidate.id !== modelId).map(
                 async (candidate) => ({
                   candidate,
-                  ready: await isSpeechModelReady(modelDirectory, candidate),
+                  ready: (await findInstalledSpeechModel(modelSources, candidate)) !== undefined,
                 }),
               ),
             );

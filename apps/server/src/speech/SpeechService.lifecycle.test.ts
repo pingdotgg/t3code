@@ -91,8 +91,10 @@ vi.mock("./model.ts", () => ({
   effectiveSpeechLanguage: (model: { languages: string[] }, intent: string) =>
     intent !== "auto" && model.languages.includes(intent) ? intent : "en",
   downloadSpeechModel: downloadModel,
-  isSpeechModelReady: async (_directory: string, model: { id: string }) =>
-    readyModels.has(model.id),
+  findInstalledSpeechModel: async (
+    sources: { readonly directories: readonly string[] },
+    model: { id: string },
+  ) => (readyModels.has(model.id) ? `${sources.directories[0]}/test.gguf` : undefined),
   removeSpeechModel: async (_directory: string, model: { id: string }) => {
     readyModels.delete(model.id);
   },

@@ -253,7 +253,7 @@ export const effectiveSpeechLanguage = (model: SpeechModel, intent: string): str
   if (model.supportsLanguageDetection) return "auto";
   return model.languages.find((language) => language === "en") ?? model.languages[0]!;
 };
-export const speechModelPath = (directory: string, model: SpeechModel): string =>
+const speechModelPath = (directory: string, model: SpeechModel): string =>
   NodePath.join(directory, model.filename);
 
 async function hasExpectedFile(
@@ -278,9 +278,42 @@ async function hasExpectedFile(
   }
 }
 
-export async function isSpeechModelReady(directory: string, model: SpeechModel): Promise<boolean> {
-  const stat = await NodeFSP.stat(speechModelPath(directory, model)).catch(() => null);
+export type SpeechModelSources = {
+  readonly directories: readonly string[];
+  readonly huggingFaceCaches: readonly string[];
+};
+
+const isInstalledFile = async (path: string, model: SpeechModel) => {
+  const stat = await NodeFSP.stat(path).catch(() => null);
   return stat?.isFile() === true && stat.size === model.size;
+};
+
+export async function findInstalledSpeechModel(
+  sources: SpeechModelSources,
+  model: SpeechModel,
+): Promise<string | undefined> {
+  for (const directory of sources.directories) {
+    const candidate = speechModelPath(directory, model);
+    if (await isInstalledFile(candidate, model)) return candidate;
+  }
+  for (const cache of sources.huggingFaceCaches) {
+    const snapshots = NodePath.join(
+      cache,
+      `models--${model.id.replaceAll("/", "--")}`,
+      "snapshots",
+    );
+    const revisions = await NodeFSP.readdir(snapshots).catch(() => undefined);
+    if (revisions === undefined) continue;
+    const ordered = [
+      model.revision,
+      ...revisions.filter((revision) => revision !== model.revision).sort(),
+    ];
+    for (const revision of ordered) {
+      const candidate = NodePath.join(snapshots, revision, model.filename);
+      if (await isInstalledFile(candidate, model)) return candidate;
+    }
+  }
+  return undefined;
 }
 
 export async function downloadSpeechModel(
