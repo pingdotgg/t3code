@@ -74,6 +74,16 @@ describe("HistorySwipeNavigation", () => {
       [[-1, -1], [-2, -1], [-3, -1], ...straightBack],
       true,
     ],
+    [
+      "a swipe that leans diagonally for two events navigates",
+      [
+        [-5, 3],
+        [-2, 2],
+        [-150, 0],
+      ],
+      true,
+    ],
+    ["a single diagonal event past the trigger keeps the thread", [[-130, 100]], false],
   ] as const)("%s", async (_name, events, navigates) => {
     navigateHistory.mockReset();
     await using screen = await render(<HistorySwipeNavigation />);

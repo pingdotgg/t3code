@@ -7,8 +7,10 @@ import { canNavigateHistory, navigateHistory, type HistoryDirection } from "../n
 const SWIPE_TRIGGER_DISTANCE = 120;
 // Movement needed before the gesture picks an axis; first events are often diagonal.
 const SWIPE_AXIS_LOCK_DISTANCE = 8;
-// Vertical scrolls drift sideways, so a tracked swipe's horizontal travel must clearly dominate.
+// Vertical scrolls drift sideways, so a swipe's horizontal travel must clearly dominate once
+// it has moved far enough for its direction to be more than noise.
 const SWIPE_HORIZONTAL_DOMINANCE = 2;
+const SWIPE_DOMINANCE_DISTANCE = 30;
 const MOMENTUM_SAMPLE_SIZE = 5;
 
 type SwipeBounds = { left: number; top: number; width: number; height: number };
@@ -56,11 +58,19 @@ function canScrollHorizontally(path: readonly EventTarget[], deltaX: number): bo
   return false;
 }
 
+function isVerticalScroll(travelX: number, travelY: number): boolean {
+  return (
+    travelX + travelY >= SWIPE_DOMINANCE_DISTANCE && travelX <= SWIPE_HORIZONTAL_DOMINANCE * travelY
+  );
+}
+
 function lockSwipeAxis(
   pending: Extract<SwipeGesture, { kind: "pending" }>,
 ): Exclude<SwipeGesture, { kind: "pending" }> {
   const { path, sumX, sumY } = pending;
-  if (Math.abs(sumX) <= Math.abs(sumY)) return { kind: "ignored" };
+  if (Math.abs(sumX) <= Math.abs(sumY) || isVerticalScroll(Math.abs(sumX), Math.abs(sumY))) {
+    return { kind: "ignored" };
+  }
   if (path.some((node) => node instanceof Element && node.matches('[role="dialog"]'))) {
     return { kind: "ignored" };
   }
@@ -138,7 +148,7 @@ export function HistorySwipeNavigation() {
         if (event.deltaX === 0 && event.deltaY === 0) return release();
         gesture.travelX += Math.abs(event.deltaX);
         gesture.travelY += Math.abs(event.deltaY);
-        if (gesture.travelX <= SWIPE_HORIZONTAL_DOMINANCE * gesture.travelY) {
+        if (isVerticalScroll(gesture.travelX, gesture.travelY)) {
           gesture = { kind: "ignored" };
           return hideIndicator();
         }
