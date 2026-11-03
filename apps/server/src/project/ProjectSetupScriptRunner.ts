@@ -190,13 +190,18 @@ function wrapCommandForCompletion(
     case "fish":
       return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
     case "nushell": {
-      const escaped = `cd $env.T3CODE_WORKTREE_PATH\n${command}`.replace(
-        /["\\\x00-\x1f]/g,
-        (char) =>
-          char === '"' || char === "\\" ? `\\${char}` : `\\u{${char.charCodeAt(0).toString(16)}}`,
+      const escaped = command.replace(/["\\\x00-\x1f]/g, (char) =>
+        char === '"' || char === "\\" ? `\\${char}` : `\\u{${char.charCodeAt(0).toString(16)}}`,
       );
-      // Nu's catch records vary across versions, and exit bypasses catch entirely.
-      return `$env.LAST_EXIT_CODE = 0; try { ^$nu.current-exe --login --commands "${escaped}" } catch { if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } }; print $"\\n${sentinel}($env.LAST_EXIT_CODE)"`;
+      // Nu resolves imports before running cd; source a file rooted in the worktree.
+      return [
+        "$env.LAST_EXIT_CODE = 0",
+        "let __t3f = try { mktemp --tmpdir-path $env.T3CODE_WORKTREE_PATH --suffix .nu .t3-setup-XXXXXXXX } catch {|e| print -e $e.msg; null }",
+        `if $__t3f == null { $env.LAST_EXIT_CODE = 1 } else { try { [$"rm --permanent ($__t3f | to nuon)" "${escaped}"] | str join (char newline) | save --force --raw $__t3f; ^$nu.current-exe --login --commands $"cd $env.T3CODE_WORKTREE_PATH; source ($__t3f | to nuon)" } catch {|e| if $e != null and $e.exit_code? == null { print -e $e.msg }; if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } } }`,
+        "let __t3c = $env.LAST_EXIT_CODE",
+        "try { if $__t3f != null and ($__t3f | path exists) { rm --permanent $__t3f } } catch {|e| print -e $e.msg }",
+        `print $"\\n${sentinel}($__t3c)"`,
+      ].join("; ");
     }
     case "posix":
       return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;

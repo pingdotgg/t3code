@@ -127,6 +127,10 @@ describe("ProjectSetupScriptRunner", () => {
   it.effect.each([
     { command: "vp i", escaped: "vp i" },
     {
+      command: "source ./setup.nu\nuse ./module.nu *",
+      escaped: "source ./setup.nu\\u{a}use ./module.nu *",
+    },
+    {
       command: 'print "quoted"; print \'C:\\tools\'; print "$env.PATH"\nexit 7 # comment\r\n\t',
       escaped:
         'print \\"quoted\\"; print \'C:\\\\tools\'; print \\"$env.PATH\\"\\u{a}exit 7 # comment\\u{d}\\u{a}\\u{9}',
@@ -143,7 +147,14 @@ describe("ProjectSetupScriptRunner", () => {
         const sentinel = written.match(/__T3_SETUP_DONE___[0-9a-f]{32}:/)?.[0];
         expect(sentinel).toBeDefined();
         expect(written).toBe(
-          ` $env.LAST_EXIT_CODE = 0; try { ^$nu.current-exe --login --commands "cd $env.T3CODE_WORKTREE_PATH\\u{a}${escaped}" } catch { if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } }; print $"\\n${sentinel}($env.LAST_EXIT_CODE)"\r`,
+          ` ${[
+            "$env.LAST_EXIT_CODE = 0",
+            "let __t3f = try { mktemp --tmpdir-path $env.T3CODE_WORKTREE_PATH --suffix .nu .t3-setup-XXXXXXXX } catch {|e| print -e $e.msg; null }",
+            `if $__t3f == null { $env.LAST_EXIT_CODE = 1 } else { try { [$"rm --permanent ($__t3f | to nuon)" "${escaped}"] | str join (char newline) | save --force --raw $__t3f; ^$nu.current-exe --login --commands $"cd $env.T3CODE_WORKTREE_PATH; source ($__t3f | to nuon)" } catch {|e| if $e != null and $e.exit_code? == null { print -e $e.msg }; if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } } }`,
+            "let __t3c = $env.LAST_EXIT_CODE",
+            "try { if $__t3f != null and ($__t3f | path exists) { rm --permanent $__t3f } } catch {|e| print -e $e.msg }",
+            `print $"\\n${sentinel}($__t3c)"`,
+          ].join("; ")}\r`,
         );
       }),
   );
