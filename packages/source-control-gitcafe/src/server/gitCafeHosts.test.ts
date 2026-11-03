@@ -16,6 +16,7 @@ describe("gitCafeHosts", () => {
     ["https://staging.git.cafe/team/project.git/", "staging.git.cafe"],
     ["ssh@git.cafe:team/project.git", "git.cafe"],
     ["ssh://git@git.cafe/team/project.git", "git.cafe"],
+    ["git.cafe:team/project.git", "git.cafe"],
   ])("reads the host and repository of %s", (url, host) => {
     assert.deepStrictEqual(GitCafeHosts.parseGitCafeRemote(url), {
       host,

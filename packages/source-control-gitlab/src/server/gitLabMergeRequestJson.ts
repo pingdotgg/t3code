@@ -740,6 +740,8 @@ function mergeRequestPatch(entries: ReadonlyArray<unknown>): GitLabMergeRequestP
       ...(value.deleted_file === true ? [`deleted file mode ${value.a_mode ?? "100644"}`] : []),
       ...(value.renamed_file === true
         ? [
+            // GitLab has no similarity score; Pierre needs this header to keep the rename.
+            `similarity index ${hunks.length > 0 || value.too_large === true || value.collapsed === true ? 0 : 100}%`,
             `rename from ${quoteGitPatchPath(value.old_path)}`,
             `rename to ${quoteGitPatchPath(value.new_path)}`,
           ]
