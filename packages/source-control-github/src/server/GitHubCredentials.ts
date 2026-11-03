@@ -1,7 +1,7 @@
 import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -135,12 +135,12 @@ export function environmentToken(
 export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
 
   const fingerprintOf = (host: string, token: string) =>
-    crypto.digest("SHA-256", new TextEncoder().encode(token)).pipe(
+    crypto.digest(Digest.sha256, new TextEncoder().encode(token)).pipe(
       Effect.map((digest) => `${host}:${Hex.encode(digest)}`),
       Effect.orDie,
     );
