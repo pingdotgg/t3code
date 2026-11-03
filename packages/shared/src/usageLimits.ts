@@ -494,9 +494,9 @@ function accountSortName(account: LimitAccount): string {
   return (account.displayName ?? account.email ?? account.key).toLowerCase();
 }
 
-// Codex ids name slots, so pool by kind; other drivers' ids identify distinct allowances.
+// Codex ids name slots and Grok ids vary by source; both pool by period.
 function poolKey(driver: ServerProvider["driver"], window: ServerProviderUsageWindow): string {
-  return driver === "codex" ? window.kind : `${window.kind}:${window.id}`;
+  return driver === "codex" || driver === "grok" ? window.kind : `${window.kind}:${window.id}`;
 }
 
 function poolMember(account: LimitAccount, reported: ServerProviderUsageWindow, now: number) {
