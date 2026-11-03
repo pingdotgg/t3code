@@ -9372,6 +9372,7 @@ describe("CodexAdapterV2 environment home derivation", () => {
           IdAllocator.layer,
           McpProviderSessions.layer,
           NodeServices.layer,
+          NodeCrypto.layer,
           Layer.succeed(HostProcess.Environment, input.hostEnvironment),
           Layer.effect(
             ServerConfig,
