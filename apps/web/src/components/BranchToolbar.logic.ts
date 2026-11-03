@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
+import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 export { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 
@@ -257,9 +258,12 @@ export function resolveBranchSelectionTarget(input: {
   const { activeProjectCwd, activeWorktreePath, refName } = input;
 
   if (refName.worktreePath) {
+    // A project in a repository subdirectory sits inside its checkout's root.
+    const isProjectCheckout =
+      workspaceRelativeFilePath(activeProjectCwd, refName.worktreePath) !== null;
     return {
       checkoutCwd: refName.worktreePath,
-      nextWorktreePath: refName.worktreePath === activeProjectCwd ? null : refName.worktreePath,
+      nextWorktreePath: isProjectCheckout ? null : refName.worktreePath,
       reuseExistingWorktree: true,
     };
   }

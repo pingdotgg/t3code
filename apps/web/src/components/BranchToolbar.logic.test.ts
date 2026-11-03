@@ -177,20 +177,27 @@ describe("resolveBranchSelectionTarget", () => {
   });
 
   it("switches back to the main repo when the ref already lives there", () => {
-    expect(
-      resolveBranchSelectionTarget({
-        activeProjectCwd: "/repo",
-        activeWorktreePath: "/repo/.t3/worktrees/feature-a",
-        refName: {
-          isDefault: true,
-          worktreePath: "/repo",
-        },
-      }),
-    ).toEqual({
-      checkoutCwd: "/repo",
-      nextWorktreePath: null,
-      reuseExistingWorktree: true,
-    });
+    // A subdirectory project's own checkout is reported at the repository root.
+    for (const [activeProjectCwd, activeWorktreePath] of [
+      ["/repo", "/repo/.t3/worktrees/feature-a"],
+      ["/repo/packages/app", "/repo/.t3/worktrees/feature-a"],
+      ["/repo/packages/app", null],
+    ] as const) {
+      expect(
+        resolveBranchSelectionTarget({
+          activeProjectCwd,
+          activeWorktreePath,
+          refName: {
+            isDefault: true,
+            worktreePath: "/repo",
+          },
+        }),
+      ).toEqual({
+        checkoutCwd: "/repo",
+        nextWorktreePath: null,
+        reuseExistingWorktree: true,
+      });
+    }
   });
 
   it("keeps checkout in the current worktree for non-default refs", () => {
