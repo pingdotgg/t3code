@@ -284,7 +284,6 @@ export const make = Effect.gen(function* () {
           OrchestrationV2CommandOutputError
         > {
           yield* Queue.take(wake);
-          if (readFailure !== undefined) return yield* readFailure;
           if (lost !== undefined) {
             return yield* new OrchestrationV2CommandOutputError({
               threadId: target.threadId,
@@ -297,6 +296,7 @@ export const make = Effect.gen(function* () {
             yield* Effect.sleep(throttle - (now - lastFrameAt));
           }
           lastFrameAt = yield* Clock.currentTimeMillis;
+          if (readFailure !== undefined) return yield* readFailure;
           throttle = COMMAND_OUTPUT_FRAME_INTERVAL_MS;
           const tail = tails.get(key) ?? finished.get(key);
           if (settled !== undefined) {

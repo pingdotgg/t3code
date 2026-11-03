@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { vi } from "vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -28,7 +29,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -72,6 +73,7 @@ const layerTestStoredContentConfig = ServerConfig.layerTest(process.cwd(), {
 }).pipe(Layer.provideMerge(NodeServices.layer));
 const layerTestContentStore = TurnItemContentStore.layer.pipe(
   Layer.provide(layerTestStoredContentConfig),
+  Layer.provide(NodeCrypto.layer),
 );
 const layerTestStores = Layer.mergeAll(
   EventStore.layer,
@@ -251,7 +253,7 @@ it.effect("does not leave image attachments after rejected or failed writes", ()
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
     const fileSystem = yield* FileSystem.FileSystem;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* Digest.Digest;
     const config = yield* ServerConfig.ServerConfig;
     const now = yield* DateTime.now;
     const threadEvent = yield* threadCreatedEvent(now);
@@ -296,7 +298,7 @@ it.effect("does not leave image attachments after rejected or failed writes", ()
     });
     const attachmentPathFor = (bytes: Uint8Array) =>
       Effect.gen(function* () {
-        const digest = yield* crypto.digest("SHA-256", bytes);
+        const digest = yield* crypto.digest(Digest.sha256, bytes);
         const attachmentId = createDeterministicAttachmentId(
           threadEvent.threadId,
           Hex.encode(digest),
@@ -332,14 +334,48 @@ it.effect("does not leave image attachments after rejected or failed writes", ()
       BEFORE INSERT ON orchestration_events
       WHEN NEW.event_type = 'turn-item.updated'
       BEGIN SELECT RAISE(ABORT, 'injected event failure'); END`;
-    const failed = yield* Effect.exit(
-      eventSink.write({
+    const contentStore = yield* TurnItemContentStore.TurnItemContentStore;
+    const cleanupEntered = yield* Deferred.make<void>();
+    const releaseCleanup = yield* Deferred.make<void>();
+    const removeNewAttachments = contentStore.removeNewAttachments;
+    using _cleanup = vi
+      .spyOn(contentStore, "removeNewAttachments")
+      .mockImplementation((ids) =>
+        Deferred.succeed(cleanupEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseCleanup)),
+          Effect.andThen(removeNewAttachments(ids)),
+        ),
+      );
+    const failedWriter = yield* eventSink
+      .write({
         events: [makeImageEvent("turn-item:failed-image", "event:failed-image", failedBytes)],
-      }),
+      })
+      .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(cleanupEntered);
+    yield* sql`DROP TRIGGER reject_turn_item_event`;
+    const successorTransactionEntered = yield* Deferred.make<void>();
+    const withTransaction = sql.withTransaction;
+    using _transaction = vi
+      .spyOn(sql, "withTransaction")
+      .mockImplementation((effect) =>
+        Deferred.succeed(successorTransactionEntered, undefined).pipe(
+          Effect.andThen(withTransaction(effect)),
+        ),
+      );
+    const successor = yield* eventSink
+      .write({
+        events: [makeImageEvent("turn-item:successor-image", "event:successor-image", failedBytes)],
+      })
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    const successorStarted = yield* Deferred.isDone(successorTransactionEntered);
+    yield* Effect.sync(() => assert.isFalse(successorStarted)).pipe(
+      Effect.ensuring(Deferred.succeed(releaseCleanup, undefined)),
     );
+    const failed = yield* Fiber.join(failedWriter);
+    yield* Fiber.join(successor);
     assert.equal(failed._tag, "Failure");
     assert.isNotNull(failedPath);
-    assert.isFalse(yield* fileSystem.exists(failedPath!));
+    assert.deepEqual(yield* fileSystem.readFile(failedPath!), failedBytes);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -544,7 +580,7 @@ layer("ProviderEventIngestorV2", (it) => {
       const eventStore = yield* EventStore.EventStoreV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const fileSystem = yield* FileSystem.FileSystem;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* Digest.Digest;
       const config = yield* ServerConfig.ServerConfig;
       const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -591,7 +627,7 @@ layer("ProviderEventIngestorV2", (it) => {
       });
 
       const importedImageBytes = Buffer.alloc(30_000, 41);
-      const importedImageDigest = yield* crypto.digest("SHA-256", importedImageBytes);
+      const importedImageDigest = yield* crypto.digest(Digest.sha256, importedImageBytes);
       const importedImageAttachmentId = createDeterministicAttachmentId(
         threadEvent.threadId,
         Hex.encode(importedImageDigest),

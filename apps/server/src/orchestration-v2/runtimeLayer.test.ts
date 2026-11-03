@@ -355,6 +355,7 @@ const layerResourceCleanupTest = ResourceCleanupService.layer.pipe(
 );
 
 const layerProjectDeletionTest = Layer.mergeAll(
+  TurnItemContentStore.layer,
   RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
   RuntimeLayer.layerProjectService,
   RuntimeLayer.layerEventSink,
@@ -385,7 +386,7 @@ const layerProjectDeletionTest = Layer.mergeAll(
   Layer.provideMerge(layerResourceCleanupTest),
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(McpProviderSessions.layer),
-  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
   Layer.provide(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
@@ -490,17 +491,34 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
               updatedAt: now,
               type: "command_execution",
               input: "print large output",
-              output,
+              output: `${output}:superseded`,
             },
           },
         ],
       });
       const sourceProjection = yield* orchestrator.getThreadProjection(sourceThreadId);
       const storedItem = sourceProjection.turnItems.find((item) => item.id === itemId);
-      assert.equal(storedItem?.type, "command_execution");
+      if (storedItem?.type !== "command_execution") throw new Error("Expected a command item.");
       assert.isDefined(
         storedItem?.type === "command_execution" ? storedItem.contentRef : undefined,
       );
+      const { contentRef: _supersededRef, ...replacement } = storedItem;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("fork-content-replacement-event"),
+            type: "turn-item.updated",
+            threadId: sourceThreadId,
+            runId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: { ...replacement, output },
+          },
+        ],
+      });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM orchestration_events WHERE event_id = 'fork-content-source-item-event'`;
+      const contentStore = yield* TurnItemContentStore.TurnItemContentStore;
 
       yield* threads.dispatch({
         type: "thread.fork",
@@ -619,6 +637,13 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
         output,
       );
       const grandchildAfterParentDelete = yield* transcript(grandchildThreadId);
+      const supersededBeforeLastFork = yield* contentStore.read(storedItem);
+      assert.equal(
+        supersededBeforeLastFork.type === "command_execution"
+          ? supersededBeforeLastFork.output
+          : undefined,
+        `${output}:superseded`,
+      );
       const grandchildItem = grandchildAfterParentDelete.items.find(
         (row) => row.sourceItemId === itemId,
       )?.item;
@@ -640,6 +665,8 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
         throw new Error("Expected the last fork to release the source attachment.");
       }
       assert.equal(missingAfterLastFork.reason, "content-missing");
+      const supersededAfterLastFork = yield* contentStore.read(storedItem).pipe(Effect.flip);
+      assert.equal(supersededAfterLastFork.reason, "content-missing");
     }),
   );
 

@@ -1,6 +1,6 @@
 import type { ThreadId, OrchestrationV2TurnItem, TurnItemId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Hex from "effect/encoding/Hex";
@@ -142,11 +142,11 @@ function replaceImageBlocks(output: unknown, replacements: ReadonlyMap<unknown, 
 export const layer: Layer.Layer<
   TurnItemContentStore,
   never,
-  Crypto.Crypto | FileSystem.FileSystem | Path.Path | ServerConfig.ServerConfig
+  Digest.Digest | FileSystem.FileSystem | Path.Path | ServerConfig.ServerConfig
 > = Layer.effect(
   TurnItemContentStore,
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* Digest.Digest;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const config = yield* ServerConfig.ServerConfig;
@@ -221,7 +221,7 @@ export const layer: Layer.Layer<
         readonly operation: "store";
         readonly bytes: Uint8Array;
       }) {
-        const digest = yield* crypto.digest("SHA-256", input.bytes).pipe(
+        const digest = yield* crypto.digest(Digest.sha256, input.bytes).pipe(
           Effect.mapError((cause) =>
             failure({
               threadId: input.threadId,

@@ -13131,13 +13131,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 (cause) => new OrchestratorProjectionError({ threadId: deletion.threadId, cause }),
               ),
             );
+          const attachmentCleanup = yield* projectionStore
+            .getThreadAttachmentIdsForDeletion(deletion.threadId)
+            .pipe(mapDispatchError(command));
           return yield* mapDispatchError(command)(
             planThreadDeletion({
               command: deletion,
               projection,
-              attachmentIds: yield* projectionStore
-                .getThreadAttachmentIdsForDeletion(deletion.threadId)
-                .pipe(mapDispatchError(command)),
+              attachmentIds: attachmentCleanup.attachmentIds,
+              attachmentOwnerThreadIds: attachmentCleanup.ownerThreadIds,
               now,
               idAllocator,
             }),

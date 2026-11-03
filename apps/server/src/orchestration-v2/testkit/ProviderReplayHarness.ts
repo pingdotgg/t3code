@@ -322,7 +322,7 @@ export function layerWithRegistry<Error>(
     ),
   ).pipe(Layer.orDie);
   const layerTurnItemContentStore = TurnItemContentStore.layer.pipe(
-    Layer.provide(Layer.merge(layerServerConfig, NodeServices.layer)),
+    Layer.provide(Layer.mergeAll(layerServerConfig, NodeServices.layer, NodeCrypto.layer)),
   );
   const layerStores = Layer.mergeAll(
     EventStore.layer,

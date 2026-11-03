@@ -17,6 +17,9 @@ import {
   type TerminalOutputState,
 } from "@t3tools/shared/terminalOutput";
 import * as DateTime from "effect/DateTime";
+import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -229,6 +232,80 @@ const takeFrame = (frames: Queue.Queue<OrchestrationV2CommandOutputFrame | "ende
   );
 
 const layer = it.layer(layerTest);
+
+it.effect("fails when stored output becomes unreadable during frame throttling", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const content = yield* TurnItemContentStore.TurnItemContentStore;
+      const clock = yield* Clock.Clock;
+      const firstFrame = yield* Deferred.make<void>();
+      const sleepStarted = yield* Deferred.make<void>();
+      const releaseSleep = yield* Deferred.make<void>();
+      const eventProcessed = yield* Deferred.make<void>();
+      const frames: OrchestrationV2CommandOutputFrame[] = [];
+      const threadId = yield* seedThread;
+      yield* writeCommandItem(threadId, { status: "running" });
+      const hub = yield* CommandOutputHub.make.pipe(
+        Effect.provideService(EventSink.EventSinkV2, {
+          ...sink,
+          stream: (input) =>
+            sink
+              .stream(input)
+              .pipe(
+                Stream.take(1),
+                Stream.concat(Stream.fromEffectDrain(Deferred.succeed(eventProcessed, undefined))),
+                Stream.concat(Stream.never),
+              ),
+        }),
+        Effect.provideService(TurnItemContentStore.TurnItemContentStore, {
+          ...content,
+          read: (item, options) =>
+            item.type === "command_execution" && item.contentRef !== undefined
+              ? Effect.fail(
+                  new TurnItemContentStore.TurnItemContentStoreError({
+                    threadId,
+                    itemId: item.id,
+                    operation: "read",
+                    reason: "content-missing",
+                  }),
+                )
+              : content.read(item, options),
+        }),
+      );
+      const subscriber = yield* hub.subscribe({ threadId, itemId: ITEM_ID }).pipe(
+        Stream.runForEach((frame) =>
+          Effect.sync(() => {
+            frames.push(frame);
+          }).pipe(Effect.andThen(Deferred.succeed(firstFrame, undefined))),
+        ),
+        Effect.flip,
+        Effect.provideService(Clock.Clock, {
+          ...clock,
+          sleep: () =>
+            Deferred.succeed(sleepStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseSleep)),
+            ),
+        }),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(firstFrame);
+      yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "next chunk" });
+      yield* Deferred.await(sleepStarted);
+      yield* writeCommandItem(threadId, {
+        status: "completed",
+        exitCode: 0,
+        output: "x".repeat(70_000),
+      });
+      yield* Deferred.await(eventProcessed);
+      yield* Deferred.succeed(releaseSleep, undefined);
+      const error = yield* Fiber.join(subscriber);
+      assert.equal(error._tag, "OrchestrationV2CommandOutputError");
+      assert.equal(error.message, "Failed to read command output.");
+      assert.isTrue(frames.every((frame) => frame.running));
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
 
 it.effect("wakes a blocked command subscriber after stored output fails to read", () =>
   Effect.gen(function* () {

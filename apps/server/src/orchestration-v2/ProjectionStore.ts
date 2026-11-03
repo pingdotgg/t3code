@@ -452,9 +452,13 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadAttachmentIds: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
-  readonly getThreadAttachmentIdsForDeletion: (
-    threadId: ThreadId,
-  ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
+  readonly getThreadAttachmentIdsForDeletion: (threadId: ThreadId) => Effect.Effect<
+    {
+      readonly attachmentIds: ReadonlyArray<string>;
+      readonly ownerThreadIds: ReadonlyArray<string>;
+    },
+    ProjectionStoreV2Error
+  >;
   readonly getThreadHistoryPage: (
     threadId: ThreadId,
     cursor: string,
@@ -5687,7 +5691,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 (owner) => getThreadAttachmentIds(ThreadId.make(owner.thread_id)),
                 { concurrency: 1 },
               );
-              return [...new Set(attachmentGroups.flat())];
+              return {
+                attachmentIds: [...new Set(attachmentGroups.flat())],
+                ownerThreadIds: owners.map((owner) => owner.thread_id),
+              };
             }),
           );
         },

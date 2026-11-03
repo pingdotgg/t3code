@@ -259,6 +259,7 @@ const layerBase: Layer.Layer<
 
     // Serialize commit and publish; reordered publication makes clients drop earlier sequences.
     const publishLane = yield* Semaphore.make(1);
+    const storageLane = yield* Semaphore.make(1);
     const commitThenPublish = <A, E, R>(
       transaction: Effect.Effect<A, E, R>,
       publish: (committed: A) => Effect.Effect<void>,
@@ -277,15 +278,24 @@ const layerBase: Layer.Layer<
         // Cancellation may roll back the transaction's work. Once it commits,
         // every subscriber must hear about it before this writer can exit.
         // Otherwise a failed child run can leave its parent's task running.
-        return sql.withTransaction(Effect.tap(restore(transaction), () => takeLane)).pipe(
-          Effect.catchCause((cause) =>
-            turnItemContentStore
-              .removeNewAttachments(createdAttachmentIds)
-              .pipe(Effect.andThen(Effect.failCause(cause))),
-          ),
-          Effect.tap(publish),
-          Effect.ensuring(Effect.suspend(() => (holdsLane ? publishLane.release(1) : Effect.void))),
-        );
+        return storageLane
+          .withPermit(
+            sql
+              .withTransaction(Effect.tap(restore(transaction), () => takeLane))
+              .pipe(
+                Effect.catchCause((cause) =>
+                  turnItemContentStore
+                    .removeNewAttachments(createdAttachmentIds)
+                    .pipe(Effect.andThen(Effect.failCause(cause))),
+                ),
+              ),
+          )
+          .pipe(
+            Effect.tap(publish),
+            Effect.ensuring(
+              Effect.suspend(() => (holdsLane ? publishLane.release(1) : Effect.void)),
+            ),
+          );
       });
 
     // A user can answer after terminal normalization reads the pending request.
