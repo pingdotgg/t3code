@@ -26,6 +26,7 @@ export function ComposerContextPermissions(props: {
             size="xs"
             className="ms-auto min-w-0 shrink-0"
             aria-label={`Permissions: ${label}`}
+            aria-haspopup="menu"
             data-composer-context-control
             onClick={props.onOpen}
           />
