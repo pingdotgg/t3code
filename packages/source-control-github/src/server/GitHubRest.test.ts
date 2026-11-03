@@ -126,6 +126,7 @@ describe("GitHubRest", () => {
         headers: NodeHttp.IncomingHttpHeaders;
         body: string;
       }> = [];
+      let redirectClosed = Promise.resolve();
       const server = NodeHttp.createServer(async (request, response) => {
         const chunks: Array<Buffer> = [];
         for await (const chunk of request) chunks.push(Buffer.from(chunk));
@@ -137,8 +138,9 @@ describe("GitHubRest", () => {
           body,
         });
         if (request.url?.endsWith("/renamed-user")) {
+          redirectClosed = new Promise<void>((resolve) => response.once("close", resolve));
           response.writeHead(301, { location: "user?per_page=1" });
-          response.end();
+          response.flushHeaders();
           return;
         }
         if (request.url === "/cross-host" || request.url === "/loop") {
@@ -233,7 +235,13 @@ describe("GitHubRest", () => {
       const layer = GitHubRest.layerWithDependencies.pipe(
         Layer.provideMerge(GitHubHttpClient.layer),
         Layer.provide(
-          Layer.mergeAll(host, fallback, NodeServices.layer, SourceControlRateLimit.layer),
+          Layer.mergeAll(
+            host,
+            fallback,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            SourceControlRateLimit.layer,
+          ),
         ),
       );
       yield* Effect.gen(function* () {
@@ -281,6 +289,7 @@ describe("GitHubRest", () => {
           path: "renamed-user",
         });
         expect(JSON.parse(renamed.body)).toEqual({ login: "proxy-user" });
+        yield* Effect.promise(() => redirectClosed);
         expect(requests.at(-1)).toMatchObject({
           path: "/user?per_page=1",
           headers: { host: "api.github.com", authorization: "Bearer placeholder" },

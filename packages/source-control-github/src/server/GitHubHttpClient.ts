@@ -3,6 +3,7 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import { HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 
 import { GH_PROCESS_CONCURRENCY } from "./GitHubCredentials.ts";
@@ -73,6 +74,7 @@ export const layer = Layer.effect(
               HttpClientRequest.setBody(HttpBody.empty),
             );
           }
+          yield* Effect.scoped(Stream.toPull(response.stream));
           request = HttpClientRequest.setUrl(request, destination);
           originalUrl = destination;
         }
