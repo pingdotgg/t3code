@@ -3333,15 +3333,15 @@ function piQuestion(
               value: "",
             },
           ];
+  // Pi's select and editor dialogs carry only a title, so show it once, as the question.
   // Extensions may send a blank placeholder, which is not a valid question.
-  const question =
-    [recordString(event, "message"), recordString(event, "placeholder")].find(
-      (text) => text !== undefined && text.trim().length > 0,
-    ) ?? title;
+  const detail = [recordString(event, "message"), recordString(event, "placeholder")].find(
+    (text) => text !== undefined && text.trim().length > 0,
+  );
   return {
     id: questionId,
-    header: title,
-    question,
+    header: detail === undefined ? "Question" : title,
+    question: detail ?? title,
     ...(method === "editor" ? { initialAnswer: recordString(event, "prefill") ?? "" } : {}),
     options,
   };
