@@ -1887,22 +1887,24 @@ it.effect("two launches rejecting the same unexpired token share one renewal", (
 );
 
 // regression: #29927 Codex also reruns its helper for each new auth manager, with no 401 behind it.
-it.effect("a launch asking again keeps a token the API still accepts", () =>
-  provideBroker(
-    Effect.gen(function* () {
-      const h = yield* makeRenewalBroker(
-        { accessToken: "accepted-access", expiresAt: 4_102_444_800_000 },
-        200,
-      );
-      const ask = Effect.scoped(
-        Effect.gen(function* () {
-          const client = yield* brokerClient(h.endpoint, h.request);
-          return JSON.parse(yield* Effect.promise(() => client.response)).token;
-        }),
-      );
-      assert.deepEqual([yield* ask, yield* ask], ["accepted-access", "accepted-access"]);
-      assert.deepEqual(h.probes, ["Bearer accepted-access"]);
-      assert.deepEqual(h.refreshTokens, []);
-    }),
-  ),
+it.effect.each([200, 503])(
+  "a launch asking again keeps its token when the probe returns %i",
+  (status) =>
+    provideBroker(
+      Effect.gen(function* () {
+        const h = yield* makeRenewalBroker(
+          { accessToken: "accepted-access", expiresAt: 4_102_444_800_000 },
+          status,
+        );
+        const ask = Effect.scoped(
+          Effect.gen(function* () {
+            const client = yield* brokerClient(h.endpoint, h.request);
+            return JSON.parse(yield* Effect.promise(() => client.response)).token;
+          }),
+        );
+        assert.deepEqual([yield* ask, yield* ask], ["accepted-access", "accepted-access"]);
+        assert.deepEqual(h.probes, ["Bearer accepted-access"]);
+        assert.deepEqual(h.refreshTokens, []);
+      }),
+    ),
 );
