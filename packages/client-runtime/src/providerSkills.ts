@@ -51,11 +51,14 @@ export function getProviderSkillsForSlashMenu(
     : [];
 }
 
+/** Drops the native commands providers such as Claude Code advertise for each skill, shown or not. */
 export function getProviderSlashCommandsForSlashMenu(
   slashCommands: ReadonlyArray<ServerProviderSlashCommand>,
-  visibleSkills: ReadonlyArray<ServerProviderSkill>,
+  skills: ReadonlyArray<ServerProviderSkill>,
 ): ServerProviderSlashCommand[] {
-  const skillNames = new Set(visibleSkills.map((skill) => skill.name.trim().toLowerCase()));
+  const skillNames = new Set(
+    skills.filter(isProviderSkillUserInvocable).map((skill) => skill.name.trim().toLowerCase()),
+  );
   return slashCommands.filter((command) => !skillNames.has(command.name.trim().toLowerCase()));
 }
 

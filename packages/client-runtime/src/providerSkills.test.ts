@@ -103,12 +103,11 @@ describe("getProviderSlashCommandsForSlashMenu", () => {
     ];
     const slashCommands = [{ name: "cafe-pr" }, { name: "compact" }];
 
-    const slashMenuSkills = getProviderSkillsForSlashMenu(skills, false);
-    const commandNames = getProviderSlashCommandsForSlashMenu(slashCommands, slashMenuSkills).map(
+    const commandNames = getProviderSlashCommandsForSlashMenu(slashCommands, skills).map(
       (command) => command.name,
     );
 
-    expect(slashMenuSkills).toEqual([]);
+    expect(getProviderSkillsForSlashMenu(skills, false)).toEqual([]);
     expect(commandNames).toEqual(["compact"]);
   });
 });
