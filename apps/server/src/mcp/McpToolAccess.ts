@@ -217,7 +217,14 @@ export const writesThreads = <P, A, E, R>(
         // Modes can rise after this check; the orchestrator rechecks under lock and records refusal before handlers wrap errors.
         const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
         return yield* handle(params).pipe(
-          Effect.provideService(DispatchModeLimit, { ...caller.limits, runtimeMode, refused }),
+          Effect.provideService(DispatchModeLimit, {
+            ...caller.limits,
+            runtimeMode,
+            ...(runtimeMode === caller.limits.runtimeMode
+              ? {}
+              : { ownChildRuntimeMode: runtimeMode }),
+            refused,
+          }),
           Effect.catch((error) =>
             Effect.flatMap(Ref.get(refused), (refusal) =>
               Effect.fail<E | OrchestratorMcpFailure>(

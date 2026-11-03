@@ -945,16 +945,23 @@ describe("a thread's own delegated child above its modes", () => {
       Effect.provideService(McpSchema.McpServerClient, client),
     );
 
+  interface Modes {
+    readonly runtimeMode?: RuntimeMode;
+    readonly interactionMode?: ProviderInteractionMode;
+  }
+
   /**
-   * A parent with a live run on account A, its Full-access/default delegated child stopped and
-   * snoozed there, and an unrelated Full-access/default thread. The user applies `narrow` to the
-   * parent once, after a tool's declaration read the parent and before the tool ran.
+   * A parent with a live run on account A, its delegated child (Full-access/default unless `child`
+   * says otherwise) stopped and snoozed there, and an unrelated Full-access/default thread. The user
+   * applies `narrow` to the parent once, after a tool's declaration read the parent and before the
+   * tool ran, and `childBeforeSend` to the child once, as a send reaches thread management.
    */
   const withOwnChild = <A, E, R>(
-    parentRuntimeMode: RuntimeMode,
-    narrow: {
-      readonly runtimeMode?: RuntimeMode;
-      readonly interactionMode?: ProviderInteractionMode;
+    setup: {
+      readonly parentRuntimeMode: RuntimeMode;
+      readonly narrow?: Modes;
+      readonly child?: Modes;
+      readonly childBeforeSend?: Modes;
     },
     body: (childId: ThreadId) => Effect.Effect<A, E, R>,
   ) =>
@@ -978,14 +985,14 @@ describe("a thread's own delegated child above its modes", () => {
           createdBy: "user",
           creationSource: "web",
         });
-      const setParentModes = (modes: typeof narrow) =>
+      const setModes = (threadId: ThreadId, modes: Modes = {}) =>
         Effect.all([
           modes.runtimeMode === undefined
             ? Effect.void
             : orchestrator.dispatch({
                 type: "thread.runtime-mode.set",
                 commandId: commandId(),
-                threadId: parentId,
+                threadId,
                 runtimeMode: modes.runtimeMode,
               }),
           modes.interactionMode === undefined
@@ -993,10 +1000,14 @@ describe("a thread's own delegated child above its modes", () => {
             : orchestrator.dispatch({
                 type: "thread.interaction-mode.set",
                 commandId: commandId(),
-                threadId: parentId,
+                threadId,
                 interactionMode: modes.interactionMode,
               }),
-        ]);
+        ]).pipe(
+          // The user changes modes outside any tool's limit.
+          Effect.provideService(DispatchModeLimit, undefined),
+          Effect.orDie,
+        );
       yield* create(parentId);
       yield* orchestrator.dispatch({
         type: "message.dispatch",
@@ -1038,22 +1049,27 @@ describe("a thread's own delegated child above its modes", () => {
         threadId: childId,
         snoozedUntil: "2099-11-10T00:00:00.000Z",
       });
-      yield* setParentModes({ runtimeMode: parentRuntimeMode });
+      yield* setModes(childId, setup.child);
+      yield* setModes(parentId, { runtimeMode: setup.parentRuntimeMode });
 
-      let pending = Object.keys(narrow).length > 0;
+      let narrowPending = setup.narrow !== undefined;
+      let childPending = setup.childBeforeSend !== undefined;
       const threads = ThreadManagement.ThreadManagementService.of({
         ...real,
         getThreadShell: (id) =>
           real.getThreadShell(id).pipe(
             Effect.tap(() => {
-              if (id !== parentId || !pending) return Effect.void;
-              pending = false;
-              return setParentModes(narrow).pipe(
-                Effect.provideService(DispatchModeLimit, undefined),
-                Effect.orDie,
-              );
+              if (id !== parentId || !narrowPending) return Effect.void;
+              narrowPending = false;
+              return setModes(parentId, setup.narrow);
             }),
           ),
+        sendToThread: (input) =>
+          Effect.suspend(() => {
+            if (input.threadId !== childId || !childPending) return Effect.void;
+            childPending = false;
+            return setModes(childId, setup.childBeforeSend);
+          }).pipe(Effect.andThen(real.sendToThread(input))),
       });
       return yield* body(childId).pipe(
         // The declaration reads the caller through the calling context's service.
@@ -1063,6 +1079,7 @@ describe("a thread's own delegated child above its modes", () => {
             Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
             Layer.provide(
               Layer.mergeAll(
+                Layer.succeed(ThreadManagement.ThreadManagementService, threads),
                 layerSettings,
                 layerAdapters,
                 layerProviders,
@@ -1083,7 +1100,7 @@ describe("a thread's own delegated child above its modes", () => {
     }).pipe(Effect.provide(Layer.merge(layerOrchestrator, layerThreads)));
 
   it.effect("moves it to another account and resumes it at its own modes", () =>
-    withOwnChild("auto", {}, (childId) =>
+    withOwnChild({ parentRuntimeMode: "auto" }, (childId) =>
       Effect.gen(function* () {
         const moved = yield* callAsParent("t3_thread_configure", {
           threadId: childId,
@@ -1111,20 +1128,40 @@ describe("a thread's own delegated child above its modes", () => {
   it.effect.each([
     {
       name: "an unrelated Full-access thread once its caller drops to Auto",
-      parentRuntimeMode: "full-access",
-      narrow: { runtimeMode: "auto" },
+      setup: { parentRuntimeMode: "full-access", narrow: { runtimeMode: "auto" } },
       target: "unrelated",
       code: "runtime_mode_escalation_denied",
     },
     {
       name: "its own child once its caller drops to plan",
-      parentRuntimeMode: "auto",
-      narrow: { interactionMode: "plan" },
+      setup: { parentRuntimeMode: "auto", narrow: { interactionMode: "plan" } },
       target: "child",
       code: "interaction_mode_escalation_denied",
     },
-  ] as const)("t3_thread_send refuses $name", ({ parentRuntimeMode, narrow, target, code }) =>
-    withOwnChild(parentRuntimeMode, narrow, (childId) =>
+    {
+      name: "its own plan child raised to default once its caller drops to plan",
+      setup: {
+        parentRuntimeMode: "auto",
+        narrow: { interactionMode: "plan" },
+        child: { interactionMode: "plan" },
+        childBeforeSend: { interactionMode: "default" },
+      },
+      target: "child",
+      code: "interaction_mode_escalation_denied",
+    },
+    {
+      name: "its own Auto child raised to Full access once its caller drops to Auto",
+      setup: {
+        parentRuntimeMode: "full-access",
+        narrow: { runtimeMode: "auto" },
+        child: { runtimeMode: "auto" },
+        childBeforeSend: { runtimeMode: "full-access" },
+      },
+      target: "child",
+      code: "runtime_mode_escalation_denied",
+    },
+  ] as const)("t3_thread_send refuses $name", ({ setup, target, code }) =>
+    withOwnChild(setup, (childId) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const threadId = target === "child" ? childId : unrelatedId;
