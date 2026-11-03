@@ -1,4 +1,5 @@
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -424,6 +425,131 @@ it.effect("coalesces streaming replay before synchronization and the live tail",
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
+it.effect("shell groups read distinct threads once and keep each event's own sequence", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-10-27T00:00:00.000Z";
+    const insert = (aggregateKind: "thread" | "project", streamId: string, version: number) =>
+      sql<{ sequence: number }>`
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES (
+        ${`shell-group:${streamId}:${version}`}, ${aggregateKind}, ${streamId}, ${version},
+        ${aggregateKind === "thread" ? "provider-session.detached" : "project.meta-updated"},
+        ${now}, 'server', ${JSON.stringify(
+          aggregateKind === "thread"
+            ? { providerSessionId: "session:shell-group", detachedAt: now }
+            : { projectId: streamId, updatedAt: now },
+        )}, '{}', 2
+      ) RETURNING sequence
+    `.pipe(Effect.map(([row]) => row!.sequence));
+    const shell = (id: string, archivedAt: string | null = null) =>
+      ({ id: ThreadId.make(id), archivedAt }) as unknown as OrchestrationV2ThreadShell;
+    const project = {
+      id: ProjectId.make("project:group"),
+    } as unknown as OrchestrationProjectShell;
+
+    const after = yield* insert("project", "project:before", 0);
+    yield* insert("thread", "thread:active", 0);
+    const archived = yield* insert("thread", "thread:archived", 0);
+    const projectUpdated = yield* insert("project", project.id, 0);
+    const active = yield* insert("thread", "thread:active", 1);
+    const missing = yield* insert("thread", "thread:missing", 0);
+
+    const shellReads: Array<ReadonlyArray<string> | undefined> = [];
+    let batchFails = false;
+    const collect = (afterSequence: number) =>
+      subscribeOrchestrationV2Shell({ afterSequence, requestCompletionMarker: true }).pipe(
+        Effect.flatMap((stream) =>
+          stream.pipe(
+            Stream.takeUntil((item) => item.kind === "synchronized"),
+            Stream.runCollect,
+          ),
+        ),
+        Effect.provideService(ThreadManagement.ThreadManagementService, {
+          listActiveSubagentThreadIds: () => Effect.succeed([]),
+          getShellSnapshot: (options?: { readonly threadIds?: ReadonlyArray<string> }) =>
+            Effect.suspend(() => {
+              shellReads.push(options?.threadIds);
+              return batchFails
+                ? Effect.fail("batch failed")
+                : Effect.succeed({
+                    schemaVersion: 1,
+                    snapshotSequence: Number.MAX_SAFE_INTEGER,
+                    threads: [shell("thread:active")],
+                    archivedThreads: [shell("thread:archived", now)],
+                  });
+            }),
+          getThreadShell: (threadId: string) =>
+            Effect.sync(() => {
+              shellReads.push([`scalar:${threadId}`]);
+              return threadId === "thread:missing"
+                ? null
+                : shell(threadId, threadId === "thread:archived" ? now : null);
+            }),
+        } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+        Effect.provideService(ProjectStore.ProjectStoreV2, {
+          listShells: () => Effect.succeed([]),
+        } as unknown as ProjectStore.ProjectStoreV2["Service"]),
+        Effect.provideService(ProjectService.ProjectService, {
+          getShell: () => Effect.succeedSome(project),
+        } as unknown as ProjectService.ProjectService["Service"]),
+        Effect.provideServiceEffect(
+          ProjectEnrichment.ProjectEnrichmentService,
+          PubSub.unbounded().pipe(
+            Effect.map(
+              (changes) =>
+                ({
+                  subscribeChanges: PubSub.subscribe(changes),
+                }) as unknown as ProjectEnrichment.ProjectEnrichmentService["Service"],
+            ),
+          ),
+        ),
+      );
+
+    const collectSummary = (afterSequence: number) =>
+      collect(afterSequence).pipe(
+        Effect.map((items) =>
+          items.flatMap((item): ReadonlyArray<ReadonlyArray<string | number>> =>
+            item.kind === "thread.updated"
+              ? [[item.kind, item.sequence, item.thread.id]]
+              : item.kind === "thread.removed"
+                ? [[item.kind, item.sequence, item.threadId]]
+                : item.kind === "project.updated"
+                  ? [[item.kind, item.sequence, item.project.id]]
+                  : [],
+          ),
+        ),
+      );
+    const expectedGroup = [
+      ["thread.removed", archived, "thread:archived"],
+      ["project.updated", projectUpdated, project.id],
+      ["thread.updated", active, "thread:active"],
+      ["thread.removed", missing, "thread:missing"],
+    ];
+
+    assert.deepEqual(yield* collectSummary(after), expectedGroup);
+    assert.deepEqual(shellReads, [["thread:archived", "thread:active", "thread:missing"]]);
+
+    shellReads.length = 0;
+    assert.deepEqual(yield* collectSummary(active), [
+      ["thread.removed", missing, "thread:missing"],
+    ]);
+    assert.deepEqual(shellReads, [["scalar:thread:missing"]]);
+
+    shellReads.length = 0;
+    batchFails = true;
+    assert.deepEqual(yield* collectSummary(after), expectedGroup);
+    assert.deepEqual(shellReads, [
+      ["thread:archived", "thread:active", "thread:missing"],
+      ["scalar:thread:archived"],
+      ["scalar:thread:active"],
+      ["scalar:thread:missing"],
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
+
 it.effect("shell snapshots omit idle children and older settled threads only on request", () =>
   Effect.gen(function* () {
     const shell = (
@@ -617,7 +743,7 @@ const layerConfigSources = Layer.mergeAll(
       ServerConfigModule.layerTest(process.cwd(), { prefix: "t3-config-subscription-test-" }),
     ),
   ),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 it.effect.each([

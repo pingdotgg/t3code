@@ -25,6 +25,7 @@ import type {
   OrchestrationV2PendingRuntimeRequestSummary,
   PlanId,
   OrchestrationV2ConversationMessage,
+  OrchestrationV2ContextTransfer,
   OrchestrationV2DomainEvent,
   OrchestrationV2OlderSettledCount,
   OrchestrationV2OlderSettledCursor,
@@ -32,6 +33,7 @@ import type {
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
+  OrchestrationV2RuntimeRequest,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadShellSnapshot,
   OrchestrationV2ShellThreadStatus,
@@ -339,6 +341,14 @@ export interface ProjectionRecordFilter {
   readonly turnItemRunIds?: ReadonlyArray<RunId | null>;
   readonly turnItemNodeIds?: ReadonlyArray<NodeId>;
   readonly runIds?: ReadonlyArray<RunId>;
+  readonly runStatuses?: ReadonlyArray<OrchestrationV2Run["status"]>;
+  /** Keeps the thread's highest-ordinal run even when `runStatuses` excludes it. */
+  readonly includeLatestRun?: true;
+  readonly providerTurnThreadIds?: ReadonlyArray<ProviderThreadId>;
+  /** Only the provider turn whose token usage was updated last. */
+  readonly latestProviderTurnUsageOnly?: true;
+  readonly runtimeRequestStatuses?: ReadonlyArray<OrchestrationV2RuntimeRequest["status"]>;
+  readonly contextTransferStatuses?: ReadonlyArray<OrchestrationV2ContextTransfer["status"]>;
   readonly subagentIds?: ReadonlyArray<NodeId>;
   readonly subagentRunIds?: ReadonlyArray<RunId>;
   readonly nodeIds?: ReadonlyArray<NodeId>;
@@ -450,6 +460,10 @@ export interface ProjectionStoreV2Shape {
   ) => Effect.Effect<ProjectionTimelinePage, ProjectionStoreV2Error>;
   readonly getMessageCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getSubagentCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
+  /** Child threads of the thread's app-owned tasks, in task order, without decoding the tasks. */
+  readonly listAppOwnedChildThreadIds: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   readonly getNextTurnItemOrdinal: (
     threadId: ThreadId,
   ) => Effect.Effect<number, ProjectionStoreV2Error>;
@@ -1067,6 +1081,8 @@ const encodePlanPayload = Schema.encodeEffect(
 const encodeTurnItemPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2TurnItemJsonSchema),
 );
+// The codec every *Json payload schema uses for timestamps, so index columns match payload_json.
+const encodePayloadTimestamp = Schema.encodeEffect(Schema.DateTimeUtcFromString);
 const encodeCheckpointScopePayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2CheckpointScopeJsonSchema),
 );
@@ -2439,7 +2455,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
             case "message.updated": {
               const payloadJson = yield* encodeMessagePayload(event.payload);
-              const payload = parseEncodedPayload(payloadJson);
+              const createdAt = yield* encodePayloadTimestamp(event.payload.createdAt);
+              const updatedAt = yield* encodePayloadTimestamp(event.payload.updatedAt);
               yield* sql`
               INSERT INTO orchestration_v2_projection_messages (
                 message_id,
@@ -2459,8 +2476,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.nodeId},
                 ${event.payload.role},
                 ${booleanInt(event.payload.streaming)},
-                ${stringField(payload, "createdAt")},
-                ${stringField(payload, "updatedAt")},
+                ${createdAt},
+                ${updatedAt},
                 ${payloadJson}
               )
               ON CONFLICT(message_id)
@@ -2510,7 +2527,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
             case "turn-item.updated": {
               const payloadJson = yield* encodeTurnItemPayload(event.payload);
-              const payload = parseEncodedPayload(payloadJson);
+              const updatedAt = yield* encodePayloadTimestamp(event.payload.updatedAt);
               yield* sql`
               INSERT INTO orchestration_v2_projection_turn_items (
                 turn_item_id,
@@ -2537,7 +2554,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.ordinal},
                 ${event.payload.type},
                 ${event.payload.status},
-                ${stringField(payload, "updatedAt")},
+                ${updatedAt},
                 ${payloadJson}
               )
               ON CONFLICT(turn_item_id)
@@ -3244,7 +3261,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ] = yield* Effect.all([
           decodeThreadPayload(threadRow.payload_json),
           (fields !== undefined && !fields.includes("runs")) ||
-          (window === undefined && matchesNothing(filter?.runIds))
+          (window === undefined &&
+            (matchesNothing(filter?.runIds) ||
+              (matchesNothing(filter?.runStatuses) && filter?.includeLatestRun !== true)))
             ? Effect.succeed([])
             : window === undefined
               ? sql<PayloadRow>`
@@ -3252,6 +3271,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             FROM orchestration_v2_projection_runs
             WHERE thread_id = ${threadId}
               ${filter?.runIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.runIds)}))`}
+              ${
+                filter?.runStatuses === undefined
+                  ? sql``
+                  : sql`AND (status IN (SELECT value FROM json_each(${encodeIdList(filter.runStatuses)}))
+                    OR (${filter.includeLatestRun === true ? 1 : 0} = 1 AND run_id = (
+                      SELECT run_id FROM orchestration_v2_projection_runs
+                      WHERE thread_id = ${threadId}
+                      ORDER BY ordinal DESC
+                      LIMIT 1
+                    )))`
+              }
             ORDER BY ordinal ASC
           `
               : sql<PayloadRow>`
@@ -3421,7 +3451,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
           `,
           (fields !== undefined && !fields.includes("providerTurns")) ||
-          (window === undefined && matchesNothing(filter?.providerTurnAttemptIds))
+          (window === undefined &&
+            matchesNothing(filter?.providerTurnAttemptIds, filter?.providerTurnThreadIds))
             ? Effect.succeed([])
             : window === undefined
               ? sql<PayloadRow>`
@@ -3429,7 +3460,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             FROM orchestration_v2_projection_provider_turns
             WHERE thread_id = ${threadId}
               ${filter?.providerTurnAttemptIds === undefined ? sql`` : sql`AND run_attempt_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerTurnAttemptIds)}))`}
-            ORDER BY provider_thread_id ASC, ordinal ASC
+              ${filter?.providerTurnThreadIds === undefined ? sql`` : sql`AND provider_thread_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerTurnThreadIds)}))`}
+              ${
+                filter?.latestProviderTurnUsageOnly === true
+                  ? sql`AND json_extract(payload_json, '$.tokenUsage') IS NOT NULL
+            ORDER BY julianday(json_extract(payload_json, '$.tokenUsage.updatedAt')) DESC,
+              provider_thread_id ASC, ordinal ASC
+            LIMIT 1`
+                  : sql`ORDER BY provider_thread_id ASC, ordinal ASC`
+              }
           `
               : sql<PayloadRow>`
             SELECT payload_json FROM orchestration_v2_projection_provider_turns
@@ -3439,13 +3478,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 OR node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
             ORDER BY provider_thread_id ASC, ordinal ASC
           `,
-          fields !== undefined && !fields.includes("runtimeRequests")
+          (fields !== undefined && !fields.includes("runtimeRequests")) ||
+          (window === undefined && matchesNothing(filter?.runtimeRequestStatuses))
             ? Effect.succeed([])
             : window === undefined
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_runtime_requests
             WHERE thread_id = ${threadId}
+              ${filter?.runtimeRequestStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.runtimeRequestStatuses)}))`}
             ORDER BY created_at ASC, runtime_request_id ASC
           `
               : sql<PayloadRow>`
@@ -3560,13 +3601,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   )
                 ORDER BY rowid ASC
               `,
-          fields !== undefined && !fields.includes("contextTransfers")
+          (fields !== undefined && !fields.includes("contextTransfers")) ||
+          (window === undefined && matchesNothing(filter?.contextTransferStatuses))
             ? Effect.succeed([])
             : window === undefined
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_context_transfers
-            WHERE source_thread_id = ${threadId} OR target_thread_id = ${threadId}
+            WHERE (source_thread_id = ${threadId} OR target_thread_id = ${threadId})
+              ${filter?.contextTransferStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.contextTransferStatuses)}))`}
             ORDER BY rowid ASC
           `
               : sql<PayloadRow>`
@@ -3613,10 +3656,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ]);
         const messageOrdinals = new Map<string, number>();
         if (fields !== undefined && fields.includes("messages") && messages.length > 1) {
+          // Broad role reads keep the original query to avoid per-ID lookup overhead.
+          const loadedMessageIds =
+            filter?.messageIds === undefined &&
+            filter?.messageRunIds === undefined &&
+            (filter?.messageRoles === undefined ||
+              (filter.messageRoles.includes("user") && filter.messageRoles.includes("assistant")))
+              ? undefined
+              : messages.map((message) => message.id);
           const rows = yield* sql<{ message_id: string; ordinal: number }>`
             SELECT json_extract(payload_json, '$.messageId') AS message_id, MIN(ordinal) AS ordinal
             FROM orchestration_v2_projection_turn_items
             WHERE thread_id = ${threadId} AND type IN ('user_message', 'assistant_message')
+              ${loadedMessageIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.messageId') IN (SELECT value FROM json_each(${encodeIdList(loadedMessageIds)}))`}
             GROUP BY json_extract(payload_json, '$.messageId')
           `;
           for (const row of rows) messageOrdinals.set(row.message_id, row.ordinal);
@@ -3925,6 +3977,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ${booleanInt(options.autoResume)}
                   OR (${booleanInt(options.snooze)} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
                 )
+                -- A subagent of a settled parent is abandoned work; resuming it would wake the parent.
+                AND NOT EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_threads parent
+                  WHERE json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+                    AND parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
+                    AND json_extract(parent.payload_json, '$.settledOverride') = 'settled'
+                )
               )
             )
             AND NOT EXISTS (
@@ -4098,9 +4157,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_nodes AS node
                     WHERE node.thread_id = subagents.child_thread_id
-                      AND node.run_id IS NULL
+                      -- Matches nodes_live_idx; +run_id keeps thread_run_idx from scanning settled nodes.
+                      AND node.status IN ('pending', 'starting', 'running', 'waiting')
+                      AND +node.run_id IS NULL
                       AND node.kind = 'root_turn'
-                      AND node.status IN ('pending', 'running', 'waiting')
                   )
                 UNION
                 -- No native subagent outlives the provider process that ran it.
@@ -5349,6 +5409,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         count: number;
       }>`SELECT COUNT(*) AS count FROM orchestration_v2_projection_subagents WHERE thread_id = ${threadId}`.pipe(
         Effect.map((rows) => rows[0]?.count ?? 0),
+        Effect.mapError(controlReadError(threadId)),
+      );
+    const listAppOwnedChildThreadIds: ProjectionStoreV2Shape["listAppOwnedChildThreadIds"] = (
+      threadId,
+    ) =>
+      sql<{ readonly child_thread_id: string }>`SELECT child_thread_id
+        FROM orchestration_v2_projection_subagents
+        WHERE thread_id = ${threadId} AND origin = 'app_owned' AND child_thread_id IS NOT NULL
+        ORDER BY COALESCE(started_at, ''), subagent_id ASC`.pipe(
+        Effect.map((rows) => [...new Set(rows.map((row) => ThreadId.make(row.child_thread_id)))]),
         Effect.mapError(controlReadError(threadId)),
       );
     const getNextTurnItemOrdinal: ProjectionStoreV2Shape["getNextTurnItemOrdinal"] = (threadId) =>
@@ -7104,6 +7174,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       isNodeStored: readOnReader(isNodeStored),
       getMessageCount: readOnReader(getMessageCount),
       getSubagentCount: readOnReader(getSubagentCount),
+      listAppOwnedChildThreadIds: readOnReader(listAppOwnedChildThreadIds),
       getNextTurnItemOrdinal: readOnReader(getNextTurnItemOrdinal),
       getTurnItem: readOnReader(getTurnItem),
       getThreadRecords: (threadId, fields, filter) =>

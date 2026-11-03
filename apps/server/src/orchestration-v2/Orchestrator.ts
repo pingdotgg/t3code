@@ -410,6 +410,9 @@ export interface OrchestratorV2Shape {
     fields: ReadonlyArray<K>,
     filter?: ProjectionRecordFilter,
   ) => Effect.Effect<ProjectionRecords<K>, OrchestratorV2Error>;
+  readonly listAppOwnedChildThreadIds: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, OrchestratorV2Error>;
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
@@ -4682,6 +4685,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
     readonly idleCompaction?: OrchestrationV2ConversationMessage["idleCompaction"];
     readonly delegatedCompletion?: OrchestrationV2ConversationMessage["delegatedCompletion"];
+    readonly notification?: OrchestrationV2ConversationMessage["notification"];
     readonly forceRestart: boolean;
   }) {
     const targetRun = input.projection.runs.find((candidate) => candidate.id === input.targetRunId);
@@ -4835,6 +4839,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(input.delegatedCompletion === undefined
             ? {}
             : { delegatedCompletion: input.delegatedCompletion }),
+          ...(input.notification === undefined ? {} : { notification: input.notification }),
           ...(input.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: input.scheduledTaskId }),
@@ -4918,13 +4923,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const selectionMustApplyNow =
       selectionChanged &&
       (providerInstanceChanged || selectionTransition?.type !== "apply_on_next_turn");
+    const attachmentsNeedRestart =
+      input.attachments.length > 0 &&
+      session.providerSession.capabilities.turns.activeSteeringAcceptsAttachments === false;
     const steeringPolicy = yield* mapDispatchError(input.command)(
       commandPolicy.decideSteeringExecution({
         commandId: input.command.commandId,
         threadId: input.command.threadId,
         providerInstanceId: targetRun.providerInstanceId,
         capabilities: session.providerSession.capabilities,
-        forceRestart: input.forceRestart || selectionMustApplyNow,
+        forceRestart: input.forceRestart || selectionMustApplyNow || attachmentsNeedRestart,
       }),
     );
 
@@ -4933,6 +4941,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         input.projection.thread.providerInstanceId !== input.modelSelection.instanceId;
       if (
         input.delegatedCompletion === undefined &&
+        input.notification === undefined &&
         (instanceChanged ||
           !modelSelectionsEqual(input.projection.thread.modelSelection, input.modelSelection))
       ) {
@@ -5723,13 +5732,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         taskIds: delivery.taskIds,
       };
     }
-    // Route durable mailbox deliveries under the thread lock, using the live
-    // session's capabilities. Never interrupt/restart a turn for a notification.
+    // Route durable mailbox deliveries and delegated task questions under the
+    // thread lock, using the live session's capabilities. A question queued
+    // behind a long parent turn is never seen. Never interrupt/restart a turn
+    // for a notification.
     if (
-      delegatedCompletion !== undefined &&
-      delegatedCompletion.taskIds.every(
-        (id) => projection.subagents.find((task) => task.id === id)?.completionWake === "always",
-      )
+      delegatedCompletion !== undefined
+        ? delegatedCompletion.taskIds.every(
+            (id) =>
+              projection.subagents.find((task) => task.id === id)?.completionWake === "always",
+          )
+        : command.notification?.source.kind === "delegated_task"
     ) {
       const active = projection.runs.find((run) => run.status === "running");
       const providerThread = projection.providerThreads.find(
@@ -5753,7 +5766,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (
           Option.isSome(session) &&
           session.value.providerSession.capabilities.turns.supportsActiveSteering &&
-          session.value.providerSession.capabilities.turns.activeSteeringInterruptsTools !== true
+          session.value.providerSession.capabilities.turns.activeSteeringInterruptsTools !== true &&
+          !(yield* stopReachedRun(command, command.threadId, active.id))
         ) {
           dispatchMode = { type: "steer_active", targetRunId: active.id };
         }
@@ -5820,11 +5834,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         effects,
         projection,
         modelSelection:
-          delegatedCompletion === undefined
+          delegatedCompletion === undefined && command.notification === undefined
             ? modelSelection
             : (projection.runs.find((run) => run.id === dispatchMode.targetRunId)?.modelSelection ??
               modelSelection),
         delegatedCompletion,
+        ...(command.notification === undefined ? {} : { notification: command.notification }),
         targetRunId: dispatchMode.targetRunId,
         messageId: command.messageId,
         text: dispatchText,
@@ -6235,24 +6250,69 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       activeProviderThread.providerInstanceId !== modelSelection.instanceId;
     // Account overlays share native history. Selection commands may already
     // have updated the app thread, so classify against the native thread's owner.
+    const providerSwitchPlan = isProviderSwitch
+      ? yield* providerSwitchService
+          .plan({
+            projection: {
+              ...projection,
+              thread: {
+                ...projection.thread,
+                modelSelection: {
+                  ...projection.thread.modelSelection,
+                  instanceId: activeProviderThread.providerInstanceId,
+                },
+              },
+            },
+            targetModelSelection: modelSelection,
+          })
+          .pipe(mapDispatchError(command))
+      : null;
     const canResumeAcrossInstances =
       isProviderSwitch &&
       activeProviderThread.nativeThreadRef !== null &&
-      (yield* providerSwitchService
-        .plan({
-          projection: {
-            ...projection,
-            thread: {
-              ...projection.thread,
-              modelSelection: {
-                ...projection.thread.modelSelection,
-                instanceId: activeProviderThread.providerInstanceId,
-              },
-            },
-          },
-          targetModelSelection: modelSelection,
-        })
-        .pipe(mapDispatchError(command))).transition.type === "restart_and_resume";
+      providerSwitchPlan?.transition.type === "restart_and_resume";
+    const sessionsToDetach = projection.providerSessions.filter(
+      (session) =>
+        providerSwitchPlan?.releaseProviderSessionIds.includes(session.id) &&
+        session.status !== "stopped" &&
+        session.status !== "error",
+    );
+    // Detaching kills background work running inside the provider process.
+    // Probe even with an empty roster: Claude's native subagents never reach
+    // pendingBackgroundTasks. Sessions shared across threads probe per thread.
+    for (const detaching of sessionsToDetach) {
+      const session = yield* providerSessions
+        .get(detaching.id)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isNone(session)) {
+        continue;
+      }
+      const runtime = session.value;
+      const probes =
+        !detaching.capabilities.sessions.supportsMultipleProviderThreadsPerSession &&
+        runtime.hasPendingBackgroundWork !== undefined
+          ? [runtime.hasPendingBackgroundWork]
+          : projection.providerThreads.flatMap((providerThread) =>
+              providerThread.providerSessionId === detaching.id &&
+              runtime.hasPendingBackgroundWorkForThread !== undefined
+                ? [runtime.hasPendingBackgroundWorkForThread(providerThread)]
+                : [],
+            );
+      for (const probe of probes) {
+        const stillRunning = yield* probe.pipe(
+          // A failed probe cannot confirm that the work ended.
+          Effect.catchCause(() => Effect.succeed(true)),
+        );
+        if (stillRunning) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause:
+              "The previous provider is still running background agents or commands, and switching would end them. Wait for them to finish, or press Stop, then send the message again.",
+          });
+        }
+      }
+    }
 
     if (
       pendingForkTransfer === undefined &&
@@ -7559,30 +7619,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
 
-    if (canResumeAcrossInstances && activeProviderThread.providerSessionId !== null) {
-      const previousProviderSessionId = activeProviderThread.providerSessionId;
+    const detachDetail = canResumeAcrossInstances
+      ? "Provider account changed; continuing the native thread."
+      : "Provider or model selection changed.";
+    for (const session of sessionsToDetach) {
       yield* emitEvent({
         type: "provider-session.detached",
         threadId: command.threadId,
-        driver: activeProviderThread.driver,
-        providerInstanceId: activeProviderThread.providerInstanceId,
+        driver: session.driver,
+        providerInstanceId: session.providerInstanceId,
         occurredAt: now,
         payload: {
-          providerSessionId: previousProviderSessionId,
+          providerSessionId: session.id,
           detachedAt: now,
-          reason: "Provider account changed; continuing the native thread.",
+          reason: detachDetail,
         },
       });
       yield* Ref.update(effects, (existing) => [
         ...existing,
         {
-          id: `effect:${command.commandId}:provider-session.detach:${previousProviderSessionId}`,
+          id: `effect:${command.commandId}:provider-session.detach:${session.id}`,
           commandId: command.commandId,
           threadId: command.threadId,
           request: {
             type: "provider-session.detach",
-            providerSessionId: previousProviderSessionId,
-            detail: "Provider account changed; continuing the native thread.",
+            providerSessionId: session.id,
+            detail: detachDetail,
           },
         } satisfies PendingOrchestrationEffectV2,
       ]);
@@ -14040,6 +14102,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       function (threadId, fields, filter) {
         return projectionStore
           .getThreadRecords(threadId, fields, filter)
+          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+      },
+    ),
+    listAppOwnedChildThreadIds: Effect.fn("OrchestratorV2.listAppOwnedChildThreadIds")(
+      function (threadId) {
+        return projectionStore
+          .listAppOwnedChildThreadIds(threadId)
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       },
     ),
