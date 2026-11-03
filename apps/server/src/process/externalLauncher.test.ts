@@ -141,6 +141,52 @@ it.effect.skipIf(windowsHost)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect.skipIf(windowsHost)("opens a colon line range at its start line", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    for (const name of ["code", "idea", "zed"]) {
+      const commandPath = path.join(binDir, name);
+      yield* fileSystem.writeFileString(commandPath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(commandPath, 0o755);
+    }
+
+    const spawned: ChildProcess.StandardCommand[] = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({ editor: "vscode", cwd: "/workspace/file.py:67-69" });
+      yield* launcher.launchEditor({ editor: "idea", cwd: "/workspace/file.py:67-69" });
+      yield* launcher.launchEditor({ editor: "zed", cwd: "/workspace/file.py:67-69" });
+      yield* launcher.launchEditor({
+        editor: "vscode",
+        cwd: String.raw`C:\workspace\file.py:67-69`,
+      });
+      yield* launcher.launchEditor({ editor: "vscode", cwd: "/workspace/file.ts:12:4" });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: { PATH: binDir, DISPLAY: ":0" },
+          onSpawn: (command) => spawned.push(command),
+        }),
+      ),
+      Effect.provideService(HostProcess.Environment, { PATH: binDir, DISPLAY: ":0" }),
+    );
+
+    assert.deepEqual(
+      spawned.map((command) => [command.command, command.args]),
+      [
+        ["code", ["--goto", "/workspace/file.py:67"]],
+        ["idea", ["--line", "67", "/workspace/file.py"]],
+        ["zed", ["/workspace/file.py:67"]],
+        ["code", ["--goto", String.raw`C:\workspace\file.py:67`]],
+        ["code", ["--goto", "/workspace/file.ts:12:4"]],
+      ],
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 // Windows drive letters cannot resolve the POSIX editor stub.
 it.effect.skipIf(windowsHost)(
   "a Linux editor launch without a display takes the desktop session's display from the systemd user manager",

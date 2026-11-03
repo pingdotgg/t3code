@@ -10,7 +10,7 @@ import { videoMimeType } from "@t3tools/shared/video";
 
 import type { MARKDOWN_FILE_ICON_SOURCES } from "./markdownFileIcons.generated";
 
-const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+|-\d+)?$/;
 
 export type MarkdownLinkPresentation =
   | {

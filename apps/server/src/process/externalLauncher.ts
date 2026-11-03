@@ -61,11 +61,12 @@ interface TargetPathAndPosition {
   readonly path: string;
   readonly line: string;
   readonly column: Option.Option<string>;
+  readonly endLine: Option.Option<string>;
 }
 
 // cmd shims reparse %* after escaping is gone; newlines and quotes can expose shell operators.
 const WINDOWS_SHIM_UNSAFE_ARG_PATTERN = /[\u0000-\u001f\u007f"]/;
-const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
+const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?:-(\d+)|:(\d+))?$/;
 const POWERSHELL_ARGUMENTS_PREFIX = [
   "-NoProfile",
   "-NonInteractive",
@@ -131,7 +132,8 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
   return Option.some({
     path: match[1],
     line: match[2],
-    column: Option.fromUndefinedOr(match[3]),
+    endLine: Option.fromUndefinedOr(match[3]),
+    column: Option.fromUndefinedOr(match[4]),
   });
 }
 
@@ -140,15 +142,22 @@ function resolveCommandEditorArgs(
   target: string,
 ): ReadonlyArray<string> {
   const parsedTarget = parseTargetPathAndPosition(target);
+  // Editors take `file:line` or `file:line:column`. A colon range opens at its start line.
+  const launchTarget =
+    Option.isSome(parsedTarget) && Option.isSome(parsedTarget.value.endLine)
+      ? `${parsedTarget.value.path}:${parsedTarget.value.line}`
+      : target;
+  const parsedLaunchTarget =
+    launchTarget === target ? parsedTarget : parseTargetPathAndPosition(launchTarget);
 
   switch (editor.launchStyle) {
     case "direct-path":
-      return [target];
+      return [launchTarget];
     case "goto":
-      return Option.isSome(parsedTarget) ? ["--goto", target] : [target];
+      return Option.isSome(parsedLaunchTarget) ? ["--goto", launchTarget] : [launchTarget];
     case "line-column":
-      return Option.match(parsedTarget, {
-        onNone: () => [target],
+      return Option.match(parsedLaunchTarget, {
+        onNone: () => [launchTarget],
         onSome: ({ path, line, column }) => [
           "--line",
           line,

@@ -62,11 +62,18 @@ describe("resolveInlineCodeFileLinkMeta", () => {
       targetPath: "/Users/julius/project/script.ts:10",
       line: 10,
     });
+    expect(resolveInlineCodeFileLinkMeta("foo.py:67-69", "/Users/julius/project")).toMatchObject({
+      filePath: "/Users/julius/project/foo.py",
+      targetPath: "/Users/julius/project/foo.py:67-69",
+      line: 67,
+      endLine: 69,
+    });
     expect(resolveInlineCodeFileLinkMeta("AGENTS.md", "/Users/julius/project")).toBeNull();
   });
 
   it("does not treat arbitrary name:digits shapes as files", () => {
     expect(resolveInlineCodeFileLinkMeta("error:1", "/Users/julius/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("error:1-3", "/Users/julius/project")).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("TODO:12", "/Users/julius/project")).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("exit:0", "/Users/julius/project")).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("port:3000", "/Users/julius/project")).toBeNull();

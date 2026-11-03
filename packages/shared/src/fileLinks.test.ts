@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { parseFileUrlHref, splitFilePathPosition, resolvePathLinkTarget } from "./fileLinks.ts";
+import {
+  fileLinkLabel,
+  parseFileUrlHref,
+  splitFilePathPosition,
+  resolvePathLinkTarget,
+} from "./fileLinks.ts";
 
 describe("parseFileUrlHref", () => {
   it.each([
@@ -32,8 +37,24 @@ describe("splitFilePathPosition", () => {
     ["src/main.ts", "#L18C2", { path: "src/main.ts", line: 18, column: 2 }],
     ["src/main.ts:3", "#L18C2", { path: "src/main.ts", line: 3 }],
     ["src/main.ts:0", "", { path: "src/main.ts" }],
+    // regression: #28555 a colon range is a start line, not part of the filename
+    ["src/main.ts:67-69", "", { path: "src/main.ts", line: 67, endLine: 69 }],
+    ["src/main.ts:69-67", "", { path: "src/main.ts", line: 69 }],
+    [
+      String.raw`C:\repo\foo.py:67-69`,
+      "",
+      { path: String.raw`C:\repo\foo.py`, line: 67, endLine: 69 },
+    ],
   ])("splits %s%s", (path, hash, expected) => {
     expect(splitFilePathPosition(path, hash)).toEqual(expected);
+  });
+});
+
+describe("fileLinkLabel", () => {
+  it("shows a colon range as a line span", () => {
+    expect(fileLinkLabel({ path: "/tmp/locomo.py", line: 67, endLine: 69 }, new Map())).toBe(
+      "locomo.py · L67-L69",
+    );
   });
 });
 
@@ -51,6 +72,7 @@ describe("resolvePathLinkTarget", () => {
       String.raw`\\server\share\project\.\src\index.ts:12`,
     ],
     ["src/index.ts:12", "/home/jane/project", "/home/jane/project/src/index.ts:12"],
+    ["src/foo.py:67-69", "/home/jane/project", "/home/jane/project/src/foo.py:67-69"],
   ])("resolves %s using the connected environment cwd %s", (path, cwd, expected) => {
     expect(resolvePathLinkTarget(path, cwd)).toBe(expected);
   });

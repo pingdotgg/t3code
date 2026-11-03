@@ -18,16 +18,16 @@ const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 // explicit folder link may end in `/` (`patches/`, `docs/My Folder/`). A bare name with no
 // slash still fails.
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*\/)+(?:[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*(?::\d+){0,2})?$/u;
+  /^(?:[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*\/)+(?:[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*(?::\d+(?:-\d+|:\d+)?)?)?$/u;
 
 const RELATIVE_FILE_NAME_PATTERN =
-  /^[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2}$/u;
+  /^[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+(?:-\d+|:\d+)?)?$/u;
 
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 
-const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+|-\d+)?$/;
 
-const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
+const POSITION_ONLY_PATTERN = /^\d+(?::\d+|-\d+)?$/;
 
 const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
 
@@ -251,7 +251,8 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   const labelPosition = splitFilePathPosition(label.trim());
   if (
     (labelPosition.line !== undefined && labelPosition.line !== destination.line) ||
-    (labelPosition.column !== undefined && labelPosition.column !== destination.column)
+    (labelPosition.column !== undefined && labelPosition.column !== destination.column) ||
+    (labelPosition.endLine !== undefined && labelPosition.endLine !== destination.endLine)
   ) {
     return false;
   }
