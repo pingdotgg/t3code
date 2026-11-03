@@ -330,6 +330,27 @@ const make = Effect.gen(function* () {
       );
       const task = taskPrompt(input);
       const title = input.title ?? parent.thread.title;
+      const stopped = yield* threads
+        .getThreadRecords(scope.thread.threadId, ["turnItems"], {
+          turnItemTypes: ["run_interrupt_request"],
+          turnItemRunIds: [parentRun.id],
+        })
+        .pipe(
+          Effect.map(({ turnItems }) => turnItems.length > 0),
+          Effect.mapError(
+            () =>
+              new OrchestratorMcpFailure({
+                code: "thread_not_found",
+                message: "The calling thread was not found.",
+              }),
+          ),
+        );
+      if (stopped) {
+        return yield* new OrchestratorMcpFailure({
+          code: "parent_not_active",
+          message: "Delegated tasks require an active run owned by this MCP provider session.",
+        });
+      }
       const launched = yield* forwarding.call(
         scope,
         ProjectToolkit.tools.t3_thread_launch,

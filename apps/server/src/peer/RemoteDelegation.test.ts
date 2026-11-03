@@ -1183,6 +1183,48 @@ it.effect("a task on another model waits for the user's answer before the box la
         instanceId,
         model: "gpt-5.5",
       });
+      const beforeStop = yield* a.threads.getThreadEventSequence(parentThreadId);
+      const stopping = yield* delegate("stopping").pipe(Effect.forkChild);
+      const third = yield* nextCard(beforeStop);
+      const parent = (yield* a.orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      yield* a.projections.apply({
+        id: EventId.make("event:remote-approval:stop"),
+        type: "turn-item.updated",
+        threadId: parentThreadId,
+        runId: parent.id,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("item:remote-approval:stop"),
+          threadId: parentThreadId,
+          runId: parent.id,
+          nodeId: parent.rootNodeId!,
+          providerThreadId: parent.providerThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1_000,
+          status: "completed",
+          title: "Interrupt requested",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "run_interrupt_request",
+          message: "Stop",
+        },
+      });
+      expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).runs[0]?.status).toBe(
+        "running",
+      );
+      yield* approvals.answer({
+        threadId: parentThreadId,
+        turnItemId: third.id,
+        decision: "approve",
+      });
+      const stopped = yield* Fiber.join(stopping);
+      expect(stopped.isError).toBe(true);
+      expect(yield* Ref.get(thread.launches)).toBe(1);
+      expect(JSON.stringify(stopped.content)).toContain("parent_not_active");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
