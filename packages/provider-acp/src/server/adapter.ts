@@ -7530,7 +7530,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             compactsContext &&
             context.input.message.text.trim().toLowerCase() === compactPromptText &&
             context.input.message.attachments.length === 0 &&
-            settledStatus === "completed"
+            settledStatus === "completed" &&
+            !context.tools.keys().some((id) => id.startsWith("acp-compaction:"))
           ) {
             context.contextUsage = null;
             yield* Ref.update(contextUsageBySessionId, (current) => {

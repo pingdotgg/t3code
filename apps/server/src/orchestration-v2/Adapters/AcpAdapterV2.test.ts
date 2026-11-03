@@ -2161,34 +2161,47 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live("sends a bare /compact prompt to an agent that advertises the compact command", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeAdvertisedCompactionHarness({
-        T3_ACP_AVAILABLE_COMMANDS: "compact,plan",
-      });
-      const compacted = yield* harness.compact();
-      assert.isTrue(Exit.isSuccess(compacted));
-      assert.deepEqual(yield* harness.nextPromptTexts(), [{ type: "text", text: "/compact" }]);
-      const events = yield* harness.runtime.events.pipe(
-        Stream.takeUntil((event) => event.type === "turn.terminal"),
-        Stream.runCollect,
-      );
-      assert.isTrue(
-        events.some(
-          (event) =>
-            event.type === "provider_thread.updated" && event.providerThread.contextUsage === null,
-        ),
-      );
-      assert.isTrue(
-        events.some(
-          (event) =>
-            event.type === "turn_item.updated" &&
-            event.turnItem.type === "compaction" &&
-            event.turnItem.status === "completed" &&
-            event.turnItem.title === "Context compacted",
-        ),
-      );
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  it.live.each([false, true])(
+    "sends a bare /compact prompt with protocol compaction %s",
+    (structured) =>
+      Effect.gen(function* () {
+        const harness = yield* makeAdvertisedCompactionHarness({
+          T3_ACP_AVAILABLE_COMMANDS: "compact,plan",
+          T3_ACP_COMPACTION_PROMPT_ORDINALS: structured ? "1" : "",
+        });
+        const compacted = yield* harness.compact();
+        assert.isTrue(Exit.isSuccess(compacted));
+        assert.deepEqual(yield* harness.nextPromptTexts(), [{ type: "text", text: "/compact" }]);
+        const events = yield* harness.runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        assert.isTrue(
+          events.some(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.contextUsage === null,
+          ),
+        );
+        assert.isTrue(
+          events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "compaction" &&
+              event.turnItem.status === "completed" &&
+              event.turnItem.title === (structured ? "Compact context" : "Context compacted"),
+          ),
+        );
+        assert.lengthOf(
+          events.filter(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "compaction" &&
+              event.turnItem.status === "completed",
+          ),
+          1,
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("refuses compaction when the agent does not advertise the compact command", () =>
