@@ -67,11 +67,15 @@ export function parseComposerContextHref(
 }
 
 export function sanitizeComposerContextLabel(label: string, kind: ComposerContextKind): string {
-  const cleaned = label
+  const normalized = label
     .replace(/[[\]\\\r\n]/g, " ")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, COMPOSER_CONTEXT_LABEL_MAX_CHARS);
+    .trim();
+  let end = COMPOSER_CONTEXT_LABEL_MAX_CHARS;
+  const before = normalized.charCodeAt(end - 1);
+  const after = normalized.charCodeAt(end);
+  if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) end--;
+  const cleaned = normalized.slice(0, end);
   return cleaned.length > 0 ? cleaned : kind;
 }
 
