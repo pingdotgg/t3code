@@ -394,6 +394,7 @@ export type ProjectionRecords<K extends ProjectionRecordField> = Pick<
 export interface ProjectionTimelinePageOptions {
   readonly afterPosition?: number;
   readonly itemId?: TurnItemId;
+  readonly attachmentId?: string;
   readonly view?: "messages" | "activity";
   readonly limit: number;
 }
@@ -1081,6 +1082,8 @@ const encodePlanPayload = Schema.encodeEffect(
 const encodeTurnItemPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2TurnItemJsonSchema),
 );
+// The codec every *Json payload schema uses for timestamps, so index columns match payload_json.
+const encodePayloadTimestamp = Schema.encodeEffect(Schema.DateTimeUtcFromString);
 const encodeCheckpointScopePayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2CheckpointScopeJsonSchema),
 );
@@ -2453,7 +2456,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
             case "message.updated": {
               const payloadJson = yield* encodeMessagePayload(event.payload);
-              const payload = parseEncodedPayload(payloadJson);
+              const createdAt = yield* encodePayloadTimestamp(event.payload.createdAt);
+              const updatedAt = yield* encodePayloadTimestamp(event.payload.updatedAt);
               yield* sql`
               INSERT INTO orchestration_v2_projection_messages (
                 message_id,
@@ -2473,8 +2477,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.nodeId},
                 ${event.payload.role},
                 ${booleanInt(event.payload.streaming)},
-                ${stringField(payload, "createdAt")},
-                ${stringField(payload, "updatedAt")},
+                ${createdAt},
+                ${updatedAt},
                 ${payloadJson}
               )
               ON CONFLICT(message_id)
@@ -2524,7 +2528,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
             case "turn-item.updated": {
               const payloadJson = yield* encodeTurnItemPayload(event.payload);
-              const payload = parseEncodedPayload(payloadJson);
+              const updatedAt = yield* encodePayloadTimestamp(event.payload.updatedAt);
               yield* sql`
               INSERT INTO orchestration_v2_projection_turn_items (
                 turn_item_id,
@@ -2551,7 +2555,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.ordinal},
                 ${event.payload.type},
                 ${event.payload.status},
-                ${stringField(payload, "updatedAt")},
+                ${updatedAt},
                 ${payloadJson}
               )
               ON CONFLICT(turn_item_id)
@@ -3275,6 +3279,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     OR (${filter.includeLatestRun === true ? 1 : 0} = 1 AND run_id = (
                       SELECT run_id FROM orchestration_v2_projection_runs
                       WHERE thread_id = ${threadId}
+                        AND (status <> 'cancelled' OR json_extract(payload_json, '$.startedAt') IS NOT NULL)
                       ORDER BY ordinal DESC
                       LIMIT 1
                     )))`
@@ -3653,10 +3658,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ]);
         const messageOrdinals = new Map<string, number>();
         if (fields !== undefined && fields.includes("messages") && messages.length > 1) {
+          // Broad role reads keep the original query to avoid per-ID lookup overhead.
+          const loadedMessageIds =
+            filter?.messageIds === undefined &&
+            filter?.messageRunIds === undefined &&
+            (filter?.messageRoles === undefined ||
+              (filter.messageRoles.includes("user") && filter.messageRoles.includes("assistant")))
+              ? undefined
+              : messages.map((message) => message.id);
           const rows = yield* sql<{ message_id: string; ordinal: number }>`
             SELECT json_extract(payload_json, '$.messageId') AS message_id, MIN(ordinal) AS ordinal
             FROM orchestration_v2_projection_turn_items
             WHERE thread_id = ${threadId} AND type IN ('user_message', 'assistant_message')
+              ${loadedMessageIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.messageId') IN (SELECT value FROM json_each(${encodeIdList(loadedMessageIds)}))`}
             GROUP BY json_extract(payload_json, '$.messageId')
           `;
           for (const row of rows) messageOrdinals.set(row.message_id, row.ordinal);
@@ -3964,6 +3978,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND (
                   ${booleanInt(options.autoResume)}
                   OR (${booleanInt(options.snooze)} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
+                )
+                -- A subagent of a settled parent is abandoned work; resuming it would wake the parent.
+                AND NOT EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_threads parent
+                  WHERE json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+                    AND parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
+                    AND json_extract(parent.payload_json, '$.settledOverride') = 'settled'
                 )
               )
             )
@@ -5815,6 +5836,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .withTransaction(
           Effect.gen(function* () {
             const index = yield* readTimelineIndex(threadId, new Set());
+            const attachmentOwners =
+              options.attachmentId === undefined
+                ? undefined
+                : new Set(
+                    (yield* sql<{ thread_id: string; turn_item_id: string }>`
+          SELECT item.thread_id, item.turn_item_id
+          FROM orchestration_v2_projection_turn_items AS item,
+            json_each(item.payload_json, '$.attachments') AS attachment
+          WHERE item.thread_id IN ${sql.in([...new Set(index.visible.map((row) => row.sourceThreadId))])}
+            AND item.type = 'user_message'
+            AND json_extract(attachment.value, '$.id') = ${options.attachmentId}`).map(
+                      (row) => `${row.thread_id}:${row.turn_item_id}`,
+                    ),
+                  );
             const matching = index.visible
               .map((row, position) => ({ ...row, position }))
               .filter((row) =>
@@ -5825,6 +5860,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                         row.item.type,
                       ))
                   : row.sourceItemId === options.itemId,
+              )
+              .filter(
+                (row) => attachmentOwners?.has(`${row.sourceThreadId}:${row.sourceItemId}`) ?? true,
               );
             const page = matching.slice(0, options.limit);
             const sources = yield* encodeTimelineSources(
