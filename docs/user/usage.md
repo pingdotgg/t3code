@@ -194,8 +194,8 @@ Session, Weekly, or both for each provider. Reopen T3 to refresh expired reading
 
 ## Agent Activity widget
 
-Add **Agent Activity** from the iOS widget gallery to see active agents from your connected
-environments. Open T3 Code to refresh the snapshot. After 15 minutes, the widget asks for a refresh.
+Add **Agent Activity** from the iOS widget gallery to see agents from your T3 Connect account.
+Open T3 Code to refresh the snapshot. After 10 minutes, unfinished tasks ask for a refresh.
 Live Activities continue to receive updates separately.
 
 ## Keyboard shortcuts

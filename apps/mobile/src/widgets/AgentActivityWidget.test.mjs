@@ -50,7 +50,9 @@ it("embeds an Agent Activity Home Screen layout and initial data independently o
     const props = {
       ...widgets.AgentActivity.initialProps,
       activeCount: 1,
-      expiresAt: 1_000,
+      freshUntil: 3_000,
+      source: "snapshot",
+      baseUrl: "t3code-dev:///",
       activities: [
         {
           environmentId: "environment",
@@ -59,6 +61,7 @@ it("embeds an Agent Activity Home Screen layout and initial data independently o
           projectTitle: "Project",
           status: "Waiting for input",
           phase: "waiting_for_input",
+          deepLink: "/threads/environment/mcp%3Atask",
         },
       ],
     };
@@ -67,16 +70,37 @@ it("embeds an Agent Activity Home Screen layout and initial data independently o
       const initial = JSON.stringify(
         context.__expoWidgetRender(widgets.AgentActivity.initialProps, environment),
       );
-      expect(initial).toContain("Tap to refresh");
-      const active = JSON.stringify(
-        context.__expoWidgetRender({ ...props, expiresAt: 3_000 }, environment),
-      );
+      expect(initial).toContain("Open T3 Code");
+      const active = JSON.stringify(context.__expoWidgetRender(props, environment));
       expect(active).toContain("1 active");
       expect(active).toContain("Review the task");
       expect(active).toContain("Needs input");
-      const expired = JSON.stringify(context.__expoWidgetRender(props, environment));
+      expect(active).toContain("t3code-dev:///threads/environment/mcp%3Atask");
+      for (const [source, subtitle] of [
+        ["loading", "Loading agents…"],
+        ["signed-out", "Sign in to T3 Connect to see agents"],
+        ["unavailable", "Couldn't reach T3 Connect"],
+        ["snapshot", "No active agents"],
+      ]) {
+        const empty = JSON.stringify(
+          context.__expoWidgetRender(
+            { activeCount: 0, activities: [], source, subtitle },
+            environment,
+          ),
+        );
+        expect(empty).toContain(subtitle);
+        expect(empty).not.toContain("Review the task");
+      }
+      const expired = JSON.stringify(
+        context.__expoWidgetRender({ ...props, freshUntil: 1_000 }, environment),
+      );
       expect(expired).toContain("Tap to refresh");
-      expect(expired).not.toContain("Review the task");
+      expect(expired).not.toContain("Needs input");
+      const scheduled = JSON.stringify(
+        context.__expoWidgetRender(props, { ...environment, timestamp: 3_000 }),
+      );
+      expect(scheduled).toContain("Tap to refresh");
+      expect(scheduled).not.toContain("Needs input");
     }
   } finally {
     NodeFS.rmSync(directory, { recursive: true, force: true });

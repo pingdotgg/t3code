@@ -26,15 +26,25 @@ export interface AgentActivityWidgetProps {
       | "deepLink"
     >
   >;
-  readonly url?: string;
-  readonly expiresAt?: number;
+  readonly baseUrl?: string;
+  readonly freshUntil?: number;
+  readonly updatedAt?: string;
+  readonly subtitle?: string;
+  readonly source?: "snapshot" | "loading" | "signed-out" | "unavailable";
+  readonly accountId?: string;
 }
 
 function AgentActivityWidget(props: AgentActivityWidgetProps, environment: WidgetEnvironment) {
   "widget";
-  const stale = (props.expiresAt ?? 0) <= Date.now();
-  const rows = stale ? [] : (props.activities ?? []);
-  const activeCount = stale ? 0 : (props.activeCount ?? 0);
+  const now = Math.max(environment.date?.getTime() ?? 0, Date.now());
+  const expired = (props.freshUntil ?? Infinity) <= now;
+  const rows = (props.activities ?? []).map((row) =>
+    expired && row.phase !== "completed" && row.phase !== "failed"
+      ? { ...row, phase: "stale" as const }
+      : row,
+  );
+  const stale = rows.some((row) => row.phase === "stale");
+  const activeCount = props.activeCount ?? 0;
   const accessory = environment.widgetFamily === "accessoryRectangular";
   const small = environment.widgetFamily === "systemSmall";
   const hero = rows[0];
@@ -51,21 +61,34 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
         return { label: "Starting", color: "#0369A1" };
       case "running":
         return { label: "Working", color: "#0369A1" };
+      case "completed":
+        return { label: "Done", color: "#047857" };
+      case "failed":
+        return { label: "Failed", color: "#B91C1C" };
+      case "stale":
+        return { label: "Tap to refresh", color: "secondary" };
       default:
         return { label: row.status, color: "primary" };
     }
   };
   const renderStatus = (row: AgentActivityWidgetProps["activities"][number]) => {
     const presentation = status(row);
-    const color = monochrome
-      ? "primary"
-      : environment.colorScheme === "dark"
-        ? row.phase === "waiting_for_approval"
-          ? "#FCD34D"
-          : row.phase === "waiting_for_input"
-            ? "#C4B5FD"
-            : "#7DD3FC"
-        : presentation.color;
+    const color =
+      row.phase === "stale"
+        ? "secondary"
+        : monochrome
+          ? "primary"
+          : environment.colorScheme === "dark"
+            ? row.phase === "waiting_for_approval"
+              ? "#FCD34D"
+              : row.phase === "waiting_for_input"
+                ? "#C4B5FD"
+                : row.phase === "completed"
+                  ? "#6EE7B7"
+                  : row.phase === "failed"
+                    ? "#FCA5A5"
+                    : "#7DD3FC"
+            : presentation.color;
     return (
       <HStack spacing={5} modifiers={[foregroundStyle(color)]}>
         <HStack modifiers={[frame({ width: 5, height: 5 })]}>
@@ -84,7 +107,7 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
       spacing={accessory ? 5 : 10}
       modifiers={[
         frame({ maxWidth: Infinity, maxHeight: Infinity, alignment: "topLeading" }),
-        widgetURL(props.url ?? "t3code://"),
+        ...(props.baseUrl ? [widgetURL(`${props.baseUrl}${hero?.deepLink.slice(1) ?? ""}`)] : []),
       ]}
     >
       <HStack spacing={8}>
@@ -99,7 +122,15 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
             lineLimit(1),
           ]}
         >
-          {stale ? "Out of date" : activeCount > 0 ? `${activeCount} active` : "Agents"}
+          {stale
+            ? "Out of date"
+            : activeCount > 0
+              ? `${activeCount} active`
+              : rows.some((row) => row.phase === "failed")
+                ? "Failed"
+                : rows.length > 0
+                  ? "Done"
+                  : "Agents"}
         </Text>
       </HStack>
       {!multiple && !accessory ? <Spacer minLength={0} /> : null}
@@ -138,10 +169,18 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
       ) : (
         <VStack alignment="leading" spacing={6}>
           <Text modifiers={[font({ size: accessory ? 13 : 17, weight: "semibold" }), lineLimit(2)]}>
-            {stale ? "Catch up in T3" : "Ready when you are"}
+            {props.source === "loading"
+              ? "Loading activity"
+              : props.source === "unavailable"
+                ? "Couldn’t refresh"
+                : props.source === "signed-out"
+                  ? "Connect your account"
+                  : props.source === "snapshot"
+                    ? "Ready when you are"
+                    : "Open T3 Code"}
           </Text>
-          <Text modifiers={[font({ size: 12 }), foregroundStyle("secondary"), lineLimit(1)]}>
-            {stale ? "Tap to refresh" : "No active agents"}
+          <Text modifiers={[font({ size: 12 }), foregroundStyle("secondary"), lineLimit(3)]}>
+            {props.subtitle ?? "Load agent activity"}
           </Text>
         </VStack>
       )}
