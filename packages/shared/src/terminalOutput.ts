@@ -393,7 +393,7 @@ class Terminal {
   }
 
   csi(params: string, final: string): void {
-    if (/^[?>=]/u.test(params)) return; // Mode switches (cursor visibility, bracketed paste).
+    if (!/^[\d;:]*$/u.test(params) || (final !== "m" && params.includes(":"))) return;
     if (final === "m") {
       const key = `${this.pen}|${params}`;
       let pen = penTransitions.get(key);
