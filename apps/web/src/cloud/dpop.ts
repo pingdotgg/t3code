@@ -3,7 +3,8 @@ import {
   computeDpopJwkThumbprint,
   DpopPublicJwk,
 } from "@t3tools/shared/dpop";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -27,18 +28,7 @@ const DPOP_KEY_STORE_NAME = "keys";
 const DPOP_KEY_ID = "relay-dpop-proof-key";
 const decodeDpopPublicJwk = Schema.decodeUnknownEffect(DpopPublicJwk);
 
-export const layer = Layer.succeed(
-  Crypto.Crypto,
-  Crypto.make({
-    randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
-    digest: (algorithm, data) =>
-      Effect.promise(async () => {
-        const input = new Uint8Array(data.length);
-        input.set(data);
-        return new Uint8Array(await globalThis.crypto.subtle.digest(algorithm, input.buffer));
-      }),
-  }),
-);
+export const layer = Layer.mergeAll(SecureRandom.layerWebCrypto, Digest.layerWebCrypto);
 
 function dpopError(message: string, cause?: unknown) {
   return new BrowserDpopError({ message, ...(cause === undefined ? {} : { cause }) });
@@ -150,7 +140,7 @@ export const createBrowserDpopProof = Effect.fn("dpop.createBrowserDpopProof")(f
 }): Effect.fn.Return<
   { readonly proof: string; readonly thumbprint: string },
   BrowserDpopError,
-  Crypto.Crypto
+  SecureRandom.SecureRandom
 > {
   const normalizedUrl = yield* Effect.try({
     try: () => new URL(input.url),
@@ -158,10 +148,7 @@ export const createBrowserDpopProof = Effect.fn("dpop.createBrowserDpopProof")(f
   });
   normalizedUrl.search = "";
   normalizedUrl.hash = "";
-  const jti = yield* Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) => crypto.randomUUIDv4()),
-    Effect.mapError((cause) => dpopError("Could not generate DPoP proof identifier.", cause)),
-  );
+  const jti = yield* SecureRandom.SecureRandom.pipe(Effect.flatMap((random) => random.uuidV4()));
   const proof = yield* Effect.tryPromise({
     try: () =>
       new SignJWT({
