@@ -912,7 +912,9 @@ export function GeneralSettingsPanel() {
             />
           }
         />
-        {settings.sidebarWorkingShelfEnabled ? (
+        {settings.sidebarWorkingShelfEnabled &&
+        !settings.boringSidebarEnabled &&
+        !settings.legacySidebarEnabled ? (
           <SettingsRow
             title={searchableSetting("inbox-oldest-first").title}
             description="The thread that has waited longest stays at the top of the inbox. Threads that come back later join at the bottom."
