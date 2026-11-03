@@ -40,7 +40,7 @@ import {
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
@@ -355,9 +355,9 @@ const rule = (action: string, effect: Rule["effect"]): Rule => ({ action, resour
 export const t3McpServerName = Effect.fn("t3McpServerName")(function* (threadId: string) {
   const name = `t3-code-${threadId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`;
   if (name.length <= 64) return name;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const digest = yield* crypto
-    .digest("SHA-256", new TextEncoder().encode(threadId))
+    .digest(Digest.sha256, new TextEncoder().encode(threadId))
     .pipe(Effect.orDie);
   return `t3-code-${Hex.encode(digest).slice(0, 16)}`;
 });
@@ -676,10 +676,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const fileSystem = yield* FileSystem.FileSystem;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const driver = OPENCODE_PROVIDER;
   const mcpServerNameFor = (threadId: string) =>
-    t3McpServerName(threadId).pipe(Effect.provideService(Crypto.Crypto, crypto));
+    t3McpServerName(threadId).pipe(Effect.provideService(Digest.Digest, crypto));
 
   const borrow = Effect.gen(function* () {
     const lent = yield* Deferred.make<
@@ -2935,12 +2935,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
     });
 
-    // The API accepts one message type; boundaries require both user and synthetic messages.
-    const userMessages = (sessionId: string) =>
-      OpenCode2Client.paginate(
-        { sessionID: Session.ID.make(sessionId), limit: 100 },
-        client.message.list,
-      ).pipe(
+    // Rollback must validate full history before native mutation; forks only need prompts.
+    const userMessages = (sessionId: string, types?: ReadonlyArray<"user" | "synthetic">) =>
+      Stream.fromIterable(types ?? [undefined]).pipe(
+        Stream.flatMap((type) =>
+          OpenCode2Client.paginate(
+            {
+              sessionID: Session.ID.make(sessionId),
+              limit: 100,
+              ...(type === undefined ? {} : { type }),
+            },
+            client.message.list,
+          ),
+        ),
         Stream.runCollect,
         Effect.map(
           (messages) =>
@@ -4018,7 +4025,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   forkInput.sourceProviderTurns ?? [],
                   source.id,
                   selected,
-                  yield* userMessages(sourceId),
+                  yield* userMessages(sourceId, ["user", "synthetic"]),
                 );
           const forked = yield* client.session.fork({
             sessionID: Session.ID.make(sourceId),
