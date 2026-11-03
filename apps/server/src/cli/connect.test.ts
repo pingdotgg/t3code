@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import * as NetService from "@t3tools/shared/Net";
@@ -13,10 +14,10 @@ import * as TestConsole from "effect/testing/TestConsole";
 import { CLOUD_LINKED_USER_ID } from "../cloud/config.ts";
 import {
   acquireRelayClientForLink,
-  connectCommand,
   formatCloudStatus,
   isLinkedAccountMismatch,
 } from "./connect.ts";
+import { connectCommand } from "./up.ts";
 
 const managedExecutable = {
   status: "available",
@@ -104,7 +105,11 @@ it.effect("prints status even when the stored credential cannot be read", () =>
     assert.isFalse(status.authenticated);
     assert.isNull(status.currentCloudUserId);
     assert.isFalse(status.accountMismatch);
-  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer, TestConsole.layer))),
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer, TestConsole.layer),
+    ),
+  ),
 );
 
 it.effect.each([
@@ -161,6 +166,8 @@ it.effect.each([
         "user_old",
       );
     }).pipe(
-      Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer, TestConsole.layer)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer, TestConsole.layer),
+      ),
     ),
 );
