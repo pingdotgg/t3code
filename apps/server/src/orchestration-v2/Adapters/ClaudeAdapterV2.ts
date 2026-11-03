@@ -1599,9 +1599,12 @@ export function makeClaudeQueryOptions(input: {
       : {}),
     ...(input.environment === undefined ? {} : { env: input.environment }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
-    hooks: claudePushNotificationHooks({
-      offer: input.pushNotificationOffer ?? (async () => ({ local: false, phone: false })),
-    }),
+    hooks: {
+      ...claudePushNotificationHooks({
+        offer: input.pushNotificationOffer ?? (async () => ({ local: false, phone: false })),
+      }),
+      ...(deviceInstructions ? { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } : {}),
+    },
     systemPrompt: {
       type: "preset" as const,
       preset: "claude_code" as const,
@@ -1617,9 +1620,6 @@ export function makeClaudeQueryOptions(input: {
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
-    ...(deviceInstructions
-      ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
-      : {}),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [

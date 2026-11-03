@@ -727,6 +727,8 @@ describe("ClaudeAdapterV2 device instructions", () => {
     ]);
     assert.deepEqual(await subagentContext({ mcp: true, deviceToolsAvailable: false }), []);
     assert.deepEqual(await subagentContext({ mcp: false, deviceToolsAvailable: true }), []);
+    assert.isArray(options({ mcp: true, deviceToolsAvailable: true }).hooks?.PostToolUse);
+    assert.isArray(options({ mcp: false, deviceToolsAvailable: false }).hooks?.PostToolUse);
   });
 });
 
