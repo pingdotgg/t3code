@@ -1397,7 +1397,7 @@ function workShownAsFinalAnswerOnly(
     timelineEntryIsCompaction(entry) ||
     work.tone === "error" ||
     work.sourceActivityKind === "runtime.error" ||
-    (work.itemType === "error" && work.toolLifecycleStatus === "failed")
+    (work.itemType === "error" && work.toolLifecycleStatus !== "completed")
   );
 }
 
@@ -1510,7 +1510,7 @@ export function deriveMessagesTimelineRows(input: {
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const revertTurnCountByUserMessageId = input.supportsConversationRollback
     ? deriveRevertTurnCountByUserMessageId({
-        timelineEntries: timelineEntries,
+        timelineEntries: input.timelineEntries,
         checkpoints: input.turnDiffSummaries,
         threadStartCheckpointReady: input.threadStartCheckpointReady === true,
         unsettledRunId,

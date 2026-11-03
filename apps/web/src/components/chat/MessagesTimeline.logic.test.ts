@@ -2773,6 +2773,7 @@ describe("v2 run and attempt history", () => {
         timelineEntries,
         isWorking: context.isWorking ?? false,
         runlessWorkActive: context.runlessWorkActive ?? false,
+
         turnDiffSummaries: [],
         supportsConversationRollback: false,
         toolCallVisibility: "finalAnswersOnly",
@@ -2808,6 +2809,82 @@ describe("v2 run and attempt history", () => {
     expect(
       zenRowIds([user, runlessReply], { isWorking: true, runlessWorkActive: true }),
     ).not.toContain("runless-entry");
+    const retrying: TimelineEntry = {
+      id: "retrying-entry",
+      kind: "work",
+      createdAt: "2026-01-01T00:00:07Z",
+      entry: {
+        id: "retrying",
+        createdAt: "2026-01-01T00:00:07Z",
+        runId,
+        label: "Retrying (2/5)",
+        tone: "info",
+        itemType: "error",
+        toolLifecycleStatus: "inProgress",
+      },
+    };
+    expect(
+      deriveMessagesTimelineRows({
+        timelineEntries: [user, retrying],
+        isWorking: true,
+        latestRun: { runId, status: "running", startedAt: user.createdAt, completedAt: null },
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+        toolCallVisibility: "finalAnswersOnly",
+      }).some((row) => row.kind === "work-live" && row.entry.id === "retrying"),
+    ).toBe(true);
+    const runAt = (id: string, second: number) => ({
+      runId: RunId.make(id),
+      at: `2026-01-01T00:01:${String(second).padStart(2, "0")}Z`,
+    });
+    const r1 = runAt("r1", 0);
+    const r2 = runAt("r2", 10);
+    const r3 = runAt("r3", 20);
+    const prompt = (id: string, run: typeof r1): TimelineEntry => ({
+      id,
+      kind: "message",
+      createdAt: run.at,
+      message: {
+        id: MessageId.make(id),
+        role: "user",
+        text: id,
+        runId: run.runId,
+        inputIntent: "turn_start",
+        createdAt: run.at,
+        updatedAt: run.at,
+        streaming: false,
+      },
+    });
+    const checkpoint = (run: typeof r1, checkpointTurnCount: number) => ({
+      runId: run.runId,
+      completedAt: run.at,
+      checkpointTurnCount,
+      checkpointRef: `checkpoint-${checkpointTurnCount}` as never,
+      status: "ready" as const,
+      files: [],
+    });
+    const wake: TimelineEntry = {
+      id: "wake",
+      kind: "work",
+      createdAt: r2.at,
+      entry: {
+        id: "wake",
+        createdAt: r2.at,
+        runId: r2.runId,
+        label: "Task finished",
+        tone: "info",
+        itemType: "notification",
+      },
+    };
+    const thirdPrompt = deriveMessagesTimelineRows({
+      timelineEntries: [prompt("first", r1), wake, prompt("third", r3)],
+      isWorking: false,
+      turnDiffSummaries: [checkpoint(r1, 1), checkpoint(r2, 2)],
+      supportsConversationRollback: true,
+      threadStartCheckpointReady: true,
+      toolCallVisibility: "finalAnswersOnly",
+    }).find((row) => row.id === "third");
+    expect(thirdPrompt?.kind === "message" ? thirdPrompt.revertTurnCount : null).toBe(2);
     expect(
       timelineTurnFoldRunIdsByEntryId({
         timelineEntries: [user, commentary, passed, final],
