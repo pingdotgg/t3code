@@ -316,6 +316,19 @@ describe("review verdicts", () => {
 });
 
 describe("pull request timeline", () => {
+  it("orders host timestamps by instant across offsets and fractional seconds", () => {
+    const events = buildPullRequestTimeline({
+      ...TIMELINE_SOURCE,
+      createdAt: "2026-07-05T01:00:00+02:00",
+      commits: [{ oid: "commit", messageHeadline: "", committedDate: "2026-07-05T00:30:00Z" }],
+      comments: [{ ...TIMELINE_SOURCE.comments[0]!, createdAt: "2026-07-05T00:30:00.5Z" }],
+      mergedAt: null,
+      closedAt: null,
+    });
+
+    expect(events.map((event) => event.id)).toEqual(["c1", "commit", "created"]);
+  });
+
   it("drops a body that is nothing but a bot's HTML comment, and keeps one that says more", () => {
     const events = buildPullRequestTimeline({
       ...TIMELINE_SOURCE,
