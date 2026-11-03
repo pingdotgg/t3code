@@ -530,6 +530,58 @@ it.effect("gives the guest a command's detail and output, but no file diffs", ()
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("gives a fork's guest the commands the fork shows from its source thread", () =>
+  Effect.gen(function* () {
+    const { orchestrator, guestShares } = yield* shareThread;
+    const command = yield* writeItem("item:command", {
+      type: "command_execution",
+      status: "completed",
+      input: "ls /work/src",
+      output: "/work/src/auth.ts\n",
+    });
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const run = (yield* orchestrator.getThreadRecords(threadId, ["runs"])).runs[0]!;
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("event:run-done"),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          providerInstanceId: instanceId,
+          occurredAt: now,
+          payload: { ...run, status: "completed", completedAt: now },
+        },
+      ],
+    });
+    const forkId = ThreadId.make("thread:guest-share-fork");
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("fork"),
+      sourceThreadId: threadId,
+      targetThreadId: forkId,
+      sourcePoint: { type: "run", runId: run.id },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const { url } = yield* guestShares.create({ threadId: forkId });
+    const { token: session } = yield* guestShares.redeem({
+      credential: url.slice(url.indexOf("#") + 1),
+      name: "Sam",
+    });
+
+    const detail = (yield* guestShares.item(session, command)).item;
+    assert.deepInclude(detail, { input: "ls /work/src", output: "/work/src/auth.ts\n" });
+    const frames = Array.from(
+      yield* Stream.runCollect(yield* guestShares.commandOutput(session, command)),
+    );
+    assert.deepEqual(frames, [
+      { kind: "replace", text: "/work/src/auth.ts\n", truncated: false, running: false },
+    ]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("pages the guest back through turns older than the stream's snapshot", () =>
   Effect.gen(function* () {
     const { guestShares, credential } = yield* shareThread;
