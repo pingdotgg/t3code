@@ -517,7 +517,6 @@ function useChatMarkdownState({
     explicitEnvironmentId,
     cwd,
     imageBaseDir,
-    sourceControlMediaRepository,
   ].join("\u0000");
   // Hide requests from an old scope even if they resolve before effect cleanup.
   const [localMedia, setLocalMedia] = useState<{
@@ -1471,9 +1470,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             _tag: SOURCE_CONTROL_MEDIA_ASSET,
             cwd,
             url: hostMediaUrl,
-            ...(sourceControlMediaRepository !== undefined
-              ? { repository: sourceControlMediaRepository }
-              : {}),
+            ...(sourceControlMediaRepository ? { repository: sourceControlMediaRepository } : {}),
           }}
           alt={altText}
           kind={kind}

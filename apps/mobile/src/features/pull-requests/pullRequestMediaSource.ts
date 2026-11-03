@@ -18,7 +18,7 @@ export function pullRequestMediaSource(url: string, location: PullRequestMediaLo
           _tag: SOURCE_CONTROL_MEDIA_ASSET,
           cwd: location.cwd,
           url: fetchUrl,
-          ...(location.repository !== undefined ? { repository: location.repository } : {}),
+          ...(location.repository ? { repository: location.repository } : {}),
         },
       }
     : { uri: url };

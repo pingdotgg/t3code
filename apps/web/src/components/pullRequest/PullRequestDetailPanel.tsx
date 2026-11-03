@@ -236,17 +236,14 @@ function resolvePullRequestReference(
 }
 
 function pullRequestMarkdownContext(
-  detail: Pick<PullRequestDetail, "provider" | "url"> | null,
+  detail: Pick<PullRequestDetail, "provider" | "url" | "repository"> | null,
   threadRef: ScopedThreadRef | null,
 ) {
   return {
     remarkPlugins: pullRequestAutolinkPlugins(detail),
     lineBreaks: sourceControlClients.find(detail?.provider ?? "")?.hardLineBreaks ?? false,
     threadRef,
-    repository:
-      detail === null
-        ? null
-        : (sourceControlClients.parseChangeRequestUrl(detail.url)?.link.repository ?? null),
+    repository: detail?.repository ?? null,
   };
 }
 

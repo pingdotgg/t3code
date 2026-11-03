@@ -44,7 +44,7 @@ function PullRequestHostVideo({
     _tag: SOURCE_CONTROL_MEDIA_ASSET,
     cwd,
     url: fetchUrl,
-    ...(repository !== undefined ? { repository } : {}),
+    ...(repository ? { repository } : {}),
   };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
@@ -110,7 +110,7 @@ export function PullRequestMarkdown({
         if (segment.media === "video" && hostMedia !== null) {
           return (
             <PullRequestHostVideo
-              key={`${repository ?? ""}:${segment.id}:${segment.url}`}
+              key={`${segment.id}:${segment.url}`}
               environmentId={environmentId}
               cwd={cwd}
               url={segment.url}

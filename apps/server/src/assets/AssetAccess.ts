@@ -838,14 +838,12 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       if (media === null) {
         return yield* new AssetSourceControlMediaUrlValidationError({});
       }
+      const { _tag, ...resource } = input.resource;
       claims = {
         version: 1,
         kind: SOURCE_CONTROL_MEDIA_ASSET,
+        ...resource,
         url: media.fetchUrl,
-        cwd: input.resource.cwd,
-        ...(input.resource.repository !== undefined
-          ? { repository: input.resource.repository }
-          : {}),
         expiresAt,
       };
       fileName = media.fileName;
@@ -960,13 +958,8 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   }
 
   if (claims.kind === SOURCE_CONTROL_MEDIA_ASSET) {
-    return {
-      kind: "source-control-media",
-      url: claims.url,
-      cwd: claims.cwd,
-      ...(claims.repository !== undefined ? { repository: claims.repository } : {}),
-      expiresAt: claims.expiresAt,
-    } satisfies ResolvedAsset;
+    const { version: _version, ...media } = claims;
+    return { ...media, kind: "source-control-media" } satisfies ResolvedAsset;
   }
 
   if (claims.kind === "tool-output-image") {

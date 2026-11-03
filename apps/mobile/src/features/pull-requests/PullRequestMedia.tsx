@@ -52,14 +52,13 @@ export function PullRequestMedia(props: {
   const withGallery = useFilePreviewGallery();
   const [image, setImage] = useState<FilePreviewSource | null>(null);
   const [video, setVideo] = useState<VideoPreviewSource | null>(null);
-  const sourceKey = JSON.stringify(media.source);
   const name = props.caption || new URL(props.url).pathname.split("/").pop() || "Attachment";
   if (props.kind === "image")
     return (
       <>
         <ThreadMarkdownImageView
           uri={media.uri}
-          sourceKey={sourceKey}
+          sourceKey={props.url}
           cacheKey={media.cacheKey}
           unavailable={media.unavailable}
           alt={name}
@@ -81,7 +80,7 @@ export function PullRequestMedia(props: {
       {props.compact ? (
         <VideoAttachmentTile
           name={name}
-          sourceIdentifier={sourceKey}
+          sourceIdentifier={props.url}
           thumbnailSource={visible ? media.uri : null}
           style={{ width: 176, height: 112, borderRadius: 16 }}
           onPress={() =>
@@ -100,7 +99,7 @@ export function PullRequestMedia(props: {
           uri={media.uri}
           unavailable={media.unavailable}
           name={name}
-          thumbnailKey={sourceKey}
+          thumbnailKey={props.url}
           thumbnailVisible={visible}
           visible={visible}
           resolvePlaybackUri={media.resolvePlaybackUri}
