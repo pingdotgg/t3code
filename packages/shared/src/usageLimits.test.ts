@@ -1189,7 +1189,7 @@ describe("/usage-limits", () => {
     expect(report?.accounts[0]?.limits.resetCredits?.availableCount).toBe(3);
   });
 
-  it("labels hub rows by account id without .json", () => {
+  it("labels hub rows by email or account id without .json", () => {
     const hub = [
       {
         ...sources[0]!,
@@ -1208,7 +1208,7 @@ describe("/usage-limits", () => {
     const report = collectProviderUsageLimits(selected.instanceId, [selected], hub, now);
     expect(
       report?.accounts.filter((account) => account.sourceLabel).map((account) => account.label),
-    ).toEqual(["CLIProxyAPI · claude-b@example.com", "CLIProxyAPI · team-seat"]);
+    ).toEqual(["b@example.com", "team-seat"]);
   });
 
   it("keeps unidentified custom instances separate, filtering by driver", () => {
@@ -1245,7 +1245,7 @@ describe("/usage-limits", () => {
       limits: { resetCredits: { availableCount: 2 } },
     });
     expect(report?.accounts[2]).toMatchObject({
-      label: "Codex account 1",
+      label: "oss",
       sourceLabel: "Accounts",
       plan: "Codex OSS",
     });
