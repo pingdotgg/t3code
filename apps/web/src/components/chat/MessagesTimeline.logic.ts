@@ -598,6 +598,7 @@ type MessagesTimelineRowContent =
       foldable: boolean;
       failureMessage: string | null;
       noticeMessage: string | null;
+      resetAt: string | null;
     }
   | {
       kind: "attempt-fold";
@@ -784,6 +785,7 @@ interface TurnFold {
   endingEntryIds: ReadonlySet<string>;
   failureMessage: string | null;
   noticeMessage: string | null;
+  resetAt: string | null;
 }
 
 interface SupersededAttemptFold {
@@ -1310,6 +1312,7 @@ function deriveTurnFolds(input: {
     const endingEntryIds = new Set<string>();
     let failureMessage: string | null = null;
     let noticeMessage: string | null = null;
+    let resetAt: string | null = null;
     const terminalEntryIndex = group.terminalEntry
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
@@ -1322,7 +1325,13 @@ function deriveTurnFolds(input: {
         const notice =
           entry.kind === "work" && entry.entry.itemType === "system_notice" ? entry.entry : null;
         if (failedItem !== null || notice !== null) {
-          if (failedItem !== null) failureMessage = failedItem.failure.message;
+          if (failedItem !== null) {
+            failureMessage = failedItem.failure.message;
+            resetAt =
+              failedItem.failure.class === "usage_limit"
+                ? (failedItem.failure.resetAt ?? null)
+                : null;
+          }
           if (notice !== null) noticeMessage = notice.label;
           hiddenEntryIds.add(entry.id);
           endingEntryIds.add(entry.id);
@@ -1415,6 +1424,7 @@ function deriveTurnFolds(input: {
       endingEntryIds,
       failureMessage,
       noticeMessage,
+      resetAt,
     });
   }
   return foldsByAnchorEntryId;
@@ -2159,6 +2169,7 @@ export function deriveMessagesTimelineRows(input: {
         ),
         failureMessage: turnFold.failureMessage,
         noticeMessage: turnFold.noticeMessage,
+        resetAt: turnFold.resetAt,
       });
     }
 
@@ -3436,6 +3447,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.foldable === bf.foldable &&
         a.failureMessage === bf.failureMessage &&
         a.noticeMessage === bf.noticeMessage &&
+        a.resetAt === bf.resetAt &&
         (a.deferredWorkItemIds ?? []).length === (bf.deferredWorkItemIds ?? []).length &&
         (a.deferredWorkItemIds ?? []).every((id, index) => id === bf.deferredWorkItemIds?.[index])
       );
