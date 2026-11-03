@@ -5422,7 +5422,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.lineage.relationshipToParent === "subagent"
           ? projection.thread.lineage.parentThreadId
           : null;
-      // The sweep may have read an open parent; resuming now would reopen a settled one.
+      // A subagent of a settled parent is abandoned work; resuming it would reopen the parent.
       const parentSettled =
         parentId !== null &&
         (yield* projectionStore
