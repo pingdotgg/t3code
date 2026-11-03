@@ -123,14 +123,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         void scratch.startScratchThread(environmentId);
       },
       "chat.new": (event) => {
-        const groups = readProjectGroups();
-        if (
-          !shouldCreateNewThreadInCurrentProject(
-            false,
-            groups.filter((group) => !group.archived).length,
-            groups.length,
-          )
-        ) {
+        if (!shouldCreateNewThreadInCurrentProject(false, readProjectGroups())) {
           claim(event);
           openCommandPalette({ open: "new-thread-in" });
           return;

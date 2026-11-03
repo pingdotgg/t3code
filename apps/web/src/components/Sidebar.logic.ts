@@ -741,10 +741,12 @@ export function isSidebarNestedLinkClick(target: EventTarget | null): boolean {
 /** The "New thread in" picker opens unless there is one open project or none; then the current context decides. */
 export function shouldCreateNewThreadInCurrentProject(
   shiftKey: boolean,
-  openProjectGroupCount: number,
-  projectGroupCount: number,
+  projectGroups: ReadonlyArray<{ readonly archived: boolean; readonly isScratch?: true }>,
 ): boolean {
-  return shiftKey || openProjectGroupCount === 1 || projectGroupCount === 0;
+  // "No project" is always offered as its own row, so it does not make the choice ambiguous.
+  const realGroups = projectGroups.filter((group) => !group.isScratch);
+  const openGroupCount = realGroups.filter((group) => !group.archived).length;
+  return shiftKey || openGroupCount === 1 || realGroups.length === 0;
 }
 
 export function orderItemsByPreferredIds<TItem, TId>(input: {

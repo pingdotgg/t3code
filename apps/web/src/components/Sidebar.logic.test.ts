@@ -1643,10 +1643,15 @@ describe("resolveSidebarFolderDot", () => {
 
 describe("shouldCreateNewThreadInCurrentProject", () => {
   it("opens the picker when several projects are open, or only archived ones exist", () => {
-    expect(shouldCreateNewThreadInCurrentProject(false, 2, 3)).toBe(false);
-    expect(shouldCreateNewThreadInCurrentProject(false, 0, 2)).toBe(false);
-    expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
-    expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
-    expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
+    const open = { archived: false };
+    const archived = { archived: true };
+    const scratch = { archived: false, isScratch: true as const };
+    expect(shouldCreateNewThreadInCurrentProject(false, [open, open, archived])).toBe(false);
+    expect(shouldCreateNewThreadInCurrentProject(false, [archived, archived])).toBe(false);
+    expect(shouldCreateNewThreadInCurrentProject(false, [open, archived, archived])).toBe(true);
+    expect(shouldCreateNewThreadInCurrentProject(false, [])).toBe(true);
+    expect(shouldCreateNewThreadInCurrentProject(true, [open, open])).toBe(true);
+    expect(shouldCreateNewThreadInCurrentProject(false, [open, scratch])).toBe(true);
+    expect(shouldCreateNewThreadInCurrentProject(false, [archived, scratch])).toBe(false);
   });
 });
