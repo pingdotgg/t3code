@@ -81,6 +81,7 @@ import {
   replaceComposerDraftAttachments,
   removeDeliveredCloudQueuedMessage,
   undoComposerDraftMerge,
+  setFreshSessionPending,
   updateComposerDraftSettings,
   waitForComposerDraftsLoaded,
 } from "./use-composer-drafts";
@@ -463,6 +464,7 @@ export async function restoreRejectedQueuedMessage(
           }
         : {}),
     });
+    if (queuedMessage.freshContext) setFreshSessionPending(draftKey, true);
     const restoredDraft = getComposerDraftSnapshot(draftKey);
     rollback = { snapshot: originalDraft, merged: restoredDraft };
     await flushComposerDrafts();
@@ -933,6 +935,7 @@ export function createThreadOutboxDelivery(): {
         interactionMode: sendSettings.interactionMode,
         createdAt: queuedMessage.createdAt,
         dispatchMode: queuedMessage.dispatchMode ?? "start",
+        ...(queuedMessage.freshContext ? { freshContext: true } : {}),
       },
     });
     if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;

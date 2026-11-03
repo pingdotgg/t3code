@@ -1,3 +1,4 @@
+import { isClearComposerCommand } from "@t3tools/shared/composerTrigger";
 import {
   mergeDirectPreviewAnnotation,
   resolveBackgroundDraftWorkspaceOptions,
@@ -207,6 +208,10 @@ interface ComposerSendInput {
   readonly panelAnimationsActive: boolean;
   readonly panelAnimationDurationMs: number;
   readonly keepFullHistory: boolean;
+  /** `/clear` can arm a fresh session on this thread. */
+  readonly freshSessionAvailable: boolean;
+  readonly freshSessionPending: boolean;
+  readonly setFreshSessionPending: (threadKey: string, pending: boolean) => void;
   readonly resumeCompactionTokens: number | null;
   readonly showPlanFollowUpPrompt: boolean;
   readonly usageLimitsKey: string | null;
@@ -302,6 +307,9 @@ export function useComposerSend(input: ComposerSendInput) {
     panelAnimationsActive,
     panelAnimationDurationMs,
     keepFullHistory,
+    freshSessionAvailable,
+    freshSessionPending,
+    setFreshSessionPending,
     resumeCompactionTokens,
     showPlanFollowUpPrompt,
     usageLimitsKey,
@@ -797,15 +805,23 @@ export function useComposerSend(input: ComposerSendInput) {
       }
       return;
     }
-    const standaloneSlashCommand =
-      sendInteractionModeEnabled &&
+    const composerHoldsOnlyText =
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
       composerReviewComments.length === 0 &&
       composerThreadContexts.length === 0 &&
-      composerEnvironmentContexts.length === 0
+      composerEnvironmentContexts.length === 0;
+    if (freshSessionAvailable && composerHoldsOnlyText && isClearComposerCommand(trimmed)) {
+      setFreshSessionPending(routeThreadKey, true);
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      return;
+    }
+    const standaloneSlashCommand =
+      sendInteractionModeEnabled && composerHoldsOnlyText
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand && multipleModelSelections === null) {
@@ -881,6 +897,7 @@ export function useComposerSend(input: ComposerSendInput) {
       keepFullHistory,
       phase,
       dispatchMode,
+      freshContext: freshSessionPending,
     });
     if (missingWorktreeBaseBranch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
@@ -1364,6 +1381,7 @@ export function useComposerSend(input: ComposerSendInput) {
           runtimeMode,
           interactionMode: sendInteractionMode,
           dispatchMode: turnDispatchMode,
+          ...(freshSessionPending ? { freshContext: true } : {}),
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
         },
@@ -1397,6 +1415,7 @@ export function useComposerSend(input: ComposerSendInput) {
       } else {
         turnStartSucceeded = true;
         setKeepFullHistory(routeThreadKey, false);
+        setFreshSessionPending(routeThreadKey, false);
         clearUsageLimitsFor(routeThreadKey);
         if (turnUsesAttachmentUploads) {
           releaseDraftAttachments(composerAttachmentsSnapshot);

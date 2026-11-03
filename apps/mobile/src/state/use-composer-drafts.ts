@@ -88,6 +88,27 @@ export function setComposerContextImporting(draftKey: string, importing: boolean
   appAtomRegistry.set(composerContextImportsAtom, next);
 }
 
+/** Drafts whose next message starts a fresh provider session (`/clear`). Not persisted. */
+const freshSessionDraftsAtom = Atom.make<Readonly<Record<string, true>>>({}).pipe(Atom.keepAlive);
+
+export function setFreshSessionPending(draftKey: string, pending: boolean): void {
+  const current = appAtomRegistry.get(freshSessionDraftsAtom);
+  if ((current[draftKey] === true) === pending) return;
+  const next = { ...current };
+  if (pending) next[draftKey] = true;
+  else delete next[draftKey];
+  appAtomRegistry.set(freshSessionDraftsAtom, next);
+}
+
+export function isFreshSessionPending(draftKey: string): boolean {
+  return appAtomRegistry.get(freshSessionDraftsAtom)[draftKey] === true;
+}
+
+export function useFreshSessionPending(draftKey: string | null): boolean {
+  const drafts = useAtomValue(freshSessionDraftsAtom);
+  return draftKey !== null && drafts[draftKey] === true;
+}
+
 interface ComposerDraftSelection {
   readonly text: string;
   readonly start: number;
