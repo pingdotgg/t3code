@@ -267,6 +267,39 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
+  it.effect("reuses a cached runtime under a mirror only while the mirror lists it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-mirror-" });
+      const cached = pinnedRuntimePaths(path, baseDir, version, "linux");
+      yield* fs.makeDirectory(path.dirname(cached.entryPath), { recursive: true });
+      yield* fs.writeFileString(cached.entryPath, "#!/bin/sh\n");
+      yield* fs.writeFileString(cached.sentinelPath, `${version}\n`);
+      const install = (checksums: string, requests: string[]) =>
+        ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          httpClient: releaseHttpClient(checksums, requests),
+          releaseBaseUrl: "https://updates.example.com/t3code",
+          requirePublishedRelease: true,
+          runner: extractingRunner(fs, path),
+          validate: () => Effect.void,
+        });
+
+      const withdrawn = yield* install("", []).pipe(Effect.flip);
+      assert.include(withdrawn.message, `finding ${archiveName} in the t3 release checksums`);
+      const requests: string[] = [];
+      assert.equal((yield* install(yield* validChecksums, requests)).entryPath, cached.entryPath);
+      // Listed, so the cached runtime is used without downloading it again.
+      assert.deepEqual(requests, [`https://updates.example.com/t3code/v${version}/SHA256SUMS`]);
+    }),
+  );
+
   it.effect("preserves a completed runtime when validation fails", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
