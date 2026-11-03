@@ -12,6 +12,12 @@ import {
   selectHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
 
+/** Providers only run a native command that opens the prompt, so its turn defers inline context to the next one. */
+export const isSlashCommandMessage = (message: {
+  readonly role: string;
+  readonly text: string;
+}): boolean => message.role === "user" && message.text.trimStart().startsWith("/");
+
 /** The provider prompt for a turn that carries inline context ahead of the user's text. */
 export const withInlineContext = (context: string, userText: string): string =>
   context === "" ? userText : `${context}\n\nUser message:\n${userText}`;
