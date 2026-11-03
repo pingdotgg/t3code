@@ -143,6 +143,7 @@ export function providerStatusBannerItem({
 
   return {
     id: `provider-status:${bannerKey}`,
+    textSize: "body",
     variant: isWarning ? "warning" : "error",
     icon: isUnauthenticated ? (
       <KeyRoundIcon />
