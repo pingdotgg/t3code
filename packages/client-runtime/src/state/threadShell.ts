@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  OrchestrationV2ArchivedShellSnapshot,
   OrchestrationV2ShellSnapshot,
   ProjectId,
   ScopedProjectRef,
@@ -12,7 +13,7 @@ import {
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 import { presentThreadShell, threadRuntimeIsActive } from "./models.ts";
@@ -58,8 +59,8 @@ const isChildRunLive = (
 /**
  * Whether a thread shows under its parent rather than in thread lists: a
  * subagent, a side chat, or a task a linked environment delegated here whose parent the
- * client has, archived or not (`delegatedUnderParent`, by thread key). A task whose parent
- * the client does not have stays in the lists, so its work is never out of reach.
+ * client lists or has archived (`delegatedUnderParent`, by thread key). A task whose parent
+ * is gone stays in the lists, so its work is never out of reach.
  */
 export function isShownUnderParent(
   ref: ScopedThreadRef,
@@ -209,6 +210,10 @@ export function createEnvironmentThreadShellAtoms(input: {
   readonly hiddenThreadTagsAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<ReadonlyArray<string> | null>;
+  /** Archived threads, which the live snapshot leaves out. */
+  readonly archivedSnapshotAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<AsyncResult.AsyncResult<OrchestrationV2ArchivedShellSnapshot, unknown>>;
 }) {
   // Point reads and aggregate lists share values without keeping an atom alive
   // for every listed thread. Replaced source objects can be collected.
@@ -663,18 +668,33 @@ export function createEnvironmentThreadShellAtoms(input: {
     return next;
   }).pipe(Atom.withLabel("environment-quiet-thread-shell-list"));
 
+  // Null while the archived page has not arrived. A failed read counts as empty.
+  const archivedThreadIdsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get): ReadonlySet<ThreadId> | null => {
+      const result = get(input.archivedSnapshotAtom(environmentId));
+      if (result.waiting || AsyncResult.isInitial(result)) return null;
+      return new Set(AsyncResult.isSuccess(result) ? result.value.threads.map((t) => t.id) : []);
+    }).pipe(Atom.withLabel(`environment-archived-thread-ids:${environmentId}`)),
+  );
+
   let previousDelegatedUnderParent: ReadonlySet<string> = new Set();
   const delegatedUnderParentAtom = Atom.make((get) => {
     const environmentIds = new Set(enabledEnvironmentIds(get(input.catalogValueAtom)));
     const next = new Set<string>();
+    // An archived parent keeps its task, as it keeps a local subagent. The live snapshot drops
+    // archived threads, so a missing parent waits on the archived page before its task lists.
+    const parentKeepsTask = (parent: ScopedThreadRef) => {
+      if (get(environmentThreadIndexAtom(parent.environmentId)).has(parent.threadId)) return true;
+      const archived = get(archivedThreadIdsAtom(parent.environmentId));
+      return archived === null || archived.has(parent.threadId);
+    };
     for (const environmentId of environmentIds) {
       for (const thread of get(environmentThreadsAtom(environmentId))) {
         const parent = thread.delegatedFrom;
         if (
           parent !== undefined &&
           environmentIds.has(parent.environmentId) &&
-          // An archived parent keeps its task, as it keeps a local subagent.
-          get(environmentThreadIndexAtom(parent.environmentId)).has(parent.threadId)
+          parentKeepsTask(parent)
         ) {
           next.add(threadKey({ environmentId, threadId: thread.id }));
         }

@@ -18,6 +18,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
+import { orchestrationEnvironment } from "./orchestration";
 import { serverEnvironment } from "./server";
 import { environmentShell } from "./shell";
 
@@ -41,6 +42,8 @@ export const environmentThreadShells = createEnvironmentThreadShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   snapshotAtom: threadEnvironment.snapshotAtom,
   hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
+  archivedSnapshotAtom: (environmentId) =>
+    orchestrationEnvironment.archivedShellSnapshot({ environmentId, input: {} }),
 });
 export const childThreadApprovalsAtom = createChildThreadApprovalsAtom({
   childThreadInputsAtom: environmentThreadShells.childThreadInputsAtom,

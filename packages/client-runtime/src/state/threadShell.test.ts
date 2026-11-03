@@ -4,12 +4,13 @@ import {
   RunId,
   RuntimeRequestId,
   ThreadId,
+  type OrchestrationV2ArchivedShellSnapshot,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
@@ -21,10 +22,21 @@ import { childThreadInputsTitle, createEnvironmentThreadShellAtoms } from "./thr
 const environmentId = EnvironmentId.make("environment-v2");
 const remoteEnvironmentId = EnvironmentId.make("remote-environment-v2");
 const otherProjectId = ProjectId.make("other-project");
+const emptyArchive: OrchestrationV2ArchivedShellSnapshot = {
+  schemaVersion: 1,
+  snapshotSequence: 0,
+  projects: [],
+  threads: [],
+};
 
 function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environmentId]) {
   const snapshotAtom = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make<OrchestrationV2ShellSnapshot | null>(v2ShellSnapshot),
+  );
+  const archivedSnapshotAtom = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make<AsyncResult.AsyncResult<OrchestrationV2ArchivedShellSnapshot, string>>(
+      AsyncResult.success(emptyArchive),
+    ),
   );
   const catalogValueAtom = Atom.make({
     isReady: true,
@@ -47,11 +59,13 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
   return {
     registry: AtomRegistry.make(),
     snapshotAtom,
+    archivedSnapshotAtom,
     catalogValueAtom,
     threads: createEnvironmentThreadShellAtoms({
       catalogValueAtom,
       snapshotAtom,
       hiddenThreadTagsAtom: () => Atom.make(null),
+      archivedSnapshotAtom,
     }),
   };
 }
@@ -314,10 +328,9 @@ describe("v2 thread shell lists", () => {
   });
 
   it("lists a task a linked environment runs for a listed thread under that thread", () => {
-    const { registry, threads, snapshotAtom, catalogValueAtom } = makeHarness([
-      environmentId,
-      remoteEnvironmentId,
-    ]);
+    const { registry, threads, snapshotAtom, archivedSnapshotAtom, catalogValueAtom } = makeHarness(
+      [environmentId, remoteEnvironmentId],
+    );
     const parent = v2ThreadShell;
     const task = {
       ...v2ThreadShell,
@@ -384,12 +397,26 @@ describe("v2 thread shell lists", () => {
     // parent's environment is switched off.
     registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [] });
     expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
-    // An archived parent is still in the archive, so its task stays under it, as a local subagent does.
-    registry.set(snapshotAtom(environmentId), {
-      ...v2ShellSnapshot,
-      threads: [{ ...parent, archivedAt: v2Now }],
-    });
+    // Archiving the parent moves it out of the live snapshot. Its task stays under it, as a
+    // local subagent does, while the archive loads and once the archive has it.
+    const archivedParent = { ...parent, archivedAt: v2Now };
+    registry.set(archivedSnapshotAtom(environmentId), AsyncResult.initial(true));
+    registry.set(
+      snapshotAtom(environmentId),
+      applyShellStreamEvent(
+        { ...v2ShellSnapshot, threads: [parent] },
+        { kind: "thread.updated", location: "archive", sequence: 1, thread: archivedParent },
+      ),
+    );
     expect(listed()).toEqual([]);
+    registry.set(
+      archivedSnapshotAtom(environmentId),
+      AsyncResult.success({ ...emptyArchive, threads: [archivedParent] }),
+    );
+    expect(listed()).toEqual([]);
+    // An archive that cannot be read cannot vouch for the parent, so the task is listed.
+    registry.set(archivedSnapshotAtom(environmentId), AsyncResult.fail("unavailable"));
+    expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
     registry.set(snapshotAtom(environmentId), {
       ...v2ShellSnapshot,
       threads: [{ ...parent, settledOverride: "settled" as const, settledAt: v2Now }],
