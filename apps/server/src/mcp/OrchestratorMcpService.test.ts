@@ -1876,6 +1876,100 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect("an accepted delegation replay skips hidden models like the original request", () =>
+    Effect.gen(function* () {
+      const altInstanceId = ProviderInstanceId.make("codex-alt");
+      const alternateProvider = providerSnapshot({
+        instanceId: altInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        model: "gpt-5.4",
+      });
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: altInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Summarize the diff.",
+        title: null,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(true),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId ? parentProjection([task]) : childProjection,
+            ),
+          assertProviderInstanceEnabled: () => Effect.void,
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.as({
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: null,
+                    event: { type: "subagent.updated", payload: task },
+                  },
+                ],
+              } as never),
+            ),
+        }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+          {
+            ...alternateProvider,
+            models: [
+              { ...alternateProvider.models[0]!, slug: "hidden-custom", isCustom: true },
+              ...alternateProvider.models,
+            ],
+          },
+        ]),
+        adapterRegistryLayer([codexInstanceId, altInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        ServerSettings.layerTest({
+          providerModelPreferences: {
+            [altInstanceId]: { hiddenModels: ["hidden-custom"], modelOrder: [] },
+          },
+        }),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.delegateTask(scope, {
+          task: "Summarize the diff.",
+          target: { providerInstanceId: altInstanceId },
+          mode: "async",
+          clientRequestId: "delegate-replay-hidden-1",
+        });
+        const commands = (yield* Ref.get(dispatched)) as ReadonlyArray<{
+          modelSelection: { model: string };
+        }>;
+        assert.equal(commands[0]?.modelSelection.model, "gpt-5.4");
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect(
     "retrying an accepted driver-only delegation replays even after the project disables every candidate",
     () =>

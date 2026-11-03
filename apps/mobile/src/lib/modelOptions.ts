@@ -479,7 +479,9 @@ export function getSelectedModelOption(
   if (!selection) return null;
   return (
     buildModelOptions(config, selection, selection.instanceId, projectId, true).find(
-      (option) => option.selection.model === selection.model,
+      (option) =>
+        option.selection.instanceId === selection.instanceId &&
+        option.selection.model === selection.model,
     ) ?? null
   );
 }

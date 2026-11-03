@@ -187,6 +187,13 @@ describe("mobile model options", () => {
         (option) => option.providerKey,
       ),
     ).toEqual(["codex", "codex_work"]);
+    expect(
+      getSelectedModelOption(
+        config,
+        { instanceId: ProviderInstanceId.make("codex_work"), model: "test" },
+        null,
+      )?.providerKey,
+    ).toBe("codex_work");
   });
 
   it("matches the web driver fallback without moving unknown Antigravity history", () => {

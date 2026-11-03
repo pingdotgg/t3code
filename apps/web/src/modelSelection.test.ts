@@ -584,6 +584,25 @@ describe("instance-scoped model selection", () => {
     expect(dispatch.modelOptionsForDispatch).toBeUndefined();
   });
 
+  it("keeps the thread model while its instance snapshot is missing and has hidden models", () => {
+    const instanceId = ProviderInstanceId.make("codex_work");
+    const driver = ProviderDriverKind.make("codex");
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers: [provider({ provider: driver, instanceId: "codex", models: ["gpt-5.6-sol"] })],
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: createModelSelection(instanceId, "gpt-5.6-sol"),
+      projectModelSelection: null,
+      settings: {
+        ...settingsWithProviderInstances(),
+        providerModelPreferences: { [instanceId]: { hiddenModels: ["other"], modelOrder: [] } },
+      },
+    });
+
+    expect(state.selectedModel).toBe("gpt-5.6-sol");
+  });
+
   it("preserves an explicit draft OpenCode selection while the catalog is empty", () => {
     const instanceId = ProviderInstanceId.make("opencode_work");
     const driver = ProviderDriverKind.make("opencode");

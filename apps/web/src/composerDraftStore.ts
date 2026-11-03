@@ -1121,7 +1121,8 @@ export function deriveEffectiveComposerModelState(input: {
           baseModelCandidate,
           { preserveUnavailableSelection: preserveThreadModel },
         ) ??
-        (input.settings.providerModelPreferences[input.selectedInstanceId]?.hiddenModels.length
+        (input.providers.some((provider) => provider.instanceId === input.selectedInstanceId) &&
+        input.settings.providerModelPreferences[input.selectedInstanceId]?.hiddenModels.length
           ? ""
           : null))
       : null) ??

@@ -1407,14 +1407,11 @@ const make = Effect.gen(function* () {
       requestedModel ??
       (instanceId === inheritedSelection.instanceId ? inheritedSelection.model : undefined);
     if (model === undefined) {
-      const settings = input.skipProjectEnablementFilter
-        ? undefined
-        : yield* serverSettings.getSettings.pipe(
-            Effect.mapError(() =>
-              failure("orchestration_error", "Unable to read server settings."),
-            ),
-          );
-      const hiddenModels = settings?.providerModelPreferences?.[instanceId]?.hiddenModels;
+      // Replays read visibility too, so they resolve the model the accepted request validated.
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      );
+      const hiddenModels = settings.providerModelPreferences?.[instanceId]?.hiddenModels;
       model = provider.models.find((candidate) => !hiddenModels?.includes(candidate.slug))?.slug;
     }
     if (model === undefined) {
