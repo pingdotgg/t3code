@@ -606,8 +606,10 @@ function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): Rea
     if (name === null) return [];
     const status = toCheckStatus(check);
     const run = check.workflowRun;
+    // Branch protection names required checks, so only a same-name result can replace one.
     if (
       status === "cancelled" &&
+      check.isRequired !== true &&
       run != null &&
       run.runNumber < (newestRunNumber.get(lineageOf(run)) ?? run.runNumber)
     ) {

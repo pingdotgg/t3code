@@ -671,9 +671,10 @@ describe("pull request detail decoding", () => {
     ["a push of another ref", "push", "push", "CANCELLED", "cancelled"],
     ["another event", "pull_request", "pull_request_target", "CANCELLED", "cancelled"],
     ["a pull request run", "pull_request", "pull_request", "FAILURE", "failure"],
+    ["a pull request run, if required", "pull_request", "pull_request", "CANCELLED", "cancelled"],
   ])(
     "keeps an older run's check when the newer run is %s",
-    (_, olderEvent, newerEvent, conclusion, status) => {
+    (label, olderEvent, newerEvent, conclusion, status) => {
       const detail = detailOf([
         inWorkflow({
           name: "test (packages/shared)",
@@ -681,6 +682,7 @@ describe("pull request detail decoding", () => {
           event: olderEvent,
           runNumber: 41,
           conclusion,
+          ...(label.endsWith("if required") ? { isRequired: true } : {}),
         }),
         inWorkflow({
           name: "test (apps/server)",
