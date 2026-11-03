@@ -23,11 +23,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 import { readEnvironmentScope } from "../../state/session";
-import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   Menu,
   MenuCheckboxItem,
@@ -45,25 +41,6 @@ function reportFailure(title: string, error: unknown) {
       title,
       description: error instanceof Error ? error.message : String(error),
     }),
-  );
-}
-
-function TaskTimingLabel({ task }: { task: ScheduledTask }) {
-  return (
-    <>
-      <span className="block">{scheduleLabel(task.schedule)}</span>
-      {task.blockedByPolicy !== undefined ? (
-        <span className="block">{task.blockedByPolicy}</span>
-      ) : task.enabled && task.nextRunAt !== null ? (
-        <span className="block">
-          Next <ScheduledRelativeLabel value={task.nextRunAt} />
-        </span>
-      ) : task.enabled ? (
-        ""
-      ) : (
-        <span className="block">Paused</span>
-      )}
-    </>
   );
 }
 
