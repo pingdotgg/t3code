@@ -1276,22 +1276,27 @@ describe("persisted environment queries", () => {
       ),
   );
 
-  it.effect("hands a server answer to readers while its save is still pending", () =>
+  it.effect("answers readers while its save is pending, and ends the save with the query", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const finishSave = Latch.makeUnsafe();
-        const saved = yield* Deferred.make<string>();
+        const saveEnded = Latch.makeUnsafe();
         const harness = yield* makeEnvironmentQueryHarness(Effect.succeed("fresh"), {
           persistence: {
             load: () => Effect.succeedNone,
-            save: (_environmentId, _key, value) =>
-              finishSave.await.pipe(Effect.andThen(Deferred.succeed(saved, value))),
+            // The registry's scheduler stops on dispose, so signal synchronously.
+            save: () =>
+              Effect.never.pipe(
+                Effect.onInterrupt(() => Effect.sync(() => saveEnded.openUnsafe())),
+              ),
           },
         });
-        const registry = yield* mountEnvironmentQuery(harness.atom);
-        expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("fresh");
-        finishSave.openUnsafe();
-        expect(yield* Deferred.await(saved)).toBe("fresh");
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const registry = yield* mountEnvironmentQuery(harness.atom);
+            expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("fresh");
+          }),
+        );
+        yield* saveEnded.await;
       }),
     ),
   );

@@ -56,7 +56,8 @@ const QUERY_MAX_BYTES = 32 * 1024 * 1024;
 const QUERY_MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
 const QUERY_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
 // A stats answer saves one row per listed PR, so the bounds index is walked once per batch of
-// saves. Each walk trims a batch below the caps, so the caps hold between walks.
+// saves. Each walk trims a batch below the caps, so the caps hold between walks. The batch count
+// lives in the database, so tabs sharing it share one count.
 const QUERY_PRUNE_BATCH_ROWS = 32;
 const QUERY_PRUNE_BATCH_BYTES = 1024 * 1024;
 const CATALOG_KEY = "document";
@@ -80,6 +81,7 @@ const StoredVcsRefsJson = Schema.fromJsonString(StoredVcsRefs);
 const isStoredQuery = Schema.is(
   Schema.Struct({ environmentId: Schema.String, payload: Schema.String, updatedAt: Schema.Number }),
 );
+const isQueryBatch = Schema.is(Schema.Struct({ rows: Schema.Number, bytes: Schema.Number }));
 const ConnectionCatalogDocumentJson = Schema.fromJsonString(ConnectionCatalogDocument);
 const decodeConnectionCatalogDocument = Schema.decodeUnknownEffect(ConnectionCatalogDocumentJson);
 const encodeConnectionCatalogDocument = Schema.encodeEffect(ConnectionCatalogDocumentJson);
@@ -352,12 +354,11 @@ function saveQueryOnConnection(
   environmentId: EnvironmentId,
   key: string,
   payload: string,
-  bytes: number,
   updatedAt: number,
-  prune: boolean,
 ) {
   return Effect.callback<void, ConnectionTransientError>((resume) => {
     try {
+      const bytes = new TextEncoder().encode(payload).length;
       const transaction = database.transaction(QUERY_STORE_NAME, "readwrite");
       transaction.addEventListener("abort", () => {
         resume(
@@ -374,26 +375,41 @@ function saveQueryOnConnection(
         return;
       }
       store.put({ environmentId, payload, updatedAt, bytes }, queryCacheKey(environmentId, key));
-      if (!prune) return;
-      const request = store
-        .index(QUERY_UPDATED_INDEX_NAME)
-        .openKeyCursor(IDBKeyRange.bound([environmentId], [environmentId, []]), "prev");
-      let rows = 0;
-      let totalBytes = 0;
-      request.addEventListener("success", () => {
-        const cursor = request.result;
-        if (cursor === null) return;
-        const [, rowUpdatedAt, rowBytes] = cursor.key as [string, number, number];
-        rows += 1;
-        totalBytes += rowBytes;
+      const batchKey = queryBatchKey(environmentId);
+      const batchRequest = store.get(batchKey);
+      batchRequest.addEventListener("success", () => {
+        const batch: unknown = batchRequest.result;
+        const rows = (isQueryBatch(batch) ? batch.rows : 0) + 1;
+        const written = (isQueryBatch(batch) ? batch.bytes : 0) + bytes;
         if (
-          rows > QUERY_MAX_ROWS - QUERY_PRUNE_BATCH_ROWS ||
-          totalBytes > QUERY_MAX_BYTES - QUERY_PRUNE_BATCH_BYTES ||
-          rowUpdatedAt < updatedAt - QUERY_MAX_AGE_MS
+          isQueryBatch(batch) &&
+          rows < QUERY_PRUNE_BATCH_ROWS &&
+          written < QUERY_PRUNE_BATCH_BYTES
         ) {
-          store.delete(cursor.primaryKey);
+          store.put({ rows, bytes: written }, batchKey);
+          return;
         }
-        cursor.continue();
+        store.put({ rows: 0, bytes: 0 }, batchKey);
+        const request = store
+          .index(QUERY_UPDATED_INDEX_NAME)
+          .openKeyCursor(IDBKeyRange.bound([environmentId], [environmentId, []]), "prev");
+        let kept = 0;
+        let totalBytes = 0;
+        request.addEventListener("success", () => {
+          const cursor = request.result;
+          if (cursor === null) return;
+          const [, rowUpdatedAt, rowBytes] = cursor.key as [string, number, number];
+          kept += 1;
+          totalBytes += rowBytes;
+          if (
+            kept > QUERY_MAX_ROWS - QUERY_PRUNE_BATCH_ROWS ||
+            totalBytes > QUERY_MAX_BYTES - QUERY_PRUNE_BATCH_BYTES ||
+            rowUpdatedAt < updatedAt - QUERY_MAX_AGE_MS
+          ) {
+            store.delete(cursor.primaryKey);
+          }
+          cursor.continue();
+        });
       });
     } catch (cause) {
       resume(Effect.fail(catalogError("write", cause)));
@@ -438,6 +454,10 @@ function threadCacheKey(environmentId: EnvironmentId, threadId: ThreadId) {
 
 function queryCacheKey(environmentId: EnvironmentId, key: string) {
   return `${environmentId}:v1:${key}`;
+}
+
+function queryBatchKey(environmentId: EnvironmentId) {
+  return `${environmentId}:batch`;
 }
 
 function vcsRefsCacheKey(environmentId: EnvironmentId, cwd: string) {
@@ -1045,8 +1065,6 @@ export const layer = Layer.effectContext(
       }),
     });
 
-    // Unpruned writes per environment; absent until the first save of this session prunes.
-    const unprunedQueryWrites = new Map<EnvironmentId, { rows: number; bytes: number }>();
     const queryStore: NonNullable<typeof EnvironmentQueryStore.Service> = {
       load: Effect.fn("EnvironmentQueryStore.load")(
         function* (environmentId, key) {
@@ -1066,23 +1084,11 @@ export const layer = Layer.effectContext(
       ),
       save: (environmentId, key, payload) =>
         Clock.currentTimeMillis.pipe(
-          Effect.flatMap((now) => {
-            const bytes = new TextEncoder().encode(payload).length;
-            const unpruned = unprunedQueryWrites.get(environmentId);
-            const rows = (unpruned?.rows ?? 0) + 1;
-            const written = (unpruned?.bytes ?? 0) + bytes;
-            const prune =
-              unpruned === undefined ||
-              rows >= QUERY_PRUNE_BATCH_ROWS ||
-              written >= QUERY_PRUNE_BATCH_BYTES;
-            unprunedQueryWrites.set(
-              environmentId,
-              prune ? { rows: 0, bytes: 0 } : { rows, bytes: written },
-            );
-            return withDatabase(database, (opened) =>
-              saveQueryOnConnection(opened, environmentId, key, payload, bytes, now, prune),
-            );
-          }),
+          Effect.flatMap((now) =>
+            withDatabase(database, (opened) =>
+              saveQueryOnConnection(opened, environmentId, key, payload, now),
+            ),
+          ),
           Effect.catch(() => Effect.logWarning("Offline query database save failed")),
         ),
     };
