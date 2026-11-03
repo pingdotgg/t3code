@@ -6001,10 +6001,29 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.deepEqual(yield* read(DateTime.subtract(now, { hours: 1 })), [
         { providerInstanceId: grokInstanceId, failedAt, model: "grok-build", failure },
       ]);
+      for (const [ordinal, code] of [
+        [9, "queued_start_failed"],
+        [10, "context_handoff_unsupported"],
+      ] as const) {
+        yield* addRun(ordinal, "failed", DateTime.subtract(now, { minutes: 4 }), {
+          ...failure,
+          code,
+        });
+        assert.deepEqual(yield* read(DateTime.subtract(now, { hours: 1 })), [
+          { providerInstanceId: grokInstanceId, failedAt, model: "grok-build", failure },
+        ]);
+      }
       yield* addRun(7, "completed", DateTime.subtract(now, { minutes: 3 }));
       assert.deepEqual(yield* read(DateTime.subtract(now, { hours: 1 })), []);
       yield* addRun(8, "failed", DateTime.subtract(now, { minutes: 2 }), workspaceFailure);
       assert.deepEqual(yield* read(DateTime.subtract(now, { hours: 1 })), []);
+      yield* addRun(11, "failed", now);
+      yield* addRun(12, "completed", now);
+      assert.deepEqual(yield* read(DateTime.subtract(now, { hours: 1 })), []);
+      yield* addRun(13, "failed", now);
+      assert.deepEqual(yield* read(DateTime.subtract(now, { hours: 1 })), [
+        { providerInstanceId: grokInstanceId, failedAt: now, model: "grok-build", failure },
+      ]);
     }),
   );
 

@@ -4139,16 +4139,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE r.provider_instance_id = ${instanceId}
               AND r.status IN ('completed', 'failed')
               AND r.completed_at >= ${since}
-              -- A failed workspace preparation never reached the provider.
+              -- Failures before provider startup do not describe provider health.
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_turn_items prep
                 WHERE prep.thread_id = r.thread_id AND prep.run_id = r.run_id
                   AND prep.type = 'error' AND prep.status = 'failed'
                   AND prep.node_id IS json_extract(r.payload_json, '$.rootNodeId')
                   AND json_extract(prep.payload_json, '$.failure.code')
-                    = ${ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE}
+                    IN (${ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE},
+                        'queued_start_failed', 'context_handoff_unsupported')
               )
-            ORDER BY r.completed_at DESC
+            ORDER BY r.completed_at DESC, r.run_id DESC
             LIMIT 1
           `;
           if (row === undefined || row.status !== "failed" || row.failure_payload_json === null) {

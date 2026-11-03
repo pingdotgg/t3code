@@ -8,7 +8,7 @@ export default Effect.gen(function* () {
   // call walked all runs.
   yield* sql`
     CREATE INDEX orchestration_v2_projection_runs_instance_finished_idx
-    ON orchestration_v2_projection_runs(provider_instance_id, completed_at)
+    ON orchestration_v2_projection_runs(provider_instance_id, completed_at, run_id)
     WHERE status IN ('completed', 'failed')
   `;
 });
