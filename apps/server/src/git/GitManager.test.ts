@@ -2580,6 +2580,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         signingKey,
       ]);
       yield* runGit(repoDir, ["config", "gpg.format", "ssh"]);
+      // A global signer such as 1Password's cannot use the fixture's generated key.
+      yield* runGit(repoDir, ["config", "gpg.ssh.program", "ssh-keygen"]);
       yield* runGit(repoDir, ["config", "user.signingkey", `${signingKey}.pub`]);
       yield* runGit(repoDir, ["config", "log.showSignature", "true"]);
       yield* runGit(repoDir, ["commit", "--amend", "-S", "--no-edit"]);

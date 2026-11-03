@@ -2874,6 +2874,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         ]);
         assert.equal(Number(yield* spawner.exitCode(keygen)), 0);
         yield* git(cwd, ["config", "gpg.format", "ssh"]);
+        // A global signer such as 1Password's cannot use the fixture's generated key.
+        yield* git(cwd, ["config", "gpg.ssh.program", "ssh-keygen"]);
         yield* git(cwd, ["config", "user.signingkey", `${signingKey}.pub`]);
         yield* git(cwd, ["config", "log.showSignature", "true"]);
         yield* git(cwd, ["commit", "-S", "-m", "range files"]);
