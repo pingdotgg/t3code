@@ -566,6 +566,12 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       }),
     );
     assert.notEqual(rotatedKey, initialKey);
+    const scratchKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
+      queryPolicy,
+      ClaudeAdapterV2.claudeMcpQueryOverrides({ mcpSession, readOnlySandbox: false }),
+      true,
+    );
+    assert.notEqual(scratchKey, initialKey);
   });
 
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
@@ -664,7 +670,11 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
 });
 
 describe("ClaudeAdapterV2 device instructions", () => {
-  const options = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
+  const options = (input: {
+    readonly mcp: boolean;
+    readonly deviceToolsAvailable: boolean;
+    readonly scratchThread?: boolean;
+  }) =>
     ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: {
         instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -677,6 +687,7 @@ describe("ClaudeAdapterV2 device instructions", () => {
         ? { mcpServers: { "t3-code": { type: "http" as const, url: "http://127.0.0.1/mcp" } } }
         : {}),
       deviceToolsAvailable: input.deviceToolsAvailable,
+      ...(input.scratchThread === undefined ? {} : { scratchThread: input.scratchThread }),
       environment: {},
     });
   const append = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
@@ -693,11 +704,12 @@ describe("ClaudeAdapterV2 device instructions", () => {
     assert.notInclude(append({ mcp: false, deviceToolsAvailable: true }), "## T3 Code devices");
   });
 
-  it("gives native subagents the device block only in a session with device access", async () => {
+  it("gives native subagents the device block with device access and the Scratch note in Scratch threads", async () => {
     // Subagents start from their task prompt, not the parent's system prompt.
     const subagentContext = (input: {
       readonly mcp: boolean;
       readonly deviceToolsAvailable: boolean;
+      readonly scratchThread?: boolean;
     }) =>
       Promise.all(
         (options(input).hooks?.SubagentStart ?? []).flatMap((matcher) =>
@@ -727,6 +739,28 @@ describe("ClaudeAdapterV2 device instructions", () => {
     ]);
     assert.deepEqual(await subagentContext({ mcp: true, deviceToolsAvailable: false }), []);
     assert.deepEqual(await subagentContext({ mcp: false, deviceToolsAvailable: true }), []);
+    const scratchContext = (input: Parameters<typeof subagentContext>[0]) =>
+      subagentContext(input).then((outputs) =>
+        outputs.map((output) =>
+          "hookSpecificOutput" in output &&
+          output.hookSpecificOutput?.hookEventName === "SubagentStart"
+            ? output.hookSpecificOutput.additionalContext
+            : undefined,
+        ),
+      );
+    const [scratchOnly] = await scratchContext({
+      mcp: false,
+      deviceToolsAvailable: false,
+      scratchThread: true,
+    });
+    assert.include(scratchOnly, "This thread has no project.");
+    const [scratchWithDevices] = await scratchContext({
+      mcp: true,
+      deviceToolsAvailable: true,
+      scratchThread: true,
+    });
+    assert.include(scratchWithDevices, T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH);
+    assert.include(scratchWithDevices, "This thread has no project.");
   });
 });
 
