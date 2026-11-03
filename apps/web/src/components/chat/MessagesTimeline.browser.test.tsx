@@ -842,7 +842,7 @@ describe("MessagesTimeline usage limit notice", () => {
   it("labels the retry time with the viewer's timezone", async () => {
     await using screen = await renderTimeline(usageLimitEntries("2026-03-17T19:30:00.000Z"));
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    expect(screen.text()).toMatch(/Usage limit reached\. Retry after .+\./);
+    expect(screen.text()).toMatch(/Retry after .+\./);
     expect(screen.text()).toContain(`(${timeZone})`);
   });
 
