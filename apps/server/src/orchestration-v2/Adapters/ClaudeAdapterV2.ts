@@ -8780,7 +8780,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
 
-          // Every trigger discards the conversation, so the reset counts whatever it says.
+          // Every trigger discards the conversation, so reset whatever the trigger is.
           if (message.type === "conversation_reset") {
             if (context.streamUsage !== null) context.streamUsage.usage = null;
             yield* emitReplacedContextUsage(context, 0, yield* DateTime.now);
