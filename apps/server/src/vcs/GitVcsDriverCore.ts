@@ -2,7 +2,7 @@ import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -943,7 +943,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { worktreesDir } = yield* ServerConfig.ServerConfig;
   const isServerInternalPath = yield* makeIsServerInternalPath;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const hostPlatform = yield* HostProcess.Platform;
   const serviceScope = yield* Effect.scope;
   const statusFetches = new Map<string, Fiber.Fiber<void, GitCommandError>>();
@@ -3361,7 +3361,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     const cwd = repository.worktreeRoot;
     const hashDiff = (diff: string, files: ReadonlyArray<ReviewDiffFileStat>) =>
-      crypto.digest("SHA-256", new TextEncoder().encode(JSON.stringify([diff, files]))).pipe(
+      digest.digest(Digest.sha256, new TextEncoder().encode(JSON.stringify([diff, files]))).pipe(
         Effect.map(Hex.encode),
         Effect.mapError(
           (cause) =>
@@ -4142,12 +4142,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       let directoryName = targetBranch.replace(/\//g, "-");
       // Leave room for files beneath the worktree on Windows, regardless of branch length.
       if (directoryName.length > 40) {
-        const digest = yield* crypto
-          .digest("SHA-256", new TextEncoder().encode(targetBranch))
-          .pipe(Effect.orDie);
+        const hash = yield* digest.digest(Digest.sha256, new TextEncoder().encode(targetBranch));
         // Avoid splitting a surrogate pair, which Git would list back as a different path.
         const prefix = directoryName.slice(0, 23).replace(/[\uD800-\uDBFF]$/, "");
-        directoryName = `${prefix}-${Hex.encode(digest).slice(0, 16)}`;
+        directoryName = `${prefix}-${Hex.encode(hash).slice(0, 16)}`;
       }
       worktreePath = path.join(parentDir, repoName, directoryName);
     }
