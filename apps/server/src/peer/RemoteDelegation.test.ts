@@ -781,6 +781,11 @@ const delegateToBox = (
       }),
     );
 
+const failureOf = (result: McpSchema.CallToolResult) => {
+  const text = result.content[0];
+  return result.isError === true && text?.type === "text" ? JSON.parse(text.text) : undefined;
+};
+
 /** Waits until the task here has the result its thread there ended with. */
 const taskResult = (
   laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
@@ -1011,7 +1016,19 @@ const seedNativeSubagents = (
     );
   });
 
-it.effect.each(["caller cancel", "root Stop"] as const)(
+const nativeRemoteStops = [
+  "caller cancel",
+  "caller cancel once it ended, with the root lowered",
+  "root Stop",
+  "root cancel",
+  "caller cancel after the root's runtime is lowered",
+  "caller cancel after the root's interaction is lowered",
+  "root cancel after the root's runtime is lowered",
+  "root cancel after the root's interaction is lowered",
+  "root Stop after the root's runtime is lowered",
+] as const;
+
+it.effect.each(nativeRemoteStops)(
   "a native subagent's task there is listed, read and stopped by %s",
   (stop) =>
     Effect.scoped(
@@ -1073,6 +1090,89 @@ it.effect.each(["caller cancel", "root Stop"] as const)(
         ).toBe(true);
         expect(yield* Ref.get(thread.stops)).toEqual([]);
 
+        const lowered = stop.match(/after the root's (runtime|interaction) is lowered/)?.[1];
+        if (lowered !== undefined) {
+          // Only the root is lowered below the thread there; the caller keeps its modes.
+          yield* a.orchestrator.dispatch(
+            lowered === "runtime"
+              ? {
+                  type: "thread.runtime-mode.set",
+                  commandId: CommandId.make("command:lower:native-remote-parent"),
+                  threadId: parentThreadId,
+                  runtimeMode: "approval-required",
+                }
+              : {
+                  type: "thread.interaction-mode.set",
+                  commandId: CommandId.make("command:lower:native-remote-parent"),
+                  threadId: parentThreadId,
+                  interactionMode: "plan",
+                },
+          );
+          const stoppedThere = (value: boolean) =>
+            a.orchestrator
+              .streamStoredEventsFrom({
+                threadId: caller!.threadId,
+                afterSequence: 0,
+                eventType: "subagent.updated",
+              })
+              .pipe(
+                Stream.filter(
+                  (stored) =>
+                    stored.event.type === "subagent.updated" &&
+                    stored.event.payload.id === delegated.taskId &&
+                    stored.event.payload.remoteChild?.stoppedThere === value,
+                ),
+                Stream.runHead,
+              );
+          if (stop.startsWith("root Stop")) {
+            yield* a.threads.stopDelegatedTasks({
+              threadId: parentThreadId,
+              commandId: CommandId.make("command:stop:native-remote-lowered"),
+            });
+            // The box refuses the follower's stop for good, so nothing retries it.
+            expect(Option.isSome(yield* stoppedThere(true))).toBe(true);
+            expect(yield* Ref.get(thread.stops)).toEqual([]);
+            expect(yield* a.projections.getOpenRemoteDelegatedTasks).toEqual([]);
+            return;
+          }
+          const refused = yield* a.call(
+            "task_cancel",
+            { taskId: delegated.taskId, clientRequestId: "cancel-lowered" },
+            stop.startsWith("caller") ? caller!.scope : parentScope,
+          );
+          expect(failureOf(refused)).toMatchObject({ code: `${lowered}_mode_escalation_denied` });
+          // The refused cancel records nothing here: the task runs on, owing no stop.
+          expect(
+            (yield* a.call("task_status", { taskId: delegated.taskId }, caller!.scope))
+              .structuredContent,
+          ).toMatchObject({ status: "running" });
+          // Its run ending there completes it with nothing ever stopped there.
+          yield* Ref.set(thread.reply, "All 412 tests pass on the box.");
+          yield* Ref.set(thread.status, "completed");
+          yield* Deferred.succeed(thread.finished, undefined);
+          expect(yield* taskResult(a, delegated.taskId, caller!.threadId)).toMatchObject({
+            status: "completed",
+          });
+          expect(yield* Ref.get(thread.stops)).toEqual([]);
+          return;
+        }
+
+        if (stop === "root cancel") {
+          const cancelled = yield* a.call("task_cancel", {
+            taskId: delegated.taskId,
+            clientRequestId: "cancel-root",
+          });
+          expect(cancelled.structuredContent).toEqual({
+            taskId: delegated.taskId,
+            status: "cancel_requested",
+          });
+          expect(yield* Ref.get(thread.stops)).toEqual(["thread.stop", "delegated-tasks"]);
+          expect(yield* taskResult(a, delegated.taskId, caller!.threadId)).toMatchObject({
+            status: "cancelled",
+          });
+          return;
+        }
+
         if (stop === "root Stop") {
           const commandId = CommandId.make("command:stop:native-remote-parent");
           yield* a.orchestrator.dispatch({
@@ -1106,6 +1206,32 @@ it.effect.each(["caller cancel", "root Stop"] as const)(
           (run) => run.id === parentRunId,
         );
         expect(parentRun?.delegatedCompletion?.delivery?.taskIds).toEqual([delegated.taskId]);
+
+        if (stop === "caller cancel once it ended, with the root lowered") {
+          yield* a.orchestrator.dispatch({
+            type: "thread.runtime-mode.set",
+            commandId: CommandId.make("command:lower:native-remote-parent-ended"),
+            threadId: parentThreadId,
+            runtimeMode: "approval-required",
+          });
+          const before = yield* a.projections.getThreadRecords(caller!.threadId, ["subagents"], {
+            subagentIds: [delegated.taskId],
+          });
+          const refused = yield* a.call(
+            "task_cancel",
+            { taskId: delegated.taskId, clientRequestId: "cancel-after-lowered" },
+            caller!.scope,
+          );
+          expect(failureOf(refused)).toMatchObject({ code: "runtime_mode_escalation_denied" });
+          expect(yield* Ref.get(thread.stops)).toEqual([]);
+          // Nothing here records that stop as made or owed.
+          expect(
+            (yield* a.projections.getThreadRecords(caller!.threadId, ["subagents"], {
+              subagentIds: [delegated.taskId],
+            })).subagents,
+          ).toEqual(before.subagents);
+          return;
+        }
 
         // The caller's cancel still stops what followed there.
         const cancelled = yield* a.call(

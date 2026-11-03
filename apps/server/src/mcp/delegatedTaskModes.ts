@@ -87,6 +87,23 @@ export function resolveInteractionMode(
     : Effect.succeed(resolved);
 }
 
+/** Each mode at the narrower of the two. */
+export function narrowestModes(
+  left: { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode },
+  right: { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode },
+) {
+  return {
+    runtimeMode:
+      runtimeModeRank(right.runtimeMode) < runtimeModeRank(left.runtimeMode)
+        ? right.runtimeMode
+        : left.runtimeMode,
+    interactionMode:
+      interactionModeRank(right.interactionMode) < interactionModeRank(left.interactionMode)
+        ? right.interactionMode
+        : left.interactionMode,
+  };
+}
+
 /** The task as its child receives it, with the role the caller asked for. */
 export function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
   return input.role === undefined || input.role === "general"

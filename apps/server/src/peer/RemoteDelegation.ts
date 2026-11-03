@@ -26,6 +26,7 @@ import * as Stream from "effect/Stream";
 import type * as Tool from "effect/ai/Tool";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import type { CallerLimits } from "../mcp/threadAccess.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import {
   resolveInteractionMode,
@@ -83,9 +84,9 @@ export class RemoteDelegation extends Context.Service<
       executionThreadId?: ThreadId,
     ) => Effect.Effect<{ readonly taskId: NodeId }, OrchestratorMcpFailure>;
     /**
-     * Stops the task's thread there, then completes it here as cancelled. A
-     * task that already has its result keeps it; its thread there is still
-     * stopped, as cancelling a local task stops follow-up work on its child.
+     * Stops the task's thread there within the calling agent's `limits`, then completes it
+     * here as cancelled; one with its result keeps it. `scope`, the thread listing the task,
+     * may run above `limits`; a stop refused for them changes nothing here.
      */
     readonly cancel: (
       scope: ThreadScope,
@@ -94,6 +95,7 @@ export class RemoteDelegation extends Context.Service<
         readonly reason?: string | undefined;
         readonly clientRequestId?: string | undefined;
       },
+      limits: CallerLimits,
     ) => Effect.Effect<OrchestratorMcpTaskCancelResult, OrchestratorMcpFailure>;
     /**
      * Follows every open remote task until it ends, including after a
@@ -429,15 +431,35 @@ const make = Effect.gen(function* () {
     remote: OrchestrationV2RemoteTaskChild,
     key: string,
     reason?: string,
+    ceiling?: CallerLimits,
   ) =>
     forwarding
-      .interruptThread(scope, remote.environmentId, {
-        threadId: remote.threadId,
-        stop: true,
-        ...(reason === undefined ? {} : { reason }),
-        clientRequestId: `${key}:${remote.threadId}`,
-      })
+      .interruptThread(
+        scope,
+        remote.environmentId,
+        {
+          threadId: remote.threadId,
+          stop: true,
+          ...(reason === undefined ? {} : { reason }),
+          clientRequestId: `${key}:${remote.threadId}`,
+        },
+        ceiling,
+      )
       .pipe(Effect.asVoid);
+
+  /**
+   * A native subagent's thread lists its task while its root's run executes it, and keeps
+   * its modes when the root's are lowered; a stop sent for the task stays within the root's.
+   */
+  const executionCeiling = Effect.fn("RemoteDelegation.executionCeiling")(function* (
+    task: OrchestrationV2Subagent,
+  ) {
+    if (task.executionThreadId === undefined || task.executionThreadId === task.threadId) return;
+    const shell = yield* threads.getThreadShell(task.executionThreadId);
+    return shell === null || shell.deletedAt !== null
+      ? undefined
+      : { runtimeMode: shell.runtimeMode, interactionMode: shell.interactionMode };
+  });
 
   /**
    * The last reply `runId` gave on the task's thread there, which is its
@@ -564,7 +586,7 @@ const make = Effect.gen(function* () {
           remote.stoppedThere !== true)
       ) {
         const key = remote.stopCount === undefined ? "stop" : `stop-${remote.stopCount}`;
-        yield* stopThere(scope, remote, key).pipe(
+        yield* stopThere(scope, remote, key, undefined, yield* executionCeiling(task)).pipe(
           // Its thread there now runs above what this side may touch, say
           // because the parent here was lowered since; no retry changes that.
           Effect.catchIf(isModeRefusal, (error) =>
@@ -695,7 +717,7 @@ const make = Effect.gen(function* () {
     });
 
   const cancel: RemoteDelegation["Service"]["cancel"] = Effect.fn("RemoteDelegation.cancel")(
-    function* (scope, task, input) {
+    function* (scope, task, input, limits) {
       const remote = task.remoteChild;
       if (remote === undefined) {
         return yield* new OrchestratorMcpFailure({
@@ -709,21 +731,28 @@ const make = Effect.gen(function* () {
       const key = `cancel:${encodeURIComponent(scope.requestNamespace)}:${
         input.clientRequestId ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie))
       }`;
+      // Refused for the caller's modes, the cancel fails, so nothing here owes that stop:
+      // it would otherwise go out again under the listing thread's.
+      const stop = stopThere(there, remote, key, reason, limits).pipe(
+        Effect.map((): string | undefined => undefined),
+        Effect.catchIf(
+          (error) => !isModeRefusal(error),
+          (error) => Effect.succeed(error.message),
+        ),
+      );
       if (task.result !== null) {
         // Best effort: the result stands whether or not the stop gets there.
-        yield* stopThere(there, remote, key, reason).pipe(
-          Effect.andThen(
-            complete(
-              task.threadId,
-              task.id,
-              terminalStatus(task.status),
-              task.result,
-              "stopped",
-              remote.stopCount,
-            ),
-          ),
-          Effect.ignoreCause({ log: true }),
-        );
+        const unstopped = yield* stop;
+        if (unstopped === undefined) {
+          yield* complete(
+            task.threadId,
+            task.id,
+            terminalStatus(task.status),
+            task.result,
+            "stopped",
+            remote.stopCount,
+          ).pipe(Effect.ignoreCause({ log: true }));
+        }
         return {
           taskId: task.id,
           status:
@@ -734,10 +763,7 @@ const make = Effect.gen(function* () {
       }
       // A link that is gone or a machine that is down still cancels the task
       // here; its follower keeps trying to stop it there, across restarts.
-      const unstopped = yield* stopThere(there, remote, key, reason).pipe(
-        Effect.as(undefined),
-        Effect.catch((error) => Effect.succeed(error.message)),
-      );
+      const unstopped = yield* stop;
       const cancelled = reason === undefined ? "Cancelled." : `Cancelled: ${reason}`;
       yield* complete(
         task.threadId,

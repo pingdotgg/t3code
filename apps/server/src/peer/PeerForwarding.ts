@@ -18,9 +18,10 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Tool from "effect/ai/Tool";
 
+import { narrowestModes } from "../mcp/delegatedTaskModes.ts";
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
-import { readCaller, unavailable } from "../mcp/threadAccess.ts";
+import { type CallerLimits, readCaller, unavailable } from "../mcp/threadAccess.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
@@ -61,11 +62,15 @@ export class PeerForwarding extends Context.Service<
       environmentId: EnvironmentId,
       input: OrchestratorMcpThreadReadInput,
     ) => Effect.Effect<OrchestratorMcpThreadReadResult, OrchestratorMcpFailure>;
-    /** `t3_thread_interrupt` there. */
+    /**
+     * `t3_thread_interrupt` there. `ceiling` narrows the scope's own limits, for a scope that
+     * names the thread a call is recorded under rather than the agent that made it.
+     */
     readonly interruptThread: (
       scope: Scope,
       environmentId: EnvironmentId,
       input: OrchestratorMcpThreadInterruptInput,
+      ceiling?: CallerLimits,
     ) => Effect.Effect<OrchestratorMcpThreadInterruptResult, OrchestratorMcpFailure>;
     /** `t3_thread_wait` there, in pieces short enough to survive any route. */
     readonly waitForThread: (
@@ -130,8 +135,10 @@ const make = Effect.gen(function* () {
     success: Schema.Top,
     environmentId: EnvironmentId,
     params: unknown,
+    ceiling?: CallerLimits,
   ) {
-    const limits = yield* callerLimits(scope);
+    const own = yield* callerLimits(scope);
+    const limits = ceiling === undefined ? own : narrowestModes(own, ceiling);
     const encoded = (yield* Schema.encodeUnknownEffect(parameters as Schema.Encoder<unknown>)(
       params,
     ).pipe(Effect.mapError(unavailable))) as Record<string, unknown>;
@@ -169,6 +176,7 @@ const make = Effect.gen(function* () {
     scope,
     environmentId,
     input,
+    ceiling,
   ) =>
     forward<OrchestratorMcpThreadInterruptResult>(
       scope,
@@ -177,6 +185,7 @@ const make = Effect.gen(function* () {
       OrchestratorMcpThreadInterruptResult,
       environmentId,
       input,
+      ceiling,
     );
 
   const waitForThread: PeerForwarding["Service"]["waitForThread"] = Effect.fn(

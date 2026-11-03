@@ -117,6 +117,7 @@ import {
 import * as Metrics from "../observability/Metrics.ts";
 import {
   interactionModeRank,
+  narrowestModes,
   resolveInteractionMode,
   resolveRuntimeMode,
   runtimeModeRank,
@@ -1279,16 +1280,7 @@ const make = Effect.gen(function* () {
     const { thread: root } = yield* loadThreadRecords(rootThreadId, []);
     if (callerThreadId === rootThreadId) return root;
     const { thread: caller } = yield* loadThreadRecords(callerThreadId, []);
-    return {
-      runtimeMode:
-        runtimeModeRank(caller.runtimeMode) < runtimeModeRank(root.runtimeMode)
-          ? caller.runtimeMode
-          : root.runtimeMode,
-      interactionMode:
-        interactionModeRank(caller.interactionMode) < interactionModeRank(root.interactionMode)
-          ? caller.interactionMode
-          : root.interactionMode,
-    };
+    return narrowestModes(root, caller);
   });
 
   const loadThreadCaller = Effect.fn("OrchestratorMcpService.loadThreadCaller")(function* (
@@ -2696,6 +2688,8 @@ const make = Effect.gen(function* () {
       const rootScope = yield* requireThreadScope(callerScope, "task_cancel");
       const { scope, callerThreadId } = yield* taskScope(rootScope, input.taskId);
       const current = yield* readTask(scope, input.taskId);
+      // The caller's modes, not the listing thread's: the session root's may be lower.
+      const limits = yield* callerLimits(rootScope.thread.threadId, callerThreadId);
       const childThreadId = current.childThreadId;
       if (childThreadId === null) {
         // The task runs in a linked environment: its thread there is stopped through the link.
@@ -2712,11 +2706,9 @@ const make = Effect.gen(function* () {
             `Delegated task ${input.taskId} does not belong to thread ${scope.thread.threadId}.`,
           );
         }
-        return yield* remoteDelegation.cancel(scope, remoteTask, input);
+        return yield* remoteDelegation.cancel(scope, remoteTask, input, limits);
       }
       const key = yield* requestKey(input.clientRequestId);
-      // The caller's modes, not the listing thread's: the session root's may be lower.
-      const limits = yield* callerLimits(rootScope.thread.threadId, callerThreadId);
       // Cancelling stops the child and every task under it, each a write to a
       // thread its user may have raised above the parent's modes since it was
       // delegated. All of them are checked before anything is stopped.
