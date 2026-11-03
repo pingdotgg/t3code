@@ -2,7 +2,7 @@ import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ByteSize from "effect/ByteSize";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -653,7 +653,7 @@ export const make = Effect.gen(function* () {
   const textGeneration = yield* TextGeneration.TextGeneration;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -854,7 +854,7 @@ export const make = Effect.gen(function* () {
     }
   });
   const randomUUIDv4 = (cwd: string) =>
-    crypto.randomUUIDv4().pipe(
+    random.uuidV4().pipe(
       Effect.mapError(
         (cause) =>
           new GitManagerError({
@@ -2339,7 +2339,15 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.ignore)));
 
-    const created = yield* findOpenPr(cwd, headContext);
+    // The PR already exists at this point, so a failed lookup only loses its metadata.
+    const created = yield* findOpenPr(cwd, headContext).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("GitManager.runPrStep lookup after create failed", {
+          provider: provider.kind,
+          errorTag: error._tag,
+        }).pipe(Effect.as(null)),
+      ),
+    );
     if (!created) {
       return {
         status: "created" as const,
