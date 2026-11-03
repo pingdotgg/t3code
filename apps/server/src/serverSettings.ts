@@ -68,7 +68,13 @@ export {
 } from "@t3tools/shared/serverSettings";
 
 const encodeServerSettings = Schema.encodeEffect(ServerSettings);
-const encodeServerSettingsJson = Schema.encodeUnknownEffect(fromJsonStringPretty(ServerSettings));
+const RetiredSourceControlFields = {
+  bitbucket: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+  github: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+};
+const encodeServerSettingsJson = Schema.encodeUnknownEffect(
+  fromJsonStringPretty(Schema.Struct({ ...ServerSettings.fields, ...RetiredSourceControlFields })),
+);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
@@ -353,8 +359,7 @@ const decodePersistedServerSettingsExit = Schema.decodeUnknownExit(PersistedServ
 const LegacyProviderSettingsJson = fromLenientJson(
   Schema.Struct({
     providers: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
-    bitbucket: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
-    github: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+    ...RetiredSourceControlFields,
   }),
 );
 const decodeLegacyProviderSettingsJsonExit = Schema.decodeUnknownExit(LegacyProviderSettingsJson);
@@ -695,8 +700,21 @@ const make = Effect.gen(function* () {
   });
 
   const writeSettingsAtomically = Effect.fnUntraced(
-    function* (settings: ServerSettings) {
-      const stripped = stripDefaultServerSettings(settings, managed.defaults) ?? {};
+    function* (
+      settings: ServerSettings,
+      retiredSourceControl: Parameters<typeof migrateLegacySourceControlSettings>[1] = {},
+    ) {
+      const stripped = Object.assign(
+        {},
+        stripDefaultServerSettings(settings, managed.defaults),
+        // Retired keys whose secrets could not be copied yet stay for the next load to migrate.
+        Object.fromEntries(
+          Object.entries(retiredSourceControl).filter(
+            ([kind, value]) =>
+              value !== undefined && settings.sourceControlHosts[kind] === undefined,
+          ),
+        ),
+      );
       const sparseSettingsJson = yield* encodeServerSettingsJson(
         managed.keepStored === undefined
           ? stripped
@@ -877,6 +895,8 @@ const make = Effect.gen(function* () {
       settingsFileTrusted &&
       legacySecretsCopied &&
       (legacySourceControl.bitbucket !== undefined || legacySourceControl.github !== undefined);
+    const retiredSourceControl =
+      settingsFileTrusted && !legacySecretsCopied ? legacySourceControl : {};
     const sourceControlMigration = hasLegacySourceControl
       ? migrateLegacySourceControlSettings(folded, legacySourceControl)
       : { settings: folded, secretMoves: [] };
@@ -888,12 +908,12 @@ const make = Effect.gen(function* () {
       (settingsFileTrusted && legacyProviders !== undefined) ||
       hasLegacySourceControl
     ) {
-      yield* writeSettingsAtomically(migrated);
+      yield* writeSettingsAtomically(migrated, retiredSourceControl);
       for (const move of sourceControlMigration.secretMoves) {
         yield* secretStore.remove(move.from).pipe(Effect.ignore);
       }
     }
-    return { settings: migrated, parseFailure };
+    return { settings: migrated, parseFailure, retiredSourceControl };
   });
 
   const settingsCache = yield* Cache.makeWith((_key: typeof cacheKey) => loadSettingsFromDisk, {
@@ -1134,7 +1154,7 @@ const make = Effect.gen(function* () {
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
-        const { settings: current, parseFailure } = yield* reloadSettings;
+        const { settings: current, parseFailure, retiredSourceControl } = yield* reloadSettings;
         if (Option.isSome(parseFailure)) {
           return yield* new ServerSettingsError({
             settingsPath,
@@ -1182,7 +1202,9 @@ const make = Effect.gen(function* () {
               yield* rollbackSecretChanges;
               return yield* Effect.failCause(materializedExit.cause);
             }
-            const writeExit = yield* Effect.exit(writeSettingsAtomically(next));
+            const writeExit = yield* Effect.exit(
+              writeSettingsAtomically(next, retiredSourceControl),
+            );
             if (Exit.isFailure(writeExit)) {
               yield* rollbackSecretChanges;
               return yield* Effect.failCause(writeExit.cause);
@@ -1190,7 +1212,11 @@ const make = Effect.gen(function* () {
             return materializedExit.value;
           }).pipe(Effect.ensuring(invalidateMaterialized)),
         );
-        yield* Cache.set(settingsCache, cacheKey, { settings: next, parseFailure: Option.none() });
+        yield* Cache.set(settingsCache, cacheKey, {
+          settings: next,
+          parseFailure: Option.none(),
+          retiredSourceControl,
+        });
         const resolved = toEffective(materializedNext);
         materialized = { source: next, value: resolved };
         yield* emitChange(next);
