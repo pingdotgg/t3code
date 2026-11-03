@@ -118,7 +118,6 @@ it("requires matching saved native state for an unfinished root run", () => {
         },
       ],
     },
-    { ...projection, providerTurns: [] },
     ...[
       "queued",
       "preparing",
@@ -131,6 +130,30 @@ it("requires matching saved native state for an unfinished root run", () => {
     ].map((status) => ({ ...projection, runs: [{ ...projection.runs[0]!, status }] })),
   ])
     assert.isUndefined(restartContinuationRun(invalid as OrchestrationV2ThreadProjection, now));
+});
+
+it("recovers a running Codex request before its first provider turn", () => {
+  const projection = makeProjection();
+  assert.equal(restartContinuationRun({ ...projection, providerTurns: [] }, now)?.id, runId);
+  const claude = ProviderDriverKind.make("claudeAgent");
+  assert.isUndefined(
+    restartContinuationRun(
+      {
+        ...projection,
+        providerTurns: [],
+        providerThreads: projection.providerThreads.map((thread) => ({
+          ...thread,
+          driver: claude,
+          nativeThreadRef: { ...thread.nativeThreadRef!, driver: claude },
+        })),
+        providerSessions: projection.providerSessions.map((session) => ({
+          ...session,
+          driver: claude,
+        })),
+      },
+      now,
+    ),
+  );
 });
 
 it("continues a live turn whose session the adapter never marked running", () => {
@@ -915,7 +938,9 @@ it.effect("continues a cut run past queued follow-ups, which stay held", () =>
       ...cut,
       runs: [...cut.runs, queuedFollowUp],
     } as unknown as OrchestrationV2ThreadProjection);
-    assert.deepEqual(texts, ["Continue where you left off."]);
+    assert.deepEqual(texts, [
+      "Continue where you left off. Your last turn was cut short, so a command or other action it started may have finished or may still be running. Before you repeat one that changes state, confirm it did not take effect and is not still running; if you cannot tell, say so instead of repeating it.",
+    ]);
   }),
 );
 
@@ -945,7 +970,9 @@ it.effect("continues a resumed queued run that ran after an earlier continuation
       ...cut,
       runs: [...cut.runs, finishedContinuation],
     } as unknown as OrchestrationV2ThreadProjection);
-    assert.deepEqual(texts, ["Continue where you left off."]);
+    assert.deepEqual(texts, [
+      "Continue where you left off. Your last turn was cut short, so a command or other action it started may have finished or may still be running. Before you repeat one that changes state, confirm it did not take effect and is not still running; if you cannot tell, say so instead of repeating it.",
+    ]);
   }),
 );
 
@@ -1139,17 +1166,13 @@ it.effect("resumes natively once Codex recorded the request, and for other provi
       messages: [cutRequest],
       providerTurns: cut.providerTurns.map((turn) => ({ ...turn, inputRecordedAt })),
     } as unknown as OrchestrationV2ThreadProjection;
-    assert.deepEqual(yield* continuationTexts(recorded), ["Continue where you left off."]);
-    assert.deepEqual(
-      yield* continuationTexts({
-        ...recorded,
-        providerThreads: recorded.providerThreads.map((thread) => ({
-          ...thread,
-          driver: ProviderDriverKind.make("acpRegistry"),
-        })),
-      }),
-      ["Continue where you left off."],
-    );
+    const recordedAcp = {
+      ...recorded,
+      providerThreads: recorded.providerThreads.map((thread) => ({
+        ...thread,
+        driver: ProviderDriverKind.make("acpRegistry"),
+      })),
+    };
     // A goal's first native turn recorded the request; its cut follow-up turn records none.
     const goalFollowUp = {
       ...cut,
@@ -1161,14 +1184,19 @@ it.effect("resumes natively once Codex recorded the request, and for other provi
         { ...cut.providerTurns[0]!, id: "turn:goal-follow-up", ordinal: 2 },
       ],
     } as unknown as OrchestrationV2ThreadProjection;
-    assert.deepEqual(yield* continuationTexts(goalFollowUp), ["Continue where you left off."]);
     const claude = ProviderDriverKind.make("claudeAgent");
     const otherDriver = {
       ...cut,
       messages: [cutRequest],
       providerThreads: cut.providerThreads.map((thread) => ({ ...thread, driver: claude })),
     } as unknown as OrchestrationV2ThreadProjection;
-    assert.deepEqual(yield* continuationTexts(otherDriver), ["Continue where you left off."]);
+    for (const projection of [recorded, recordedAcp, goalFollowUp, otherDriver]) {
+      const commands = yield* continuationDispatches(projection);
+      assert.lengthOf(commands, 1);
+      assert.notInclude(commands[0]!.text, cutRequest.text);
+      assert.deepEqual(commands[0]!.attachments, []);
+      assert.isUndefined(commands[0]!.context);
+    }
   }),
 );
 
