@@ -25,7 +25,6 @@ import { readThreadShell } from "~/state/entities";
 const threadTitle = (ref: ScopedThreadRef) => readThreadShell(ref)?.title;
 
 /** Pasted thread links count as context too, so they become chips like a copied chip does. */
-
 export function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
 ): ComposerContextClipboardFragment | null {
