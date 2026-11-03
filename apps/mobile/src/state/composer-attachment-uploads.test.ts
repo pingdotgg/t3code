@@ -99,9 +99,15 @@ vi.mock("./entities", () => ({
   useProjects: () => [],
   useServerConfigs: () => new Map([["environment-1", config]]),
   useThreadShells: () => [],
+  useVisibleThreadShells: () => [],
 }));
 vi.mock("./projects", () => ({ environmentProjects: {} }));
-vi.mock("./workspace", () => ({ workspaceConnections: {} }));
+vi.mock("./workspace", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    workspaceConnections: { environmentsAtom: Atom.make([{ environmentId: "environment-1" }]) },
+  };
+});
 vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
   return { serverEnvironment: { configValueAtom: Atom.family(() => Atom.make(null)) } };
@@ -209,6 +215,7 @@ const requestsAtom = Atom.make((get) =>
   composerAttachmentUploadRequests({
     drafts: get(drafts.composerDraftUploadSourcesAtom),
     queuedMessagesByThreadKey: get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
+    knownEnvironmentIds: [environmentId],
     connectedEnvironmentIds: new Set([environmentId]),
     operableEnvironmentIds: new Set([environmentId]),
     serverConfigs: new Map([[environmentId, config]]),
@@ -335,4 +342,38 @@ it("keeps an unexpected draft flush error blocking Send", async () => {
     "Retry or remove the failed attachment",
   );
   expect(native.deleted).toEqual(["pending-1"]);
+});
+
+it("uploads draft attachments for threads whose ids contain colons", () => {
+  const keys = [
+    "environment-1:thread-1",
+    "environment-1:thread:mcp:namespace:key:0",
+    "environment-1:command-1:fork",
+    "environment-1:thread-1~queued-edit~run:1",
+  ];
+  const requests = composerAttachmentUploadRequests({
+    drafts: Object.fromEntries(keys.map((key) => [key, { attachments: [{ ...image, id: key }] }])),
+    queuedMessagesByThreadKey: {},
+    knownEnvironmentIds: [environmentId],
+    connectedEnvironmentIds: new Set([environmentId]),
+    operableEnvironmentIds: new Set([environmentId]),
+    serverConfigs: new Map([[environmentId, config]]),
+  });
+  expect(requests.map((request) => [request.attachment.id, request.environmentId])).toEqual(
+    keys.map((key) => [key, environmentId]),
+  );
+});
+
+it("does not upload a disconnected colon environment's draft to its connected prefix", () => {
+  const connected = EnvironmentId.make("a");
+  const disconnected = EnvironmentId.make("a:vcs-status:b");
+  const requests = composerAttachmentUploadRequests({
+    drafts: { [`${disconnected}:thread-1`]: { attachments: [image] } },
+    queuedMessagesByThreadKey: {},
+    knownEnvironmentIds: [connected, disconnected],
+    connectedEnvironmentIds: new Set([connected]),
+    operableEnvironmentIds: new Set([connected]),
+    serverConfigs: new Map([[connected, config]]),
+  });
+  expect(requests).toEqual([]);
 });
