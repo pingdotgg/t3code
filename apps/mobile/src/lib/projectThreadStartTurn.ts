@@ -87,5 +87,12 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
 
 export function deriveThreadTitleFromPrompt(value: string): string {
   const title = threadTitleTextFromPrompt(value) || "New thread";
-  return title.length <= 72 ? title : `${title.slice(0, 69).trimEnd()}...`;
+  if (title.length <= 72) return title;
+  let end = 69;
+  const previous = title.charCodeAt(end - 1);
+  const next = title.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${title.slice(0, end).trimEnd()}...`;
 }
