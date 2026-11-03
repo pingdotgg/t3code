@@ -370,6 +370,18 @@ const dwordBoolean = (value: RegistryValue) =>
 function windowsPolicyDocument(
   values: ReadonlyArray<PolicyRegistryValue>,
 ): { readonly document: unknown } | { readonly error: string } {
+  // Registry names ignore case; a hand-written `organization` is still Organization.
+  const canonical = new Map(
+    [...Object.keys(WINDOWS_POLICY_VALUES), ...Object.keys(WINDOWS_POLICY_GROUPS)].map((name) => [
+      name.toLowerCase(),
+      name,
+    ]),
+  );
+  values = values.map((value) =>
+    value.key === ""
+      ? { ...value, name: canonical.get(value.name.toLowerCase()) ?? value.name }
+      : value,
+  );
   const document: Record<string, unknown> = { schemaVersion: 1 };
   const lists = new Map<string, Array<string>>();
   const disabled: Array<ReadonlyArray<string>> = [];

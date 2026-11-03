@@ -222,7 +222,8 @@ describe("readManagedPolicy", () => {
             [
               organization,
               text("SupportUrl", ""),
-              text("MaxRuntimeMode", "auto-accept-edits"),
+              // Registry names ignore case.
+              text("maxRuntimeMode", "auto-accept-edits"),
               dword("Telemetry", 0),
               text("Settings", '{"enableAgentBrowserAccess": {"value": false, "locked": true}}'),
               text("UpdatesMode", "off"),
