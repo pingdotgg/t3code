@@ -536,10 +536,17 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
       : {}
   ) as CSSProperties;
+  // A fullscreen window has square corners, so the pane keeps its own radius.
+  const windowCornerStyle = (
+    isWindowFullscreen
+      ? { "--desktop-window-corner-radius": "initial", "--desktop-window-corner-shape": "initial" }
+      : {}
+  ) as CSSProperties;
   const sidebarProviderStyle = {
     "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
     ...windowControlsInsetStyle,
+    ...windowCornerStyle,
   } as CSSProperties;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps native traffic-light visibility in step with the committed shell layout and restores it on unmount
