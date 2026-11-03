@@ -36,6 +36,7 @@ import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -53,6 +54,7 @@ const adapter = {
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerTest = Layer.mergeAll(
   layerDatabase,
+  ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
   ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
   EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
   ProviderReplayHarness.layerWithRegistry(
@@ -1013,7 +1015,7 @@ it.effect.each([undefined, "shared", "worktree"] as const)(
       });
       const parent = yield* projections.getThreadProjection(parentThreadId);
       const parentRun = parent.runs[0]!;
-      yield* orchestrator.dispatch({
+      const request = {
         type: "delegated_task.request",
         commandId: CommandId.make("delegate-parent-pr"),
         ...(isolation === undefined
@@ -1039,7 +1041,74 @@ it.effect.each([undefined, "shared", "worktree"] as const)(
         interactionMode: "default",
         createdBy: "agent",
         creationSource: "mcp",
-      });
+      } as const;
+      if (isolation !== undefined) {
+        const projects = yield* ProjectStore.ProjectStoreV2;
+        const destinationId = ProjectId.make("project:destination");
+        const rejected = yield* orchestrator
+          .dispatch({ ...request, commandId: CommandId.make("delegate-missing-project") })
+          .pipe(Effect.result);
+        assert.isTrue(Result.isFailure(rejected));
+        const now = "2026-11-03T00:00:00.000Z";
+        yield* projects.apply({
+          sequence: 1,
+          eventId: EventId.make("event:destination"),
+          aggregateKind: "project",
+          aggregateId: destinationId,
+          occurredAt: now,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "project.created",
+          payload: {
+            projectId: destinationId,
+            title: "Destination",
+            workspaceRoot: "/destination",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE projection_projects SET deleted_at = ${now} WHERE project_id = ${destinationId}`;
+        assert.isTrue(
+          Result.isFailure(
+            yield* orchestrator
+              .dispatch({ ...request, commandId: CommandId.make("delegate-deleted-project") })
+              .pipe(Effect.result),
+          ),
+        );
+        yield* sql`UPDATE projection_projects SET deleted_at = NULL WHERE project_id = ${destinationId}`;
+        for (const access of ["auto", "full-access"] as const) {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`event:parent-link:${access}`),
+                type: "thread.metadata-updated",
+                threadId: parentThreadId,
+                occurredAt: yield* DateTime.now,
+                payload: {
+                  ...parent.thread,
+                  linkOrigin: { sessionId: "linked", label: "Linked caller", access },
+                },
+              },
+            ],
+          });
+          if (access === "auto") {
+            assert.isTrue(
+              Result.isFailure(
+                yield* orchestrator
+                  .dispatch({ ...request, commandId: CommandId.make("delegate-fenced-project") })
+                  .pipe(Effect.result),
+              ),
+            );
+            assert.isEmpty((yield* projections.getThreadProjection(parentThreadId)).subagents);
+          }
+        }
+      }
+      yield* orchestrator.dispatch(request);
       const updatedParent = yield* projections.getThreadProjection(parentThreadId);
       const childThreadId = updatedParent.subagents[0]!.childThreadId!;
       const child = yield* projections.getThreadProjection(childThreadId);

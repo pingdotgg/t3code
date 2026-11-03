@@ -5,6 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
   EnvironmentId,
+  EventId,
   isProviderNativeSubagentThread,
   MessageId,
   type ModelSelection,
@@ -28,6 +29,7 @@ import * as Tracer from "effect/Tracer";
 import { McpSchema, McpServer } from "effect/ai";
 
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -237,6 +239,7 @@ describe("orchestrator MCP toolkit", () => {
         const layerTest = layerOrchestratorToolkit.pipe(
           Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provideMerge(layerOrchestration),
+          Layer.provideMerge(ProjectStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
           Layer.provide(
             CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript).pipe(
               Layer.provide(McpProviderSessions.layer),
@@ -271,6 +274,29 @@ describe("orchestrator MCP toolkit", () => {
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const server = yield* McpServer.McpServer;
+          const projects = yield* ProjectStore.ProjectStoreV2;
+          const at = "2026-11-03T00:00:00.000Z";
+          yield* projects.apply({
+            sequence: 1,
+            eventId: EventId.make("event:mcp-destination"),
+            aggregateKind: "project",
+            aggregateId: destinationId,
+            occurredAt: at,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            type: "project.created",
+            payload: {
+              projectId: destinationId,
+              title: "Destination",
+              workspaceRoot: cwd,
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: at,
+              updatedAt: at,
+            },
+          });
           const parentCreate = yield* orchestrator.dispatch({
             type: "thread.create",
             createdBy: "user",
