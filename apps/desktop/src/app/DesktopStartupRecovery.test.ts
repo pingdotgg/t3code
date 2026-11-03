@@ -74,6 +74,16 @@ describe("resolveStartupRecoveryOffer", () => {
     ).toEqual({ _tag: "Reinstall", version: "0.1.2" });
   });
 
+  it("blames the managed policy instead of offering another version", () => {
+    expect(
+      resolveStartupRecoveryOffer(
+        updateState({ status: "available", availableVersion: "0.1.4" }),
+        "0.1.2",
+        true,
+      ),
+    ).toEqual({ _tag: "ManagedPolicy" });
+  });
+
   it("falls back to the releases page when this version never started", () => {
     expect(resolveStartupRecoveryOffer(updateState({ status: "disabled" }), "0.1.3")).toEqual({
       _tag: "Releases",
@@ -168,6 +178,7 @@ it.effect.each([
       yield* SubscriptionRef.set(state.primaryBackendStartup, {
         _tag: "Failing",
         reason: "Server failed before readiness",
+        managedPolicy: false,
         output: "Failure details",
       });
       yield* Deferred.await(checked);
