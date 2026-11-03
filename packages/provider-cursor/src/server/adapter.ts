@@ -1972,16 +1972,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
         });
 
+        // `shell-output-delta` wraps a protobuf oneof as `{ case, value }`. Only stdout and
+        // stderr carry text; `exit` carries the exit status.
         const shellOutputText = (event: Record<string, unknown>): string => {
-          const candidates = [
-            event.text,
-            event.output,
-            event.data,
-            event.stdout,
-            event.stderr,
-            event.chunk,
-          ];
-          return candidates.filter((value): value is string => typeof value === "string").join("");
+          const kind = event.case;
+          if (kind !== "stdout" && kind !== "stderr") {
+            return "";
+          }
+          const value = event.value;
+          const data =
+            typeof value === "object" && value !== null ? Reflect.get(value, "data") : undefined;
+          return typeof data === "string" ? data : "";
         };
 
         const handleInteractionUpdate = Effect.fnUntraced(function* (
