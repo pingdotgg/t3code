@@ -1086,11 +1086,15 @@ it.effect("retrying a running window keeps the prompt it was dispatched with", (
         yield* service.triggerWebhook(requestFor(task));
         yield* save("Prompt at dispatch");
         yield* sql`CREATE TRIGGER fail_completion BEFORE UPDATE ON scheduled_tasks
-          WHEN NEW.last_run_status = 'succeeded' BEGIN SELECT RAISE(FAIL, 'completion unavailable'); END`;
+          WHEN OLD.last_run_status = 'running' AND NEW.last_run_status = 'running' BEGIN SELECT RAISE(FAIL, 'completion unavailable'); END`;
         yield* TestClock.adjust("10 seconds");
         yield* drainPendingDispatch(workers);
         const launched = yield* Queue.take(launches);
         assert.equal(launched.initialMessage?.text, "Prompt at dispatch");
+        assert.equal(
+          (yield* sql`SELECT 1 FROM scheduled_task_webhook_pending WHERE state = 'running'`).length,
+          1,
+        );
         yield* save("Prompt saved after dispatch");
         yield* sql`DROP TRIGGER fail_completion`;
         yield* drainPendingDispatch(workers);

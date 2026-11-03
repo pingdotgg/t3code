@@ -35,7 +35,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as Duration from "effect/Duration";
 import * as Metric from "effect/Metric";
 import * as Layer from "effect/Layer";
@@ -853,9 +852,18 @@ export const layer = Layer.effect(
                 .getThreadRecords(run.threadId, ["messages"], { messageIds: [run.messageId] })
                 .pipe(
                   Effect.map(({ messages }) => messages[0]?.runId ?? null),
-                  Effect.orElseSucceed(() => null),
+                  Effect.retry({ times: 2 }),
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("Could not confirm scheduled run cancellation", {
+                      cause,
+                    }).pipe(Effect.as(undefined)),
+                  ),
                 );
-        if (!trackedRuns.confirmCancel(run.messageId, run.cancelledRunId, moved)) return;
+        if (
+          moved === undefined ||
+          !trackedRuns.confirmCancel(run.messageId, run.cancelledRunId, moved)
+        )
+          return;
       }
       yield* recordRunEnd(run).pipe(
         Effect.retry({ times: 2 }),
@@ -901,6 +909,26 @@ export const layer = Layer.effect(
           const run = runs[0];
           if (run === undefined) return;
           if (!trackedRuns.bindRun(messageId, runId, pending.runId)) return;
+          if (run.status === "failed") {
+            const { turnItems } = yield* threadManagement.getThreadRecords(
+              threadId,
+              ["turnItems"],
+              {
+                turnItemRunId: runId,
+                turnItemTypes: ["error"],
+              },
+            );
+            for (const item of turnItems) {
+              trackedRuns.observe({
+                id: EventId.make(`scheduled-task-catch-up:${item.id}`),
+                type: "turn-item.updated",
+                threadId,
+                runId,
+                occurredAt,
+                payload: item,
+              });
+            }
+          }
           const ended = trackedRuns.observe({
             id: EventId.make(`scheduled-task-catch-up:${runId}`),
             type: "run.updated",
@@ -1353,22 +1381,14 @@ export const layer = Layer.effect(
       Effect.forEach(trackedRuns.pending(), catchUpRun, { discard: true }),
     );
 
-    // The stream resumes after a cursor it fixes on its first pull. Starting
-    // that pull before the catch-up read means an event landing in between is
-    // delivered by the stream instead of missed, and a run seen by both is
-    // settled once because the tracker forgets it when it ends.
+    // Capture the stream cursor before catch-up so an event between them is replayed.
     const runEvents = Stream.fromPull(
       Effect.gen(function* () {
-        const pull = yield* Stream.toPull(threadManagement.streamDomainEvents);
+        const stream = yield* threadManagement.openDomainEventStream;
+        const pull = yield* Stream.toPull(stream);
         runEventGeneration++;
-        const first = yield* Effect.forkScoped(pull, { startImmediately: true });
         yield* catchUpRuns;
-        let joined = false;
-        return Effect.suspend(() => {
-          if (joined) return pull;
-          joined = true;
-          return Fiber.join(first);
-        });
+        return pull;
       }),
     );
 

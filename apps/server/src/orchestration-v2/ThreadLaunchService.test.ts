@@ -558,6 +558,7 @@ it.effect("an automation queued behind a running turn records how its own turn e
     const projection = yield* threads.getThreadProjection(launched.threadId);
     const queued = projection.runs.find((run) => run.status === "queued");
     assert.isDefined(queued);
+    const events = yield* threads.openDomainEventStream;
 
     yield* threads.dispatch({
       type: "queued-run.cancel",
@@ -565,6 +566,11 @@ it.effect("an automation queued behind a running turn records how its own turn e
       threadId: launched.threadId,
       runId: queued!.id,
     });
+    const cancelled = yield* events.pipe(
+      Stream.filter((event) => event.type === "run.updated" && event.payload.id === queued!.id),
+      Stream.runHead,
+    );
+    assert.isTrue(Option.isSome(cancelled));
     yield* tasks.subscribeList().pipe(
       Stream.filter(({ tasks: listed }) => listed[0]?.lastRunStatus === "failed"),
       Stream.take(1),

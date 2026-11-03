@@ -562,6 +562,7 @@ const makeTurnHarness = (
     readonly messageRunId?: RunId;
     /** The runs the thread's projection holds, as read back after the event stream drops. */
     readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+    readonly providerError?: string;
     /** How many times the event stream fails before it starts to deliver events. */
     readonly streamFailures?: number;
     /** Reads the thread as deleted, which the projection keeps as a flagged record. */
@@ -618,6 +619,9 @@ const makeTurnHarness = (
                 if (fields.includes("runs")) yield* options.duringRunsRead?.(events) ?? Effect.void;
                 return {
                   thread: { deletedAt: options.threadDeleted ? epoch : null },
+                  turnItems: options.providerError
+                    ? [providerErrorEvent(options.messageRunId!, options.providerError).payload]
+                    : [],
                   messages: (filter?.messageIds ?? []).map((id) => ({
                     id,
                     runId: options.messageRunId ?? null,
@@ -627,17 +631,15 @@ const makeTurnHarness = (
                   ),
                 } as never;
               }),
-            streamDomainEvents: Stream.unwrap(
-              Ref.getAndUpdate(subscriptions, (n) => n + 1).pipe(
-                Effect.flatMap((attempt) =>
-                  attempt < (options.streamFailures ?? (options.dropStreamOnCommand ? 1 : 0))
-                    ? (options.dropStreamOnCommand ? Deferred.await(dropStream) : Effect.void).pipe(
-                        Effect.as(Stream.fail(new Error("event stream dropped") as never)),
-                      )
-                    : (options.liveTail ? Queue.clear(events) : Effect.void).pipe(
-                        Effect.as(Stream.fromQueue(events)),
-                      ),
-                ),
+            openDomainEventStream: Ref.getAndUpdate(subscriptions, (n) => n + 1).pipe(
+              Effect.flatMap((attempt) =>
+                attempt < (options.streamFailures ?? (options.dropStreamOnCommand ? 1 : 0))
+                  ? (options.dropStreamOnCommand ? Deferred.await(dropStream) : Effect.void).pipe(
+                      Effect.as(Stream.fail(new Error("event stream dropped") as never)),
+                    )
+                  : (options.liveTail ? Queue.clear(events) : Effect.void).pipe(
+                      Effect.as(Stream.fromQueue(events)),
+                    ),
               ),
             ),
           }),
@@ -803,7 +805,10 @@ it.effect("a turn that ends while the dispatch is being recorded still advances 
 
 it.effect("a queued message promoted to a steer keeps its run going in the active run", () =>
   Effect.gen(function* () {
-    const harness = yield* makeTurnHarness({ messageRunId: RunId.make("run:active") });
+    const harness = yield* makeTurnHarness({
+      messageRunId: RunId.make("run:active"),
+      recordsUnreadable: true,
+    });
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       const { task } = yield* upsertBoundTask(service);
@@ -877,6 +882,7 @@ it.effect("the event stream keeps being resumed after many failures", () =>
     const runId = RunId.make("run:late");
     const harness = yield* makeTurnHarness({
       streamFailures: 8,
+      providerError: "Provider unavailable during reconnect.",
       messageRunId: runId,
       runs: [runOf(runId, MessageId.make("unused"), "failed")],
     });
@@ -888,6 +894,10 @@ it.effect("the event stream keeps being resumed after many failures", () =>
       yield* TestClock.adjust("10 minutes");
       yield* untilStatus(service, task.id, "failed");
       assert.equal(yield* Ref.get(harness.subscriptions), 9);
+      assert.equal(
+        (yield* service.list()).tasks[0]?.lastRunError,
+        "Provider unavailable during reconnect.",
+      );
     }).pipe(Effect.provide(harness.layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
