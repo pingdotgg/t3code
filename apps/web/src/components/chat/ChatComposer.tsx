@@ -2520,6 +2520,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const insertComposerFolders = async (folders: File[], target: FolderDropTarget) => {
     const bridge = window.desktopBridge;
+    const draftKey = attachmentTargetKeyRef.current;
     for (const folder of folders) {
       const droppedPath = resolveDroppedFolderPath(folder, bridge?.getPathForFile);
       const path =
@@ -2528,6 +2529,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           : ((await bridge
               ?.toLocalBackendPath(target.wslBackendId, droppedPath)
               .catch(() => null)) ?? null);
+      // ChatView is reused across threads, so a slow conversion must not land in the next draft.
+      if (attachmentTargetKeyRef.current !== draftKey) return;
       if (path === null) {
         toastManager.add({
           type: "error",

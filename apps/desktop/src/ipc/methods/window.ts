@@ -263,6 +263,8 @@ export const toLocalBackendPath = DesktopIpc.makeIpcMethod({
     if (Option.isNone(config) || Option.isSome(config.value.preflightFailure)) return null;
     const { runningDistro } = config.value;
     if (runningDistro === undefined) return path;
+    const uncDistro = extractDistroFromUncPath(path);
+    if (uncDistro !== null && uncDistro.toLowerCase() !== runningDistro.toLowerCase()) return null;
     return Option.getOrNull(yield* windowsPathToWsl(runningDistro, path));
   }),
 });
