@@ -71,7 +71,7 @@ export const assertFullAccessNamingLink = (caller: Caller, message: string, what
       ? message
       : outsideLinkMessage(
           origin,
-          `it has that link's ${origin.access} access, which is below the full access needed to ${what}.`,
+          `it has that link's ${origin.access === undefined ? "" : `${origin.access} `}access, which is below the full access needed to ${what}.`,
         ),
   );
 };
