@@ -148,7 +148,11 @@ it.live("discovers models through a home-relative OpenCode wrapper", () =>
           ProviderEventLoggers.NoOpProviderEventLoggers,
         ),
         OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
-      ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
+      ).pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer),
+        ),
+      ),
     ),
   ),
 );
