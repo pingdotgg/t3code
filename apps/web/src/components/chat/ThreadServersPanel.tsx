@@ -94,7 +94,11 @@ export function ThreadServersPanel(props: {
   };
 
   return (
-    <ThreadDetailsSection headingId="thread-details-servers-heading" title="Servers">
+    <ThreadDetailsSection
+      headingId="thread-details-servers-heading"
+      title="Servers"
+      data-thread-servers-panel
+    >
       <ul className="m-0 list-none p-0">
         {servers.map((server) => {
           const key = serverKey(server);
