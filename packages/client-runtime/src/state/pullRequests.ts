@@ -308,6 +308,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       if (
         detail.state !== "open" ||
         detail.isDraft ||
+        detail.isInMergeQueue === true ||
         !detail.capabilities.actions.includes("merge") ||
         !detail.viewerPermissions.actions.includes("merge")
       ) {

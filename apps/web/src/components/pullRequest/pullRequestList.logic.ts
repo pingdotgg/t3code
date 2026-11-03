@@ -915,7 +915,9 @@ export function pullRequestHostActions(
 }
 
 export function pullRequestQuickActions(
-  entry: Pick<EnvironmentPullRequestEntry, "state" | "isDraft">,
+  entry: Pick<EnvironmentPullRequestEntry, "state" | "isDraft"> & {
+    readonly isInMergeQueue?: boolean | undefined;
+  },
   hostActions: ReadonlySet<PullRequestAction>,
 ): ReadonlyArray<PullRequestQuickAction> {
   const forState: ReadonlyArray<PullRequestQuickAction> =
@@ -925,7 +927,9 @@ export function pullRequestQuickActions(
         ? ["reopen"]
         : entry.isDraft
           ? ["close", "ready"]
-          : ["close", "merge"];
+          : entry.isInMergeQueue === true
+            ? ["close"]
+            : ["close", "merge"];
   return forState.filter((action) => hostActions.has(action));
 }
 

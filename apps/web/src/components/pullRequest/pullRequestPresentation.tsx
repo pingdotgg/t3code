@@ -144,13 +144,15 @@ function resolvePullRequestConflict(input: {
 export function PullRequestStateGlyph({
   state,
   isDraft,
+  isInMergeQueue,
   className,
 }: {
   state: PullRequestState;
   isDraft: boolean;
+  isInMergeQueue?: boolean | undefined;
   className?: string;
 }) {
-  const presentation = resolvePullRequestState({ state, isDraft });
+  const presentation = resolvePullRequestState({ state, isDraft, isInMergeQueue });
   return (
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
