@@ -1,17 +1,24 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - a skip condition must be known before the test runs.
+// @effect-diagnostics nodeBuiltinImport:off - a skip condition must be known before the test runs, and the spawner's checks are node:fs/promises calls.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFSP from "node:fs/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as NonBlockingSpawner from "./NonBlockingSpawner.ts";
+
+vi.mock("node:fs/promises", { spy: true });
 
 const wrapped = NonBlockingSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -184,6 +191,60 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("NonBlockingSpa
         }
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  // A hung check holds a libuv threadpool thread, and those also compress WebSocket frames.
+  it.live("checks at most two paths at once, however many directories hang", () =>
+    Effect.gen(function* () {
+      const allArrived = yield* Deferred.make<void>();
+      let arrivals = 0;
+      // Each spawn resolves its cwd, then starts its check within microtasks.
+      const arrivalPath = Layer.effect(
+        Path.Path,
+        Effect.map(Path.Path, (path) => ({
+          ...path,
+          resolve: (...segments: ReadonlyArray<string>) => {
+            if (++arrivals === 3) setImmediate(() => Deferred.doneUnsafe(allArrived, Effect.void));
+            return path.resolve(...segments);
+          },
+        })),
+      );
+      const hung: Array<() => void> = [];
+      let releasing = false;
+      let running = 0;
+      let mostRunning = 0;
+      using _access = vi.spyOn(NodeFSP, "access").mockImplementation(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            mostRunning = Math.max(mostRunning, ++running);
+            const fail = () => {
+              running--;
+              reject(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
+            };
+            if (releasing) fail();
+            else hung.push(fail);
+          }),
+      );
+      const spawns = yield* Effect.forEach(
+        ["a", "b", "c"],
+        (name) => spawnError(ChildProcess.make("true", [], { cwd: `/t3code-hung-30183/${name}` })),
+        { concurrency: "unbounded" },
+      ).pipe(
+        Effect.provide(
+          NonBlockingSpawner.layer.pipe(
+            Layer.provide(arrivalPath),
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(allArrived);
+      expect(mostRunning).toBe(2);
+      releasing = true;
+      for (const fail of hung.splice(0)) fail();
+      yield* Fiber.join(spawns);
+      expect(mostRunning).toBe(2);
+    }),
   );
 
   it.live("only ever hands the native spawner a trampoline, without a cwd", () =>

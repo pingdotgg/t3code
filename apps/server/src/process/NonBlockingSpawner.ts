@@ -114,15 +114,29 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
 
-  // At most one check runs per directory and checks of one path share it, so a
-  // hung directory holds one of libuv's four threadpool threads, which also
-  // compress every WebSocket frame.
+  // At most one check runs per directory, checks of one path share it, and at
+  // most two run at once, so hung mounts never hold more than two of libuv's
+  // four threadpool threads, which also compress every WebSocket frame.
   const inFlight = new Map<string, Promise<string>>();
   const queues = new Map<string, Promise<unknown>>();
+  const waiting: Array<() => void> = [];
+  let probing = 0;
+  const limitedProbe = async (target: string) => {
+    if (probing < 2) probing++;
+    else await new Promise<void>((resume) => waiting.push(resume));
+    try {
+      return await probe(target);
+    } finally {
+      // A waiter inherits the slot.
+      const next = waiting.shift();
+      if (next === undefined) probing--;
+      else next();
+    }
+  };
   const check = (directory: string, target: string) => {
     const pending = inFlight.get(target);
     if (pending !== undefined) return pending;
-    const result = (queues.get(directory) ?? Promise.resolve()).then(() => probe(target));
+    const result = (queues.get(directory) ?? Promise.resolve()).then(() => limitedProbe(target));
     queues.set(directory, result);
     inFlight.set(target, result);
     void result.then(() => {
