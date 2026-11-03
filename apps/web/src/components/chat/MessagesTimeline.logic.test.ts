@@ -2695,7 +2695,12 @@ describe("v2 run and attempt history", () => {
   it("hides tool calls or everything but the final answer", () => {
     const runId = RunId.make("turn-1");
     const at = (second: number) => `2026-01-01T00:00:${String(second).padStart(2, "0")}Z`;
-    const message = (id: string, role: "user" | "assistant", second: number): TimelineEntry => ({
+    const message = (
+      id: string,
+      role: "user" | "assistant",
+      second: number,
+      inputIntent?: "steer",
+    ): TimelineEntry => ({
       id,
       kind: "message",
       createdAt: at(second),
@@ -2707,6 +2712,7 @@ describe("v2 run and attempt history", () => {
         createdAt: at(second),
         updatedAt: at(second),
         streaming: false,
+        ...(inputIntent ? { inputIntent } : {}),
       },
     });
     const command = (
@@ -2761,6 +2767,12 @@ describe("v2 run and attempt history", () => {
     ]);
     expect(rows([user, failed, final], "hideAll")).toEqual(["user", "final"]);
     expect(rows(turn, "zen")).toEqual(["user", "final"]);
+    const [steer, answer] = [
+      message("steer", "user", 4, "steer"),
+      message("answer", "assistant", 7),
+    ];
+    expect(rows([user, steer, answer, final], "zen")).toEqual(["user", "steer", "answer", "final"]);
+    expect(rows([user, steer, step, passed, final], "zen")).toEqual(["user", "steer", "final"]);
     expect(rows([user, step, passed], "zen", running)).toEqual([
       "user",
       "working-indicator-row",

@@ -24,6 +24,7 @@ On web and desktop, **Settings → Labs → Tool calls in chat** hides commands,
 and MCP tool calls from the conversation. **Hide successful** shows a call while it runs and keeps
 it only if it fails. **Hide all** hides every call and shows **Thinking** while the agent works.
 **Zen** also hides the agent's in-between messages, so each turn shows your message
-and the agent's last reply, which appears when the turn ends. Find shows the in-between messages
+and the agent's last reply, which appears when the turn ends. If you steer while the agent is
+answering, the answer it finished before reading your steer stays too. Find shows the in-between messages
 while it is open. Approvals, questions, and errors always show. The setting applies to this browser
 or app only.
