@@ -219,10 +219,16 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         for (const payload of payloads) {
           connection.protocolVersion = protocolVersionOf(payload) ?? connection.protocolVersion;
         }
-        // An initialize that was replaced while in flight must not leave its new session behind.
-        if (connection.retired) yield* close(connection).pipe(Effect.ignore);
         return payloads;
-      }).pipe(Effect.mapError(bridgeError)),
+      }).pipe(
+        Effect.mapError(bridgeError),
+        // An initialize replaced while in flight must not leave its session behind, even on failure.
+        Effect.ensuring(
+          Effect.suspend(() =>
+            connection.retired ? close(connection).pipe(Effect.ignore) : Effect.void,
+          ),
+        ),
+      ),
     );
 
   const close = Effect.fn("mcpOverAcpBridge.close")(function* (connection: Connection) {
