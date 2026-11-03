@@ -87,6 +87,26 @@ export function wheelDeltaPx(delta: number, event: WheelEvent): number {
   return delta;
 }
 
+function scrollsSideways(element: Element): boolean {
+  if (element.scrollWidth <= element.clientWidth) return false;
+  const { overflowX } = getComputedStyle(element);
+  return overflowX === "auto" || overflowX === "scroll";
+}
+
+export function sidewaysWheelScrollsStrip(
+  path: readonly EventTarget[],
+  strip: Element,
+  deltaX: number,
+  deltaY: number,
+): boolean {
+  if (Math.abs(deltaX) <= Math.abs(deltaY)) return false;
+  for (const node of path) {
+    if (node === strip) return scrollsSideways(strip);
+    if (node instanceof Element && scrollsSideways(node)) return false;
+  }
+  return false;
+}
+
 /**
  * The browser sends a trackpad swipe as wheel events with no begin or end,
  * and keeps sending the OS's momentum after the fingers lift. A stream ends
