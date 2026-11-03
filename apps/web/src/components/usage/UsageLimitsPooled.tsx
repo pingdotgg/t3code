@@ -48,6 +48,9 @@ import {
   useResetCredit,
 } from "./UsageLimits";
 
+import { useT } from "../../hooks/useI18n";
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
+
 function accountInitials(email: string): string {
   const [local = "", domain = ""] = email.split("@");
   return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || "?";
@@ -124,10 +127,11 @@ function AccountName({
   );
 }
 
-function Row({ label, children }: { readonly label: string; readonly children: ReactNode }) {
+function Row({ label, children }: { readonly label: MessageKey; readonly children: ReactNode }) {
+  const t = useT();
   return (
     <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-3">
-      <span className="text-muted-foreground">{label}</span>
+      <span className="text-muted-foreground">{t(label)}</span>
       <span className="min-w-0 text-foreground tabular-nums">{children}</span>
     </div>
   );
@@ -148,6 +152,7 @@ function SegmentPopover({
   readonly redeem: ReturnType<typeof useResetCredit> | null;
   readonly onRedeem: () => void;
 }) {
+  const t = useT();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
@@ -178,22 +183,28 @@ function SegmentPopover({
         ) : null}
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
-        {account.plan ? <Row label="Plan">{account.plan}</Row> : null}
+        {account.plan ? <Row label="misc.usage.plan">{account.plan}</Row> : null}
         {where ? (
-          <Row label={account.environments.length > 0 ? "Signed in" : "Via"}>{where}</Row>
+          <Row label={account.environments.length > 0 ? "misc.usage.signedIn" : "misc.usage.via"}>
+            {where}
+          </Row>
         ) : null}
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
-        <Row label="Left">{remaining}%</Row>
+        <Row label="misc.usage.left">{remaining}%</Row>
         {window.resetsAt ? (
-          <Row label="Resets">
+          <Row label="misc.usage.resets">
             {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
             {resetsIn ? ` · ${resetsIn.replace("resets in ", "in ")}` : ""}
           </Row>
         ) : null}
-        {timeLeft !== null ? <Row label="Even pace">{timeLeft}% left by now</Row> : null}
+        {timeLeft !== null ? (
+          <Row label="misc.usage.evenPace">{t("misc.usage.leftByNow", { percent: timeLeft })}</Row>
+        ) : null}
         {reset && reset.restoresPercent > 0 ? (
-          <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
+          <Row label="misc.usage.restores">
+            {t("misc.usage.restoresPool", { percent: reset.restoresPercent })}
+          </Row>
         ) : null}
       </div>
       {credits && redeem ? (

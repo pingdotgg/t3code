@@ -37,6 +37,8 @@ export function ComposerCodeBlockLanguagePicker(props: {
 }) {
   const t = useT();
   const [query, setQuery] = useState("");
+  const labelOf = (entry: CodeBlockLanguage) =>
+    entry.id === "" ? t("chat.codeLanguage.plainText") : entry.label;
   const current = codeLanguageEntry(props.language)?.id ?? props.language;
   const items: CodeBlockLanguage[] = CODE_BLOCK_LANGUAGES.some((entry) => entry.id === current)
     ? [...CODE_BLOCK_LANGUAGES]
@@ -44,7 +46,7 @@ export function ComposerCodeBlockLanguagePicker(props: {
   const needle = query.trim().toLowerCase();
   const filteredItems = needle
     ? items.filter(
-        (entry) => entry.label.toLowerCase().includes(needle) || entry.id.includes(needle),
+        (entry) => labelOf(entry).toLowerCase().includes(needle) || entry.id.includes(needle),
       )
     : items;
   const selected = items.find((entry) => entry.id === current) ?? null;
@@ -55,7 +57,7 @@ export function ComposerCodeBlockLanguagePicker(props: {
         items={items}
         filteredItems={filteredItems}
         autoHighlight
-        itemToStringLabel={(entry) => entry.label}
+        itemToStringLabel={(entry) => labelOf(entry)}
         isItemEqualToValue={(a, b) => a.id === b.id}
         value={selected}
         onOpenChange={(open) => {
@@ -94,7 +96,7 @@ export function ComposerCodeBlockLanguagePicker(props: {
             {(entry: CodeBlockLanguage) => (
               <ComboboxItem key={entry.id || "plain"} value={entry}>
                 <LanguageIcon language={entry.id} theme={props.theme} />
-                <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+                <span className="min-w-0 flex-1 truncate">{labelOf(entry)}</span>
                 {entry.id === current ? <CheckIcon className="ml-auto" /> : null}
               </ComboboxItem>
             )}
