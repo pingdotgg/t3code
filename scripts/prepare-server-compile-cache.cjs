@@ -6,8 +6,21 @@ const os = require("node:os");
 
 // afterPack runs before signing and installer creation, against the final ASAR layout.
 module.exports = async ({ appOutDir, electronPlatformName, arch, packager }) => {
+  // Linux packaging and relocated AppImage cache reuse still need native validation.
+  if (electronPlatformName !== "darwin" && electronPlatformName !== "win32") {
+    console.log(`[server-compile-cache] Skipping unsupported target ${electronPlatformName}`);
+    return;
+  }
   const targetArch = ["ia32", "x64", "armv7l", "arm64", "universal"][arch];
-  if (electronPlatformName !== process.platform || targetArch !== process.arch) {
+  const runsWithRosetta =
+    electronPlatformName === "darwin" &&
+    process.platform === "darwin" &&
+    process.arch === "arm64" &&
+    targetArch === "x64";
+  if (
+    electronPlatformName !== process.platform ||
+    (targetArch !== process.arch && !runsWithRosetta)
+  ) {
     console.log(
       `[server-compile-cache] Skipping unexecutable target ${electronPlatformName}/${targetArch}`,
     );
@@ -38,14 +51,14 @@ module.exports = async ({ appOutDir, electronPlatformName, arch, packager }) => 
   env.T3CODE_HOME = state;
   let result;
   try {
-    result = spawnSync(
-      executable,
-      [
-        "-e",
-        `require(${JSON.stringify(helper)}).generatePreparedServerCache(${JSON.stringify(resources)}).then(()=>process.exit(0),e=>{console.error(e);process.exit(1)})`,
-      ],
-      { env, encoding: "utf8", timeout: 120000 },
+    // Run a script file, not -e: -e defines a global __filename of "[eval]", which
+    // @effect/platform-node passes to createRequire and fails on.
+    const runner = path.join(state, "prepare-server-compile-cache-runner.cjs");
+    fs.writeFileSync(
+      runner,
+      `require(${JSON.stringify(helper)}).generatePreparedServerCache(${JSON.stringify(resources)}).then(()=>process.exit(0),e=>{console.error(e);process.exit(1)})`,
     );
+    result = spawnSync(executable, [runner], { env, encoding: "utf8", timeout: 120000 });
   } finally {
     fs.rmSync(state, { recursive: true, force: true });
   }
