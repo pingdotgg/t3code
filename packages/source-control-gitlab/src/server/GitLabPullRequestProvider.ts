@@ -345,9 +345,10 @@ export const make = Effect.gen(function* () {
             reactions: [] as ReadonlyArray<PullRequestReaction>,
             reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
           }),
-          // Usually cached by the detail read beside this one.
           recoverRead(
-            mergeRequestDetail(input).pipe(Effect.map((mergeRequest) => mergeRequest.diffRefs)),
+            cli
+              .getMergeRequestDetail({ ...input, downstreamChecks: false })
+              .pipe(Effect.map((mergeRequest) => mergeRequest.diffRefs)),
             undefined,
           ),
         ],

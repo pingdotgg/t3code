@@ -188,6 +188,9 @@ describe("decodeMergeRequestDetailJson", () => {
       headSha: "h",
     });
     expect(diffRefs({ diff_refs: null })).toBeUndefined();
+    expect(
+      diffRefs({ diff_refs: { base_sha: null, start_sha: "s", head_sha: "h" } }),
+    ).toBeUndefined();
   });
 
   it("reads either auto-merge field, and says nothing where GitLab named neither", () => {

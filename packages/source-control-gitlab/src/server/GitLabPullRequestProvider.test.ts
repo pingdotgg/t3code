@@ -562,6 +562,7 @@ describe("optional activity reads", () => {
 
   it.effect("marks a thread outdated once the merge request's diff moves past it", () =>
     Effect.gen(function* () {
+      let detailReads = 0;
       const thread = (id: string) => ({
         id,
         path: "src/a.ts",
@@ -575,6 +576,11 @@ describe("optional activity reads", () => {
         Effect.provide(
           Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
             ...reads,
+            getMergeRequestDetail: () =>
+              Effect.map(reads.getMergeRequestDetail(), (detail) => ({
+                ...detail,
+                diffRefs: ++detailReads === 1 ? { ...currentRefs, headSha: "head1" } : currentRefs,
+              })),
             listDiscussions: () =>
               Effect.succeed({
                 threads: [thread("current"), thread("moved"), thread("unplaced")],
@@ -588,6 +594,9 @@ describe("optional activity reads", () => {
         ),
       );
 
+      const checks = provider.getChangeRequestChecks;
+      if (!checks) throw new Error("missing getChangeRequestChecks");
+      yield* checks(reference);
       const { reviewThreads } = yield* provider.getChangeRequestActivity(reference);
       expect(reviewThreads.map(({ id, isOutdated }) => [id, isOutdated])).toEqual([
         ["current", false],
