@@ -97,6 +97,57 @@ it.effect("drops planner statistics a database already has", () => {
   );
 });
 
+const insertSearchableMessage = (sql: SqlClient.SqlClient) => sql`
+  INSERT INTO orchestration_v2_projection_messages (
+    message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json
+  ) VALUES (
+    'message:vacuum', 'thread:vacuum', NULL, NULL, 'user', 0,
+    '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z',
+    '{"text":"vacuum search text","createdBy":"user"}'
+  )
+`;
+const searchHits = (sql: SqlClient.SqlClient) =>
+  sql<{ readonly rowid: number }>`
+    SELECT rowid FROM orchestration_v2_message_search
+    WHERE orchestration_v2_message_search MATCH '"vacuum search"'
+  `;
+const messageRowids = (sql: SqlClient.SqlClient) =>
+  sql<{ readonly rowid: number }>`SELECT rowid FROM orchestration_v2_projection_messages`;
+const pendingRebuild = (sql: SqlClient.SqlClient) => sql`
+  SELECT projection_name FROM orchestration_v2_projection_metadata
+  WHERE projection_name = 'message-search-rebuild-pending'
+`;
+
+it.effect("rebuilds message search on open when a conversion was interrupted", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-search-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+  const persistence = () =>
+    SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer));
+
+  return Effect.gen(function* () {
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* insertSearchableMessage(sql);
+      // VACUUM finished but the process died before the rebuild.
+      yield* sql`INSERT INTO orchestration_v2_message_search (orchestration_v2_message_search) VALUES ('delete-all')`;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_metadata (
+          projection_name, schema_version, last_sequence, updated_at
+        ) VALUES ('message-search-rebuild-pending', 0, 0, '1970-01-01T00:00:00.000Z')
+      `;
+      assert.deepEqual(yield* searchHits(sql), []);
+    }).pipe(Effect.provide(persistence()));
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      assert.deepEqual(yield* searchHits(sql), yield* messageRowids(sql));
+      assert.deepEqual(yield* pendingRebuild(sql), []);
+    }).pipe(Effect.provide(persistence()));
+  }).pipe(
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
+
 it.effect("turns on incremental auto_vacuum for a small existing database when it opens", () => {
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-vacuum-"));
   const dbPath = NodePath.join(tempDir, "state.sqlite");
@@ -111,6 +162,9 @@ it.effect("turns on incremental auto_vacuum for a small existing database when i
       yield* sql`VACUUM`;
       yield* sql`CREATE TABLE retained (value TEXT)`;
       yield* sql`INSERT INTO retained VALUES ('keep')`;
+      yield* insertSearchableMessage(sql);
+      // A stale index stands in for rowids VACUUM renumbered; only a rebuild refills it.
+      yield* sql`INSERT INTO orchestration_v2_message_search (orchestration_v2_message_search) VALUES ('delete-all')`;
       assert.deepEqual(yield* sql`PRAGMA auto_vacuum`, [{ auto_vacuum: 0 }]);
     }).pipe(Effect.provide(persistence()));
 
@@ -118,6 +172,8 @@ it.effect("turns on incremental auto_vacuum for a small existing database when i
       const sql = yield* SqlClient.SqlClient;
       assert.deepEqual(yield* sql`PRAGMA auto_vacuum`, [{ auto_vacuum: 2 }]);
       assert.deepEqual(yield* sql`SELECT value FROM retained`, [{ value: "keep" }]);
+      assert.deepEqual(yield* searchHits(sql), yield* messageRowids(sql));
+      assert.deepEqual(yield* pendingRebuild(sql), []);
     }).pipe(Effect.provide(persistence()));
   }).pipe(
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),

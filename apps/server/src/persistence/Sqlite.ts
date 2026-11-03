@@ -5,6 +5,7 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
+import { rebuildMessageSearch } from "../orchestration-v2/messageSearchIndex.ts";
 import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
@@ -12,6 +13,23 @@ import * as ServerConfig from "../config.ts";
 const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 // VACUUM rewrites every live page while holding the write lock; ~2 s at this size on an SSD.
 const ONLINE_VACUUM_MAX_LIVE_BYTES = 128 * 1024 * 1024;
+
+// VACUUM may renumber message rowids, which the contentless search index is keyed by.
+const MESSAGE_SEARCH_REBUILD_PENDING = "message-search-rebuild-pending";
+
+const rebuildMessageSearchIfPending = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const pending = yield* sql`
+    SELECT 1 FROM orchestration_v2_projection_metadata
+    WHERE projection_name = ${MESSAGE_SEARCH_REBUILD_PENDING}
+  `;
+  if (pending.length === 0) return;
+  yield* rebuildMessageSearch(sql);
+  yield* sql`
+    DELETE FROM orchestration_v2_projection_metadata
+    WHERE projection_name = ${MESSAGE_SEARCH_REBUILD_PENDING}
+  `;
+});
 
 // Larger databases keep auto_vacuum NONE until doctor's offline VACUUM: a minutes-long rewrite
 // would block every writer. Another process holding the file makes this fail; try next open.
@@ -25,6 +43,13 @@ const enableIncrementalVacuumIfCheap = Effect.gen(function* () {
   const liveBytes =
     ((pages[0]?.page_count ?? 0) - (free[0]?.freelist_count ?? 0)) * (size[0]?.page_size ?? 0);
   if (liveBytes > ONLINE_VACUUM_MAX_LIVE_BYTES) return;
+  // Recorded first, so a crash after VACUUM still rebuilds the index on the next open.
+  yield* sql`
+    INSERT INTO orchestration_v2_projection_metadata (
+      projection_name, schema_version, last_sequence, updated_at
+    ) VALUES (${MESSAGE_SEARCH_REBUILD_PENDING}, 0, 0, '1970-01-01T00:00:00.000Z')
+    ON CONFLICT(projection_name) DO NOTHING
+  `;
   yield* sql`PRAGMA auto_vacuum = INCREMENTAL`;
   yield* sql`VACUUM`;
 }).pipe(
@@ -55,6 +80,7 @@ const layerSetup = Layer.effectDiscard(
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
     yield* runMigrations();
     yield* enableIncrementalVacuumIfCheap;
+    yield* rebuildMessageSearchIfPending;
     // Collecting stats scans every page, and stale small-table stats cause scans after growth; use indexes by default.
     // Connections cache stats; reload after deleting them.
     const statTables = yield* sql`SELECT 1 FROM sqlite_schema WHERE name = 'sqlite_stat1'`;
