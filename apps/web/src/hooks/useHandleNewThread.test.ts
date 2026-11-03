@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import type { RuntimeMode } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, RuntimeMode } from "@t3tools/contracts";
 
 const testState = vi.hoisted(() => {
   let completeProjectFileRead: (value: null) => void = () => undefined;
@@ -183,7 +183,9 @@ vi.mock("react", () => ({
   useCallback: <T>(callback: T) => callback,
   useMemo: <T>(factory: () => T) => factory(),
 }));
-vi.mock("../components/Sidebar.logic", () => ({ orderItemsByPreferredIds: () => [] }));
+vi.mock("../components/Sidebar.logic", () => ({
+  orderItemsByPreferredIds: <T>(input: { items: readonly T[] }) => [...input.items],
+}));
 vi.mock("../composerDraftStore", () => {
   const useComposerDraftStore = Object.assign(() => null, {
     getState: () => testState.draftStore,
@@ -247,7 +249,7 @@ vi.mock("../uiStateStore", () => ({
 }));
 vi.mock("./useSettings", () => ({ getClientSettings: () => ({}) }));
 
-import { useNewThreadHandler } from "./useHandleNewThread";
+import { resolveDefaultProjectRef, useNewThreadHandler } from "./useHandleNewThread";
 
 describe.each([
   ["new", null],
@@ -363,5 +365,34 @@ describe("useNewThreadHandler", () => {
 
     expect(opened).toEqual({ draftId: "draft-delayed", threadId: "thread-delayed" });
     expect(testState.router.navigate).toHaveBeenCalledOnce();
+  });
+});
+
+describe("resolveDefaultProjectRef", () => {
+  it("keeps a scratch destination for captures without preferring it over a real project", () => {
+    const project = {
+      id: "project" as ProjectId,
+      environmentId: "environment-primary" as EnvironmentId,
+      title: "No project",
+      workspaceRoot: "/scratch",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const scratch = { ...project, id: "scratch" as ProjectId, isScratch: true as const };
+    const scratchRef = { environmentId: scratch.environmentId, projectId: scratch.id };
+    expect(resolveDefaultProjectRef([scratch], [])).toEqual(scratchRef);
+    expect(resolveDefaultProjectRef([scratch, project], [])).toEqual({
+      environmentId: project.environmentId,
+      projectId: project.id,
+    });
+    expect(
+      resolveDefaultProjectRef([scratch, { ...project, archivedAt: scratch.createdAt }], []),
+    ).toEqual(scratchRef);
+    expect(
+      resolveDefaultProjectRef([{ ...scratch, archivedAt: scratch.createdAt }], []),
+    ).toBeNull();
+    expect(resolveDefaultProjectRef([], [])).toBeNull();
   });
 });
