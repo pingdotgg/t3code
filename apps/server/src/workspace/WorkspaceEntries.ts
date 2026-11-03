@@ -439,7 +439,7 @@ export const make = Effect.gen(function* () {
                   relativePath: directoryPath,
                 })
                 .pipe(Effect.mapError(toError));
-        const { entries, throughSymlink, nestedGitRoots } = yield* Effect.tryPromise({
+        const { entries, throughSymlink, skippedPaths, nestedGitRoots } = yield* Effect.tryPromise({
           try: async () => {
             const root = await NodeFSP.realpath(normalizedCwd);
             const directory = await NodeFSP.realpath(target.absolutePath);
@@ -534,6 +534,18 @@ export const make = Effect.gen(function* () {
               }),
               // Git refuses to classify paths beyond a symbolic link.
               throughSymlink: relative !== target.relativePath.split("/").join(path.sep),
+              skippedPaths:
+                input.reportSkipped === true
+                  ? children.flatMap((child, index) =>
+                      kinds[index] === undefined
+                        ? [
+                            target.relativePath
+                              ? `${target.relativePath}/${child.name}`
+                              : child.name,
+                          ]
+                        : [],
+                    )
+                  : [],
             };
           },
           catch: toError,
@@ -573,6 +585,7 @@ export const make = Effect.gen(function* () {
           return {
             entries: entries.map((entry) => ({ ...entry, ignored: true })),
             truncated: false,
+            ...(input.reportSkipped === true ? { skippedPaths } : {}),
           };
         }
         const ignored = new Set<string>();
@@ -588,6 +601,7 @@ export const make = Effect.gen(function* () {
             ignored.has(entry.path) ? { ...entry, ignored: true } : entry,
           ),
           truncated: false,
+          ...(input.reportSkipped === true ? { skippedPaths } : {}),
         };
       }
       const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths");

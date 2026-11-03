@@ -35,13 +35,16 @@ export async function readProjectFilesToCopy(
       appAtomRegistry,
       projectEnvironment.listEntries({
         environmentId: source.environmentId,
-        input: { cwd: source.cwd, directoryPath: relativePath.slice(0, -1) },
+        input: { cwd: source.cwd, directoryPath: relativePath.slice(0, -1), reportSkipped: true },
       }),
       { label: "List folder to copy", reportFailure: false, refresh: true },
     );
     if (result._tag === "Failure") throw new Error(failureMessage(result));
     if (result.value.truncated)
       throw new Error(m(msg("Could not list every file in {path}.", { path: relativePath })));
+    const skippedPath = result.value.skippedPaths?.[0];
+    if (skippedPath !== undefined)
+      throw new Error(m(msg("Cannot copy unsupported entry {path}.", { path: skippedPath })));
     for (const entry of result.value.entries) {
       pending.add(entry.kind === "directory" ? `${entry.path}/` : entry.path);
       if (pending.size > COPY_MAX_ENTRIES) {

@@ -181,7 +181,13 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
       );
       if (written._tag === "Failure")
         failed.push(`${read.relativePath}: ${failureMessage(written)}`);
-      else if (read.mode !== undefined && written.value.mode !== read.mode)
+      // Stricter destination permissions are safe if owner executability survives.
+      else if (
+        read.mode !== undefined &&
+        (written.value.mode === undefined ||
+          (written.value.mode & ~read.mode) !== 0 ||
+          (read.mode & ~written.value.mode & 0o100) !== 0)
+      )
         failed.push(
           `${read.relativePath}: ${m(msg("The destination could not preserve file permissions."))}`,
         );
