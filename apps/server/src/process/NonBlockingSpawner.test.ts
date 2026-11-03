@@ -81,7 +81,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("NonBlockingSpa
         const fileSystem = yield* FileSystem.FileSystem;
         const root = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
         const scripts = {
-          stale: "#!/t3code-missing-interpreter\n",
+          stale: "#!/bin/sh\necho stale\n",
           fresh: "#!/bin/sh\necho fresh\n",
           "target/bin": "#!/bin/sh\necho target\n",
         };
@@ -90,6 +90,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("NonBlockingSpa
           yield* fileSystem.writeFileString(`${root}/${directory}/tool`, body);
           yield* fileSystem.chmod(`${root}/${directory}/tool`, 0o755);
         }
+        yield* fileSystem.chmod(`${root}/stale/tool`, 0o644);
         yield* fileSystem.makeDirectory(`${root}/target/subdir`);
         yield* fileSystem.symlink(`${root}/target/subdir`, `${root}/link`);
         for (const PATH of [`${root}/stale:${root}/fresh`, `${root}/link/../bin`]) {
