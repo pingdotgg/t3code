@@ -136,9 +136,9 @@ export const layer = HttpApiBuilder.group(
       .handle("checkReachability", () =>
         requireEnvironmentScope(AuthRelayReadScope).pipe(Effect.andThen(reachability.check)),
       )
-      .handle("unlink", () =>
+      .handle("unlink", ({ query }) =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(
-          Effect.andThen(toHttpError(cloudLink.unlink())),
+          Effect.andThen(toHttpError(cloudLink.unlink(query.expectedCloudUserId))),
         ),
       )
       .handle("preferences", ({ payload }) =>

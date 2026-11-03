@@ -456,7 +456,12 @@ export class CloudLink extends Context.Service<
       EnvironmentCloudLinkStateResult,
       CloudLinkInternalError
     >;
-    readonly unlink: () => Effect.Effect<EnvironmentCloudRelayConfigResult, CloudLinkInternalError>;
+    readonly unlink: (
+      expectedCloudUserId?: string,
+    ) => Effect.Effect<
+      EnvironmentCloudRelayConfigResult,
+      CloudLinkInternalError | CloudLinkAccountMismatchError
+    >;
     readonly updatePreferences: (
       input: EnvironmentCloudPreferencesRequest,
     ) => Effect.Effect<
@@ -1314,9 +1319,18 @@ const make = Effect.gen(function* () {
   );
 
   const unlink = Effect.fn("environment.cloud.unlink")(
-    function* () {
+    function* (expectedCloudUserId?: string) {
       return yield* endpointRuntime.withLinkStateLock(
         Effect.gen(function* () {
+          if (expectedCloudUserId !== undefined) {
+            const linkedUser = yield* secrets.get(CLOUD_LINKED_USER_ID);
+            if (
+              Option.isNone(linkedUser) ||
+              bytesToString(linkedUser.value) !== expectedCloudUserId
+            ) {
+              return yield* new CloudLinkAccountMismatchError({});
+            }
+          }
           const endpointRuntimeStatus = yield* endpointRuntime.applyConfig(null);
           yield* Effect.all(
             [
