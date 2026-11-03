@@ -56,6 +56,7 @@ import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { showThreadUndoNotice } from "./showThreadUndoNotice";
+import { createChatPaneCommands } from "./useChatPaneCommands";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
@@ -411,6 +412,7 @@ export function useThreadActions() {
       markThreadVisited(scopedThreadKey(threadRef), wokeAt);
     }
     refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+    const focusMovedToOtherPane = createChatPaneCommands(router).closePaneShowing(threadRef);
     opts.onArchived?.();
     showThreadUndoNotice({
       action: "Archived",
@@ -419,7 +421,11 @@ export function useThreadActions() {
       failureTitle: "Failed to undo archive",
     });
 
-    if (shouldNavigateToDraft && router.state.location.href === requestingRouteHref) {
+    if (
+      shouldNavigateToDraft &&
+      !focusMovedToOtherPane &&
+      router.state.location.href === requestingRouteHref
+    ) {
       const navigationResult = await settlePromise(() =>
         handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
@@ -573,8 +579,9 @@ export function useThreadActions() {
     );
     clearTerminalUiState(threadRef);
     clearDeletedThreadPanelState(threadRef);
+    const focusMovedToOtherPane = createChatPaneCommands(router).closePaneShowing(threadRef);
 
-    if (shouldNavigateToFallback) {
+    if (shouldNavigateToFallback && !focusMovedToOtherPane) {
       const fallbackThread = fallbackThreadId
         ? readThreadShell(scopeThreadRef(threadRef.environmentId, fallbackThreadId))
         : null;

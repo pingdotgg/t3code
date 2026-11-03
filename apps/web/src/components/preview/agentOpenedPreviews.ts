@@ -224,7 +224,10 @@ function watchEnvironmentDevices(environmentId: EnvironmentId): () => void {
       const state = AsyncResult.getOrElse(result, () => null);
       if (state === null) return;
       applyDeviceSnapshot(environmentId, state, {
-        sheetLayout: window.matchMedia(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY).matches,
+        // A split pane too narrow for the inline right panel opens it as a sheet too.
+        sheetLayout:
+          window.matchMedia(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY).matches ||
+          document.querySelector("[data-chat-pane-narrow]") !== null,
         autoShowFloatingPreview: getClientSettings().browserAutoShowFloatingPreview,
       });
     },

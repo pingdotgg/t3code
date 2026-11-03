@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import {
+  isChatSplitOpen,
   resolveChatPanes,
   SINGLE_CHAT_PANE_LAYOUT,
   useChatPanesStore,
@@ -67,6 +68,7 @@ export function ChatPanes({
   const paneThreadKeys = useComposerDraftStore(
     useShallow((store) => panes.map((pane) => paneThreadKey(pane.target, store))),
   );
+  const splitOpen = isChatSplitOpen(layout);
   const vertical = layout.direction === "column";
   const minPaneSize = vertical ? CHAT_PANE_MIN_HEIGHT : CHAT_PANE_MIN_WIDTH;
   // Too small for two panes: only the focused one renders, and the split returns with room.
@@ -142,7 +144,7 @@ export function ChatPanes({
       >
         {panes.map((pane, index) => {
           if (!fitsSplit && !pane.active) return null;
-          const alone = !fitsSplit;
+          const alone = !splitOpen || !fitsSplit;
           const edges = alone
             ? ALL_WINDOW_EDGES
             : {
@@ -152,7 +154,7 @@ export function ChatPanes({
               };
           return (
             <Fragment key={pane.id}>
-              {index > 0 && fitsSplit ? (
+              {index > 0 && !alone ? (
                 <ChatPaneDivider
                   vertical={vertical}
                   minPaneSize={minPaneSize}
@@ -161,6 +163,7 @@ export function ChatPanes({
               ) : null}
               <ChatPane
                 pane={pane}
+                inSplit={splitOpen}
                 sized={index === 0 && !alone}
                 vertical={vertical}
                 alone={alone}
@@ -293,6 +296,7 @@ function ChatPaneDivider({
 
 function ChatPane({
   pane,
+  inSplit,
   sized,
   vertical,
   alone,
@@ -306,6 +310,8 @@ function ChatPane({
   focusIntentRef,
 }: {
   pane: ResolvedChatPane;
+  /** False for the one pane outside a split, which behaves like a plain thread view. */
+  inSplit: boolean;
   /** The first pane takes the split ratio; the second fills the rest. */
   sized: boolean;
   vertical: boolean;
@@ -361,29 +367,31 @@ function ChatPane({
       className={cn(
         "relative flex min-h-0 min-w-0 flex-col",
         sized ? "shrink grow-0 basis-[calc(var(--chat-pane-split)*100%)]" : "flex-1 basis-0",
-        vertical ? "min-h-60" : "min-w-90",
+        !alone && (vertical ? "min-h-60" : "min-w-90"),
         // Layout containment anchors the header's fixed title bar controls to this pane.
         !alone && "[contain:layout]",
         !alone &&
           !passive &&
-          "before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-30 before:h-px before:bg-primary/60",
+          "before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-30 before:h-0.5 before:bg-primary/60",
         !alone && passive && "[&_[data-chat-header]]:opacity-60",
         !edges.top && "[&_[data-chat-header]]:[-webkit-app-region:no-drag]",
       )}
       style={windowEdgeStyle(edges)}
       data-chat-pane={pane.id}
+      data-chat-pane-narrow={(!alone && narrow) || undefined}
       data-background-thread-view={passive || undefined}
       onPointerDownCapture={passive ? onFocus : undefined}
       onFocusCapture={passive ? onFocusIn : undefined}
     >
       {/* The app-wide composer handle belongs to the focused pane's composer. */}
       <ComposerHandleContext value={passive ? null : composerHandle}>
-        <ChatPaneContext value={chatPaneValue}>
+        <ChatPaneContext value={inSplit ? chatPaneValue : null}>
           <ThreadRouteContent
             target={pane.target}
             background={background}
             passive={passive}
             unavailable={<UnavailablePane onClose={close} />}
+            onMissing={inSplit ? close : undefined}
           />
         </ChatPaneContext>
       </ComposerHandleContext>

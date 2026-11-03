@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   chatPaneRestoreTarget,
   closeChatPane,
+  isChatSplitOpen,
   commitChatPanes,
   openChatSplit,
   resolveChatPanes,
@@ -45,29 +46,29 @@ describe("chat panes", () => {
   it("opens beside the routed thread and keeps the routed pane focused", () => {
     const layout = split(thread("a"), thread("b"));
     expect(shown(layout, thread("a"))).toEqual([
-      { id: "pane-1", target: "a", active: true },
-      { id: "pane-2", target: "b", active: false },
+      { id: "primary", target: "a", active: true },
+      { id: "pane-1", target: "b", active: false },
     ]);
   });
 
   it("focuses the pane whose thread the route lands on, leaving the other pane as it was", () => {
     const layout = split(thread("a"), thread("b"));
     expect(shown(layout, thread("b"))).toEqual([
-      { id: "pane-1", target: "a", active: false },
-      { id: "pane-2", target: "b", active: true },
+      { id: "primary", target: "a", active: false },
+      { id: "pane-1", target: "b", active: true },
     ]);
   });
 
   it("retargets only the focused pane when the route moves to another thread", () => {
     const focusedRight = commitChatPanes(split(thread("a"), thread("b")), thread("b"));
     expect(shown(focusedRight, thread("c"))).toEqual([
-      { id: "pane-1", target: "a", active: false },
-      { id: "pane-2", target: "c", active: true },
+      { id: "primary", target: "a", active: false },
+      { id: "pane-1", target: "c", active: true },
     ]);
     const committed = commitChatPanes(focusedRight, thread("c"));
     expect(shown(committed, thread("a"))).toEqual([
-      { id: "pane-1", target: "a", active: true },
-      { id: "pane-2", target: "c", active: false },
+      { id: "primary", target: "a", active: true },
+      { id: "pane-1", target: "c", active: false },
     ]);
   });
 
@@ -79,8 +80,8 @@ describe("chat panes", () => {
   it("keeps a draft pane addressable by its draft id", () => {
     const layout = split(thread("a"), draft("d"));
     expect(shown(layout, draft("d"))).toEqual([
-      { id: "pane-1", target: "a", active: false },
-      { id: "pane-2", target: "d", active: true },
+      { id: "primary", target: "a", active: false },
+      { id: "pane-1", target: "d", active: true },
     ]);
   });
 
@@ -103,16 +104,16 @@ describe("chat panes", () => {
       createPaneId: paneIds(),
     });
     expect(shown(layout, thread("a"))).toEqual([
-      { id: "pane-1", target: "a", active: true },
-      { id: "pane-2", target: "c", active: false },
+      { id: "primary", target: "a", active: true },
+      { id: "pane-1", target: "c", active: false },
     ]);
   });
 
   it("swapping keeps each pane's thread, focus and size", () => {
     const layout = swapChatPanes({ ...split(thread("a"), thread("b")), ratio: 0.7 });
     expect(shown(layout, thread("a"))).toEqual([
-      { id: "pane-2", target: "b", active: false },
-      { id: "pane-1", target: "a", active: true },
+      { id: "pane-1", target: "b", active: false },
+      { id: "primary", target: "a", active: true },
     ]);
     expect(layout.ratio).toBeCloseTo(0.3);
   });
@@ -124,14 +125,20 @@ describe("chat panes", () => {
   });
 
   it("closing the unfocused pane returns to one pane without moving the route", () => {
-    const result = closeChatPane(split(thread("a"), thread("b")), "pane-2");
-    expect(result.layout.panes).toEqual([]);
+    const result = closeChatPane(split(thread("a"), thread("b")), "pane-1");
+    expect(isChatSplitOpen(result.layout)).toBe(false);
     expect(result.focusTarget).toBeNull();
+    // The routed pane keeps its id, so its view stays mounted.
+    expect(shown(result.layout, thread("a"))).toEqual([
+      { id: "primary", target: "a", active: true },
+    ]);
   });
 
   it("closing the focused pane moves the route to the remaining pane", () => {
-    const result = closeChatPane(split(thread("a"), thread("b")), "pane-1");
-    expect(result.layout.panes).toEqual([]);
+    const result = closeChatPane(split(thread("a"), thread("b")), "primary");
     expect(result.focusTarget).toEqual(thread("b"));
+    expect(shown(result.layout, thread("b"))).toEqual([
+      { id: "pane-1", target: "b", active: true },
+    ]);
   });
 });

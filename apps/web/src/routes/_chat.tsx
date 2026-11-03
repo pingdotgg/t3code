@@ -3,8 +3,6 @@ import { Outlet, createFileRoute, redirect, useMatches } from "@tanstack/react-r
 import { useState } from "react";
 
 import { ChatPanes } from "../components/ChatPanes";
-import { ThreadRouteView } from "../components/ThreadRouteView";
-import { isChatSplitOpen, useChatPanesStore } from "../chatPanesStore";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { SidebarInset } from "../components/ui/sidebar";
 import { resolveThreadRouteTarget, type ThreadRouteTarget } from "../threadRoutes";
@@ -30,16 +28,13 @@ function ChatRouteLayout() {
     setBackgroundTarget(threadTarget);
   }
   const shownTarget = modalOpen ? backgroundTarget : threadTarget;
-  const splitOpen = useChatPanesStore((state) => isChatSplitOpen(state.layout));
   return (
     <>
       {shownTarget?.kind === "server" && !modalOpen ? (
         <ThreadLinkPrompt threadRef={shownTarget.threadRef} />
       ) : null}
-      {shownTarget && splitOpen ? (
+      {shownTarget ? (
         <ChatPanes routeTarget={shownTarget} background={modalOpen} />
-      ) : shownTarget ? (
-        <ThreadRouteView target={shownTarget} background={modalOpen} />
       ) : modalOpen ? (
         <SidebarInset className="h-dvh" />
       ) : (

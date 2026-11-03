@@ -1,3 +1,4 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
 
@@ -52,6 +53,24 @@ export function createChatPaneCommands(router: AnyRouter) {
     if (focusTarget) navigateTo(focusTarget);
   };
 
+  /**
+   * Closes the pane showing a thread that is gone. True when that moved focus to the other pane,
+   * so the caller skips its own fallback navigation.
+   */
+  const closePaneShowing = (threadRef: ScopedThreadRef): boolean => {
+    const store = useChatPanesStore.getState();
+    if (!isChatSplitOpen(store.layout)) return false;
+    const key = scopedThreadKey(threadRef);
+    const pane = store.layout.panes.find(
+      (candidate) =>
+        candidate.target.kind === "server" && scopedThreadKey(candidate.target.threadRef) === key,
+    );
+    if (!pane) return false;
+    const focusTarget = store.closePane(pane.id);
+    if (focusTarget) navigateTo(focusTarget);
+    return focusTarget !== null;
+  };
+
   /** Back to one pane, keeping the focused one; the route already shows it. */
   const closeOtherPanes = () => {
     const store = useChatPanesStore.getState();
@@ -67,6 +86,7 @@ export function createChatPaneCommands(router: AnyRouter) {
     focusOtherPane: () => focusPaneAt(1),
     closeFocusedPane,
     closeOtherPanes,
+    closePaneShowing,
   };
 }
 

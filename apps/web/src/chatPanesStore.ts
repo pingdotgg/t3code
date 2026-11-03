@@ -38,6 +38,8 @@ export const SINGLE_CHAT_PANE_LAYOUT: ChatPanesLayout = {
 };
 
 const MIN_CHAT_PANE_RATIO = 0.1;
+/** The one pane's id before any split; a split keeps it for the routed pane, so it stays mounted. */
+const PRIMARY_CHAT_PANE_ID = "primary";
 
 function clampChatPaneRatio(ratio: number): number {
   if (!Number.isFinite(ratio)) return SINGLE_CHAT_PANE_LAYOUT.ratio;
@@ -62,7 +64,9 @@ export function resolveChatPanes(
   layout: ChatPanesLayout,
   routeTarget: ThreadRouteTarget,
 ): ReadonlyArray<ResolvedChatPane> {
-  if (!isChatSplitOpen(layout)) return [];
+  if (!isChatSplitOpen(layout)) {
+    return [{ id: layout.panes[0]?.id ?? PRIMARY_CHAT_PANE_ID, target: routeTarget, active: true }];
+  }
   const routeKey = chatPaneTargetKey(routeTarget);
   const routedPane = layout.panes.find((pane) => chatPaneTargetKey(pane.target) === routeKey);
   const activePaneId =
@@ -98,6 +102,7 @@ export function commitChatPanes(
   layout: ChatPanesLayout,
   routeTarget: ThreadRouteTarget,
 ): ChatPanesLayout {
+  if (!isChatSplitOpen(layout)) return layout;
   const resolved = resolveChatPanes(layout, routeTarget);
   const active = resolved.find((pane) => pane.active);
   if (!active) return layout;
@@ -134,7 +139,7 @@ export function openChatSplit(
   if (chatPaneTargetKey(input.routeTarget) === targetKey) return current;
   const direction = input.direction ?? current.direction;
   if (!isChatSplitOpen(current)) {
-    const activePaneId = input.createPaneId();
+    const activePaneId = current.panes[0]?.id ?? PRIMARY_CHAT_PANE_ID;
     return {
       direction,
       ratio: SINGLE_CHAT_PANE_LAYOUT.ratio,
@@ -175,8 +180,13 @@ export function closeChatPane(
   const closedActive = layout.activePaneId === paneId;
   const activePaneId = closedActive ? (panes[0]?.id ?? null) : layout.activePaneId;
   const focusTarget = closedActive ? (panes[0]?.target ?? null) : null;
-  if (panes.length < 2)
-    return { layout: { ...SINGLE_CHAT_PANE_LAYOUT, direction: layout.direction }, focusTarget };
+  if (panes.length < 2) {
+    // The remaining pane keeps its id, so it stays mounted as the single pane.
+    return {
+      layout: { ...SINGLE_CHAT_PANE_LAYOUT, direction: layout.direction, panes, activePaneId },
+      focusTarget,
+    };
+  }
   return { layout: { ...layout, panes, activePaneId }, focusTarget };
 }
 

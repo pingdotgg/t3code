@@ -8,7 +8,6 @@ import { useEffect, useState } from "react";
 
 import ChatView from "./ChatView";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
-import { SidebarInset } from "./ui/sidebar";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
@@ -26,43 +25,23 @@ import {
 } from "../threadRoutes";
 
 /**
- * Unkeyed so navigating between server threads reuses one ChatView. Rendered by the `_chat`
- * layout, since an element only survives a route swap when the same parent renders it. Draft
- * promotion runs in the draft store; this only follows the redirect it leaves behind.
- * `background` keeps the thread mounted, inert and in place under Settings or Usage.
- */
-export function ThreadRouteView({
-  target,
-  background = false,
-}: {
-  target: ThreadRouteTarget;
-  background?: boolean;
-}) {
-  return (
-    <SidebarInset
-      className="h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh"
-      inert={background}
-      data-background-thread-view={background || undefined}
-    >
-      <ThreadRouteContent target={target} background={background} />
-    </SidebarInset>
-  );
-}
-
-/**
- * A `passive` view is an unfocused split pane: it stays interactive but never moves the route and
- * leaves global shortcuts to the focused pane. `unavailable` replaces a thread it cannot show.
+ * Unkeyed so route changes reuse one ChatView, which only survives while the same pane renders it.
+ * `background` keeps the thread inert under Settings or Usage; `passive` is an unfocused split pane
+ * that never moves the route or takes global shortcuts; `unavailable` replaces a missing thread.
  */
 export function ThreadRouteContent({
   target,
   background = false,
   passive = false,
   unavailable = null,
+  onMissing,
 }: {
   target: ThreadRouteTarget;
   background?: boolean;
   passive?: boolean;
   unavailable?: React.ReactNode;
+  /** Replaces the trip home when the routed thread turns out deleted or archived. */
+  onMissing?: (() => void) | undefined;
 }) {
   const ownsRoute = !background && !passive;
   const navigate = useNavigate();
@@ -154,11 +133,20 @@ export function ThreadRouteContent({
     if (renderState === "missing") {
       const { clearPendingFileDropsForThread } = useSidebarPendingFileDropStore.getState();
       clearPendingFileDropsForThread(target.threadRef);
-      if (environmentHasAnyThreads && ownsRoute) {
+      if (ownsRoute && onMissing) onMissing();
+      else if (environmentHasAnyThreads && ownsRoute) {
         void navigate({ to: "/", replace: true });
       }
     }
-  }, [ownsRoute, bootstrapComplete, environmentHasAnyThreads, navigate, renderState, target]);
+  }, [
+    ownsRoute,
+    bootstrapComplete,
+    environmentHasAnyThreads,
+    navigate,
+    onMissing,
+    renderState,
+    target,
+  ]);
 
   let view: React.ReactNode = null;
   let redirect: React.ReactNode = null;
