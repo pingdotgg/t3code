@@ -476,7 +476,7 @@ describe("RelayEnvironmentDiscovery", () => {
     }),
   );
 
-  it.effect.each(["application-active", "application-active-long"] as const)(
+  it.effect.each(["application-active", "application-active-long", "application-focused"] as const)(
     "lists the account again when the app returns to the foreground (%s)",
     (reason) =>
       Effect.gen(function* () {
@@ -553,6 +553,64 @@ describe("RelayEnvironmentDiscovery", () => {
         expect([...relisted.environments.keys()]).toEqual(
           environments.map((environment) => environment.environmentId),
         );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("coalesces foreground checks that arrive during an in-flight refresh", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        yield* Effect.yieldNow;
+        const refreshFiber = yield* Effect.forkChild(discovery.refresh);
+        yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.filter((state) => state.listed),
+          Stream.runHead,
+        );
+
+        for (const reason of [
+          "application-active",
+          "application-focused",
+          "application-active",
+          "application-focused",
+          "application-active-long",
+        ] as const) {
+          yield* harness.wake(reason);
+          yield* Effect.yieldNow;
+        }
+        // Waits on the lock behind every refresh the wakeups queued.
+        const lastRefresh = yield* Effect.forkChild(discovery.refresh);
+        yield* Effect.yieldNow;
+        const requests = yield* Ref.get(harness.statusRequests);
+        for (const environment of environments) {
+          yield* Deferred.succeed(
+            requests.get(environment.environmentId)!,
+            status(environment, "online"),
+          );
+        }
+        yield* Fiber.join(refreshFiber);
+        yield* Fiber.join(lastRefresh);
+
+        expect(yield* Ref.get(harness.listCalls)).toBe(3);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("leaves a signed-out state untouched when the app returns", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        yield* Effect.yieldNow;
+        yield* Ref.set(harness.clerkToken, null);
+        yield* discovery.refresh;
+        const signedOut = yield* SubscriptionRef.get(discovery.state);
+
+        yield* harness.wake("application-active");
+        yield* Effect.yieldNow;
+
+        expect(yield* SubscriptionRef.get(discovery.state)).toBe(signedOut);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

@@ -123,6 +123,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const state = yield* SubscriptionRef.make(EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
   const refreshLock = yield* Semaphore.make(1);
+  const foregroundCheckLock = yield* Semaphore.make(1);
   const hasRefreshed = yield* Ref.make(false);
   const accountGeneration = yield* Ref.make(0);
   const activeAccountId = yield* Ref.make<Option.Option<string>>(Option.none());
@@ -325,7 +326,11 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
   // Refreshes only when the account's registrations changed, so foregrounding keeps unchanged rows.
   const checkRegistrations = Effect.fn("RelayEnvironmentDiscovery.checkRegistrations")(
     function* () {
-      if (!(yield* Ref.get(hasRefreshed)) || (yield* connectivity.status) === "offline") {
+      if (
+        !(yield* Ref.get(hasRefreshed)) ||
+        (yield* connectivity.status) === "offline" ||
+        Option.isNone(yield* session.identity)
+      ) {
         return;
       }
       const current = yield* SubscriptionRef.get(state);
@@ -350,6 +355,8 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
     Effect.catch((error) =>
       Effect.logDebug("Relay foreground registration check failed", { error }),
     ),
+    // A check that waits on an in-flight refresh lists the account again once it finishes.
+    foregroundCheckLock.withPermitsIfAvailable(1),
   );
 
   yield* connectivity.changes.pipe(
