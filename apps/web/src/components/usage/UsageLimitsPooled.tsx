@@ -37,7 +37,6 @@ import { AlertTriangleIcon, ExternalLinkIcon, GripVerticalIcon, TicketIcon } fro
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   createContext,
-  Fragment,
   type ReactNode,
   type RefObject,
   use,
@@ -48,6 +47,7 @@ import {
 
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -589,8 +589,17 @@ function PoolWindowCard({
   );
 }
 
-function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
+function PoolSection({
+  pool,
+  now,
+  animate,
+}: {
+  readonly pool: LimitPool;
+  readonly now: number;
+  readonly animate: boolean;
+}) {
   const {
+    active,
     attributes,
     listeners,
     setNodeRef,
@@ -598,18 +607,21 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: pool.driver });
+  } = useSortable({ id: pool.driver, ...(animate ? {} : { transition: null }) });
   const color = barColor(pool.driver);
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
   return (
     <section
       ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={cn("relative flex flex-col gap-3", isDragging && "z-10 bg-background opacity-80")}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn(
+        "relative flex flex-col gap-3",
+        isDragging && "z-10 rounded-lg bg-background shadow-lg",
+      )}
     >
       <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
-        <Tooltip>
+        <Tooltip disabled={active !== null}>
           <TooltipTrigger
             render={
               <button
@@ -666,6 +678,8 @@ export function UsageLimitsPooled({
   readonly onProviderOrderChange: (order: readonly ProviderDriverKind[]) => void;
 }) {
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
+  const [keyboardDrag, setKeyboardDrag] = useState(false);
+  const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
   const collectedPools = collectLimitPools(collectLimitAccounts(presentations), now);
   const order = usageLimitOrder(
@@ -681,11 +695,6 @@ export function UsageLimitsPooled({
   );
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
-  const cursorPromptAt =
-    Math.max(
-      pools.findIndex((pool) => pool.driver === "codex"),
-      pools.findIndex((pool) => pool.driver === "claudeAgent"),
-    ) + 1;
   return (
     <div className="flex flex-col gap-8">
       {pools.length === 0 && notices.length === 0 && !cursorPrompt && externalLinks.length === 0 ? (
@@ -698,6 +707,7 @@ export function UsageLimitsPooled({
           sensors={sensors}
           collisionDetection={closestCenter}
           modifiers={[restrictToVerticalAxis]}
+          onDragStart={({ activatorEvent }) => setKeyboardDrag(activatorEvent.type === "keydown")}
           onDragEnd={({ active, over }) => {
             if (!over || active.id === over.id) return;
             const visibleOrder = pools.map((pool) => pool.driver);
@@ -716,11 +726,13 @@ export function UsageLimitsPooled({
             items={pools.map((pool) => pool.driver)}
             strategy={verticalListSortingStrategy}
           >
-            {pools.map((pool, index) => (
-              <Fragment key={pool.driver}>
-                {index === cursorPromptAt ? cursorPrompt : null}
-                <PoolSection pool={pool} now={now} />
-              </Fragment>
+            {pools.map((pool) => (
+              <PoolSection
+                key={pool.driver}
+                pool={pool}
+                now={now}
+                animate={!keyboardDrag && !reducedMotion}
+              />
             ))}
           </SortableContext>
         </DndContext>
@@ -738,7 +750,7 @@ export function UsageLimitsPooled({
           ) : null
         }
       </Popover>
-      {cursorPromptAt === pools.length ? cursorPrompt : null}
+      {cursorPrompt}
       {externalLinks.map((link) => (
         <section
           key={link.url}
