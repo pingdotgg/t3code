@@ -7,7 +7,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -36,7 +36,7 @@ vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) 
 }));
 
 import { render } from "../../../test/render";
-import { useComposerDraftStore } from "../../composerDraftStore";
+import { partializeComposerDraftStoreState, useComposerDraftStore } from "../../composerDraftStore";
 import { resolveComposerInteractionMode } from "../ChatView.logic";
 import { usePlanFollowUpSend, useThreadInteractionMode } from "./useProposedPlanSend";
 
@@ -170,6 +170,17 @@ it.each([
     );
     await expect.element(composerMode).toHaveTextContent("plan");
     expect(state.otherCommands).toEqual([]);
+
+    const persisted = JSON.parse(
+      JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+    );
+    expect(persisted.draftsByThreadKey[scopedThreadKey(threadRef)]).toHaveProperty(
+      "failedPlanFollowUpRunId",
+      planRunId,
+    );
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    useComposerDraftStore.setState(merge(persisted, useComposerDraftStore.getInitialState()));
+    await expect.element(composerMode).toHaveTextContent("plan");
 
     // A run from this send or another client means the thread really left plan.
     await screen.rerender(

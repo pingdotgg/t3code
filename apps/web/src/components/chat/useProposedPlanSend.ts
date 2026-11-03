@@ -3,7 +3,6 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type ProviderInteractionMode,
-  type RunId,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -21,7 +20,6 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { truncate } from "@t3tools/shared/String";
 import { useNavigate } from "@tanstack/react-router";
 import type { Dispatch, SetStateAction } from "react";
-import { create } from "zustand";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import type { ComposerHandleRef } from "../../composerHandleContext";
@@ -47,16 +45,15 @@ import type { useTimelineFollow } from "./useTimelineFollow";
 
 type LocalDispatchState = ReturnType<typeof useLocalDispatchState>;
 
-// The latest run of each thread whose plan follow-up failed. The server may have left plan
-// without a turn, so the thread keeps its plan controls until another run starts.
-const useFailedPlanFollowUpRuns = create<Readonly<Record<string, RunId>>>()(() => ({}));
-
 /** The thread's interaction mode, or plan while a failed plan follow-up awaits a retry. */
 export function useThreadInteractionMode(
   thread: EnvironmentThreadShell | null | undefined,
 ): ProviderInteractionMode | undefined {
-  const failedRunId = useFailedPlanFollowUpRuns((runs) =>
-    thread ? runs[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))] : undefined,
+  const failedRunId = useComposerDraftStore((store) =>
+    thread
+      ? store.getComposerDraft(scopeThreadRef(thread.environmentId, thread.id))
+          ?.failedPlanFollowUpRunId
+      : undefined,
   );
   if (!thread) return undefined;
   return failedRunId !== undefined && failedRunId === thread.latestRun?.runId
@@ -242,7 +239,7 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
 
     const failedRunId = activeThread.latestRun?.runId;
     if (failedRunId !== undefined) {
-      useFailedPlanFollowUpRuns.setState({ [scopedThreadKey(threadRefForSend)]: failedRunId });
+      useComposerDraftStore.getState().setFailedPlanFollowUpRunId(threadRefForSend, failedRunId);
     }
     setOptimisticUserMessages((existing) =>
       existing.filter((message) => message.id !== messageIdForSend),
