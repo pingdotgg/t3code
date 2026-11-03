@@ -274,6 +274,10 @@ task has completed, the parent agent has its result, and the thread has sat idle
 This keeps those threads out of other Codex apps' thread lists. T3 Code keeps the
 full history, and a follow-up to the task continues the same Codex conversation.
 
+To clean up older entries, wait for the task and its subagents to finish and for
+the parent to receive the result. Then run `codex archive <session-id>` on the
+machine hosting that Codex session. Keep the T3 thread to continue it later.
+
 Subagent threads started by the agent can't take messages; message the parent
 thread instead. When such a subagent needs an approval or an answer, the parent
 thread asks for it.

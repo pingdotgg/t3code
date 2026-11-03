@@ -7401,7 +7401,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("counts a running grandchild after its root and direct child settled", () =>
+  it.effect("counts a pending or running grandchild after its root and direct child settled", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const grandchildThread = "native-codex-resume-grandchild-thread";
@@ -7451,16 +7451,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   },
                 },
               },
-              {
-                type: "emit_inbound",
-                frame: {
-                  method: "turn/started",
-                  params: {
-                    threadId: grandchildThread,
-                    turn: makeCodexReplayTurn({ id: grandchildTurn, status: "inProgress" }),
-                  },
-                },
-              },
               ...rootFinished,
               childAgentMessage({
                 id: "child-answer",
@@ -7471,6 +7461,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               }),
               childTurnCompleted(RESUME_CHILD_TURN_1),
               fence("gpt-fence-child-settled"),
+              {
+                type: "emit_inbound",
+                afterMs: 30_000,
+                frame: {
+                  method: "turn/started",
+                  params: {
+                    threadId: grandchildThread,
+                    turn: makeCodexReplayTurn({ id: grandchildTurn, status: "inProgress" }),
+                  },
+                },
+              },
+              fence("gpt-fence-grandchild-running"),
               {
                 type: "emit_inbound",
                 afterMs: 30_000,
@@ -7509,6 +7511,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* TestClock.adjust("30 seconds");
         yield* fenced("gpt-fence-child-settled");
         assert.include(harness.continuationRequests[0]?.detail, "CHILD_DONE");
+        assert.isTrue(yield* ownsRunningWork);
+
+        yield* TestClock.adjust("30 seconds");
+        yield* fenced("gpt-fence-grandchild-running");
         assert.isTrue(yield* ownsRunningWork);
 
         yield* TestClock.adjust("30 seconds");
