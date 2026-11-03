@@ -2,6 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import {
+  OrchestratorMcpThreadRun,
+  OrchestratorMcpThreadSendResult,
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
 } from "./orchestratorMcp.ts";
@@ -66,4 +68,41 @@ describe("orchestrator MCP contracts", () => {
       }),
     ).toThrow();
   });
+});
+
+it("preserves held, unheld and unknown queue state in run and send JSON", () => {
+  for (const queueHeld of [true, false, undefined]) {
+    const queue = queueHeld === undefined ? {} : { queueHeld };
+    for (const [schema, value] of [
+      [
+        OrchestratorMcpThreadRun,
+        {
+          runId: "run-queue",
+          ordinal: 1,
+          status: "queued",
+          providerInstanceId: "codex",
+          model: "gpt-6.1-sol",
+          requestedAt: "2026-11-02T00:00:00Z",
+          startedAt: null,
+          completedAt: null,
+        },
+      ],
+      [
+        OrchestratorMcpThreadSendResult,
+        {
+          threadId: "thread-queue",
+          messageId: "message-queue",
+          runId: "run-queue",
+          status: "queued",
+          delivery: "queued",
+        },
+      ],
+    ] as const) {
+      const decode = Schema.decodeUnknownSync(Schema.fromJsonString(schema));
+      const encode = Schema.encodeSync(Schema.fromJsonString(schema));
+      const decoded = decode(JSON.stringify({ ...value, ...queue }));
+      expect(decoded).toEqual({ ...value, ...queue });
+      expect(JSON.parse(encode(decoded))).toEqual({ ...value, ...queue });
+    }
+  }
 });

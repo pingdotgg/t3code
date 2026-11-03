@@ -107,8 +107,12 @@ t3 thread list
 `.` means the project that contains the current folder; a project id also
 works. A new thread uses the project's default model and permission mode, and
 runs in the project folder unless you pass `--worktree <base-branch>`. `send`
-never interrupts: a busy thread gets the message as its next turn. Pass `-` as
-the message to read it from stdin.
+defaults to queueing a new turn. Use `--mode steer` to steer an active turn or
+`--mode auto` to let the server choose. Steering uses native provider behavior;
+providers without in-place steering may interrupt and restart the active turn.
+Held queued messages are not eligible for dispatch; `send` and `show` report
+the hold state when the server provides it. `show` includes up to 50 recent runs,
+so it is not a complete queue count. Pass `-` as the message to read it from stdin.
 
 `--wait` prints the agent's reply. It exits 1 when the run fails or stops, and
 2 when the agent waits for an answer you give in the app. Add `--json` for a

@@ -130,6 +130,9 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     runs: [
       makeRun({ id: activeRunId, ordinal: 1, status: "running" }),
       makeRun({ id: cancelledRunId, ordinal: 2, status: "cancelled" }),
+      { ...makeRun({ id: RunId.make("held"), ordinal: 3, status: "queued" }), queueHeld: true },
+      { ...makeRun({ id: RunId.make("unheld"), ordinal: 4, status: "queued" }), queueHeld: false },
+      makeRun({ id: RunId.make("implicit-unheld"), ordinal: 5, status: "queued" }),
     ],
     visibleTurnItems: [],
     runtimeRequests: [],
@@ -190,7 +193,14 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     const service = yield* OrchestratorMcpService.OrchestratorMcpService;
     const result = yield* service.readThread(makeScope(), { threadId: parentThreadId });
     expect(result.thread.status).toBe("running");
-    expect(result.thread.latestRunId).toBe(cancelledRunId);
+    expect(result.thread.latestRunId).toBe("implicit-unheld");
+    expect(result.recentRuns.map(({ runId, queueHeld }) => ({ runId, queueHeld }))).toEqual([
+      { runId: "implicit-unheld", queueHeld: false },
+      { runId: "unheld", queueHeld: false },
+      { runId: "held", queueHeld: true },
+      { runId: cancelledRunId, queueHeld: undefined },
+      { runId: activeRunId, queueHeld: undefined },
+    ]);
     expect(result.thread.activeRunId).toBe(activeRunId);
 
     callerUnavailable = true;
@@ -511,7 +521,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
                 ),
           sendToThread: () =>
             Effect.succeed({
-              run: { id: "run-foreign", status: "queued" },
+              run: { id: "run-foreign", status: "queued", queueHeld: true },
               delivery: "started",
             } as unknown as ThreadManagementService.ThreadManagementSendResult),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
@@ -555,6 +565,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       message: "hi",
     });
     expect(sent.threadId).toBe(foreignThreadId);
+    expect(sent.queueHeld).toBe(true);
 
     parentRuns = [];
     yield* service.readThread(makeScope(), { threadId: foreignThreadId });
