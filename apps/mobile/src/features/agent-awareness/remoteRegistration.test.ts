@@ -836,35 +836,39 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       }).pipe(Effect.provide(relay));
     });
 
-    it.effect("registers an existing Live Activity before waiting on the widget read", () => {
-      const order: Array<string> = [];
-      const activity = {
-        getId: () => "activity-1",
-        getPushToken: vi.fn(() => {
-          order.push("push-token");
-          return Promise.resolve(null);
-        }),
-        addPushTokenListener: vi.fn(),
-      };
-      widgetMocks.getInstances.mockReturnValue([activity] as never);
-      const relay = fakeRelay(() =>
-        Effect.sync(() => {
-          order.push("widget-snapshot");
-          return { aggregate };
-        }),
-      );
-      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+    it.effect("publishes the widget snapshot before token registration finishes", () =>
+      Effect.gen(function* () {
+        let markRequested = () => {};
+        const requested = new Promise<void>((resolve) => {
+          markRequested = resolve;
+        });
+        let releaseToken = () => {};
+        const response = new Promise<null>((resolve) => {
+          releaseToken = () => resolve(null);
+        });
+        const activity = {
+          getId: () => "activity-1",
+          getPushToken: vi.fn(() => {
+            markRequested();
+            return response;
+          }),
+          addPushTokenListener: vi.fn(),
+        };
+        widgetMocks.getInstances.mockReturnValue([activity] as never);
+        const relay = fakeRelay(() => Effect.succeed({ aggregate }));
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
 
-      return Effect.gen(function* () {
-        yield* refreshActiveLiveActivityRemoteRegistration();
-
-        expect(order).toEqual(["push-token", "widget-snapshot"]);
-        expect(publishWidgetMock).toHaveBeenLastCalledWith(
-          { kind: "snapshot", aggregate },
-          "user-a",
+        const refresh = yield* Effect.forkChild(
+          refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(relay)),
         );
-      }).pipe(Effect.provide(relay));
-    });
+        yield* Effect.promise(() => requested);
+        const publishedBeforeRegistration = publishWidgetMock.mock.lastCall;
+        releaseToken();
+        yield* Fiber.join(refresh);
+
+        expect(publishedBeforeRegistration).toEqual([{ kind: "snapshot", aggregate }, "user-a"]);
+      }),
+    );
 
     it.effect("keeps the newest rows when an older overlapping read finishes last", () =>
       Effect.gen(function* () {
@@ -928,44 +932,43 @@ describe("makeRelayDeviceRegistrationRequest", () => {
 
     it.effect("an obsolete refresh does not discard the next account's read", () =>
       Effect.gen(function* () {
-        let markTokenRequested = () => {};
-        const tokenRequested = new Promise<void>((resolve) => {
-          markTokenRequested = resolve;
-        });
-        let releaseToken = () => {};
-        widgetMocks.getInstances.mockReturnValueOnce([
-          {
-            getId: () => "activity-a",
-            getPushToken: () => {
-              markTokenRequested();
-              return new Promise<null>((resolve) => {
-                releaseToken = () => resolve(null);
-              });
-            },
-            addPushTokenListener: vi.fn(),
-          },
-        ] as never);
-        const requested = yield* Deferred.make<void>();
-        const response = yield* Deferred.make<{ readonly aggregate: typeof aggregate }>();
+        const activity = {
+          getId: () => "activity-a",
+          getPushToken: vi.fn(() => Promise.resolve(null)),
+          addPushTokenListener: vi.fn(),
+        };
+        widgetMocks.getInstances.mockReturnValueOnce([activity] as never);
+        const requestedA = yield* Deferred.make<void>();
+        const responseA = yield* Deferred.make<{ readonly aggregate: typeof aggregate }>();
+        const requestedB = yield* Deferred.make<void>();
+        const responseB = yield* Deferred.make<{ readonly aggregate: typeof aggregate }>();
+        let reads = 0;
         const relay = fakeRelay(() =>
-          Deferred.succeed(requested, undefined).pipe(Effect.andThen(Deferred.await(response))),
+          ++reads === 1
+            ? Deferred.succeed(requestedA, undefined).pipe(
+                Effect.andThen(Deferred.await(responseA)),
+              )
+            : Deferred.succeed(requestedB, undefined).pipe(
+                Effect.andThen(Deferred.await(responseB)),
+              ),
         );
         setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-a"), "user-a");
 
         const refreshA = yield* Effect.forkChild(
           refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(relay)),
         );
-        yield* Effect.promise(() => tokenRequested);
+        yield* Deferred.await(requestedA);
         setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-b"), "user-b");
         const refreshB = yield* Effect.forkChild(
           refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(relay)),
         );
-        yield* Deferred.await(requested);
-        releaseToken();
+        yield* Deferred.await(requestedB);
+        yield* Deferred.succeed(responseA, { aggregate });
         yield* Fiber.join(refreshA);
-        yield* Deferred.succeed(response, { aggregate });
+        yield* Deferred.succeed(responseB, { aggregate });
         yield* Fiber.join(refreshB);
 
+        expect(activity.getPushToken).not.toHaveBeenCalled();
         expect(publishWidgetMock).toHaveBeenLastCalledWith(
           { kind: "snapshot", aggregate },
           "user-b",

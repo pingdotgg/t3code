@@ -1076,6 +1076,11 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
     }
   }
 
+  if (hadActivities) {
+    yield* refreshWidget;
+    if (!isCurrentAccount()) return;
+  }
+
   const registrationResults = yield* Effect.forEach(activities, (activity) =>
     registerLiveActivityPushToken({ activity }).pipe(
       Effect.map((registered) => !registered),
@@ -1090,11 +1095,5 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
 
   if (registrationResults.some(Boolean)) {
     scheduleActiveLiveActivityRegistrationRetry();
-  }
-
-  // An existing card keeps its push token registered without waiting on the
-  // relay; the widget still repaints afterwards.
-  if (hadActivities) {
-    yield* refreshWidget;
   }
 });
