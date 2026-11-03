@@ -172,7 +172,8 @@ export const comparisonBase = Effect.fn("checkChanged.comparisonBase")(function*
   return closest;
 });
 
-const CODE = /\.[cm]?[jt]sx?$/;
+// CI's lint and knip also read Astro components' frontmatter.
+const CODE = /\.(?:[cm]?[jt]sx?|astro)$/;
 const TEST = /\.test\.[cm]?[jt]sx?$/;
 // CI runs the .github/scripts tests with `node --test`; vitest passes a failing node:test file.
 const NODE_TEST = /^\.github[/\\]scripts[/\\]/;
@@ -469,7 +470,9 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     ...(present.length > 0
       ? [command("format", ["fmt", "--check", "--no-error-on-unmatched-pattern", ...present])]
       : []),
-    ...(code.length > 0 ? [command("lint", ["lint", ...code])] : []),
+    ...(code.length > 0
+      ? [command("lint", ["lint", "--no-error-on-unmatched-pattern", ...code])]
+      : []),
     ...(runKnip
       ? knipPasses.map((args, index) => command(`knip ${index + 1}/${knipPasses.length}`, args))
       : []),

@@ -566,6 +566,119 @@ it.effect.each(["bare", "unborn"] as const)(
     ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each(["on a branch", "detached", "unborn"] as const)(
+  "reads only the repository root for review requests that ignore the branch when %s",
+  (state) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawnedArgs: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (ChildProcess.isStandardCommand(command)) spawnedArgs.push(command.args.map(String));
+          return delegate.spawn(command);
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const discoveries = () => {
+          const commands = spawnedArgs.filter(
+            (args) =>
+              args.includes("--show-toplevel") ||
+              args.includes("--git-common-dir") ||
+              (args.includes("symbolic-ref") && args.includes("HEAD")),
+          );
+          spawnedArgs.length = 0;
+          return commands.length;
+        };
+        const cwd = yield* makeTmpDir();
+        if (state === "unborn") {
+          yield* git(cwd, ["init", "-b", "main"]);
+        } else {
+          yield* initRepoWithCommit(cwd);
+          yield* writeTextFile(cwd, "committed.txt", "committed\n");
+          yield* git(cwd, ["add", "."]);
+          yield* git(cwd, ["commit", "-m", "add file"]);
+          if (state === "detached") yield* git(cwd, ["checkout", "--detach"]);
+        }
+        yield* writeTextFile(cwd, "new.txt", "new\n");
+        spawnedArgs.length = 0;
+
+        const workingTree = yield* driver.getReviewDiffPreview({
+          cwd,
+          file: { path: "new.txt", previousPath: null, sourceKind: "working-tree" },
+        });
+        assert.equal(discoveries(), 1);
+        assert.deepStrictEqual(
+          workingTree.sources
+            .find((source) => source.kind === "working-tree")!
+            .files!.map((file) => file.path),
+          ["new.txt"],
+        );
+
+        if (state !== "unborn") {
+          const commitSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+          spawnedArgs.length = 0;
+          const commit = yield* driver.getReviewDiffPreview({
+            cwd,
+            commitSha,
+            file: { path: "committed.txt", previousPath: null, sourceKind: "commit" },
+          });
+          assert.equal(discoveries(), 1);
+          assert.include(commit.sources[0]!.diff, "+committed");
+        }
+
+        const general = yield* driver.getReviewDiffPreview({ cwd });
+        assert.equal(discoveries(), 3);
+        assert.equal(
+          general.sources.find((source) => source.kind === "branch-range")!.headRef,
+          state === "detached" ? "HEAD" : yield* git(cwd, ["branch", "--show-current"]),
+        );
+      }),
+    ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  { kind: "working-tree", request: { sourceKind: "working-tree" } },
+  { kind: "commit", request: { sourceKind: "commit", commitSha: "HEAD" } },
+] as const)("keeps $kind review requests safe without a worktree root", ({ request }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const bareRoot = yield* makeTmpDir("git-review-bare-");
+      const spawner = ChildProcessSpawner.make((command) =>
+        delegate.spawn(
+          ChildProcess.isStandardCommand(command) && command.options.cwd === bareRoot
+            ? ChildProcess.setEnv(command, { GIT_DIR: bareRoot })
+            : command,
+        ),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const path = yield* Path.Path;
+      const file = { path: "README.md", previousPath: null, sourceKind: request.sourceKind };
+      const input = (cwd: string) => ({
+        cwd,
+        file,
+        ...("commitSha" in request ? { commitSha: request.commitSha } : {}),
+      });
+      const source = yield* makeTmpDir();
+      yield* initRepoWithCommit(source);
+      yield* git(source, ["clone", "--bare", source, bareRoot]);
+      const nonRepository = yield* makeTmpDir();
+      for (const cwd of [bareRoot, nonRepository, path.join(nonRepository, "missing")]) {
+        assert.isEmpty((yield* driver.getReviewDiffPreview(input(cwd))).sources);
+      }
+
+      const brokenConfig = yield* makeTmpDir();
+      yield* initRepoWithCommit(brokenConfig);
+      yield* writeTextFile(brokenConfig, ".git/config", "[broken");
+      const error = yield* driver.getReviewDiffPreview(input(brokenConfig)).pipe(Effect.flip);
+      assert.equal(error.operation, "GitVcsDriver.resolveRepositoryPaths.commonDir");
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "preserves embedded newlines in repository paths after worktree creation",
   () =>
@@ -1326,7 +1439,7 @@ it.effect.each([
           return yield* Effect.die("expected Git command");
         if (command.args[0] !== "fetch") return makeNonRepositoryHandle();
         assert.deepEqual(command.args, ["fetch", "--quiet", "--", "origin"]);
-        assert.equal(command.options.env?.LC_ALL, "C");
+        assert.equal(command.options.env?.LANGUAGE, "C");
         assert.equal(command.options.env?.GIT_TERMINAL_PROMPT, "0");
         yield* Ref.update(attempts, (count) => count + 1);
         return ChildProcessSpawner.makeHandle({
@@ -1750,7 +1863,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
                 command.args[0] === "branch" ||
                 command.args[0] === "checkout")
             ) {
-              locales.push(command.options.env?.LC_ALL);
+              locales.push(command.options.env?.LANGUAGE);
             }
             return delegate.spawn(command);
           });
@@ -2150,9 +2263,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("loads repository-relative files from a nested project directory", () =>
+    it.effect("loads repository-relative files from nested directories and aliases", () =>
       Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
+        const directory = yield* makeTmpDir();
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const platform = yield* HostProcess.Platform;
+        const cwd = path.join(directory, platform === "win32" ? "repository" : "repository\n ");
+        yield* fileSystem.makeDirectory(cwd);
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         yield* git(cwd, ["checkout", "-b", "feature/nested"]);
         yield* writeTextFile(cwd, "nested/tracked.txt", "committed\n");
@@ -2160,27 +2278,34 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["commit", "-m", "nested file"]);
         yield* writeTextFile(cwd, "nested/tracked.txt", "changed\n");
         yield* writeTextFile(cwd, "untracked.txt", "new\n");
-        const path = yield* Path.Path;
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const nestedCwd = path.join(cwd, "nested");
-        const preview = yield* driver.getReviewDiffPreview({
-          cwd: nestedCwd,
-          baseRef: initialBranch,
-        });
-        assert.equal(
-          preview.sources.find((source) => source.kind === "working-tree")!.files!.length,
-          2,
-        );
-        for (const source of preview.sources) {
-          for (const file of source.files ?? []) {
-            const scoped = yield* driver.getReviewDiffPreview({
-              cwd: nestedCwd,
-              baseRef: initialBranch,
-              file: { path: file.path, previousPath: file.previousPath, sourceKind: source.kind },
-            });
-            const patch = scoped.sources.find((item) => item.kind === source.kind)!;
-            assert.deepStrictEqual(patch.files, [file]);
-            assert.include(patch.diff, `b/${file.path}`);
+        const projectDirectories = [nestedCwd];
+        if (symlinksSupported) {
+          const alias = path.join(directory, "alias");
+          yield* fileSystem.symlink(nestedCwd, alias);
+          projectDirectories.push(alias);
+        }
+        for (const projectDirectory of projectDirectories) {
+          const preview = yield* driver.getReviewDiffPreview({
+            cwd: projectDirectory,
+            baseRef: initialBranch,
+          });
+          assert.equal(
+            preview.sources.find((source) => source.kind === "working-tree")!.files!.length,
+            2,
+          );
+          for (const source of preview.sources) {
+            for (const file of source.files ?? []) {
+              const scoped = yield* driver.getReviewDiffPreview({
+                cwd: projectDirectory,
+                baseRef: initialBranch,
+                file: { path: file.path, previousPath: file.previousPath, sourceKind: source.kind },
+              });
+              const patch = scoped.sources.find((item) => item.kind === source.kind)!;
+              assert.deepStrictEqual(patch.files, [file]);
+              assert.include(patch.diff, `b/${file.path}`);
+            }
           }
         }
       }),
@@ -2272,18 +2397,19 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("keeps a/ and b/ patch prefixes when the repository disables them", () =>
+    it.effect("keeps the patch format clients parse when the repository changes it", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* git(cwd, ["config", "diff.noprefix", "true"]);
         yield* git(cwd, ["config", "diff.mnemonicPrefix", "true"]);
+        yield* git(cwd, ["config", "diff.suppressBlankEmpty", "true"]);
         yield* git(cwd, ["checkout", "-b", "feature/noprefix"]);
-        yield* writeTextFile(cwd, "README.md", "# committed change\n");
+        yield* writeTextFile(cwd, "README.md", "# test\n\ncommitted change\n");
         yield* git(cwd, ["add", "README.md"]);
         yield* git(cwd, ["commit", "-m", "committed change"]);
-        yield* writeTextFile(cwd, "README.md", "# dirty change\n");
+        yield* writeTextFile(cwd, "README.md", "# test\n\ndirty change\n");
         yield* writeTextFile(cwd, "untracked.txt", "untracked\n");
 
         const preview = yield* driver.getReviewDiffPreview({
@@ -2295,6 +2421,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const workingTree = preview.sources.find((source) => source.kind === "working-tree")?.diff;
         const branchRange = preview.sources.find((source) => source.kind === "branch-range")?.diff;
         assert.include(workingTree, "diff --git a/README.md b/README.md");
+        assert.include(workingTree, " # test\n \n-committed change\n+dirty change\n");
         assert.include(workingTree, "+++ b/untracked.txt");
         assert.include(branchRange, "diff --git a/README.md b/README.md");
       }),
@@ -4155,6 +4282,38 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }
       }),
     );
+
+    // regression: #27749 hooks inherited the driver's forced LC_ALL=C
+    it.effect("runs post-checkout hooks under the server's own locale", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const serverLocale = process.env.LC_ALL ?? "unset";
+        const seenLocale = path.join(yield* makeTmpDir("git-hook-locale-"), "lc-all");
+        yield* writeTextFile(
+          cwd,
+          "hooks/post-checkout",
+          `#!/bin/sh\necho "\${LC_ALL-unset}" > '${seenLocale}'\n[ "\${LC_ALL-unset}" = '${serverLocale}' ]\n`,
+        );
+        yield* fs.chmod(path.join(cwd, "hooks/post-checkout"), 0o755);
+        yield* git(cwd, ["config", "core.hooksPath", path.join(cwd, "hooks")]);
+        const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "locale");
+
+        const result = yield* driver
+          .createWorktree({ cwd, path: worktreePath, refName: initialBranch, newRefName: "locale" })
+          .pipe(Effect.result);
+
+        assert.equal(
+          (yield* fs.readFileString(seenLocale)).trim(),
+          serverLocale,
+          "post-checkout hook should see the server's LC_ALL",
+        );
+        assert.isTrue(Result.isSuccess(result), "worktree creation failed in the hook");
+      }),
+    );
     it.effect.each(["commit", "short-commit", "tag", "revision"] as const)(
       "creates a worktree from a %s without recording it as a PR base",
       (kind) =>
@@ -4188,6 +4347,38 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             null,
           );
         }),
+    );
+
+    // regression: #28354 a failed worktree add left its new branch behind and blocked retries
+    it.effect("removes the new branch when the worktree cannot be added", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const path = yield* Path.Path;
+        const occupiedPath = yield* makeTmpDir("git-worktrees-");
+        yield* writeTextFile(occupiedPath, "existing.txt", "occupied\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const failed = yield* driver
+          .createWorktree({
+            cwd,
+            path: occupiedPath,
+            refName: initialBranch,
+            newRefName: "t3/collide",
+          })
+          .pipe(Effect.result);
+
+        assert.isTrue(Result.isFailure(failed));
+        assert.equal(yield* git(cwd, ["branch", "--list", "t3/collide"]), "");
+        const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "retry");
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "t3/collide",
+        });
+        assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "t3/collide");
+      }),
     );
 
     it.effect("creates parallel worktrees in one repository without racing on its config", () =>
