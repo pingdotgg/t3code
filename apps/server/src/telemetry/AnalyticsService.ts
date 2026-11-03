@@ -354,9 +354,8 @@ export const make = Effect.gen(function* () {
     disableYield: true,
   }).pipe(Effect.forkScoped);
 
-  // Finalizers are uninterruptible; the timeout could not stop the flush otherwise.
   yield* Effect.addFinalizer(() =>
-    flush.pipe(Effect.interruptible, Effect.timeout(SHUTDOWN_FLUSH_TIMEOUT), Effect.ignore),
+    flush.pipe(Effect.timeout(SHUTDOWN_FLUSH_TIMEOUT), Effect.ignore),
   );
 
   return AnalyticsService.of({ record, flush, recordOwners });
