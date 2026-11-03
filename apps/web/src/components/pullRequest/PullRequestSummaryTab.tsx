@@ -657,8 +657,7 @@ export function PullRequestSummaryTab({
         <div className="space-y-2">
           <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">
             <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-              {/* Azure DevOps accepts reviewers but cannot list candidates.
-                  Leads the row so its menu stays put as reviewers come and go. */}
+              {/* Azure DevOps accepts reviewers but cannot list candidates. */}
               {detail.capabilities.reviewers.request &&
               detail.capabilities.reviewers.listCandidates ? (
                 <PullRequestReviewerPicker
