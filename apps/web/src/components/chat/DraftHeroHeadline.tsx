@@ -34,6 +34,7 @@ import {
   useEnvironmentProviders,
 } from "~/state/environments";
 import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
+import { ProjectRowActions, ProjectRowLeading } from "../ProjectComboboxRow";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { isProjectPinShortcut, ProjectPinButton } from "../ProjectPinButton";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
@@ -332,32 +333,42 @@ export function DraftHeroHeadline({
             const entry = projectEntryByKey.get(item.value);
             return (
               <ComboboxItem key={item.value} hideIndicator value={item}>
-                {item.value === ADD_PROJECT_VALUE ? (
-                  <FolderPlusIcon className="size-4 shrink-0" />
-                ) : entry ? (
-                  <ProjectFavicon project={entry.group} className="size-4 shrink-0" />
-                ) : null}
                 <Tooltip>
                   <TooltipTrigger render={<span className="min-w-0 flex-1 text-sm" />}>
                     <DraftProjectName value={item.label} />
                   </TooltipTrigger>
                   <TooltipPopup side="top">{item.label}</TooltipPopup>
                 </Tooltip>
-                {entry && canPinProjectGroup(entry.group) ? (
-                  <ProjectPinButton
-                    name={entry.group.displayName}
-                    pinned={entry.group.pinned}
-                    shortcutLabel={shortcutLabelForCommand(keybindings, "thread.pin")}
-                    onToggle={() => toggleProjectGroupPin(entry.group)}
-                  />
-                ) : null}
-                {entry && showProjectEnvironments ? (
-                  <ProjectEnvironmentBadge
-                    group={entry.group}
-                    primaryEnvironmentId={primaryEnvironmentId}
-                    machineByEnvironmentId={environmentMachineById}
-                  />
-                ) : null}
+                <ProjectRowLeading
+                  icon={
+                    item.value === ADD_PROJECT_VALUE ? (
+                      <FolderPlusIcon className="size-4 shrink-0" />
+                    ) : entry ? (
+                      <ProjectFavicon project={entry.group} className="size-4 shrink-0" />
+                    ) : null
+                  }
+                  machine={
+                    entry && showProjectEnvironments ? (
+                      <ProjectEnvironmentBadge
+                        group={entry.group}
+                        primaryEnvironmentId={primaryEnvironmentId}
+                        machineByEnvironmentId={environmentMachineById}
+                      />
+                    ) : null
+                  }
+                />
+                <ProjectRowActions
+                  pin={
+                    entry && canPinProjectGroup(entry.group) ? (
+                      <ProjectPinButton
+                        name={entry.group.displayName}
+                        pinned={entry.group.pinned}
+                        shortcutLabel={shortcutLabelForCommand(keybindings, "thread.pin")}
+                        onToggle={() => toggleProjectGroupPin(entry.group)}
+                      />
+                    ) : null
+                  }
+                />
               </ComboboxItem>
             );
           }}

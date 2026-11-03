@@ -163,6 +163,7 @@ import type { SidebarThreadSummary } from "../types";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { cn } from "~/lib/utils";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
+import { ProjectRowActions, ProjectRowLeading } from "./ProjectComboboxRow";
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
@@ -831,30 +832,6 @@ function useSidebarLookups() {
     projectGroupByScopeKey,
     projectScopeItems,
   };
-}
-
-/**
- * Two fixed slots so hover never widens a row; the gear takes the machine's slot on hover.
- * Touch has no hover, so it shows the machine and gear together.
- */
-function ProjectScopeRowTrailing(props: {
-  machine: ReactNode;
-  pin: ReactNode;
-  settings: ReactNode;
-}) {
-  return (
-    <span className="flex shrink-0 items-center pointer-coarse:gap-5">
-      {props.pin ?? <span className="size-7 sm:size-6" />}
-      <span className="flex pointer-fine:grid">
-        <span className="flex size-7 items-center justify-center empty:pointer-coarse:hidden sm:size-6 pointer-fine:col-start-1 pointer-fine:row-start-1 pointer-fine:in-data-highlighted:invisible">
-          {props.machine}
-        </span>
-        <span className="flex pointer-fine:invisible pointer-fine:col-start-1 pointer-fine:row-start-1 pointer-fine:in-data-highlighted:visible">
-          {props.settings}
-        </span>
-      </span>
-    </span>
-  );
 }
 
 function canOperateThreads(
@@ -3024,13 +3001,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     }
                   >
                     {scopedProjectGroups.length > 1 ? (
-                      <span className="flex shrink-0 -space-x-1.5">
-                        {scopedProjectGroups.slice(0, 2).map((project) => (
-                          <ProjectFavicon
+                      <span className="flex shrink-0">
+                        {scopedProjectGroups.slice(0, 2).map((project, index) => (
+                          <span
                             key={project.projectKey}
-                            project={project}
-                            className="size-3.5"
-                          />
+                            className={
+                              index === 0
+                                ? "flex"
+                                : "-ml-1 flex rounded-[25%] bg-sidebar ring-2 ring-sidebar"
+                            }
+                          >
+                            <ProjectFavicon project={project} className="size-3.5" />
+                          </span>
                         ))}
                       </span>
                     ) : scopedProjectGroups[0] ? (
@@ -3114,23 +3096,35 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               if (project) handleProjectSettings(event, project);
                             }}
                           >
-                            {project ? (
-                              <ProjectFavicon project={project} className="size-4 shrink-0" />
-                            ) : (
-                              <FolderIcon className="size-4 shrink-0" />
-                            )}
                             <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                            <ProjectRowLeading
+                              icon={
+                                project ? (
+                                  <ProjectFavicon project={project} className="size-4 shrink-0" />
+                                ) : (
+                                  <FolderIcon className="size-4 shrink-0" />
+                                )
+                              }
+                              machine={
+                                project && showProjectEnvironments ? (
+                                  <ProjectEnvironmentBadge
+                                    group={project}
+                                    primaryEnvironmentId={primaryEnvironmentId}
+                                    machineByEnvironmentId={environmentMachineById}
+                                  />
+                                ) : null
+                              }
+                              selection={
+                                project
+                                  ? {
+                                      checked: isSelected,
+                                      onToggle: () => toggleProjectScopeKey(project.projectKey),
+                                    }
+                                  : undefined
+                              }
+                            />
                             {project ? (
-                              <ProjectScopeRowTrailing
-                                machine={
-                                  showProjectEnvironments ? (
-                                    <ProjectEnvironmentBadge
-                                      group={project}
-                                      primaryEnvironmentId={primaryEnvironmentId}
-                                      machineByEnvironmentId={environmentMachineById}
-                                    />
-                                  ) : null
-                                }
+                              <ProjectRowActions
                                 pin={
                                   canPinProject(project) ? (
                                     <ProjectPinButton
