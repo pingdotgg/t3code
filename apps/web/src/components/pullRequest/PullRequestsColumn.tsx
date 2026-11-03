@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from "rea
 import { cn } from "~/lib/utils";
 import { useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
 import { Button } from "../ui/button";
-import { PaneNotch } from "../PaneNotch";
+import { PANE_BODY_UNDER_HEADER_CLASS, PaneNotch } from "../PaneNotch";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { SettingsPaneHeader, SettingsTabNotch } from "../settings/SettingsTabNotch";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
@@ -135,15 +135,15 @@ export function PullRequestsColumn({
       inert={maximizedAway}
       data-pane-notch-host={split ? "" : undefined}
       className={cn(
-        "@container/pr-list flex min-h-0 min-w-0 flex-col overflow-x-hidden bg-background",
+        "@container/pr-list flex min-h-0 min-w-0 flex-col overflow-x-hidden bg-background surface-grain",
         maximizedAway ? "w-0 flex-none" : "flex-1",
         // Beside an open review the list is a pane of its own, its corner given to the notch.
-        split && "overflow-hidden surface-grain md:rounded-pane md:rounded-ss-none",
+        split && "overflow-hidden md:rounded-pane md:rounded-ss-none",
       )}
     >
       {/* A closed right panel leaves this column full-width, so the header reserves native
           window controls. */}
-      <SettingsPaneHeader trailingEdge={!rightPanelOpen}>
+      <SettingsPaneHeader transparent trailingEdge={!rightPanelOpen}>
         <SettingsTabNotch
           title="Pull requests"
           icon={
@@ -202,8 +202,15 @@ export function PullRequestsColumn({
         </PaneNotch>
       </SettingsPaneHeader>
 
-      <div ref={scrollRef} className="scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
-        <WorkspacePageContainer width="expanded" className="min-h-full gap-4">
+      <div
+        ref={scrollRef}
+        data-surface-reaches-under-header=""
+        className={cn(
+          "scrollbar-gutter-both min-h-0 flex-1 scroll-pt-[var(--surface-top-inset,0px)] overflow-y-auto",
+          PANE_BODY_UNDER_HEADER_CLASS,
+        )}
+      >
+        <WorkspacePageContainer width="expanded" className="min-h-full gap-4 pt-under-header-6">
           {listBody}
         </WorkspacePageContainer>
       </div>
