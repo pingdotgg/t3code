@@ -835,22 +835,31 @@ function usageLimitEntries(resetAt: string) {
 
 describe("MessagesTimeline usage limit notice", () => {
   it("labels the retry time with the viewer's timezone", async () => {
-    await using screen = await renderTimeline(usageLimitEntries("2026-03-17T19:30:00.000Z"));
+    const resetAt = "2026-03-17T19:30:00.000Z";
+    using _timers = fakeTimers({ now: new Date("2026-03-17T18:00:00.000Z") });
+    await using screen = await renderTimeline(usageLimitEntries(resetAt), {
+      usageLimit: { runId: RunId.make("usage-limit-run"), resetAt, snoozed: false },
+    });
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    expect(screen.text()).toMatch(/Usage limit reached\. Retry after .+\./);
+    expect(screen.text()).toContain("resumes ");
     expect(screen.text()).toContain(`(${timeZone})`);
   });
 
   it("keeps the retry time in the named zone after the viewer's timezone changes", async () => {
     const resetAt = "2026-07-01T19:30:00.000Z";
+    using _timers = fakeTimers({ now: new Date("2026-07-01T18:00:00.000Z") });
     const session = cdp();
     await session.send("Emulation.setTimezoneOverride", { timezoneId: "Europe/Madrid" });
     try {
       {
-        await using _madrid = await renderTimeline(usageLimitEntries(resetAt));
+        await using _madrid = await renderTimeline(usageLimitEntries(resetAt), {
+          usageLimit: { runId: RunId.make("usage-limit-run"), resetAt, snoozed: false },
+        });
       }
       await session.send("Emulation.setTimezoneOverride", { timezoneId: "America/New_York" });
-      await using screen = await renderTimeline(usageLimitEntries(resetAt));
+      await using screen = await renderTimeline(usageLimitEntries(resetAt), {
+        usageLimit: { runId: RunId.make("usage-limit-run"), resetAt, snoozed: false },
+      });
       const newYorkTime = new Date(resetAt).toLocaleTimeString(undefined, {
         hour: "numeric",
         minute: "2-digit",
