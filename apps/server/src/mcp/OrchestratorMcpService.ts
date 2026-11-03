@@ -2321,7 +2321,8 @@ const make = Effect.gen(function* () {
             orchestrationCapableInstanceIds.has(provider.instanceId),
           );
           const failure = failureByInstance.get(provider.instanceId);
-          const lastFailure = failure === undefined ? undefined : capabilityLastFailure(failure, now);
+          const lastFailure =
+            failure === undefined ? undefined : capabilityLastFailure(failure, now);
           const { listed, omitted } = listCapabilityModels({
             provider,
             preferences: settings.providerModelPreferences?.[provider.instanceId],

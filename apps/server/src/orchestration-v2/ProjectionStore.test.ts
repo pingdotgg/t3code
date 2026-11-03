@@ -5740,7 +5740,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       };
       const addRun = Effect.fnUntraced(function* (
         ordinal: number,
-        status: "completed" | "failed",
+        status: "completed" | "failed" | "cancelled" | "interrupted" | "rolled_back",
         completedAt: DateTime.Utc,
       ) {
         const runId = RunId.make(`run:instance-failure:${ordinal}`);
@@ -5767,7 +5767,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             completedAt,
           },
         });
-        if (status === "completed") return;
+        if (status !== "failed") return;
         yield* store.apply({
           id: EventId.make(`event:instance-failure:error:${ordinal}`),
           type: "turn-item.updated",
@@ -5804,7 +5804,17 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         { providerInstanceId: grokInstanceId, failedAt, model: "grok-build", failure },
       ]);
       assert.deepEqual(yield* read(DateTime.subtract(now, { minutes: 5 })), []);
-      yield* addRun(3, "completed", DateTime.subtract(now, { minutes: 5 }));
+      for (const [ordinal, status] of [
+        [3, "cancelled"],
+        [4, "interrupted"],
+        [5, "rolled_back"],
+      ] as const) {
+        yield* addRun(ordinal, status, DateTime.subtract(now, { minutes: 5 }));
+        assert.deepEqual(yield* read(DateTime.subtract(now, { hours: 1 })), [
+          { providerInstanceId: grokInstanceId, failedAt, model: "grok-build", failure },
+        ]);
+      }
+      yield* addRun(6, "completed", DateTime.subtract(now, { minutes: 4 }));
       assert.deepEqual(yield* read(DateTime.subtract(now, { hours: 1 })), []);
     }),
   );
