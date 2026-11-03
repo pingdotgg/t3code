@@ -3,8 +3,8 @@ import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Path from "effect/Path";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -15,6 +15,7 @@ import {
   makeClaudeEnvironment,
   resolveClaudeRuntime,
   materializeClaudeHome,
+  mergeClaudeProcessEnvironment,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 
@@ -163,4 +164,46 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }),
     );
   });
+
+  it.effect(
+    "drops the launching Claude session and Electron's run-as-Node flag, and labels processes t3-code unless overridden",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+        const host = {
+          CLAUDE_CODE_ENTRYPOINT: "claude-desktop",
+          CLAUDECODE: "1",
+          CLAUDE_CODE_SESSION_ID: "host-session",
+          CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/host-claude.sock",
+          CLAUDE_EFFORT: "high",
+          ELECTRON_RUN_AS_NODE: "1",
+          KEEP: "1",
+        };
+        const instance = [
+          { name: "CLAUDE_CODE_ENTRYPOINT", value: "instance", sensitive: false },
+          { name: "CLAUDE_EFFORT", value: "low", sensitive: false },
+        ];
+
+        expect(yield* mergeClaudeProcessEnvironment({ homePath }, undefined, host)).toEqual({
+          CLAUDE_CODE_ENTRYPOINT: "t3-code",
+          KEEP: "1",
+        });
+        expect(yield* mergeClaudeProcessEnvironment({ homePath }, instance, host)).toEqual({
+          CLAUDE_CODE_ENTRYPOINT: "instance",
+          CLAUDE_EFFORT: "low",
+          KEEP: "1",
+        });
+
+        yield* fileSystem.writeFileString(
+          path.join(homePath, "settings.json"),
+          JSON.stringify({ env: { CLAUDE_CODE_ENTRYPOINT: "custom" } }),
+        );
+        expect(
+          (yield* mergeClaudeProcessEnvironment({ homePath }, instance, host))
+            .CLAUDE_CODE_ENTRYPOINT,
+        ).toBe("custom");
+      }),
+  );
 });

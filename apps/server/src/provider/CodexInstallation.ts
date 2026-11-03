@@ -12,7 +12,7 @@ import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHub
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -211,7 +211,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
   const manifestService = yield* ModelManifest.ModelManifest;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const http = yield* HttpClient.HttpClient;
   const githubCredentials = yield* GitHubCredentials.GitHubCredentials;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -814,16 +814,14 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
           ) {
             return yield* SubscriptionRef.get(state);
           }
-          const operationId = yield* crypto.randomUUIDv4();
+          const operationId = yield* random.uuidV4();
           const next: ProviderInstallState = {
-            driver: DRIVER,
+            ...current,
             operationId,
             phase: "downloading",
             downloadedBytes: 0,
             totalBytes: release.archiveBytes,
             version: release.version,
-            installedVersion: current.installedVersion,
-            canRemove: current.canRemove,
             message: "Downloading Codex.",
           };
           yield* SubscriptionRef.set(state, next);

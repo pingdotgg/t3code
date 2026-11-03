@@ -17,7 +17,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -198,7 +198,7 @@ export const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const bootedAt = yield* Clock.currentTimeMillis;
   const lives = new Map<string, WatchLife>();
 
@@ -278,7 +278,7 @@ export const make = Effect.gen(function* () {
     wake?: { readonly text: string; readonly notification: OrchestrationV2Notification },
     endedWatch?: ThreadPullRequestWatch,
   ) {
-    const uuid = yield* crypto.randomUUIDv4();
+    const uuid = yield* random.uuidV4();
     yield* engine.dispatch({
       type: "thread.pull-request-watch.sync",
       commandId: CommandId.make(`server:pr-watch:${target.thread.id}:${uuid}`),
@@ -479,22 +479,28 @@ export const make = Effect.gen(function* () {
     if (fingerprint !== null || group.targets.some((target) => target.watch.mode === "checks")) {
       yield* pullRequests.invalidate({ reference });
     }
-    const read = yield* Effect.exit(
-      Effect.all(
-        [
-          pullRequests.detail({ ...reference, allowStale: false }),
+    const [detailRead, activityRead] = yield* Effect.all(
+      [
+        Effect.exit(pullRequests.detail({ ...reference, allowStale: false })),
+        Effect.exit(
           plan.activity && watchReviews
             ? pullRequests.activity(reference).pipe(Effect.asSome)
             : Effect.succeed(Option.none<PullRequestActivity>()),
-        ],
-        { concurrency: 2 },
-      ),
+        ),
+      ],
+      { concurrency: 2 },
     );
+    // Activity failures must not cancel or hide a permanent detail failure.
+    const read = Exit.isFailure(detailRead)
+      ? Exit.failCause(detailRead.cause)
+      : Exit.isFailure(activityRead)
+        ? Exit.failCause(activityRead.cause)
+        : Exit.succeed([detailRead.value, activityRead.value] as const);
     if (Exit.isFailure(read)) {
       if (Cause.hasInterruptsOnly(read.cause)) return yield* Effect.failCause(read.cause);
       lastReads.delete(group.key);
       const reason = providerFailureReason(read.cause);
-      if (reason !== "not-found") {
+      if (reason !== "not-found" && reason !== "forbidden") {
         readFailures.delete(group.key);
         if (reason === "rate-limited") return;
         return yield* Effect.failCause(read.cause);
@@ -510,9 +516,9 @@ export const make = Effect.gen(function* () {
     }
     readFailures.delete(group.key);
     const [detail, activity] = read.value;
-    const headSha = detail.headSha ?? null;
     for (const target of group.targets) {
       const life = lifeOf(target);
+      const headSha = detail.headSha ?? life.headSha;
       const pushed = life.headSha !== null && headSha !== life.headSha;
       lives.set(lifeKey(target), {
         ...life,

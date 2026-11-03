@@ -109,16 +109,20 @@ a readable copy for Antigravity when a provider session starts. Edit the origina
 shared skill, then start a new session to pick up changes. Private skills in an
 Antigravity account's profile remain separate from the shared library.
 
-Antigravity receives images directly. Every other attachment, including PDFs,
-text, audio, archives, and videos, is passed as a saved file path for the agent
-to inspect with its tools. A video path does not enable native video input.
+Antigravity receives images and audio directly, and reads PDFs and text files as
+documents. With the managed runtime on macOS and Linux, an MP4 video up to 20 MiB
+is sent as video to Gemini models. Other attachments, and videos for other models, are passed as a
+saved file path for the agent to inspect with its tools.
 
 ### Subagents
 
-Antigravity groups subagent activity into batches. You cannot open or control
-individual subagents, and an idle batch does not confirm that every child
-succeeded. See [agent work](./thread-sidebar.md#inspect-agent-work) for where to
-inspect activity.
+Antigravity groups subagent activity into batches. Open a batch and select
+**Subagent work** (**Work** on mobile) to read each child's role, prompt, and recent steps. This view
+is read only: you cannot message or control individual subagents, and an idle
+batch does not confirm that every child succeeded. If Antigravity did not record
+which children a batch started, the view says so. See
+[agent work](./thread-sidebar.md#inspect-agent-work) for where to inspect
+activity.
 
 ## Accounts and removal
 

@@ -35,6 +35,7 @@ import {
   BINDING_STREAM_OBJECT,
   HEADER_STREAM_CONTROL_OP,
   PATH_STREAM_PUBLIC_URL,
+  PATH_STREAM_VIDEO,
   STREAM_OBJECT_NAME,
 } from "./StreamOptions.shared.ts";
 
@@ -49,6 +50,7 @@ interface Env {
 // Errors (`workers/stream/errors.ts`)
 // -----------------------------------------------------------------------------
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- workerd Stream binding error mirroring the workers-sdk protocol (`name`/`code`/`statusCode`) thrown to user code
 export class StreamBindingError extends Error implements StreamError {
   constructor(
     message: string,
@@ -217,7 +219,7 @@ export interface DownloadRow extends Record<string, SqlStorageValue> {
 
 function rowToStreamVideo(row: VideoRow, entryUrl: URL): StreamVideo {
   const placeholderUrl = `https://customer-placeholder.cloudflarestream.com/${row.id}`;
-  const videoUrl = `${entryUrl.origin}/cdn-cgi/mf/stream/${row.id}/watch`;
+  const videoUrl = `${entryUrl.origin}${PATH_STREAM_VIDEO}/${row.id}/watch`;
   return {
     id: row.id,
     creator: row.creator,
@@ -238,8 +240,7 @@ function rowToStreamVideo(row: VideoRow, entryUrl: URL): StreamVideo {
     size: row.size,
     preview: videoUrl,
     allowedOrigins: JSON.parse(row.allowed_origins) as Array<string>,
-    requireSignedURLs:
-      row.require_signed_urls === null ? null : row.require_signed_urls === 1,
+    requireSignedURLs: row.require_signed_urls === null ? null : row.require_signed_urls === 1,
     uploaded: row.uploaded,
     uploadExpiry: row.upload_expiry,
     maxSizeBytes: row.max_size_bytes,
@@ -338,19 +339,13 @@ export class StreamObject extends DurableObject<Env> {
 
   #getWatermarkRow(id: string): WatermarkRow | undefined {
     return this.#sql
-      .exec<WatermarkRow>(
-        "SELECT * FROM _mf_stream_watermarks WHERE id = ?",
-        id,
-      )
+      .exec<WatermarkRow>("SELECT * FROM _mf_stream_watermarks WHERE id = ?", id)
       .toArray()[0];
   }
 
   #listDownloadRows(videoId: string): Array<DownloadRow> {
     return this.#sql
-      .exec<DownloadRow>(
-        "SELECT * FROM _mf_stream_downloads WHERE video_id = ?",
-        videoId,
-      )
+      .exec<DownloadRow>("SELECT * FROM _mf_stream_downloads WHERE video_id = ?", videoId)
       .toArray();
   }
 
@@ -366,19 +361,13 @@ export class StreamObject extends DurableObject<Env> {
 
     if (body !== null) {
       // Count bytes while streaming through to blob storage
-      const { readable, writable } = new TransformStream<
-        Uint8Array,
-        Uint8Array
-      >({
+      const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>({
         transform(chunk, controller) {
           size += chunk.byteLength;
           controller.enqueue(chunk);
         },
       });
-      [blobId] = await Promise.all([
-        this.#blob.put(readable),
-        body.pipeTo(writable),
-      ]);
+      [blobId] = await Promise.all([this.#blob.put(readable), body.pipeTo(writable)]);
     }
 
     this.#sql.exec(
@@ -414,14 +403,10 @@ export class StreamObject extends DurableObject<Env> {
     return row;
   }
 
-  async updateVideo(
-    id: string,
-    params: StreamUpdateVideoParams,
-  ): Promise<VideoRow> {
+  async updateVideo(id: string, params: StreamUpdateVideoParams): Promise<VideoRow> {
     return this.ctx.storage.transactionSync(() => {
       const current = this.#getVideoRow(id);
-      if (current === undefined)
-        throw new NotFoundError(`Video not found: ${id}`);
+      if (current === undefined) throw new NotFoundError(`Video not found: ${id}`);
 
       this.#sql.exec(
         `UPDATE _mf_stream_videos SET
@@ -454,8 +439,7 @@ export class StreamObject extends DurableObject<Env> {
       );
 
       const updated = this.#getVideoRow(id);
-      if (updated === undefined)
-        throw new NotFoundError(`Video not found: ${id}`);
+      if (updated === undefined) throw new NotFoundError(`Video not found: ${id}`);
       return updated;
     });
   }
@@ -480,8 +464,7 @@ export class StreamObject extends DurableObject<Env> {
           id,
         )
         .toArray()[0];
-      if (videoRow === undefined)
-        throw new NotFoundError(`Video not found: ${id}`);
+      if (videoRow === undefined) throw new NotFoundError(`Video not found: ${id}`);
 
       const blobIds = captionBlobs;
       if (videoRow.blob_id !== null) blobIds.push(videoRow.blob_id);
@@ -494,9 +477,7 @@ export class StreamObject extends DurableObject<Env> {
     if (params?.before === undefined && params?.after === undefined) {
       if (params?.limit === undefined) {
         return this.#sql
-          .exec<VideoRow>(
-            "SELECT * FROM _mf_stream_videos ORDER BY created DESC",
-          )
+          .exec<VideoRow>("SELECT * FROM _mf_stream_videos ORDER BY created DESC")
           .toArray();
       }
       return this.#sql
@@ -520,9 +501,7 @@ export class StreamObject extends DurableObject<Env> {
     if (params.before !== undefined) {
       const op = compToSql[params.beforeComp ?? "lt"];
       if (op === undefined) {
-        throw new BadRequestError(
-          "Invalid comparison operator: " + String(params.beforeComp),
-        );
+        throw new BadRequestError("Invalid comparison operator: " + String(params.beforeComp));
       }
       conditions.push("created " + op + " ?");
       values.push(params.before);
@@ -530,9 +509,7 @@ export class StreamObject extends DurableObject<Env> {
     if (params.after !== undefined) {
       const op = compToSql[params.afterComp ?? "gte"];
       if (op === undefined) {
-        throw new BadRequestError(
-          "Invalid comparison operator: " + String(params.afterComp),
-        );
+        throw new BadRequestError("Invalid comparison operator: " + String(params.afterComp));
       }
       conditions.push("created " + op + " ?");
       values.push(params.after);
@@ -558,17 +535,11 @@ export class StreamObject extends DurableObject<Env> {
     return btoa(JSON.stringify(payload));
   }
 
-  async generateCaption(
-    videoId: string,
-    language: string,
-  ): Promise<CaptionRow> {
+  async generateCaption(videoId: string, language: string): Promise<CaptionRow> {
     const video = this.#getVideoRow(videoId);
-    if (video === undefined)
-      throw new NotFoundError(`Video not found: ${videoId}`);
+    if (video === undefined) throw new NotFoundError(`Video not found: ${videoId}`);
 
-    const label =
-      new Intl.DisplayNames(["en"], { type: "language" }).of(language) ??
-      language;
+    const label = new Intl.DisplayNames(["en"], { type: "language" }).of(language) ?? language;
 
     // Delete old blob if caption already exists
     const existing = this.#getCaptionRow(videoId, language);
@@ -579,8 +550,7 @@ export class StreamObject extends DurableObject<Env> {
     this.#upsertCaption(videoId, language, 1, label, "ready", null);
 
     const row = this.#getCaptionRow(videoId, language);
-    if (row === undefined)
-      throw new NotFoundError(`Caption not found: ${videoId}/${language}`);
+    if (row === undefined) throw new NotFoundError(`Caption not found: ${videoId}/${language}`);
     return row;
   }
 
@@ -590,12 +560,9 @@ export class StreamObject extends DurableObject<Env> {
     input: ReadableStream,
   ): Promise<CaptionRow> {
     const video = this.#getVideoRow(videoId);
-    if (video === undefined)
-      throw new NotFoundError(`Video not found: ${videoId}`);
+    if (video === undefined) throw new NotFoundError(`Video not found: ${videoId}`);
 
-    const label =
-      new Intl.DisplayNames(["en"], { type: "language" }).of(language) ??
-      language;
+    const label = new Intl.DisplayNames(["en"], { type: "language" }).of(language) ?? language;
 
     // Delete old blob if caption already exists
     const existing = this.#getCaptionRow(videoId, language);
@@ -608,8 +575,7 @@ export class StreamObject extends DurableObject<Env> {
     this.#upsertCaption(videoId, language, 0, label, "ready", blobId);
 
     const row = this.#getCaptionRow(videoId, language);
-    if (row === undefined)
-      throw new NotFoundError(`Caption not found: ${videoId}/${language}`);
+    if (row === undefined) throw new NotFoundError(`Caption not found: ${videoId}/${language}`);
     return row;
   }
 
@@ -638,23 +604,16 @@ export class StreamObject extends DurableObject<Env> {
     );
   }
 
-  async listCaptions(
-    videoId: string,
-    language?: string,
-  ): Promise<Array<CaptionRow>> {
+  async listCaptions(videoId: string, language?: string): Promise<Array<CaptionRow>> {
     const video = this.#getVideoRow(videoId);
-    if (video === undefined)
-      throw new NotFoundError(`Video not found: ${videoId}`);
+    if (video === undefined) throw new NotFoundError(`Video not found: ${videoId}`);
 
     if (language !== undefined) {
       const row = this.#getCaptionRow(videoId, language);
       return row !== undefined ? [row] : [];
     }
     return this.#sql
-      .exec<CaptionRow>(
-        "SELECT * FROM _mf_stream_captions WHERE video_id = ?",
-        videoId,
-      )
+      .exec<CaptionRow>("SELECT * FROM _mf_stream_captions WHERE video_id = ?", videoId)
       .toArray();
   }
 
@@ -685,11 +644,7 @@ export class StreamObject extends DurableObject<Env> {
       );
     }
 
-    return this.createWatermarkFromBody(
-      await response.arrayBuffer(),
-      url,
-      params,
-    );
+    return this.createWatermarkFromBody(await response.arrayBuffer(), url, params);
   }
 
   async createWatermarkFromBody(
@@ -698,9 +653,7 @@ export class StreamObject extends DurableObject<Env> {
     params: StreamWatermarkCreateParams,
   ): Promise<WatermarkRow> {
     const size = buffer.byteLength;
-    const blobId = await this.#blob.put(
-      new Response(buffer).body as ReadableStream<Uint8Array>,
-    );
+    const blobId = await this.#blob.put(new Response(buffer).body as ReadableStream<Uint8Array>);
 
     const id = crypto.randomUUID();
     const now = this.#now();
@@ -722,23 +675,19 @@ export class StreamObject extends DurableObject<Env> {
     );
 
     const row = this.#getWatermarkRow(id);
-    if (row === undefined)
-      throw new NotFoundError(`Watermark not found: ${id}`);
+    if (row === undefined) throw new NotFoundError(`Watermark not found: ${id}`);
     return row;
   }
 
   async getWatermark(id: string): Promise<WatermarkRow> {
     const row = this.#getWatermarkRow(id);
-    if (row === undefined)
-      throw new NotFoundError(`Watermark not found: ${id}`);
+    if (row === undefined) throw new NotFoundError(`Watermark not found: ${id}`);
     return row;
   }
 
   async listWatermarks(): Promise<Array<WatermarkRow>> {
     return this.#sql
-      .exec<WatermarkRow>(
-        "SELECT * FROM _mf_stream_watermarks ORDER BY created DESC",
-      )
+      .exec<WatermarkRow>("SELECT * FROM _mf_stream_watermarks ORDER BY created DESC")
       .toArray();
   }
 
@@ -749,8 +698,7 @@ export class StreamObject extends DurableObject<Env> {
         id,
       )
       .toArray()[0];
-    if (deleted === undefined)
-      throw new NotFoundError(`Watermark not found: ${id}`);
+    if (deleted === undefined) throw new NotFoundError(`Watermark not found: ${id}`);
     if (deleted.blob_id !== null) {
       await this.#blob.delete(deleted.blob_id);
     }
@@ -761,8 +709,7 @@ export class StreamObject extends DurableObject<Env> {
     downloadType: StreamDownloadType = "default",
   ): Promise<Array<DownloadRow>> {
     const video = this.#getVideoRow(videoId);
-    if (video === undefined)
-      throw new NotFoundError(`Video not found: ${videoId}`);
+    if (video === undefined) throw new NotFoundError(`Video not found: ${videoId}`);
 
     this.#sql.exec(
       `INSERT INTO _mf_stream_downloads (video_id, download_type, status, percent_complete)
@@ -781,8 +728,7 @@ export class StreamObject extends DurableObject<Env> {
 
   async listDownloads(videoId: string): Promise<Array<DownloadRow>> {
     const video = this.#getVideoRow(videoId);
-    if (video === undefined)
-      throw new NotFoundError(`Video not found: ${videoId}`);
+    if (video === undefined) throw new NotFoundError(`Video not found: ${videoId}`);
     return this.#listDownloadRows(videoId);
   }
 
@@ -846,9 +792,7 @@ export class StreamObject extends DurableObject<Env> {
       // Run an arbitrary SQL query (e.g. get the blob ID for a video)
       const [query, ...params] = args;
       assert(typeof query === "string");
-      const results = this.#sql
-        .exec(query, ...(params as Array<SqlStorageValue>))
-        .toArray();
+      const results = this.#sql.exec(query, ...(params as Array<SqlStorageValue>)).toArray();
       return Response.json(results);
     } else if (name === "getBlob") {
       // Get an arbitrary blob
@@ -860,10 +804,7 @@ export class StreamObject extends DurableObject<Env> {
       // Enable/disable fake timers, advance time, or wait for tasks
       const func: unknown = this.timers[name as keyof Timers];
       assert(typeof func === "function", `Unknown control op: ${name}`);
-      const result = await (func as (...args: Array<unknown>) => unknown).apply(
-        this.timers,
-        args,
-      );
+      const result = await (func as (...args: Array<unknown>) => unknown).apply(this.timers, args);
       return Response.json(result ?? null);
     }
   }
@@ -878,9 +819,7 @@ export class StreamObject extends DurableObject<Env> {
 // binding. Using the loopback means the binding always sees the latest value,
 // even across restarts (mirrors Miniflare's `getPublicUrl`).
 async function getPublicUrl(loopback: Fetcher): Promise<URL> {
-  const resp = await loopback.fetch(
-    `http://localhost${PATH_STREAM_PUBLIC_URL}`,
-  );
+  const resp = await loopback.fetch(`http://localhost${PATH_STREAM_PUBLIC_URL}`);
   const url = (await resp.json()) as string | null;
   if (!url) {
     throw new Error(
@@ -907,7 +846,9 @@ function rowsToDownloadResponse(
 export class StreamBinding extends WorkerEntrypoint<Env> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    const match = url.pathname.match(/^\/cdn-cgi\/mf\/stream\/([^/]+)\/watch$/);
+    const match = url.pathname.match(
+      /^(?:\/__cf_local\/stream|\/cdn-cgi\/mf\/stream)\/([^/]+)\/watch$/,
+    );
     if (!match) {
       return new Response("Not found", { status: 404 });
     }
@@ -952,12 +893,8 @@ export class StreamBinding extends WorkerEntrypoint<Env> {
   }
 
   // Not supported in local mode yet
-  async createDirectUpload(
-    _params: StreamDirectUploadCreateParams,
-  ): Promise<StreamDirectUpload> {
-    throw new BadRequestError(
-      "createDirectUpload is not supported in local mode",
-    );
+  async createDirectUpload(_params: StreamDirectUploadCreateParams): Promise<StreamDirectUpload> {
+    throw new BadRequestError("createDirectUpload is not supported in local mode");
   }
 
   video(id: string): StreamVideoHandle {
@@ -973,10 +910,7 @@ export class StreamBinding extends WorkerEntrypoint<Env> {
   }
 }
 
-class StreamScopedCaptionsImpl
-  extends RpcTarget
-  implements StreamScopedCaptions
-{
+class StreamScopedCaptionsImpl extends RpcTarget implements StreamScopedCaptions {
   readonly #env: Env;
   readonly #videoId: string;
 
@@ -986,10 +920,7 @@ class StreamScopedCaptionsImpl
     this.#videoId = videoId;
   }
 
-  async upload(
-    language: string,
-    input: ReadableStream,
-  ): Promise<StreamCaption> {
+  async upload(language: string, input: ReadableStream): Promise<StreamCaption> {
     const stub = getStub(this.#env);
     const row = await stub.uploadCaption(this.#videoId, language, input);
     return rowToStreamCaption(row);
@@ -1013,10 +944,7 @@ class StreamScopedCaptionsImpl
   }
 }
 
-class StreamScopedDownloadsImpl
-  extends RpcTarget
-  implements StreamScopedDownloads
-{
+class StreamScopedDownloadsImpl extends RpcTarget implements StreamScopedDownloads {
   readonly #env: Env;
   readonly #videoId: string;
 
@@ -1026,9 +954,7 @@ class StreamScopedDownloadsImpl
     this.#videoId = videoId;
   }
 
-  async generate(
-    downloadType: StreamDownloadType = "default",
-  ): Promise<StreamDownloadGetResponse> {
+  async generate(downloadType: StreamDownloadType = "default"): Promise<StreamDownloadGetResponse> {
     const stub = getStub(this.#env);
     const rows = await stub.generateDownload(this.#videoId, downloadType);
     return rowsToDownloadResponse(rows.map(rowToStreamDownload));
@@ -1117,16 +1043,10 @@ class StreamWatermarksImpl extends RpcTarget implements StreamWatermarks {
     streamOrUrl: ReadableStream | string,
     params: StreamWatermarkCreateParams,
   ): Promise<StreamWatermark> {
-    if (
-      params.opacity !== undefined &&
-      (params.opacity < 0 || params.opacity > 1)
-    ) {
+    if (params.opacity !== undefined && (params.opacity < 0 || params.opacity > 1)) {
       throw new BadRequestError("opacity must be between 0.0 and 1.0");
     }
-    if (
-      params.padding !== undefined &&
-      (params.padding < 0 || params.padding > 1)
-    ) {
+    if (params.padding !== undefined && (params.padding < 0 || params.padding > 1)) {
       throw new BadRequestError("padding must be between 0.0 and 1.0");
     }
     if (params.scale !== undefined && (params.scale < 0 || params.scale > 1)) {
@@ -1168,8 +1088,6 @@ class StreamWatermarksImpl extends RpcTarget implements StreamWatermarks {
  */
 export default {
   async fetch(request, env) {
-    return getStub(env).fetch(
-      request as unknown as Parameters<DurableObjectStub["fetch"]>[0],
-    );
+    return getStub(env).fetch(request as unknown as Parameters<DurableObjectStub["fetch"]>[0]);
   },
 } satisfies ExportedHandler<Env>;

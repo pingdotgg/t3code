@@ -10,7 +10,7 @@ import {
   OrchestratorMcpThreadWaitResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -94,7 +94,7 @@ export const remoteTarget = (scope: Scope, environmentId: EnvironmentId | undefi
 const make = Effect.gen(function* () {
   const peers = yield* PeerMcpClient.PeerMcpClient;
   const links = yield* PeerLinks.PeerLinks;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const threads = yield* ThreadManagement.ThreadManagementService;
 
   /**
@@ -136,7 +136,7 @@ const make = Effect.gen(function* () {
         scope,
         toolName,
         args.clientRequestId,
-      ).pipe(Effect.provideService(Crypto.Crypto, crypto))}`;
+      ).pipe(Effect.provideService(Digest.Digest, crypto))}`;
     }
     return yield* peers.call({
       environmentId,

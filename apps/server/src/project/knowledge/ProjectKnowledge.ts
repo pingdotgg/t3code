@@ -33,7 +33,7 @@ import {
   projectComposerContextForProvider,
   projectKnowledgeContextRecord,
 } from "@t3tools/shared/composerContextReferences";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
@@ -207,9 +207,9 @@ const storageError = (projectId: ProjectId) => (cause: unknown) =>
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const digest = Effect.fn("ProjectKnowledge.digest")((text: string) =>
-    crypto.digest("SHA-256", new TextEncoder().encode(text)).pipe(Effect.map(Hex.encode)),
+    crypto.digest(Digest.sha256, new TextEncoder().encode(text)).pipe(Effect.map(Hex.encode)),
   );
   const store = yield* makeStore;
   const holographic = yield* HolographicMemory.HolographicMemory;
