@@ -1883,16 +1883,16 @@ function OpenCommandPaletteDialog(props: {
               // rejected as a conflict with the first.
               if (checkoutChoiceSubmittingRef.current) return;
               checkoutChoiceSubmittingRef.current = true;
-              try {
-                // The folder was just seen on disk; if it has gone, say so rather than recreate it.
-                await addFolderAsProject({
+              // The folder was just seen on disk; if it has gone, say so rather than recreate it.
+              const added = await settlePromise(() =>
+                addFolderAsProject({
                   environmentId,
                   workspaceRoot: choice.workspaceRoot,
                   createWorkspaceRootIfMissing: false,
-                });
-              } finally {
-                checkoutChoiceSubmittingRef.current = false;
-              }
+                }),
+              );
+              checkoutChoiceSubmittingRef.current = false;
+              if (added._tag === "Failure") throw squashAtomCommandFailure(added);
             },
           })),
         },
