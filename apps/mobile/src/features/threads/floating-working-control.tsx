@@ -203,7 +203,7 @@ export function FloatingWorkingControl(props: {
     <Pressable
       accessibilityRole="button"
       accessibilityLabel="Scroll to end"
-      onPressIn={props.onScrollToEnd}
+      onPress={props.onScrollToEnd}
       className="h-11 flex-row items-center pr-3.5 active:opacity-70"
     >
       {statusLabel}
