@@ -1,7 +1,11 @@
+import { useAndroidFloatingTabs } from "../settings/appearance/AppearancePreferencesProvider";
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
 import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
-import { useMemo, type ReactNode } from "react";
+import { type ReactNode } from "react";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
+import { FLOATING_TABS } from "./floating-workspace-tabs";
 import { View } from "react-native";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
@@ -14,9 +18,15 @@ export function AndroidWorkspaceSidebar(props: {
   readonly onRequestVisibility: () => void;
   readonly selectedPullRequestKey: string | null;
 }) {
+  const floatingTabsEnabled = useAndroidFloatingTabs();
   const workspace = useWorkspaceTabs()!;
   const enabled = useEnabledNavigationTabs();
-  const context = useMemo(() => ({ ...workspace, bottomClearance: 16 }), [workspace]);
+  const insets = useSafeAreaInsets();
+  const { fabSize } = useAndroidControlSizing();
+  const bottomClearance = floatingTabsEnabled
+    ? insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize
+    : 16;
+  const context = { ...workspace, bottomClearance };
   if (enabled.length === 0) return <WorkspaceNoTabs />;
   return (
     <WorkspaceTabPanes

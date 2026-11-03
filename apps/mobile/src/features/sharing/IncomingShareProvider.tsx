@@ -1,7 +1,7 @@
 import * as Dialog from "../../components/ui/Dialog";
 import Constants from "expo-constants";
 import * as Crypto from "expo-crypto";
-import { PROVIDER_SEND_TURN_MAX_FILE_BYTES } from "@t3tools/contracts";
+import { EnvironmentId, PROVIDER_SEND_TURN_MAX_FILE_BYTES } from "@t3tools/contracts";
 import {
   clearSharedPayloads,
   getResolvedSharedPayloadsAsync,
@@ -11,10 +11,12 @@ import {
 } from "expo-sharing";
 import { useSyncExternalStore } from "react";
 import { Platform } from "react-native";
+import { CommonActions } from "@react-navigation/native";
 
 import {
   buildIncomingShareDraft,
   isShareFileUriUnderOwnedRoots,
+  selectIncomingShareAttachmentsForServer,
   type IncomingShareDestination,
   type IncomingShareDraft,
 } from "./incoming-share-model";
@@ -26,6 +28,16 @@ import { coalescedRun } from "../../lib/coalescedRun";
 import { rootNavigationRef } from "../../lib/rootNavigation";
 import { selectWorkspaceDetail } from "../workspace/workspace-detail-selection";
 import { isDraftThreadRoute } from "../threads/thread-route-state";
+import { makeIncomingShareImports } from "../threads/incomingShareImport";
+import { liveNewTaskFlowKeys } from "../threads/new-task-flow-state";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { serverEnvironment } from "../../state/server";
+import {
+  getComposerDraftSnapshot,
+  mergeComposerDraftContent,
+  scheduleUnusedComposerAttachmentCleanup,
+  undoComposerDraftMerge,
+} from "../../state/use-composer-drafts";
 import {
   EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
   transitionIncomingSharePresentation,
@@ -217,6 +229,11 @@ function getIncomingShareSnapshot() {
 }
 
 function reportRefreshFailure(cause: unknown) {
+  console.warn(
+    "[incoming-share] refresh failed",
+    cause,
+    cause instanceof Error ? cause.cause : null,
+  );
   const error = cause instanceof Error ? cause : new Error("Could not import shared content.");
   Dialog.alert("Could not import shared content", error.message, [
     { text: "Dismiss", style: "cancel" },
@@ -282,6 +299,67 @@ async function releaseShareReservation(
   publish(await incomingShareInbox.releaseReservation(shareId, expectedDestination));
 }
 
+/** Moves shares into new-task drafts; see makeIncomingShareImports. */
+export const incomingShareImports = makeIncomingShareImports({
+  registry: appAtomRegistry,
+  getShare: (shareId) => snapshot.drafts.find((draft) => draft.id === shareId) ?? null,
+  reserve: reserveShare,
+  release: releaseShareReservation,
+  consume: consumeShare,
+  readDraft: getComposerDraftSnapshot,
+  undoMerge: undoComposerDraftMerge,
+  mergeIntoDraft: mergeComposerDraftContent,
+  selectAttachments: (share, environmentId) =>
+    selectIncomingShareAttachmentsForServer({
+      attachments: share.attachments,
+      serverConfig: appAtomRegistry.get(
+        serverEnvironment.configValueAtom(EnvironmentId.make(environmentId)),
+      ),
+    }),
+  releaseUnusedAttachments: scheduleUnusedComposerAttachmentCleanup,
+  onWarnings: (warnings) => {
+    Dialog.alert("Some shared content was skipped", warnings.join("\n"));
+  },
+  onImportFailure: (target, error) => {
+    Dialog.alert(
+      "Could not import shared content",
+      error instanceof Error ? error.message : "The shared content could not be saved.",
+      [
+        {
+          text: "Cancel import",
+          style: "cancel",
+          onPress: () => void incomingShareImports.cancel(target),
+        },
+        { text: "Retry", onPress: () => incomingShareImports.retry(target) },
+      ],
+      { cancelable: false },
+    );
+  },
+  onCancelFailure: (target, error) => {
+    Dialog.alert(
+      "Could not cancel import",
+      error instanceof Error ? error.message : "The shared content could not be restored safely.",
+      [
+        { text: "Retry import", onPress: () => incomingShareImports.retry(target) },
+        { text: "Retry cancel", onPress: () => void incomingShareImports.cancel(target) },
+      ],
+      { cancelable: false },
+    );
+  },
+  leave: (target) => {
+    rootNavigationRef.dispatch({
+      ...CommonActions.goBack(),
+      source: target.routeKey,
+      target: rootNavigationRef.getRootState()?.key,
+    });
+  },
+});
+
+/** Abandons the share imports of draft routes that left the stack. */
+export function pruneIncomingShareImports(state: Parameters<typeof liveNewTaskFlowKeys>[0]) {
+  void incomingShareImports.prune(liveNewTaskFlowKeys(state));
+}
+
 export function useIncomingShare() {
   const { drafts, isLoading } = useSyncExternalStore(
     subscribeIncomingShares,
@@ -291,8 +369,6 @@ export function useIncomingShare() {
     pendingShare: drafts[0] ?? null,
     isLoading,
     getShare: (shareId: string) => drafts.find((draft) => draft.id === shareId) ?? null,
-    reserveShare,
     releaseShareReservation,
-    consumeShare,
   };
 }

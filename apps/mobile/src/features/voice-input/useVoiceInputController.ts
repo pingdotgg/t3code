@@ -27,6 +27,7 @@ export function useVoiceInputController(input: {
   // oxlint-disable-next-line react/refs -- Transcription finishes asynchronously and must reach the composer's current selection setter, not the one captured at start.
   latestInput.current = input;
   const mounted = useRef(true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks mount so async transcription results skip a composer that has unmounted
   useEffect(() => {
     mounted.current = true;
     return () => {

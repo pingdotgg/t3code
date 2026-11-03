@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
@@ -22,9 +23,14 @@ import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRe
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { ThreadSearch } from "../orchestration-v2/ThreadSearch.ts";
+import { PeerForwarding } from "../peer/PeerForwarding.ts";
+import { PeerLinkRequests } from "../peer/PeerLinkRequests.ts";
+import { PeerLinks } from "../peer/PeerLinks.ts";
+import { RemoteDelegation } from "../peer/RemoteDelegation.ts";
 import { PreviewManager } from "../preview/Manager.ts";
 import { PreviewBrowser } from "../preview/PreviewBrowser.ts";
 import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
+import { ProjectCloneTracker } from "../project/ProjectCloneTracker.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
 import { PullRequestReviewGuideService } from "../pullRequest/PullRequestReviewGuideService.ts";
@@ -48,14 +54,19 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
   Layer.mock(McpProviderSessions)({}),
   Layer.mock(OrchestratorV2)({}),
+  Layer.mock(PeerForwarding)({}),
+  Layer.mock(PeerLinkRequests)({}),
+  Layer.mock(PeerLinks)({}),
   Layer.mock(PreviewAutomationBroker)({}),
   Layer.mock(PreviewBrowser)({}),
   Layer.mock(PreviewManager)({}),
+  Layer.mock(ProjectCloneTracker)({}),
   Layer.mock(ProjectService)({}),
   Layer.mock(ProjectSetupScriptRunner)({}),
   Layer.mock(ProviderAdapterRegistryV2)({}),
   Layer.mock(ProviderRegistry)({}),
   Layer.mock(PullRequestReviewGuideService)({}),
+  Layer.mock(RemoteDelegation)({}),
   Layer.mock(ScheduledTaskService)({}),
   Layer.mock(SecretRequests)({}),
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-context-budget-" }),
@@ -67,7 +78,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ThreadManagementService)({}),
   Layer.mock(ThreadSearch)({}),
   Layer.mock(VcsStatusBroadcaster)({}),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const utf8Bytes = (text: string) => Buffer.byteLength(text, "utf8");
 
@@ -115,11 +126,14 @@ it.effect("agent context matches the committed budget", () =>
       ),
     };
 
-    expect(measured).toEqual(budget);
+    expect(
+      measured,
+      "Set agentContextBudget.json to the measured values. Before you cut text to fit, run the evals that cover it (evals/README.md).",
+    ).toEqual(budget);
   }).pipe(
     Effect.provide(
       McpHttpServer.layerTools.pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(toolHandlerServices),
       ),
     ),

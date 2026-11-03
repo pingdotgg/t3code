@@ -3,7 +3,7 @@ import { environmentSession } from "../../state/session";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { useCallback, useMemo, useState, type ComponentProps } from "react";
+import { useState, type ComponentProps } from "react";
 import { Platform, Pressable, View, type NativeSyntheticEvent } from "react-native";
 import {
   Screen,
@@ -57,32 +57,25 @@ export function ThreadFileNavigatorPane(props: {
     cwd: canReadFiles ? props.cwd : null,
     searchQuery,
   });
-  const handlePreviewFile = useCallback(
-    (relativePath: string) => {
-      preloadWorkspaceFileContents({
-        cwd: props.cwd,
-        environmentId: props.environmentId,
-        relativePath,
-        theme: highlightTheme,
-      });
+  const handlePreviewFile = (relativePath: string) => {
+    preloadWorkspaceFileContents({
+      cwd: props.cwd,
+      environmentId: props.environmentId,
+      relativePath,
+      theme: highlightTheme,
+    });
+  };
+  const nativeHeaderRightBarButtonItems = [
+    {
+      accessibilityLabel: "Close files",
+      icon: { name: "xmark", type: "sfSymbol" as const },
+      identifier: "thread-file-navigator-close",
+      onPress: toggleAuxiliaryPane,
+      sharesBackground: false,
+      tintColor: foregroundColor,
+      type: "button" as const,
     },
-    [highlightTheme, props.cwd, props.environmentId],
-  );
-  const nativeHeaderRightBarButtonItems = useMemo(
-    () =>
-      [
-        {
-          accessibilityLabel: "Close files",
-          icon: { name: "xmark", type: "sfSymbol" as const },
-          identifier: "thread-file-navigator-close",
-          onPress: toggleAuxiliaryPane,
-          sharesBackground: false,
-          tintColor: foregroundColor,
-          type: "button" as const,
-        },
-      ] as ComponentProps<typeof ScreenStackHeaderConfig>["headerRightBarButtonItems"],
-    [foregroundColor, toggleAuxiliaryPane],
-  );
+  ] as ComponentProps<typeof ScreenStackHeaderConfig>["headerRightBarButtonItems"];
 
   const fileTree = (
     <FileTreeBrowser
