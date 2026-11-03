@@ -968,8 +968,9 @@ describe("deriveMessagesTimelineRows", () => {
         timelineEntries: [prompt, { ...reply, message: { ...reply.message, streaming } }],
       };
       const rows = applyWorkingWindow(deriveMessagesTimelineRows(running), running);
+      expect(rows.map((row) => row.id)).toEqual(["prompt", "working-indicator-row", "reply"]);
       expect(rows.filter((row) => row.kind === "working")).toMatchObject([
-        { createdAt: prompt.createdAt },
+        { createdAt: prompt.createdAt, window: { items: [], answering: streaming } },
       ]);
       expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
     }
@@ -4518,38 +4519,71 @@ describe("working window", () => {
     expect(workingRow(rows)?.window?.items.map((item) => item.id)).toEqual(["command"]);
   });
 
-  it("keeps unchanged window items when a later one streams", () => {
-    const answer = (text: string) => ({
+  it("streams the answer below the bar and folds it once work follows", () => {
+    const answer = {
       id: "answer",
       kind: "message" as const,
       createdAt: time(3),
       message: {
         id: MessageId.make("answer"),
         role: "assistant" as const,
-        text,
+        text: "Look",
         runId,
         createdAt: time(3),
         updatedAt: time(3),
         streaming: true,
       },
-    });
+    };
     const command = work("command", 2, {
       label: "Ran pwd",
       itemType: "command_execution",
       toolLifecycleStatus: "completed",
     });
+    const answering = run([prompt("prompt", 0), command, answer]);
+    expect(answering.map((row) => row.id)).toEqual(["prompt", "working-indicator-row", "answer"]);
+    expect(workingRow(answering)?.window?.items.map((item) => item.id)).toEqual(["command"]);
+    const followed = run([
+      prompt("prompt", 0),
+      command,
+      { ...answer, message: { ...answer.message, streaming: false } },
+      work("next", 4, {
+        label: "Running ls",
+        itemType: "command_execution",
+        toolLifecycleStatus: "inProgress",
+      }),
+    ]);
+    expect(followed.map((row) => row.id)).toEqual(["prompt", "working-indicator-row"]);
+    expect(workingRow(followed)?.window?.items.map((item) => item.id)).toEqual([
+      "command",
+      "answer",
+      "next",
+    ]);
+  });
+
+  it("keeps unchanged window items when a later one changes", () => {
+    const command = work("command", 2, {
+      label: "Ran pwd",
+      itemType: "command_execution",
+      toolLifecycleStatus: "completed",
+    });
+    const next = (status: "inProgress" | "completed") =>
+      work("next", 3, {
+        label: "Ran ls",
+        itemType: "command_execution",
+        toolLifecycleStatus: status,
+      });
     const first = computeStableMessagesTimelineRows(
-      run([prompt("prompt", 0), command, answer("Look")]),
+      run([prompt("prompt", 0), command, next("inProgress")]),
       { result: [], byId: new Map() },
     );
-    const next = computeStableMessagesTimelineRows(
-      run([prompt("prompt", 0), command, answer("Looking")]),
+    const later = computeStableMessagesTimelineRows(
+      run([prompt("prompt", 0), command, next("completed")]),
       first,
     );
-    const [firstCommand, firstAnswer] = workingRow(first.result)!.window!.items;
-    const [nextCommand, nextAnswer] = workingRow(next.result)!.window!.items;
-    expect(nextCommand).toBe(firstCommand);
-    expect(nextAnswer).not.toBe(firstAnswer);
+    const [firstCommand, firstNext] = workingRow(first.result)!.window!.items;
+    const [laterCommand, laterNext] = workingRow(later.result)!.window!.items;
+    expect(laterCommand).toBe(firstCommand);
+    expect(laterNext).not.toBe(firstNext);
   });
 
   it("leaves rows alone when nothing is running", () => {
@@ -4799,13 +4833,22 @@ it.each([
   };
   const original = applyWorkingWindow(deriveMessagesTimelineRows(input), input);
   const collapsed = applyBackgroundActivityGroups(original, input);
-  const finalAnswer = original.filter(
-    (row) =>
-      (row.kind === "message" || row.kind === "assistant-meta") &&
-      row.message.runId === fixture.runId &&
-      !row.message.streaming,
-  );
-  expect(collapsed.slice(1)).toEqual(finalAnswer);
+  const answerRows = (runId: RunId, rows = original) =>
+    rows.filter(
+      (row) =>
+        (row.kind === "message" || row.kind === "assistant-meta") && row.message.runId === runId,
+    );
+  const keptAnswer = (rows: MessagesTimelineRow[]) => {
+    const answer = answerRows(fixture.runId, rows);
+    return answer.length > 0 ? answer : answerRows(fixture.historyRunId, rows);
+  };
+  expect(keptAnswer(original)).not.toEqual([]);
+  expect(collapsed.slice(1)).toEqual(keptAnswer(original));
+  if (active) {
+    const streaming = deriveMessagesTimelineRows(input);
+    expect(keptAnswer(streaming)).toMatchObject([{ message: { streaming: true } }]);
+    expect(applyBackgroundActivityGroups(streaming, input).slice(1)).toEqual(keptAnswer(streaming));
+  }
   expect(collapsed[0]).toMatchObject({
     kind: "background-activity",
     updateCount: 2,
@@ -4813,6 +4856,41 @@ it.each([
     expanded: false,
     runIds: [fixture.historyRunId, fixture.runId],
   });
+  if (!active) {
+    const queuedRunId = RunId.make("queued-wake-run");
+    const queuedInput = {
+      ...input,
+      latestRun: {
+        runId: queuedRunId,
+        status: "queued" as const,
+        startedAt: fixture.time(9),
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: fixture.time(9),
+    };
+    const queuedRows = applyWorkingWindow(deriveMessagesTimelineRows(queuedInput), queuedInput);
+    const queued = applyBackgroundActivityGroups(queuedRows, queuedInput);
+    expect(keptAnswer(queuedRows)).toMatchObject([{ message: { streaming: false } }]);
+    expect(queued.slice(1)).toEqual(keptAnswer(queuedRows));
+    expect(queued[0]).toMatchObject({
+      id: collapsed[0]!.id,
+      updateCount: 2,
+      active: true,
+      runIds: [fixture.historyRunId, fixture.runId, queuedRunId],
+    });
+    const silentInput = {
+      ...input,
+      timelineEntries: entries.filter(
+        (entry) => entry.kind !== "message" || entry.message.runId !== fixture.runId,
+      ),
+    };
+    const silent = applyBackgroundActivityGroups(
+      applyWorkingWindow(deriveMessagesTimelineRows(silentInput), silentInput),
+      silentInput,
+    );
+    expect(silent.slice(1)).toEqual(answerRows(fixture.historyRunId));
+  }
   const expanded = applyBackgroundActivityGroups(original, {
     ...input,
     expandedWorkGroupIds: new Set([collapsed[0]!.id]),
