@@ -2145,22 +2145,27 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         }),
     );
 
-    it.effect("holds a follow-up open while the child's own subagent still runs", () =>
+    it.effect.each([
+      { scenario: "while the child's own subagent still runs", queuedFollowup: false },
+      // The completion wake runs ahead of a later queued follow-up, yet belongs to the first.
+      { scenario: "for its completion wake ahead of a queued follow-up", queuedFollowup: true },
+    ])("holds a follow-up open $scenario", ({ queuedFollowup }) =>
       Effect.gen(function* () {
+        const key = queuedFollowup ? "queued-followup-grandchild" : "followup-grandchild";
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const eventSink = yield* EventSink.EventSinkV2;
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
         const now = yield* DateTime.now;
-        const parentThreadId = ThreadId.make("thread:followup-grandchild-parent");
-        const projectId = ProjectId.make("project:followup-grandchild");
-        const parentRunId = RunId.make("run:followup-grandchild-parent");
-        const rootNodeId = NodeId.make("node:followup-grandchild-parent");
+        const parentThreadId = ThreadId.make(`thread:${key}-parent`);
+        const projectId = ProjectId.make(`project:${key}`);
+        const parentRunId = RunId.make(`run:${key}-parent`);
+        const rootNodeId = NodeId.make(`node:${key}-parent`);
         yield* seedParentWithTerminalTask({
           threadId: parentThreadId,
           projectId,
           runId: parentRunId,
           rootNodeId,
-          taskId: NodeId.make("node:followup-grandchild-seed"),
+          taskId: NodeId.make(`node:${key}-seed`),
           deliveryState: "acknowledged",
           now,
         });
@@ -2169,7 +2174,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           projectId,
           parentRunId,
           rootNodeId,
-          name: "followup-grandchild-child",
+          name: `${key}-child`,
           completionWake: "always",
           continuationPending: false,
           runStatus: "completed",
@@ -2180,7 +2185,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         while (firstWake.threadId !== parentThreadId) firstWake = yield* requests.take;
         yield* orchestrator.dispatch({
           type: "delegated_task.completion-delivery.acknowledge",
-          commandId: CommandId.make("command:followup-grandchild-ack"),
+          commandId: CommandId.make(`command:${key}-ack`),
           parentThreadId,
           taskId: child.taskId,
           observedByRunId: parentRunId,
@@ -2189,10 +2194,10 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           (run) => run.id === parentRunId,
         )!;
         yield* eventSink.write({
-          commandId: reconcileCommandId("followup-grandchild-parent-finished"),
+          commandId: reconcileCommandId(`${key}-parent-finished`),
           events: [
             {
-              id: EventId.make("event:followup-grandchild-parent-finished"),
+              id: EventId.make(`event:${key}-parent-finished`),
               type: "run.updated",
               threadId: parentThreadId,
               runId: parentRunId,
@@ -2202,12 +2207,12 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           ],
         });
 
-        const followupMessageId = MessageId.make("message:followup-grandchild-send");
+        const followupMessageId = MessageId.make(`message:${key}-send`);
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           createdBy: "agent",
           creationSource: "mcp",
-          commandId: CommandId.make("command:followup-grandchild-send"),
+          commandId: CommandId.make(`command:${key}-send`),
           threadId: child.childThreadId,
           senderThreadId: parentThreadId,
           messageId: followupMessageId,
@@ -2219,13 +2224,28 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           child.childThreadId,
         )).runs.find((row) => row.userMessageId === followupMessageId)!;
         assert.isDefined(followupRun.delegatedTaskId);
+        const laterMessageId = MessageId.make(`message:${key}-later`);
+        if (queuedFollowup) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "agent",
+            creationSource: "mcp",
+            commandId: CommandId.make(`command:${key}-later`),
+            threadId: child.childThreadId,
+            senderThreadId: parentThreadId,
+            messageId: laterMessageId,
+            text: "Another task.",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          });
+        }
 
         // The follow-up run delegates its own app-owned grandchild, then ends its turn.
-        const grandchildTaskId = NodeId.make("node:followup-grandchild-grandchild");
-        const grandchildThreadId = ThreadId.make("thread:followup-grandchild-grandchild");
+        const grandchildTaskId = NodeId.make(`node:${key}-grandchild`);
+        const grandchildThreadId = ThreadId.make(`thread:${key}-grandchild`);
         const grandchildRun = runEvent({
           threadId: grandchildThreadId,
-          runId: RunId.make("run:followup-grandchild-grandchild"),
+          runId: RunId.make(`run:${key}-grandchild`),
           ordinal: 1,
           status: "running",
           now,
@@ -2234,7 +2254,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           id: grandchildTaskId,
           threadId: child.childThreadId,
           runId: followupRun.id,
-          parentNodeId: followupRun.rootNodeId ?? NodeId.make("node:followup-grandchild-child"),
+          parentNodeId: followupRun.rootNodeId ?? NodeId.make(`node:${key}-child`),
           origin: "app_owned" as const,
           createdBy: "agent" as const,
           driver,
@@ -2253,13 +2273,13 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           updatedAt: now,
         };
         const assistantMessage = (runId: RunId, text: string) => ({
-          id: EventId.make(`event:followup-grandchild-answer:${runId}`),
+          id: EventId.make(`event:${key}-answer:${runId}`),
           type: "message.updated" as const,
           threadId: child.childThreadId,
           runId,
           occurredAt: now,
           payload: {
-            id: MessageId.make(`message:followup-grandchild-answer:${runId}`),
+            id: MessageId.make(`message:${key}-answer:${runId}`),
             threadId: child.childThreadId,
             runId,
             nodeId: null,
@@ -2274,10 +2294,10 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           },
         });
         yield* eventSink.write({
-          commandId: reconcileCommandId("followup-grandchild-delegated"),
+          commandId: reconcileCommandId(`${key}-delegated`),
           events: [
             {
-              id: EventId.make("event:followup-grandchild-grandchild-thread"),
+              id: EventId.make(`event:${key}-grandchild-thread`),
               type: "thread.created",
               threadId: grandchildThreadId,
               occurredAt: now,
@@ -2286,7 +2306,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                 creationSource: "server",
                 id: grandchildThreadId,
                 projectId,
-                title: "followup-grandchild-grandchild",
+                title: `${key}-grandchild`,
                 providerInstanceId: modelSelection.instanceId,
                 modelSelection,
                 runtimeMode: "full-access",
@@ -2310,7 +2330,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               },
             },
             {
-              id: EventId.make("event:followup-grandchild-grandchild-task"),
+              id: EventId.make(`event:${key}-grandchild-task`),
               type: "subagent.updated",
               threadId: child.childThreadId,
               runId: followupRun.id,
@@ -2324,16 +2344,18 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           ],
         });
         yield* eventSink.write({
-          commandId: reconcileCommandId("followup-grandchild-followup-ended"),
+          commandId: reconcileCommandId(`${key}-followup-ended`),
           events: [
             assistantMessage(followupRun.id, "CHILD_WAITING"),
             {
-              id: EventId.make("event:followup-grandchild-followup-ended"),
+              id: EventId.make(`event:${key}-followup-ended`),
               type: "run.updated",
               threadId: child.childThreadId,
               runId: followupRun.id,
               occurredAt: now,
-              payload: { ...followupRun, status: "completed", startedAt: now, completedAt: now },
+              payload: queuedFollowup
+                ? { ...followupRun, status: "running", startedAt: now }
+                : { ...followupRun, status: "completed", startedAt: now, completedAt: now },
             },
           ],
         });
@@ -2354,11 +2376,11 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
 
         // The grandchild settles and its completion wakes the child, as ProviderContinuationService does.
         yield* eventSink.write({
-          commandId: reconcileCommandId("followup-grandchild-grandchild-ended"),
+          commandId: reconcileCommandId(`${key}-grandchild-ended`),
           events: [
             {
               ...grandchildRun,
-              id: EventId.make("event:followup-grandchild-grandchild-ended"),
+              id: EventId.make(`event:${key}-grandchild-ended`),
               payload: { ...grandchildRun.payload, status: "completed", completedAt: now },
             },
           ],
@@ -2373,7 +2395,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           type: "message.dispatch",
           createdBy: "agent",
           creationSource: "server",
-          commandId: CommandId.make("command:followup-grandchild-child-wake"),
+          commandId: CommandId.make(`command:${key}-child-wake`),
           threadId: child.childThreadId,
           messageId: delivery.messageId,
           text: "Delegated task finished",
@@ -2388,19 +2410,38 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         const wakeRun = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
           (run) => run.userMessageId === delivery.messageId,
         )!;
+        if (queuedFollowup) {
+          yield* eventSink.write({
+            commandId: reconcileCommandId(`${key}-followup-completed`),
+            events: [
+              {
+                id: EventId.make(`event:${key}-followup-completed`),
+                type: "run.updated",
+                threadId: child.childThreadId,
+                runId: followupRun.id,
+                occurredAt: now,
+                payload: { ...followupRun, status: "completed", startedAt: now, completedAt: now },
+              },
+            ],
+          });
+          yield* orchestrator.resumeQueuedRuns;
+          const runs = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs;
+          assert.equal(runs.find((run) => run.id === wakeRun.id)?.status, "starting");
+          assert.equal(runs.find((run) => run.userMessageId === laterMessageId)?.status, "queued");
+        }
         yield* orchestrator.dispatch({
           type: "delegated_task.completion-delivery.acknowledge",
-          commandId: CommandId.make("command:followup-grandchild-grandchild-ack"),
+          commandId: CommandId.make(`command:${key}-grandchild-ack`),
           parentThreadId: child.childThreadId,
           taskId: grandchildTaskId,
           observedByRunId: wakeRun.id,
         });
         yield* eventSink.write({
-          commandId: reconcileCommandId("followup-grandchild-wake-ended"),
+          commandId: reconcileCommandId(`${key}-wake-ended`),
           events: [
             assistantMessage(wakeRun.id, "CHILD_DONE"),
             {
-              id: EventId.make("event:followup-grandchild-wake-ended"),
+              id: EventId.make(`event:${key}-wake-ended`),
               type: "run.updated",
               threadId: child.childThreadId,
               runId: wakeRun.id,

@@ -88,6 +88,7 @@ import {
   subagentResultForRun,
   delegatedTaskProgress,
   delegatedTaskRuns,
+  delegatedRunOwners,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
   DispatchModeLimit,
@@ -539,12 +540,21 @@ function directChildTaskIds(
 ): ReadonlyArray<NodeId> {
   const ids = new Set<NodeId>();
   if (target.thread.forkedFrom?.type === "node") ids.add(target.thread.forkedFrom.nodeId);
+  const owners = runTaskIds(target);
   for (const run of target.runs) {
-    if (returnedRunIds.has(run.id) && run.delegatedTaskId !== undefined) {
-      ids.add(run.delegatedTaskId);
-    }
+    const taskId = returnedRunIds.has(run.id) ? owners.get(run.id) : undefined;
+    if (taskId !== undefined) ids.add(taskId);
   }
   return [...ids];
+}
+
+function runTaskIds(
+  child: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+): ReadonlyMap<RunId, NodeId | undefined> {
+  const { forkedFrom } = child.thread;
+  return forkedFrom?.type === "node"
+    ? delegatedRunOwners(child.runs, forkedFrom.nodeId)
+    : new Map(child.runs.map((run) => [run.id, run.delegatedTaskId]));
 }
 
 function directAppOwnedChildTasks(
@@ -558,18 +568,9 @@ function directAppOwnedChildTasks(
   ) {
     return [];
   }
-  const original = parent.subagents.find(
-    (task) =>
-      task.origin === "app_owned" &&
-      task.threadId === parent.thread.id &&
-      task.id ===
-        (target.thread.forkedFrom?.type === "node" ? target.thread.forkedFrom.nodeId : undefined) &&
-      task.childThreadId === target.thread.id,
-  );
+  const owners = runTaskIds(target);
   const taskIds = new Set(
-    target.runs
-      .filter((run) => returnedRunIds.has(run.id))
-      .map((run) => run.delegatedTaskId ?? original?.id),
+    target.runs.filter((run) => returnedRunIds.has(run.id)).map((run) => owners.get(run.id)),
   );
   return parent.subagents.filter(
     (task) =>
@@ -581,18 +582,13 @@ function directAppOwnedChildTasks(
 
 function taskResultTransfer(
   parent: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers">,
-  child: Pick<OrchestrationV2ThreadProjection, "runs" | "contextTransfers">,
+  child: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "contextTransfers">,
   task: OrchestrationV2Subagent,
 ) {
   const originalRun = delegatedTaskRun(child, task);
+  const owners = runTaskIds(child);
   const resultRunIds = new Set(
-    child.runs
-      .filter(
-        (run) =>
-          run.delegatedTaskId === task.id ||
-          (originalRun?.delegatedTaskId === undefined && run.delegatedTaskId === undefined),
-      )
-      .map((run) => run.id),
+    child.runs.filter((run) => owners.get(run.id) === task.id).map((run) => run.id),
   );
   if (originalRun !== undefined) resultRunIds.add(originalRun.id);
   return parent.contextTransfers.find(

@@ -224,17 +224,36 @@ export function subagentResultForRun(
   };
 }
 
-/** A task owns its bound runs and the unbound runs created after them, such as wakes that joined it. */
-export function delegatedTaskRuns<
-  Run extends Pick<OrchestrationV2Run, "ordinal" | "delegatedTaskId">,
->(runs: ReadonlyArray<Run>, taskId: NodeId, originalTaskId: NodeId): Array<Run> {
+type TaskRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "startedAt" | "delegatedTaskId">;
+
+/**
+ * Each run's task: its bound task, or for an unbound run (a wake, a user turn) the task whose
+ * bound run most recently started before it. A queued bound run owns nothing else yet.
+ */
+export function delegatedRunOwners(
+  runs: ReadonlyArray<TaskRun>,
+  originalTaskId: NodeId,
+): ReadonlyMap<TaskRun["id"], NodeId> {
+  const start = (run: TaskRun) =>
+    run.startedAt === null ? Number.POSITIVE_INFINITY : DateTime.toEpochMillis(run.startedAt);
+  const owners = new Map<TaskRun["id"], NodeId>();
   let owner = originalTaskId;
+  for (const run of runs.toSorted((a, b) => start(a) - start(b) || a.ordinal - b.ordinal)) {
+    if (run.delegatedTaskId !== undefined && run.startedAt !== null) owner = run.delegatedTaskId;
+    owners.set(run.id, run.delegatedTaskId ?? owner);
+  }
+  return owners;
+}
+
+export function delegatedTaskRuns<Run extends TaskRun>(
+  runs: ReadonlyArray<Run>,
+  taskId: NodeId,
+  originalTaskId: NodeId,
+): Array<Run> {
+  const owners = delegatedRunOwners(runs, originalTaskId);
   return runs
-    .toSorted((a, b) => a.ordinal - b.ordinal)
-    .filter((run) => {
-      owner = run.delegatedTaskId ?? owner;
-      return owner === taskId;
-    });
+    .filter((run) => owners.get(run.id) === taskId)
+    .toSorted((a, b) => a.ordinal - b.ordinal);
 }
 
 export function delegatedTaskProgress(projection: {

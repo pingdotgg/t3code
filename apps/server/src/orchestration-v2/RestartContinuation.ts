@@ -1,5 +1,6 @@
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { delegatedRunOwners } from "@t3tools/provider-core/server/subagentProjection";
 import {
   CommandId,
   isOrchestrationV2WorkActive,
@@ -264,7 +265,9 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     // A parent's Stop reaches its open delegated tasks through an effect a restart can cut short.
     const { lineage, forkedFrom } = projection.thread;
     const taskId =
-      source.delegatedTaskId ?? (forkedFrom?.type === "node" ? forkedFrom.nodeId : undefined);
+      forkedFrom?.type === "node"
+        ? delegatedRunOwners(projection.runs, forkedFrom.nodeId).get(source.id)
+        : source.delegatedTaskId;
     if (
       lineage.relationshipToParent === "subagent" &&
       lineage.parentThreadId !== null &&
