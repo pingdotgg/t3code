@@ -1037,7 +1037,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     // A shut-down AVD is listed by its name and a running one by its adb serial.
     const byAvdName = state.devices.filter(
       (device) =>
-        device.platform === "android" && !device.physical && device.name === input.deviceId,
+        device.platform === "android" &&
+        !device.physical &&
+        device.booted &&
+        device.name === input.deviceId,
     );
     const located = yield* locate(state, input, [...byId, ...byAvdName]);
     // Several emulators running one AVD: its name picks none of them.

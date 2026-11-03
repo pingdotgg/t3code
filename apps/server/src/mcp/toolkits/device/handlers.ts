@@ -155,14 +155,20 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
   if (input.deviceId !== undefined) {
     const { deviceId, hostId } = input;
     const devices = yield* DeviceService.DeviceService;
-    const located = yield* devices.locateDevice({ deviceId, hostId }).pipe(mapLocateErrors);
-    if (Option.isSome(located)) return located.value;
     // A failed refresh keeps the previous devices, so the device may be there unlisted.
     const failed = state.hosts.filter(
       (host) =>
         (hostId === undefined || host.id === hostId) &&
         state.hostStatuses[host.id]?.status === "failed",
     );
+    const located = yield* devices.locateDevice({ deviceId, hostId }).pipe(
+      Effect.catchTags({
+        DeviceOnOtherHostError: (error) =>
+          failed.length > 0 ? Effect.succeedNone : Effect.fail(error),
+      }),
+      mapLocateErrors,
+    );
+    if (Option.isSome(located)) return located.value;
     if (failed.length > 0) {
       const failures = failed.map((host) => {
         const detail = state.hostStatuses[host.id]?.detail;
