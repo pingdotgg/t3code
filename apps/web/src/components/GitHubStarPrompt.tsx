@@ -29,14 +29,11 @@ function dismiss() {
 // Every close path, including both buttons, runs `onClose`, which saves the dismissal.
 function showStarPrompt(environmentId: EnvironmentId) {
   const close = () => toastManager.close(id);
-  const openInBrowser = async () => {
-    try {
-      await readLocalApi()?.shell.openExternal(`https://github.com/${REPOSITORY}`);
-      close();
-      return true;
-    } catch {
-      return false;
-    }
+  const openInBrowser = () => {
+    close();
+    void readLocalApi()
+      ?.shell.openExternal(`https://github.com/${REPOSITORY}`)
+      .catch(() => undefined);
   };
   const starInPlace = async () => {
     toastManager.update(id, { actionProps: { children: "Starring…", disabled: true } });
@@ -45,11 +42,10 @@ function showStarPrompt(environmentId: EnvironmentId) {
       toastManager.add({ type: "success", title: "Thanks for the star!", timeout: 4_000 });
       return;
     }
-    if (await openInBrowser()) return;
-    // The browser blocked a tab opened after the await; this click opens it directly.
-    toastManager.update(id, {
-      actionProps: { children: "Open GitHub", onClick: () => void openInBrowser() },
-    });
+    // Browsers block new tabs once the click's activation expires; desktop opens through its bridge.
+    if (window.desktopBridge || navigator.userActivation?.isActive !== false)
+      return openInBrowser();
+    toastManager.update(id, { actionProps: { children: "Open GitHub", onClick: openInBrowser } });
   };
   const id = toastManager.add({
     title: "Enjoying T3 Code?",

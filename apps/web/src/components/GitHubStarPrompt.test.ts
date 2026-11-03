@@ -164,7 +164,7 @@ describe("recordPromptSent", () => {
     expect(add).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
-  it("stars on click, opens GitHub when starring fails, and asks for a click when blocked", async () => {
+  it("stars on click, opens GitHub when starring fails, and asks for a click once the click expired", async () => {
     setup({ sent: 5 });
     await (await startSession()).send();
     click(add.mock.lastCall?.[0].actionProps);
@@ -184,14 +184,15 @@ describe("recordPromptSent", () => {
 
     setup({ sent: 5 });
     starred.starWorks = false;
-    openExternal.mockRejectedValueOnce(new Error("Unable to open link."));
+    vi.stubGlobal("navigator", { userActivation: { isActive: false } });
     await (await startSession()).send();
     click(add.mock.lastCall?.[0].actionProps);
     await vi.advanceTimersByTimeAsync(0);
     const fallback = update.mock.lastCall?.[1];
     expect(fallback).toMatchObject({ actionProps: { children: "Open GitHub" } });
+    expect(openExternal).not.toHaveBeenCalled();
     click(typeof fallback === "object" ? fallback.actionProps : undefined);
-    expect(openExternal).toHaveBeenCalledTimes(2);
+    expect(openExternal).toHaveBeenCalledOnce();
     vi.unstubAllGlobals();
   });
 });

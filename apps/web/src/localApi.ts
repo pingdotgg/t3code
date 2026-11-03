@@ -27,10 +27,7 @@ export function createLocalApi(): LocalApi {
           return;
         }
 
-        // `noopener` would make window.open return null even when it opens, hiding a blocked popup.
-        const opened = window.open(url, "_blank");
-        if (!opened) throw new Error("Unable to open link.");
-        opened.opener = null;
+        window.open(url, "_blank", "noopener,noreferrer");
       },
       openSystemSettings: async (pane) => {
         if (!window.desktopBridge) {
