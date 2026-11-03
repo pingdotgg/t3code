@@ -732,6 +732,42 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
   );
 });
 
+it.layer(layerTest)("ThreadSearch short words outside ASCII", (it) => {
+  it.effect("finds them in any case or accent, with or without the index", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:short-non-ascii");
+      const russian = ThreadId.make("thread:short-russian");
+      const french = ThreadId.make("thread:short-french");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(russian, project),
+          message(russian, "russian", "user", "В логах ошибка"),
+          thread(french, project),
+          message(french, "french", "user", "École fermée à Lyon"),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+
+      const assertMatches = Effect.gen(function* () {
+        assert.deepEqual(yield* threadIds("ошибка в"), [russian]);
+        assert.deepEqual(yield* threadIds("fermée éc"), [french]);
+        // They still narrow: a word the message lacks rules it out.
+        assert.deepEqual(yield* threadIds("ошибка я"), []);
+      });
+      yield* assertMatches;
+      yield* sql`DROP TABLE orchestration_v2_message_search`;
+      yield* assertMatches;
+    }),
+  );
+});
+
 it.layer(layerTest)("ThreadSearch across scripts and without the index", (it) => {
   it.effect(
     "matches Korean, Japanese, and two-character Chinese words, and whole short words",

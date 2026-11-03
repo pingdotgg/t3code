@@ -99,6 +99,7 @@ const MESSAGE_HIT_LIMIT = 2000;
 const MESSAGE_CANDIDATE_LIMIT = 10_000;
 // Without the index, how many of the newest messages a search scans.
 const MESSAGE_SCAN_LIMIT = 20_000;
+const NON_ASCII = /[\u0080-\uffff]/;
 
 /**
  * The SQL inputs for a message search, or null when the query has no token
@@ -114,9 +115,12 @@ function buildMessageSearch(
   if (long.length === 0) return null;
   // Two-character CJK words are too short for trigrams.
   const indexed = hasIndex && long.every((token) => Array.from(token).length >= 3);
+  // SQLite's lower() folds ASCII only, so "в" would reject a message that has "В". The matcher
+  // still requires these tokens, ignoring case and accents.
+  const narrowing = short.filter((token) => !NON_ASCII.test(token));
   return {
     match: indexed ? long.map((token) => `"${token.replaceAll('"', '""')}"`).join(" ") : null,
-    substrings: indexed ? short : [...long, ...short],
+    substrings: indexed ? narrowing : [...long, ...narrowing],
   };
 }
 
