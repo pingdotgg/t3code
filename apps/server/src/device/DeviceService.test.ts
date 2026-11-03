@@ -1884,12 +1884,43 @@ describe("locating a device id across hosts", () => {
               { id: "emulator-5556", name: "Medium_Phone" },
             ]),
           ],
+          [macMini.id, listingHost(macMini, [{ id: "emulator-5554", name: "Medium_Phone" }])],
         ]),
       ).pipe(Effect.provide(NodeCrypto.layer));
       yield* service.list;
-      expect(yield* service.locateDevice({ deviceId: DeviceId.make("Medium_Phone") })).toEqual(
+      const deviceId = DeviceId.make("Medium_Phone");
+      expect(yield* service.locateDevice({ deviceId }).pipe(Effect.flip)).toMatchObject({
+        _tag: "DeviceHostAmbiguousError",
+      });
+      expect(yield* service.locateDevice({ deviceId, hostId: LOCAL_DEVICE_HOST_ID })).toEqual(
         Option.none(),
       );
+      expect(
+        Option.getOrUndefined(yield* service.locateDevice({ deviceId, hostId: "mac-mini" })),
+      ).toMatchObject({ hostId: "mac-mini", id: "emulator-5554" });
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+  );
+
+  it.effect("prefers a listed id to another host's emulator running that AVD", () =>
+    Effect.gen(function* () {
+      const service = yield* DeviceService.makeWithHosts(
+        new Map([
+          [
+            thisMachine.id,
+            listingHost(thisMachine, [{ id: "Medium_Phone", name: "Medium_Phone" }]),
+          ],
+          [macMini.id, listingHost(macMini, [{ id: "emulator-5554", name: "Medium_Phone" }])],
+        ]),
+      ).pipe(Effect.provide(NodeCrypto.layer));
+      yield* service.list;
+      const deviceId = DeviceId.make("Medium_Phone");
+      expect(Option.getOrUndefined(yield* service.locateDevice({ deviceId }))).toMatchObject({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        id: "Medium_Phone",
+      });
+      expect(
+        Option.getOrUndefined(yield* service.locateDevice({ deviceId, hostId: "mac-mini" })),
+      ).toMatchObject({ hostId: "mac-mini", id: "emulator-5554" });
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
   );
 
