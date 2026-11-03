@@ -9,6 +9,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import {
   AuthRelayWriteScope,
+  tailscaleServeFailureMessage,
   type EnvironmentId,
   connectReachabilityHelpUrl,
   formatConnectReachable,
@@ -204,6 +205,9 @@ export function SavedBackendListRow({
     relayHttpBaseUrl: discoveredRelayHttpBaseUrl ?? lastRelayHttpBaseUrl,
     connectedTarget,
   });
+  const tailscaleFailure = tailscaleServeFailureMessage(
+    environment.serverConfig?.tailscaleServeFailure,
+  );
   const machineKind = resolveEnvironmentMachineKind(
     environment.serverConfig ??
       (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
@@ -316,6 +320,9 @@ export function SavedBackendListRow({
               expanded={diagnosisOpen}
               onToggle={() => setDiagnosisOpen((open) => !open)}
             />
+          ) : null}
+          {enabled && tailscaleFailure ? (
+            <p className="mt-1 max-w-md text-xs text-muted-foreground">{tailscaleFailure}</p>
           ) : null}
           {serverUpdateState.status !== "idle" ? (
             <div className="mt-1 max-w-md">

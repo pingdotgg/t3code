@@ -28,6 +28,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
+import { tailscaleServeFailureMessage } from "@t3tools/contracts";
 import * as ServerConfig from "./config.ts";
 import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
@@ -215,7 +216,6 @@ import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
   disableTailscaleServe,
-  ensureTailscaleServe,
   readTailscaleServeRoutesTo,
   readTailscaleStatus,
 } from "@t3tools/tailscale";
@@ -896,30 +896,41 @@ const layerMakeServer = Layer.unwrap(
 
               const localPort = address.port;
               const localHost = loopbackUrlHostForAddress(address);
-              return yield* ensureTailscaleServe({
-                localPort,
-                servePort: config.tailscaleServePort,
-                localHost,
-              }).pipe(
-                Effect.as({
+              const directEndpoints = yield* DirectEndpoints.DirectEndpoints;
+              return yield* directEndpoints
+                .configureTailscaleServe({
                   localPort,
-                  localHost: localHost.replace(/^\[|\]$/gu, ""),
                   servePort: config.tailscaleServePort,
-                }),
-                Effect.tap(() =>
-                  Effect.logInfo("Tailscale Serve configured", {
+                  localHost,
+                })
+                .pipe(
+                  Effect.as({
                     localPort,
+                    localHost: localHost.replace(/^\[|\]$/gu, ""),
                     servePort: config.tailscaleServePort,
                   }),
-                ),
-                Effect.catch((cause) =>
-                  Effect.logWarning("Failed to configure Tailscale Serve", {
-                    cause,
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }).pipe(Effect.as(null)),
-                ),
-              );
+                  Effect.tap(() =>
+                    Effect.logInfo("Tailscale Serve configured", {
+                      localPort,
+                      servePort: config.tailscaleServePort,
+                    }),
+                  ),
+                  Effect.catch((cause) =>
+                    Effect.logWarning(
+                      tailscaleServeFailureMessage(
+                        cause._tag === "TailscaleCommandExitError" &&
+                          cause.stderrDiagnostic === "permission-denied"
+                          ? "permission-denied"
+                          : "unknown",
+                      ),
+                      {
+                        cause,
+                        localPort,
+                        servePort: config.tailscaleServePort,
+                      },
+                    ).pipe(Effect.as(null)),
+                  ),
+                );
             }),
             (configured) =>
               configured

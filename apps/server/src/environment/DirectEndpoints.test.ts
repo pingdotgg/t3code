@@ -285,6 +285,70 @@ const resolveWithServe = (probeStatus: number) =>
   );
 
 describe("DirectEndpoints Tailscale Serve", () => {
+  effectIt.effect("reports safe Serve setup failures and clears them after recovery", () =>
+    Effect.gen(function* () {
+      const failure = yield* Ref.make<string | null>(
+        "Access denied: serve config denied tskey-secret",
+      );
+      const probeStatus = yield* Ref.make(502);
+      const spawner = ChildProcessSpawner.make((command) =>
+        Ref.get(failure).pipe(
+          Effect.map((failureStderr) => {
+            const status = command._tag === "StandardCommand" && command.args[0] === "status";
+            const stderr = status ? null : failureStderr;
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(stderr ? 1 : 0)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.make(new TextEncoder().encode(status ? TAILSCALE_STATUS_JSON : "")),
+              stderr: Stream.make(new TextEncoder().encode(stderr ?? "")),
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }),
+        ),
+      );
+      const service = yield* DirectEndpoints.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerServeConfig(),
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make((request) =>
+                Ref.get(probeStatus).pipe(
+                  Effect.map((status) =>
+                    HttpClientResponse.fromWeb(request, new Response(null, { status })),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      const configure = service.configureTailscaleServe({ localPort: 3773 }).pipe(Effect.result);
+      expect((yield* configure)._tag).toBe("Failure");
+      expect(yield* service.tailscaleServeFailure).toBe("permission-denied");
+      expect(yield* service.resolve()).toEqual([]);
+      expect(yield* service.tailscaleServeFailure).toBe("permission-denied");
+      yield* Ref.set(probeStatus, 200);
+      expect(yield* service.resolve()).toEqual([
+        { kind: "tailnet", httpBaseUrl: "https://bb-1.tail1234.ts.net/" },
+      ]);
+      expect(yield* service.tailscaleServeFailure).toBeNull();
+      yield* Ref.set(failure, "unrecognized failure tskey-secret private-device");
+      expect((yield* configure)._tag).toBe("Failure");
+      expect(yield* service.tailscaleServeFailure).toBe("unknown");
+      yield* Ref.set(failure, null);
+      expect((yield* configure)._tag).toBe("Success");
+      expect(yield* service.tailscaleServeFailure).toBeNull();
+    }),
+  );
+
   effectIt.effect("lists the tailnet name once Serve answers for this server", () =>
     Effect.gen(function* () {
       expect(yield* resolveWithServe(200)).toEqual([
