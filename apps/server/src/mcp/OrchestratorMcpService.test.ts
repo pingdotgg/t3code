@@ -1392,6 +1392,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       Effect.gen(function* () {
         const disabledAntigravityInstanceId = ProviderInstanceId.make("antigravity-alt");
         const disabledWithoutAdapterInstanceId = ProviderInstanceId.make("codex-without-adapter");
+        const projectDisabledInstanceId = ProviderInstanceId.make("codex-project-off");
         const forkOnlyInstanceId = ProviderInstanceId.make("forkOnly");
         const forkShadow = yield* buildUnavailableProviderSnapshot({
           driverKind: "forkOnly",
@@ -1437,6 +1438,11 @@ describe("OrchestratorMcpService provider resolution", () => {
             model: "gpt-5.4",
             enabled: false,
           }),
+          providerSnapshot({
+            instanceId: projectDisabledInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
           forkShadow,
         ];
         const layerDependencies = Layer.mergeAll(
@@ -1445,12 +1451,34 @@ describe("OrchestratorMcpService provider resolution", () => {
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadRecords: () => Effect.succeed(parentProjection([])),
           }),
-          ServerSettings.layerTest(),
+          ServerSettings.layerTest({
+            providerInstances: {
+              [ProviderInstanceId.make("pi")]: {
+                driver: ProviderDriverKind.make("pi"),
+                enabled: true,
+              },
+              [ProviderInstanceId.make("acpRegistry")]: {
+                driver: ProviderDriverKind.make("acpRegistry"),
+                enabled: true,
+              },
+              [antigravityInstanceId]: {
+                driver: ProviderDriverKind.make("antigravity"),
+                enabled: true,
+              },
+              [projectDisabledInstanceId]: { driver: ProviderDriverKind.make("codex") },
+            },
+            projectSettingsOverrides: {
+              [projectId]: {
+                providerInstances: { [projectDisabledInstanceId]: { enabled: false } },
+              },
+            },
+          }),
           Layer.mock(ProviderRegistry.ProviderRegistry)({
             getProviders: Effect.sync(() => providers),
           }),
           adapterRegistryLayer([
             codexInstanceId,
+            projectDisabledInstanceId,
             ProviderInstanceId.make("claudeAgent"),
             ProviderInstanceId.make("pi"),
             ProviderInstanceId.make("acpRegistry"),
@@ -1520,6 +1548,11 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.isFalse(disabled!.canRunChildTask);
           assert.isFalse(disabled!.canRunCrossProviderChildTask);
           assert.deepEqual(disabled!.constraints, ["Provider instance is disabled."]);
+
+          const projectDisabled = byId.get(projectDisabledInstanceId);
+          assert.isDefined(projectDisabled);
+          assert.isFalse(projectDisabled!.canRunChildTask);
+          assert.deepEqual(projectDisabled!.constraints, ["Provider instance is disabled."]);
 
           const disabledWithoutAdapter = byId.get(disabledWithoutAdapterInstanceId);
           assert.isDefined(disabledWithoutAdapter);
