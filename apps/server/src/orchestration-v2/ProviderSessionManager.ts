@@ -6,7 +6,7 @@ import {
   ModelSelection,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
-  type OrchestrationV2ProviderThread,
+  OrchestrationV2ProviderThread,
   OrchestrationV2RuntimeRequest,
   ProviderInstanceId,
   ProviderSessionId,
@@ -53,6 +53,8 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+
+const providerThreadsEqual = Schema.toEquivalence(OrchestrationV2ProviderThread);
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
@@ -1736,7 +1738,21 @@ export const layerWithOptions = (
             // must not reclaim a thread that has moved to the replacement session.
             if (owner !== undefined && owner.providerSessionId !== entry.runtime.providerSessionId)
               return true;
-            const events = yield* providerEventIngestor.normalize(input);
+            // A provider may repeat an already committed snapshot after the run
+            // closes. Keep rewind effects, but do not store that snapshot a second time.
+            const events = yield* providerEventIngestor.normalize({
+              ...input,
+              skipProviderThreadSnapshot:
+                skipProviderThreadSnapshot ||
+                (owner !== undefined &&
+                  providerThreadsEqual(owner, {
+                    ...event.providerThread,
+                    pendingBackgroundTasks: event.providerThread.pendingBackgroundTasks ?? [],
+                    contextUsage: event.providerThread.contextUsage ?? null,
+                    nativeMetadata: event.providerThread.nativeMetadata ?? null,
+                    goal: event.providerThread.goal ?? null,
+                  })),
+            });
             if (events.length === 0) return true;
             const written = yield* eventSink.writeIfProviderThreadUnchanged({
               ...(owner === undefined

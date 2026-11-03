@@ -3628,6 +3628,7 @@ it.effect.each([
   "newer received update",
   "unrelated reader",
   "coalesced updates",
+  "repeated committed snapshot",
   "rejected write",
   "released rewind",
   "replacement owner",
@@ -3782,6 +3783,14 @@ it.effect.each([
           Stream.take(2),
           Stream.runDrain,
         );
+      } else if (scenario === "repeated committed snapshot") {
+        yield* first.events.pipe(
+          Stream.mapEffect((event) => first.persistEvent!(event, persist(event))),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        yield* Queue.offer(adapterEvents, update("cleared-session"));
+        yield* routed;
       } else if (scenario === "newer received update") {
         const second = yield* runtime.subscribeEvents!;
         const newer = update("newer-session");
