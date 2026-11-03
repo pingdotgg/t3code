@@ -238,7 +238,8 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       {queuedRuns.map(({ run, text, attachments, context, message }, index) => {
         const controls = resolveThreadQueueRowControls({
           busy: busyRunId !== null,
-          canPromoteToSteer: workflow?.canPromoteToSteer ?? false,
+          // A fresh message starts its own turn; steering would put it in the session it leaves.
+          canPromoteToSteer: (workflow?.canPromoteToSteer ?? false) && run.freshContext !== true,
           canSendNow: workflow?.canSendNow ?? false,
           editBlocked: editBlockedReason !== null,
           isEditing: editing?.runId === run.id,
