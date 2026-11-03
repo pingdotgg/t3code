@@ -3,6 +3,7 @@ import * as NodeVM from "node:vm";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Playwright download mocks perform real file operations outside the Effect runtime.
 import * as NodeFSP from "node:fs/promises";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it } from "@effect/vitest";
@@ -58,7 +59,7 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       return makeEncoderPage() as unknown as Page;
     }
     async connectDesktopPage(endpoint: string) {
-      const context = makeContext();
+      const context = makeContext(undefined, desktopPageUrl);
       context.page.viewportSize.mockReturnValue(null);
       desktopConnections.push({ endpoint, context });
       return { browser: { close: async () => {} }, page: context.page as unknown as Page };
@@ -151,12 +152,12 @@ function fileChooserElement(accept: string) {
   };
 }
 
-function makeContext(onClose?: (context: BrowserContext) => void) {
+function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "about:blank") {
   const events = new NodeEvents.EventEmitter();
   const nativeFileChooser = vi.fn();
   const setChooserFiles = vi.fn(async (_files: unknown) => {});
   const sessions: ReturnType<typeof makeSession>[] = [];
-  let url = "about:blank";
+  let url = initialUrl;
   let viewport: ReturnType<Page["viewportSize"]> = { width: 1280, height: 800 };
   const cssViewport = { width: 1920, height: 1080 };
   let closed = false;
@@ -299,6 +300,7 @@ let focusedFrame: ReturnType<typeof makeFrame> | null = null;
 let contextFailure: Error | null = null;
 let initialNavigation: (() => Promise<void>) | null = null;
 let desktopRendersNext = false;
+let desktopPageUrl = "about:blank";
 /** Replaces the answer to the desktop page's size reads. */
 let desktopSizeAnswer: (() => Promise<Record<string, unknown>>) | null = null;
 const desktopDetaches = new NodeEvents.EventEmitter();
@@ -383,7 +385,7 @@ const dependencies = Layer.mergeAll(
   PreviewAgentActivity.layer,
 ).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const layer = ServerBrowser.layer.pipe(Layer.provideMerge(dependencies));
 const ready = Effect.gen(function* () {
@@ -446,6 +448,7 @@ beforeEach(() => {
   focusedFrame = null;
   desktopTabs.clear();
   desktopRendersNext = false;
+  desktopPageUrl = "about:blank";
   desktopSizeAnswer = null;
   desktopDetachReady = Promise.withResolvers<void>();
   desktopReleased = Promise.withResolvers<void>();
@@ -559,6 +562,33 @@ it.effect("a tab the desktop does not draw is marked headless, so the desktop st
 
       expect(headlessOf(tabId)).toBe(true);
       expect(headlessOf(desktopTab.tabId)).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a desktop page that loaded before the server attached reports its loaded title", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      desktopRendersNext = true;
+      desktopPageUrl = "https://example.com/loaded";
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { url: desktopPageUrl, reuseExistingTab: false, show: false },
+      });
+      let event = yield* PubSub.take(events);
+      while (event.type !== "navigated" || event.tabId !== opened.tabId) {
+        event = yield* PubSub.take(events);
+      }
+
+      expect(event.snapshot.navStatus).toEqual({
+        _tag: "Success",
+        url: "https://example.com/loaded",
+        title: "test page",
+      });
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -987,6 +1017,49 @@ it.live(
         expect(status.loading).toBe(true);
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a navigation that fails while a load reads its title keeps its failure", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const page = contexts[0]!.page;
+      const heldTitle = Promise.withResolvers<string>();
+      page.title.mockImplementationOnce(() => heldTitle.promise);
+      yield* Effect.promise(() => page.goto("https://example.com/first"));
+      const failing = {
+        url: () => "https://example.com/missing",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_NAME_NOT_RESOLVED" }),
+      };
+      page.emit("request", failing);
+      page.emit("requestfailed", failing);
+      heldTitle.resolve("Held");
+      // A load at the same await depth reports after the held one, so its Success marks the end.
+      page.emit("load");
+
+      const statuses: Array<string> = [];
+      while (!statuses.at(-1)?.startsWith("Success")) {
+        const event = yield* PubSub.take(events);
+        if (event.type === "failed" && event.tabId === tabId) {
+          statuses.push(`LoadFailed ${event.url}`);
+        } else if (event.type === "navigated" && event.tabId === tabId) {
+          const status = event.snapshot.navStatus;
+          if (status._tag === "Success") statuses.push(`Success ${status.title}`);
+          else if (status._tag === "Loading") statuses.push(`Loading ${status.url}`);
+        }
+      }
+      expect(statuses).toEqual([
+        "Loading https://example.com/missing",
+        "LoadFailed https://example.com/missing",
+        "Success test page",
+      ]);
+    }),
+  ).pipe(Effect.provide(layer)),
 );
 
 it.effect.each([
