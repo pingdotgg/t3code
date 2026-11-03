@@ -1587,6 +1587,118 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
+  it.effect("says the Cursor sandbox is unavailable when the host blocks it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-sandbox-" });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-sandbox-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "auto-accept-edits",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-sandbox",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              // The SDK's local executor throws this when cursorsandbox cannot start, e.g. AppArmor denying its user namespace.
+              send: () =>
+                Effect.fail(
+                  new CursorAgentSdk.CursorAgentSdkRunnerError({
+                    method: "run.start",
+                    cause: new ConfigurationError(
+                      "Local SDK sandboxing was requested, but sandboxing is not supported in this environment. Disable local.sandboxOptions.enabled or remove ~/.cursor/sandbox.json to run without sandboxing.",
+                      { isRetryable: false },
+                    ),
+                  }),
+                ),
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-sandbox-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const sendFailure = yield* runtime
+        .startTurn({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("cursor-sandbox-run"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("cursor-sandbox-attempt"),
+          rootNodeId: NodeId.make("cursor-sandbox-root"),
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("cursor-sandbox-project"),
+            createdBy: "user",
+            creationSource: "web",
+            title: "Cursor sandbox",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "auto-accept-edits",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          message: {
+            messageId: MessageId.make("cursor-sandbox-message"),
+            createdBy: "user",
+            creationSource: "web",
+            text: "teste",
+            attachments: [],
+          },
+        })
+        .pipe(Effect.flip);
+      const message = makeProviderFailure({
+        cause: new ProviderAdapter.ProviderAdapterTurnStartError({
+          driver: CursorAgentSdk.CURSOR_PROVIDER,
+          threadId,
+          providerThreadId: providerThread.id,
+          runId: RunId.make("cursor-sandbox-run"),
+          cause: sendFailure,
+        }),
+      }).message;
+      assert.match(message, /sandbox/i);
+      assert.notMatch(message, /could not start this turn/);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
   it("maps runtime modes to the SDK sandbox and auto-review controls", () => {
     const base = {
       interactionMode: "default" as const,
