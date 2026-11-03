@@ -1,7 +1,15 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
-import { type CSSProperties, Fragment, useEffect, useState } from "react";
+import {
+  type CSSProperties,
+  type FocusEvent,
+  Fragment,
+  type RefObject,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import {
   resolveChatPanes,
@@ -34,6 +42,7 @@ const CHAT_PANE_KEYBOARD_STEP = 0.05;
 /** Room for the chat column and the right panel beside it at their 360px minimums. */
 const CHAT_PANE_INLINE_RIGHT_PANEL_MIN_WIDTH = 720;
 const NO_THREAD_KEYS: ReadonlySet<string> = new Set();
+const KEYBOARD_FOCUS = "keyboard";
 
 interface WindowEdges {
   readonly top: boolean;
@@ -75,6 +84,36 @@ export function ChatPanes({
   useEffect(() => {
     if (!background) useChatPanesStore.getState().commit(routeTarget);
   }, [background, routeTarget]);
+  const activePaneId = panes.find((pane) => pane.active)?.id ?? null;
+  // Which pane the user is moving into: the one pressed last, or any pane after Tab or F6.
+  const focusIntentRef = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window listeners that record whether the user, not code, is moving focus
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      focusIntentRef.current = event.key === "Tab" || event.key === "F6" ? KEYBOARD_FOCUS : null;
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      focusIntentRef.current =
+        event.target instanceof Element
+          ? (event.target.closest<HTMLElement>("[data-chat-pane]")?.dataset.chatPane ?? null)
+          : null;
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+    };
+  }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases DOM focus left in a pane that the route just unfocused
+  useEffect(() => {
+    // Focus moved by the sidebar, palette or a shortcut can leave a terminal or composer in the
+    // other pane focused, where keystrokes would keep landing.
+    const focused = document.activeElement;
+    if (!(focused instanceof HTMLElement)) return;
+    const focusedPane = focused.closest<HTMLElement>("[data-chat-pane]");
+    if (focusedPane && focusedPane.dataset.chatPane !== activePaneId) focused.blur();
+  }, [activePaneId]);
 
   const focusPane = (target: ThreadRouteTarget) => {
     // A pointerdown and the focus it causes both land here before the route re-renders.
@@ -129,6 +168,7 @@ export function ChatPanes({
                 edges={edges}
                 background={background}
                 onFocus={() => focusPane(pane.target)}
+                focusIntentRef={focusIntentRef}
                 chatPane={{
                   direction: layout.direction,
                   element: null,
@@ -267,6 +307,7 @@ function ChatPane({
   background,
   chatPane,
   onFocus,
+  focusIntentRef,
 }: {
   pane: ResolvedChatPane;
   /** The first pane takes the split ratio; the second fills the rest. */
@@ -278,8 +319,20 @@ function ChatPane({
   background: boolean;
   chatPane: ChatPaneContextValue;
   onFocus: () => void;
+  focusIntentRef: RefObject<string | null>;
 }) {
   const composerHandle = useComposerHandleContext();
+  // Code can focus a pane after it lost focus (an async editor focus, a dialog restoring focus);
+  // that is not the user switching panes, so the focused pane's composer takes it instead.
+  const onFocusIn = (event: FocusEvent<HTMLDivElement>) => {
+    const intent = focusIntentRef.current;
+    if (intent === KEYBOARD_FOCUS || intent === pane.id) {
+      onFocus();
+      return;
+    }
+    if (event.target instanceof HTMLElement) event.target.blur();
+    composerHandle?.current?.focusAtEnd();
+  };
   const passive = !pane.active;
   const [narrow, setNarrow] = useState(false);
   const [element, setElement] = useState<HTMLDivElement | null>(null);
@@ -308,7 +361,7 @@ function ChatPane({
       data-chat-pane={pane.id}
       data-background-thread-view={passive || undefined}
       onPointerDownCapture={passive ? onFocus : undefined}
-      onFocusCapture={passive ? onFocus : undefined}
+      onFocusCapture={passive ? onFocusIn : undefined}
     >
       {/* The app-wide composer handle belongs to the focused pane's composer. */}
       <ComposerHandleContext value={passive ? null : composerHandle}>

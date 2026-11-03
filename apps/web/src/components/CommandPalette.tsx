@@ -76,6 +76,9 @@ import {
   TextSearchIcon,
   UserPlusIcon,
 } from "lucide-react";
+import { ArrowLeftRightIcon, Columns2Icon, Rows2Icon, XIcon } from "lucide-react";
+import { isChatSplitOpen, useChatPanesStore } from "../chatPanesStore";
+import { useChatPaneCommands } from "../hooks/useChatPaneCommands";
 import { openThreadFind } from "./chat/threadFindStore";
 import {
   useDeferredValue,
@@ -880,6 +883,7 @@ function OpenCommandPaletteDialog(props: {
 
   const {
     threadItems: allThreadItems,
+    openInSplitItems,
     threadMessageItems,
     now: searchNow,
     isSearchPending: isThreadSearchPending,
@@ -1227,6 +1231,8 @@ function OpenCommandPaletteDialog(props: {
     if (firstOption) startNewProject(firstOption.environmentId, null);
   };
 
+  const chatPanesLayout = useChatPanesStore((state) => state.layout);
+  const { focusOtherPane, closeFocusedPane } = useChatPaneCommands();
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
   if (projects.length > 0) {
@@ -1306,6 +1312,70 @@ function OpenCommandPaletteDialog(props: {
         openThreadFind(activeThreadKey);
       },
     });
+  }
+
+  if (paletteRouteTarget !== null && openInSplitItems.length > 0) {
+    actionItems.push({
+      kind: "submenu",
+      value: "action:open-in-split",
+      searchTerms: ["split", "side by side", "pane", "beside", "open thread"],
+      title: "Open thread in split...",
+      icon: <Columns2Icon className={ITEM_ICON_CLASS} />,
+      addonIcon: <Columns2Icon className={ADDON_ICON_CLASS} />,
+      groups: [
+        {
+          value: "open-in-split",
+          label: "Threads",
+          items: openInSplitItems.toSorted(
+            (left, right) =>
+              (right.threadSearch ? threadRecentUse(right.threadSearch) : 0) -
+              (left.threadSearch ? threadRecentUse(left.threadSearch) : 0),
+          ),
+        },
+      ],
+    });
+  }
+
+  if (isChatSplitOpen(chatPanesLayout)) {
+    const sideBySide = chatPanesLayout.direction === "row";
+    actionItems.push(
+      {
+        kind: "action",
+        value: "action:split-focus-other",
+        searchTerms: ["split", "pane", "focus", "other", "switch"],
+        title: "Focus other split pane",
+        icon: <Columns2Icon className={ITEM_ICON_CLASS} />,
+        run: async () => focusOtherPane(),
+      },
+      {
+        kind: "action",
+        value: "action:split-swap",
+        searchTerms: ["split", "pane", "swap", "flip"],
+        title: "Swap split panes",
+        icon: <ArrowLeftRightIcon className={ITEM_ICON_CLASS} />,
+        run: async () => useChatPanesStore.getState().swap(),
+      },
+      {
+        kind: "action",
+        value: "action:split-direction",
+        searchTerms: ["split", "pane", "stack", "vertical", "horizontal", "side by side"],
+        title: sideBySide ? "Stack split panes top and bottom" : "Place split panes side by side",
+        icon: sideBySide ? (
+          <Rows2Icon className={ITEM_ICON_CLASS} />
+        ) : (
+          <Columns2Icon className={ITEM_ICON_CLASS} />
+        ),
+        run: async () => useChatPanesStore.getState().setDirection(sideBySide ? "column" : "row"),
+      },
+      {
+        kind: "action",
+        value: "action:split-close",
+        searchTerms: ["split", "pane", "close", "single"],
+        title: "Close split pane",
+        icon: <XIcon className={ITEM_ICON_CLASS} />,
+        run: async () => closeFocusedPane(),
+      },
+    );
   }
 
   const promptLinkTarget = paletteRouteTarget

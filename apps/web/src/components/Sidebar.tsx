@@ -257,6 +257,8 @@ import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarT
 import { TooltipProvider } from "./ui/tooltip";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+import { useChatPaneCommands } from "../hooks/useChatPaneCommands";
+import { backgroundChatPaneThreadRefs, useChatPanesStore } from "../chatPanesStore";
 import {
   SidebarSearchResultRow,
   SortableThreadRow,
@@ -1083,6 +1085,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const openAddProjectCommandPalette = () => openCommandPalette({ open: "add-project" });
   const routeThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  const { openInSplit } = useChatPaneCommands();
+  const chatPanesLayout = useChatPanesStore((state) => state.layout);
+  const backgroundPaneThreadKeys = new Set(
+    backgroundChatPaneThreadRefs(chatPanesLayout, routeTarget).map(scopedThreadKey),
+  );
 
   // A selection made under one scope can hold threads the next scope hides.
   // The viewport outlives the scope and does not anchor, so a new list starts at the top.
@@ -1586,6 +1593,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return;
     }
     if (isTrailingDoubleClick(event.detail)) {
+      return;
+    }
+    if (event.altKey && threadKey !== routeThreadKey && openInSplit(threadRef)) {
+      event.preventDefault();
       return;
     }
     navigateToThread(threadRef);
@@ -2646,6 +2657,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              canOpenInSplit: routeTarget !== null && threadKey !== routeThreadKey,
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2674,6 +2686,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         switch (clicked.value) {
+          case "open-in-split":
+            openInSplit(threadRef);
+            return;
           case "filter-by-project":
             if (threadProjectGroup) {
               setProjectScopeKeys(
@@ -3379,6 +3394,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               routeRowThreadKey === threadKey ? revealActiveRow : undefined
                             }
                             isRouteThread={routeThreadKey === threadKey}
+                            inBackgroundPane={backgroundPaneThreadKeys.has(threadKey)}
                             openPullRequestsInRightPanel={routeThreadRef !== null}
                             jumpLabel={
                               showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null

@@ -1,4 +1,5 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -72,6 +73,17 @@ export function resolveChatPanes(
     pane.id === activePaneId
       ? { id: pane.id, target: routeTarget, active: true }
       : { ...pane, active: false },
+  );
+}
+
+/** Threads in unfocused panes for this route; a draft pane has no thread until it sends. */
+export function backgroundChatPaneThreadRefs(
+  layout: ChatPanesLayout,
+  routeTarget: ThreadRouteTarget | null,
+): ReadonlyArray<ScopedThreadRef> {
+  if (routeTarget === null) return [];
+  return resolveChatPanes(layout, routeTarget).flatMap((pane) =>
+    !pane.active && pane.target.kind === "server" ? [pane.target.threadRef] : [],
   );
 }
 

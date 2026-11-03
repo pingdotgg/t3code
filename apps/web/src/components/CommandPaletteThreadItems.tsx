@@ -1,4 +1,5 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useChatPaneCommands } from "../hooks/useChatPaneCommands";
 import { findForMessageMatch, openThreadFindOnQuery } from "./chat/threadFindStore";
 import {
   claimThreadOpen,
@@ -99,6 +100,7 @@ export function useCommandPaletteThreadItems(input: {
 }) {
   const { activeThread, threadSearchQuery } = input;
   const navigate = useNavigate();
+  const { openInSplit } = useChatPaneCommands();
   const threads = useVisibleThreadShells();
   const { projectEnvironmentLocationById } = useEnvironmentLookups();
   const providerEntryByEnvironmentAndInstanceId = useProviderEntryByEnvironmentAndInstanceId();
@@ -242,8 +244,32 @@ export function useCommandPaletteThreadItems(input: {
     .slice(0, order.shown)
     .flatMap((value) => messageItemByValue.get(value) ?? []);
 
+  // The same rows, but picking one shows that thread beside the open one.
+  const threadByValue = new Map(
+    threads.map((thread) => [`thread:${thread.environmentId}:${thread.id}`, thread]),
+  );
+  const openInSplitItems = threadItems.flatMap((item) => {
+    const thread = threadByValue.get(item.value);
+    if (
+      !thread ||
+      (thread.id === activeThread?.id && thread.environmentId === activeThread.environmentId)
+    ) {
+      return [];
+    }
+    return [
+      {
+        ...item,
+        value: `split:${item.value}`,
+        run: async () => {
+          openInSplit(scopeThreadRef(thread.environmentId, thread.id));
+        },
+      },
+    ];
+  });
+
   return {
     threadItems,
+    openInSplitItems,
     threadMessageItems,
     now,
     isSearchPending: messageSearch.isPending,
