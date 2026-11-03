@@ -20,12 +20,15 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderAdapterOpenSessionError } from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -36,19 +39,23 @@ import {
 } from "@t3tools/provider-core/server/snapshotProbe";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 
+import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
+
 const makeUnsupportedOrchestrationAdapter = (
   driver: ProviderDriverKind,
   instanceId: ProviderInstanceId,
 ): ProviderAdapter.ProviderAdapterV2["Service"] => ({
   driver,
   instanceId,
-  capabilities: Effect.succeed({
-    supportsModelSwitchInSession: false,
-    canReadThreadSnapshot: false,
-    supportsForkThread: false,
-    supportsRollbackThread: false,
-    supportsSteerTurn: false,
-  } as unknown as OrchestrationV2ProviderCapabilities),
+  getCapabilities: () =>
+    Effect.succeed({
+      supportsModelSwitchInSession: false,
+      canReadThreadSnapshot: false,
+      supportsForkThread: false,
+      supportsRollbackThread: false,
+      supportsSteerTurn: false,
+    } as unknown as OrchestrationV2ProviderCapabilities),
+  planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
   openSession: (input) =>
     Effect.fail(
       new ProviderAdapterOpenSessionError({
@@ -57,7 +64,6 @@ const makeUnsupportedOrchestrationAdapter = (
         cause: new Error(`${driver} does not support live orchestration sessions.`),
       }),
     ),
-  closeSession: () => Effect.void,
 });
 
 const makeUnsupportedTextGeneration = (driver: ProviderDriverKind): ProviderTextGeneration => {
@@ -78,26 +84,35 @@ const makeUnsupportedTextGeneration = (driver: ProviderDriverKind): ProviderText
 };
 
 export type StandaloneDriverEnv =
+  | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
-  | HttpClient.HttpClient;
+  | HttpClient.HttpClient
+  | HostProcess.HomeDirectory
+  | HostProcess.Platform;
+
+export interface StandaloneProbeResult {
+  readonly installed: boolean;
+  readonly status: "ready" | "warning" | "error";
+  readonly auth: {
+    readonly status: "authenticated" | "unauthenticated" | "unknown";
+    readonly label?: string;
+    readonly email?: string;
+  };
+  readonly message?: string;
+  readonly version?: string | null;
+  readonly models: ReadonlyArray<ServerProviderModel>;
+}
 
 interface StandaloneDriverOptions<Config extends { enabled?: boolean }> {
   readonly driverKind: ProviderDriverKind;
   readonly displayName: string;
-  readonly configSchema: Schema.Schema<Config>;
+  readonly configSchema: Schema.Codec<Config, unknown>;
   readonly probe: (
     config: Config,
     env: NodeJS.ProcessEnv,
     spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
-    httpClient: HttpClient.HttpClient["Service"],
-  ) => Effect.Effect<{
-    readonly installed: boolean;
-    readonly status: "ready" | "warning" | "error";
-    readonly auth: { readonly status: "authenticated" | "unauthenticated" | "unknown"; readonly label?: string; readonly email?: string };
-    readonly message?: string;
-    readonly version?: string | null;
-    readonly models: ReadonlyArray<ServerProviderModel>;
-  }>;
+    httpClient: HttpClient.HttpClient,
+  ) => Effect.Effect<StandaloneProbeResult>;
 }
 
 function createStandaloneDriver<Config extends { enabled?: boolean }>(
@@ -112,7 +127,7 @@ function createStandaloneDriver<Config extends { enabled?: boolean }>(
       supportsMultipleInstances: true,
     },
     configSchema: options.configSchema,
-    defaultConfig: () => decodeConfig({}),
+    defaultConfig: (): Config => decodeConfig({} as any) as Config,
     create: Effect.fn("StandaloneDriver.create")(function* ({
       instanceId,
       displayName,
@@ -124,7 +139,7 @@ function createStandaloneDriver<Config extends { enabled?: boolean }>(
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const httpClient = yield* HttpClient.HttpClient;
       const processEnv = yield* mergeProviderInstanceEnvironment(environment);
-      const effectiveConfig = { ...config, enabled };
+      const effectiveConfig = { ...config, enabled } as Config;
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: options.driverKind,
         instanceId,
@@ -137,7 +152,7 @@ function createStandaloneDriver<Config extends { enabled?: boolean }>(
         continuationGroupKey: continuationIdentity.continuationKey,
       });
 
-      const checkProvider = Effect.fn("checkStandaloneProvider")(function* () {
+      const checkProvider: Effect.Effect<ServerProvider> = Effect.gen(function* () {
         const checkedAt = DateTime.formatIso(yield* DateTime.now);
         if (!enabled) {
           const disabledDraft = buildServerProvider({
@@ -160,30 +175,35 @@ function createStandaloneDriver<Config extends { enabled?: boolean }>(
         const probed = yield* options
           .probe(effectiveConfig, processEnv, spawner, httpClient)
           .pipe(
-            Effect.catchAll(() =>
-              Effect.succeed({
-                installed: false,
-                status: "warning" as const,
-                auth: { status: "unknown" as const, label: options.displayName },
-                message: `Could not verify ${options.displayName} status.`,
-                version: null,
-                models: [],
-              }),
-            ),
+            Effect.orElseSucceed(() => ({
+              installed: false,
+              status: "warning" as const,
+              auth: { status: "unknown" as const, label: options.displayName },
+              message: `Could not verify ${options.displayName} status.`,
+              version: null,
+              models: [] as ReadonlyArray<ServerProviderModel>,
+            })),
           );
+
+        const status =
+          probed.status === "ready" ? ("warning" as const) : probed.status;
+        const message =
+          probed.status === "ready"
+            ? `${options.displayName} is connected, but live orchestration sessions are not supported yet.`
+            : probed.message;
 
         const draft: ServerProviderDraft = buildServerProvider({
           driver: options.driverKind,
           presentation: { displayName: options.displayName },
           enabled: true,
           checkedAt,
-          models: probed.models,
+          models: [],
           probe: {
             installed: probed.installed,
             version: probed.version ?? null,
-            status: probed.status,
+            status,
             auth: probed.auth,
-            ...(probed.message ? { message: probed.message } : {}),
+            ...(message ? { message } : {}),
           },
         });
 
@@ -201,9 +221,19 @@ function createStandaloneDriver<Config extends { enabled?: boolean }>(
         getSettings: Effect.succeed(effectiveConfig),
         streamSettings: Stream.empty,
         haveSettingsChanged: () => false,
-        initialSnapshot: () => checkProvider(),
-        checkProvider: checkProvider(),
-      });
+        initialSnapshot: () => checkProvider,
+        checkProvider,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: options.driverKind,
+              instanceId,
+              detail: `Failed to build ${options.displayName} snapshot.`,
+              cause,
+            }),
+        ),
+      );
 
       return {
         instanceId,
@@ -220,110 +250,124 @@ function createStandaloneDriver<Config extends { enabled?: boolean }>(
   };
 }
 
+const probeOllama = Effect.fn("probeOllama")(function* (
+  config: OllamaSettings,
+  env: NodeJS.ProcessEnv,
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  httpClient: HttpClient.HttpClient,
+): Effect.fn.Return<StandaloneProbeResult> {
+  const configuredEndpoint = config.apiEndpoint?.trim();
+  const endpoint =
+    configuredEndpoint &&
+    configuredEndpoint.length > 0 &&
+    configuredEndpoint !== "http://localhost:11434"
+      ? configuredEndpoint
+      : env.OLLAMA_HOST?.trim() || configuredEndpoint || "http://localhost:11434";
+  const trimmedEndpoint = endpoint.replace(/\/+$/, "");
+  const builtInModels: ReadonlyArray<ServerProviderModel> = [
+    { slug: "llama3.3", name: "Llama 3.3", isDefault: true, isCustom: false, capabilities: null },
+    { slug: "deepseek-r1", name: "DeepSeek R1", isDefault: false, isCustom: false, capabilities: null },
+    { slug: "qwen2.5-coder", name: "Qwen 2.5 Coder", isDefault: false, isCustom: false, capabilities: null },
+  ];
+  const models = providerModelsFromSettings(builtInModels, config.customModels, null);
+
+  // Ping Ollama version endpoint
+  const reachable = yield* httpClient
+    .get(`${trimmedEndpoint}/api/version`)
+    .pipe(
+      Effect.timeout("2 seconds"),
+      Effect.map((res: { readonly status: number }) => res.status === 200),
+      Effect.orElseSucceed(() => false),
+    );
+
+  if (reachable) {
+    return {
+      installed: true,
+      status: "ready",
+      auth: { status: "authenticated", label: "Ollama" },
+      models,
+    };
+  }
+
+  // Try CLI check if HTTP ping failed
+  const cliCheck = yield* spawner
+    .exitCode(ChildProcess.make("ollama", ["--version"]))
+    .pipe(
+      Effect.map((code) => Number(code) === 0),
+      Effect.timeout("2 seconds"),
+      Effect.orElseSucceed(() => false),
+    );
+
+  if (cliCheck) {
+    return {
+      installed: true,
+      status: "warning",
+      auth: { status: "unknown", label: "Ollama" },
+      message: `Ollama CLI is installed, but the server is not responding at ${trimmedEndpoint}.`,
+      models,
+    };
+  }
+
+  return {
+    installed: false,
+    status: "warning",
+    auth: { status: "unknown", label: "Ollama" },
+    message: "Ollama server is not running on configured endpoint.",
+    models,
+  };
+});
+
 export const OllamaDriver: ProviderDriver<OllamaSettings, StandaloneDriverEnv> =
   createStandaloneDriver({
     driverKind: ProviderDriverKind.make("ollama"),
     displayName: "Ollama",
     configSchema: OllamaSettings,
-    probe: (config, env, spawner, httpClient) =>
-      Effect.gen(function* () {
-        const endpoint = config.apiEndpoint || env.OLLAMA_HOST || "http://localhost:11434";
-        const trimmedEndpoint = endpoint.replace(/\/+$/, "");
-        const builtInModels: ReadonlyArray<ServerProviderModel> = [
-          { slug: "llama3.3", name: "Llama 3.3", isDefault: true, isCustom: false },
-          { slug: "deepseek-r1", name: "DeepSeek R1", isDefault: false, isCustom: false },
-          { slug: "qwen2.5-coder", name: "Qwen 2.5 Coder", isDefault: false, isCustom: false },
-        ];
-        const models = providerModelsFromSettings(builtInModels, config.customModels, null);
-
-        // Ping Ollama version endpoint
-        const reachable = yield* httpClient
-          .get(`${trimmedEndpoint}/api/version`)
-          .pipe(
-            Effect.timeout("2 seconds"),
-            Effect.map((res) => res.status === 200),
-            Effect.orElseSucceed(() => false),
-          );
-
-        if (reachable) {
-          return {
-            installed: true,
-            status: "ready" as const,
-            auth: { status: "authenticated" as const, label: "Ollama" },
-            models,
-          };
-        }
-
-        // Try CLI check if HTTP ping failed
-        const cliCheck = yield* spawner
-          .spawn(ChildProcess.make("ollama", ["--version"]))
-          .pipe(
-            Effect.flatMap((proc) => proc.exitCode),
-            Effect.map((code) => Number(code) === 0),
-            Effect.scoped,
-            Effect.timeout("2 seconds"),
-            Effect.orElseSucceed(() => false),
-          );
-
-        if (cliCheck) {
-          return {
-            installed: true,
-            status: "ready" as const,
-            auth: { status: "authenticated" as const, label: "Ollama" },
-            models,
-          };
-        }
-
-        return {
-          installed: false,
-          status: "warning" as const,
-          auth: { status: "unknown" as const, label: "Ollama" },
-          message: "Ollama server is not running on configured endpoint.",
-          models,
-        };
-      }),
+    probe: probeOllama,
   });
+
+const probeZed = Effect.fn("probeZed")(function* (
+  config: ZedSettings,
+  _env: NodeJS.ProcessEnv,
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+): Effect.fn.Return<StandaloneProbeResult> {
+  const binary = config.binaryPath || "zed";
+  const builtInModels: ReadonlyArray<ServerProviderModel> = [
+    { slug: "default", name: "Zed Default", isDefault: true, isCustom: false, capabilities: null },
+  ];
+  const models = providerModelsFromSettings(builtInModels, config.customModels, null);
+
+  const cliCheck = yield* spawner
+    .exitCode(ChildProcess.make(binary, ["--version"]))
+    .pipe(
+      Effect.map((code) => Number(code) === 0),
+      Effect.timeout("2 seconds"),
+      Effect.orElseSucceed(() => false),
+    );
+
+  if (cliCheck) {
+    return {
+      installed: true,
+      status: "ready",
+      auth: { status: "authenticated", label: "Zed" },
+      models,
+    };
+  }
+
+  return {
+    installed: false,
+    status: "warning",
+    auth: { status: "unknown", label: "Zed" },
+    message: "Zed binary was not found on PATH.",
+    models,
+  };
+});
 
 export const ZedDriver: ProviderDriver<ZedSettings, StandaloneDriverEnv> =
   createStandaloneDriver({
     driverKind: ProviderDriverKind.make("zed"),
     displayName: "Zed",
     configSchema: ZedSettings,
-    probe: (config, _env, spawner) =>
-      Effect.gen(function* () {
-        const binary = config.binaryPath || "zed";
-        const builtInModels: ReadonlyArray<ServerProviderModel> = [
-          { slug: "default", name: "Zed Default", isDefault: true, isCustom: false },
-        ];
-        const models = providerModelsFromSettings(builtInModels, config.customModels, null);
-
-        const cliCheck = yield* spawner
-          .spawn(ChildProcess.make(binary, ["--version"]))
-          .pipe(
-            Effect.flatMap((proc) => proc.exitCode),
-            Effect.map((code) => Number(code) === 0),
-            Effect.scoped,
-            Effect.timeout("2 seconds"),
-            Effect.orElseSucceed(() => false),
-          );
-
-        if (cliCheck) {
-          return {
-            installed: true,
-            status: "ready" as const,
-            auth: { status: "authenticated" as const, label: "Zed" },
-            models,
-          };
-        }
-
-        return {
-          installed: false,
-          status: "warning" as const,
-          auth: { status: "unknown" as const, label: "Zed" },
-          message: "Zed binary was not found on PATH.",
-          models,
-        };
-      }),
+    probe: probeZed,
   });
 
 export const CloudflareDriver: ProviderDriver<CloudflareSettings, StandaloneDriverEnv> =
@@ -331,40 +375,54 @@ export const CloudflareDriver: ProviderDriver<CloudflareSettings, StandaloneDriv
     driverKind: ProviderDriverKind.make("cloudflare"),
     displayName: "Cloudflare",
     configSchema: CloudflareSettings,
-    probe: (config, env) =>
+    probe: (config, env): Effect.Effect<StandaloneProbeResult> =>
       Effect.sync(() => {
         const token = config.apiToken || env.CLOUDFLARE_API_TOKEN;
+        const accountId = config.accountId || env.CLOUDFLARE_ACCOUNT_ID;
         const hasToken = Boolean(token && token.trim().length > 0);
+        const hasAccountId = Boolean(accountId && accountId.trim().length > 0);
         const builtInModels: ReadonlyArray<ServerProviderModel> = [
           {
             slug: "@cf/meta/llama-3.3-70b-instruct",
             name: "Llama 3.3 70B Instruct",
             isDefault: true,
             isCustom: false,
+            capabilities: null,
           },
           {
             slug: "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
             name: "DeepSeek R1 Distill Qwen 32B",
             isDefault: false,
             isCustom: false,
+            capabilities: null,
           },
         ];
         const models = providerModelsFromSettings(builtInModels, config.customModels, null);
 
-        if (hasToken) {
+        if (hasToken && hasAccountId) {
           return {
             installed: true,
-            status: "ready" as const,
-            auth: { status: "authenticated" as const, label: "Cloudflare Workers AI" },
+            status: "ready",
+            auth: { status: "authenticated", label: "Cloudflare Workers AI" },
+            models,
+          };
+        }
+
+        if (hasToken && !hasAccountId) {
+          return {
+            installed: true,
+            status: "warning",
+            auth: { status: "unauthenticated", label: "Cloudflare Account ID" },
+            message: "Enter a Cloudflare Account ID in provider settings.",
             models,
           };
         }
 
         return {
           installed: true,
-          status: "warning" as const,
-          auth: { status: "unauthenticated" as const, label: "Cloudflare API Token" },
-          message: "Enter a Cloudflare API token in provider settings.",
+          status: "warning",
+          auth: { status: "unauthenticated", label: "Cloudflare API Token" },
+          message: "Enter a Cloudflare API token and Account ID in provider settings.",
           models,
         };
       }),
@@ -375,39 +433,53 @@ export const BedrockDriver: ProviderDriver<AwsBedrockSettings, StandaloneDriverE
     driverKind: ProviderDriverKind.make("bedrock"),
     displayName: "AWS Bedrock",
     configSchema: AwsBedrockSettings,
-    probe: (config, env) =>
+    probe: (config, env): Effect.Effect<StandaloneProbeResult> =>
       Effect.sync(() => {
         const accessKey = config.accessKeyId || env.AWS_ACCESS_KEY_ID;
+        const secretKey = config.secretAccessKey || env.AWS_SECRET_ACCESS_KEY;
         const hasAccessKey = Boolean(accessKey && accessKey.trim().length > 0);
+        const hasSecretKey = Boolean(secretKey && secretKey.trim().length > 0);
         const builtInModels: ReadonlyArray<ServerProviderModel> = [
           {
             slug: "anthropic.claude-3-7-sonnet-20250219-v1:0",
             name: "Claude 3.7 Sonnet",
             isDefault: true,
             isCustom: false,
+            capabilities: null,
           },
           {
             slug: "amazon.nova-pro-v1:0",
             name: "Amazon Nova Pro",
             isDefault: false,
             isCustom: false,
+            capabilities: null,
           },
         ];
         const models = providerModelsFromSettings(builtInModels, config.customModels, null);
 
-        if (hasAccessKey) {
+        if (hasAccessKey && hasSecretKey) {
           return {
             installed: true,
-            status: "ready" as const,
-            auth: { status: "authenticated" as const, label: "AWS Bedrock" },
+            status: "ready",
+            auth: { status: "authenticated", label: "AWS Bedrock" },
+            models,
+          };
+        }
+
+        if (hasAccessKey && !hasSecretKey) {
+          return {
+            installed: true,
+            status: "warning",
+            auth: { status: "unauthenticated", label: "AWS Secret Access Key" },
+            message: "Enter an AWS Secret Access Key in provider settings.",
             models,
           };
         }
 
         return {
           installed: true,
-          status: "warning" as const,
-          auth: { status: "unauthenticated" as const, label: "AWS Credentials" },
+          status: "warning",
+          auth: { status: "unauthenticated", label: "AWS Credentials" },
           message: "Enter AWS credentials in provider settings.",
           models,
         };

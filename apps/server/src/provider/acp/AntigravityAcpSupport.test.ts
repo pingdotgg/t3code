@@ -46,6 +46,7 @@ function makeModelRuntime(
     value: string | boolean,
     options?: { readonly allowUnlistedValue?: boolean },
   ) {
+    yield* Effect.void;
     selections.push(
       `${configId}=${String(value)}${options?.allowUnlistedValue === true ? " (unlisted)" : ""}`,
     );

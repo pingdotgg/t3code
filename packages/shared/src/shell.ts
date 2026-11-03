@@ -87,36 +87,45 @@ function resolveWellKnownToolCandidate(
 
   if (normalizedCommand === "opencode" || normalizedCommand === "opencode-cli") {
     if (platform === "win32") {
-      const localAppData = env.LOCALAPPDATA ?? "";
-      const appData = env.APPDATA ?? "";
-      const candidates = [
-        path.join(localAppData, "Programs", "@opencode-aidesktop", "resources", "opencode-cli.exe"),
-        path.join(localAppData, "OpenCode", "opencode-cli.exe"),
-        path.join(localAppData, "OpenCode", "opencode.exe"),
-        path.join(localAppData, "Programs", "OpenCode", "resources", "opencode-cli.exe"),
-        path.join(localAppData, "Programs", "OpenCode", "opencode-cli.exe"),
-        path.join(appData, "npm", "opencode.cmd"),
-        path.join(localAppData, "npm", "opencode.cmd"),
-      ];
-      const cliDir = path.join(appData, "ai.opencode.desktop", "cli");
-      try {
-        if (NodeFS.existsSync(cliDir)) {
-          for (const sub of NodeFS.readdirSync(cliDir)) {
-            candidates.push(path.join(cliDir, sub, "opencode-cli.exe"));
+      const localAppData = env.LOCALAPPDATA?.trim();
+      const appData = env.APPDATA?.trim();
+      const candidates: string[] = [];
+      if (localAppData) {
+        candidates.push(
+          path.join(localAppData, "Programs", "@opencode-aidesktop", "resources", "opencode-cli.exe"),
+          path.join(localAppData, "OpenCode", "opencode-cli.exe"),
+          path.join(localAppData, "OpenCode", "opencode.exe"),
+          path.join(localAppData, "Programs", "OpenCode", "resources", "opencode-cli.exe"),
+          path.join(localAppData, "Programs", "OpenCode", "opencode-cli.exe"),
+          path.join(localAppData, "npm", "opencode.cmd"),
+        );
+      }
+      if (appData) {
+        candidates.push(path.join(appData, "npm", "opencode.cmd"));
+        const cliDir = path.join(appData, "ai.opencode.desktop", "cli");
+        try {
+          if (NodeFS.existsSync(cliDir)) {
+            for (const sub of NodeFS.readdirSync(cliDir)) {
+              candidates.push(path.join(cliDir, sub, "opencode-cli.exe"));
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      }
 
       for (const candidate of candidates) {
         if (isExecutable(candidate)) return candidate;
       }
     } else if (platform === "darwin") {
-      const home = env.HOME ?? "";
+      const home = env.HOME?.trim();
       const candidates = [
         "/Applications/OpenCode.app/Contents/Resources/opencode-cli",
         "/Applications/OpenCode AI.app/Contents/Resources/opencode-cli",
-        path.join(home, "Applications", "OpenCode.app", "Contents", "Resources", "opencode-cli"),
-        path.join(home, ".local", "bin", "opencode"),
+        ...(home
+          ? [
+              path.join(home, "Applications", "OpenCode.app", "Contents", "Resources", "opencode-cli"),
+              path.join(home, ".local", "bin", "opencode"),
+            ]
+          : []),
         "/usr/local/bin/opencode",
         "/opt/homebrew/bin/opencode",
       ];
@@ -124,9 +133,9 @@ function resolveWellKnownToolCandidate(
         if (isExecutable(candidate)) return candidate;
       }
     } else if (platform === "linux") {
-      const home = env.HOME ?? "";
+      const home = env.HOME?.trim();
       const candidates = [
-        path.join(home, ".local", "bin", "opencode"),
+        ...(home ? [path.join(home, ".local", "bin", "opencode")] : []),
         "/usr/local/bin/opencode",
         "/opt/OpenCode/resources/opencode-cli",
       ];
@@ -138,27 +147,40 @@ function resolveWellKnownToolCandidate(
 
   if (normalizedCommand === "grok") {
     if (platform === "win32") {
-      const localAppData = env.LOCALAPPDATA ?? "";
-      const appData = env.APPDATA ?? "";
-      const userProfile = env.USERPROFILE ?? env.HOME ?? "";
-      const candidates = [
-        path.join(localAppData, "Programs", "Grok Bot", "resources", "app.asar.unpacked", "dist", "native", "grok.exe"),
-        path.join(localAppData, "Programs", "grok", "grok.exe"),
-        path.join(appData, "npm", "grok.cmd"),
-        path.join(localAppData, "npm", "grok.cmd"),
-        path.join(userProfile, ".grok", "bin", "grok.exe"),
-        path.join(userProfile, ".local", "bin", "grok.exe"),
-      ];
+      const localAppData = env.LOCALAPPDATA?.trim();
+      const appData = env.APPDATA?.trim();
+      const userProfile = env.USERPROFILE?.trim() || env.HOME?.trim();
+      const candidates: string[] = [];
+      if (localAppData) {
+        candidates.push(
+          path.join(localAppData, "Programs", "Grok Bot", "resources", "app.asar.unpacked", "dist", "native", "grok.exe"),
+          path.join(localAppData, "Programs", "grok", "grok.exe"),
+          path.join(localAppData, "npm", "grok.cmd"),
+        );
+      }
+      if (appData) {
+        candidates.push(path.join(appData, "npm", "grok.cmd"));
+      }
+      if (userProfile) {
+        candidates.push(
+          path.join(userProfile, ".grok", "bin", "grok.exe"),
+          path.join(userProfile, ".local", "bin", "grok.exe"),
+        );
+      }
       for (const candidate of candidates) {
         if (isExecutable(candidate)) return candidate;
       }
     } else if (platform === "darwin") {
-      const home = env.HOME ?? "";
+      const home = env.HOME?.trim();
       const candidates = [
         "/Applications/Grok.app/Contents/Resources/grok",
         "/Applications/Grok Bot.app/Contents/Resources/grok",
-        path.join(home, ".grok", "bin", "grok"),
-        path.join(home, ".local", "bin", "grok"),
+        ...(home
+          ? [
+              path.join(home, ".grok", "bin", "grok"),
+              path.join(home, ".local", "bin", "grok"),
+            ]
+          : []),
         "/opt/homebrew/bin/grok",
         "/usr/local/bin/grok",
       ];
@@ -166,10 +188,14 @@ function resolveWellKnownToolCandidate(
         if (isExecutable(candidate)) return candidate;
       }
     } else if (platform === "linux") {
-      const home = env.HOME ?? "";
+      const home = env.HOME?.trim();
       const candidates = [
-        path.join(home, ".grok", "bin", "grok"),
-        path.join(home, ".local", "bin", "grok"),
+        ...(home
+          ? [
+              path.join(home, ".grok", "bin", "grok"),
+              path.join(home, ".local", "bin", "grok"),
+            ]
+          : []),
         "/usr/local/bin/grok",
       ];
       for (const candidate of candidates) {
@@ -933,9 +959,6 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
 ): Effect.fn.Return<ResolvedSpawnCommand> {
   const platform = yield* HostProcess.Platform;
   const isMacosGit = platform === "darwin" && command === "git";
-  if (platform !== "win32" && !isMacosGit) {
-    return { command, args: [...args], shell: false };
-  }
 
   const hostEnvironment = yield* HostProcess.Environment;
   const env =
@@ -964,6 +987,8 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
     platform,
     resolvePathEnvironmentVariable(env),
     resolveWindowsPathExtensions(env).join(";"),
+    env.LOCALAPPDATA ?? "",
+    env.APPDATA ?? "",
     env.MSYSTEM ? "msystem" : "",
     command,
   ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
@@ -974,12 +999,20 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
     resolvedExecutable = cached.resolvedPath;
   } else {
     const found = resolveExecutable(command, platform, env);
-    resolvedExecutable = found === undefined ? null : preferGitForWindowsBinary(found, env);
+    resolvedExecutable =
+      found === undefined
+        ? null
+        : platform === "win32"
+          ? preferGitForWindowsBinary(found, env)
+          : found;
     if (!explicitPath && resolvedExecutable !== null) {
       cacheCommandResolution(cache, cacheKey, resolvedExecutable, nowNanos);
     }
   }
   const resolvedCommand = resolvedExecutable ?? command;
+  if (platform !== "win32") {
+    return { command: resolvedCommand, args: [...args], shell: false };
+  }
   const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
   if (extension !== ".cmd" && extension !== ".bat") {
     return { command: resolvedCommand, args: [...args], shell: false };

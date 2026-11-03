@@ -13,7 +13,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
@@ -198,7 +198,9 @@ describe("buildGrokModelCapabilities", () => {
   });
 });
 
-it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("checkGrokProviderStatus", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer))(
+  "checkGrokProviderStatus",
+  (it) => {
   it.effect("reports an installed CLI as unhealthy when --version exits non-zero", () =>
     Effect.gen(function* () {
       const secretStderr = "broken grok install: secret-token-value";

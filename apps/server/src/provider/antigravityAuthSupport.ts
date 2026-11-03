@@ -445,6 +445,10 @@ export const syncAntigravityGlobalCredentials = Effect.fn(
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const signedOutMarker = path.join(input.profileDirectory, ".signed_out");
+  const isSignedOut = yield* fs.exists(signedOutMarker).pipe(Effect.orElseSucceed(() => false));
+  if (isSignedOut) return;
+
   const profileTokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
   const userTokenPath = path.join(input.userHome, ".gemini", "antigravity-acp", "acp_token.json");
   const profileAccountsPath = path.join(input.profileDirectory, "google_accounts.json");

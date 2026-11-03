@@ -854,6 +854,9 @@ importers:
       '@napi-rs/keyring':
         specifier: ^1.3.0
         version: 1.3.0
+      '@t3tools/client-runtime':
+        specifier: workspace:*
+        version: link:../../packages/client-runtime
       '@t3tools/provider-acp':
         specifier: workspace:*
         version: link:../../packages/provider-acp
@@ -6067,10 +6070,6 @@ packages:
 
   '@pierre/highlights@0.2.0':
     resolution: {integrity: sha512-hTpcOU1EzDAP4bYtEhxmMu2jwMvtkUydRUBUpWMSHTs3dw0IaC3Ld5ansMy18L0GE3b6Vfl2OGkLK+pWWpnBmw==}
-
-  '@pierre/theme@1.1.0':
-    resolution: {integrity: sha512-GC2OWTAfTIIWWYhPCygwG8t2EtePQkRfON4MI2rwIkJylmiyqIttJID2dCL8sUD8cNdEvYkEyfEHHKMeCiDLoQ==}
-    engines: {vscode: ^1.0.0}
 
   '@pierre/theme@2.0.0':
     resolution: {integrity: sha512-yNDd9GYLQl1mEUJR8AneJ5e4ohLIHQd/wZLWr4fagt78vS2RwwZNW530vVgHqXFAyFVcFlRmGUD5ramXH46OXw==}
@@ -15696,8 +15695,6 @@ snapshots:
       - '@shikijs/themes'
 
   '@pierre/highlights@0.2.0': {}
-
-  '@pierre/theme@1.1.0': {}
 
   '@pierre/theme@2.0.0': {}
 

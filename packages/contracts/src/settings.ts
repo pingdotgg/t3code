@@ -861,13 +861,13 @@ export const OllamaSettings = makeProviderSettingsSchema(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     apiEndpoint: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("http://localhost:11434")),
+      Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "API endpoint",
         description: "Base URL for the Ollama server API.",
         providerSettingsForm: {
           placeholder: "http://localhost:11434",
-          clearWhenEmpty: "persist",
+          clearWhenEmpty: "omit",
         },
       }),
     ),
@@ -923,9 +923,9 @@ export const CloudflareSettings = makeProviderSettingsSchema(
         title: "API Token",
         description: "Cloudflare API Token with Workers AI permissions.",
         providerSettingsForm: {
+          control: "password",
           placeholder: "Paste Cloudflare API token",
           clearWhenEmpty: "omit",
-          sensitive: true,
         },
       }),
     ),
@@ -959,9 +959,9 @@ export const AwsBedrockSettings = makeProviderSettingsSchema(
         title: "Access Key ID",
         description: "AWS Access Key ID.",
         providerSettingsForm: {
+          control: "password",
           placeholder: "AKIA...",
           clearWhenEmpty: "omit",
-          sensitive: true,
         },
       }),
     ),
@@ -972,9 +972,9 @@ export const AwsBedrockSettings = makeProviderSettingsSchema(
         title: "Secret Access Key",
         description: "AWS Secret Access Key.",
         providerSettingsForm: {
+          control: "password",
           placeholder: "Paste secret access key",
           clearWhenEmpty: "omit",
-          sensitive: true,
         },
       }),
     ),

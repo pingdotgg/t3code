@@ -12,6 +12,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -72,6 +73,21 @@ import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./Antigra
 const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
+
+const AntigravityTokenSchema = Schema.Struct({
+  client_id: Schema.String,
+  refresh_token: Schema.String,
+});
+const decodeAntigravityToken = Schema.decodeUnknownOption(
+  Schema.fromJsonString(AntigravityTokenSchema),
+);
+
+const AntigravityAccountsSchema = Schema.Struct({
+  active: Schema.String,
+});
+const decodeAntigravityAccounts = Schema.decodeUnknownOption(
+  Schema.fromJsonString(AntigravityAccountsSchema),
+);
 
 export type AntigravityDriverEnv =
   | AntigravityInstallation.AntigravityInstallation
@@ -354,10 +370,17 @@ export const AntigravityDriver: ProviderDriver<
       makeRuntime: makeDisposableRuntime,
       // A new sign-in may be another account; drop any in-flight quota read first.
       onAuthenticated: (started, runtime) =>
-        Effect.suspend(() => provider.onSignedIn).pipe(
+        fileSystem.remove(path.join(profileDirectory, ".signed_out")).pipe(
+          Effect.ignore,
+          Effect.andThen(Effect.suspend(() => provider.onSignedIn)),
           Effect.andThen(publishCatalog(started, runtime)),
         ),
-      onSignedOut: Effect.suspend(() => provider.onSignedOut),
+      onSignedOut: fileSystem
+        .writeFileString(path.join(profileDirectory, ".signed_out"), "signed_out")
+        .pipe(
+          Effect.ignore,
+          Effect.andThen(Effect.suspend(() => provider.onSignedOut)),
+        ),
       usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
     });
 
@@ -435,11 +458,16 @@ export const AntigravityDriver: ProviderDriver<
         }
         case "oauth-personal":
         case "oauth-business": {
-          yield* syncAntigravityGlobalCredentials({ profileDirectory, userHome }).pipe(
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-            Effect.provideService(Path.Path, path),
-            Effect.ignore,
-          );
+          const isSignedOut = yield* fileSystem
+            .exists(path.join(profileDirectory, ".signed_out"))
+            .pipe(Effect.orElseSucceed(() => false));
+          if (!isSignedOut) {
+            yield* syncAntigravityGlobalCredentials({ profileDirectory, userHome }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.ignore,
+            );
+          }
           const profileTokenPath = path.join(profileDirectory, "antigravity-acp", "acp_token.json");
           const userTokenPath = path.join(userHome, ".gemini", "antigravity-acp", "acp_token.json");
           const profileAccountsPath = path.join(profileDirectory, "google_accounts.json");
@@ -448,7 +476,10 @@ export const AntigravityDriver: ProviderDriver<
           let tokenPath: string | null = null;
           if (yield* fileSystem.exists(profileTokenPath).pipe(Effect.orElseSucceed(() => false))) {
             tokenPath = profileTokenPath;
-          } else if (yield* fileSystem.exists(userTokenPath).pipe(Effect.orElseSucceed(() => false))) {
+          } else if (
+            !isSignedOut &&
+            (yield* fileSystem.exists(userTokenPath).pipe(Effect.orElseSucceed(() => false)))
+          ) {
             tokenPath = userTokenPath;
           }
 
@@ -463,21 +494,12 @@ export const AntigravityDriver: ProviderDriver<
           const tokenContent = yield* fileSystem
             .readFileString(tokenPath)
             .pipe(Effect.orElseSucceed(() => ""));
-          let hasValidToken = false;
-          try {
-            const parsed = JSON.parse(tokenContent);
-            if (
-              parsed &&
-              typeof parsed.client_id === "string" &&
-              parsed.client_id.trim().length > 0 &&
-              typeof parsed.refresh_token === "string" &&
-              parsed.refresh_token.trim().length > 0
-            ) {
-              hasValidToken = true;
-            }
-          } catch {
-            hasValidToken = false;
-          }
+          const parsedToken = Option.getOrUndefined(decodeAntigravityToken(tokenContent));
+          const hasValidToken = Boolean(
+            parsedToken &&
+              parsedToken.client_id.trim().length > 0 &&
+              parsedToken.refresh_token.trim().length > 0,
+          );
 
           if (!hasValidToken) {
             return {
@@ -503,13 +525,9 @@ export const AntigravityDriver: ProviderDriver<
             const accountsContent = yield* fileSystem
               .readFileString(accountsPath)
               .pipe(Effect.orElseSucceed(() => ""));
-            try {
-              const parsed = JSON.parse(accountsContent);
-              if (parsed && typeof parsed.active === "string" && parsed.active.trim().length > 0) {
-                email = parsed.active.trim();
-              }
-            } catch {
-              // ignore
+            const parsedAccounts = Option.getOrUndefined(decodeAntigravityAccounts(accountsContent));
+            if (parsedAccounts && parsedAccounts.active.trim().length > 0) {
+              email = parsedAccounts.active.trim();
             }
           }
 

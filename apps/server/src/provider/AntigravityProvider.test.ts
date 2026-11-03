@@ -386,6 +386,68 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     ),
   );
 
+  it.effect(
+    "updates status, email, and text generation when probeAuth transitions from authenticated to unauthenticated",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const probeAuthRef = yield* Ref.make<
+            Effect.Effect<{
+              readonly authenticated: boolean;
+              readonly type?: string;
+              readonly label?: string;
+              readonly email?: string;
+            }>
+          >(
+            Effect.succeed({
+              authenticated: true,
+              type: "oauth-personal",
+              label: "Google account",
+              email: "user@example.com",
+            }),
+          );
+          const harness = yield* makeHarness({
+            probeAuth: Effect.flatten(Ref.get(probeAuthRef)),
+          });
+          yield* harness.initialize;
+
+          const authenticatedSnapshot = yield* harness.provider.snapshot.getSnapshot;
+          expect(authenticatedSnapshot).toMatchObject({
+            installed: true,
+            status: "ready",
+            auth: {
+              status: "authenticated",
+              type: "oauth-personal",
+              label: "Google account",
+              email: "user@example.com",
+            },
+            supportsTextGeneration: true,
+          });
+
+          // Transition to unauthenticated
+          yield* Ref.set(
+            probeAuthRef,
+            Effect.succeed({
+              authenticated: false,
+              type: "oauth-personal",
+              label: "Google account",
+            }),
+          );
+
+          const unauthenticatedSnapshot = yield* harness.provider.snapshot.refresh;
+          expect(unauthenticatedSnapshot).toMatchObject({
+            installed: true,
+            status: "warning",
+            auth: {
+              status: "unauthenticated",
+            },
+            supportsTextGeneration: false,
+          });
+          expect(unauthenticatedSnapshot.auth).not.toHaveProperty("email");
+        }),
+      ),
+  );
+
   it.effect("clears all account metadata on sign-out and authentication failure", () =>
     Effect.scoped(
       Effect.gen(function* () {
