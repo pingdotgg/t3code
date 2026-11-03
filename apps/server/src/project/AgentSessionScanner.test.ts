@@ -16,7 +16,6 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -256,7 +255,6 @@ const makeFileIdentityFixture = Effect.fn("AgentSessionScanner.test.makeFileIden
 );
 
 const LIBUV_POOL_SIZE = Number(process.env.UV_THREADPOOL_SIZE ?? 4);
-const SCAN_DEADLINE = "5 seconds";
 
 /**
  * Opening a FIFO for reading waits in `open()` until a writer appears, like a
@@ -282,19 +280,6 @@ const makeOpenGate = Effect.fn("AgentSessionScanner.test.makeOpenGate")(function
 });
 
 /**
- * Racing a stuck fs call against a timer waits for the loser's interruption,
- * which never comes, so the work runs detached and only the join is timed.
- * The gate finalizer later lets the abandoned fiber finish.
- */
-const awaitWithinDeadline = <A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-  deadline: Duration.Input = SCAN_DEADLINE,
-) =>
-  Effect.forkDetach(effect).pipe(
-    Effect.flatMap((fiber) => Fiber.join(fiber).pipe(Effect.timeoutOption(deadline))),
-  );
-
-/**
  * Resolves once a reader has opened the FIFO, so its read deadline is already
  * scheduled on the TestClock. The writer stays open until the scope closes, so
  * the reader sees no EOF and has to wait out that deadline.
@@ -303,13 +288,6 @@ const awaitGateReader = (gatePath: string) =>
   Effect.acquireRelease(
     Effect.promise(() => NodeFS.promises.open(gatePath, NodeFS.constants.O_WRONLY)),
     (handle) => Effect.promise(() => handle.close()),
-  );
-
-const scanUntilDeadline = <E, R>(
-  scan: Effect.Effect<{ readonly candidates: ReadonlyArray<{ readonly path: string }> }, E, R>,
-) =>
-  awaitWithinDeadline(
-    scan.pipe(Effect.map(({ candidates }) => candidates.map(({ path }) => path))),
   );
 
 it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
@@ -1874,36 +1852,44 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "AgentSessionScanner scan with a git config open() that never returns",
   () => {
-    it.live("completes every scan and leaves the libuv pool free when .git/config is a FIFO", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const repo = yield* makeTempDir("t3code-workspace-fifo-config-");
-        yield* fileSystem.makeDirectory(path.join(repo, ".git"));
-        yield* makeOpenGate(path.join(repo, ".git", "config"));
-        const transcriptPath = path.join(claudeHomePath, "projects", "-fifo", "a.jsonl");
-        yield* writeTranscript({
-          filePath: transcriptPath,
-          contents: claudeSessionLine(repo),
-          mtimeMs: Date.parse("2026-05-03T00:00:00.000Z"),
-        });
+    it.effect(
+      "completes every scan and leaves the libuv pool free when .git/config is a FIFO",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const repo = yield* makeTempDir("t3code-workspace-fifo-config-");
+          yield* fileSystem.makeDirectory(path.join(repo, ".git"));
+          yield* makeOpenGate(path.join(repo, ".git", "config"));
+          const transcriptPath = path.join(claudeHomePath, "projects", "-fifo", "a.jsonl");
+          yield* writeTranscript({
+            filePath: transcriptPath,
+            contents: claudeSessionLine(repo),
+            mtimeMs: Date.parse("2026-05-03T00:00:00.000Z"),
+          });
 
-        for (let attempt = 1; attempt <= LIBUV_POOL_SIZE + 1; attempt++) {
-          expect(
-            yield* scanUntilDeadline(runScan({ claudeHomePath, codexHomePath })),
-            `scan ${attempt} of ${LIBUV_POOL_SIZE + 1} hung reading ${repo}/.git/config`,
-          ).toEqual(Option.some([repo]));
-        }
-        expect(
-          Option.isSome(yield* awaitWithinDeadline(fileSystem.readFileString(transcriptPath))),
-          "an unrelated fs read hung: the scans left libuv pool threads stuck in open()",
-        ).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+          for (let attempt = 1; attempt <= LIBUV_POOL_SIZE + 1; attempt++) {
+            const scan = yield* Effect.forkChild(
+              runScan({ claudeHomePath, codexHomePath }).pipe(
+                Effect.map(({ candidates }) => candidates.map(({ path }) => path)),
+              ),
+            );
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                yield* awaitGateReader(path.join(repo, ".git", "config"));
+                yield* TestClock.adjust("2 seconds");
+                expect(yield* Fiber.join(scan), `scan ${attempt}`).toEqual([repo]);
+              }),
+            );
+          }
+          // Hangs if the scans left libuv pool threads stuck in open().
+          yield* fileSystem.readFileString(transcriptPath);
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
-    it.live("still reads the git identity of repositories next to a blocked one", () =>
+    it.effect("still reads the git identity of repositories next to a blocked one", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const fileSystem = yield* FileSystem.FileSystem;
@@ -1931,25 +1917,28 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         }
 
         for (let attempt = 1; attempt <= 2; attempt++) {
-          const result = yield* awaitWithinDeadline(runScan({ claudeHomePath, codexHomePath }));
-          expect(
-            Option.map(result, ({ candidates }) =>
-              candidates.map((candidate) => ({ path: candidate.path, git: candidate.git })),
-            ),
-            `scan ${attempt}`,
-          ).toEqual(
-            Option.some([
-              {
-                path: repos[2],
-                git: { remoteKey: "github.com/pingdotgg/repo-2", repository: "pingdotgg/repo-2" },
-              },
-              { path: repos[1], git: { remoteKey: null, repository: null } },
-              {
-                path: repos[0],
-                git: { remoteKey: "github.com/pingdotgg/repo-0", repository: "pingdotgg/repo-0" },
-              },
-            ]),
+          const scan = yield* Effect.forkChild(runScan({ claudeHomePath, codexHomePath }));
+          const result = yield* Effect.scoped(
+            Effect.gen(function* () {
+              yield* awaitGateReader(path.join(repos[1], ".git", "config"));
+              yield* TestClock.adjust("2 seconds");
+              return yield* Fiber.join(scan);
+            }),
           );
+          expect(
+            result.candidates.map((candidate) => ({ path: candidate.path, git: candidate.git })),
+            `scan ${attempt}`,
+          ).toEqual([
+            {
+              path: repos[2],
+              git: { remoteKey: "github.com/pingdotgg/repo-2", repository: "pingdotgg/repo-2" },
+            },
+            { path: repos[1], git: { remoteKey: null, repository: null } },
+            {
+              path: repos[0],
+              git: { remoteKey: "github.com/pingdotgg/repo-0", repository: "pingdotgg/repo-0" },
+            },
+          ]);
         }
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
@@ -2003,7 +1992,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
-    it.live("completes every scan when a .git pointer file or commondir never opens", () =>
+    it.effect("completes every scan when a .git pointer file or commondir never opens", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const fileSystem = yield* FileSystem.FileSystem;
@@ -2033,19 +2022,29 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         // One scanner across scans: later scans skip the files that blocked.
         yield* Effect.gen(function* () {
           const scanner = yield* AgentSessionScanner.AgentSessionScanner;
-          for (let attempt = 1; attempt <= LIBUV_POOL_SIZE + 1; attempt++) {
-            expect(
-              yield* scanUntilDeadline(scanner.scan),
-              `scan ${attempt} of ${LIBUV_POOL_SIZE + 1} hung opening a blocked git file`,
-            ).toEqual(Option.some([pointerCheckout]));
+          const scanPaths = scanner.scan.pipe(
+            Effect.map(({ candidates }) => candidates.map(({ path }) => path)),
+          );
+          const first = yield* Effect.forkChild(scanPaths);
+          // Pointer files are read first, then the commondir files they lead to.
+          for (const gatePath of [
+            path.join(pointerCheckout, ".git"),
+            path.join(worktreeGitDir, "commondir"),
+          ]) {
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                yield* awaitGateReader(gatePath);
+                yield* TestClock.adjust("2 seconds");
+              }),
+            );
+          }
+          expect(yield* Fiber.join(first)).toEqual([pointerCheckout]);
+          for (let attempt = 2; attempt <= LIBUV_POOL_SIZE + 1; attempt++) {
+            expect(yield* scanPaths, `scan ${attempt}`).toEqual([pointerCheckout]);
           }
         }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
-        expect(
-          Option.isSome(
-            yield* awaitWithinDeadline(fileSystem.readFileString(path.join(worktree, ".git"))),
-          ),
-          "an unrelated fs read hung: the scans left libuv pool threads stuck in open()",
-        ).toBe(true);
+        // Hangs if the scans left libuv pool threads stuck in open().
+        yield* fileSystem.readFileString(path.join(worktree, ".git"));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
