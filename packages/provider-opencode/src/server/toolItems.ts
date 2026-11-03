@@ -81,6 +81,16 @@ function nativeReadOutput(output: string): string {
   return envelope === null ? output : envelope[1] + body.slice(envelope[0].length);
 }
 
+/** OpenCode's shell tool succeeds when the command exits non-zero. */
+export function openCodeCommandFailed(toolName: string, completedMetadata: unknown): boolean {
+  const exitCode = recordNumber(completedMetadata, "exit", "exitCode");
+  return (
+    openCodeToolProjectionKind(toolName) === "command_execution" &&
+    exitCode !== undefined &&
+    exitCode !== 0
+  );
+}
+
 export function openCodeToolTurnItem(
   base: ToolItemBase,
   tool: {
