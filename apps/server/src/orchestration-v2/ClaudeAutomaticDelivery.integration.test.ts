@@ -15,6 +15,7 @@ import {
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -494,11 +495,39 @@ it.effect.each(deliveries)(
     ),
 );
 
-// SIGKILL ends the stream without a frame. SIGTERM makes the CLI stop its tasks first.
-const exitWhileIdle = (awaited: boolean, signal: "SIGKILL" | "SIGTERM") =>
+// SIGKILL ends the stream without a frame. SIGTERM makes the CLI stop its tasks first; the
+// empty roster level can come before or after the stop notification.
+const exitWhileIdle = (options: {
+  readonly awaited: boolean;
+  readonly signal: "SIGKILL" | "SIGTERM" | "SIGTERM-roster-first";
+  /** Exit while the run's settling write has not committed yet. */
+  readonly beforeRunSettles?: boolean;
+}) =>
   Effect.scoped(
     Effect.gen(function* () {
+      const { awaited, signal } = options;
       const cwd = yield* checkpointWorkspace("claude-idle-exit-awaited-task");
+      const settleHeld = yield* Deferred.make<void>();
+      const releaseSettle = yield* Deferred.make<void>();
+      const holdSettle = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
+        options.beforeRunSettles === true &&
+        events.some(
+          (event) =>
+            event.type === "run.updated" &&
+            (event.payload.status === "waiting" || event.payload.status === "completed"),
+        )
+          ? Deferred.succeed(settleHeld, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseSettle)),
+            )
+          : Effect.void;
+      const wrapEventSink = (sink: EventSink.EventSinkV2Shape): EventSink.EventSinkV2Shape => ({
+        ...sink,
+        write: (input) => holdSettle(input.events).pipe(Effect.andThen(sink.write(input))),
+        writeWithEffects: (input) =>
+          holdSettle(input.events).pipe(Effect.andThen(sink.writeWithEffects(input))),
+        writeIfRunCurrent: (input) =>
+          holdSettle(input.events).pipe(Effect.andThen(sink.writeIfRunCurrent(input))),
+      });
       const processes: Array<Queue.Queue<SDKMessage>> = [];
       const offers: SDKUserMessage[] = [];
       const taskId = "b8sleep180";
@@ -627,10 +656,15 @@ const exitWhileIdle = (awaited: boolean, signal: "SIGKILL" | "SIGTERM") =>
             (event.payload.status === "waiting" || event.payload.status === "completed"),
         );
         yield* Queue.offer(firstProcess, result("waiting-on-sleep", false));
-        yield* Fiber.join(settled);
-        yield* worker.drain();
+        if (options.beforeRunSettles === true) {
+          yield* Deferred.await(settleHeld);
+        } else {
+          yield* Fiber.join(settled);
+          yield* worker.drain();
+        }
         const beforeExit = yield* orchestrator.getThreadProjection(threadId);
         const firstRun = beforeExit.runs[0]!;
+        if (options.beforeRunSettles === true) assert.equal(firstRun.status, "running");
         assert.deepEqual(
           beforeExit.providerThreads[0]?.pendingBackgroundTasks?.map((task) => [
             task.taskId,
@@ -643,45 +677,54 @@ const exitWhileIdle = (awaited: boolean, signal: "SIGKILL" | "SIGTERM") =>
         const woken = yield* watch(
           (event) => event.type === "run.updated" && event.payload.id !== firstRun.id,
         );
-        if (signal === "SIGTERM") {
+        if (signal !== "SIGKILL") {
           const stopped = yield* watch(
             (event) =>
               event.type === "provider-thread.updated" &&
               event.payload.pendingBackgroundTasks?.length === 0,
           );
-          yield* Queue.offerAll(firstProcess, [
-            frame({
-              type: "system",
-              subtype: "task_notification",
-              task_id: taskId,
-              status: "stopped",
-              output_file: "",
-              summary: "sleep 180",
-              uuid: "stopped",
-              session_id: sessionId,
-            }),
-            frame({
-              type: "system",
-              subtype: "task_updated",
-              task_id: taskId,
-              patch: { status: "killed", end_time: 1 },
-              uuid: "killed",
-              session_id: sessionId,
-            }),
-            frame({
-              type: "system",
-              subtype: "background_tasks_changed",
-              tasks: [],
-              uuid: "roster-empty",
-              session_id: sessionId,
-            }),
-          ]);
+          const notification = frame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: taskId,
+            status: "stopped",
+            output_file: "",
+            summary: "sleep 180",
+            uuid: "stopped",
+            session_id: sessionId,
+          });
+          const emptyRoster = frame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [],
+            uuid: "roster-empty",
+            session_id: sessionId,
+          });
+          const killed = frame({
+            type: "system",
+            subtype: "task_updated",
+            task_id: taskId,
+            patch: { status: "killed", end_time: 1 },
+            uuid: "killed",
+            session_id: sessionId,
+          });
+          yield* Queue.offerAll(
+            firstProcess,
+            signal === "SIGTERM"
+              ? [notification, killed, emptyRoster]
+              : [emptyRoster, notification, killed],
+          );
           yield* Fiber.join(stopped);
         }
         // The CLI exits while the thread is idle; the T3 server keeps running.
         yield* Queue.shutdown(firstProcess);
         yield* Fiber.join(recorded);
         yield* worker.drain();
+        if (options.beforeRunSettles === true) {
+          yield* Deferred.succeed(releaseSettle, undefined);
+          yield* Fiber.join(settled);
+          yield* worker.drain();
+        }
 
         const afterExit = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(
@@ -700,14 +743,20 @@ const exitWhileIdle = (awaited: boolean, signal: "SIGKILL" | "SIGTERM") =>
         if (!awaited) return;
         yield* Fiber.join(woken);
         yield* worker.drain();
-        assert.isTrue(
-          offers.slice(1).some((offer) => JSON.stringify(offer.message).includes(taskId)),
-          "the agent must be woken with a note naming the lost task",
+        const afterWake = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(
+          afterWake.runs.filter((run) => run.id !== firstRun.id),
+          1,
+          "the agent must be woken exactly once",
+        );
+        assert.lengthOf(offers.slice(1), 1);
+        assert.include(
+          JSON.stringify(offers[1]?.message),
+          taskId,
+          "the wake must carry a note naming the lost task",
         );
         assert.equal(
-          (yield* orchestrator.getThreadProjection(threadId)).messages.filter(
-            (message) => message.createdBy === "user",
-          ).length,
+          afterWake.messages.filter((message) => message.createdBy === "user").length,
           1,
         );
       }).pipe(
@@ -715,7 +764,7 @@ const exitWhileIdle = (awaited: boolean, signal: "SIGKILL" | "SIGTERM") =>
           ProviderReplayHarness.layerWithRegistry(
             { name: "claude-idle-exit-awaited-task" },
             registry,
-            { runEffectWorker: false, runContinuationWorker: true },
+            { runEffectWorker: false, runContinuationWorker: true, wrapEventSink },
           ),
         ),
       );
@@ -732,13 +781,21 @@ const exitWhileIdle = (awaited: boolean, signal: "SIGKILL" | "SIGTERM") =>
   );
 
 it.effect("wakes the agent when Claude's process exits while it awaits background work", () =>
-  exitWhileIdle(true, "SIGKILL"),
+  exitWhileIdle({ awaited: true, signal: "SIGKILL" }),
 );
 
 it.effect("wakes the agent when Claude stops awaited background work before exiting", () =>
-  exitWhileIdle(true, "SIGTERM"),
+  exitWhileIdle({ awaited: true, signal: "SIGTERM" }),
+);
+
+it.effect("wakes the agent when Claude empties its roster before stopping awaited work", () =>
+  exitWhileIdle({ awaited: true, signal: "SIGTERM-roster-first" }),
+);
+
+it.effect("wakes the agent once when Claude exits before its last run settles", () =>
+  exitWhileIdle({ awaited: true, signal: "SIGKILL", beforeRunSettles: true }),
 );
 
 it.effect("records but does not wake for an unawaited shell lost when Claude's process exits", () =>
-  exitWhileIdle(false, "SIGKILL"),
+  exitWhileIdle({ awaited: false, signal: "SIGKILL" }),
 );

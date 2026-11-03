@@ -165,6 +165,18 @@ export function isAwaitedWork(work: Pick<Work, "kind" | "awaited">): boolean {
   return work.awaited === true || (work.kind !== "shell" && work.kind !== "monitor");
 }
 
+/** A settled run whose process exit took work the agent awaited, so the agent is owed a wake. */
+export function owesProviderExitWake(
+  run: Pick<OrchestrationV2Run, "status" | "restartCancelledBackgroundWork">,
+): boolean {
+  return (
+    (run.status === "completed" || run.status === "waiting") &&
+    (run.restartCancelledBackgroundWork ?? []).some(
+      (work) => work.cause === "provider_exit" && isAwaitedWork(work),
+    )
+  );
+}
+
 export function runOutcome(
   run: Pick<OrchestrationV2Run, "status" | "restartCancelledBackgroundWork">,
 ): OrchestrationV2Run["status"] {

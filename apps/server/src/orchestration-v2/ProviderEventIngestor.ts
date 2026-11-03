@@ -38,14 +38,14 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
-import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
-import { boundFileChangeForStorage } from "./WireProjection.ts";
 import {
   cancelledRosterTaskWork,
   latestStartedRun,
   mergeRestartCancelledBackgroundWork,
 } from "./RestartBackgroundNote.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
+import { boundFileChangeForStorage } from "./WireProjection.ts";
 
 export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
   "ProviderEventNormalizeError",
@@ -718,24 +718,6 @@ export const layer: Layer.Layer<
             if (events.length === 0) {
               return [];
             }
-            // The continuation wakes the agent only for awaited work; the rest rides along on the next user message.
-            const effects = events.flatMap((event) =>
-              event.type === "run.background-work-cancelled"
-                ? [
-                    {
-                      id: `effect:restart-continuation:${event.payload.runId}`,
-                      commandId:
-                        input.commandId ??
-                        CommandId.make(`command:provider-exit:${event.payload.runId}`),
-                      threadId: event.threadId,
-                      request: {
-                        type: "provider-runtime.continue" as const,
-                        sourceRunId: event.payload.runId,
-                      },
-                    },
-                  ]
-                : [],
-            );
             const mapWriteError = (cause: unknown) =>
               new ProviderEventPublishError({
                 providerSessionId: input.providerSessionId,
@@ -754,16 +736,13 @@ export const layer: Layer.Layer<
               return ownerResult.storedEvents;
             }
             if (input.writeIfRunCurrent === undefined) {
-              const write = {
-                guardPendingUserInputCancellations: true,
-                ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-                events,
-              };
-              return yield* (
-                effects.length === 0
-                  ? eventSink.write(write)
-                  : eventSink.writeWithEffects({ ...write, effects })
-              ).pipe(retryLockTimeout, Effect.mapError(mapWriteError));
+              return yield* eventSink
+                .write({
+                  guardPendingUserInputCancellations: true,
+                  ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+                  events,
+                })
+                .pipe(retryLockTimeout, Effect.mapError(mapWriteError));
             }
             const result = yield* eventSink
               .writeIfRunCurrent({

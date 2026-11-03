@@ -5477,16 +5477,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               );
             }
             const listed = new Set(tasks.map((task) => task.taskId));
-            yield* Ref.update(awaitedBackgroundTasksByNativeThread, (current) => {
+            const unlisted = yield* Ref.modify(awaitedBackgroundTasksByNativeThread, (current) => {
               const awaited = current.get(nativeThreadId);
-              if (awaited === undefined) return current;
+              const none: ReadonlyArray<string> = [];
+              if (awaited === undefined) return [none, current] as const;
               const kept = new Set([...awaited].filter((taskId) => listed.has(taskId)));
-              if (kept.size === awaited.size) return current;
+              if (kept.size === awaited.size) return [none, current] as const;
               const updated = new Map(current);
               if (kept.size === 0) updated.delete(nativeThreadId);
               else updated.set(nativeThreadId, kept);
-              return updated;
+              return [[...awaited].filter((taskId) => !listed.has(taskId)), updated] as const;
             });
+            // Keep the agent's await mark for a notification that follows the empty level.
+            if (unlisted.length > 0) {
+              yield* Ref.update(lastKnownOpaqueTasks, (current) => {
+                const updated = new Map(current);
+                for (const taskId of unlisted) {
+                  const task = current.get(taskId);
+                  if (task !== undefined) updated.set(taskId, { ...task, awaited: true });
+                }
+                return updated;
+              });
+            }
           });
 
         const upsertPendingBackgroundTask =
@@ -8168,16 +8180,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? message.summary
               : null;
           if (isPendingTaskNotification) {
-            const task = claudePendingBackgroundTasksFromRoster(
-              rosterForNativeThread(
-                yield* Ref.get(pendingBackgroundTasksByNativeThread),
-                wakeInput.nativeThreadId,
-              ),
-              taskIdSetForNativeThread(
-                yield* Ref.get(awaitedBackgroundTasksByNativeThread),
-                wakeInput.nativeThreadId,
-              ),
-            ).find((candidate) => candidate.taskId === message.task_id);
+            const task =
+              claudePendingBackgroundTasksFromRoster(
+                rosterForNativeThread(
+                  yield* Ref.get(pendingBackgroundTasksByNativeThread),
+                  wakeInput.nativeThreadId,
+                ),
+                taskIdSetForNativeThread(
+                  yield* Ref.get(awaitedBackgroundTasksByNativeThread),
+                  wakeInput.nativeThreadId,
+                ),
+              ).find((candidate) => candidate.taskId === message.task_id) ??
+              (yield* Ref.get(lastKnownOpaqueTasks)).get(message.task_id);
             yield* recordWakeReport(
               wakeInput.nativeThreadId,
               message.task_id,

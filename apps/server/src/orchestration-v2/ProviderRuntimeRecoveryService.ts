@@ -31,8 +31,8 @@ import {
 import {
   awaitingProviderThreadId,
   cancelledRosterTaskWork,
-  latestStartedRun,
   cancelledTurnItemWork,
+  latestStartedRun,
   mergeRestartCancelledBackgroundWork,
 } from "./RestartBackgroundNote.ts";
 
