@@ -2,11 +2,73 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  contextWindowSegments,
   hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
   resolveContextWindowModelDisplayName,
   shouldReserveContextWindowMeter,
 } from "./ContextWindowMeter.logic";
+
+describe("contextWindowSegments", () => {
+  const usage = {
+    usedTokens: 1_000,
+    inputTokens: 800,
+    cachedInputTokens: 600,
+    outputTokens: 200,
+    reasoningOutputTokens: 150,
+  };
+  const breakdown = (input: Parameters<typeof contextWindowSegments>[0]) =>
+    contextWindowSegments(input).map(({ label, tokens }) => [label, tokens]);
+
+  it("counts cache and reasoning once within their parent totals", () => {
+    expect(breakdown(usage)).toEqual([
+      ["Cached input", 600],
+      ["New input", 200],
+      ["Output", 50],
+      ["Reasoning", 150],
+    ]);
+  });
+
+  it("shows one segment when only used context is reported, including after compaction", () => {
+    expect(
+      breakdown({
+        usedTokens: 1_000,
+        inputTokens: null,
+        cachedInputTokens: null,
+        outputTokens: null,
+        reasoningOutputTokens: null,
+      }),
+    ).toEqual([["Used context", 1_000]]);
+    expect(
+      breakdown({
+        ...usage,
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningOutputTokens: 0,
+      }),
+    ).toEqual([["Used context", 1_000]]);
+  });
+
+  it("keeps unclassified context instead of inflating reported categories", () => {
+    expect(breakdown({ ...usage, usedTokens: 1_200 })).toEqual([
+      ["Cached input", 600],
+      ["New input", 200],
+      ["Output", 50],
+      ["Reasoning", 150],
+      ["Other context", 200],
+    ]);
+  });
+
+  it("caps subsets at their parent and total context", () => {
+    expect(
+      breakdown({ ...usage, usedTokens: 900, cachedInputTokens: 900, reasoningOutputTokens: 300 }),
+    ).toEqual([
+      ["Cached input", 800],
+      ["Reasoning", 100],
+    ]);
+  });
+});
 
 function claudeProvider(input: {
   instanceId: string;
