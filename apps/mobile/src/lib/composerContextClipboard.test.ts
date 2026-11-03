@@ -247,7 +247,7 @@ describe("mobile context clipboard imports", () => {
       ),
     ).toBe(true);
     expect(result!.text).toMatch(
-      /^Compare these findings: \[Remote discussion\]\(t3-thread:\/\/v2\/source\/foreign-thread\) .* before changing anything\.$/,
+      /^Compare these findings: \[Remote discussion\]\(https:\/\/app\.t3\.codes\/threads\/source\/foreign-thread\) .* before changing anything\.$/,
     );
 
     const restoreHistory = createComposerContextHistory();

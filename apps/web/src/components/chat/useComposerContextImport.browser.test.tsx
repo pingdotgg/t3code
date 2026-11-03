@@ -249,7 +249,9 @@ it.each([false, true])(
       remapped = importer.importContextRecords([unlinked, linked], unlinked.environmentId);
     });
     expect(Object.fromEntries(remapped)).toEqual({
-      [unlinked.contextId]: { markdown: "[Thread remote](t3-thread://v2/unlinked-source/remote)" },
+      [unlinked.contextId]: {
+        markdown: "[Thread remote](https://app.t3.codes/threads/unlinked-source/remote)",
+      },
       [linked.contextId]: linked.contextId,
     });
     expect(store.getComposerDraft(target)?.threadContexts).toEqual(

@@ -10,7 +10,7 @@ import {
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 
-import { formatThreadLink, replaceThreadLinks, threadLinkCandidates } from "./threadLinks.ts";
+import { formatHostedThreadLink, replaceThreadLinks, threadLinkCandidates } from "./threadLinks.ts";
 
 const CONTEXT_PROTOCOL = "t3-context:";
 const COMPOSER_CONTEXT_HREF_PREFIX = `${CONTEXT_PROTOCOL}//v1/`;
@@ -429,10 +429,7 @@ export function threadContextsOutsideEnvironment(input: {
 
 /** A thread this agent can't read stays a link naming its machine, so the ids survive without attaching it. */
 export function unreadableThreadContextLink(record: ThreadContextRecord): string {
-  return formatThreadLink(
-    { environmentId: record.environmentId, threadId: record.threadId },
-    record.title,
-  );
+  return formatHostedThreadLink(record, record.title);
 }
 
 export function remapComposerContextAttachments(

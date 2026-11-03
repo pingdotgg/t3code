@@ -18,6 +18,7 @@ import {
   threadContextRecord,
   threadContextsOutsideEnvironment,
   threadLinkContextReferences,
+  unreadableThreadContextLink,
   toComposerContextId,
   toKindScopedComposerContextId,
 } from "./composerContextReferences.ts";
@@ -520,6 +521,13 @@ describe("threadLinkContextReferences", () => {
       () => "Here",
     );
     expect(pasted.records).toEqual([copied, threadContextRecord(thread("env-9", "t9"), "Here")]);
+    for (const threadId of ["a)b", "a b", "a>b", "a%29b"]) {
+      const record = threadContextRecord(thread("env-1", threadId), "Copied title");
+      expect(
+        threadLinkContextReferences(unreadableThreadContextLink(record), [], () => undefined)
+          .records,
+      ).toEqual([record]);
+    }
     expect(
       threadLinkContextReferences("https://app.t3.codes/threads/env-9/t9", [], () => undefined)
         .records,
