@@ -540,6 +540,8 @@ const RECONNECT_WAIT = "30 seconds";
 const LOST_BACKGROUND =
   "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
+// OpenCode loads a newly connected MCP server's tools 100 ms (debounced) after it connects.
+const MCP_TOOLS_SETTLE = "300 millis";
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
 // Other failures may still have admitted the prompt.
 const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
@@ -3076,17 +3078,80 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ),
     );
 
-    // The waiter is registered before each read so a change landing mid-read is not lost.
-    const settledMcpStatus = Effect.fnUntraced(function* (server: string, directory: string) {
+    // Each waiter is registered before the call it covers so a change landing mid-call is not lost.
+    const watchMcpStatus = (server: string) =>
+      Deferred.make<void>().pipe(
+        Effect.tap((changed) => Effect.sync(() => mcpStatusChanges.set(server, changed))),
+      );
+
+    const settledMcpStatus = Effect.fnUntraced(function* (
+      server: string,
+      directory: string,
+      changedSinceAdd: Deferred.Deferred<void>,
+    ) {
+      let changed = changedSinceAdd;
+      let reconnected = false;
       for (;;) {
-        const changed = yield* Deferred.make<void>();
-        mcpStatusChanges.set(server, changed);
         const listed = yield* client.mcp.list({ location: { directory } });
         const status = listed.data.find((each) => each.name === server)?.status.status;
-        if (status !== "pending") return status;
+        if (status !== "pending") {
+          return { status, reconnected: reconnected || (yield* Deferred.isDone(changed)) };
+        }
         yield* Deferred.await(changed);
+        reconnected = true;
+        changed = yield* watchMcpStatus(server);
       }
     });
+
+    const addMcp = Effect.fnUntraced(
+      function* (state: ThreadState, wanted: NonNullable<ThreadState["mcp"]>, endpoint: string) {
+        // An add that replaces a live connection reconnects before it returns.
+        const changedSinceAdd = yield* watchMcpStatus(wanted.name);
+        const added = yield* client.mcp
+          .add({
+            server: wanted.name,
+            location: { directory: wanted.directory },
+            config: new Mcp.RemoteConfig({
+              type: "remote",
+              url: endpoint,
+              headers: { Authorization: wanted.credential },
+              oauth: false,
+            }),
+          })
+          .pipe(
+            Effect.timeout(INVENTORY_TIMEOUT),
+            Effect.as(true),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not add T3 Code's MCP server to OpenCode.", cause).pipe(
+                Effect.as(false),
+              ),
+            ),
+          );
+        if (!added) return "unavailable" as const;
+        state.mcp = wanted;
+        // An add to a fresh Location returns while OpenCode is still connecting.
+        return yield* settledMcpStatus(wanted.name, wanted.directory, changedSinceAdd).pipe(
+          Effect.timeout(INVENTORY_TIMEOUT),
+          Effect.flatMap(({ status, reconnected }) =>
+            status === "connected"
+              ? Effect.succeed(reconnected ? ("reconnected" as const) : ("connected" as const))
+              : Effect.logWarning("OpenCode did not connect T3 Code's MCP server.", {
+                  status,
+                }).pipe(Effect.as("unavailable" as const)),
+          ),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("OpenCode did not connect T3 Code's MCP server.", cause).pipe(
+              Effect.as("unavailable" as const),
+            ),
+          ),
+        );
+      },
+      (effect, _state, wanted) =>
+        Effect.ensuring(
+          effect,
+          Effect.sync(() => mcpStatusChanges.delete(wanted.name)),
+        ),
+    );
 
     const prepareTurn = Effect.fnUntraced(function* (
       sessionId: string,
@@ -3114,47 +3179,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // Re-adding an unchanged config keeps its existing connection.
       let mcpAvailable = false;
       if (wanted !== undefined) {
-        mcpAvailable = yield* client.mcp
-          .add({
-            server: name,
-            location: { directory },
-            config: new Mcp.RemoteConfig({
-              type: "remote",
-              url: mcpSession!.endpoint,
-              headers: { Authorization: wanted.credential },
-              oauth: false,
-            }),
-          })
-          .pipe(
-            Effect.timeout(INVENTORY_TIMEOUT),
-            Effect.as(true),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Could not add T3 Code's MCP server to OpenCode.", cause).pipe(
-                Effect.as(false),
-              ),
-            ),
-          );
-        if (mcpAvailable) {
-          state.mcp = wanted;
-          // An add to a fresh Location returns while OpenCode is still connecting. Tools that join
-          // mid-turn restart Claude-backed turns, so prompt once the server has settled.
-          mcpAvailable = yield* settledMcpStatus(name, directory).pipe(
-            Effect.timeout(INVENTORY_TIMEOUT),
-            Effect.ensuring(Effect.sync(() => mcpStatusChanges.delete(name))),
-            Effect.flatMap((status) =>
-              status === "connected"
-                ? Effect.succeed(true)
-                : Effect.logWarning("OpenCode did not connect T3 Code's MCP server.", {
-                    status,
-                  }).pipe(Effect.as(false)),
-            ),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("OpenCode did not connect T3 Code's MCP server.", cause).pipe(
-                Effect.as(false),
-              ),
-            ),
-          );
-        }
+        const mcp = yield* addMcp(state, wanted, mcpSession!.endpoint);
+        mcpAvailable = mcp !== "unavailable";
+        // Nothing reports OpenCode loading the tools, and tools that join mid-turn restart
+        // Claude-backed turns.
+        if (mcp === "reconnected") yield* Effect.sleep(MCP_TOOLS_SETTLE);
       }
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
