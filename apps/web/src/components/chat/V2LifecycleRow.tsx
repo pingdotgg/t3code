@@ -419,7 +419,7 @@ function SubagentTimelineLink(props: {
     environmentThreadDetails.threadAtom(props.parentRef),
     (thread) => thread?.projection.subagents.find((agent) => agent.id === props.subagentId) ?? null,
   );
-  const remote = props.remote ?? agent?.remoteChild;
+  const remote = agent?.remoteChild ?? props.remote;
   const remoteThreadId = remote?.threadId;
   const remoteEnvironment = useEnvironment(remote?.environmentId ?? null);
   const navigate = useNavigate();
@@ -542,7 +542,7 @@ function SubagentTimelineLink(props: {
           model={agent?.model ?? null}
           modelSelection={agent?.modelSelection}
           status={liveStatus}
-          result={agent?.result ?? props.result}
+          result={remote?.launchError ?? agent?.result ?? props.result}
           progress={agent?.progress ?? props.progress}
         />
       </ThreadHoverCardPopup>

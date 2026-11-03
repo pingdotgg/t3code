@@ -127,6 +127,7 @@ export function ThreadSubagentGroup(props: {
       completedAt: live?.completedAt ?? item.completedAt,
       result: live?.result ?? item.result,
       progress: live?.progress ?? item.progress,
+      remoteChild: live?.remoteChild ?? item.remoteChild,
       model: live?.model ?? null,
     };
   });
