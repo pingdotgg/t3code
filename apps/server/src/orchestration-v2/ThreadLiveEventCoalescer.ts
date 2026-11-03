@@ -95,7 +95,8 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
   let windowFiber: Fiber.Fiber<void, never> | null = null;
   let closed = false;
 
-  const cancelWindow = Effect.fn("ThreadLiveEventCoalescer.cancelWindow")(function* () {
+  // cancelWindow/flushPending/offerAll run per live event or batch; sub-ms spans here would flood the rotating trace.
+  const cancelWindow = Effect.fnUntraced(function* () {
     const fiber = windowFiber;
     if (!fiber) {
       return;
@@ -104,7 +105,7 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
     yield* Fiber.interrupt(fiber);
   });
 
-  const flushPending = Effect.fn("ThreadLiveEventCoalescer.flushPending")(function* () {
+  const flushPending = Effect.fnUntraced(function* () {
     if (pendingUpdates.length === 0) {
       return;
     }
@@ -135,9 +136,7 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
 
   // Keep each source batch together so a synchronization marker cannot pass
   // events already pulled from PubSub but still being coalesced.
-  const offerAll = Effect.fn("ThreadLiveEventCoalescer.offerAll")(function* (
-    inputs: ReadonlyArray<ThreadLiveInput>,
-  ) {
+  const offerAll = Effect.fnUntraced(function* (inputs: ReadonlyArray<ThreadLiveInput>) {
     yield* mutex.withPermits(1)(
       Effect.forEach(
         inputs,
