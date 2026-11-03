@@ -116,6 +116,11 @@ function CheckoutGroupingSelect({ member }: { member: SidebarProjectGroupMember 
     >
       <SelectTrigger
         size="sm"
+        title={
+          selection === "inherit"
+            ? `Default (${PROJECT_GROUPING_MODE_LABELS[globalMode]})`
+            : PROJECT_GROUPING_MODE_LABELS[selection]
+        }
         aria-label={`Grouping rule for ${member.workspaceRoot} on ${
           member.environmentLabel
             ? `${member.environmentLabel} (${member.environmentId})`
@@ -123,9 +128,7 @@ function CheckoutGroupingSelect({ member }: { member: SidebarProjectGroupMember 
         }`}
       >
         <SelectValue>
-          {selection === "inherit"
-            ? `Default (${PROJECT_GROUPING_MODE_LABELS[globalMode]})`
-            : PROJECT_GROUPING_MODE_LABELS[selection]}
+          {selection === "inherit" ? "Default" : PROJECT_GROUPING_MODE_LABELS[selection]}
         </SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -445,8 +448,16 @@ function ProjectDetail({
   );
   const checkoutControls = (member: SidebarProjectGroupMember) => (
     <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-auto">
-      <div className="min-w-0 flex-1 @min-[32rem]/settings-row:w-72 @min-[32rem]/settings-row:flex-none">
-        <CheckoutGroupingSelect member={member} />
+      <div className="min-w-0 flex-1 @min-[32rem]/settings-row:w-44 @min-[32rem]/settings-row:flex-none">
+        <Tooltip>
+          <TooltipTrigger render={<div />}>
+            <CheckoutGroupingSelect member={member} />
+          </TooltipTrigger>
+          <TooltipPopup>
+            Grouping rule decides how each checkout joins project groups in the sidebar. Changing it
+            can move a checkout to a different project.
+          </TooltipPopup>
+        </Tooltip>
       </div>
       {hasMultipleCheckouts ? checkoutRemoveButton(member) : null}
     </div>
@@ -464,17 +475,22 @@ function ProjectDetail({
   // Every checkout shows, even a lone one, so where the project lives is always visible.
   const checkoutChoices = (
     <SettingsSection title="Checkouts">
-      <p className="px-3 py-2.5 text-meta text-muted-foreground sm:px-4">
-        Grouping rule decides how each checkout joins project groups in the sidebar. Changing it can
-        move a checkout to a different project.
-      </p>
       {Array.from(checkoutsByEnvironment, ([environmentId, members]) => {
         if (checkoutsByEnvironment.size === 1) {
           return members.map((member) => (
             <SettingsRow
               key={member.physicalProjectKey}
               title={member.environmentLabel ?? "Environment"}
-              description={<span className="font-mono">{member.workspaceRoot}</span>}
+              description={
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<span className="block truncate font-mono" tabIndex={0} />}
+                  >
+                    {member.workspaceRoot}
+                  </TooltipTrigger>
+                  <TooltipPopup>{member.workspaceRoot}</TooltipPopup>
+                </Tooltip>
+              }
               leading={
                 <EnvironmentMachineIcon
                   kind={resolveEnvironmentMachineKind(
@@ -667,56 +683,54 @@ function ProjectDetail({
               </div>
             }
           />
-          {canOrganize ? (
-            <>
-              <SettingsRow
-                title="Pin"
-                description="Pinned projects come first in project pickers."
-                control={
-                  <Switch
-                    checked={group.pinned}
-                    disabled={isOrganizing}
-                    onCheckedChange={(checked) =>
-                      void organize(
-                        { pinned: Boolean(checked) },
-                        checked ? "Failed to pin project" : "Failed to unpin project",
-                      )
-                    }
-                    aria-label="Pin project"
-                  />
-                }
-              />
-              <SettingsRow
-                title="Archive"
-                description={
-                  group.archived
-                    ? "Hidden from project pickers. Threads and files are kept."
-                    : "Hides the project from project pickers. Threads and files are kept."
-                }
-                control={
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={isOrganizing}
-                    onClick={() =>
-                      void organize(
-                        { archived: !group.archived },
-                        group.archived
-                          ? "Failed to unarchive project"
-                          : "Failed to archive project",
-                      )
-                    }
-                  >
-                    {group.archived ? "Unarchive" : "Archive"}
-                  </Button>
-                }
-              />
-            </>
-          ) : null}
         </SettingsSection>
         {checkoutChoices}
         <ProjectActionsSettings />
         <ProjectDefaultsSettings category="project" />
+        {canOrganize ? (
+          <SettingsSection title="Organization">
+            <SettingsRow
+              title="Pin"
+              description="Pinned projects come first in project pickers."
+              control={
+                <Switch
+                  checked={group.pinned}
+                  disabled={isOrganizing}
+                  onCheckedChange={(checked) =>
+                    void organize(
+                      { pinned: Boolean(checked) },
+                      checked ? "Failed to pin project" : "Failed to unpin project",
+                    )
+                  }
+                  aria-label="Pin project"
+                />
+              }
+            />
+            <SettingsRow
+              title="Archive"
+              description={
+                group.archived
+                  ? "Hidden from project pickers. Threads and files are kept."
+                  : "Hides the project from project pickers. Threads and files are kept."
+              }
+              control={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={isOrganizing}
+                  onClick={() =>
+                    void organize(
+                      { archived: !group.archived },
+                      group.archived ? "Failed to unarchive project" : "Failed to archive project",
+                    )
+                  }
+                >
+                  {group.archived ? "Unarchive" : "Archive"}
+                </Button>
+              }
+            />
+          </SettingsSection>
+        ) : null}
         <SettingsSection title="Danger">
           <SettingsRow
             title={hasOtherMembers ? "Remove checkout" : `Remove ${group.displayName}`}
