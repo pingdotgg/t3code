@@ -58,9 +58,10 @@ function codeFenceFor(code: string): string {
 }
 
 function outsideCodeFences(markdown: string, tidy: (prose: string) => string): string {
+  // A fence closes only at its own opening run, so split yields [prose, fence, run] triples.
   return markdown
-    .split(/(```[\s\S]*?(?:```|$))/)
-    .map((part, index) => (index % 2 === 1 ? part : tidy(part)))
+    .split(/((`{3,})[\s\S]*?(?:\2|$))/)
+    .map((part, index) => (index % 3 === 0 ? tidy(part) : index % 3 === 1 ? part : ""))
     .join("");
 }
 
