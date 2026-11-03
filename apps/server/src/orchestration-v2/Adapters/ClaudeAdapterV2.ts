@@ -2648,6 +2648,17 @@ const decodeClaudeTranscriptLine = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ type: Schema.String })),
 );
 
+const decodeClaudeAssistantCursorLine = Schema.decodeUnknownResult(
+  Schema.fromJsonString(
+    Schema.Struct({
+      type: Schema.Literal("assistant"),
+      uuid: Schema.String,
+      isSidechain: Schema.optionalKey(Schema.Boolean),
+      message: Schema.Struct({ content: Schema.Array(Schema.Unknown) }),
+    }),
+  ),
+);
+
 const isClaudeConversationLine = (line: string): boolean =>
   Option.match(decodeClaudeTranscriptLine(line), {
     onNone: () => false,
@@ -5533,6 +5544,54 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     adapterOptions.settings,
     adapterOptions.environment,
   ).pipe(Effect.provideService(Path.Path, path));
+  const resolveMessageCursor = Effect.fn("ClaudeAdapterV2.resolveMessageCursor")(function* (
+    nativeThreadId: string,
+    cursor: string,
+  ) {
+    // SDK block UUIDs replace the last 12 hex digits with the block index.
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-0000[0-9a-f]{8}$/i.test(cursor)) {
+      return cursor;
+    }
+    const prefix = cursor.slice(0, 24);
+    const blockIndex = Number.parseInt(cursor.slice(24), 16);
+    const candidates = new Set<string>();
+    let exact = false;
+    let containsBlock = false;
+    const projectsDir = path.join(homePath, "projects");
+    const projects = yield* fileSystem
+      .readDirectory(projectsDir)
+      .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([])));
+    for (const project of projects) {
+      const transcriptPath = path.join(projectsDir, project, `${nativeThreadId}.jsonl`);
+      if (!(yield* fileSystem.exists(transcriptPath).pipe(Effect.orElseSucceed(() => false))))
+        continue;
+      yield* fileSystem.stream(transcriptPath).pipe(
+        Stream.decodeText,
+        Stream.splitLines,
+        Stream.filterMap(decodeClaudeAssistantCursorLine),
+        Stream.runForEach((entry) =>
+          Effect.sync(() => {
+            if (entry.isSidechain === true) return;
+            if (entry.uuid === cursor) exact = true;
+            if (entry.uuid.slice(0, 24) !== prefix) return;
+            candidates.add(entry.uuid);
+            if (entry.message.content.length > 1 && entry.message.content.length > blockIndex) {
+              containsBlock = true;
+            }
+          }),
+        ),
+      );
+    }
+    if (exact) return cursor;
+    if (candidates.size > 1) {
+      return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+        driver: CLAUDE_PROVIDER,
+        detail: "Cannot resolve an ambiguous Claude assistant message cursor.",
+      });
+    }
+    // Writes may not have flushed at turn settlement; resolve again when the cursor is consumed.
+    return containsBlock ? ([...candidates][0] ?? cursor) : cursor;
+  });
   const hostEnvironment = yield* HostProcess.Environment;
   const hostPlatform = yield* HostProcess.Platform;
   const customHome =
@@ -9132,6 +9191,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? { ...requested, status: "failed" as const, failure: retryBudgetFailure }
               : requested;
           input.context.steersClosed = true;
+          const nativeThreadId = input.context.input.providerThread.nativeThreadRef?.nativeId;
+          if (input.context.nativeMessageCursor !== null && nativeThreadId != null) {
+            input.context.nativeMessageCursor = yield* resolveMessageCursor(
+              nativeThreadId,
+              input.context.nativeMessageCursor,
+            ).pipe(Effect.orElseSucceed(() => input.context.nativeMessageCursor));
+          }
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.status === "completed") {
             yield* assistantDeltas.flushTurn(input.context.nativeTurnId);
@@ -12592,7 +12658,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : { allowedTools: queryPolicy.allowedTools }),
           });
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
-          const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
+          const pinnedHead = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
           // Continuations drain existing output without prompting; retain the live process regardless of selection.
           if (
@@ -12710,6 +12776,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
 
+          const resumeSessionAt =
+            pinnedHead === undefined
+              ? undefined
+              : yield* resolveMessageCursor(nativeThreadId, pinnedHead);
           const openedWithResume = (yield* Ref.get(openedNativeThreads)).has(nativeThreadId);
           // Idle release loses openedNativeThreads; persisted turns still require resume to avoid "already in use".
           const hasPersistedProviderTurn =
@@ -14261,7 +14331,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const nativeThreadId = yield* getNativeThreadId(rollbackInput.providerThread);
               yield* closeLiveQueryForNativeThread(nativeThreadId);
               const now = yield* DateTime.now;
-              const resumeSessionAt = yield* resolveClaudeRollbackResumeSessionAt(rollbackInput);
+              const cursor = yield* resolveClaudeRollbackResumeSessionAt(rollbackInput);
+              const resumeSessionAt =
+                cursor === null ? null : yield* resolveMessageCursor(nativeThreadId, cursor);
 
               if (rollbackInput.target.type === "thread_start" && resumeSessionAt === null) {
                 const resetNativeThreadId = yield* queryRunner.allocateSessionId;
@@ -14335,7 +14407,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
               const sourceNativeThreadId = yield* getNativeThreadId(forkInput.sourceProviderThread);
               yield* closeLiveQueryForNativeThread(sourceNativeThreadId);
-              const upToMessageId = yield* resolveClaudeForkUpToMessageId(forkInput);
+              const cursor = yield* resolveClaudeForkUpToMessageId(forkInput);
+              const upToMessageId =
+                cursor === undefined
+                  ? undefined
+                  : yield* resolveMessageCursor(sourceNativeThreadId, cursor);
               // A moved project still has its transcript under the original cwd.
               // Let the SDK find the session by ID within this Claude home.
               const forkOptions: ForkSessionOptions =
