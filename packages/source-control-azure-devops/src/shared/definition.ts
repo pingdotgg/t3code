@@ -117,6 +117,7 @@ export const definition = defineSourceControl({
   changeRequestCloseCommand:
     /\baz\s+repos\s+pr\s+update\b[^;&|]*--status[\s=]+["']?(?:completed|abandoned)\b/u,
   authorProfileUrl: () => null,
+  hardLineBreaks: true,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: (input) => {
     const args = CHECKOUT_COMMAND.exec(input)?.[1];
