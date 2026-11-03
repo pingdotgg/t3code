@@ -387,7 +387,7 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(config.bootstrapDelivery, "fd3", testCase.name);
           assert.equal(config.bootstrap.desktopBrowserControlFd, 7, testCase.name);
         }
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("resolvePrimary starts from server.asar without materializing the WSL tree", () =>
