@@ -4204,11 +4204,31 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         yield* applyItem(busyThreadId, RunId.make("run:shell-item-counts:missing"));
         yield* applyItem(otherThreadId, otherRunId);
 
-        const snapshot = yield* projectionStore.getShellSnapshot({ projectId });
+        // A run id can belong to another thread; the count joins by run id alone.
+        yield* applyItem(otherThreadId, completedRunId);
+        const { statements, tracer } = traceSqlStatements();
+        const snapshot = yield* projectionStore
+          .getShellSnapshot({ projectId })
+          .pipe(Effect.withTracer(tracer));
+        const countQuery = statements.find((query) =>
+          query.includes("FROM (\n          SELECT thread_id, run_id, COUNT(*)"),
+        );
+        assert.isDefined(countQuery);
+        const plan = yield* (yield* SqlClient.SqlClient).unsafe<{ readonly detail: string }>(
+          `EXPLAIN QUERY PLAN ${countQuery}`,
+          [encodeUnknownJsonString([busyThreadId, emptyThreadId, otherThreadId])],
+        );
+        assert.isTrue(
+          plan.some((row) =>
+            row.detail.includes(
+              "SEARCH r USING COVERING INDEX orchestration_v2_projection_runs_id_status_idx",
+            ),
+          ),
+        );
         const expected = [
           [busyThreadId, 4],
           [emptyThreadId, 0],
-          [otherThreadId, 1],
+          [otherThreadId, 2],
         ] as const;
         for (const [threadId, itemCount] of expected) {
           const shell = yield* projectionStore.getThreadShell(threadId);

@@ -6271,7 +6271,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           WHERE thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
           GROUP BY thread_id, run_id
         ) counts
-        LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = counts.run_id
+        -- The unique run-id index otherwise wins and fetches large run payload rows.
+        LEFT JOIN orchestration_v2_projection_runs r
+          INDEXED BY orchestration_v2_projection_runs_id_status_idx ON r.run_id = counts.run_id
         GROUP BY counts.thread_id
       `;
 
