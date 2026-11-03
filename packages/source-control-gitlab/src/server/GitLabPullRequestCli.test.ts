@@ -930,7 +930,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
   );
 
   it.effect(
-    "keeps discussions current when the merge request's diff refs are missing or unreadable",
+    "keeps discussions current for unreadable refs but propagates CLI requirements and rate limits",
     () =>
       Effect.gen(function* () {
         const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
@@ -970,6 +970,29 @@ layer("GitLabPullRequestCli.layer", (it) => {
           });
 
           expect(threads.map((thread) => [thread.id, thread.isOutdated])).toEqual([["abc", false]]);
+        }
+        const context = {
+          operation: "execute" as const,
+          command: "glab" as const,
+          cwd: "/w",
+          cause: new Error("unavailable"),
+        };
+        for (const error of [
+          new GitLabCli.GitLabCliUnavailableError(context),
+          new GitLabCli.GitLabCliAuthenticationError(context),
+          new GitLabCli.GitLabCliRateLimitError(context),
+        ]) {
+          mockedExecute.mockImplementation(({ args }) =>
+            args[1]?.includes("/discussions") ? Effect.succeed(output("[]")) : Effect.fail(error),
+          );
+          expect(
+            yield* Effect.result(
+              cli.listDiscussions({ cwd: "/w", repository: "acme/web", number: 7 }),
+            ),
+          ).toMatchObject({
+            _tag: "Failure",
+            failure: error,
+          });
         }
       }),
   );

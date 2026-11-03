@@ -1731,7 +1731,16 @@ export const make = Effect.gen(function* () {
           discussionsPage({ ...input, page: 1, collected: [], diffRefsByThreadId: new Map() }),
           // Fresh beside the discussions: cached refs from before a push would invert every flag.
           // Unreadable refs leave threads current rather than hiding them.
-          getDiffRefs(input).pipe(Effect.orElseSucceed(() => null)),
+          getDiffRefs(input).pipe(
+            Effect.catchTags(
+              {
+                GitLabCliUnavailableError: (error) => Effect.fail(error),
+                GitLabCliAuthenticationError: (error) => Effect.fail(error),
+                GitLabCliRateLimitError: (error) => Effect.fail(error),
+              },
+              () => Effect.succeed(null),
+            ),
+          ),
         ],
         { concurrency: 2 },
       );
