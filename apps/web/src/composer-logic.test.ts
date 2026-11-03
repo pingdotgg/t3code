@@ -260,6 +260,19 @@ describe("detectComposerTrigger", () => {
     (text) => expect(detectComposerTrigger(text, text.length)).toBeNull(),
   );
 
+  it.each(["Ask &", "Ask &vps"])("detects the machine trigger in %j", (text) => {
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "environment",
+      query: text.slice(5),
+      rangeStart: 4,
+      rangeEnd: text.length,
+    });
+  });
+
+  it.each(["build &&", "R&D", "&&next"])("leaves %j out of the machine menu", (text) =>
+    expect(detectComposerTrigger(text, text.length)).toBeNull(),
+  );
+
   it("does not keep a subcommand trigger active after /model arguments", () => {
     const text = "/model spark";
     const trigger = detectComposerTrigger(text, text.length);

@@ -17,7 +17,12 @@ import {
 
 import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
 
-export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
+export type ComposerTriggerKind =
+  | "path"
+  | "pull-request"
+  | "slash-command"
+  | "skill"
+  | "environment";
 export type ComposerSlashCommand = "model" | "plan" | "default" | "side" | "btw";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
@@ -279,6 +284,12 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeStart: tokenStart,
       rangeEnd: cursor,
     };
+  }
+  if (token.startsWith("&")) {
+    const query = token.slice(1);
+    // `&&` is a shell operator, not a machine.
+    if (query.includes("&")) return null;
+    return { kind: "environment", query, rangeStart: tokenStart, rangeEnd: cursor };
   }
   if (!token.startsWith("@")) {
     return null;

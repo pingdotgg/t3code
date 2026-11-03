@@ -302,6 +302,9 @@ current title and opens it when selected. Your prompt only carries a reference: 
 history on demand, so attaching a long thread costs nothing until the agent looks. Attaching a
 thread does not change it, and the agent cannot send messages to it unless you ask.
 
+To point the agent at another machine, type `&` to list your linked machines, then keep typing to
+filter them by name. `@` also offers machines, mixed in with threads and files.
+
 A thread from a linked machine, picked, pasted or dropped, stays a reference that the agent reads
 on that machine. Dropping a thread from any other environment attaches a saved transcript file. The source
 environment must be connected and up to date. The transcript includes the visible history and

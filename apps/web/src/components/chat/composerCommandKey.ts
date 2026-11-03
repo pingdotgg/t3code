@@ -215,8 +215,10 @@ export function composerCommandKeyHandler(input: {
       return true;
     }
     const { trigger } = resolveActiveComposerTrigger();
+    // A machine trigger keeps its menu hidden until a machine matches.
     const menuIsActive =
-      !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
+      !isLiteralPendingAnswer &&
+      (composerMenuOpenRef.current || (trigger !== null && trigger.kind !== "environment"));
     if (key === "Escape") {
       if (!menuIsActive || event.isComposing || event.keyCode === 229) return false;
       dismissComposerTrigger(trigger);

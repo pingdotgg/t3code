@@ -3,7 +3,8 @@ export type ComposerTriggerKind =
   | "pull-request"
   | "slash-command"
   | "slash-model"
-  | "skill";
+  | "skill"
+  | "environment";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 
 export interface ComposerTrigger {
@@ -145,6 +146,12 @@ export function detectComposerTrigger(
       rangeStart: tokenStart,
       rangeEnd: cursor,
     };
+  }
+  if (token.startsWith("&")) {
+    const query = token.slice(1);
+    // `&&` is a shell operator, not a machine.
+    if (query.includes("&")) return null;
+    return { kind: "environment", query, rangeStart: tokenStart, rangeEnd: cursor };
   }
   if (!token.startsWith("@")) {
     return null;

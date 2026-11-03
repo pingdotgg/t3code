@@ -263,6 +263,7 @@ const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
   "pull-request": "Pull requests",
   "slash-command": "Commands",
   skill: "Skills",
+  environment: "Machines",
 };
 
 const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
