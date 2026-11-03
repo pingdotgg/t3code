@@ -11485,9 +11485,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect.each(["notification", "tool result"] as const)(
-    "does not replay a subagent that finished inside a cancelled wake (ended by %s)",
-    (ending) =>
+  it.effect.each([
+    { ending: "notification", cancelled: "after its result" },
+    { ending: "tool result", cancelled: "after its result" },
+    { ending: "tool result", cancelled: "while the subagent ran" },
+  ] as const)(
+    "does not replay a subagent that finished inside a cancelled wake (ended by $ending, cancelled $cancelled)",
+    ({ ending, cancelled }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const SECOND_TASK_ID = "b2ndwake";
@@ -11539,6 +11543,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
           );
           yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...makeAssistantTextFrame({
+                uuid: "00000000-0000-4000-8000-000000000168",
+                text: "Reading the build log.",
+              }),
+              parent_tool_use_id: SUBAGENT_TOOL_USE_ID,
+            }),
+          );
+          if (cancelled === "while the subagent ran") {
+            yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+          }
+          yield* harness.offerAndWait(
             ending === "notification"
               ? claudeSdkFrame({
                   type: "system",
@@ -11569,7 +11585,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 }),
           );
           yield* harness.offerAndWait(wakeResult);
-          yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+          if (cancelled === "after its result") {
+            yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+          }
 
           yield* harness.offerAndWait(
             claudeSdkFrame({
@@ -11624,6 +11642,169 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             "a subagent that finished in the cancelled wake must not be replayed as running",
           );
           assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each(["before the real turn", "after its first frame"] as const)(
+    "offers a cancelled wake once when an empty lifecycle result precedes its turn (cancelled %s)",
+    (cancelled) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const SECOND_TASK_ID = "b2ndwake";
+          const SECOND_TOOL_USE_ID = "toolu_second_wake";
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-empty-lifecycle"),
+              text: "Run two builds in the background.",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(wakeTaskStarted);
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...wakeTaskStarted,
+              task_id: SECOND_TASK_ID,
+              tool_use_id: SECOND_TOOL_USE_ID,
+              uuid: "00000000-0000-4000-8000-000000000171",
+            }),
+          );
+          yield* harness.offerAndWait(turnOneResult);
+          yield* harness.awaitTerminal(1);
+
+          yield* harness.offerAndWait(wakeNotification);
+          yield* harness.offerAndWait(wakeTurnInit);
+          assert.lengthOf(harness.continuationRequests, 1);
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000172",
+              result: "",
+              numTurns: 0,
+              origin: { kind: "task-notification" },
+              terminalReason: null,
+            }),
+          );
+          if (cancelled === "before the real turn") {
+            yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+          }
+          yield* harness.offerAndWait(
+            claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000173" }),
+          );
+          yield* harness.offerAndWait(wakeAssistant);
+          if (cancelled === "after its first frame") {
+            yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+          }
+          yield* harness.offerAndWait(wakeResult);
+          assert.lengthOf(
+            harness.continuationRequests,
+            1,
+            "the cancelled wake must not be offered again",
+          );
+
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...wakeNotification,
+              task_id: SECOND_TASK_ID,
+              tool_use_id: SECOND_TOOL_USE_ID,
+              output_file: `/tmp/claude-replay/tasks/${SECOND_TASK_ID}.output`,
+              uuid: "00000000-0000-4000-8000-000000000174",
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000175" }),
+          );
+          assert.lengthOf(harness.continuationRequests, 2, "the next wake must be offered");
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each([
+    "before the cancelled wake's result",
+    "after the cancelled wake's result",
+  ] as const)(
+    "offers a subagent's wake that arrives behind a cancelled wake (notified %s)",
+    (notified) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const SUBAGENT_TASK_ID = "bg-agent";
+          const SUBAGENT_TOOL_USE_ID = "toolu-bg-agent";
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-later-subagent"),
+              text: "Run a build and an agent in the background.",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(wakeTaskStarted);
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...wakeTaskStarted,
+              task_id: SUBAGENT_TASK_ID,
+              tool_use_id: SUBAGENT_TOOL_USE_ID,
+              task_type: "local_agent",
+              uuid: "00000000-0000-4000-8000-000000000181",
+            }),
+          );
+          yield* harness.offerAndWait(turnOneResult);
+          yield* harness.awaitTerminal(1);
+
+          const subagentNotification = claudeSdkFrame({
+            ...wakeNotification,
+            task_id: SUBAGENT_TASK_ID,
+            tool_use_id: SUBAGENT_TOOL_USE_ID,
+            output_file: `/tmp/claude-replay/tasks/${SUBAGENT_TASK_ID}.output`,
+            summary: "Agent finished",
+            uuid: "00000000-0000-4000-8000-000000000182",
+          });
+          yield* harness.offerAndWait(wakeNotification);
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* harness.offerAndWait(wakeAssistant);
+          assert.lengthOf(harness.continuationRequests, 1);
+          if (notified === "before the cancelled wake's result") {
+            yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+            yield* harness.offerAndWait(subagentNotification);
+            yield* harness.offerAndWait(wakeResult);
+          } else {
+            yield* harness.offerAndWait(wakeResult);
+            yield* harness.offerAndWait(subagentNotification);
+            yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+          }
+          assert.lengthOf(
+            harness.continuationRequests,
+            2,
+            "the subagent's wake must get its own continuation",
+          );
+          assert.equal(harness.continuationRequests[1]?.detail, "Agent finished");
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
