@@ -13084,7 +13084,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
-            cause: `Thread ${command.threadId} changed before automatic settlement.`,
+            cause: `Thread ${command.threadId} has a queued run that may still start.`,
           });
         }
         yield* dispatchThreadMutation(

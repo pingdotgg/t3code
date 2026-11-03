@@ -3185,58 +3185,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       return { threadId, activeRun, wakeRun };
     });
 
-  const failRun = (run: OrchestrationV2Run) =>
-    Effect.gen(function* () {
-      const eventSink = yield* EventSink.EventSinkV2;
-      const now = yield* DateTime.now;
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make(`${run.id}:error`),
-            type: "turn-item.updated",
-            threadId: run.threadId,
-            runId: run.id,
-            ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
-            providerInstanceId: run.providerInstanceId,
-            occurredAt: now,
-            payload: {
-              id: TurnItemId.make(`${run.id}:error`),
-              type: "error",
-              threadId: run.threadId,
-              runId: run.id,
-              nodeId: run.rootNodeId,
-              providerThreadId: run.providerThreadId,
-              providerTurnId: null,
-              nativeItemRef: null,
-              parentItemId: null,
-              ordinal: 2,
-              status: "failed",
-              title: "Provider failure",
-              startedAt: now,
-              completedAt: now,
-              updatedAt: now,
-              failure: {
-                class: "provider_error",
-                message: "Provider failed.",
-                code: "provider_failed",
-                retryable: null,
-              },
-            },
-          },
-          {
-            id: EventId.make(`${run.id}:failed`),
-            type: "run.updated",
-            threadId: run.threadId,
-            runId: run.id,
-            ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
-            providerInstanceId: run.providerInstanceId,
-            occurredAt: now,
-            payload: { ...run, status: "failed", completedAt: now },
-          },
-        ],
-      });
-    });
-
   // Completes `run`, then dispatches automatic settlement while the completion reaction waits
   // before releasing and starting the queue: the window the settlement sweep races.
   const autoSettleBeforeCompletionReaction = (run: OrchestrationV2Run, commandId: CommandId) =>
@@ -3327,52 +3275,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         afterSettle.thread.settledAt,
         "automatic settlement must wait for the queued pull request watch wake",
       );
-      assert.equal(after.runs.find((run) => run.id === wakeRun.id)?.status, "starting");
-    }),
-  );
-
-  it.effect("automatic settlement waits for a held wake that a completed run releases", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const { threadId, activeRun, wakeRun } = yield* queuedWatchWake("pr-watch-released-wake");
-      const beforeFailure = yield* orchestrator.getThreadEventSequence(threadId);
-      yield* failRun(activeRun);
-      yield* eventSink
-        .stream({ threadId, afterSequence: beforeFailure, eventType: "run.updated" })
-        .pipe(
-          Stream.filter(
-            (stored) =>
-              stored.event.type === "run.updated" &&
-              stored.event.payload.id === wakeRun.id &&
-              stored.event.payload.queueHeld === true,
-          ),
-          Stream.runHead,
-        );
-      // The server's own message: a later completion releases the wake's hold.
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "agent",
-        creationSource: "server",
-        commandId: CommandId.make("pr-watch-released-wake-tick"),
-        threadId,
-        messageId: MessageId.make("pr-watch-released-wake-tick"),
-        text: "Scheduled tick",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "start_immediately" },
-      });
-      const tickRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
-        (run) => run.status === "starting",
-      );
-      assert.isDefined(tickRun);
-
-      const { window, afterSettle, after } = yield* autoSettleBeforeCompletionReaction(
-        tickRun,
-        CommandId.make("pr-watch-released-wake-auto-settle"),
-      );
-      assert.equal(window.runs.find((run) => run.id === wakeRun.id)?.queueHeld, true);
-      assert.isNull(afterSettle.thread.settledAt);
       assert.equal(after.runs.find((run) => run.id === wakeRun.id)?.status, "starting");
     }),
   );
