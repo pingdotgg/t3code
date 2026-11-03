@@ -28,9 +28,11 @@ function typeset(tex: string, display: boolean): string {
   } catch {
     // A percent before a newline may be an authored TeX comment; leave it alone.
     const lastNewline = Math.max(tex.lastIndexOf("\n"), tex.lastIndexOf("\r"));
-    const repaired = tex.replace(/(\\*)%/g, (match, backslashes: string, offset: number) =>
-      backslashes.length % 2 === 0 && offset > lastNewline ? `${backslashes}\\%` : match,
-    );
+    const repaired = tex.includes("\\verb")
+      ? tex
+      : tex.replace(/(\\*)%/g, (match, backslashes: string, offset: number) =>
+          backslashes.length % 2 === 0 && offset > lastNewline ? `${backslashes}\\%` : match,
+        );
     if (repaired !== tex) {
       try {
         html = katex.renderToString(repaired, options);

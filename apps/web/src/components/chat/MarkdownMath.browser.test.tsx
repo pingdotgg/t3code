@@ -41,12 +41,14 @@ it("typesets a display equation whose label has an unescaped percent", async () 
   const adjacent = "\\text{100%% yield}";
   const paired = "\\begin{aligned}x\\\\%\\end{aligned}";
   const commented = "\\begin{aligned}\nx &= 1 % +999\n\\\\ y &= \\text{2%}\n\\end{aligned}";
+  const verbatim = "\\verb|100%|+\\text{2%}";
   await using screen = await render(
     <>
       <MarkdownMath tex={tex} display />
       <MarkdownMath tex={adjacent} display />
       <MarkdownMath tex={paired} display />
       <MarkdownMath tex={commented} display />
+      <MarkdownMath tex={verbatim} display />
     </>,
   );
   await vi.waitFor(() => expect(screen.container.querySelector(".katex")).not.toBeNull());
@@ -60,5 +62,7 @@ it("typesets a display equation whose label has an unescaped percent", async () 
   expect(equations[2]?.querySelector(".katex")).not.toBeNull();
   expect(equations[3]?.querySelector(".katex")).toBeNull();
   expect(equations[3]?.textContent).toBe(`\\[\n${commented}\n\\]`);
+  expect(equations[4]?.querySelector(".katex")).toBeNull();
+  expect(equations[4]?.textContent).toBe(`\\[\n${verbatim}\n\\]`);
   expect(equations[0]?.getAttribute("data-markdown-copy")).toBe(`\\[\n${tex}\n\\]\n\n`);
 });
