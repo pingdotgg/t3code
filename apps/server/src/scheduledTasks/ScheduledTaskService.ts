@@ -457,6 +457,7 @@ export const layer = Layer.effect(
     const webhookPermits = yield* Ref.make<ReadonlyMap<ScheduledTaskId, Semaphore.Semaphore>>(
       new Map(),
     );
+    const waitingDrains = yield* Ref.make<ReadonlyMap<ScheduledTaskId, object>>(new Map());
     const webhookRateWindows = yield* Ref.make<ReadonlyMap<ScheduledTaskId, RateWindow>>(new Map());
     const webhookRejectedRateWindows = yield* Ref.make<ReadonlyMap<ScheduledTaskId, RateWindow>>(
       new Map(),
@@ -1869,7 +1870,22 @@ export const layer = Layer.effect(
     const drainPendingWebhooks = Effect.fnUntraced(
       function* (taskId: ScheduledTaskId) {
         const permit = yield* webhookPermit(taskId);
+        // One waiter per task is enough: it reads every row committed before it gets the permit.
+        const token = {};
+        const queued = yield* Ref.modify(waitingDrains, (waiting) =>
+          waiting.has(taskId)
+            ? ([false, waiting] as const)
+            : ([true, new Map(waiting).set(taskId, token)] as const),
+        );
+        if (!queued) return;
+        const leaveQueue = Ref.update(waitingDrains, (waiting) => {
+          if (waiting.get(taskId) !== token) return waiting;
+          const next = new Map(waiting);
+          next.delete(taskId);
+          return next;
+        });
         const dispatch = Effect.gen(function* () {
+          yield* leaveQueue;
           while (true) {
             // A delete-and-recreate swaps the permit; the new incarnation's drain owns its rows.
             if ((yield* Ref.get(webhookPermits)).get(taskId) !== permit) return;
@@ -1936,6 +1952,7 @@ export const layer = Layer.effect(
         });
         yield* dispatch.pipe(
           permit.withPermits(1),
+          Effect.ensuring(leaveQueue),
           Effect.catch((cause) => Effect.logWarning("Pending webhook dispatch failed", { cause })),
         );
       },
