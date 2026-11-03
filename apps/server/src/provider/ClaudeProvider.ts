@@ -334,11 +334,7 @@ const decodeLaunchArgEnabledPlugins = Schema.decodeUnknownOption(
   Schema.Struct({
     enabledPlugins: Schema.Record(
       Schema.String,
-      Schema.Union([
-        Schema.Boolean,
-        Schema.mutable(Schema.Array(Schema.String)),
-        Schema.Record(Schema.String, Schema.Unknown),
-      ]),
+      Schema.Union([Schema.Boolean, Schema.mutable(Schema.Array(Schema.String))]),
     ),
   }),
 );
