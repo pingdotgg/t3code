@@ -2718,15 +2718,12 @@ const make = Effect.gen(function* () {
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
-      const runtimeMode = yield* resolveRuntimeMode(
-        parent.thread.runtimeMode,
-        input.runtimeMode,
-        target,
-      );
-      const interactionMode = yield* resolveInteractionMode(
-        parent.thread.interactionMode,
-        input.interactionMode,
-      );
+      const resolveModes = (thread: OrchestrationV2ThreadProjection["thread"]) =>
+        Effect.all({
+          runtimeMode: resolveRuntimeMode(thread.runtimeMode, input.runtimeMode, target),
+          interactionMode: resolveInteractionMode(thread.interactionMode, input.interactionMode),
+        });
+      let { runtimeMode, interactionMode } = yield* resolveModes(parent.thread);
       // A replayed receipt starts nothing new, so it needs no second answer.
       if (!isRetryOfAcceptedDelegation) {
         const authorized = yield* resolveTarget({
@@ -2747,6 +2744,11 @@ const make = Effect.gen(function* () {
           title: input.title,
           task: taskPrompt(input),
         });
+        // The user may have narrowed this thread's modes while the card waited.
+        const current = yield* threadManagement
+          .getThreadRecords(scope.thread.threadId, [])
+          .pipe(Effect.mapError(threadManagementFailure));
+        ({ runtimeMode, interactionMode } = yield* resolveModes(current.thread));
       }
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
       if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {

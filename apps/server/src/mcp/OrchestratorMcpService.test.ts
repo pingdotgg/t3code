@@ -3176,6 +3176,8 @@ describe("OrchestratorMcpService provider resolution", () => {
       /** The parent's run ends while its card waits. */
       readonly parentRunEndsOnAsk?: boolean;
       readonly parentRunInitiallyEnded?: boolean;
+      /** The user narrows the parent's modes while its card waits. */
+      readonly parentModesNarrowOnAsk?: boolean;
       readonly hasReceipt?: (commandId: CommandId) => boolean;
       /** The thread's selection, as `t3_thread_configure` leaves it, while its run keeps its own. */
       readonly threadSelection?: Parameters<typeof parentProjection>[1];
@@ -3186,6 +3188,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         const cards = new Map<string, Card>();
         const waiting = yield* Deferred.make<void>();
         let parentRunEnded = input.parentRunInitiallyEnded === true;
+        let parentModes = {};
         const task = {
           id: taskId,
           threadId: parentThreadId,
@@ -3204,6 +3207,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             ...projection,
             thread: {
               ...projection.thread,
+              ...parentModes,
               modelSelection: input.threadSelection ?? inherited,
             },
             runs: projection.runs.map((run) =>
@@ -3230,6 +3234,9 @@ describe("OrchestratorMcpService provider resolution", () => {
                   const existing = cards.get(command.turnItemId);
                   if (existing === undefined) {
                     parentRunEnded = input.parentRunEndsOnAsk === true;
+                    if (input.parentModesNarrowOnAsk === true) {
+                      parentModes = { runtimeMode: "approval-required", interactionMode: "plan" };
+                    }
                     cards.set(command.turnItemId, {
                       id: command.turnItemId,
                       type: "delegation_approval",
@@ -3448,6 +3455,40 @@ describe("OrchestratorMcpService provider resolution", () => {
             setup.parentRunEndsOnAsk === true ? ["pending", "cancelled"] : ["pending"],
           );
         }
+      }),
+    );
+
+    it.effect("a child approved after the parent's modes narrowed runs at the narrower modes", () =>
+      Effect.gen(function* () {
+        const inheriting = yield* harness({
+          decide: () => "approved",
+          parentModesNarrowOnAsk: true,
+        });
+        yield* delegate(inheriting.service, { model: "other-model" }, "narrowed-inherited");
+        assert.deepEqual(
+          inheriting
+            .delegations()
+            .map(
+              (command) =>
+                command.type === "delegated_task.request" && [
+                  command.runtimeMode,
+                  command.interactionMode,
+                ],
+            ),
+          [["approval-required", "plan"]],
+        );
+        const explicit = yield* harness({ decide: () => "approved", parentModesNarrowOnAsk: true });
+        const failure = yield* explicit.service
+          .delegateTask(scope, {
+            task: "Review the change.",
+            target: yield* decodeTarget({ model: "other-model" }),
+            runtimeMode: "full-access",
+            mode: "async",
+            clientRequestId: "narrowed-explicit",
+          })
+          .pipe(Effect.flip);
+        assert.propertyVal(failure, "code", "runtime_mode_escalation_denied");
+        assert.deepEqual(explicit.delegations(), []);
       }),
     );
 

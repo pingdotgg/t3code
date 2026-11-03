@@ -9177,11 +9177,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     const run = projection.runs.find((candidate) => candidate.id === command.runId);
-    if (run === undefined || run.rootNodeId !== command.nodeId) {
+    if (run === undefined) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Node ${command.nodeId} is not the root of run ${command.runId}.`,
+        cause: `Run ${command.runId} was not found.`,
       });
     }
     const existing = projection.turnItems.find((item) => item.id === command.turnItemId);
@@ -9199,6 +9199,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Delegation approval ${command.turnItemId} belongs to another run.`,
       });
     }
+    // A new card goes on the run's current root. A steer that restarts the run
+    // replaces that root, so an update may name the card's own node or the new root.
+    if (
+      existing === undefined
+        ? run.rootNodeId !== command.nodeId
+        : existing.nodeId !== command.nodeId && run.rootNodeId !== command.nodeId
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Node ${command.nodeId} is not the root of run ${command.runId}.`,
+      });
+    }
+    const nodeId = existing?.nodeId ?? command.nodeId;
     const now = yield* DateTime.now;
     const unchanged =
       existing !== undefined &&
@@ -9210,7 +9224,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           id: command.turnItemId,
           threadId: command.threadId,
           runId: command.runId,
-          nodeId: command.nodeId,
+          nodeId,
           providerThreadId: run.providerThreadId,
           providerTurnId: providerTurnForRun(projection, run)?.id ?? null,
           nativeItemRef: null,
@@ -9239,7 +9253,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       type: "turn-item.updated",
       threadId: command.threadId,
       runId: command.runId,
-      nodeId: command.nodeId,
+      nodeId,
       providerInstanceId: run.providerInstanceId,
       occurredAt: now,
       payload: turnItem,
