@@ -19,6 +19,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -115,6 +116,7 @@ interface HarnessOptions {
   readonly removeWorktreeFails?: boolean;
   readonly deleteLocalBranchFails?: boolean;
   readonly createWorktreeGate?: Effect.Effect<void>;
+  readonly existsFails?: boolean;
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -234,7 +236,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
             ),
           ),
   );
-  const listRefs = vi.fn((input: { readonly query?: string | undefined }) =>
+  const listRefs = vi.fn((input: { readonly cwd: string; readonly query?: string | undefined }) =>
     Effect.succeed({
       refs:
         options.existingBranchWorktreePath === undefined
@@ -331,6 +333,19 @@ const makeHarness = (options: HarnessOptions = {}) => {
         } satisfies Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>),
         NodeServices.layer,
         NodeCrypto.layer,
+        options.existsFails
+          ? FileSystem.layerNoop({
+              exists: (path) =>
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "exists",
+                    pathOrDescriptor: path,
+                  }),
+                ),
+            })
+          : Layer.empty,
       ),
     ),
   );
@@ -338,6 +353,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   return {
     layer,
     scope,
+    listRefs,
     dispatch,
     sendToThread,
     fetchWorktreeBaseCommit,
@@ -708,6 +724,37 @@ describe("t3_worktree_status", () => {
         branch: "feature/existing",
         defaultStartFromOrigin: true,
       });
+    });
+  });
+});
+
+describe("t3_worktree_list", () => {
+  const listRefs = (harness: ReturnType<typeof makeHarness>, worktreePath: string | null) =>
+    Effect.gen(function* () {
+      const service = yield* WorktreeMcpService.WorktreeMcpService;
+      return yield* service.listRefs({ worktreePath, workspaceRoot });
+    }).pipe(Effect.provide(harness.layer));
+
+  it.effect("lists refs from the thread's worktree, or the project root once it was removed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const worktreePath = yield* fs.makeTempDirectoryScoped({ prefix: "worktree-list-" });
+      const harness = makeHarness();
+      yield* listRefs(harness, worktreePath);
+      yield* listRefs(harness, `${worktreePath}/removed`);
+      expect(harness.listRefs.mock.calls.map(([input]) => input.cwd)).toEqual([
+        worktreePath,
+        workspaceRoot,
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("fails instead of falling back when the worktree cannot be checked", () => {
+    const harness = makeHarness({ existsFails: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(listRefs(harness, "/worktrees/project/unreadable"));
+      expectTypedFailure(exit, { _tag: "PlatformError" });
+      expect(harness.listRefs).not.toHaveBeenCalled();
     });
   });
 });
