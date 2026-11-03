@@ -1,9 +1,9 @@
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
-  OrchestrationV2DispatchCommandError,
   type ModelSelection,
   type ProviderInteractionMode,
+  type RunId,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -20,8 +20,8 @@ import type {
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { truncate } from "@t3tools/shared/String";
 import { useNavigate } from "@tanstack/react-router";
-import * as Schema from "effect/Schema";
 import type { Dispatch, SetStateAction } from "react";
+import { create } from "zustand";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import type { ComposerHandleRef } from "../../composerHandleContext";
@@ -47,8 +47,22 @@ import type { useTimelineFollow } from "./useTimelineFollow";
 
 type LocalDispatchState = ReturnType<typeof useLocalDispatchState>;
 
-// The server answered and committed nothing; a transport failure may still have started the turn.
-const isDispatchRefusal = Schema.is(OrchestrationV2DispatchCommandError);
+// The latest run of each thread whose plan follow-up failed. The server may have left plan
+// without a turn, so the thread keeps its plan controls until another run starts.
+const useFailedPlanFollowUpRuns = create<Readonly<Record<string, RunId>>>()(() => ({}));
+
+/** The thread's interaction mode, or plan while a failed plan follow-up awaits a retry. */
+export function useThreadInteractionMode(
+  thread: EnvironmentThreadShell | null | undefined,
+): ProviderInteractionMode | undefined {
+  const failedRunId = useFailedPlanFollowUpRuns((runs) =>
+    thread ? runs[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))] : undefined,
+  );
+  if (!thread) return undefined;
+  return failedRunId !== undefined && failedRunId === thread.latestRun?.runId
+    ? "plan"
+    : thread.interactionMode;
+}
 
 interface PlanSendBase {
   readonly environmentId: EnvironmentId;
@@ -103,9 +117,6 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
     reportFailure: false,
   });
-  const setThreadInteractionMode = useOrchestrationCommand(threadEnvironment.setInteractionMode, {
-    reportFailure: false,
-  });
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
   );
@@ -142,7 +153,6 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
 
     const threadIdForSend = activeThread.id;
     const threadRefForSend = scopeThreadRef(activeThread.environmentId, threadIdForSend);
-    const previousInteractionMode = activeThread.interactionMode;
     const previousDraftInteractionMode = useComposerDraftStore
       .getState()
       .getComposerDraft(threadRefForSend)?.interactionMode;
@@ -219,20 +229,8 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
         },
       });
       failure = startResult._tag === "Failure" ? startResult : null;
-
-      // A thread left out of plan without a turn would hide Implement when the plan mode setting is off.
-      if (failure !== null && isDispatchRefusal(squashAtomCommandFailure(failure))) {
+      if (failure !== null) {
         setComposerDraftInteractionMode(threadRefForSend, previousDraftInteractionMode);
-        if (previousInteractionMode !== nextInteractionMode) {
-          await setThreadInteractionMode({
-            environmentId,
-            input: {
-              threadId: threadIdForSend,
-              interactionMode: previousInteractionMode,
-              createdAt: new Date().toISOString(),
-            },
-          });
-        }
       }
     }
 
@@ -242,6 +240,10 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
       return true;
     }
 
+    const failedRunId = activeThread.latestRun?.runId;
+    if (failedRunId !== undefined) {
+      useFailedPlanFollowUpRuns.setState({ [scopedThreadKey(threadRefForSend)]: failedRunId });
+    }
     setOptimisticUserMessages((existing) =>
       existing.filter((message) => message.id !== messageIdForSend),
     );

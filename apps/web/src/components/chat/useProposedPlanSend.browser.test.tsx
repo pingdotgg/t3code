@@ -2,7 +2,9 @@ import {
   CommandId,
   EnvironmentId,
   OrchestrationV2DispatchCommandError,
+  type ProviderInteractionMode,
   ProviderInstanceId,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -14,7 +16,7 @@ import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   startTurnError: null as unknown,
-  modeSets: [] as unknown[],
+  otherCommands: [] as string[],
 }));
 
 vi.mock(import("../../state/session"), async (importOriginal) => ({
@@ -24,19 +26,19 @@ vi.mock(import("../../state/session"), async (importOriginal) => ({
 
 vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useOrchestrationCommand: ((command: { readonly label: string }) =>
-    async (value: { readonly input: unknown }) => {
-      if (command.label.endsWith(":start-turn")) {
-        return AsyncResult.failure(Cause.fail(state.startTurnError));
-      }
-      if (command.label.endsWith(":set-interaction-mode")) state.modeSets.push(value.input);
-      return AsyncResult.success(undefined);
-    }) as never,
+  useOrchestrationCommand: ((command: { readonly label: string }) => async () => {
+    if (command.label.endsWith(":start-turn")) {
+      return AsyncResult.failure(Cause.fail(state.startTurnError));
+    }
+    state.otherCommands.push(command.label);
+    return AsyncResult.success(undefined);
+  }) as never,
 }));
 
 import { render } from "../../../test/render";
 import { useComposerDraftStore } from "../../composerDraftStore";
-import { usePlanFollowUpSend } from "./useProposedPlanSend";
+import { resolveComposerInteractionMode } from "../ChatView.logic";
+import { usePlanFollowUpSend, useThreadInteractionMode } from "./useProposedPlanSend";
 
 const environmentId = EnvironmentId.make("environment:test");
 const threadId = ThreadId.make("thread:plan");
@@ -44,15 +46,28 @@ const threadRef = scopeThreadRef(environmentId, threadId);
 
 function setup(startTurnError: unknown) {
   state.startTurnError = startTurnError;
-  state.modeSets = [];
-  useComposerDraftStore.getState().setInteractionMode(threadRef, "plan");
+  state.otherCommands = [];
+  useComposerDraftStore.getState().setInteractionMode(threadRef, null);
 }
 
-function ImplementButton(props: { readonly onSettled: (sent: boolean) => void }) {
+function serverThread(interactionMode: ProviderInteractionMode, runId: RunId) {
+  return {
+    id: threadId,
+    environmentId,
+    interactionMode,
+    title: "Plan",
+    latestRun: { runId },
+  } as never;
+}
+
+function PlanThread(props: {
+  readonly thread: ReturnType<typeof serverThread>;
+  readonly onSettled: (sent: boolean) => void;
+}) {
   const submitPlanFollowUp = usePlanFollowUpSend({
     environmentId,
-    routeThreadKey: "environment:test:thread:plan",
-    activeThread: { id: threadId, environmentId, interactionMode: "plan", title: "Plan" } as never,
+    routeThreadKey: `${threadRef.environmentId}:${threadRef.threadId}`,
+    activeThread: props.thread,
     activeThreadBranch: null,
     activeProposedPlan: { id: "plan:1", planMarkdown: "# Plan" } as never,
     isServerThread: true,
@@ -83,55 +98,83 @@ function ImplementButton(props: { readonly onSettled: (sent: boolean) => void })
     persistThreadSettingsForNextTurn: async (): Promise<AtomCommandResult<void, unknown>> =>
       AsyncResult.success(undefined),
   });
+  const threadMode = useThreadInteractionMode(props.thread);
+  const draftMode = useComposerDraftStore(
+    (store) => store.getComposerDraft(threadRef)?.interactionMode ?? null,
+  );
+  // Mirrors ChatView with the plan mode setting off.
+  const composer = resolveComposerInteractionMode({
+    planModeEnabled: false,
+    provider: { showInteractionModeToggle: true },
+    interactionMode: draftMode ?? threadMode ?? "default",
+    persistedInteractionMode: threadMode,
+  });
   return (
-    <button
-      type="button"
-      onClick={() =>
-        void submitPlanFollowUp({ text: "Implement the plan", interactionMode: "default" }).then(
-          props.onSettled,
-        )
-      }
-    >
-      Implement
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() =>
+          void submitPlanFollowUp({ text: "Implement the plan", interactionMode: "default" }).then(
+            props.onSettled,
+          )
+        }
+      >
+        Implement
+      </button>
+      <output aria-label="composer mode">
+        {composer.enabled ? composer.interactionMode : "controls hidden"}
+      </output>
+    </>
   );
 }
 
 it.each([
   {
-    name: "a refused send returns the thread to plan so Implement can be retried",
+    name: "refused by the server",
+    planRunId: RunId.make("run:plan-refused"),
     error: new OrchestrationV2DispatchCommandError({
       commandId: CommandId.make("command:refused"),
       commandType: "message.dispatch",
       message: "Refused",
     }),
-    draftMode: "plan",
-    modeSets: [{ threadId, interactionMode: "plan" }],
   },
   {
-    name: "a send lost in transport may have started, so the thread stays out of plan",
+    name: "lost in transport",
+    planRunId: RunId.make("run:plan-lost"),
     error: new RpcClientError.RpcClientError({
       reason: new RpcClientError.RpcClientDefect({
         message: "socket closed",
         cause: new Error("socket closed"),
       }),
     }),
-    draftMode: "default",
-    modeSets: [],
   },
-])("$name", async ({ error, draftMode, modeSets }) => {
-  setup(error);
-  let onSettled!: (sent: boolean) => void;
-  const settled = new Promise<boolean>((resolve) => {
-    onSettled = resolve;
-  });
-  await using screen = await render(<ImplementButton onSettled={onSettled} />);
+])(
+  "an Implement send $name keeps the plan controls until another run starts, without writing the thread mode",
+  async ({ error, planRunId }) => {
+    setup(error);
+    let onSettled!: (sent: boolean) => void;
+    const settled = new Promise<boolean>((resolve) => {
+      onSettled = resolve;
+    });
+    await using screen = await render(
+      <PlanThread thread={serverThread("plan", planRunId)} onSettled={onSettled} />,
+    );
+    const composerMode = screen.getByRole("status", { name: "composer mode" });
 
-  await screen.getByRole("button", { name: "Implement" }).click();
+    await screen.getByRole("button", { name: "Implement" }).click();
+    expect(await settled).toBe(false);
 
-  expect(await settled).toBe(false);
-  expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.interactionMode).toBe(
-    draftMode,
-  );
-  expect(state.modeSets).toMatchObject(modeSets);
-});
+    // The settings save already moved the server thread out of plan.
+    await screen.rerender(
+      <PlanThread thread={serverThread("default", planRunId)} onSettled={onSettled} />,
+    );
+    await expect.element(composerMode).toHaveTextContent("plan");
+    expect(state.otherCommands).toEqual([]);
+
+    // A run from this send or another client means the thread really left plan.
+    await screen.rerender(
+      <PlanThread thread={serverThread("default", RunId.make("run:next"))} onSettled={onSettled} />,
+    );
+    await expect.element(composerMode).toHaveTextContent("controls hidden");
+  },
+);
