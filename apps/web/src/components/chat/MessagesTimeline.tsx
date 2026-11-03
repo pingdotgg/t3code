@@ -1741,7 +1741,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   const isLatestRun = latestRunId === row.runId;
   // One line says why the run failed: its error, unless the composer banner
   // already does, then the provider notice that carries the limit's reset.
-  const failureLine =
+  const failureMessage =
     row.failureMessage !== null && !(isLatestRun && row.failureMessage === threadErrorMessage)
       ? row.failureMessage
       : row.noticeMessage;
@@ -1799,9 +1799,15 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         <p className="px-1 pt-2 text-body text-muted-foreground">
           {row.diff ? "Stopped by you. Changes so far are kept." : "Stopped by you."}
         </p>
-      ) : failureLine ? (
+      ) : row.ending === "limited" && row.resetAt ? (
+        <TurnFoldRetryNotice
+          message={failureMessage}
+          resetAt={row.resetAt}
+          timestampFormat={ctx.timestampFormat}
+        />
+      ) : failureMessage ? (
         <p className="whitespace-pre-wrap break-words px-1 pt-2 text-body text-muted-foreground">
-          {failureLine}
+          {failureMessage}
         </p>
       ) : null}
     </div>
@@ -1843,6 +1849,26 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
 const EMPTY_TIMELINE_SLASH_COMMANDS: ReadonlyArray<{ readonly name: string }> = [];
 export type { TimelinePendingRequest, TimelineUsageLimit } from "./timelineRowContext";
 
+function TurnFoldRetryNotice({
+  message,
+  resetAt,
+  timestampFormat,
+}: {
+  message: string | null;
+  resetAt: string;
+  timestampFormat: TimestampFormat;
+}) {
+  const nowMinute = useNowMinute();
+  const nowMs = Date.parse(`${nowMinute}:00Z`);
+  const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const resetTime = formatUpcomingTimestamp(resetAt, timestampFormat, nowMs, timeZone);
+  return (
+    <p className="whitespace-pre-wrap break-words px-1 pt-2 text-body text-muted-foreground">
+      {message ? `${message} ` : ""}Retry after {resetTime} ({timeZone}).
+    </p>
+  );
+}
+
 function TurnFoldUsageLimit({
   limit,
   timestampFormat,
@@ -1854,10 +1880,12 @@ function TurnFoldUsageLimit({
   const nowMs = Date.parse(`${nowMinute}:00Z`);
   const resetPassed = useDeadlinePassed(limit.resetAt === null ? null : Date.parse(limit.resetAt));
   if (!limit.resetAt || resetPassed || !(Date.parse(limit.resetAt) > nowMs)) return null;
+  const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
   return (
     <>
       <span className="shrink-0 text-meta text-muted-foreground">
-        resumes {formatUpcomingTimestamp(limit.resetAt, timestampFormat, nowMs)}
+        resumes {formatUpcomingTimestamp(limit.resetAt, timestampFormat, nowMs, timeZone)} (
+        {timeZone})
       </span>
       {limit.onToggleSnooze ? (
         <WorkingBarChip
