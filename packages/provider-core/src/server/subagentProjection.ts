@@ -224,6 +224,19 @@ export function subagentResultForRun(
   };
 }
 
+/** A task owns its bound runs and the unbound runs created after them, such as wakes that joined it. */
+export function delegatedTaskRuns<
+  Run extends Pick<OrchestrationV2Run, "ordinal" | "delegatedTaskId">,
+>(runs: ReadonlyArray<Run>, taskId: NodeId, originalTaskId: NodeId): Array<Run> {
+  let owner = originalTaskId;
+  return runs
+    .toSorted((a, b) => a.ordinal - b.ordinal)
+    .filter((run) => {
+      owner = run.delegatedTaskId ?? owner;
+      return owner === taskId;
+    });
+}
+
 export function delegatedTaskProgress(projection: {
   readonly runs: OrchestrationV2ThreadProjection["runs"];
   readonly messages: ReadonlyArray<

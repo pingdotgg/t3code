@@ -87,6 +87,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import {
   subagentResultForRun,
   delegatedTaskProgress,
+  delegatedTaskRuns,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
   DispatchModeLimit,
@@ -1511,18 +1512,26 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(threadManagementFailure));
     const childRun = delegatedTaskRun(childControls, task);
     const terminalRun = latestTerminalResultRun(childControls, childRun);
-    const progress = delegatedTaskProgress(childControls);
+    const { forkedFrom } = childControls.thread;
+    const taskRuns =
+      forkedFrom?.type === "node"
+        ? delegatedTaskRuns(childControls.runs, task.id, forkedFrom.nodeId)
+        : childControls.runs;
+    const taskRun = taskRuns.findLast((run) => run.delegatedTaskId === task.id);
+    const taskRunActive = taskRun !== undefined && !isTerminalTaskStatus(taskStatusForRun(taskRun));
+    // Mirrors the orchestrator: a task resolves once the work it owns settles, with its latest result.
+    const progress = delegatedTaskProgress({ ...childControls, runs: taskRuns });
     const taskResultRun =
-      childRun?.delegatedTaskId === task.id
-        ? childControls.runs
-            .filter((run) => run.delegatedTaskId === task.id)
-            .toSorted((a, b) => b.ordinal - a.ordinal)[0]
+      taskRun !== undefined &&
+      (taskRunActive ||
+        progress.resultRun === undefined ||
+        runRanAfter(taskRun, progress.resultRun))
+        ? taskRun
         : progress.resultRun;
-    const taskWorkState =
-      childRun?.delegatedTaskId === task.id
-        ? isTerminalTaskStatus(taskStatusForRun(taskResultRun))
-          ? "result_available"
-          : "working"
+    const taskWorkState = taskRunActive
+      ? "working"
+      : taskRun !== undefined && progress.resultRun === undefined
+        ? "result_available"
         : progress.state;
     const resultRunIds = [
       ...new Set(
@@ -1546,7 +1555,7 @@ const make = Effect.gen(function* () {
       task.result === null &&
       taskWorkState === "result_available" &&
       (yield* threadManagement
-        .delegatedTaskResultPending(task.childThreadId, childRun?.delegatedTaskId)
+        .delegatedTaskResultPending(task.childThreadId, task.id)
         .pipe(Effect.mapError(threadManagementFailure)));
     const workState =
       task.result !== null ? "result_available" : heldForRestart ? "working" : taskWorkState;

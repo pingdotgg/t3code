@@ -181,6 +181,7 @@ import {
   makeSubagentChildThread,
   subagentResultForRun,
   delegatedTaskProgress,
+  delegatedTaskRuns,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
@@ -7985,18 +7986,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (row) => row.id === message.runId,
       );
     if (run === undefined || run.delegatedTaskId !== undefined) return;
+    const originalId = child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined;
     const parent = yield* projectionStore
       .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"], {
-        subagentIds: child.forkedFrom?.type === "node" ? [child.forkedFrom.nodeId] : [],
+        omitSettledSubagents: { except: originalId === undefined ? [] : [originalId] },
       })
       .pipe(mapDispatchError(command));
-    const original = parent.subagents.find(
-      (task) =>
-        task.origin === "app_owned" &&
-        task.childThreadId === child.id &&
-        task.id === (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined),
+    const tasks = parent.subagents.filter(
+      (task) => task.origin === "app_owned" && task.childThreadId === child.id,
     );
-    if (original === undefined || original.result === null) return;
+    const original = tasks.find((task) => task.id === originalId);
+    // Wakes and user turns join an open task, which resolves with their result; only the parent opens another.
+    if (
+      original === undefined ||
+      original.result === null ||
+      (command.senderThreadId !== parentThreadId &&
+        tasks.some((task) => task.result === null && task.completedAt === null))
+    )
+      return;
     const owner =
       parent.runs.filter(isActiveRun).toSorted((a, b) => b.ordinal - a.ordinal)[0] ??
       latestExecutedRun(parent.runs);
@@ -12396,7 +12403,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly settledContinuationOf?: RunId;
         readonly syncRunId?: RunId;
         readonly task: OrchestrationV2Subagent;
-        readonly resultRun?: OrchestrationV2Run;
       },
     ) {
       const childThreadId = childControls.thread.id;
@@ -12408,13 +12414,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return;
       }
-      const taskRuns = childControls.runs.filter((run) => run.delegatedTaskId === options.task.id);
+      const taskRuns = delegatedTaskRuns(childControls.runs, options.task.id, forkedFrom.nodeId);
+      const taskRun = taskRuns.findLast((run) => run.delegatedTaskId === options.task.id);
+      // A task resolves once the work it owns settles, including subagents and background work its runs started.
+      const { state, resultRun } = delegatedTaskProgress({ ...childControls, runs: taskRuns });
       const childRun =
-        taskRuns.length === 0
-          ? options.task.id === forkedFrom.nodeId
-            ? options.resultRun
-            : undefined
-          : taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+        (taskRun !== undefined && delegatedTaskTerminalStatus(runOutcome(taskRun)) === null) ||
+        resultRun === undefined
+          ? taskRun
+          : state !== "result_available"
+            ? undefined
+            : taskRun !== undefined && runRanAfter(taskRun, resultRun)
+              ? taskRun
+              : resultRun;
       if (childRun === undefined) return;
       const outcome = runOutcome(childRun);
       const terminalStatus = delegatedTaskTerminalStatus(outcome);
@@ -12475,11 +12487,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
       if (
-        yield* childAwaitsRestartContinuation(
-          taskRuns.length === 0 ? childControls.runs : taskRuns,
-          childRun,
-          options?.settledContinuationOf,
-        )
+        yield* childAwaitsRestartContinuation(taskRuns, childRun, options?.settledContinuationOf)
       ) {
         return;
       }
@@ -12702,7 +12710,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       childControls.thread.forkedFrom?.type !== "node"
     )
       return;
-    const progress = delegatedTaskProgress(childControls);
     const parent = yield* projectionStore.getThreadRecords(parentThreadId, [
       "subagents",
       "contextTransfers",
@@ -12711,8 +12718,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         task.origin !== "app_owned" ||
         task.childThreadId !== childThreadId ||
-        (task.id === childControls.thread.forkedFrom.nodeId &&
-          progress.state !== "result_available") ||
         (task.result !== null &&
           parent.contextTransfers.some(
             (transfer) =>
@@ -12720,13 +12725,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ))
       )
         continue;
-      yield* finalizeAppOwnedSubagentTask(childControls, {
-        ...options,
-        task,
-        ...(progress.resultRun === undefined ? {} : { resultRun: progress.resultRun }),
-      });
+      yield* finalizeAppOwnedSubagentTask(childControls, { ...options, task });
     }
 
+    const progress = delegatedTaskProgress(childControls);
     const { resultRun } = progress;
     if (progress.state !== "result_available" || resultRun === undefined) return;
     const status = delegatedTaskTerminalStatus(runOutcome(resultRun));
@@ -13983,16 +13985,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
         { messageRoles: ["user"] },
       );
-      if (taskId !== undefined) {
-        const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
-        const run = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
-        if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
-        return yield* childAwaitsRestartContinuation(runs, run);
-      }
-      const progress = delegatedTaskProgress(child);
+      const { forkedFrom } = child.thread;
+      const runs =
+        taskId === undefined || forkedFrom?.type !== "node"
+          ? child.runs
+          : delegatedTaskRuns(child.runs, taskId, forkedFrom.nodeId);
+      const progress = delegatedTaskProgress({ ...child, runs });
       if (progress.state !== "result_available") return true;
       if (progress.resultRun === undefined) return false;
-      return yield* childAwaitsRestartContinuation(child.runs, progress.resultRun);
+      return yield* childAwaitsRestartContinuation(runs, progress.resultRun);
     },
     (effect, childThreadId, _taskId?) =>
       effect.pipe(
