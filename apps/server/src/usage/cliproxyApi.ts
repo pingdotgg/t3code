@@ -18,6 +18,98 @@ import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 
+// Management's cooldowns are routing restrictions, not subscription usage windows.
+const RoutingConfig = Schema.Struct({
+  "api-keys": Schema.Array(Schema.String),
+  "claude-api-key": Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
+  "openai-compatibility": Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
+  "oauth-model-alias": Schema.optional(
+    Schema.NullOr(Schema.Record(Schema.String, Schema.Array(Schema.Unknown))),
+  ),
+  "oauth-excluded-models": Schema.optional(
+    Schema.NullOr(Schema.Record(Schema.String, Schema.Array(Schema.Unknown))),
+  ),
+  "force-model-prefix": Schema.optional(Schema.Boolean),
+});
+const RoutingAccount = Schema.Struct({
+  id: Schema.String,
+  provider: Schema.String,
+  disabled: Schema.Boolean,
+  cooldowns: Schema.optional(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          scope: Schema.String,
+          model_key: Schema.optional(Schema.String),
+          reason: Schema.String,
+          retry_at: Schema.optional(Schema.String),
+        }),
+      ),
+    ),
+  ),
+});
+const RoutingAccounts = Schema.Struct({ files: Schema.Array(RoutingAccount) });
+const AccountModels = Schema.Struct({ models: Schema.Array(Schema.Struct({ id: Schema.String })) });
+
+// Date.parse normalizes some impossible dates (for example February 30).
+const strictTimestampMillis = (value: string): number | null => {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-](\d{2}):(\d{2}))$/.exec(
+      value,
+    );
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > days[month - 1]! ||
+    Number(match[4]) > 23 ||
+    Number(match[5]) > 59 ||
+    Number(match[6]) > 59 ||
+    (match[7] !== "Z" && (Number(match[8]) > 23 || Number(match[9]) > 59))
+  )
+    return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+};
+
+/** Max restrictions per eligible account, then the first opportunity in the pool. */
+export function poolCooldownResetAt(
+  accounts: ReadonlyArray<typeof RoutingAccount.Type>,
+  model: string,
+  nowMs: number,
+): string | null {
+  if (accounts.length === 0) return null;
+  let earliest = Infinity;
+  for (const account of accounts) {
+    if (!account.cooldowns) return null;
+    let latest = -Infinity;
+    for (const cooldown of account.cooldowns) {
+      if (cooldown.scope !== "credential" && cooldown.scope !== "model") return null;
+      if (cooldown.scope === "model" && !cooldown.model_key) return null;
+      if (cooldown.scope === "model" && cooldown.model_key !== model) continue;
+      const deadline = cooldown.retry_at;
+      if (!deadline) return null;
+      const ms = strictTimestampMillis(deadline);
+      if (ms === null) return null;
+      latest = Math.max(latest, ms);
+    }
+    // An unrestricted or already available account does not explain this 429.
+    if (latest <= nowMs) return null;
+    earliest = Math.min(earliest, latest);
+  }
+  return Number.isFinite(earliest) ? DateTime.formatIso(DateTime.makeUnsafe(earliest)) : null;
+}
+
+const decodeRoutingConfig = Schema.decodeUnknownEffect(RoutingConfig);
+const decodeRoutingAccounts = Schema.decodeUnknownEffect(RoutingAccounts);
+const decodeAccountModels = Schema.decodeUnknownEffect(AccountModels);
+
 const AuthFile = Schema.Struct({
   id: Schema.String,
   auth_index: Schema.String,
@@ -437,5 +529,41 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ),
     );
   });
-  return { readAccounts, consume };
+  const poolResetAt = Effect.fn("CliproxyApi.poolResetAt")(function* (
+    config: UsageLimitSourceConfig,
+    input: { readonly apiKey: string; readonly model: string },
+  ) {
+    // Exact API model IDs only. Aliases/prefixes require routing rules we do not infer.
+    if (!/^claude-[a-z0-9.-]+$/.test(input.model) || !input.apiKey) return null;
+    const routing = yield* decodeRoutingConfig(yield* management(config, "config"));
+    if (
+      !routing["api-keys"].includes(input.apiKey) ||
+      routing["force-model-prefix"] ||
+      routing["claude-api-key"]?.length ||
+      routing["openai-compatibility"]?.length ||
+      routing["oauth-model-alias"]?.claude?.length ||
+      routing["oauth-excluded-models"]?.claude?.length
+    )
+      return null;
+    const { files } = yield* decodeRoutingAccounts(yield* management(config, "auth-files"));
+    const claude = files.filter((account) => account.provider === "claude" && !account.disabled);
+    if (new Set(claude.map((account) => account.id)).size !== claude.length) return null;
+    const eligible = yield* Effect.forEach(
+      claude,
+      (account) =>
+        Effect.gen(function* () {
+          const { models } = yield* decodeAccountModels(
+            yield* management(config, `auth-files/models?name=${encodeURIComponent(account.id)}`),
+          );
+          return models.some((model) => model.id === input.model) ? [account] : [];
+        }),
+      { concurrency: 4 },
+    );
+    return poolCooldownResetAt(
+      eligible.flat(),
+      input.model,
+      DateTime.toEpochMillis(yield* DateTime.now),
+    );
+  });
+  return { readAccounts, consume, poolResetAt };
 });
