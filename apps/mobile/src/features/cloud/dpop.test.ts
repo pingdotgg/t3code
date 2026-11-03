@@ -4,7 +4,7 @@ import * as NodeCrypto from "node:crypto";
 
 import { vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 
@@ -65,12 +65,10 @@ function proofHtu(proof: string): string {
 describe("mobile DPoP", () => {
   it.effect("passes typed-array digest input through the Expo Crypto adapter", () =>
     Effect.gen(function* () {
-      const crypto = yield* Crypto.Crypto;
-      const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode("typed-array"));
+      const digest = yield* Digest.Digest;
+      const hex = yield* digest.digestHex(Digest.sha256, new TextEncoder().encode("typed-array"));
 
-      expect(Buffer.from(digest).toString("hex")).toBe(
-        NodeCrypto.createHash("sha256").update("typed-array").digest("hex"),
-      );
+      expect(hex).toBe(NodeCrypto.createHash("sha256").update("typed-array").digest("hex"));
     }).pipe(Effect.provide(Dpop.layer)),
   );
 

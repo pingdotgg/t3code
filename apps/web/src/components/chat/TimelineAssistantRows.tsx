@@ -101,7 +101,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             onOpenTurnDiff={ctx.onOpenTurnDiff}
           />
         ) : null}
-        {row.showAssistantMeta || row.showAssistantTimestamp || unresolvedSideChatsChip !== null ? (
+        {row.showAssistantMeta || unresolvedSideChatsChip !== null ? (
           <div className="mt-1.5 flex items-center gap-2">
             {unresolvedSideChatsChip}
             {row.showAssistantMeta ? (
@@ -109,12 +109,6 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
                 projectedItem={row.projectedItem}
                 message={row.message}
                 showCopyButton={row.showAssistantCopyButton}
-                copyStreaming={row.assistantCopyStreaming}
-              />
-            ) : row.showAssistantTimestamp ? (
-              <AssistantMessageMeta
-                message={row.message}
-                showCopyButton={false}
                 copyStreaming={row.assistantCopyStreaming}
               />
             ) : null}
