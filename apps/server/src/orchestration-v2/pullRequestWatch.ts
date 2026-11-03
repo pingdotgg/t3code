@@ -146,7 +146,7 @@ export function evaluatePullRequestWatch(
       : (watch.checksAwaitedSince ?? null);
     checksAwaitedSince = checks.length > 0 ? null : awaitedBefore;
     const awaitedMs = checksAwaitedSince === null ? 0 : now - Date.parse(checksAwaitedSince);
-    if (awaitedMs >= PULL_REQUEST_WATCH_NO_CHECKS_MS) {
+    if (!unread && awaitedMs >= PULL_REQUEST_WATCH_NO_CHECKS_MS) {
       changes.push({ kind: "no-checks", minutes: Math.round(awaitedMs / 60_000) });
       checksAwaitedSince = null;
     }

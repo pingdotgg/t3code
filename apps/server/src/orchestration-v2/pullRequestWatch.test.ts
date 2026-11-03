@@ -503,6 +503,16 @@ describe("evaluatePullRequestWatch", () => {
     assert.isTrue(anHourLater(legacy, detail({ checks: [] })).every((kinds) => kinds.length === 0));
     const pushed = anHourLater(legacy, detail({ headSha: "bbbbbbbbbb", checks: [] }));
     assert.deepEqual(pushed.flat(), ["no-checks"]);
+    const unknown = detail({
+      checks: [{ ...check("Workflow approval status", "action-required"), placeholder: true }],
+    });
+    assert.deepEqual(anHourLater(watch(), unknown).flat(), []);
+    assert.deepEqual(anHourLater(legacy, { ...unknown, headSha: "bbbbbbbbbb" }).flat(), []);
+    const unread = evaluate(watch(), unknown, noRemarks, 0);
+    assert.deepEqual(
+      evaluate(unread.next, detail({ checks: [] }), noRemarks, 60 * 60_000).changes,
+      [{ kind: "no-checks", minutes: 60 }],
+    );
   });
 
   it("never reports missing checks on a host where an empty list says nothing", () => {
