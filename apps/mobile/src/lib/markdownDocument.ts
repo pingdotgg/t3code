@@ -334,6 +334,7 @@ function transformNativeMarkdown(
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
       const escaped = node.value.replace(/[\\[\]&]/g, "\\$&");
+      const label = escaped.replace(/[*_~]/g, "\\$&");
       if (
         start !== undefined &&
         end !== undefined &&
@@ -342,7 +343,7 @@ function transformNativeMarkdown(
         !/[<>]/.test(node.value) &&
         fileLinks.exists(node.value)
       ) {
-        edits.push({ start, end, content: `[${escaped}](<${escaped}>)`, href: node.value });
+        edits.push({ start, end, content: `[${label}](<${escaped}>)`, href: node.value });
       }
     } else if (node.type === "link" || node.type === "image" || node.type === "definition") {
       authoredUrls.add(node.url);

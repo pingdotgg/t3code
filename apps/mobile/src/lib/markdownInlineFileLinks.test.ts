@@ -107,8 +107,14 @@ describe("inline code that names a file", () => {
     expect(rewrite(markdown)).toBe(markdown);
   });
 
-  it("links to the exact path when it holds backslashes or ampersands", () => {
-    for (const path of ["C:\\repo\\_private\\file.ts", "./src/a&copy;.ts", "./src/[id].ts"]) {
+  it("keeps the exact path as link text and destination", () => {
+    for (const path of [
+      "C:\\repo\\_private\\file.ts",
+      "./src/a&copy;.ts",
+      "./src/[id].ts",
+      "./src/__tests__/main.ts",
+      "./src/**name**_~~test~~.ts",
+    ]) {
       const paragraph = parser.parse(rewrite(`\`${path}\``)).children[0];
       const link = paragraph?.type === "paragraph" ? paragraph.children[0] : undefined;
       expect(link?.type === "link" && link.url).toBe(path);
