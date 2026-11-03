@@ -43,6 +43,9 @@ describe("appendTerminalOutput", () => {
     const first = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, "red: \u001b[3");
     expect(first.text).toBe("red: ");
     expect(feed(["red: \u001b[3", "1mR\u001b[0m"]).text).toBe("red: \u001b[0;31mR\u001b[0m");
+    expect(
+      terminalOutputSpans(feed(["\u001b[38:2::12:", "34:56mR"]).text, TERMINAL_PALETTES.dark),
+    ).toEqual([{ text: "R", style: { color: "rgb(12,34,56)" } }]);
   });
 
   it("keeps a bounded tail that starts on a fresh line", () => {
@@ -106,7 +109,7 @@ describe("appendTerminalOutput edge cases from review", () => {
 
 describe("appendTerminalOutput under adversarial output", () => {
   it("ignores unsupported cursor-control parameters without corrupting the screen", () => {
-    for (const sequence of ["1.5A", "1.5G", "1$K", "1$J", ">1A", "?25l"]) {
+    for (const sequence of ["1.5A", "1.5G", "1$K", "1$J", ">1A", "?25l", "1:2A", "1:2K", "1:2J"]) {
       const input = `a\nb\nc\u001b[${sequence}X`;
       expect(feed([input]).text).toBe("a\nb\ncX");
       for (let cut = 1; cut < input.length; cut += 1) {

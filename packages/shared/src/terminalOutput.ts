@@ -393,7 +393,7 @@ class Terminal {
   }
 
   csi(params: string, final: string): void {
-    if (!/^[\d;:]*$/u.test(params)) return;
+    if (!/^[\d;:]*$/u.test(params) || (final !== "m" && params.includes(":"))) return;
     if (final === "m") {
       const key = `${this.pen}|${params}`;
       let pen = penTransitions.get(key);
