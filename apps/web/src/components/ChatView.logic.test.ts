@@ -1,6 +1,16 @@
-import { useComposerDraftStore, type ComposerThreadDraftState } from "../composerDraftStore";
+import {
+  addPreparingComposerImages,
+  removePreparingComposerImages,
+} from "./chat/preparingComposerImages";
+import { pendingDraftWork } from "./chat/pendingDraftWork";
+import {
+  composerTargetKey,
+  useComposerDraftStore,
+  type ComposerThreadDraftState,
+} from "../composerDraftStore";
 import {
   composerDraftUserContentSignature,
+  composerDraftChangedDuringPreparation,
   boundAttachmentIds,
   buildExpiredTerminalContextToastCopy,
   mergeDirectPreviewAnnotation,
@@ -1300,6 +1310,28 @@ describe("composerDraftUserContentSignature", () => {
       const before = composerDraftUserContentSignature(store.getComposerDraft(target));
       store.setFileUpload(target, "report", target.environmentId, "server-upload");
       expect(composerDraftUserContentSignature(store.getComposerDraft(target))).toBe(before);
+      const key = composerTargetKey(target);
+      addPreparingComposerImages(key, [
+        { id: "compressing", name: "image.png", file: new File(["image"], "image.png") },
+      ]);
+      try {
+        expect(composerDraftChangedDuringPreparation(target, before)).toBe(true);
+        expect(
+          composerDraftChangedDuringPreparation(
+            { ...target, threadId: ThreadId.make("other") },
+            composerDraftUserContentSignature(null),
+          ),
+        ).toBe(false);
+      } finally {
+        removePreparingComposerImages(key, new Set(["compressing"]));
+      }
+      pendingDraftWork.begin(key);
+      try {
+        expect(composerDraftChangedDuringPreparation(target, before)).toBe(true);
+      } finally {
+        pendingDraftWork.end(key);
+      }
+      expect(composerDraftChangedDuringPreparation(target, before)).toBe(false);
       store.setPrompt(target, "Send this plus my new edit");
       expect(composerDraftUserContentSignature(store.getComposerDraft(target))).not.toBe(before);
       expect(store.getComposerDraft(target)?.prompt).toBe("Send this plus my new edit");

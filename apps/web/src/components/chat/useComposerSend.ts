@@ -1,5 +1,6 @@
 import {
   composerDraftUserContentSignature,
+  composerDraftChangedDuringPreparation,
   mergeDirectPreviewAnnotation,
   resolveBackgroundDraftWorkspaceOptions,
   shouldDockDraftHeroForSubmission,
@@ -953,9 +954,7 @@ export function useComposerSend(input: ComposerSendInput) {
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
     );
     const draftChangedDuringPreparation = () =>
-      composerDraftUserContentSignature(
-        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-      ) !== draftContentForSend;
+      composerDraftChangedDuringPreparation(composerDraftTarget, draftContentForSend);
     const changedDraftError =
       "Draft changed while preparing this message. Review it and send again.";
     sendInFlightRef.current = true;

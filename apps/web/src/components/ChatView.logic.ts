@@ -71,10 +71,15 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type ComposerThreadDraftState,
+  type ComposerThreadTarget,
+  composerTargetKey,
+  useComposerDraftStore,
   type DraftId,
   type DraftThreadState,
 } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
+import { countPreparingComposerImages } from "./chat/preparingComposerImages";
+import { pendingDraftWork } from "./chat/pendingDraftWork";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadShells, environmentThreadDetails } from "../state/threads";
 import { waitForAtomValue } from "../state/waitForAtomValue";
@@ -1186,6 +1191,19 @@ export function composerDraftUserContentSignature(
     threadContexts: draft?.threadContexts ?? [],
     environmentContexts: draft?.environmentContexts ?? [],
   });
+}
+
+export function composerDraftChangedDuringPreparation(
+  target: ComposerThreadTarget,
+  signature: string,
+): boolean {
+  const key = composerTargetKey(target);
+  return (
+    countPreparingComposerImages(key) > 0 ||
+    pendingDraftWork.has(key) ||
+    composerDraftUserContentSignature(useComposerDraftStore.getState().getComposerDraft(target)) !==
+      signature
+  );
 }
 
 export interface PlanFollowUpComposerSnapshot {

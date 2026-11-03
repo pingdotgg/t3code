@@ -27,6 +27,7 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   composerDraftUserContentSignature,
+  composerDraftChangedDuringPreparation,
   boundAttachmentIds,
   type ComposerSendSnapshot,
   type makeThreadErrorSetter,
@@ -127,11 +128,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     // fails every selection; the draft restore below still runs.
     const sendResult = await settlePromise(async () => {
       const attachments = await attachmentsPromise;
-      if (
-        composerDraftUserContentSignature(
-          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-        ) !== draftContentForSend
-      ) {
+      if (composerDraftChangedDuringPreparation(composerDraftTarget, draftContentForSend)) {
         throw new Error("Draft changed while preparing this message. Review it and send again.");
       }
       const fileBlockReason = readFileBlockReason();
