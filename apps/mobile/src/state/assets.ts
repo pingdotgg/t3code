@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomMount, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import {
   assetUrlStateFromResult,
@@ -6,13 +6,14 @@ import {
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
   EMPTY_ASSET_URL_ATOM,
+  makeRevisionedAssetUrlFamily,
 } from "@t3tools/client-runtime/state/assets";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom, AsyncResult } from "effect/reactivity";
-import { useCallback } from "react";
 
+import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { projectFaviconDatabaseCache } from "../lib/projectFaviconDatabaseCache";
 import { type AssetUrlState, deriveAssetUrlState } from "./asset-url-state";
@@ -34,9 +35,16 @@ export const projectFaviconUrlAtom = createProjectFaviconUrlAtomFamily({
   projectClones: environmentProjectCloneListAtom,
 });
 
+const revisionedAssetUrl = makeRevisionedAssetUrlFamily(assetEnvironment.createUrl);
+
+/**
+ * Pass `revision` for a host file whose bytes can change under the same path; each new
+ * revision re-mints the URL so the image reloads.
+ */
 export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
+  revision?: string | null,
 ): AssetUrlState {
   const fileAccessSession = useEnvironmentQuery(
     environmentId === null ? null : environmentSession.sessionStateAtom(environmentId),
@@ -54,7 +62,9 @@ export function useAssetUrlState(
   const result = useAtomValue(
     blocked !== null || environmentId === null || resource === null
       ? EMPTY_ASSET_URL_ATOM
-      : assetEnvironment.createUrl({ environmentId, input: { resource } }),
+      : revision === undefined
+        ? assetEnvironment.createUrl({ environmentId, input: { resource } })
+        : revisionedAssetUrl({ environmentId, input: { resource }, revision }),
   );
   const shared =
     blocked ??
@@ -87,14 +97,14 @@ export function useRefreshAssetUrl(
     refresh: true,
     reportFailure: false,
   });
-  return useCallback(async () => {
+  return async () => {
     if (environmentId === null || resource === null || httpBaseUrl === null) return null;
     const state = assetUrlStateFromResult(
       await createUrl({ environmentId, input: { resource } }),
       httpBaseUrl,
     );
     return state._tag === "Success" ? state.url : null;
-  }, [createUrl, environmentId, httpBaseUrl, resource]);
+  };
 }
 
 /** {@link useRefreshAssetUrl} for async tasks that resolve several resources at once. */
@@ -112,7 +122,7 @@ export async function refreshAssetUrl(
     reportFailure: false,
     ...(signal ? { signal } : {}),
   });
-  // The query can wait through a reconnect; resolve against the connection that answered it.
+  // A route can change while the query runs; resolve against the connection now current.
   const connection = appAtomRegistry.get(connectionAtom);
   if (connection._tag === "None") return null;
   const state = assetUrlStateFromResult(result, connection.value.httpBaseUrl);
@@ -154,6 +164,7 @@ const freshAssetUrlFamily = Atom.family((key: FreshAssetUrlKey) =>
 const noFreshAssetUrl = Atom.make(AsyncResult.initial<AuthorizedAssetUrl, Error>()).pipe(
   Atom.withLabel("fresh-asset-url:none"),
 );
+const noSessionGeneration = Atom.make(0);
 
 /**
  * A signed URL minted when the reader mounts, not a cached one: cached links can
@@ -166,9 +177,20 @@ export function useFreshAssetUrl(
 ): AsyncResult.AsyncResult<AuthorizedAssetUrl, Error> {
   const connection = usePreparedConnection(environmentId);
   const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
-  return useAtomValue(
+  const atom =
     resource === null
       ? noFreshAssetUrl
-      : freshAssetUrlFamily({ environmentId, resource, httpBaseUrl, revision }),
-  );
+      : freshAssetUrlFamily({ environmentId, resource, httpBaseUrl, revision });
+  // Minting fails at once while the environment is unreachable; mint again once a new session is
+  // up instead of keeping the error until Retry.
+  const sessionGeneration =
+    environmentId === null
+      ? noSessionGeneration
+      : environmentCatalog.sessionGenerationAtom(environmentId);
+  // A listener alone does not compute the atom, so nothing would follow the connection.
+  useAtomMount(sessionGeneration);
+  useAtomSubscribe(sessionGeneration, () => {
+    if (AsyncResult.isFailure(appAtomRegistry.get(atom))) appAtomRegistry.refresh(atom);
+  });
+  return useAtomValue(atom);
 }

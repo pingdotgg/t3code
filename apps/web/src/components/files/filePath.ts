@@ -23,7 +23,8 @@ export function fileBreadcrumbs(projectName: string, relativePath: string): File
       return {
         label: part,
         // A bare drive (`C:`) means the drive's current directory; its root is `C:\`.
-        path: /^[A-Za-z]:$/.test(path) ? `${path}\\` : path,
+        // A bare `~` is not a host path; the home folder is `~/`.
+        path: /^[A-Za-z]:$/.test(path) ? `${path}\\` : hostPath && path === "~" ? "~/" : path,
         kind: index === parts.length - 1 ? ("file" as const) : ("directory" as const),
       };
     }),

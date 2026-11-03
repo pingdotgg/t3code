@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { restoreSettingsLinkState } from "../settings/settings-navigation";
-import { workspaceSelectionsIn, workspaceTabNavigationState } from "./workspace-tab-navigation";
+import {
+  workspaceSelectionsIn,
+  workspaceTabColumns,
+  workspaceTabNavigationState,
+} from "./workspace-tab-navigation";
 
 const home = { key: "home", name: "Home" };
 const thread = {
@@ -46,6 +50,36 @@ describe("workspace tab selections", () => {
 
 describe("opening a workspace tab", () => {
   const columns = { columns: true, check: available };
+
+  it("opens Android Settings beside its default page only in a wide window", () => {
+    const open = (wide: boolean) =>
+      workspaceTabNavigationState(
+        { routes: [home, thread] },
+        "settings",
+        {},
+        {
+          columns: workspaceTabColumns("android", "settings", wide),
+          check: available,
+        },
+      );
+    expect(names(open(false))).toEqual(["Home", "Settings"]);
+    expect(names(open(true))).toEqual(["Home", "Settings", "SettingsEnvironments"]);
+  });
+
+  it("keeps Android list tabs and iOS remembered-detail navigation unchanged", () => {
+    const open = (platform: string) =>
+      workspaceTabNavigationState(
+        { routes: [home, thread] },
+        "threads",
+        { threads: thread.params },
+        {
+          columns: workspaceTabColumns(platform, "threads", true),
+          check: available,
+        },
+      );
+    expect(names(open("android"))).toEqual(["Home"]);
+    expect(names(open("ios"))).toEqual(["Home", "Thread"]);
+  });
 
   it("opens the remembered page beside the list with columns, and the list without", () => {
     const state = { routes: [home, thread] };

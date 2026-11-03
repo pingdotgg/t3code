@@ -121,6 +121,7 @@ export function useAssistantCitationTarget({
   // in a cleanup: StrictMode and <Activity> replay cleanups on a live activation.
   // Unmounting needs no retire; the rows observing it unmount with the list.
   const activatedRef = useRef<CitationNavigation | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retires the replaced citation scroll and activates the new one, releasing the timeline follow
   useEffect(() => {
     if (activatedRef.current === current) return;
     activatedRef.current?.retire();
@@ -129,6 +130,7 @@ export function useAssistantCitationTarget({
   }, [current]);
   // Escape and pointerdown dismiss before the viewport mounts; the viewport
   // listeners join once it exists.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes document and viewport listeners that dismiss the pending citation scroll
   useEffect(() => current?.attachDismissal(viewport), [current, viewport]);
 
   const settled = current !== null && settlement?.target === current.target ? settlement : null;
