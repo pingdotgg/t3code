@@ -522,5 +522,40 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         );
       }),
     );
+
+    it.effect("keeps paths from signed commits under log.showSignature", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const signingKey = NodePath.join(yield* makeTmpDir("checkpoint-signing-key-"), "key");
+        yield* (yield* VcsProcess.VcsProcess).run({
+          operation: "CheckpointStore.test.sshKeygen",
+          command: "ssh-keygen",
+          cwd: tmp,
+          args: ["-q", "-t", "ed25519", "-N", "", "-f", signingKey],
+          timeoutMs: 10_000,
+        });
+        yield* git(tmp, ["config", "gpg.format", "ssh"]);
+        yield* git(tmp, ["config", "user.signingkey", `${signingKey}.pub`]);
+        yield* git(tmp, ["config", "log.showSignature", "true"]);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("checkpoint-authored-paths-signed");
+        const refs = {
+          cwd: tmp,
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
+          toCheckpointRef: checkpointRefForThreadTurn(threadId, 1),
+        };
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: refs.fromCheckpointRef,
+        });
+        yield* writeTextFile(NodePath.join(tmp, "kept.txt"), "kept\n");
+        yield* git(tmp, ["add", "kept.txt"]);
+        yield* git(tmp, ["commit", "-S", "-m", "kept"]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
+
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["kept.txt"]));
+      }),
+    );
   });
 });
