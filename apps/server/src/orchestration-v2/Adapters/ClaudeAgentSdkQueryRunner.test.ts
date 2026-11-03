@@ -550,6 +550,13 @@ it.effect.each([
 
       assert.equal(result._tag, boots ? "Success" : "Failure");
       if (result._tag === "Success") yield* result.success.close;
+      else
+        assert.equal(
+          makeProviderFailure({
+            cause: { _tag: "ProviderAdapterTurnStartError", cause: result.failure },
+          }).message,
+          "Claude timed out while starting up. Retry the turn; if it keeps failing, check Claude and the server logs.",
+        );
     }).pipe(Effect.provide(realQueryRunner)),
   ),
 );
