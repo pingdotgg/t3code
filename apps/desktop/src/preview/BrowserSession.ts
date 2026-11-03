@@ -31,6 +31,13 @@ const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
   // Deny notifications: pages could impersonate T3 Code; app notifications use the default session.
 ]);
 
+const MICROSOFT_SIGN_IN_URLS = [
+  "https://login.microsoftonline.com/*",
+  "https://login.microsoft.com/*",
+  "https://login.live.com/*",
+];
+const ELECTRON_USER_AGENT_TOKEN = / Electron\/[^ ]+/;
+
 const NEVER_EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set([
   "about:",
   "blob:",
@@ -316,6 +323,17 @@ export const make = Effect.gen(function* BrowserSessionMake() {
             );
           };
           // Rewriting Electron's native User-Agent makes Turnstile fail integrity checks with error 600010.
+          // Microsoft sign-in hides passkeys when the User-Agent header names Electron.
+          browserSession.webRequest.onBeforeSendHeaders(
+            { urls: MICROSOFT_SIGN_IN_URLS },
+            ({ requestHeaders }, callback) => {
+              const userAgent = requestHeaders["User-Agent"];
+              if (userAgent !== undefined) {
+                requestHeaders["User-Agent"] = userAgent.replace(ELECTRON_USER_AGENT_TOKEN, "");
+              }
+              callback({ requestHeaders });
+            },
+          );
           browserSession.setPermissionRequestHandler(
             (webContents, permission, callback, details) => {
               if (permission === "openExternal") {
