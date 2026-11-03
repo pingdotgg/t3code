@@ -715,6 +715,57 @@ it.effect("hides Android discovery failures when the host has no Android SDK", (
   }).pipe(Effect.scoped),
 );
 
+// The hub reports `error` as a util.inspect of Node's exec error.
+const simctlMessage = "[apple-utils] Failed to run `xcrun simctl list devices --json`:";
+const simctlCause =
+  "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=60): Unable to connect to CoreSimulatorService [xcrun shim fail mode]";
+const simctlError = `Error: Command failed: xcrun simctl list devices --json
+${simctlCause}
+
+    at genericNodeError (node:internal/errors:986:15)
+    at wrappedFn (node:internal/errors:540:14)
+    at ChildProcess.exithandler (node:child_process:417:12)
+    at ChildProcess._handle.onexit (node:internal/child_process:335:5) {
+  code: 1,
+  killed: false,
+  signal: null,
+  cmd: 'xcrun simctl list devices --json',
+  stdout: '',
+  stderr: '${simctlCause}\\n'
+}`;
+const avdmanager = "/Users/test/Library/Android/sdk/cmdline-tools/latest/bin/avdmanager";
+const avdmanagerError = `Error: spawn ${avdmanager} ENOENT
+    at ChildProcess._handle.onexit (node:internal/child_process:316:19)
+    at onErrorNT (node:internal/child_process:524:16) {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'spawn ${avdmanager}',
+  path: '${avdmanager}',
+  spawnargs: [ 'list', 'avd' ],
+  cmd: '${avdmanager} list avd',
+  stdout: '',
+  stderr: ''
+}`;
+
+it.effect("keeps the cause from the hub's error in discovery warnings, without the stack", () =>
+  Effect.gen(function* () {
+    const { service, discoveryErrors } = yield* fixture();
+    yield* Ref.set(discoveryErrors, [
+      { message: simctlMessage, error: simctlError },
+      { message: "[android-utils] Failed to run `avdmanager list avd`:", error: avdmanagerError },
+    ]);
+    const state = yield* service.configure({ enabled: true });
+    expect(state.hostStatusDetail).toBe(
+      [
+        `${simctlMessage} Error: Command failed: xcrun simctl list devices --json ${simctlCause}`,
+        `[android-utils] Failed to run \`avdmanager list avd\`: Error: spawn ${avdmanager} ENOENT`,
+      ].join("\n"),
+    );
+    expect(state.hostStatusDetail).not.toContain("    at ");
+    expect(state.hostStatusDetail).not.toContain("stderr:");
+  }).pipe(Effect.scoped),
+);
+
 it.effect.each([
   {
     diagnostic: "Insufficient disk space at /private/user/path",
@@ -1006,7 +1057,7 @@ it.effect.each(["shutdown", "close"] as const)(
       expect(launchers).toEqual(new Set([session]));
       expect(released.slice(5)).toEqual([[otherSession, true]]);
       expect(otherSession).not.toBe(session);
-      // Cancellation cannot strand cleanup after the launcher has begun closing its session.
+      // Cancelling cleanup retains the session and launcher for a later retry.
       pauseBind = { entered: yield* Deferred.make<void>(), proceed: yield* Deferred.make<void>() };
       pauseRelease = {
         entered: yield* Deferred.make<void>(),
@@ -1016,7 +1067,6 @@ it.effect.each(["shutdown", "close"] as const)(
         service.agentLauncher({ ...target(threadId), targetArgs: [] }),
       );
       yield* Deferred.await(pauseBind.entered);
-      const updates = yield* service.subscribe;
       const retiring = yield* Effect.forkChild(
         operation === "shutdown" ? service.shutdown(input) : service.close({ threadId }),
       );
@@ -1024,10 +1074,14 @@ it.effect.each(["shutdown", "close"] as const)(
       yield* Fiber.join(binding);
       yield* Deferred.await(pauseRelease.entered);
       expect((yield* service.state).sessions).toHaveLength(1);
-      yield* Effect.sync(() => retiring.interruptUnsafe());
+      yield* service.inspect;
+      yield* Fiber.interrupt(retiring);
+      expect((yield* service.state).sessions).toHaveLength(1);
+      expect(launchers).toEqual(new Set([session]));
       yield* Deferred.succeed(pauseRelease.proceed, undefined);
-      expect((yield* PubSub.take(updates)).sessions).toEqual([]);
-      yield* Fiber.await(retiring);
+      if (operation === "shutdown") yield* service.shutdown(input);
+      else yield* service.close({ threadId });
+      expect((yield* service.state).sessions).toEqual([]);
       expect(launchers).toEqual(new Set());
       yield* bind(input);
       failingLauncher = undefined;
@@ -1532,7 +1586,9 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
     expect(removedFiles).toHaveLength(1);
   }).pipe(
     Effect.scoped,
-    Effect.provide(Layer.mergeAll(ServerSettings.layerTest(), NodeServices.layer)),
+    Effect.provide(
+      Layer.mergeAll(ServerSettings.layerTest(), NodeServices.layer, NodeCrypto.layer),
+    ),
   ),
 );
 

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -82,7 +83,7 @@ const makeDiskSessionStoreLayer = Effect.fn("makeDiskSessionStoreLayer")(functio
   );
 });
 
-it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.layer", (it) => {
   it.effect.each(["revoke", "revokeAllExcept", "replace"] as const)(
     "invalidates every connection for a session on %s and leaves other sessions active",
     (operation) =>
@@ -357,7 +358,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect((yield* sessions.verify(uncapped.token)).runtimeModeCeiling).toBeUndefined();
     }).pipe(Effect.provide(layerSessionStore())),
   );
-  it.effect("keeps recorded scopes unchanged for both token versions", () =>
+  it.effect("takes scopes from the session record", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
       const secrets = yield* ServerSecretStore.ServerSecretStore;
@@ -366,12 +367,19 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       const [encodedPayload] = issued.token.split(".");
       const currentClaims = base64UrlDecodeUtf8(encodedPayload!);
       expect(currentClaims).toContain('"v":1');
-      const legacyPayload = base64UrlEncode(currentClaims.replace('"v":1', '"v":2'));
       const secret = yield* secrets.getOrCreateRandom("server-signing-key", 32);
-      const legacyToken = `${legacyPayload}.${signPayload(legacyPayload, secret)}`;
+      const resign = (claims: string) => {
+        const payload = base64UrlEncode(claims);
+        return `${payload}.${signPayload(payload, secret)}`;
+      };
+      const legacyToken = resign(currentClaims.replace('"v":1', '"v":2'));
+      const editedToken = resign(
+        currentClaims.replace(/"scopes":\[[^\]]*\]/, '"scopes":["access:write"]'),
+      );
 
       expect((yield* sessions.verify(issued.token)).scopes).toEqual(legacyScopes);
       expect((yield* sessions.verify(legacyToken)).scopes).toEqual(legacyScopes);
+      expect((yield* sessions.verify(editedToken)).scopes).toEqual(legacyScopes);
     }).pipe(
       Effect.provide(
         SessionStore.layer.pipe(

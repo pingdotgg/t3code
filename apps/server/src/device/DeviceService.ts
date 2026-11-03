@@ -50,7 +50,7 @@ import {
   writeAgentDeviceConfig,
 } from "./AgentDeviceTarget.ts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -271,7 +271,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   launchers?: AgentDeviceLaunchers,
 ) {
   const settings = yield* ServerSettings.ServerSettingsService;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const lifecycleLock = yield* Semaphore.make(1);
   const readDeviceSettings = settings.getSettings.pipe(
     Effect.map((value) => ({
@@ -322,7 +322,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     const live = new Set(
       yield* Effect.forEach(state.sessions, (session) =>
         agentDeviceSession(session.threadId, session.hostId, session.deviceId),
-      ).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+      ).pipe(Effect.provideService(Digest.Digest, digest)),
     );
     const retired = [...boundLaunchers].filter(([session]) => !live.has(session));
     yield* Effect.forEach(
@@ -357,32 +357,36 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         session.threadId,
         session.hostId,
         session.deviceId,
-      ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      ).pipe(Effect.provideService(Digest.Digest, digest));
       const launcher = boundLaunchers.get(name);
       if (launcher === undefined) continue;
       if (!hostSessionLaunchers.has(name)) yield* launchers?.release?.(launcher) ?? Effect.void;
     }
   });
 
-  // Uninterruptible so a committed retirement always prunes, even if its caller is cancelled.
-  const publish = <E = never>(
+  // Cleanup is interruptible; only a successful retirement commits and prunes without interruption.
+  const publish = Effect.fn("DeviceService.publish")(function* <E = never>(
     update: (state: DeviceServiceState) => DeviceServiceState,
     beforeRetire?: (sessions: ReadonlyArray<DeviceSession>) => Effect.Effect<void, E>,
-  ) =>
-    launcherLock
+  ) {
+    if (beforeRetire) {
+      const { state } = yield* SynchronizedRef.get(stateRef);
+      const next = update(state);
+      yield* beforeRetire(state.sessions.filter((session) => !next.sessions.includes(session)));
+    }
+    return yield* launcherLock
       .withPermit(
         SynchronizedRef.modifyEffect(stateRef, ({ state }) =>
           Effect.gen(function* () {
             const next = { ...update(state), revision: state.revision + 1 };
             const retired = state.sessions.filter((session) => !next.sessions.includes(session));
             if (beforeRetire) {
-              yield* beforeRetire(retired);
               for (const session of retired) {
                 const name = yield* agentDeviceSession(
                   session.threadId,
                   session.hostId,
                   session.deviceId,
-                ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+                ).pipe(Effect.provideService(Digest.Digest, digest));
                 boundLaunchers.delete(name);
                 hostSessionLaunchers.delete(name);
               }
@@ -396,6 +400,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         ),
       )
       .pipe(Effect.uninterruptible);
+  });
 
   const resolveHost = Effect.fn("DeviceService.resolveHost")(function* (
     hostId: DeviceHostId | undefined,
@@ -909,7 +914,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                 session.threadId,
                 session.hostId,
                 session.deviceId,
-              ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+              ).pipe(Effect.provideService(Digest.Digest, digest));
               yield* ready.releaseAgentSession(name, session.deviceId);
             }
           }
@@ -1172,7 +1177,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           input.threadId,
           input.hostId,
           input.deviceId,
-        ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+        ).pipe(Effect.provideService(Digest.Digest, digest));
         if (boundSession) hostSessionLaunchers.add(ownSession);
         const session = boundSession ?? ownSession;
         return {
@@ -1195,23 +1200,25 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           target.threadId,
           target.hostId,
           target.deviceId,
-        ).pipe(Effect.provideService(Crypto.Crypto, crypto));
-        return yield* launcherLock.withPermit(
-          Effect.gen(function* () {
-            const { state } = yield* SynchronizedRef.get(stateRef);
-            if (
-              !state.sessions.some(
-                (live) =>
-                  live.threadId === target.threadId &&
-                  live.hostId === target.hostId &&
-                  live.deviceId === target.deviceId,
+        ).pipe(Effect.provideService(Digest.Digest, digest));
+        return yield* lifecycleLock.withPermit(
+          launcherLock.withPermit(
+            Effect.gen(function* () {
+              const { state } = yield* SynchronizedRef.get(stateRef);
+              if (
+                !state.sessions.some(
+                  (live) =>
+                    live.threadId === target.threadId &&
+                    live.hostId === target.hostId &&
+                    live.deviceId === target.deviceId,
+                )
               )
-            )
-              return Option.none();
-            const launcher = yield* launchers.bind({ session, targetArgs });
-            boundLaunchers.set(session, launcher);
-            return Option.some(launcher);
-          }),
+                return Option.none();
+              const launcher = yield* launchers.bind({ session, targetArgs });
+              boundLaunchers.set(session, launcher);
+              return Option.some(launcher);
+            }),
+          ),
         );
       }),
       state: SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state)),
@@ -1265,10 +1272,10 @@ export const make = Effect.gen(function* () {
   const hosts = new Map<DeviceHostId, DeviceHost.DeviceHost["Service"]>([
     [localHost.id, localHost],
   ]);
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const configPath = (hostId: DeviceHostId, deviceId?: DeviceId) =>
     agentDeviceConfigPath(config.stateDir, hostId, path, deviceId).pipe(
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(Digest.Digest, digest),
     );
   const configureAgent = Effect.fn("DeviceService.configureAgent")(
     function* (
