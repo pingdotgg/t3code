@@ -181,6 +181,7 @@ export function RightPanelSurfaceContent(props: {
           parentRef={threadRef}
           threadId={surface.threadId}
           parentPanel={props.sideChatParentPanel}
+          visible={visible}
           onClose={() => onCloseSurface(surface)}
         />
       );
