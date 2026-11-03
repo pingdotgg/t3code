@@ -381,10 +381,13 @@ function normalizeT3McpToolLabel(value: string): string {
 }
 
 // Timelines resolve every work row's tool name on each update; names repeat across updates.
+// ACP titles can carry whole commands, so long labels are parsed but not kept.
 const toolNameCache = new Map<string, string | null>();
 const TOOL_NAME_CACHE_LIMIT = 10_000;
+const TOOL_NAME_CACHE_MAX_KEY_LENGTH = 256;
 
 function resolveT3McpToolName(value: string): string | null {
+  if (value.length > TOOL_NAME_CACHE_MAX_KEY_LENGTH) return parseT3McpToolName(value);
   const cached = toolNameCache.get(value);
   if (cached !== undefined) return cached;
   const name = parseT3McpToolName(value);
