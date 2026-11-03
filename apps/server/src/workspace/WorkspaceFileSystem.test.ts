@@ -534,6 +534,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         );
 
         const supportsMode = (yield* HostProcess.Platform) !== "win32";
+        const expectedMode = 0o700 & ~(yield* HostProcess.Umask);
         const written = yield* workspaceFileSystem.writeFile({
           cwd,
           relativePath: "plans/effect-rpc.md",
@@ -542,11 +543,24 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         });
         expect(written).toEqual({
           relativePath: "plans/effect-rpc.md",
-          ...(supportsMode ? { mode: 0o755 } : {}),
+          ...(supportsMode ? { mode: expectedMode } : {}),
         });
         if (supportsMode) {
           const stat = yield* Effect.promise(() => NodeFSP.stat(`${cwd}/plans/effect-rpc.md`));
-          expect(stat.mode & 0o777).toBe(0o755);
+          expect(stat.mode & 0o777).toBe(expectedMode);
+          const parent = yield* Effect.promise(() => NodeFSP.stat(`${cwd}/plans`));
+          expect(parent.mode & 0o777).toBe(0o700 & ~(yield* HostProcess.Umask));
+          const secret = yield* workspaceFileSystem
+            .writeFile({
+              cwd,
+              relativePath: "private/.env",
+              contents: "SECRET=example\n",
+              mode: 0o644,
+            })
+            .pipe(Effect.provideService(HostProcess.Umask, 0o077));
+          expect(secret.mode).toBe(0o600);
+          const secretStat = yield* Effect.promise(() => NodeFSP.stat(`${cwd}/private/.env`));
+          expect(secretStat.mode & 0o777).toBe(0o600);
         }
 
         const afterWrite = yield* workspaceEntries.list({ cwd });
@@ -567,6 +581,21 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const supportsMode = (yield* HostProcess.Platform) !== "win32";
         if (supportsMode) {
           yield* Effect.promise(() => NodeFSP.chmod(path.join(cwd, "src/main.ts"), 0o755));
+          const native = yield* Effect.promise(() =>
+            vi.importActual<typeof NodeFSP>("node:fs/promises"),
+          );
+          const open = vi.mocked(NodeFSP.open).mockImplementation(async (file, flags, mode) => {
+            const handle = await native.open(file, flags, mode);
+            if (file === path.join(cwd, "src/main.ts") && mode !== undefined) {
+              const write = handle.writeFile.bind(handle);
+              handle.writeFile = async (...args) => {
+                expect((await handle.stat()).mode & 0o077).toBe(0);
+                return write(...args);
+              };
+            }
+            return handle;
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(() => open.mockImplementation(native.open)));
         }
 
         yield* workspaceFileSystem.writeFile({
@@ -592,6 +621,15 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           const stat = yield* Effect.promise(() => NodeFSP.stat(path.join(cwd, "src/main.ts")));
           expect(stat.mode & 0o777).toBe(0o700);
 
+          const restricted = yield* workspaceFileSystem.writeFile({
+            cwd,
+            relativePath: "src/main.ts",
+            contents: "export const edited = true;\n",
+            mode: 0o644,
+          });
+          expect(restricted.mode).toBe(0o600);
+          yield* Effect.promise(() => NodeFSP.chmod(path.join(cwd, "src/main.ts"), 0o700));
+
           const native = yield* Effect.promise(() =>
             vi.importActual<typeof NodeFSP>("node:fs/promises"),
           );
@@ -608,6 +646,19 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             mode: 0o600,
           });
           expect(written.mode).toBe(0o700);
+          yield* Effect.promise(() => NodeFSP.chmod(path.join(cwd, "src/main.ts"), 0o644));
+          const unsupported = yield* workspaceFileSystem
+            .writeFile({
+              cwd,
+              relativePath: "src/main.ts",
+              contents: "SECRET=example\n",
+              mode: 0o600,
+            })
+            .pipe(Effect.flip);
+          expect(unsupported).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+          expect(yield* fileSystem.readFileString(path.join(cwd, "src/main.ts"))).not.toContain(
+            "SECRET",
+          );
         }
       }).pipe(
         Effect.provide(

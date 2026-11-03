@@ -294,12 +294,14 @@ export type ProjectSearchContentsResult = typeof ProjectSearchContentsResult.Typ
 export const ProjectListEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   directoryPath: Schema.optional(TrimmedString),
+  reportSkipped: Schema.optional(Schema.Boolean),
 });
 export type ProjectListEntriesInput = typeof ProjectListEntriesInput.Type;
 
 export const ProjectListEntriesResult = Schema.Struct({
   entries: Schema.Array(ProjectEntry),
   truncated: Schema.Boolean,
+  skippedPaths: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 export type ProjectListEntriesResult = typeof ProjectListEntriesResult.Type;
 
@@ -516,6 +518,7 @@ export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
+  // Copied files and new parents remain owner-only, subject to destination restrictions.
   mode: Schema.optional(ProjectFileMode),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;

@@ -23,6 +23,25 @@ function setup() {
   mocks.executeAtomQuery.mockReset();
   const readPaths: string[] = [];
   const listedPaths: string[] = [];
+  const directories = new Map([
+    [
+      ".local",
+      [
+        { path: ".local/config.json", kind: "file" },
+        { path: ".local/nested", kind: "directory" },
+      ],
+    ],
+    [".local/nested", [{ path: ".local/nested/token", kind: "file" }]],
+    [".agents", [{ path: ".agents/skills", kind: "directory" }]],
+    [".agents/skills", [{ path: ".agents/skills/example", kind: "directory" }]],
+    [
+      ".agents/skills/example",
+      [
+        { path: ".agents/skills/example/SKILL.md", kind: "file" },
+        { path: ".agents/skills/example/helper.sh", kind: "file" },
+      ],
+    ],
+  ]);
   mocks.executeAtomQuery.mockImplementation(async (_registry, query) => {
     expect(query.environmentId).toBe(source.environmentId);
     expect(query.input.cwd).toBe(source.cwd);
@@ -31,13 +50,7 @@ function setup() {
       return {
         _tag: "Success",
         value: {
-          entries:
-            query.input.directoryPath === ".local"
-              ? [
-                  { path: ".local/config.json", kind: "file" },
-                  { path: ".local/nested", kind: "directory" },
-                ]
-              : [{ path: ".local/nested/token", kind: "file" }],
+          entries: directories.get(query.input.directoryPath) ?? [],
           truncated: false,
         },
       };
@@ -45,63 +58,48 @@ function setup() {
     readPaths.push(query.input.relativePath);
     return {
       _tag: "Success",
-      value: { contents: `contents:${query.input.relativePath}`, truncated: false },
+      value: {
+        contents: `contents:${query.input.relativePath}`,
+        truncated: false,
+        ...(query.input.includeMode && query.input.relativePath.endsWith("helper.sh")
+          ? { mode: 0o755 }
+          : {}),
+      },
     };
   });
   return { readPaths, listedPaths };
 }
 
 describe("readProjectFilesToCopy", () => {
-  it("includes skills inside a selected gitignored .agents folder", async () => {
-    setup();
-    const directories = new Map([
-      [".agents", [{ path: ".agents/skills", kind: "directory" }]],
-      [".agents/skills", [{ path: ".agents/skills/example", kind: "directory" }]],
-      [
-        ".agents/skills/example",
-        [
-          { path: ".agents/skills/example/SKILL.md", kind: "file" },
-          { path: ".agents/skills/example/helper.sh", kind: "file" },
-        ],
-      ],
-    ]);
-    mocks.executeAtomQuery.mockImplementation(async (_registry, query) => ({
-      _tag: "Success",
-      value:
-        query.method === "list"
-          ? { entries: directories.get(query.input.directoryPath) ?? [], truncated: false }
-          : query.input.relativePath.endsWith("helper.sh")
-            ? {
-                contents: "#!/bin/sh\necho skill\n",
-                truncated: false,
-                ...(query.input.includeMode ? { mode: 0o755 } : {}),
-              }
-            : { contents: "# Example skill\n", truncated: false },
-    }));
-
-    expect(await readProjectFilesToCopy(source, [".agents/"])).toEqual([
-      { relativePath: ".agents/skills/example/SKILL.md", contents: "# Example skill\n" },
-      {
-        relativePath: ".agents/skills/example/helper.sh",
-        contents: "#!/bin/sh\necho skill\n",
-        mode: 0o755,
-      },
-    ]);
-  });
-
   it("reads selected ignored folders recursively and keeps paths for the destination", async () => {
     const { readPaths, listedPaths } = setup();
 
-    const result = await readProjectFilesToCopy(source, [".env", ".local/"]);
+    const result = await readProjectFilesToCopy(source, [".env", ".local/", ".agents/"]);
 
-    expect(listedPaths).toEqual([".local", ".local/nested"]);
-    expect(readPaths.toSorted()).toEqual([".env", ".local/config.json", ".local/nested/token"]);
+    expect(listedPaths).toEqual([
+      ".local",
+      ".agents",
+      ".local/nested",
+      ".agents/skills",
+      ".agents/skills/example",
+    ]);
+    expect(readPaths.toSorted()).toEqual([
+      ".agents/skills/example/SKILL.md",
+      ".agents/skills/example/helper.sh",
+      ".env",
+      ".local/config.json",
+      ".local/nested/token",
+    ]);
     expect(result).toEqual(
       expect.arrayContaining(
-        readPaths.map((relativePath) => ({ relativePath, contents: `contents:${relativePath}` })),
+        readPaths.map((relativePath) => ({
+          relativePath,
+          contents: `contents:${relativePath}`,
+          ...(relativePath.endsWith("helper.sh") ? { mode: 0o755 } : {}),
+        })),
       ),
     );
-    expect(result).toHaveLength(3);
+    expect(result).toHaveLength(5);
   });
 
   it("does not enumerate unselected folders", async () => {
@@ -134,17 +132,35 @@ describe("readProjectFilesToCopy", () => {
     );
   });
 
-  it("rejects incomplete folder listings instead of copying a partial folder", async () => {
-    setup();
-    mocks.executeAtomQuery.mockResolvedValue({
-      _tag: "Success",
-      value: { entries: [{ path: ".local/config.json", kind: "file" }], truncated: true },
-    });
+  it.each([
+    {
+      reason: "truncated",
+      truncated: true,
+      skippedPaths: [],
+      message: "Could not list every file in .local/.",
+    },
+    {
+      reason: "unsupported",
+      truncated: false,
+      skippedPaths: [".local/skills"],
+      message: "Cannot copy unsupported entry .local/skills.",
+    },
+  ])(
+    "rejects $reason folder listings instead of copying a partial folder",
+    async ({ truncated, skippedPaths, message }) => {
+      setup();
+      mocks.executeAtomQuery.mockImplementation(async (_registry, query) => ({
+        _tag: "Success",
+        value: {
+          entries: [{ path: ".local/config.json", kind: "file" }],
+          truncated,
+          ...(query.input.reportSkipped ? { skippedPaths } : {}),
+        },
+      }));
 
-    await expect(readProjectFilesToCopy(source, [".local/"])).rejects.toThrow(
-      "Could not list every file in .local/.",
-    );
-  });
+      await expect(readProjectFilesToCopy(source, [".local/"])).rejects.toThrow(message);
+    },
+  );
 
   it("rejects folder expansion beyond 200 entries before reading contents", async () => {
     setup();
