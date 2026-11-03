@@ -4,7 +4,7 @@
  * scenario and check its metrics, so one flow can serve several issues.
  */
 import type { ThreadId } from "@t3tools/contracts";
-import type * as Crypto from "effect/Crypto";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -157,7 +157,9 @@ const failure = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       new ScenarioFailure({ message: error instanceof Error ? error.message : String(error) }),
   );
 
-type Scenario = (ctx: ScenarioContext) => Effect.Effect<Metrics, ScenarioFailure, Crypto.Crypto>;
+type Scenario = (
+  ctx: ScenarioContext,
+) => Effect.Effect<Metrics, ScenarioFailure, SecureRandom.SecureRandom>;
 
 export const SCENARIOS = {
   /** Six upward flings in the long settled thread. */
