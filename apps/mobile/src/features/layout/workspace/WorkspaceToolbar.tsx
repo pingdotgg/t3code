@@ -1,7 +1,7 @@
 import { useActiveNewTask } from "../../../state/active-new-task";
 import { Toolbar } from "../../../components/ui/Toolbar";
-import { useFocusEffect, useIsFocused } from "@react-navigation/native";
-import { use, useCallback, useEffect, useRef } from "react";
+import { useIsFocused } from "@react-navigation/native";
+import { use, useCallback, useEffect, useEffectEvent, useRef } from "react";
 import { isDuoDevice } from "../../../lib/device-type";
 import { useDeviceType } from "../../../native/native-layout-metrics";
 import { createNativeHeaderMenu } from "../../../components/ui/nativeHeaderMenu.ios";
@@ -106,19 +106,15 @@ export function WorkspaceToolbar(props: {
       }
     }
   };
-  useFocusEffect(
-    useCallback(() => {
-      const frame = requestAnimationFrame(restoreSearch);
-      return () => cancelAnimationFrame(frame);
-    }, [restoreSearch]),
-  );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to restore the native search bar's text and focus when its tab becomes active
+  const restoreOnAppearance = useEffectEvent(restoreSearch);
+  // iOS 27's X reports only a blur, so restoring then would write the query back into the closing field.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to restore the native search bar's text and focus when its host appears, refocuses or moves
   useEffect(() => {
     if (!tabActive) return;
-    const frame = requestAnimationFrame(restoreSearch);
+    const frame = requestAnimationFrame(() => restoreOnAppearance());
     return () => cancelAnimationFrame(frame);
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Moving the search bar to the bottom toolbar restores its focus and query.
-  }, [restoreSearch, tabActive, bottomSearch]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- each is a way the native search bar reappears or moves, while query and mode edits must not restore it
+  }, [focused, searchHostVisible, searchVisible, selectedTab, tabActive, bottomSearch]);
   const composeButton = nativeToolbarCompose ? (
     <Toolbar.Button
       identifier="workspace-compose"
