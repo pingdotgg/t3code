@@ -63,9 +63,10 @@ command-id retries.
 [ProjectionMaintenance](../../apps/server/src/orchestration-v2/ProjectionMaintenance.ts) deletes
 older events the projections cover, so projections cannot be rebuilt from the log. It keeps each
 stream's newest event (high-water marks, stream versions, snapshot sequences), `thread.created`
-(the legacy importer's marker), the first `running` update of each run attempt (Codex usage
-history), and prompt anchors that retained subagent rows reference. A client cursor below the
-recorded pruned-through sequence resumes from a snapshot. Command receipts stay for idempotency; a
+(the legacy importer's marker), every `running` run update (Codex usage history reads the first
+of each attempt), and prompt anchors that retained subagent rows reference. A client whose cursor
+is below both its thread's newest event and the recorded pruned-through sequence missed pruned
+events, so it resumes from a snapshot; an idle thread's cursor resumes without one. Command receipts stay for idempotency; a
 retry older than the retained history can find its events gone and must answer from projections.
 
 Retained events must remain decodable on replay. Changing a schema affects old environments at

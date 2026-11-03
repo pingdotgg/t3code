@@ -302,6 +302,36 @@ it.effect("prunes events the projections cover once the retained day has passed"
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("keeps the anchor a retained stream head borrows from", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const eventStore = yield* EventStore.EventStoreV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:prune-head");
+    yield* sink.write({ events: [threadCreated(makeThread(threadId, now), now)] });
+    yield* sink.write({ events: subagentEvents(threadId, now, 0) });
+    // The stream's newest row borrows prompt A, so it is kept below the boundary.
+    yield* sink.write({ events: subagentEvents(threadId, now, 0, "repeat") });
+    yield* maintenance.pruneEventStore();
+    yield* TestClock.adjust("1 day");
+    assert.isAbove((yield* maintenance.pruneEventStore()).deletedEventCount, 0);
+
+    assert.include(
+      yield* remainingEventIds(threadId),
+      "event:turn-item-compaction:subagent-item:0",
+    );
+    const stored = yield* eventStore.read({ threadId }).pipe(Stream.runCollect);
+    const head = Array.from(stored).at(-1)?.event;
+    assert.deepEqual(
+      head?.type === "turn-item.updated" && head.payload.type === "subagent"
+        ? head.payload.prompt
+        : null,
+      "Review prompt A. ".repeat(40),
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("keeps an anchor that a row appended during the pass borrows from", () =>
   Effect.scoped(
     Effect.gen(function* () {

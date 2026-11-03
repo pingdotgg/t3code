@@ -1091,3 +1091,38 @@ it.effect.each(["thread", "shell"] as const)(
       assert.deepEqual(Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit, "snapshot");
     }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
+
+// A thread idle since before the boundary missed nothing; resuming must not resend its body.
+it.effect("thread resume at its own high-water below the pruned boundary skips the snapshot", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-10-13T00:00:00.000Z";
+    const threadId = ThreadId.make("thread:idle");
+    const [last] = yield* sql<{ sequence: number }>`
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES (
+        'idle:0', 'thread', ${threadId}, 0, 'provider-session.detached',
+        ${now}, 'server', ${JSON.stringify({ providerSessionId: "session:idle", detachedAt: now })},
+        '{}', 2
+      ) RETURNING sequence
+    `;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_metadata (
+        projection_name, schema_version, last_sequence, updated_at
+      ) VALUES (${OrchestrationEventStore.EVENT_LOG_PRUNED_THROUGH}, 2, ${last!.sequence + 10}, ${now})
+    `;
+    const exit = yield* subscribeOrchestrationV2Thread({
+      threadId,
+      afterSequence: last!.sequence,
+    }).pipe(
+      Effect.provideService(ThreadManagement.ThreadManagementService, {
+        ensureLegacyTranscript: () => Effect.void,
+        getThreadSnapshot: () => Effect.die("snapshot"),
+      } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+      Effect.exit,
+    );
+    assert.notDeepEqual(Exit.isFailure(exit) ? Cause.squash(exit.cause) : "resumed", "snapshot");
+  }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);

@@ -100,6 +100,20 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
       betweenPages: Effect.Effect<void>,
     ) {
       const referenced = yield* readPromptReferences(throughSequence, head, betweenPages);
+      // Stream heads at or below the boundary are kept, so the anchors they borrow must stay too.
+      const keptHeadReferences = yield* sql<{ readonly prompt_sequence: number }>`
+        SELECT json_extract(event.payload_json, '$.promptSequence') AS prompt_sequence
+        FROM (
+          SELECT MAX(sequence) AS sequence FROM orchestration_events
+          GROUP BY aggregate_kind, stream_id
+        ) AS heads
+        JOIN orchestration_events AS event ON event.sequence = heads.sequence
+        WHERE heads.sequence <= ${throughSequence}
+          AND event.event_type IN ('subagent.updated', 'turn-item.updated')
+          AND json_type(event.payload_json, '$.promptSequence') = 'integer'
+      `.pipe(NodeSqliteClient.readOnly);
+      for (const row of keptHeadReferences) referenced.add(row.prompt_sequence);
+      yield* betweenPages;
       let referencesThrough = head;
       let deleted = 0;
       let cursor = 0;
