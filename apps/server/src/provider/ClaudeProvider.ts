@@ -12,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -23,6 +24,7 @@ import {
   type SDKControlGetUsageResponse,
   type SDKUserMessage,
   type SettingSource,
+  type Settings as ClaudeSdkSettings,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import {
@@ -37,7 +39,11 @@ import {
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
 import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
-import { discoverClaudeSkills, readClaudeSettingsEnv } from "./Drivers/ClaudeSkills.ts";
+import {
+  discoverClaudeSkills,
+  readClaudeLaunchArgSettings,
+  readClaudeSettingsEnv,
+} from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
@@ -201,6 +207,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
   readonly managedMcpConfig: boolean;
+  readonly enabledPlugins?: ClaudeSdkSettings["enabledPlugins"];
 }): ClaudeQueryOptions {
   return {
     persistSession: false,
@@ -208,7 +215,10 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
     // Keep settings for slash-command discovery, but disable hooks so health checks do not run SessionStart repeatedly.
-    settings: { disableAllHooks: true },
+    settings: {
+      ...(input.enabledPlugins ? { enabledPlugins: input.enabledPlugins } : {}),
+      disableAllHooks: true,
+    },
     allowedTools: [],
     // Exclude filesystem MCP servers; omit strict mode when managed-mcp.json already excludes them and forbids the flag.
     mcpServers: {},
@@ -318,6 +328,17 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
   });
 }
 
+// Claude Code drops the whole inline settings layer, disableAllHooks included, when any key
+// in it is invalid, so the probe takes only well-formed plugin switches from --settings.
+const decodeLaunchArgEnabledPlugins = Schema.decodeUnknownOption(
+  Schema.Struct({
+    enabledPlugins: Schema.Record(
+      Schema.String,
+      Schema.Union([Schema.Boolean, Schema.mutable(Schema.Array(Schema.String))]),
+    ),
+  }),
+);
+
 /** A never-yielding prompt allows local initialization IPC without sending an Anthropic request. */
 const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
@@ -333,6 +354,19 @@ const probeClaudeCapabilities = (
       claudeEnvironment,
     );
     const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
+    // An unreadable --settings value fails the turn, not the provider status.
+    const enabledPlugins = yield* readClaudeLaunchArgSettings({
+      settings: claudeSettings,
+      cwd: cwd ?? null,
+      fileSystem: yield* FileSystem.FileSystem,
+      path: yield* Path.Path,
+    }).pipe(
+      Effect.map(
+        (settings) =>
+          Option.getOrUndefined(decodeLaunchArgEnabledPlugins(settings ?? {}))?.enabledPlugins,
+      ),
+      Effect.orElseSucceed(() => undefined),
+    );
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // oxlint-disable-next-line require-yield -- never yields, so no prompt reaches the API
@@ -345,6 +379,7 @@ const probeClaudeCapabilities = (
           environment: claudeEnvironment,
           cwd,
           managedMcpConfig,
+          enabledPlugins,
         }),
       });
       const init = await q.initializationResult();
