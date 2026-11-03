@@ -615,6 +615,33 @@ describe("PreviewManager", () => {
       ),
   );
 
+  effectIt.effect.each([
+    ["darwin", true, false, true],
+    ["darwin", false, true, false],
+    ["linux", false, true, true],
+    ["win32", true, false, false],
+  ] as const)(
+    "reloads the preview only on the platform refresh chord: %s meta=%s ctrl=%s",
+    ([platform, meta, control, expected]) =>
+      withManager(
+        (manager) =>
+          Effect.gen(function* () {
+            const preview = makeFaviconWebContents();
+            fromId.mockReturnValue(preview.webContents);
+            yield* manager.createTab("tab_refresh");
+            yield* manager.registerWebview("tab_refresh", 42);
+            const preventDefault = vi.fn();
+            preview.listeners.get("before-input-event")!(
+              { preventDefault } as never,
+              { type: "keyDown", key: "r", meta, control, shift: false, alt: false } as never,
+            );
+            expect(preventDefault).toHaveBeenCalledTimes(expected ? 1 : 0);
+            expect(preview.reload).toHaveBeenCalledTimes(expected ? 1 : 0);
+          }),
+        platform,
+      ),
+  );
+
   effectIt.effect("keeps editing and forwarded shortcuts in whichever tab holds focus", () =>
     withManager((manager) =>
       Effect.gen(function* () {
