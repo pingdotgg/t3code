@@ -245,11 +245,14 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const effectiveEnvironment = resolved?.environment ?? resolvedEnvironment;
       const models = yield* getModels;
       const requestedModel = modelSelection.model;
+      const listed = models.filter((candidate) => !candidate.isCustom);
+      // An unlisted slug is one this account can't run, e.g. gpt-6-luna on a ChatGPT login.
       const model =
         models.find((candidate) => candidate.slug === requestedModel)?.slug ??
-        models.find(
-          (candidate) => !candidate.isCustom && codexModelFamily(candidate.slug) === requestedModel,
-        )?.slug ??
+        listed.find((candidate) => codexModelFamily(candidate.slug) === requestedModel)?.slug ??
+        listed.find((candidate) => candidate.isDefault)?.slug ??
+        listed.find((candidate) => !candidate.isLegacy)?.slug ??
+        listed[0]?.slug ??
         requestedModel;
       const launchArgs = resolveCodexLaunchArgs(effectiveConfig.launchArgs, effectiveEnvironment);
       const reasoningEffort =

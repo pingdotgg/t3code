@@ -163,6 +163,7 @@ function withFakeCodexEnv<A, E, R>(
     launchArgs?: string;
     environment?: NodeJS.ProcessEnv;
     models?: ReadonlyArray<string>;
+    defaultModel?: string;
     managedRuntime?: boolean;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
@@ -180,6 +181,7 @@ function withFakeCodexEnv<A, E, R>(
           slug,
           name: slug,
           isCustom: false,
+          ...(slug === input.defaultModel ? { isDefault: true } : {}),
           capabilities: null,
         })),
       ),
@@ -224,15 +226,34 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
       }),
   );
 
-  it.effect.each(["gpt-5.6-luna", "openai.gpt-5.6-luna"])(
-    "dispatches the qualified live model for %s",
-    (selectedModel) =>
+  it.effect.each([
+    {
+      selectedModel: "gpt-5.6-luna",
+      models: ["openai.gpt-5.6-luna"],
+      expected: "openai.gpt-5.6-luna",
+    },
+    {
+      selectedModel: "openai.gpt-5.6-luna",
+      models: ["openai.gpt-5.6-luna"],
+      expected: "openai.gpt-5.6-luna",
+    },
+    {
+      selectedModel: "gpt-6-luna",
+      models: ["gpt-5.6-luna", "gpt-6-astra"],
+      defaultModel: "gpt-6-astra",
+      expected: "gpt-6-astra",
+    },
+    { selectedModel: "gpt-6-luna", models: ["gpt-5.6-luna"], expected: "gpt-5.6-luna" },
+    { selectedModel: "gpt-6-luna", models: [], expected: "gpt-6-luna" },
+  ])(
+    "dispatches $expected for $selectedModel from $models",
+    ({ selectedModel, models, defaultModel, expected }) =>
       withFakeCodexEnv(
         {
-          output: JSON.stringify({ title: "Bedrock title" }),
-          models: ["openai.gpt-5.6-luna"],
-          requireArg: "--model openai.gpt-5.6-luna",
-          forbidArg: "--model gpt-5.6-luna",
+          output: JSON.stringify({ title: "Live title" }),
+          models,
+          ...(defaultModel ? { defaultModel } : {}),
+          requireArg: `--model ${expected}`,
         },
         (textGeneration) =>
           Effect.gen(function* () {
@@ -241,7 +262,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
               message: "Describe this change",
               modelSelection: createModelSelection(ProviderInstanceId.make("codex"), selectedModel),
             });
-            expect(result.title).toBe("Bedrock title");
+            expect(result.title).toBe("Live title");
           }),
       ),
   );
