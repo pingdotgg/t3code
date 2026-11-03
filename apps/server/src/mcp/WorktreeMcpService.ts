@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type GitCommandError,
   MessageId,
   type ProjectId,
   WorktreeMcpFailure,
@@ -8,14 +9,18 @@ import {
   type WorktreeMcpHandoffResult,
   type WorktreeMcpSetupScriptStatus,
   type WorktreeMcpStatusResult,
+  type VcsListRefsInput,
+  type VcsListRefsResult,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import type * as PlatformError from "effect/PlatformError";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -35,6 +40,12 @@ export class WorktreeMcpService extends Context.Service<
     readonly status: (
       scope: McpInvocationScope,
     ) => Effect.Effect<WorktreeMcpStatusResult, WorktreeMcpFailure>;
+    readonly listRefs: (
+      input: Omit<VcsListRefsInput, "cwd"> & {
+        readonly worktreePath: string | null;
+        readonly workspaceRoot: string;
+      },
+    ) => Effect.Effect<VcsListRefsResult, GitCommandError | PlatformError.PlatformError>;
   }
 >()("t3/mcp/WorktreeMcpService") {}
 
@@ -57,6 +68,7 @@ const asOperationFailed = (prefix: string) =>
 
 const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
+  const fileSystem = yield* FileSystem.FileSystem;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -434,13 +446,25 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return WorktreeMcpService.of({ handoff, status });
+  const listRefs: WorktreeMcpService["Service"]["listRefs"] = Effect.fn(
+    "WorktreeMcpService.listRefs",
+  )(function* ({ worktreePath, workspaceRoot, ...refs }) {
+    // Storage cleanup removes a worktree but keeps its path on the thread.
+    const cwd =
+      worktreePath !== null && (yield* fileSystem.exists(worktreePath))
+        ? worktreePath
+        : workspaceRoot;
+    return yield* gitWorkflow.listRefs({ ...refs, cwd });
+  });
+
+  return WorktreeMcpService.of({ handoff, status, listRefs });
 });
 
 export const layer: Layer.Layer<
   WorktreeMcpService,
   never,
   | SecureRandom.SecureRandom
+  | FileSystem.FileSystem
   | ThreadManagementService.ThreadManagementService
   | ProjectService.ProjectService
   | ServerSettings.ServerSettingsService
