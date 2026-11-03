@@ -9,6 +9,7 @@ import { deriveThreadStructureRuntime } from "@t3tools/client-runtime/state/thre
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { Platform, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -155,6 +156,7 @@ function StatusBanner(props: { readonly summary: ActivitySummary }) {
 export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivityRouteParams>) {
   const navigation = useNavigation();
   const isAndroid = Platform.OS === "android";
+  const insets = useSafeAreaInsets();
   const params = props.route.params;
   // The route's own thread, so a deep link shows the thread in its URL, not the selected one.
   const threadRef = scopeThreadRef(
@@ -229,7 +231,8 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
       ) : (
         <NativeScrollView
           contentInsetAdjustmentBehavior="automatic"
-          contentContainerClassName="gap-5 px-4 py-4"
+          contentContainerClassName="gap-5 px-4 pt-4"
+          contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 16 }}
         >
           <StatusBanner summary={summary} />
           {summary.plan ? (
