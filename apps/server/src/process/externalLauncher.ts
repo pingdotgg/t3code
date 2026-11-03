@@ -512,17 +512,23 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* resolveFileManagerRevealLaunch(input.cwd, platform, env, command);
   }
 
+  const parsedTarget = parseTargetPathAndPosition(input.cwd);
+  const fileManagerTarget =
+    Option.isSome(parsedTarget) && Option.isSome(parsedTarget.value.endLine)
+      ? parsedTarget.value.path
+      : input.cwd;
+
   return {
     editor: editorDef.id,
-    target: input.cwd,
+    target: fileManagerTarget,
     command,
     args:
       command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
-        ? [resolveWslFileManagerPath(input.cwd, env.WSL_DISTRO_NAME)]
+        ? [resolveWslFileManagerPath(fileManagerTarget, env.WSL_DISTRO_NAME)]
         : platform === "win32"
           ? // Explorer interprets / as a switch and silently opens a fallback folder.
-            [normalizeWindowsFileManagerPath(input.cwd)]
-          : [input.cwd],
+            [normalizeWindowsFileManagerPath(fileManagerTarget)]
+          : [fileManagerTarget],
   };
 });
 

@@ -146,7 +146,7 @@ it.effect.skipIf(windowsHost)("opens a colon line range at its start line", () =
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
-    for (const name of ["code", "idea", "zed"]) {
+    for (const name of ["code", "idea", "zed", "xdg-open", "xdg-mime"]) {
       const commandPath = path.join(binDir, name);
       yield* fileSystem.writeFileString(commandPath, "#!/bin/sh\n");
       yield* fileSystem.chmod(commandPath, 0o755);
@@ -163,12 +163,20 @@ it.effect.skipIf(windowsHost)("opens a colon line range at its start line", () =
         cwd: String.raw`C:\workspace\file.py:67-69`,
       });
       yield* launcher.launchEditor({ editor: "vscode", cwd: "/workspace/file.ts:12:4" });
+      yield* launcher.launchEditor({ editor: "file-manager", cwd: "/workspace/file.py:67-69" });
+      yield* launcher.launchEditor({ editor: "file-manager", cwd: "/workspace/file.ts:12:4" });
     }).pipe(
       Effect.provide(
         layerTest({
           platform: "linux",
           env: { PATH: binDir, DISPLAY: ":0" },
-          onSpawn: (command) => spawned.push(command),
+          spawnResult: (command) =>
+            command.command === "xdg-mime" ? { stdout: "inode/directory\n" } : undefined,
+          onSpawn: (command) => {
+            if (command.command !== "xdg-mime") {
+              spawned.push(command);
+            }
+          },
         }),
       ),
       Effect.provideService(HostProcess.Environment, { PATH: binDir, DISPLAY: ":0" }),
@@ -182,6 +190,8 @@ it.effect.skipIf(windowsHost)("opens a colon line range at its start line", () =
         ["zed", ["/workspace/file.py:67"]],
         ["code", ["--goto", String.raw`C:\workspace\file.py:67`]],
         ["code", ["--goto", "/workspace/file.ts:12:4"]],
+        ["xdg-open", ["/workspace/file.py"]],
+        ["xdg-open", ["/workspace/file.ts:12:4"]],
       ],
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
