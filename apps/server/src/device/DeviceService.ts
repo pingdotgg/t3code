@@ -651,10 +651,18 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           if (ready) yield* refresh(ready);
         }).pipe(
           Effect.catch((error) =>
-            setHostStatus(host.id, {
-              status: "failed",
-              detail: error._tag === "DeviceHostUnavailableError" ? error.reason : error.message,
-            }),
+            lifecycleLock.withPermit(
+              Effect.gen(function* () {
+                const current = yield* readDeviceSettings;
+                if (!current.enabled || (host.id === LOCAL_DEVICE_HOST_ID && !current.localEnabled))
+                  return;
+                yield* setHostStatus(host.id, {
+                  status: "failed",
+                  detail:
+                    error._tag === "DeviceHostUnavailableError" ? error.reason : error.message,
+                });
+              }),
+            ),
           ),
         ),
       { concurrency: 4 },

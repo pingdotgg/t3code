@@ -88,6 +88,7 @@ const fixture = Effect.fn("fixture")(function* (
     readonly routesStreams?: boolean;
     readonly onClose?: Effect.Effect<"ok" | "missing" | "reject" | "http_error" | "malformed">;
     readonly onPlatformAvailability?: Effect.Effect<void>;
+    readonly onSummary?: Effect.Effect<void>;
   } = {},
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
@@ -229,12 +230,12 @@ const fixture = Effect.fn("fixture")(function* (
       kind: connection.kind,
       label: "Test server",
       platforms: [
-        { platform: "android", available: true },
-        { platform: "ios", available: true },
+        { platform: "android" as const, available: true },
+        { platform: "ios" as const, available: true },
       ],
       hubInstalled: true,
       agentDeviceInstalled: false,
-    })),
+    })).pipe(Effect.tap(() => options.onSummary ?? Effect.void)),
     platformAvailability: (platform) =>
       (options.onPlatformAvailability ?? Effect.void).pipe(
         Effect.as({ platform, available: true }),
@@ -559,6 +560,40 @@ describe("device setup consent", () => {
     }).pipe(Effect.scoped),
   );
 });
+
+it.effect("does not publish a late local listing failure after the source is disabled", () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const finish = yield* Deferred.make<void>();
+    let pause = false;
+    const { service, settings } = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      {
+        onSummary: Effect.suspend(() =>
+          pause
+            ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(finish)))
+            : Effect.void,
+        ),
+      },
+    );
+    yield* service.configure({ enabled: true });
+    pause = true;
+    const listing = yield* service.list.pipe(Effect.forkChild);
+    yield* Deferred.await(entered);
+    yield* Ref.update(settings, (current) => ({ ...current, localDevicesEnabled: false }));
+    yield* service.list;
+    yield* Deferred.succeed(finish, undefined);
+    const after = yield* Fiber.join(listing);
+    expect(after.hostStatus).toBe("idle");
+    expect(after.hostStatuses[LOCAL_DEVICE_HOST_ID]).toBeUndefined();
+    expect(after.devices).toEqual([]);
+  }).pipe(Effect.scoped),
+);
 
 it.effect.each(["all", "local"] as const)(
   "does not restore sessions after %s support is disabled",
