@@ -485,6 +485,72 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("a fresh-session task launches one thread, then starts each later run fresh in it", () =>
+  Effect.gen(function* () {
+    const launches = yield* Ref.make(0);
+    const sends = yield* Ref.make<Array<{ threadId: ThreadId; freshContext?: boolean }>>([]);
+    const launched = ThreadId.make("thread:fresh-session-task");
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            launch: () =>
+              Ref.update(launches, (n) => n + 1).pipe(
+                Effect.as({ threadId: launched, resumed: false } as never),
+              ),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: (input) =>
+              Ref.update(sends, (all) => [
+                ...all,
+                {
+                  threadId: input.threadId,
+                  ...(input.freshContext === undefined ? {} : { freshContext: input.freshContext }),
+                },
+              ]).pipe(Effect.as({} as never)),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const input = {
+        id: ScheduledTaskId.make("task:fresh-session"),
+        title: "Triage",
+        prompt: "Triage new issues",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      } as const;
+      yield* service.upsert({ ...input, threadMode: "fresh_session" });
+
+      assert.equal((yield* service.runNow({ id: input.id })).threadId, launched);
+      // A form opened before the first run saves no thread and no mode; both stay.
+      const { task } = yield* service.upsert({ ...input, threadId: null });
+      assert.equal(task.threadId, launched);
+      assert.equal(task.threadMode, "fresh_session");
+      yield* service.runNow({ id: input.id });
+
+      assert.equal(yield* Ref.get(launches), 1);
+      assert.deepEqual(yield* Ref.get(sends), [{ threadId: launched, freshContext: true }]);
+      const unbound = yield* service.upsert({ ...input, threadMode: "new_thread" });
+      assert.equal(unbound.task.threadId, null);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect("refuses saving an enabled task above the policy ceiling", () =>
   Effect.gen(function* () {
     const layer = ScheduledTaskService.layer.pipe(

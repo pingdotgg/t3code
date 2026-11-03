@@ -269,6 +269,7 @@ export const make = Effect.gen(function* () {
       triage: true,
       oneTimeSchedules: true,
       freshContext: true,
+      scheduledTaskThreadModes: true,
       npmReleaseLookup: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),
