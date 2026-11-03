@@ -539,6 +539,8 @@ it.layer(layerTest)("ProjectService", (it) => {
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;
       const sql = yield* SqlClient.SqlClient;
+      const enrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+      const changes = yield* enrichment.subscribeChanges;
       const projectId = ProjectId.make("project:delete-retry");
       yield* service.create({
         commandId: CommandId.make("command:delete-retry:create"),
@@ -546,6 +548,12 @@ it.layer(layerTest)("ProjectService", (it) => {
         title: "Delete retry",
         workspaceRoot: "/work/delete-retry",
       });
+      // Wait out the identity + favicon lanes so an in-flight cache write cannot
+      // land between the delete and its replay and change the replayed result.
+      for (;;) {
+        const change = yield* PubSub.take(changes);
+        if (change.workspaceRoot === "/work/delete-retry") break;
+      }
       const input = { commandId: CommandId.make("command:delete-retry:delete"), projectId };
       const deleted = yield* service.delete(input);
       assert.deepEqual(yield* service.delete(input), deleted);
