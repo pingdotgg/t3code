@@ -11322,16 +11322,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : path.join(yield* HostProcess.HomeDirectory, ".claude"),
             "projects",
           );
-          const transcriptPaths: Array<string> = [];
-          for (const project of yield* fileSystem.readDirectory(projectsDir)) {
-            const transcriptPath = path.join(projectsDir, project, `${nativeThreadId}.jsonl`);
-            // Stray files beside the project dirs fail with ENOTDIR.
-            if (yield* fileSystem.exists(transcriptPath).pipe(Effect.orElseSucceed(() => false))) {
-              transcriptPaths.push(transcriptPath);
-            }
-          }
-          return transcriptPaths;
+          return (yield* fileSystem.readDirectory(projectsDir)).map((project) =>
+            path.join(projectsDir, project, `${nativeThreadId}.jsonl`),
+          );
         });
+
+        // Stray files beside the project dirs fail with ENOTDIR.
+        const claudeTranscriptExists = (transcriptPath: string) =>
+          fileSystem.exists(transcriptPath).pipe(Effect.orElseSucceed(() => false));
 
         // Metadata-only transcripts cannot be resumed or recreated; fail resumeThread to trigger a fresh session and handoff.
         const claudeTranscriptState = Effect.fn("ClaudeAdapterV2.claudeTranscriptState")(function* (
@@ -11341,6 +11339,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           let found = false;
           let unreadable = false;
           for (const transcriptPath of yield* claudeTranscriptPaths(nativeThreadId)) {
+            if (!(yield* claudeTranscriptExists(transcriptPath))) {
+              continue;
+            }
             const conversationLine = yield* fileSystem
               .stream(transcriptPath)
               .pipe(
@@ -11372,6 +11373,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             const prefix = messageId.slice(0, 24);
             for (const transcriptPath of yield* claudeTranscriptPaths(nativeThreadId)) {
+              if (!(yield* claudeTranscriptExists(transcriptPath))) {
+                continue;
+              }
               const persisted = yield* fileSystem.stream(transcriptPath).pipe(
                 Stream.decodeText,
                 Stream.splitLines,
