@@ -80,9 +80,9 @@ control Auto-review, which is not represented as an interactive T3 Code approval
 
 ### Sandbox blocked on Linux
 
-On Ubuntu 23.10 and newer, AppArmor stops Cursor's bundled `cursorsandbox` helper from creating
-user namespaces, so Supervised, Auto-accept edits and Auto turns fail with "Cursor could not start
-its command sandbox". To allow the helper, save this profile as `/etc/apparmor.d/t3-cursor-sandbox`:
+On Ubuntu 23.10 and newer, AppArmor can stop Cursor's bundled `cursorsandbox` helper from creating
+user namespaces, so sandboxed Cursor turns fail with "Cursor could not start its command sandbox".
+To allow the helper, save this profile as `/etc/apparmor.d/t3-cursor-sandbox`:
 
 ```text
 abi <abi/4.0>,
@@ -94,8 +94,10 @@ profile t3-cursor-sandbox /**/@cursor/sdk-linux-*/bin/cursorsandbox flags=(uncon
 ```
 
 Load it with `sudo apparmor_parser -r /etc/apparmor.d/t3-cursor-sandbox`, then restart T3 Code.
-The path covers AppImage, deb and `npx t3` installs, and the system-wide restriction stays on for
-everything else. Alternatively, switch the thread to **Full access**, which runs without the sandbox.
+The path covers AppImage, deb and `npx t3` installs. Because AppImage and `npx t3` run from
+directories your user can write to, any program placed at a matching path also gets user
+namespaces. With the deb package, you can narrow the profile to the helper's full path under
+`/opt` instead. Alternatively, switch the thread to **Full access**, which runs without the sandbox.
 
 The existing Cursor binary path and API endpoint settings belong to the CLI/ACP integration. Cursor
 V2 execution does not launch that binary, and the SDK does not expose an API endpoint override.

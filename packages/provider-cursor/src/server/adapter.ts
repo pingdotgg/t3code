@@ -335,22 +335,26 @@ class CursorModelUnavailableError extends Schema.TaggedError<CursorModelUnavaila
 
 class CursorSandboxUnavailableError extends Schema.TaggedError<CursorSandboxUnavailableError>()(
   "CursorSandboxUnavailableError",
-  { cause: Schema.Defect() },
+  { platform: Schema.String, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Cursor could not start its command sandbox on this machine, which Supervised, Auto-accept edits and Auto threads use. On Linux (Ubuntu 23.10 and newer), AppArmor blocks Cursor's bundled cursorsandbox helper until a profile lets it create user namespaces; the Cursor guide in T3 Code's docs shows how to add one. Otherwise, switch this thread to Full access.";
+    // Windows Supervised and Auto skip the sandbox (see cursorRuntimeAgentPolicy).
+    return this.platform === "win32"
+      ? "Cursor cannot sandbox commands on Windows. Switch this thread to Supervised or Auto, which run without the sandbox here, or to Full access."
+      : 'Cursor could not start its command sandbox on this machine. On Ubuntu 23.10 and newer, AppArmor may be blocking its helper: see "Sandbox blocked on Linux" in the Cursor guide. Otherwise, switch this thread to Full access.';
   }
 }
 
 // Uncoded SDK configuration rejections are identifiable only by message text.
 const classifyCursorConfigurationError =
-  (modelSelection: ModelSelection) => (error: CursorAgentSdk.CursorAgentSdkRunnerError) => {
+  (modelSelection: ModelSelection, platform: NodeJS.Platform) =>
+  (error: CursorAgentSdk.CursorAgentSdkRunnerError) => {
     if (!isCursorSdkError(error.cause, "ConfigurationError")) return error;
     if (error.cause.message.startsWith("Cannot use this model:")) {
       return new CursorModelUnavailableError({ model: modelSelection.model, cause: error.cause });
     }
     return cursorSandboxUnsupported(error.cause)
-      ? new CursorSandboxUnavailableError({ cause: error.cause })
+      ? new CursorSandboxUnavailableError({ platform, cause: error.cause })
       : error;
   };
 
@@ -2271,7 +2275,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               threadId: openInput.threadId,
               providerSessionId: input.providerSessionId,
             })
-            .pipe(Effect.mapError(classifyCursorConfigurationError(openInput.modelSelection)));
+            .pipe(
+              Effect.mapError(classifyCursorConfigurationError(openInput.modelSelection, platform)),
+            );
           const next = {
             nativeThreadId: sdkSession.agentId,
             session: sdkSession,
@@ -2420,7 +2426,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   return handleInteractionUpdate(context, update);
                 },
               })
-              .pipe(Effect.mapError(classifyCursorConfigurationError(turnInput.modelSelection)));
+              .pipe(
+                Effect.mapError(
+                  classifyCursorConfigurationError(turnInput.modelSelection, platform),
+                ),
+              );
             yield* Ref.set(told, {
               agent: agent.nativeThreadId,
               orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),

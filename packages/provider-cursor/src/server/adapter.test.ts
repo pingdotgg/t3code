@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -1587,7 +1588,10 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("says the Cursor sandbox is unavailable when the host blocks it", () =>
+  it.effect.each([
+    { platform: "linux", advice: /Sandbox blocked on Linux.*switch this thread to Full access/ },
+    { platform: "win32", advice: /Switch this thread to Supervised or Auto/ },
+  ] as const)("says the Cursor sandbox is unavailable on $platform", ({ platform, advice }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-sandbox-" });
@@ -1624,6 +1628,7 @@ describe("CursorAdapterV2", () => {
             }),
         }),
         Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+        Effect.provideService(HostProcess.Platform, platform),
       );
       const runtime = yield* adapter.openSession({
         threadId,
@@ -1689,8 +1694,8 @@ describe("CursorAdapterV2", () => {
           cause: sendFailure,
         }),
       }).message;
-      assert.match(message, /^Cursor could not start its command sandbox/);
-      assert.match(message, /switch this thread to Full access/);
+      assert.match(message, /^Cursor (?:could not start its command sandbox|cannot sandbox)/);
+      assert.match(message, advice);
     }).pipe(
       Effect.scoped,
       Effect.provide(
