@@ -25,7 +25,7 @@ export const THREAD_TERMINAL_SURFACE_ID = "thread-terminal";
  */
 export const LEGACY_PANEL_SURFACE_ID = "legacy-panel";
 
-/** Global pages become workspace tabs only when explicitly opened there. */
+/** Pull requests always shows as a workspace tab; Settings and Usage open as modals. */
 export type LayoutPageContent = { kind: "settings" | "usage" | "pull-requests"; href?: string };
 
 export type LayoutTabContent =
