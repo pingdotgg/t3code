@@ -169,6 +169,7 @@ function ComboboxPopup({
   sideOffset = 4,
   alignOffset,
   align = "start",
+  collisionAvoidance,
   anchor: anchorProp,
   spacing = "default",
   ...props
@@ -179,6 +180,7 @@ function ComboboxPopup({
   alignOffset?: ComboboxPrimitive.Positioner.Props["alignOffset"];
   side?: ComboboxPrimitive.Positioner.Props["side"];
   anchor?: ComboboxPrimitive.Positioner.Props["anchor"];
+  collisionAvoidance?: ComboboxPrimitive.Positioner.Props["collisionAvoidance"];
 }) {
   const { chipsRef, multiple } = React.use(ComboboxContext);
   const anchor = anchorProp ?? (multiple ? chipsRef : undefined);
@@ -189,6 +191,7 @@ function ComboboxPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
+        collisionAvoidance={collisionAvoidance}
         className="z-[130] select-none"
         data-slot="combobox-positioner"
         side={side}
