@@ -1256,16 +1256,6 @@ export const layer = Layer.effect(
           input.id === undefined ? {} : { taskId: input.id },
         );
       }
-      // Refused on save rather than at run time; a disabled task can still be saved, so one
-      // stored above the ceiling can be turned off before its mode is lowered. A task bound to a
-      // thread runs in that thread's mode, which the orchestrator checks instead.
-      const modeDenial =
-        input.enabled && input.threadId == null
-          ? managedRuntimeModeDenial(managedPolicy.summary, input.runtimeMode)
-          : undefined;
-      if (modeDenial !== undefined) {
-        return yield* taskError(modeDenial, input.id === undefined ? {} : { taskId: input.id });
-      }
       const now = yield* localNow;
       const uuid =
         input.commandId === undefined
@@ -1286,6 +1276,18 @@ export const layer = Layer.effect(
       // keep their run history, and so real load failures propagate instead
       // of silently resetting an existing row.
       const existingTask = yield* findTask(id);
+      const threadMode = resolveThreadMode(input, existingTask);
+      const threadId =
+        threadMode === "new_thread" ? null : (input.threadId ?? existingTask?.threadId ?? null);
+      // Refused on save rather than at run time; a disabled task can still be saved, so one
+      // stored above the ceiling can be turned off before its mode is lowered. A task bound to a
+      // thread runs in that thread's mode, which the orchestrator checks instead. Checked before
+      // the save consumes a webhook secret.
+      const modeDenial =
+        input.enabled && threadId === null
+          ? managedRuntimeModeDenial(managedPolicy.summary, input.runtimeMode)
+          : undefined;
+      if (modeDenial !== undefined) return yield* taskError(modeDenial, { taskId: id });
       // Keep the existing next_run_at when the schedule itself is untouched:
       // editing a title or prompt must not postpone (or resurrect) a due
       // run — only schedule/enabled changes restart the clock.
@@ -1365,7 +1367,6 @@ export const layer = Layer.effect(
         existingTask !== null &&
         existingTask.enabled === input.enabled &&
         isSameSchedule(existingTask.schedule, schedule);
-      const threadMode = resolveThreadMode(input, existingTask);
       if (!scheduleUnchanged)
         yield* requireFutureOnce({ enabled: input.enabled, schedule }, now, id);
       const task: ScheduledTask = {
@@ -1375,8 +1376,7 @@ export const layer = Layer.effect(
         enabled: input.enabled,
         schedule,
         projectId: input.projectId,
-        threadId:
-          threadMode === "new_thread" ? null : (input.threadId ?? existingTask?.threadId ?? null),
+        threadId,
         threadMode,
         workspaceStrategy,
         modelSelection: input.modelSelection,

@@ -667,19 +667,21 @@ it.effect("refuses saving an enabled task above the policy ceiling", () =>
         .pipe(Effect.flip);
       assert.equal(reenabled.message, "Example Corp limits threads to Auto-accept edits.");
       // A task bound to a thread runs in that thread's mode, so its own is not checked.
-      yield* service.upsert({
+      const bound = {
         id: ScheduledTaskId.make("task:bound"),
         title: "Follow up",
         prompt: "Check progress",
         enabled: true,
         schedule: { type: "interval", everyMs: 60_000 },
         projectId: ProjectId.make("project:test"),
-        threadId: ThreadId.make("thread:bound"),
         workspaceStrategy: { type: "root" },
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",
-      });
+      } as const;
+      yield* service.upsert({ ...bound, threadId: ThreadId.make("thread:bound") });
+      // Nor when an edit omits the thread it stays bound to.
+      yield* service.upsert(bound);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
