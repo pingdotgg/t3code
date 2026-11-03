@@ -47,6 +47,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { createAttachmentId } from "../attachmentStore.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ServerConfig from "../config.ts";
@@ -2405,6 +2406,140 @@ it.layer(layerLegacyImportTest)("OrchestrationV2 legacy import", (it) => {
   );
 });
 
+// A run fork stores no message rows; it shows its source's prompt, image included, by reading through.
+const seedImagePromptRunFork = Effect.fn("test.seedImagePromptRunFork")(function* (key: string) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const eventSink = yield* EventSink.EventSinkV2;
+  const now = yield* DateTime.now;
+  const sourceThreadId = ThreadId.make(`image-fork-source:${key}`);
+  const forkThreadId = ThreadId.make(`image-fork-target:${key}`);
+  const runId = RunId.make(`image-fork-run:${key}`);
+  const messageId = MessageId.make(`image-fork-message:${key}`);
+  const attachmentId = createAttachmentId(sourceThreadId, "png")!;
+  const text = "What is in this screenshot?";
+  const attachments = [
+    {
+      type: "image" as const,
+      id: attachmentId,
+      name: "screenshot.png",
+      mimeType: "image/png",
+      sizeBytes: 8,
+    },
+  ];
+  yield* orchestrator.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make(`image-fork-create:${key}`),
+    threadId: sourceThreadId,
+    projectId: ProjectId.make(`image-fork-project:${key}`),
+    title: "Image source",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+  });
+  yield* eventSink.write({
+    events: [
+      {
+        id: EventId.make(`image-fork-run:${key}`),
+        type: "run.created",
+        threadId: sourceThreadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId: sourceThreadId,
+          ordinal: 1,
+          providerInstanceId: modelSelection.instanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: messageId,
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      },
+      {
+        id: EventId.make(`image-fork-message:${key}`),
+        type: "message.updated",
+        threadId: sourceThreadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: messageId,
+          threadId: sourceThreadId,
+          runId,
+          nodeId: null,
+          role: "user",
+          text,
+          attachments,
+          streaming: false,
+          createdBy: "user",
+          creationSource: "web",
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      {
+        id: EventId.make(`image-fork-prompt:${key}`),
+        type: "turn-item.updated",
+        threadId: sourceThreadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`image-fork-prompt:${key}`),
+          threadId: sourceThreadId,
+          runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "user_message",
+          createdBy: "user",
+          creationSource: "web",
+          messageId,
+          inputIntent: "turn_start",
+          text,
+          attachments,
+        },
+      },
+    ],
+  });
+  yield* orchestrator.dispatch({
+    type: "thread.fork",
+    commandId: CommandId.make(`image-fork-fork:${key}`),
+    sourceThreadId,
+    targetThreadId: forkThreadId,
+    sourcePoint: { type: "run", runId },
+    createdBy: "user",
+    creationSource: "web",
+  });
+  return { sourceThreadId, forkThreadId, attachmentId };
+});
+
+const queuedAttachmentCleanup = Effect.fn("test.queuedAttachmentCleanup")(function* (
+  commandId: CommandId,
+) {
+  const outbox = yield* EffectOutbox.EffectOutboxV2;
+  return (yield* outbox.listByCommandId(commandId)).flatMap((effect) =>
+    effect.request.type === "attachment.cleanup" ? effect.request.attachmentIds : [],
+  );
+});
+
 it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
     Effect.gen(function* () {
@@ -2719,6 +2854,57 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(projection.thread.modelSelection.model, "gpt-5.5");
       assert.isNotNull(projection.thread.archivedAt);
       assert.isNotNull(projection.thread.deletedAt);
+    }),
+  );
+
+  it.effect("deleting a thread keeps the attachments a live run fork still shows", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { sourceThreadId, forkThreadId, attachmentId } =
+        yield* seedImagePromptRunFork("delete-source");
+      const deleteCommandId = CommandId.make("image-fork-delete-source");
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: deleteCommandId,
+        threadId: sourceThreadId,
+      });
+      const fork = yield* orchestrator.getThreadProjection(forkThreadId);
+      assert.isNull(fork.thread.deletedAt);
+      assert.include(
+        fork.visibleTurnItems.flatMap(({ item }) =>
+          item.type === "user_message" ? item.attachments.map((file) => file.id) : [],
+        ),
+        attachmentId,
+      );
+      assert.notInclude(
+        yield* queuedAttachmentCleanup(deleteCommandId),
+        attachmentId,
+        "deleting the source queued cleanup of an image its live fork still shows",
+      );
+    }),
+  );
+
+  it.effect("deleting the last thread that shows an inherited attachment cleans it up", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { sourceThreadId, forkThreadId, attachmentId } =
+        yield* seedImagePromptRunFork("delete-both");
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("image-fork-delete-both-source"),
+        threadId: sourceThreadId,
+      });
+      const deleteForkCommandId = CommandId.make("image-fork-delete-both-fork");
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: deleteForkCommandId,
+        threadId: forkThreadId,
+      });
+      assert.include(
+        yield* queuedAttachmentCleanup(deleteForkCommandId),
+        attachmentId,
+        "deleting the last fork that shows the inherited image left it uncleaned",
+      );
     }),
   );
 
