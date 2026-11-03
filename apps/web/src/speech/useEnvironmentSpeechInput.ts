@@ -320,7 +320,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       request === startRequestRef.current &&
       controllerRef.current === expectedController &&
       latestInputRef.current.ownerKey === expectedOwner;
-    setQueuedStart({ prepared, request });
     let latestStatus: EnvironmentSpeechStatus;
     try {
       latestStatus = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
