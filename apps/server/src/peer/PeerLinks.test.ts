@@ -425,6 +425,8 @@ it.effect("a linked peer that is renamed shows its new name", () =>
 
       yield* Ref.set(b.descriptor, descriptorOf(box.environmentId, "Box Studio"));
       expect((yield* a.links.list).map((link) => link.label)).toEqual(["Box Studio"]);
+      const storedAfterList = yield* a.links.get(box.environmentId);
+      expect(Option.map(storedAfterList, (link) => link.label)).toEqual(Option.some("Box Studio"));
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
