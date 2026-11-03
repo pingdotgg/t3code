@@ -1,3 +1,4 @@
+import { useNavigation } from "@react-navigation/native";
 import { useMemo } from "react";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
@@ -22,7 +23,8 @@ export function ThreadHeader(
   const goBack = useWorkspaceBackNavigation("threads");
   const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive } =
     useAdaptiveWorkspaceLayout();
-  const { onOpenTerminal, onMergeBack } = props.gitControls;
+  const navigation = useNavigation();
+  const { onOpenTerminal, onMergeBack, environmentId, threadId, hasThread } = props.gitControls;
   const native = useThreadHeaderOptions(props);
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
     const actions: AppBarAction[] = [];
@@ -50,6 +52,16 @@ export function ThreadHeader(
       });
     }
     actions.push({
+      accessibilityLabel: "Open activity",
+      icon: "list.number",
+      disabled: hasThread === false,
+      onPress: () =>
+        navigation.navigate("ThreadActivity", {
+          environmentId: String(environmentId),
+          threadId: String(threadId),
+        }),
+    });
+    actions.push({
       accessibilityLabel: "Open git controls",
       icon: "point.topleft.down.curvedto.point.bottomright.up",
       onPress: props.onOpenGitInspector,
@@ -68,6 +80,10 @@ export function ThreadHeader(
     props.onOpenFilesInspector,
     onOpenTerminal,
     onMergeBack,
+    navigation,
+    environmentId,
+    threadId,
+    hasThread,
     props.onOpenGitInspector,
     toggleAuxiliaryPane,
     props.onReturnToThread,
