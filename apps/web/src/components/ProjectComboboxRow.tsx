@@ -62,7 +62,12 @@ export function ProjectRowLeading(props: {
       ) : null}
       {props.machine ? (
         <span
-          className={cn("absolute -right-1.5 -bottom-1 z-10 flex", selection && "cursor-pointer")}
+          className={cn(
+            "absolute -right-1.5 -bottom-1 z-10 flex",
+            selection && "cursor-pointer",
+            // Checked rows drop the badge visually but keep its label for screen readers.
+            selection?.checked && "pointer-events-none opacity-0",
+          )}
           {...toggleHandlers}
         >
           {props.machine}
