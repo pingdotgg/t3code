@@ -11,6 +11,7 @@ import type { CursorSettings } from "../settings.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import { cursorSdkModelSelection } from "./sdkModel.ts";
 import type { CursorAuth } from "./auth.ts";
+import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorSdk from "./CursorSdk.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -22,12 +23,10 @@ function cursorSdkResultDetail(result: RunResult): string {
   switch (result.status) {
     case "cancelled":
       return "Cursor SDK request was cancelled.";
-    case "error": {
-      const message = result.error?.message.trim();
-      return message
-        ? `Cursor SDK request finished with an error: ${message}`
+    case "error":
+      return CursorAgentSdk.isCursorUsageLimitError(result.error)
+        ? "Cursor usage limit reached. Try again later or choose another text-generation provider."
         : "Cursor SDK request finished with an error.";
-    }
     case "finished":
       return "Cursor SDK returned empty output.";
   }
@@ -186,6 +185,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         return yield* new TextGenerationError({
           operation,
           detail: cursorSdkResultDetail(promptResult),
+          ...(promptResult.error ? { cause: promptResult.error } : {}),
         });
       }
 
