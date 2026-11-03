@@ -104,7 +104,7 @@ export interface PullRequestMergeEvent extends PullRequestRef {
 
 type PullRequestReading = Pick<
   PullRequestSummary,
-  "state" | "isDraft" | "updatedAt" | "observedAt"
+  "state" | "isDraft" | "isInMergeQueue" | "updatedAt" | "observedAt"
 >;
 
 function supersedesReading(current: PullRequestReading | undefined, next: PullRequestReading) {
@@ -1681,6 +1681,9 @@ export const make = Effect.gen(function* () {
             updatedAt: changeRequest.updatedAt,
             observedAt,
             ...(changeRequest.isDraft === undefined ? {} : { isDraft: changeRequest.isDraft }),
+            ...(changeRequest.isInMergeQueue === undefined
+              ? {}
+              : { isInMergeQueue: changeRequest.isInMergeQueue }),
             ...(changeRequest.author === undefined ? {} : { author: changeRequest.author }),
             ...(changeRequest.additions === undefined
               ? {}
@@ -1795,6 +1798,9 @@ export const make = Effect.gen(function* () {
               ? {}
               : { baseComparison: changeRequest.baseComparison }),
             ...(changeRequest.behindBy === undefined ? {} : { behindBy: changeRequest.behindBy }),
+            ...(changeRequest.isInMergeQueue === undefined
+              ? {}
+              : { isInMergeQueue: changeRequest.isInMergeQueue }),
             ...(changeRequest.autoMergeEnabled === undefined
               ? {}
               : { autoMergeEnabled: changeRequest.autoMergeEnabled }),
@@ -3147,6 +3153,7 @@ export const make = Effect.gen(function* () {
     url: detail.url,
     state: detail.state,
     isDraft: detail.isDraft,
+    ...(detail.isInMergeQueue === undefined ? {} : { isInMergeQueue: detail.isInMergeQueue }),
     author: detail.author,
     additions: detail.additions,
     deletions: detail.deletions,
@@ -3176,10 +3183,13 @@ export const make = Effect.gen(function* () {
       detailStates.set(scope, {
         state: next.state,
         isDraft: next.isDraft,
+        isInMergeQueue: next.isInMergeQueue,
         updatedAt: next.updatedAt,
         observedAt: next.observedAt,
       });
-      return (current?.state !== next.state || current?.isDraft !== next.isDraft) &&
+      return (current?.state !== next.state ||
+        current?.isDraft !== next.isDraft ||
+        current?.isInMergeQueue !== next.isInMergeQueue) &&
         ref.host !== undefined
         ? PubSub.publish(stateChanges, {
             host: ref.host,

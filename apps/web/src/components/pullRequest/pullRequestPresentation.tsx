@@ -104,8 +104,16 @@ export function PullRequestReviewDecisionGlyph({
 export function resolvePullRequestState(input: {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly isInMergeQueue?: boolean | undefined;
 }): PullRequestStatePresentation {
-  const key = input.state === "open" && input.isDraft ? "draft" : input.state;
+  const key =
+    input.state !== "open"
+      ? input.state
+      : input.isDraft
+        ? "draft"
+        : input.isInMergeQueue === true
+          ? "queued"
+          : "open";
   return PULL_REQUEST_STATE_PRESENTATION[key];
 }
 

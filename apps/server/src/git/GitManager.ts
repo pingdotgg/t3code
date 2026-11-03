@@ -203,6 +203,7 @@ interface OpenPrInfo {
 interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
   state: "open" | "closed" | "merged";
   isDraft?: boolean;
+  isInMergeQueue?: boolean;
   closedAt?: string | null;
   mergedAt?: string | null;
   updatedAt: Option.Option<DateTime.Utc>;
@@ -408,6 +409,7 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     ...(summary.headSha !== undefined ? { headSha: summary.headSha } : {}),
     state: summary.state ?? "open",
     ...(summary.isDraft === true ? { isDraft: true } : {}),
+    ...(summary.isInMergeQueue === true ? { isInMergeQueue: true } : {}),
     closedAt: summary.closedAt ?? null,
     mergedAt: summary.mergedAt ?? null,
     updatedAt: summary.updatedAt,
@@ -585,6 +587,7 @@ function toStatusPr(pr: PullRequestInfo): {
   headRef: string;
   state: "open" | "closed" | "merged";
   isDraft?: boolean;
+  isInMergeQueue?: boolean;
   updatedAt: string | null;
 } {
   return {
@@ -595,6 +598,7 @@ function toStatusPr(pr: PullRequestInfo): {
     headRef: pr.headRefName,
     state: pr.state,
     ...(pr.isDraft === true ? { isDraft: true } : {}),
+    ...(pr.isInMergeQueue === true ? { isInMergeQueue: true } : {}),
     updatedAt: Option.match(pr.updatedAt, {
       onNone: () => null,
       onSome: (updatedAt) => DateTime.formatIso(updatedAt),
@@ -1188,7 +1192,11 @@ export const make = Effect.gen(function* () {
   const pullRequestStateChanges = yield* PubSub.sliding<ThreadPullRequestKey>(64);
   const lookupStates = new Map<
     string,
-    { readonly state: PullRequestInfo["state"]; readonly isDraft: boolean }
+    {
+      readonly state: PullRequestInfo["state"];
+      readonly isDraft: boolean;
+      readonly isInMergeQueue: boolean;
+    }
   >();
   const noteLookupState = (pr: PullRequestInfo) =>
     Effect.suspend(() => {
@@ -1202,9 +1210,14 @@ export const make = Effect.gen(function* () {
         const oldest = lookupStates.keys().next().value;
         if (oldest !== undefined) lookupStates.delete(oldest);
       }
-      lookupStates.set(id, { state: pr.state, isDraft: pr.isDraft === true });
+      lookupStates.set(id, {
+        state: pr.state,
+        isDraft: pr.isDraft === true,
+        isInMergeQueue: pr.isInMergeQueue === true,
+      });
       return (previous?.state ?? "open") === pr.state &&
-        (previous?.isDraft === true) === (pr.isDraft === true)
+        (previous?.isDraft === true) === (pr.isDraft === true) &&
+        (previous?.isInMergeQueue === true) === (pr.isInMergeQueue === true)
         ? Effect.void
         : PubSub.publish(pullRequestStateChanges, key);
     });
