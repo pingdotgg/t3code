@@ -72,11 +72,18 @@ const event = (
   type: string,
   data: Record<string, unknown>,
   label?: string,
+  version = 1,
 ): ProviderReplayEntry => ({
   type: "emit_inbound",
   frame: {
     type: "sdk.event",
-    event: { id: `evt_${type.replaceAll(".", "")}0000`, created: 1, type, data, ...durable },
+    event: {
+      id: `evt_${type.replaceAll(".", "")}0000`,
+      created: 1,
+      type,
+      data,
+      durable: { ...durable.durable, version },
+    },
   },
   ...(label === undefined ? {} : { label }),
 });
@@ -563,6 +570,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         status: 429,
       },
     },
+    {
+      name: "a Claude limit without a reset timestamp",
+      failureClass: "usage_limit",
+      error: {
+        type: "provider.unknown",
+        message: "You've hit your session limit · resets 5:20pm (Europe/Berlin)",
+      },
+    },
+    {
+      name: "an unrelated provider.unknown failure",
+      failureClass: "provider_error",
+      error: {
+        type: "provider.unknown",
+        message: "Request failed. Resets at 2026-11-02T20:00:00Z.",
+      },
+    },
   ] as const)("classifies $name as $failureClass", ({ error, failureClass }) =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -581,6 +604,35 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         retryable: null,
       });
     }).pipe(Effect.scoped),
+  );
+
+  // regression: #29289 Claude weekly limits through claude-agent lost their usage-limit reset
+  it.effect(
+    "classifies a Claude weekly limit as a usage limit that resets at its reported time",
+    () =>
+      Effect.gen(function* () {
+        const message =
+          "You've hit your weekly limit · resets 9pm (Europe/Paris) Resets at 2026-11-02T20:00:00.000Z.";
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.failed", {
+            sessionID: SESSION,
+            error: { type: "provider.unknown", message },
+          }),
+        ]);
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        const ended = yield* Fiber.join(terminal);
+        assert.equal(ended?.status, "failed");
+        assert.deepEqual(ended?.failure, {
+          class: "usage_limit",
+          code: "provider.unknown",
+          message,
+          retryable: null,
+          resetAt: "2026-11-02T20:00:00.000Z",
+        });
+      }).pipe(Effect.scoped),
   );
 
   it.effect("ends the turn when its terminal event is one this build cannot decode", () =>
@@ -898,47 +950,85 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("keeps a finished background subagent's queued report as pending work", () =>
-    Effect.gen(function* () {
-      const { runtime, thread } = yield* resumed([
-        ...backgroundLaunch(CHILD),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        event("session.execution.succeeded", { sessionID: CHILD }),
-        event("session.inbox.enqueued", {
-          inboxID: "msg_report",
-          sessionID: SESSION,
-          item: {
-            type: "synthetic",
-            payload: {
-              text: `<subagent sessionID="${CHILD}" state="completed" description="Sleep">\nCHILD_OK\n</subagent>`,
-              description: "Sleep",
-              metadata: {
-                source: "subagent",
-                childID: CHILD,
-                agent: "General",
-                state: "completed",
-              },
-            },
-            delivery: "steer",
-          },
-        }),
-        event("session.usage.updated", { sessionID: SESSION }),
-      ]);
-      const reported = yield* Deferred.make<void>();
-      yield* runtime.events.pipe(
-        Stream.tap((event) =>
-          event.type === "subagent.updated" && event.subagent.status === "completed"
-            ? Deferred.succeed(reported, undefined)
-            : Effect.void,
-        ),
-        Stream.runDrain,
-        Effect.forkScoped,
-      );
-      yield* runtime.startTurn(withLineage(thread));
-      yield* Deferred.await(reported);
-      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
-      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-    }).pipe(Effect.scoped),
+  it.effect(
+    "keeps a finished background subagent's queued report pending until its native continuation ends",
+    () =>
+      Effect.gen(function* () {
+        const gate = makeProviderReplayGate(["continue"]);
+        const { runtime, thread } = yield* resumed(
+          [
+            ...nestedLaunch,
+            event("session.execution.succeeded", { sessionID: DEEP }),
+            deepReport("completed"),
+            event("session.model.selected", {
+              sessionID: SESSION,
+              model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
+            }),
+            event("session.execution.started", { sessionID: MIDDLE }, "continue"),
+            event("session.inbox.delivered", { sessionID: MIDDLE, inboxID: "msg_deep_report" }),
+            event("session.text.ended", {
+              sessionID: MIDDLE,
+              assistantMessageID: "msg_native_continuation",
+              ordinal: 0,
+              text: "GRANDCHILD_OK",
+            }),
+            event("session.execution.succeeded", { sessionID: MIDDLE }),
+            event("session.model.selected", {
+              sessionID: SESSION,
+              model: { providerID: "opencode", id: "big-pickle", variant: "none" },
+            }),
+          ],
+          { replayGate: gate },
+        );
+        const queued = yield* Deferred.make<void>();
+        const drained = yield* Deferred.make<void>();
+        const timeline: Array<boolean | string> = [];
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.gen(function* () {
+              if (event.type === "provider_thread.updated") {
+                if (
+                  event.providerThread.nativeThreadRef?.nativeId === MIDDLE &&
+                  event.pendingBackgroundWork !== undefined
+                ) {
+                  timeline.push(event.pendingBackgroundWork);
+                }
+                if (event.providerThread.id === thread.id) {
+                  const variant =
+                    event.providerThread.nativeMetadata?.modelSelection?.options?.[0]?.value;
+                  if (variant === "thinking") yield* Deferred.succeed(queued, undefined);
+                  if (variant === "none") yield* Deferred.succeed(drained, undefined);
+                }
+              }
+              if (
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.nativeTurnRef?.nativeId === `${MIDDLE}:turn:2`
+              ) {
+                timeline.push(event.providerTurn.status);
+              }
+              if (event.type === "message.updated" && event.message.text === "GRANDCHILD_OK") {
+                timeline.push(event.message.text);
+              }
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        yield* Deferred.await(queued);
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+        assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        assert.strictEqual(timeline.at(-1), true);
+        timeline.length = 0;
+        gate.release("continue");
+        yield* Deferred.await(drained);
+        assert.deepEqual(
+          timeline.filter((entry) => typeof entry === "string"),
+          ["running", "GRANDCHILD_OK", "completed"],
+        );
+        assert.isAbove(timeline.indexOf(false), timeline.indexOf("completed"));
+        assert.strictEqual(timeline.at(-1), false);
+        assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      }).pipe(Effect.scoped),
   );
 
   const returnedRunning = (id: string): ProviderReplayEntry => ({
@@ -1238,6 +1328,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     Effect.gen(function* () {
       const deep: Array<string> = [];
       const middleTurns = new Map<string, string>();
+      const pendingSnapshots = new Map<string, boolean>();
+      const variants = new Map<string, unknown>();
+      let rootVariant: unknown;
       const terminals: Array<string> = [];
       const changed = yield* Deferred.make<void>();
       let wake = changed;
@@ -1245,6 +1338,16 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         Stream.tap((event) =>
           Effect.gen(function* () {
             if (event.type === "turn.terminal") terminals.push(event.status);
+            if (event.type === "provider_thread.updated") {
+              const nativeId = event.providerThread.nativeThreadRef?.nativeId;
+              if (nativeId != null && event.pendingBackgroundWork !== undefined) {
+                pendingSnapshots.set(nativeId, event.pendingBackgroundWork);
+              }
+              const variant =
+                event.providerThread.nativeMetadata?.modelSelection?.options?.[0]?.value;
+              if (nativeId != null) variants.set(nativeId, variant);
+              if (nativeId === SESSION) rootVariant = variant;
+            }
             if (event.type === "subagent.updated" && event.subagent.title === "Deep") {
               deep.push(event.subagent.status);
             }
@@ -1269,8 +1372,163 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             yield* until(check);
           });
         });
-      return { deep, middleTurns, terminals, until };
+      return {
+        deep,
+        middleTurns,
+        terminals,
+        pendingSnapshots,
+        variants,
+        get rootVariant() {
+          return rootVariant;
+        },
+        until,
+      };
     });
+
+  it.effect("clears a nested report cancelled during a held wake", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const gate = makeProviderReplayGate(["drained"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          ...backgroundLaunch(CHILD),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          childReport("msg_report", "CHILD_OK"),
+          event("session.execution.started", { sessionID: SESSION }),
+          ...nestedLaunch.slice(3, -2),
+          event(
+            "session.tool.success",
+            {
+              ...toolOf(SESSION, "call-middle"),
+              content: [{ type: "text", text: "MIDDLE_OK" }],
+              metadata: { sessionID: MIDDLE, status: "completed", truncated: false },
+              executed: false,
+            },
+            undefined,
+            2,
+          ),
+          event("session.execution.succeeded", { sessionID: DEEP }),
+          deepReport("completed"),
+          event("session.inbox.cancelled", { sessionID: MIDDLE, inboxID: "msg_deep_report" }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.model.selected", {
+            sessionID: SESSION,
+            model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
+          }),
+          event(
+            "session.model.selected",
+            {
+              sessionID: SESSION,
+              model: { providerID: "opencode", id: "big-pickle", variant: "none" },
+            },
+            "drained",
+          ),
+        ],
+        { replayGate: gate },
+      ).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) =>
+            Effect.sync(() => {
+              offers.push(request);
+            }),
+          take: Effect.never,
+        }),
+      );
+      const watch = yield* watchNested(runtime);
+      yield* runtime.startTurn(withLineage(thread));
+      assert.isTrue(yield* Effect.promise(() => gate.waitForReached("drained")));
+      yield* watch.until(() => watch.rootVariant === "thinking");
+      assert.lengthOf(offers, 1);
+      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
+      gate.release("drained");
+      yield* watch.until(() => watch.rootVariant === "none");
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.strictEqual(watch.pendingSnapshots.get(MIDDLE), false);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("clears the caller's pending work when a called session's held wake runs", () =>
+    Effect.gen(function* () {
+      const OTHER = "ses_other00000000000000000000";
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const gate = makeProviderReplayGate(["drained"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.get", { sessionID: OTHER }),
+          replyData("session.get", sessionInfo({ id: OTHER })),
+          out("permission.list", { sessionID: OTHER }),
+          replyData("permission.list", []),
+          out("session.form.list", { sessionID: OTHER }),
+          replyData("session.form.list", []),
+          event("session.execution.started", { sessionID: OTHER }),
+          event("session.execution.succeeded", { sessionID: OTHER }),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.tool.input.started", {
+            ...toolOf(SESSION, "call-other"),
+            name: "subagent",
+          }),
+          event("session.tool.called", {
+            ...toolOf(SESSION, "call-other"),
+            name: "subagent",
+            input: { description: "Other", prompt: "again" },
+            executed: false,
+          }),
+          event("session.tool.progress", {
+            ...toolOf(SESSION, "call-other"),
+            metadata: { sessionID: OTHER, status: "running" },
+          }),
+          event("session.tool.success", {
+            ...toolOf(SESSION, "call-other"),
+            content: [{ type: "text", text: "OTHER_OK" }],
+            metadata: { sessionID: OTHER, status: "completed", truncated: false },
+            executed: false,
+          }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event(
+            "session.model.selected",
+            {
+              sessionID: OTHER,
+              model: { providerID: "opencode", id: "big-pickle", variant: "none" },
+            },
+            "drained",
+          ),
+        ],
+        { replayGate: gate },
+      ).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) =>
+            Effect.sync(() => {
+              offers.push(request);
+            }),
+          take: Effect.never,
+        }),
+      );
+      const other = yield* runtime.resumeThread({
+        providerThread: {
+          ...thread,
+          id: ProviderThreadId.make("provider-thread:opencode2-adapter:other"),
+          nativeThreadRef: { driver: OPENCODE_PROVIDER, nativeId: OTHER, strength: "strong" },
+        },
+        threadId,
+        modelSelection: bigPickle,
+        runtimePolicy: policy(),
+      });
+      const watch = yield* watchNested(runtime);
+      yield* watch.until(() => offers.length === 1);
+      yield* runtime.startTurn(withLineage(thread));
+      assert.isTrue(yield* Effect.promise(() => gate.waitForReached("drained")));
+      // The called session's held wake is its caller's pending work too.
+      yield* watch.until(() => watch.pendingSnapshots.get(SESSION) === true);
+      yield* runtime.startTurn(continuationTurn(other, offers[0]!));
+      gate.release("drained");
+      yield* watch.until(() => watch.variants.get(OTHER) === "none");
+      assert.isFalse(watch.pendingSnapshots.get(OTHER));
+      assert.isFalse(watch.pendingSnapshots.get(SESSION));
+    }).pipe(Effect.scoped),
+  );
 
   it.effect("stops a foreground subagent's background subagent after the turn ended", () =>
     Effect.gen(function* () {
@@ -2150,6 +2408,20 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const { runtime, thread } = yield* resumed([
         out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
         promptAccepted,
+        event("session.step.started", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_before_gap",
+          agent: "build",
+          model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+          started: 1,
+        }),
+        event("session.step.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_before_gap",
+          finish: "tool-calls",
+          cost: 0,
+          tokens: { input: 100, output: 10, reasoning: 0, cache: { read: 0, write: 0 } },
+        }),
         ...reconnected({}, "succeeded"),
       ]);
       const events = yield* runtime.events.pipe(
@@ -2164,6 +2436,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         "command_execution:completed",
       ]);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      // Steps that ended during the gap sent no tokens or models, so both stay incomplete.
+      const settled = collected.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+      );
+      const usage =
+        settled?.type === "provider_turn.updated" ? settled.providerTurn.turnTokenUsage : undefined;
+      assert.deepInclude(usage, { usageStatus: "partial", inputTokens: 100, outputTokens: 10 });
+      assert.notProperty(usage, "models");
     }).pipe(Effect.scoped),
   );
 
@@ -2230,6 +2511,76 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("sends a $skill that appears once OpenCode finishes scanning the directory", () =>
+    Effect.gen(function* () {
+      const prompts: Array<unknown> = [];
+      const greet = {
+        id: "greet",
+        name: "greet",
+        path: `${WORK}/.opencode/skills/greet/SKILL.md`,
+        content: "Say hello.",
+      };
+      const { runtime, thread } = yield* resumed(
+        [
+          out("skill.list", { "location[directory]": WORK }),
+          reply("skill.list", { location: { directory: WORK }, data: [] }),
+          // OpenCode answers the model list only once the directory scan has ended.
+          ...directoryModels(WORK),
+          out("skill.list", { "location[directory]": WORK }),
+          reply("skill.list", { location: { directory: WORK }, data: [greet] }),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { onPrompt: (input) => prompts.push(input) },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const started = yield* runtime
+        .startTurn({
+          ...turnInput(thread),
+          message: { ...turnInput(thread).message, text: "$greet again please" },
+        })
+        .pipe(Effect.exit);
+      assert.deepInclude(prompts[0], { skills: [{ id: "greet" }] });
+      assert.isTrue(Exit.isSuccess(started));
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "keeps a $skill found on the first read when the reread after the scan comes back empty",
+    () =>
+      Effect.gen(function* () {
+        const prompts: Array<unknown> = [];
+        const greet = {
+          id: "greet",
+          name: "greet",
+          path: `${WORK}/.opencode/skills/greet/SKILL.md`,
+          content: "Say hello.",
+        };
+        const { runtime, thread } = yield* resumed(
+          [
+            out("skill.list", { "location[directory]": WORK }),
+            reply("skill.list", { location: { directory: WORK }, data: [greet] }),
+            ...directoryModels(WORK),
+            out("skill.list", { "location[directory]": WORK }),
+            reply("skill.list", { location: { directory: WORK }, data: [] }),
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            event("session.execution.succeeded", { sessionID: SESSION }),
+          ],
+          { onPrompt: (input) => prompts.push(input) },
+        );
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn({
+          ...turnInput(thread),
+          message: { ...turnInput(thread).message, text: "$greet then echo $HOME" },
+        });
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+        assert.deepInclude(prompts[0], { skills: [{ id: "greet" }] });
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps a turn still running after a reconnect open for its next events", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -2262,6 +2613,49 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         "Arrived on the new stream.",
       ]);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("continues a reply still streaming at reconnect from the text already shown", () =>
+    Effect.gen(function* () {
+      const delta = (text: string) =>
+        event("session.text.delta", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant_gap",
+          ordinal: 0,
+          delta: text,
+        });
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+        promptAccepted,
+        delta("Sent before the stream dropped"),
+        // OpenCode saves a block's text only when the block ends.
+        ...reconnected({ [SESSION]: { type: "running" } }, undefined, {
+          content: [{ type: "text", text: "" }],
+          finish: undefined,
+        }),
+        ...openRequests([]),
+        delta(" and after it came back."),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const collected = yield* Fiber.join(events);
+      const texts = collected.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+          ? [event.turnItem.text]
+          : [],
+      );
+      assert.deepEqual(texts, [
+        "Sent before the stream dropped",
+        "Sent before the stream dropped",
+        "Sent before the stream dropped and after it came back.",
+        "Sent before the stream dropped and after it came back.",
+      ]);
     }).pipe(Effect.scoped),
   );
 
@@ -2836,6 +3230,40 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("leaves models unknown when a step ends without a seen start", () =>
+    Effect.gen(function* () {
+      const tokens = { input: 10, output: 1, reasoning: 0, cache: { read: 0, write: 0 } };
+      const step = (id: string) => ({ sessionID: SESSION, assistantMessageID: id });
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.step.started", {
+          ...step("msg_seen"),
+          agent: "build",
+          model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+          started: 1,
+        }),
+        event("session.step.ended", { ...step("msg_seen"), finish: "tool-calls", cost: 0, tokens }),
+        event("session.step.ended", { ...step("msg_unseen"), finish: "stop", cost: 0, tokens }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const turn = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+        ),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const settled = Option.getOrUndefined(yield* Fiber.join(turn));
+      const usage =
+        settled?.type === "provider_turn.updated" ? settled.providerTurn.turnTokenUsage : undefined;
+      assert.deepInclude(usage, { usageStatus: "complete", inputTokens: 20, outputTokens: 2 });
+      assert.notProperty(usage, "models");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("reports cache writes as cache creation, not only as input", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -3185,6 +3613,56 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         turn?.type === "provider_turn.updated" ? turn.providerTurn.tokenUsage?.maxTokens : null,
         48000,
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rejects unreadable rollback history before cutting the native session", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("message.list", { sessionID: SESSION, limit: "100", type: undefined }),
+        reply("message.list", {
+          data: [
+            { id: "msg_kept", time: { created: 1 }, text: "first", type: "user" },
+            {
+              id: "msg_compaction",
+              time: { created: 2 },
+              type: "compaction",
+              status: "completed",
+              reason: "auto",
+              summary: "First turn summary",
+              recent: 42,
+            },
+            { id: "msg_dropped", time: { created: 3 }, text: "second", type: "user" },
+          ],
+          cursor: {},
+        }),
+      ]);
+      const now = yield* DateTime.now;
+      const turns = ["msg_kept", "msg_dropped"].map((nativeId, index) => ({
+        id: ProviderTurnId.make(`provider-turn:rollback-history:${index}`),
+        providerThreadId: thread.id,
+        nodeId: NodeId.make(`node:rollback-history:${index}`),
+        runAttemptId: RunAttemptId.make(`attempt:rollback-history:${index}`),
+        nativeTurnRef: { driver: OPENCODE_PROVIDER, nativeId, strength: "weak" as const },
+        ordinal: index + 1,
+        status: "completed" as const,
+        startedAt: now,
+        completedAt: now,
+      }));
+      const failure = yield* runtime
+        .rollbackThread({
+          providerThread: thread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint:rollback-history"),
+            appRunOrdinal: 1,
+            providerTurn: turns[0]!,
+          },
+          providerThreadTurns: turns,
+        })
+        .pipe(Effect.flip);
+      assert.equal(failure._tag, "ProviderAdapterRollbackThreadError");
+      assert.include(Cause.pretty(Cause.fail(failure)), '["recent"]');
     }).pipe(Effect.scoped),
   );
 
@@ -3975,8 +4453,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     Effect.gen(function* () {
       const FORK = "ses_f1484db83ffeLGtrRCFimo1H0e";
       const { runtime, thread, first, second } = yield* continued([
-        out("message.list", "<any>"),
-        reply("message.list", continuedHistory),
+        out("message.list", { sessionID: SESSION, limit: "100", type: "user" }),
+        reply("message.list", { data: [continuedHistory.data[1]], cursor: {} }),
+        out("message.list", { sessionID: SESSION, limit: "100", type: "synthetic" }),
+        reply("message.list", {
+          data: [
+            { id: "msg_later_report", time: { created: 3 }, text: "later", type: "synthetic" },
+          ],
+          cursor: { next: "synthetic-page-2" },
+        }),
+        out("message.list", {
+          sessionID: SESSION,
+          limit: "100",
+          type: "synthetic",
+          cursor: "synthetic-page-2",
+        }),
+        reply("message.list", { data: [continuedHistory.data[0]], cursor: {} }),
         out("session.fork", { sessionID: SESSION, before: "msg_report" }),
         replyData("session.fork", sessionInfo({ id: FORK })),
         out("session.update", { sessionID: FORK, permissions: "<any>" }),

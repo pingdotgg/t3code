@@ -1,5 +1,9 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
+import {
+  normalizeProviderAccentColor,
+  resolveProviderInstanceDisplayName,
+  shouldShowInstanceBadge,
+} from "@t3tools/client-runtime/state/provider-instance-display";
 import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
 import type { ReactNode } from "react";
@@ -7,7 +11,7 @@ import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
 import { subagentCardDetail } from "./subagent-card-presentation";
@@ -102,9 +106,24 @@ function SubagentMetadata(props: {
   const { environmentId, subagent } = props;
   // A task in a linked environment runs a provider instance of that environment.
   const config = useEnvironmentServerConfig(subagent.remoteChild?.environmentId ?? environmentId);
-  const provider = config?.providers.find(
+  const providers = (config?.providers ?? []).map((candidate) => {
+    const rawConfig = config?.settings.providerInstances[candidate.instanceId]?.config;
+    const instanceConfig =
+      rawConfig !== null && typeof rawConfig === "object"
+        ? (rawConfig as Readonly<Record<string, unknown>>)
+        : null;
+    const agentId = instanceConfig?.source === "local" ? undefined : instanceConfig?.agentId;
+    return {
+      ...candidate,
+      driverKind: candidate.driver,
+      accentColor: normalizeProviderAccentColor(candidate.accentColor),
+      acpRegistryAgentId: typeof agentId === "string" ? agentId.trim() || undefined : undefined,
+    };
+  });
+  const provider = providers.find(
     (candidate) => candidate.instanceId === subagent.providerInstanceId,
   );
+  const showBadge = provider !== undefined && shouldShowInstanceBadge(provider, providers);
   const parent = useThreadShell(scopeThreadRef(environmentId, subagent.threadId))?.source;
   const child = useThreadShell(
     subagent.childThreadId === null ? null : scopeThreadRef(environmentId, subagent.childThreadId),
@@ -123,11 +142,22 @@ function SubagentMetadata(props: {
   });
   return (
     <View className="min-w-0 flex-row items-center gap-1.5">
-      <ProviderIcon
-        provider={provider?.driver ?? subagent.driver}
-        iconUrl={provider?.iconUrl}
-        size={12}
-      />
+      {showBadge ? (
+        <ProviderInstanceIcon
+          provider={provider.driver}
+          iconUrl={provider.iconUrl}
+          size={12}
+          displayName={resolveProviderInstanceDisplayName(provider)}
+          accentColor={provider.accentColor}
+          showBadge
+        />
+      ) : (
+        <ProviderIcon
+          provider={provider?.driver ?? subagent.driver}
+          iconUrl={provider?.iconUrl}
+          size={12}
+        />
+      )}
       <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
         {provider ? `${resolveProviderInstanceDisplayName(provider)} · ` : ""}
         {modelLabel}
