@@ -9,6 +9,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
   parseGoalCommand,
@@ -114,6 +115,44 @@ const PROMPT_REFUSAL_TAGS = [
 const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
+
+/**
+ * Whether `providerThread`'s native session holds none of the turns kept before `run`. Legacy
+ * attempts lack a native id, so a reset is only visible once some attempt here recorded one.
+ */
+const nativeSessionMissesKeptTurns = (
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "runs" | "attempts" | "providerTurns" | "contextHandoffs"
+  >,
+  providerThread: OrchestrationV2ProviderThread,
+  run: OrchestrationV2Run,
+): boolean => {
+  const nativeId = providerThread.nativeThreadRef?.nativeId;
+  if (nativeId === undefined) return false;
+  const acceptedAttemptIds = new Set(projection.providerTurns.map((turn) => turn.runAttemptId));
+  const keptRunIds = new Set(
+    projection.runs
+      .filter((source) => source.ordinal < run.ordinal && source.status !== "rolled_back")
+      .map((source) => source.id),
+  );
+  const accepted = projection.attempts.filter(
+    (attempt) =>
+      attempt.providerThreadId === providerThread.id && acceptedAttemptIds.has(attempt.id),
+  );
+  const kept = accepted.filter((attempt) => keptRunIds.has(attempt.runId));
+  return (
+    kept.length > 0 &&
+    accepted.some((attempt) => attempt.nativeThreadId !== undefined) &&
+    !kept.some((attempt) => attempt.nativeThreadId === nativeId) &&
+    !projection.contextHandoffs.some(
+      (handoff) =>
+        handoff.toProviderThreadId === providerThread.id &&
+        handoff.delivery?.nativeThreadId === nativeId &&
+        handoff.delivery.status !== "pending",
+    )
+  );
+};
 
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
@@ -1092,16 +1131,22 @@ export const layer: Layer.Layer<
             coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
             strategy: "full_thread_summary",
             runs: projection.runs,
-            items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
-              (item) =>
-                item.runId === null ||
-                projection.runs.some(
-                  (source) =>
-                    source.id === item.runId &&
-                    source.ordinal < run.ordinal &&
-                    source.status !== "rolled_back",
-                ),
-            ),
+            items: [
+              ...(yield* ContextHandoffService.readInheritedHandoffItems(
+                projectionStore,
+                projection.thread,
+              )),
+              ...(yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
+                (item) =>
+                  item.runId === null ||
+                  projection.runs.some(
+                    (source) =>
+                      source.id === item.runId &&
+                      source.ordinal < run.ordinal &&
+                      source.status !== "rolled_back",
+                  ),
+              ),
+            ],
             createdAt,
           });
           return { handoff, transferId, createdAt };
@@ -1253,34 +1298,9 @@ export const layer: Layer.Layer<
             handoff.delivery?.status === "pending",
         );
         // A provider that cannot truncate rolls back into a fresh native session holding none of the kept turns.
-        const nativeId = providerThread.nativeThreadRef.nativeId;
-        const providerTurnAttemptIds = new Set(
-          projection.providerTurns.map((turn) => turn.runAttemptId),
-        );
-        const keptAttempts = projection.attempts.filter(
-          (attempt) =>
-            attempt.providerThreadId === providerThread.id &&
-            providerTurnAttemptIds.has(attempt.id) &&
-            projection.runs.some(
-              (source) =>
-                source.id === attempt.runId &&
-                source.ordinal < run.ordinal &&
-                source.status !== "rolled_back",
-            ),
-        );
         const nativeSessionLacksKeptTurns =
           !session.providerSession.capabilities.checkpointing.providerCanRollbackConversation &&
-          keptAttempts.length > 0 &&
-          !keptAttempts.some(
-            (attempt) =>
-              attempt.nativeThreadId === undefined || attempt.nativeThreadId === nativeId,
-          ) &&
-          !projection.contextHandoffs.some(
-            (handoff) =>
-              handoff.toProviderThreadId === providerThread.id &&
-              handoff.delivery?.nativeThreadId === nativeId &&
-              handoff.delivery.status !== "pending",
-          );
+          nativeSessionMissesKeptTurns(projection, providerThread, run);
         const resumed = yield* Effect.result(
           uncertainDelivery || nativeSessionLacksKeptTurns
             ? Effect.fail(

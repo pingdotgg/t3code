@@ -1506,6 +1506,7 @@ describe("orchestration v2 provider switching", () => {
       rollback: "replaces_native_thread",
       failResumeAfterRollback: false,
       replaysKeptTurn: true,
+      history: "plain",
     },
     {
       name: "a native rollback whose next resume fails",
@@ -1516,6 +1517,7 @@ describe("orchestration v2 provider switching", () => {
       rollback: "truncates",
       failResumeAfterRollback: true,
       replaysKeptTurn: true,
+      history: "plain",
     },
     {
       // Pi forks into a new native thread that still holds the kept turns.
@@ -1527,13 +1529,36 @@ describe("orchestration v2 provider switching", () => {
       rollback: "replaces_native_thread",
       failResumeAfterRollback: false,
       replaysKeptTurn: false,
+      history: "plain",
+    },
+    {
+      name: "an ACP rollback to a turn recorded before attempts kept their native session",
+      instanceId: GROK_MODEL_SELECTION.instanceId,
+      driver: GROK_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      modelSelection: GROK_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      replaysKeptTurn: true,
+      history: "legacy_first_turn",
+    },
+    {
+      name: "an ACP rollback in a forked thread",
+      instanceId: GROK_MODEL_SELECTION.instanceId,
+      driver: GROK_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      modelSelection: GROK_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      replaysKeptTurn: true,
+      history: "forked",
     },
   ] as const)(
     "gives the agent the kept conversation and not the rewound turn after $name",
     (scenario) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const name = `rollback-kept-context-${scenario.driver}`;
+          const name = `rollback-kept-context-${scenario.driver}-${scenario.history}`;
           const cwd = yield* checkpointWorkspace(name);
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
@@ -1558,12 +1583,13 @@ describe("orchestration v2 provider switching", () => {
             const runToCompletion = Effect.fn("runToCompletion")(function* (
               ordinal: number,
               text: string,
+              thread: ThreadId = threadId,
             ) {
               yield* orchestrator.dispatch({
                 type: "message.dispatch",
-                commandId: CommandId.make(`${name}:${ordinal}`),
-                threadId,
-                messageId: MessageId.make(`${name}:${ordinal}`),
+                commandId: CommandId.make(`${thread}:${ordinal}`),
+                threadId: thread,
+                messageId: MessageId.make(`${thread}:${ordinal}`),
                 createdBy: "user",
                 creationSource: "web",
                 text,
@@ -1575,6 +1601,7 @@ describe("orchestration v2 provider switching", () => {
                 Stream.filter(
                   ({ event }) =>
                     event.type === "run.updated" &&
+                    event.threadId === thread &&
                     event.payload.ordinal === ordinal &&
                     (event.payload.status === "completed" || event.payload.status === "failed"),
                 ),
@@ -1582,20 +1609,44 @@ describe("orchestration v2 provider switching", () => {
               );
               yield* worker.drain();
             });
-            yield* orchestrator.dispatch({
-              type: "thread.create",
-              commandId: CommandId.make(`${name}:create`),
-              threadId,
-              projectId,
-              createdBy: "user",
-              creationSource: "web",
-              title: "Edit from here",
-              modelSelection: scenario.modelSelection,
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              branch: null,
-              worktreePath: null,
-            });
+            const createThread = (thread: ThreadId) =>
+              orchestrator.dispatch({
+                type: "thread.create",
+                commandId: CommandId.make(`${thread}:create`),
+                threadId: thread,
+                projectId,
+                createdBy: "user",
+                creationSource: "web",
+                title: "Edit from here",
+                modelSelection: scenario.modelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+              });
+            if (scenario.history === "forked") {
+              const sourceThreadId = ThreadId.make(`${name}:source`);
+              yield* createThread(sourceThreadId);
+              yield* runToCompletion(
+                1,
+                "My home town is Oslo. Reply with only the word: noted",
+                sourceThreadId,
+              );
+              yield* orchestrator.dispatch({
+                type: "thread.fork",
+                commandId: CommandId.make(`${name}:fork`),
+                sourceThreadId,
+                targetThreadId: threadId,
+                sourcePoint: {
+                  type: "run",
+                  runId: (yield* orchestrator.getThreadProjection(sourceThreadId)).runs[0]!.id,
+                },
+                createdBy: "user",
+                creationSource: "web",
+              });
+            } else {
+              yield* createThread(threadId);
+            }
             yield* runToCompletion(
               1,
               "My favourite colour is teal. Reply with only the word: noted",
@@ -1605,6 +1656,20 @@ describe("orchestration v2 provider switching", () => {
               "My favourite animal is an otter. Reply with only the word: noted",
             );
             const beforeRollback = yield* orchestrator.getThreadProjection(threadId);
+            if (scenario.history === "legacy_first_turn") {
+              const firstRunId = beforeRollback.runs.find((run) => run.ordinal === 1)?.id;
+              yield* (yield* EventSink.EventSinkV2).write({
+                events: beforeRollback.attempts
+                  .filter((attempt) => attempt.runId === firstRunId)
+                  .map(({ nativeThreadId: _nativeThreadId, ...legacy }, index) => ({
+                    id: EventId.make(`${name}:legacy-attempt:${index}`),
+                    type: "run-attempt.updated" as const,
+                    threadId,
+                    occurredAt: beforeRollback.thread.createdAt,
+                    payload: legacy,
+                  })),
+              });
+            }
             const keptCheckpoint = beforeRollback.checkpoints.find(
               (checkpoint) => checkpoint.appRunOrdinal === 1 && checkpoint.status === "ready",
             );
@@ -1668,6 +1733,13 @@ describe("orchestration v2 provider switching", () => {
                 delivered,
                 "favourite colour is teal",
                 "the agent's session still holds the kept turn, so no handoff replays it",
+              );
+            }
+            if (scenario.history === "forked") {
+              assert.include(
+                delivered,
+                "home town is Oslo",
+                "the fork's inherited turn is kept too",
               );
             }
             assert.notInclude(
