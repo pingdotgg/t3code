@@ -289,6 +289,7 @@ describe("DesktopBackendConfiguration", () => {
             isPackaged: true,
             appName: "T3 Code (Nightly)",
             launcher: "resources/backend-launcher/t3-backend-launcher",
+            launcherExists: true,
             helper: true,
             expectLauncher: true,
           },
@@ -298,6 +299,7 @@ describe("DesktopBackendConfiguration", () => {
             isPackaged: false,
             appName: "Electron",
             launcher: "repo/native/backend-launcher/build/arm64/t3-backend-launcher",
+            launcherExists: true,
             helper: true,
             expectLauncher: true,
           },
@@ -307,7 +309,18 @@ describe("DesktopBackendConfiguration", () => {
             isPackaged: true,
             appName: "T3 Code (Beta)",
             launcher: "resources/backend-launcher/t3-backend-launcher",
+            launcherExists: true,
             helper: false,
+            expectLauncher: false,
+          },
+          {
+            name: "launcher missing",
+            platform: "darwin",
+            isPackaged: true,
+            appName: "T3 Code (Beta)",
+            launcher: "resources/backend-launcher/t3-backend-launcher",
+            launcherExists: false,
+            helper: true,
             expectLauncher: false,
           },
           {
@@ -316,6 +329,7 @@ describe("DesktopBackendConfiguration", () => {
             isPackaged: true,
             appName: "T3 Code (Beta)",
             launcher: "resources/backend-launcher/t3-backend-launcher",
+            launcherExists: true,
             helper: true,
             expectLauncher: false,
           },
@@ -336,7 +350,7 @@ describe("DesktopBackendConfiguration", () => {
           const launcherPath = path.join(baseDir, testCase.launcher);
           for (const file of [
             executablePath,
-            launcherPath,
+            ...(testCase.launcherExists ? [launcherPath] : []),
             ...(testCase.helper ? [helperPath] : []),
           ]) {
             yield* fileSystem.makeDirectory(path.dirname(file), { recursive: true });
