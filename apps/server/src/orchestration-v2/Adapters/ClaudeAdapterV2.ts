@@ -25,6 +25,7 @@ import {
   addClaudeLedgerUsage,
   claudeLedgerDelta,
   claudeModelLedger,
+  claudeReportedContextWindows,
   normalizeClaudeTurnTokenUsage,
   type ClaudeLedgerUsage,
   type ClaudeModelLedger,
@@ -221,12 +222,6 @@ import {
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
 
-function claudeContextWindow(modelSelection: ModelSelection): number | null {
-  return (
-    resolveClaudeCatalogContextWindowTokens(BUNDLED_CLAUDE_MODEL_CATALOG, modelSelection) ?? null
-  );
-}
-
 interface ClaudeCacheCreation {
   readonly ephemeral_1h_input_tokens: number;
   readonly ephemeral_5m_input_tokens: number;
@@ -273,7 +268,7 @@ export function claudeProviderTurnTokenUsage(
     readonly cache_creation?: ClaudeCacheCreation | null;
     readonly output_tokens: number;
   },
-  modelSelection: ModelSelection,
+  maxTokens: number | null,
   updatedAt: string,
   autoCompactWindow = "",
   requestedAt?: DateTime.Utc,
@@ -281,7 +276,6 @@ export function claudeProviderTurnTokenUsage(
   const inputTokens = claudeMessageInputTokens(usage);
   const outputTokens = usage.output_tokens;
   const promptCacheTtlMs = claudePromptCacheTtlMs(usage.cache_creation);
-  const maxTokens = claudeContextWindow(modelSelection);
   // The cache lifetime starts with the request, not when its response ends.
   const promptCacheExpiresAt =
     promptCacheTtlMs === undefined || requestedAt === undefined
@@ -4620,6 +4614,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     BUNDLED_CLAUDE_MODEL_CATALOG,
     adapterOptions.settings.customModels,
   );
+  // Results report the window Claude Code compacts against; outside the catalog it is the only source.
+  const reportedContextWindows = new Map<string, number>();
+  const claudeContextWindow = (modelSelection: ModelSelection): number | null =>
+    resolveClaudeCatalogContextWindowTokens(BUNDLED_CLAUDE_MODEL_CATALOG, modelSelection) ??
+    reportedContextWindows.get(compileClaudeModelSelection(modelSelection).apiModelId) ??
+    null;
   const continuationRequests = adapterOptions.continuationRequests ?? {
     offer: () => Effect.void,
   };
@@ -4852,6 +4852,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
         // Wake buffers replay result frames, so ledger growth is measured once on arrival.
         const resultLedgerUsage = new WeakMap<SDKMessage, ClaudeLedgerUsage>();
+        const resultsReportingNewContextWindow = new WeakSet<SDKMessage>();
         // A worktree handoff changes the project settings even within one session.
         let bypassCache: { cwd: string | null; availability: ClaudeBypassAvailability } | null =
           null;
@@ -5147,7 +5148,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (requestStarted && context.streamUsage !== null) context.streamUsage.requestedAt = now;
           const tokenUsage = claudeProviderTurnTokenUsage(
             usage,
-            context.input.modelSelection,
+            claudeContextWindow(context.input.modelSelection),
             DateTime.formatIso(now),
             adapterOptions.settings.autoCompactWindow,
             context.streamUsage?.requestedAt,
@@ -9584,6 +9585,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (message.type === "result") {
+            if (resultsReportingNewContextWindow.has(message) && context.streamUsage?.usage) {
+              yield* emitContextUsage(context, context.streamUsage.usage);
+            }
             const completedAt = yield* DateTime.now;
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
@@ -10646,6 +10650,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       growth === undefined && context.modelLedger !== undefined
                         ? undefined
                         : ledger;
+                    for (const [model, window] of claudeReportedContextWindows(
+                      message.modelUsage,
+                    )) {
+                      if (reportedContextWindows.get(model) === window) continue;
+                      reportedContextWindows.set(model, window);
+                      resultsReportingNewContextWindow.add(message);
+                    }
                   }
                   return handleSdkMessage({ query: querySession, message });
                 }),
@@ -11348,8 +11359,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           driver: CLAUDE_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
-          getModelContextWindow: (selection) =>
-            resolveClaudeCatalogContextWindowTokens(BUNDLED_CLAUDE_MODEL_CATALOG, selection),
+          getModelContextWindow: (selection) => claudeContextWindow(selection) ?? undefined,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           backgroundTasksEndWithProcess: true,
           hasPendingBackgroundWork: Effect.gen(function* () {
