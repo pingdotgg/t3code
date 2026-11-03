@@ -2,12 +2,21 @@
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
 
 import {
@@ -129,9 +138,9 @@ describe("buildGrokModelCapabilities", () => {
         type: "select",
         currentValue: "medium",
         options: [
-          { id: "xhigh", label: "Extra High Effort", isDefault: true },
-          { id: "high", label: "High Effort" },
           { id: "medium", label: "Medium Effort" },
+          { id: "high", label: "High Effort" },
+          { id: "xhigh", label: "Extra High Effort", isDefault: true },
         ],
       },
     ]);
@@ -189,7 +198,7 @@ describe("buildGrokModelCapabilities", () => {
   });
 });
 
-it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("checkGrokProviderStatus", (it) => {
   it.effect("reports an installed CLI as unhealthy when --version exits non-zero", () =>
     Effect.gen(function* () {
       const secretStderr = "broken grok install: secret-token-value";
@@ -218,6 +227,68 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.status).toBe("error");
       expect(snapshot.message).toBe("Grok CLI is installed but failed to run.");
       expect(snapshot.message).not.toContain(secretStderr);
+    }),
+  );
+
+  it.effect.each([
+    {
+      label: "answers after 6 s",
+      versionDelay: "6 seconds",
+      version: "1.0.52",
+      message: "Grok CLI is installed but ACP initialize failed. Model options may be incomplete.",
+      probesAfterVersion: true,
+    },
+    {
+      label: "never answers",
+      versionDelay: "Infinity",
+      version: null,
+      message: "Grok CLI is installed but timed out while running `grok --version`.",
+      probesAfterVersion: false,
+    },
+  ] as const)("gives `grok --version` 10 s when it $label", (row) =>
+    Effect.gen(function* () {
+      // A fake CLI runs on wall time, so a stub answers `--version` on the test clock.
+      const spawned: Array<string> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+        spawned.push(args.join(" "));
+        if (!args.includes("--version")) {
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "ChildProcess",
+              method: "spawn",
+              description: "Only `grok --version` is stubbed.",
+            }),
+          );
+        }
+        const handle = ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(900_000_201),
+          exitCode: Effect.delay(Effect.succeed(ChildProcessSpawner.ExitCode(0)), row.versionDelay),
+          isRunning: Effect.succeed(true),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.encodeText(
+            Stream.fromEffect(Effect.delay(Effect.succeed("grok 1.0.52\n"), row.versionDelay)),
+          ),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+        return Effect.succeed(handle);
+      });
+      const fiber = yield* checkGrokProviderStatus(decodeGrokSettings({ enabled: true }), {}).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("10 seconds");
+      const snapshot = yield* Fiber.join(fiber);
+      expect(snapshot.installed).toBe(true);
+      expect(snapshot.version).toBe(row.version);
+      expect(snapshot.message).toBe(row.message);
+      expect(spawned.length > 1).toBe(row.probesAfterVersion);
     }),
   );
 
@@ -304,7 +375,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
   );
 
   // An expired access token prints the logged-out banner, then the CLI refreshes it in the
-  // same run, so the next `grok models` reports the login (#14285).
+  // same run, so the next `grok models` reports the login.
   it.effect("reports authenticated when `grok models` logs in after refreshing a token", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
@@ -349,6 +420,27 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       ]);
       expect(snapshot.message).toContain("ACP initialize failed");
       expect(snapshot.slashCommands.map((command) => command.name)).toEqual(["compact"]);
+    }),
+  );
+
+  it.effect("warns instead of reporting ready when no models are discovered", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const grokPath = yield* writeFakeGrokCli({
+            modelsOutput: "You are logged in with grok.com.\n",
+            acp: true,
+          });
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { ...process.env, XAI_API_KEY: "", T3_ACP_OMIT_INITIALIZE_MODEL_STATE: "1" },
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("warning");
+      expect(snapshot.message).toContain("did not list any models");
+      expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
     }),
   );
 
@@ -461,7 +553,7 @@ describe("Grok usage limits", () => {
   });
 });
 
-it.layer(NodeServices.layer)("readGrokAccount", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("readGrokAccount", (it) => {
   it.effect("reads the configured Grok home and prefers the current login scope to legacy", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -630,9 +722,39 @@ it.layer(NodeServices.layer)("readGrokAccount", (it) => {
       }
     }),
   );
+
+  it.effect("tells accounts in Legacy (no storage) to switch to Privacy Mode", () =>
+    Effect.gen(function* () {
+      const { usageLimits: limits } = yield* readGrokAccount({
+        HOME: "/definitely/not/a/grok-home",
+        GROK_AUTH: '{"https://accounts.x.ai/sign-in":{"key":"private-token"}}',
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  {
+                    error:
+                      "Grok Build is not supported in Legacy (no storage). Switch to Privacy Mode to use Grok Build. [WKE=privacy-mode:legacy]",
+                  },
+                  { status: 403 },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(limits.unavailable?.reason).toBe("probeFailed");
+      expect(limits.unavailable?.message).toMatch(/Privacy Mode/);
+      expect(limits.unavailable?.message).not.toMatch(/WKE=|Grok Build is not supported/);
+    }),
+  );
 });
 
-it.layer(NodeServices.layer)("readGrokAccount email", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("readGrokAccount email", (it) => {
   it.effect("names the account whose limits were read, and nothing for other auth", () =>
     Effect.gen(function* () {
       const current = '"https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"';

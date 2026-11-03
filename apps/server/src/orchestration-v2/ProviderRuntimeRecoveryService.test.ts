@@ -418,6 +418,89 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("recovery closes a secret card's form but leaves a link card open", () => {
+  const threadId = ThreadId.make("thread_secret_recovery");
+  const runId = RunId.make("run_secret_recovery");
+  let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
+    null;
+  const projection = {
+    thread: { id: threadId },
+    runtimeRequests: [],
+    providerSessions: [],
+    providerThreads: [],
+    providerTurns: [],
+    runs: [{ id: runId, status: "running", providerInstanceId: ProviderInstanceId.make("codex") }],
+    attempts: [],
+    nodes: [],
+    subagents: [],
+    messages: [],
+    turnItems: [
+      {
+        id: "turn-item:secret-request:recovery",
+        threadId,
+        runId,
+        nodeId: null,
+        type: "secret_request",
+        status: "waiting",
+        secretStatus: "pending",
+        label: "GitHub token",
+        reason: "Used as GH_TOKEN.",
+      },
+      {
+        id: "turn-item:link-request:recovery",
+        threadId,
+        runId,
+        nodeId: null,
+        type: "link_request",
+        status: "waiting",
+        linkStatus: "pending",
+        url: "https://box.example.ts.net",
+        reason: "Run the suite there.",
+      },
+    ],
+  } as unknown as OrchestrationV2ThreadProjection;
+  const layer = ProviderRuntimeRecovery.layer.pipe(
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getRecoveryThreadIds: () => Effect.succeed([threadId]),
+          getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          commitCommand: (input) => {
+            committedInput = input;
+            return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+          },
+        }),
+        IdAllocator.layer,
+        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+          runRecoveryOnce: Effect.succeed(false),
+        }),
+        Layer.mock(EffectOutbox.EffectOutboxV2)({
+          listByCommandId: () => Effect.succeed([]),
+          reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+        }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
+    const cards = (committedInput?.events ?? []).flatMap((event) =>
+      event.type === "turn-item.updated" ? [event.payload] : [],
+    );
+    const secret = cards.find((card) => card.type === "secret_request");
+    assert.equal(secret?.status, "cancelled");
+    assert.equal(secret?.type === "secret_request" ? secret.secretStatus : null, "cancelled");
+    // Nothing in memory waits on a link card; the user can still answer it.
+    assert.equal(
+      cards.some((card) => card.type === "link_request"),
+      false,
+    );
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect.each(["queued", "preparing"] as const)("recovers $0 work after restart", (status) => {
   const threadId = ThreadId.make("thread_queued_restart");
   const runId = RunId.make("run_queued_restart");
@@ -591,6 +674,14 @@ it.effect(
           nodeId: rootNodeId,
           status: "running",
         },
+        ...(["assistant_message", "reasoning", "proposed_plan"] as const).map((type) => ({
+          id: TurnItemId.make(`turn_item_recovery_cancel_${type}`),
+          runId,
+          nodeId: rootNodeId,
+          type,
+          status: "running",
+          streaming: true,
+        })),
       ],
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
@@ -644,12 +735,27 @@ it.effect(
           ["provider-turn.updated", "cancelled"],
           ["message.updated", null],
           ["turn-item.updated", "cancelled"],
+          ["turn-item.updated", "cancelled"],
+          ["turn-item.updated", "cancelled"],
+          ["turn-item.updated", "cancelled"],
           ["provider-thread.updated", "idle"],
           ["provider-session.updated", "stopped"],
         ],
       );
       const messageEvent = events.find((event) => event.type === "message.updated");
       assert.isFalse(messageEvent?.type === "message.updated" && messageEvent.payload.streaming);
+      assert.deepEqual(
+        events.flatMap((event) =>
+          event.type === "turn-item.updated" && "streaming" in event.payload
+            ? [[event.payload.type, event.payload.streaming]]
+            : [],
+        ),
+        [
+          ["assistant_message", false],
+          ["reasoning", false],
+          ["proposed_plan", false],
+        ],
+      );
     }).pipe(Effect.provide(layer));
   },
 );

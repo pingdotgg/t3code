@@ -94,13 +94,16 @@ export const layer = Layer.effect(Foo, make);
 
 Reusable functions use `Effect.fn("Service.operation")`, not an arrow or declaration returning
 `Effect.gen`. The named form creates a span; `Effect.fn(function* ...)` only captures stack
-frames. Keep `Effect.gen` for inline programs, callbacks, and layer construction.
+frames. Keep `Effect.gen` for inline programs and layer construction. Use
+`Effect.fnUntraced(function* ...)` for inline handlers that share the enclosing operation's span.
 
 Default to named spans for service operations and I/O. Use `Effect.fnUntraced` deliberately for
 per-chunk/per-event work, tight loops, or helpers already covered by the same operation's span.
 Explain the reason beside the function or a group of related functions. A loop is not by itself
 an exemption: its outer operation can still have a useful span without tracing each iteration.
-Preserve existing span names and options instead of adding a second span for the same operation.
+Move existing span names and options into `Effect.fn` instead of adding a second span for the same
+operation; annotate the current span for attributes that depend on function arguments. Keep an
+explicit `withSpan` inside an untraced function when an outer tracer override must cover span creation.
 
 Pass effect combinators after the generator body. A transform that needs the function's input
 receives it after the effect. Use `Effect.fn.Return<A, E, R>` when the generator needs an explicit

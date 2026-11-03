@@ -10,17 +10,7 @@ import { useStableCallback } from "../../hooks/useStableCallback";
 import { toastManager } from "../ui/toast";
 import { usageLimitsBannerItem } from "./ComposerUsageLimits";
 
-/**
- * The open /usage-limits panel for one thread, model and turn. Only the open
- * moment is stored: the rows read live provider data, so a redeemed reset
- * credit or refreshed probe shows through. Anything that spends quota closes
- * it: a new turn from any source, or the agent resuming after an approval or
- * answered question.
- *
- * `panelKey` names that thread, model and turn. It is null while the provider
- * list or the thread itself is unavailable, such as during a reconnect; the
- * panel then stays hidden rather than being dropped.
- */
+/** Keep opened data live. Retain hidden panels during reconnect; clear when quota-spending work resumes. */
 export function useUsageLimitsPanel(input: {
   readonly environmentId: EnvironmentId;
   readonly threadKey: string;
@@ -44,7 +34,6 @@ export function useUsageLimitsPanel(input: {
     readonly threadKey: string;
     readonly now: number;
   } | null>(null);
-  // Drop the snapshot as soon as the thread or model changes so it cannot resurface stale.
   if (panel !== null && panelKey !== null && panel.key !== panelKey) {
     setPanel(null);
   }
@@ -59,12 +48,10 @@ export function useUsageLimitsPanel(input: {
           setPanel(null),
         )
       : null;
-  // T3 owns /usage-limits only where Limits has data for the selected provider;
-  // elsewhere the name stays the provider's own and is sent through untouched.
+  // Intercept /usage-limits only when Limits has selected-provider data.
   const offered =
     providerDriver !== null && hasProviderUsageLimits(providerDriver, providers, sources);
 
-  // Answered locally from the last Limits snapshot; the agent never sees it.
   const open = useStableCallback(() => {
     const now = Date.now();
     const nextReport =
@@ -79,7 +66,7 @@ export function useUsageLimitsPanel(input: {
     toastManager.add({ type: "info", title: "Usage limits are unavailable for this provider" });
     return false;
   });
-  // Responses can resolve after navigating away; only the originating thread's panel clears.
+  // Async responses may clear only their originating thread's panel.
   const clearFor = useStableCallback((originThreadKey: string) =>
     setPanel((current) =>
       current !== null && current.threadKey === originThreadKey ? null : current,

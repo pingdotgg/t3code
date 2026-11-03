@@ -42,7 +42,7 @@ import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as LegacyV1ThreadImporter from "./LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../Orchestrator.ts";
-import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../testkit/ProjectionReplay.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
@@ -80,13 +80,7 @@ const codexModelSelection = {
   model: "gpt-5.4",
 };
 
-/**
- * Slot 41 carries a site-local `ThreadSummaryTimeline` migration, matching
- * production databases where local builds recorded extra names under the shared
- * id sequence. The V2 runner only applies migrations past the recorded maximum
- * id, so the cutover in this test applies 050, 051 and 052 on top of the
- * untouched copy — the same path the real upgrade takes.
- */
+/** Slot 41 models site-local migrations sharing production ids; the V2 runner applies only ids above the recorded maximum. */
 const seedV1Database = (fixturePath: string, workspace: string) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -606,9 +600,7 @@ const layerBoot = (input: {
   const layerImporterProvided = LegacyV1ThreadImporter.layer.pipe(
     Layer.provide(Layer.mergeAll(layerStoresProvided, layerEventSinkProvided)),
   );
-  const layerMaintenanceProvided = ProjectionMaintenance.layer.pipe(
-    Layer.provide(layerStoresProvided),
-  );
+  const layerMaintenanceProvided = ProjectionReplay.layer.pipe(Layer.provide(layerStoresProvided));
   const layerOrchestratorProvided = ProviderReplayHarness.layerWithRegistry(
     {
       name: input.name,
@@ -682,7 +674,7 @@ describe("orchestration v2 legacy v1 cutover", () => {
             Effect.gen(function* () {
               const sql = yield* SqlClient.SqlClient;
               const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-              const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+              const maintenance = yield* ProjectionReplay.ProjectionReplay;
               const projections = yield* ProjectionStore.ProjectionStoreV2;
               const orchestrator = yield* Orchestrator.OrchestratorV2;
 

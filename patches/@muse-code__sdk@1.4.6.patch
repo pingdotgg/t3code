@@ -1,0 +1,46 @@
+diff --git a/dist/src/connection/spawn.d.ts b/dist/src/connection/spawn.d.ts
+index b67e690eae07748e6aee2c8ee59bbfef13b2eea8..581ef3e9184da89cde8471a8fe03c86209ac7c81 100644
+--- a/dist/src/connection/spawn.d.ts
++++ b/dist/src/connection/spawn.d.ts
+@@ -20,6 +20,8 @@ export interface SpawnMspConnectionOptions {
+     readonly onStderr?: (chunk: string) => void;
+     /** See {@link MuseServeChildOptions.shutdownTimeoutMs}. */
+     readonly shutdownTimeoutMs?: number;
++    /** Raw process exit, before inherited stdio drains and `exited` settles. */
++    readonly onProcessExit?: (exit: ProcessExit) => void;
+ }
+ /**
+  * How the host process ended: its exit code, or the signal that ended it.
+@@ -74,6 +76,8 @@ export interface MuseServeChildOptions {
+      * `0..2147483647`; anything else throws `RangeError` at spawn.
+      */
+     readonly shutdownTimeoutMs?: number;
++    /** Raw process exit, before inherited stdio drains and `exited` settles. */
++    readonly onProcessExit?: (exit: ProcessExit) => void;
+     /**
+      * Deterministic-test seam; production always uses `child_process.spawn`.
+      * A stub here observes the exact options the call site passes, so a
+diff --git a/dist/src/connection/spawn.js b/dist/src/connection/spawn.js
+index 28aeb6246ba937c5321f1393dc120eface0707f3..0c835bb9d45a73eacd6a35b5e589191f04104537 100644
+--- a/dist/src/connection/spawn.js
++++ b/dist/src/connection/spawn.js
+@@ -390,7 +390,10 @@ export class MuseServeChild {
+             detached: ownsProcessGroup,
+         });
+         const spawnChild = options.spawnFn ?? spawn;
+-        return new MuseServeChild(spawnChild(options.museBin, [...(options.args ?? [])], spawnOptions), options.onStderr, options.shutdownTimeoutMs, ownsProcessGroup);
++        const child = spawnChild(options.museBin, [...(options.args ?? [])], spawnOptions);
++        if (options.onProcessExit !== undefined)
++            child.once("exit", (code, signal) => options.onProcessExit({ code, signal }));
++        return new MuseServeChild(child, options.onStderr, options.shutdownTimeoutMs, ownsProcessGroup);
+     }
+     get stderrTail() {
+         return this.#tail.lines();
+@@ -414,6 +417,7 @@ export class MspHandshake {
+     constructor(options) {
+         this.child = MuseServeChild.spawn({
+             museBin: options.command,
++            ...(options.onProcessExit === undefined ? {} : { onProcessExit: options.onProcessExit }),
+             ...(options.args === undefined ? {} : { args: options.args }),
+             ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+             ...(options.env === undefined ? {} : { env: options.env }),

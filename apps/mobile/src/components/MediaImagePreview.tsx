@@ -45,9 +45,7 @@ function ImagePreviewHeader(header: { readonly imageIndex: number }) {
 
 export function MediaImagePreview(props: MediaImagePreviewProps) {
   const gallery = props.source.gallery ?? [props.source];
-  // react-native-image-viewing keys its whole Modal by imageIndex, so changing it remounts the
-  // viewer and replays the Android fade over the screen behind. Keep the opening index; the
-  // header follows paging through the index the library passes it.
+  // Freeze imageIndex: react-native-image-viewing remounts the Modal and replays its fade when it changes.
   const [initialIndex] = useState(() =>
     Math.max(
       0,

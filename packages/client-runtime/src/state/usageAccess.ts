@@ -1,6 +1,5 @@
 import {
   AuthDiagnosticsReadScope,
-  type AuthSessionState,
   sessionGrantsScope,
   type SessionGrantInput,
 } from "@t3tools/contracts";

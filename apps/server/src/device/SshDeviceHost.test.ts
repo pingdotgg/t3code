@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Net from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
@@ -10,6 +11,7 @@ import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../config.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
@@ -26,11 +28,12 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     let forwards = 0;
     let failForward = true;
     let rejectConfig = true;
+    const releases: Array<string | undefined> = [];
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
         if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
         const forwarding = command.args.includes("-L");
-        (forwarding ? tunnelArgs : commandArgs).push([...command.args]);
+        (forwarding ? tunnelArgs : commandArgs).push(command.args.map(String));
         if (forwarding) tunnelStdins.push(command.options.stdin);
         let output = "";
         let exitCode = 0;
@@ -118,7 +121,12 @@ it.effect("preserves installed status after probes and cleans failed agent activ
       Effect.provideService(
         HttpClient.HttpClient,
         HttpClient.make((request) =>
-          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok"))),
+          Effect.sync(() => {
+            if (!request.url.endsWith("/rpc"))
+              return HttpClientResponse.fromWeb(request, new Response("ok"));
+            releases.push(request.headers.authorization);
+            return HttpClientResponse.fromWeb(request, Response.json({ result: { ok: true } }));
+          }),
         ),
       ),
     );
@@ -156,6 +164,10 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     yield* host.ensureAgentReady(() => Effect.void);
     yield* host.platformAvailability("ios");
     expect((yield* host.summary).agentDeviceInstalled).toBe(true);
+    // Close releases agent sessions through the forwarded daemon.
+    const agentReady = yield* host.current;
+    yield* agentReady!.releaseAgentSession!("t3-session", "device");
+    expect(releases).toEqual(["Bearer fixture"]);
     yield* host.stopAgent;
     expect(forwards).toBe(1);
     const multiplexingOff = ["ControlMaster=no", "ControlPath=none", "ControlPersist=no"];
@@ -181,5 +193,196 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     }
     yield* host.stop;
     expect(forwards).toBe(0);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("lists Android devices without probing the host again once it reports Android", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped();
+    const modes: string[] = [];
+    let androidInstalled = false;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
+        const forwarding = command.args.includes("-L");
+        let output = "";
+        if (!forwarding) {
+          const stdin = command.options.stdin;
+          const script =
+            stdin && typeof stdin === "object" && "stream" in stdin && Stream.isStream(stdin.stream)
+              ? yield* stdin.stream.pipe(
+                  Stream.decodeText(),
+                  Stream.runFold(
+                    () => "",
+                    (a, b) => a + b,
+                  ),
+                )
+              : "";
+          const mode = /const mode = "([^"]+)"/.exec(script)?.[1] ?? "";
+          modes.push(mode);
+          output =
+            mode === ""
+              ? "Pixel_8\n"
+              : JSON.stringify({
+                  nodePath: "/node",
+                  platforms: [
+                    { platform: "ios", available: true },
+                    { platform: "android", available: androidInstalled },
+                  ],
+                  hubPort: 1234,
+                  helpers: { serveSimAxSettings: null, serveSimCli: null },
+                });
+        }
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(123),
+          stdout: Stream.make(new TextEncoder().encode(output)),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          exitCode: forwarding ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(forwarding),
+          kill: () => Effect.void,
+          stdin: Sink.drain,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+          unref: Effect.succeed(Effect.void),
+        });
+      }),
+    );
+    const host = yield* SshDeviceHost.make({
+      kind: "ssh",
+      id: "test",
+      label: "Test",
+      target: "test.example",
+    }).pipe(
+      Effect.provide(Layer.mergeAll(ServerConfig.layerTest(home, home), Net.layer)),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(
+                request.url.endsWith("/api/devices")
+                  ? JSON.stringify({ simulators: [], emulators: [] })
+                  : "ok",
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    const ready = yield* host.ensureReady(() => Effect.void);
+    const androidNames = ready.devices.list.pipe(
+      Effect.map((list) =>
+        list.devices.filter((device) => device.platform === "android").map((device) => device.name),
+      ),
+    );
+
+    modes.splice(0);
+
+    expect(yield* androidNames).toEqual([]);
+    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(yield* androidNames).toEqual([]);
+    expect(modes.splice(0)).toEqual(["probe"]);
+
+    // The SDK appears after connecting, so the next listing still probes the host.
+    androidInstalled = true;
+    expect(yield* androidNames).toEqual(["Pixel_8"]);
+    expect(modes.splice(0)).toEqual(["probe", ""]);
+
+    // Android is now known to be available, so listing only runs `emulator -list-avds`.
+    expect(yield* androidNames).toEqual(["Pixel_8"]);
+    expect(modes.splice(0)).toEqual([""]);
+
+    androidInstalled = false;
+    expect((yield* host.platformAvailability("android")).available).toBe(false);
+    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(yield* androidNames).toEqual([]);
+    expect(modes.splice(0)).toEqual(["probe"]);
+
+    androidInstalled = true;
+    yield* host.inspect;
+    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(yield* androidNames).toEqual(["Pixel_8"]);
+    expect(modes.splice(0)).toEqual([""]);
+    yield* host.stop;
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect(
+  "keeps the SSH forward through slow health probes and reconnects once the hub stays down",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped();
+      let forwardSpawns = 0;
+      let hubAnswers = true;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
+          const forwarding = command.args.includes("-L");
+          // A fresh forward reaches a working hub again.
+          if (forwarding && ++forwardSpawns > 1) hubAnswers = true;
+          const output = JSON.stringify({
+            nodePath: "/node",
+            platforms: [{ platform: "ios", available: true }],
+            hubPort: 1234,
+            helpers: { serveSimAxSettings: null, serveSimCli: null },
+          });
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(123),
+            stdout: Stream.make(new TextEncoder().encode(output)),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            exitCode: forwarding ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(forwarding),
+            kill: () => Effect.void,
+            stdin: Sink.drain,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+            unref: Effect.succeed(Effect.void),
+          });
+        }),
+      );
+      const host = yield* SshDeviceHost.make({
+        kind: "ssh",
+        id: "test",
+        label: "Test",
+        target: "test.example",
+      }).pipe(
+        Effect.provide(Layer.mergeAll(ServerConfig.layerTest(home, home), Net.layer)),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            hubAnswers
+              ? Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok")))
+              : Effect.never,
+          ),
+        ),
+      );
+      yield* host.ensureReady(() => Effect.void);
+      expect(forwardSpawns).toBe(1);
+
+      // A loaded host can miss a probe or two without being gone; the forward stays up.
+      hubAnswers = false;
+      yield* TestClock.adjust("30 seconds");
+      hubAnswers = true;
+      yield* TestClock.adjust("2 minutes");
+      expect(forwardSpawns).toBe(1);
+
+      // A hub that keeps missing probes is still replaced.
+      hubAnswers = false;
+      // Recovery reset the miss count, so two new misses do not reconnect yet.
+      yield* TestClock.adjust("30 seconds");
+      expect(forwardSpawns).toBe(1);
+      yield* TestClock.adjust("30 seconds");
+      expect(forwardSpawns).toBe(2);
+      yield* host.stop;
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, TestClock.layer())),
+    ),
 );

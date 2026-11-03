@@ -1,9 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - cleanup uses Node's retrying rm, which the FileSystem service does not expose.
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ClaudeSettings, type ServerProvider } from "@t3tools/contracts";
 import { vi } from "vite-plus/test";
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ClaudeSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -11,11 +11,12 @@ import * as TestClock from "effect/testing/TestClock";
 import {
   buildClaudeCapabilitiesProbeQueryOptions,
   probeClaudeCapabilities,
+  probeClaudeWorkspaceSnapshot,
 } from "./ClaudeProvider.ts";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
-const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+const decodeClaudeSettings = Schema.decodeEffect(ClaudeSettings);
 
 it("drops strict MCP mode, and only that, next to an administrator's managed-mcp.json", () => {
   const options = buildClaudeCapabilitiesProbeQueryOptions({
@@ -31,6 +32,18 @@ it("drops strict MCP mode, and only that, next to an administrator's managed-mcp
   assert.deepEqual(options.mcpServers, {});
   assert.equal(options.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
 });
+
+it.effect("reports a deleted worktree's scan as finished, not pending", () =>
+  Effect.gen(function* () {
+    const snapshot = yield* probeClaudeWorkspaceSnapshot(
+      yield* decodeClaudeSettings({}),
+      { skills: [], slashCommands: [] } as unknown as ServerProvider,
+      "/nonexistent/t3-deleted-worktree",
+      { HOME: "/nonexistent/t3-home" },
+    );
+    assert.strictEqual(snapshot.slashCommandsPending, false);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.effect("keeps the probe subprocess alive while gateway model discovery can finish", () =>
   Effect.gen(function* () {
@@ -48,7 +61,7 @@ it.effect("keeps the probe subprocess alive while gateway model discovery can fi
     });
     yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
     const capabilities = yield* probeClaudeCapabilities(
-      decodeClaudeSettings({ binaryPath: "claude" }),
+      yield* decodeClaudeSettings({ binaryPath: "claude" }),
       {
         ...process.env,
         ANTHROPIC_BASE_URL: "https://gateway.example",

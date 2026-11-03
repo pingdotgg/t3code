@@ -21,9 +21,7 @@ function frameField(frame: unknown, key: string): unknown {
   return typeof frame === "object" && frame !== null ? Reflect.get(frame, key) : undefined;
 }
 
-// The recording itself shows the ordering this fixture guards: the CLI ran a
-// wake turn between the resume prompt's offer and that prompt's own turn, and
-// only the prompt's turn echoed its uuid.
+// A CLI wake can precede the offered prompt's turn; only the latter echoes its uuid.
 function assertRecordedWakeBeforePrompt(transcript: ProviderReplayTranscript) {
   const resumeOfferIndex = transcript.entries.findIndex(
     (entry) => entry.type === "expect_outbound" && entry.label === "prompt.offer:3",
