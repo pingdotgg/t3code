@@ -10,7 +10,7 @@ import {
   SecretRequestError,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -185,9 +185,9 @@ const withService = <A, E>(
       options.frameGate === undefined && options.onFrame === undefined
         ? NodePlatformCrypto.layer
         : Layer.effect(
-            Crypto.Crypto,
+            SecureRandom.SecureRandom,
             Effect.gen(function* () {
-              const crypto = yield* Crypto.Crypto;
+              const crypto = yield* SecureRandom.SecureRandom;
               return {
                 ...crypto,
                 randomBytes: (size: number) =>
