@@ -1,5 +1,6 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { isListedThreadLineage } from "@t3tools/contracts";
 import type { AnyRouter } from "@tanstack/react-router";
 import type { AtomRegistry } from "effect/reactivity";
 
@@ -42,9 +43,8 @@ export function startBackgroundThreadAnnouncements(
     const now = new Date().toISOString();
     const snapshots: BackgroundThreadSnapshot[] = [];
     for (const thread of threads) {
-      // Subagents have no row of their own; their requests surface on the parent.
-      if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent")
-        continue;
+      // Subagents and side chats have no row of their own; their requests surface on the parent.
+      if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) continue;
       if (!liveEnvironmentIds.has(thread.environmentId)) continue;
       snapshots.push({
         key: scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
