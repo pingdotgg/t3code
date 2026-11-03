@@ -1,10 +1,17 @@
-import { CommandId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import {
+  CommandId,
+  type MessageId,
+  type OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import type * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 
@@ -56,6 +63,7 @@ export const layer = Layer.effectDiscard(
     const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const retryAttempts = yield* Ref.make(new Map<string, number>());
+    const layerScope = yield* Effect.scope;
 
     const clearRetryAttempt = (key: string) =>
       Ref.update(retryAttempts, (current) => {
@@ -72,6 +80,50 @@ export const layer = Layer.effectDiscard(
         updated.set(key, attempt + 1);
         return [Math.min(100 * 2 ** Math.min(attempt, 6), 5_000), updated] as const;
       });
+
+    // A continuation run can end without starting (a queued cancel), so the adapter never sees it.
+    const releaseWhenRunEnds = Effect.fn("ProviderContinuationService.releaseWhenRunEnds")(
+      function* (input: {
+        readonly request: ProviderContinuationRequests.ProviderContinuationRequest;
+        readonly clearIfCurrent: () => Effect.Effect<void>;
+        readonly messageId: MessageId;
+        readonly dispatched: Orchestrator.OrchestratorV2DispatchResult;
+      }) {
+        const runId = input.dispatched.storedEvents.flatMap(({ event }) =>
+          event.type === "run.created" && event.payload.userMessageId === input.messageId
+            ? [event.payload.id]
+            : [],
+        )[0];
+        if (runId === undefined) return;
+        // Replays from the dispatch so a run that ended before this subscription still counts.
+        const ended = yield* threads
+          .streamStoredEventsFrom({
+            threadId: input.request.threadId,
+            afterSequence: input.dispatched.sequence,
+            eventType: "run.updated",
+          })
+          .pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "run.updated" &&
+                event.payload.id === runId &&
+                ThreadManagementService.isTerminalRunStatus(event.payload.status),
+            ),
+            Stream.runHead,
+          );
+        if (Option.isSome(ended)) yield* input.clearIfCurrent();
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("orchestration-v2.provider-continuation.release-watch-failed", {
+              threadId: input.request.threadId,
+              providerThreadId: input.request.providerThreadId,
+              cause,
+            }),
+          ),
+        ),
+    );
 
     const dispatchContinuation = Effect.fn("ProviderContinuationService.dispatchContinuation")(
       function* (request: ProviderContinuationRequests.ProviderContinuationRequest) {
@@ -218,19 +270,26 @@ export const layer = Layer.effectDiscard(
               request.clearIfCurrent !== undefined ? request.clearIfCurrent() : Effect.void,
             ),
           );
-        if (request.dispatchIfCurrent === undefined) {
-          yield* dispatch.pipe(
-            Effect.catchTags({
-              ThreadManagementProviderInstanceDisabledError: logInstanceDisabled,
-            }),
-          );
-          return;
+        const refused = (
+          error: ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
+        ) => logInstanceDisabled(error).pipe(Effect.as(Option.none()));
+        const dispatched =
+          request.dispatchIfCurrent === undefined
+            ? yield* dispatch.pipe(
+                Effect.asSome,
+                Effect.catchTags({ ThreadManagementProviderInstanceDisabledError: refused }),
+              )
+            : yield* request
+                .dispatchIfCurrent(dispatch)
+                .pipe(Effect.catchTags({ ThreadManagementProviderInstanceDisabledError: refused }));
+        if (Option.isSome(dispatched) && request.clearIfCurrent !== undefined) {
+          yield* releaseWhenRunEnds({
+            request,
+            clearIfCurrent: request.clearIfCurrent,
+            messageId,
+            dispatched: dispatched.value,
+          }).pipe(Effect.forkIn(layerScope));
         }
-        yield* request.dispatchIfCurrent(dispatch).pipe(
-          Effect.catchTags({
-            ThreadManagementProviderInstanceDisabledError: logInstanceDisabled,
-          }),
-        );
       },
     );
 
