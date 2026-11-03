@@ -1259,6 +1259,7 @@ export const make = Effect.gen(function* () {
   const getPrLookup = (key: string) => detachStackFrame(Cache.get(prLookupCache, key));
   interface LastKnownPr {
     readonly pr: ReturnType<typeof toStatusPr> | null;
+    readonly headSha: string | null;
     readonly upstreamRef: string | null;
     readonly headBranch: string;
     readonly remoteName: string | null;
@@ -1280,7 +1281,7 @@ export const make = Effect.gen(function* () {
   const resolveLastKnownPr = (
     branchKey: string,
     current: Pick<LastKnownPr, "upstreamRef" | "headBranch" | "remoteName" | "headRemoteUrlKey">,
-  ): ReturnType<typeof toStatusPr> | null => {
+  ): LastKnownPr | null => {
     const lastKnown = lastKnownPrByBranchKey.get(branchKey);
     if (!lastKnown) return null;
     if (lastKnown.headBranch !== current.headBranch) {
@@ -1289,7 +1290,7 @@ export const make = Effect.gen(function* () {
 
     // Config read failures become null; require both remote URLs before treating a mismatch as real.
     if (lastKnown.headRemoteUrlKey !== null && current.headRemoteUrlKey !== null) {
-      return lastKnown.headRemoteUrlKey === current.headRemoteUrlKey ? lastKnown.pr : null;
+      return lastKnown.headRemoteUrlKey === current.headRemoteUrlKey ? lastKnown : null;
     }
 
     if (
@@ -1298,9 +1299,9 @@ export const make = Effect.gen(function* () {
       lastKnown.remoteName !== null &&
       current.remoteName !== null
     ) {
-      return lastKnown.remoteName === current.remoteName ? lastKnown.pr : null;
+      return lastKnown.remoteName === current.remoteName ? lastKnown : null;
     }
-    return lastKnown.pr;
+    return lastKnown;
   };
   const lookupStatusPr = Effect.fn("lookupStatusPr")(function* (
     cwd: string,
@@ -1325,17 +1326,18 @@ export const make = Effect.gen(function* () {
     }
     return yield* getPrLookup(cacheKey).pipe(
       Effect.map(({ latest, headContext }) => {
-        if (!latest) return { pr: null, headContext };
+        if (!latest) return { pr: null, headSha: null, headContext };
         // Merged/closed matches are usually reverse-merge history, not the thread's PR context.
         if (details.isDefaultBranch && latest.state !== "open") {
-          return { pr: null, headContext };
+          return { pr: null, headSha: null, headContext };
         }
-        return { pr: toStatusPr(latest), headContext };
+        return { pr: toStatusPr(latest), headSha: latest.headSha ?? null, headContext };
       }),
-      Effect.tap(({ pr, headContext }) =>
+      Effect.tap(({ pr, headSha, headContext }) =>
         Effect.sync(() =>
           rememberLastKnownPr(branchKey, {
             pr,
+            headSha,
             upstreamRef: details.upstreamRef,
             headBranch: headContext.headBranch,
             remoteName: headContext.remoteName,
@@ -1343,7 +1345,7 @@ export const make = Effect.gen(function* () {
           }),
         ),
       ),
-      Effect.map(({ pr }) => pr),
+      Effect.map(({ pr, headSha }) => ({ pr, headSha })),
       Effect.catch((error) => {
         const fallback = lastKnownPrByBranchKey.get(branchKey)?.pr
           ? resolveLookupHeadContext(cwd, details).pipe(
@@ -1375,6 +1377,10 @@ export const make = Effect.gen(function* () {
               : {}),
           }),
           Effect.andThen(fallback),
+          Effect.map((lastKnown) => ({
+            pr: lastKnown?.pr ?? null,
+            headSha: lastKnown?.headSha ?? null,
+          })),
         );
       }),
     );
@@ -1390,7 +1396,7 @@ export const make = Effect.gen(function* () {
       return null;
     }
 
-    const pr =
+    const { pr, headSha } =
       details.branch !== null
         ? yield* lookupStatusPr(
             cwd,
@@ -1402,13 +1408,35 @@ export const make = Effect.gen(function* () {
             },
             options?.refreshMissingPullRequest,
           )
-        : null;
+        : { pr: null, headSha: null };
+    // Squash and rebase merges land new commits, so HEAD never becomes reachable from the base.
+    const shippedByMergedPr =
+      pr?.state === "merged" &&
+      headSha !== null &&
+      (yield* Effect.gen(function* () {
+        const defaultBranch =
+          details.defaultBranch ??
+          (yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(
+            Effect.flatMap((remoteName) => gitCore.resolveDefaultBranchName(cwd, remoteName)),
+            Effect.orElseSucceed(() => null),
+          ));
+        const mergedIntoDefault =
+          defaultBranch === null
+            ? pr.baseRef === "main" || pr.baseRef === "master"
+            : pr.baseRef === defaultBranch;
+        if (!mergedIntoDefault) return false;
+        return yield* gitCore.resolveCommit({ cwd, revision: "HEAD" }).pipe(
+          Effect.map(({ commitSha }) => commitSha === headSha),
+          Effect.orElseSucceed(() => false),
+        );
+      }));
 
     return {
       hasUpstream: details.hasUpstream,
-      aheadCount: details.aheadCount,
+      // A real upstream delta stays; only the no-upstream fallback counts against the base.
+      aheadCount: shippedByMergedPr && !details.hasUpstream ? 0 : details.aheadCount,
       behindCount: details.behindCount,
-      aheadOfDefaultCount: details.aheadOfDefaultCount,
+      aheadOfDefaultCount: shippedByMergedPr ? 0 : details.aheadOfDefaultCount,
       pr,
     } satisfies VcsStatusRemoteResult;
   });
