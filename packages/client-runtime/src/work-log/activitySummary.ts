@@ -1,4 +1,4 @@
-import type { ThreadStructureVisibleTurnItem } from "../state/models.ts";
+import type { ThreadStructureRuntime, ThreadStructureVisibleTurnItem } from "../state/models.ts";
 import { turnItemIsWorkspacePreparation } from "../state/turnItemPresentation.ts";
 import {
   isAbsolutePath,
@@ -81,7 +81,7 @@ export interface ActivityPlan {
 export interface ActivitySummary {
   readonly phase: "running" | "waiting" | "idle";
   /** How an idle run ended; null while it is still running or waiting. */
-  readonly outcome: "finished" | "failed" | "incomplete" | null;
+  readonly outcome: "finished" | "failed" | "incomplete" | "stopped" | null;
   readonly now: string | null;
   readonly done: ReadonlyArray<ActivityStep>;
   readonly failedCount: number;
@@ -210,12 +210,10 @@ export function deriveActivitySummary(
   runActive: boolean,
   /** The run in progress, which can exist before it has any item. */
   activeRunId: ActivityItem["runId"] = null,
+  runStatus: ThreadStructureRuntime["status"] | "pending" | null = null,
 ): ActivitySummary {
   const latestRunId = activeRunId ?? items.findLast((item) => item.runId !== null)?.runId ?? null;
-  const runItems =
-    latestRunId === null
-      ? []
-      : items.filter((item) => item.runId === latestRunId).filter(isActivityItem);
+  const runItems = items.filter((item) => item.runId === latestRunId).filter(isActivityItem);
 
   let runningLabel: string | null = null;
   let waitingLabel: string | null = null;
@@ -278,9 +276,17 @@ export function deriveActivitySummary(
       null,
     );
 
-  // What needs the user wins over what is running.
+  const stopped =
+    runStatus === "interrupted" || runStatus === "cancelled" || runStatus === "rolled_back";
+  // Retained background commands stay visible, but cannot revive a stopped run.
   const phase: ActivitySummary["phase"] =
-    waitingLabel !== null ? "waiting" : runningLabel !== null || runActive ? "running" : "idle";
+    stopped || runStatus === "failed"
+      ? "idle"
+      : waitingLabel !== null
+        ? "waiting"
+        : runningLabel !== null || runActive
+          ? "running"
+          : "idle";
 
   const plan =
     latestTodo === null
@@ -293,16 +299,18 @@ export function deriveActivitySummary(
   const outcome: ActivitySummary["outcome"] =
     phase !== "idle"
       ? null
-      : failedCount > 0
+      : failedCount > 0 || runStatus === "failed"
         ? "failed"
         : plan !== null && plan.completed < plan.steps.length
           ? "incomplete"
-          : "finished";
+          : stopped
+            ? "stopped"
+            : "finished";
 
   return {
     phase,
     outcome,
-    now: waitingLabel ?? runningLabel,
+    now: phase === "idle" ? null : (waitingLabel ?? runningLabel),
     done,
     failedCount,
     touched,

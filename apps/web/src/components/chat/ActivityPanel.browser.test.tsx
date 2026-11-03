@@ -16,6 +16,7 @@ vi.mock("~/state/entities", () => ({
 vi.mock("@t3tools/client-runtime/state/thread-execution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/thread-execution")>()),
   deriveThreadStructureRuntime: () => null,
+  deriveProviderSubagentStatus: () => null,
 }));
 
 const threadRef = { environmentId: "env", threadId: "thread" } as unknown as ScopedThreadRef;

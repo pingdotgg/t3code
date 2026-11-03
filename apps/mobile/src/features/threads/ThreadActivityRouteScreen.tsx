@@ -4,8 +4,11 @@ import {
 } from "@t3tools/client-runtime/work-log/activity-summary";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
-import { deriveThreadStructureRuntime } from "@t3tools/client-runtime/state/thread-execution";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  deriveProviderSubagentStatus,
+  deriveThreadStructureRuntime,
+} from "@t3tools/client-runtime/state/thread-execution";
+import { EnvironmentId, isOrchestrationV2WorkActive, ThreadId } from "@t3tools/contracts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as Option from "effect/Option";
 import { useEffect, useRef } from "react";
@@ -119,8 +122,8 @@ function StatusBanner(props: { readonly summary: ActivitySummary }) {
   } else if (summary.outcome === "failed") {
     icon = "xmark.circle.fill";
     tint = "accent-danger-foreground";
-    title = "Finished with errors";
-    details.push(`${plural(failedCount, "step")} failed`);
+    title = failedCount > 0 ? "Finished with errors" : "Run failed";
+    if (failedCount > 0) details.push(`${plural(failedCount, "step")} failed`);
     if (plan) details.push(`${plan.completed} of ${plural(plan.steps.length, "step")}`);
     if (touchedTotals.files > 0) details.push(`${plural(touchedTotals.files, "file")} changed`);
   } else {
@@ -131,6 +134,11 @@ function StatusBanner(props: { readonly summary: ActivitySummary }) {
       details.push(`${plan.completed} of ${plural(plan.steps.length, "step")} done`);
     } else if (plan) {
       details.push(`${plan.completed} of ${plural(plan.steps.length, "step")}`);
+    }
+    if (summary.outcome === "stopped") {
+      icon = "exclamationmark.circle";
+      tint = "accent-warning-foreground";
+      title = "Stopped";
     }
     if (touchedTotals.files > 0) details.push(`${plural(touchedTotals.files, "file")} changed`);
   }
@@ -203,12 +211,16 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
   const threadDeleted = threadState.status === "deleted";
   const threadError = Option.getOrNull(threadState.error);
   const runtime = structure === null ? null : deriveThreadStructureRuntime(structure.projection);
-  const runActive = threadRuntimeIsActive(runtime);
+  const subagent = structure === null ? null : deriveProviderSubagentStatus(structure.projection);
+  const runActive = subagent
+    ? isOrchestrationV2WorkActive(subagent.status)
+    : threadRuntimeIsActive(runtime);
   const summary = deriveActivitySummary(
     visibleItems.map((visible) => visible.item),
     selectedThreadCwd ?? selectedThreadProject?.workspaceRoot ?? null,
     runActive,
     runtime?.activeRunId ?? null,
+    subagent?.status ?? runtime?.status ?? null,
   );
 
   const handleBack = () => {
@@ -233,6 +245,7 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
 
   const isEmpty =
     summary.phase === "idle" &&
+    summary.outcome === "finished" &&
     summary.now === null &&
     summary.done.length === 0 &&
     summary.touched.length === 0 &&

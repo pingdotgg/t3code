@@ -44,7 +44,8 @@ const summarize = (
   workspaceRoot: string | null = null,
   runActive = false,
   activeRunId: typeof run1 | null = null,
-) => deriveActivitySummary(items, workspaceRoot, runActive, activeRunId);
+  runStatus: "completed" | "interrupted" | "failed" | null = null,
+) => deriveActivitySummary(items, workspaceRoot, runActive, activeRunId, runStatus);
 
 describe("deriveActivitySummary", () => {
   it("reports the running item as now and finished work as done, in order", () => {
@@ -67,6 +68,9 @@ describe("deriveActivitySummary", () => {
     ]);
 
     expect(summary.done.map((step) => step.label)).toEqual(["new command"]);
+    expect(summarize([{ ...command("native command", "completed"), runId: null }]).done).toEqual([
+      { id: expect.any(String), label: "native command", failed: false },
+    ]);
   });
 
   it("shows labels relative to the workspace", () => {
@@ -86,6 +90,9 @@ describe("deriveActivitySummary", () => {
     expect(between.outcome).toBeNull();
     expect(summarize([command("bun test", "completed")]).phase).toBe("idle");
     expect(summarize([], null, true).phase).toBe("running");
+    const background = summarize([command("sleep 60", "running")], null, false, null, "completed");
+    expect(background.phase).toBe("running");
+    expect(background.now).toBe("sleep 60");
   });
 
   it("is waiting, not running, when the agent needs the user", () => {
@@ -351,6 +358,16 @@ describe("deriveActivitySummary", () => {
       "failed",
     );
     expect(summarize([command("vp lint", "running")]).outcome).toBeNull();
+    expect(
+      summarize(
+        [command("pwd", "completed"), command("sleep 90", "interrupted")],
+        null,
+        false,
+        null,
+        "interrupted",
+      ).outcome,
+    ).toBe("stopped");
+    expect(summarize([], null, false, null, "failed").outcome).toBe("failed");
   });
 
   it("is idle with nothing to show for an empty thread", () => {
