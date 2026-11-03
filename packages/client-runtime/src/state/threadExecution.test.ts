@@ -26,6 +26,7 @@ import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
+  formatModelSelectionEffort,
   isBackgroundWorkStopPending,
   presentPendingBackgroundWork,
   presentProviderGoal,
@@ -470,6 +471,48 @@ describe("provider-reported model selection", () => {
         ],
       }),
     ).toBeNull();
+  });
+});
+
+describe("formatModelSelectionEffort", () => {
+  it("labels a Pi thinking level but not Claude's boolean thinking toggle", () => {
+    const model = "anthropic/claude-haiku-5-5";
+    const piModels = [
+      {
+        slug: model,
+        name: "Haiku 5.5",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "thinking",
+              label: "Thinking",
+              type: "select" as const,
+              options: [
+                { id: "low", label: "Low" },
+                { id: "high", label: "High", isDefault: true },
+              ],
+            },
+          ],
+        },
+      },
+    ];
+    const claudeModels = [
+      {
+        ...piModels[0]!,
+        capabilities: {
+          optionDescriptors: [{ id: "thinking", label: "Thinking", type: "boolean" as const }],
+        },
+      },
+    ];
+    const selection = (instanceId: string, value: string | boolean) => ({
+      instanceId: ProviderInstanceId.make(instanceId),
+      model,
+      options: [{ id: "thinking", value }],
+    });
+
+    expect(formatModelSelectionEffort(selection("pi", "low"), piModels)).toBe("Low");
+    expect(formatModelSelectionEffort(selection("claude", true), claudeModels)).toBeNull();
   });
 });
 
