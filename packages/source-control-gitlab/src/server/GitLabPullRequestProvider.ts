@@ -329,27 +329,39 @@ export const make = Effect.gen(function* () {
             reactions: [] as ReadonlyArray<PullRequestReaction>,
             reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
           }),
+          // Usually cached by the detail read beside this one; web_url holds the real web origin.
+          recoverRead(
+            mergeRequestDetail(input).pipe(Effect.map((mergeRequest) => mergeRequest.url)),
+            null,
+          ),
         ],
-        { concurrency: 4 },
+        { concurrency: 5 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => ({
-          reactions: awards.reactions,
-          comments: notes.comments.map((comment) => ({
-            ...comment,
-            reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-          })),
-          commentCount: notes.comments.length,
-          commentsTruncated: notes.truncated || discussions.truncated,
-          reviewThreads: discussions.threads.map((thread) => ({
-            ...thread,
-            comments: thread.comments.map((comment) => ({
-              ...comment,
-              reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-            })),
-          })),
-          commits,
-        })),
+        Effect.map(
+          ([notes, commits, discussions, awards, webUrl]): ProviderChangeRequestActivity => {
+            const noteUrl = (id: string) => (webUrl === null ? null : `${webUrl}#note_${id}`);
+            return {
+              reactions: awards.reactions,
+              comments: notes.comments.map((comment) => ({
+                ...comment,
+                url: noteUrl(comment.id),
+                reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+              })),
+              commentCount: notes.comments.length,
+              commentsTruncated: notes.truncated || discussions.truncated,
+              reviewThreads: discussions.threads.map((thread) => ({
+                ...thread,
+                comments: thread.comments.map((comment) => ({
+                  ...comment,
+                  url: noteUrl(comment.id),
+                  reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+                })),
+              })),
+              commits,
+            };
+          },
+        ),
       ),
 
     // Straight from the host, never the shared read: this is what a write is refused or let

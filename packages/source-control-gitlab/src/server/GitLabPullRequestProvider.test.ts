@@ -480,7 +480,34 @@ describe("optional activity reads", () => {
     messageHeadline: "Keep this commit",
     committedDate: "2026-07-01T00:00:00Z",
   };
+  const webUrl = "https://git.acme.dev/acme/web/-/merge_requests/7";
   const reads = {
+    getMergeRequestDetail: () =>
+      Effect.succeed({
+        number: 7,
+        title: "Merge request 7",
+        url: webUrl,
+        author: null,
+        headBranch: "feat/page",
+        baseBranch: "main",
+        state: "open" as const,
+        isDraft: false,
+        mergeability: "mergeable" as const,
+        additions: 0,
+        deletions: 0,
+        createdAt: "2026-07-01T00:00:00Z",
+        updatedAt: "2026-07-02T00:00:00Z",
+        reviewRequestLogins: [],
+        labels: [],
+        body: "",
+        changedFiles: 1,
+        mergedAt: null,
+        closedAt: null,
+        reviewers: [],
+        checks: [],
+        viewerCanMerge: true,
+        reviewerIds: [],
+      }),
     listNotes: () => Effect.succeed({ comments: [comment], truncated: false }),
     listCommits: () => Effect.succeed([commit]),
     listDiscussions: () => Effect.succeed({ threads: [], truncated: false }),
@@ -531,7 +558,39 @@ describe("optional activity reads", () => {
       }),
   );
 
-  it.effect("keeps comments and commits when optional discussions and reactions fail", () =>
+  it.effect("links comments and thread comments to their note on the merge request page", () =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            listDiscussions: () =>
+              Effect.succeed({
+                threads: [
+                  {
+                    id: "d1",
+                    path: "src/a.ts",
+                    line: 1,
+                    side: "right" as const,
+                    isResolved: false,
+                    isOutdated: false,
+                    comments: [comment],
+                  },
+                ],
+                truncated: false,
+              }),
+          }),
+        ),
+      );
+
+      const activity = yield* provider.getChangeRequestActivity(reference);
+
+      expect(activity.comments[0]?.url).toBe(`${webUrl}#note_42`);
+      expect(activity.reviewThreads[0]?.comments[0]?.url).toBe(`${webUrl}#note_42`);
+    }),
+  );
+
+  it.effect("keeps comments and commits when optional discussions, reactions and links fail", () =>
     Effect.gen(function* () {
       const provider = yield* make.pipe(
         Effect.provide(
@@ -547,6 +606,7 @@ describe("optional activity reads", () => {
                 }),
               ),
             listReactions: () => Effect.fail(new GitLabCli.GitLabCliCommandError(context)),
+            getMergeRequestDetail: () => Effect.fail(new GitLabCli.GitLabCliCommandError(context)),
           }),
         ),
       );
