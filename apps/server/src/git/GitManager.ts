@@ -171,6 +171,7 @@ const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
 const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
+const SETTLED_PR_LOOKUP_RECHECK_INTERVAL = Duration.minutes(15);
 const PR_THREAD_CONTEXT_BYTES = 16_000;
 const PR_THREAD_COMMAND_OUTPUT_CHARS = 2_000;
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
@@ -2425,6 +2426,10 @@ export const make = Effect.gen(function* () {
     prLookupGitStateByKey.set(entryKey, { readAtMs, value });
     return value;
   });
+  const settledPrLookupByBranchKey = new Map<
+    string,
+    { readonly url: string; readonly fingerprint: string; readonly confirmedAtMs: number }
+  >();
   const forgetPrLookupGitState = (cwd: string) =>
     normalizeStatusCacheKey(cwd).pipe(
       Effect.map((cacheCwd) => {
@@ -2470,6 +2475,39 @@ export const make = Effect.gen(function* () {
       };
     },
   );
+  // objectname lets a settled PR result notice new commits on its branch.
+  const readPrLookupBranchRef = (cacheCwd: string, branch: string, fresh: boolean) =>
+    rememberPrLookupGitState(
+      cacheCwd,
+      `branchRef\u0000${branch}`,
+      fresh,
+      gitCore
+        .execute({
+          operation: "GitManager.branchPullRequest.branchRef",
+          cwd: cacheCwd,
+          args: [
+            "for-each-ref",
+            "--format=%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(objectname)",
+            `refs/heads/${branch}`,
+          ],
+        })
+        .pipe(Effect.map((result) => result.stdout)),
+    );
+  const readSettledPrLookupFingerprint = (cacheCwd: string, branch: string) =>
+    Effect.all(
+      [
+        readPrLookupBranchRef(cacheCwd, branch, true),
+        gitCore
+          .execute({
+            operation: "GitManager.branchPullRequest.remoteUrls",
+            cwd: cacheCwd,
+            args: ["config", "--get-regexp", "^remote\\..*\\.url$"],
+            allowNonZeroExit: true,
+          })
+          .pipe(Effect.map((result) => result.stdout)),
+      ],
+      { concurrency: "unbounded" },
+    ).pipe(Effect.map((parts) => parts.join("\u0000")));
   const lookupBranchPullRequest = Effect.fn("lookupBranchPullRequest")(function* (
     cacheCwd: string,
     branch: string,
@@ -2493,20 +2531,7 @@ export const make = Effect.gen(function* () {
       .filter((remoteName) => remoteName.length > 0);
     const [firstRemoteName] = remoteNames;
     if (firstRemoteName === undefined) return null;
-    const branchRef = yield* remember(
-      `branchRef\u0000${branch}`,
-      gitCore
-        .execute({
-          operation: "GitManager.branchPullRequest.branchRef",
-          cwd: cacheCwd,
-          args: [
-            "for-each-ref",
-            "--format=%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)",
-            `refs/heads/${branch}`,
-          ],
-        })
-        .pipe(Effect.map((result) => result.stdout)),
-    );
+    const branchRef = yield* readPrLookupBranchRef(cacheCwd, branch, options.freshGitState);
     const expectedRefName = `refs/heads/${branch}`;
     const exactBranch = (branchRef ?? "")
       .split("\n")
@@ -2657,10 +2682,38 @@ export const make = Effect.gen(function* () {
       freshGitState,
     });
     if (pullRequest === null || pullRequest.state === "open" || freshGitState) return pullRequest;
-    return yield* lookupBranchPullRequest(cacheCwd, branch, {
+    // A confirmed closed or merged result stays final until the branch or remotes change,
+    // with a periodic fresh lookup so a new PR from a reused branch still shows up.
+    const settledKey = `${cacheCwd}\u0000${branch}`;
+    const now = yield* Clock.currentTimeMillis;
+    const settled = settledPrLookupByBranchKey.get(settledKey);
+    // Read before any fresh lookup, so a change made during it forces another one.
+    const fingerprint = yield* readSettledPrLookupFingerprint(cacheCwd, branch);
+    if (
+      settled !== undefined &&
+      settled.url === pullRequest.url &&
+      settled.fingerprint === fingerprint &&
+      now - settled.confirmedAtMs < Duration.toMillis(SETTLED_PR_LOOKUP_RECHECK_INTERVAL)
+    ) {
+      return pullRequest;
+    }
+    const confirmed = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh: false,
       freshGitState: true,
     });
+    settledPrLookupByBranchKey.delete(settledKey);
+    if (confirmed !== null && confirmed.state !== "open") {
+      if (settledPrLookupByBranchKey.size >= PR_LOOKUP_CACHE_CAPACITY) {
+        const oldestKey = settledPrLookupByBranchKey.keys().next().value;
+        if (oldestKey !== undefined) settledPrLookupByBranchKey.delete(oldestKey);
+      }
+      settledPrLookupByBranchKey.set(settledKey, {
+        url: confirmed.url,
+        fingerprint,
+        confirmedAtMs: now,
+      });
+    }
+    return confirmed;
   });
   const invalidateLocalStatus: GitManager["Service"]["invalidateLocalStatus"] = Effect.fn(
     "invalidateLocalStatus",
