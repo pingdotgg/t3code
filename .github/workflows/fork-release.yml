@@ -164,7 +164,7 @@ jobs:
                 ($shas | split("\n")) as $in
                 | sort_by(.number)[]
                 | select(.mergeCommit.oid as $oid | $in | index($oid))
-                | ((.body // "") | capture("(?s)## Release notes[ \\t]*\\r?\\n(?<s>.*?)(\\r?\\n## |$)").s // "" | gsub("^\\s+|\\s+$"; "")) as $s
+                | ((.body // "") | capture("(?s)## Release notes[ \\t]*\\r?\\n(?<s>.*?)(\\r?\\n(## |🤖)|$)").s // "" | gsub("^\\s+|\\s+$"; "")) as $s
                 | if $s != "" then $s else "- " + .title end')"
             if [ -n "$changes" ]; then echo "$changes"; else echo "- Upstream changes only."; fi
             echo
