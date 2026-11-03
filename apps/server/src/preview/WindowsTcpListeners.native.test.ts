@@ -38,3 +38,15 @@ it.effect("reads native Windows IPv4/IPv6 wildcard and loopback listeners and pr
     expect(yield* native.processName(0)).toBeNull();
   }).pipe(Effect.provide(WindowsTcpListeners.layer)),
 );
+
+it.effect("rejects native TCP discovery on unsupported architectures", () =>
+  Effect.gen(function* () {
+    const native = yield* WindowsTcpListeners.WindowsTcpListeners;
+    const error = yield* Effect.flip(native.scan);
+    expect(error.operation).toBe("load");
+    expect(String(error.cause)).toContain("No native TCP discovery on ia32");
+  }).pipe(
+    Effect.provide(WindowsTcpListeners.layer),
+    Effect.provideService(HostProcess.Architecture, "ia32"),
+  ),
+);
