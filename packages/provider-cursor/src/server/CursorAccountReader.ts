@@ -1,5 +1,5 @@
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as HttpClient from "effect/http/HttpClient";
@@ -25,7 +25,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const keychain = yield* CursorKeychain.CursorKeychain;
     const context = yield* Effect.context<
-      FileSystem.FileSystem | Crypto.Crypto | HttpClient.HttpClient
+      FileSystem.FileSystem | Digest.Digest | HttpClient.HttpClient
     >();
     return CursorAccountReader.of({
       read: Effect.fn("CursorAccountReader.read")(function (credentialSource, sinceMs, untilMs) {
