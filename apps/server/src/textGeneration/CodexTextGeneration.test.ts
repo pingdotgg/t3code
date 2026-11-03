@@ -310,7 +310,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("reports Codex's final error instead of its banner and echoed prompt", () =>
+  it.effect("keeps Codex's banner, prompt, and error text out of the failure detail", () =>
     withFakeCodexEnv(
       {
         output: "",
@@ -333,8 +333,10 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
               modelSelection: DEFAULT_TEST_MODEL_SELECTION,
             })
             .pipe(Effect.flip);
-          expect(error.detail).toBe(
-            "Codex CLI command failed: unexpected status 401 Unauthorized: Missing bearer authentication",
+          expect(error.detail).toBe("Codex CLI command failed with code 1.");
+          expect(error.detail).not.toContain("Unauthorized");
+          expect(error.cause).toEqual(
+            new Error("unexpected status 401 Unauthorized: Missing bearer authentication"),
           );
         }),
     ),

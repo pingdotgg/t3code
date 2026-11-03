@@ -337,18 +337,14 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         // Codex echoes its banner and the whole prompt to stderr before reporting the error.
         const stderrLines = stderr.trim().split("\n");
         const lastErrorLine = stderrLines.findLastIndex((line) => line.startsWith("ERROR: "));
-        const stderrDetail =
+        const output =
           lastErrorLine === -1
-            ? stderr.trim()
+            ? stderr.trim() || stdout.trim()
             : stderrLines.slice(lastErrorLine).join("\n").slice("ERROR: ".length);
-        const stdoutDetail = stdout.trim();
-        const detail = stderrDetail.length > 0 ? stderrDetail : stdoutDetail;
         return yield* new TextGenerationError({
           operation,
-          detail:
-            detail.length > 0
-              ? `Codex CLI command failed: ${detail}`
-              : `Codex CLI command failed with code ${exitCode}.`,
+          detail: `Codex CLI command failed with code ${exitCode}.`,
+          ...(output.length > 0 ? { cause: new Error(output) } : {}),
         });
       }
     });
