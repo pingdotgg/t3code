@@ -1443,6 +1443,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       window.webContents.on("before-input-event", (_event, input) => {
         syncMenuShortcuts(window.webContents, input);
       });
+      browserHost.openedPopup(wc, window.webContents);
     };
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
       syncMenuShortcuts(wc, input);

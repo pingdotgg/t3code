@@ -484,7 +484,12 @@ const make = Effect.gen(function* () {
   >();
 
   const closedPendingTabs = new Set<string>();
-  const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
+  const adoptedPages = new Map<
+    string,
+    { readonly page: Page; readonly openerTabId: string; readonly native: boolean }
+  >();
+  /** A desktop popup can reach adoption from both its `popup` event and the connect sweep. */
+  const adoptedPopups = new WeakSet<Page>();
   const closedSessions = new Set<string>();
   let hostConnectionId: string | null = null;
   let viewerResizeOrder = 0;
@@ -766,7 +771,10 @@ const make = Effect.gen(function* () {
     try {
       const endpoint = await runPromise(
         desktopChannel
-          .endpoint({ threadId: snapshot.threadId, tabId: snapshot.tabId })
+          .endpoint(
+            { threadId: snapshot.threadId, tabId: snapshot.tabId },
+            { popups: snapshot.automationOwner !== undefined },
+          )
           .pipe(Scope.provide(scope)),
       );
       const connected = await contexts.connectDesktopPage(endpoint);
@@ -800,13 +808,17 @@ const make = Effect.gen(function* () {
   ): Promise<ServerTab> => {
     const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
     adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
-    const desktop =
+    const connection =
       adopted === undefined && (await desktopRenders(snapshot))
         ? await connectDesktop(snapshot)
         : null;
+    // A desktop popup window shares its opener's connection, so closing it closes only its page.
+    const desktop =
+      connection ??
+      (adopted?.native ? { page: adopted.page, close: () => adopted.page.close() } : null);
     if (desktop) opened.push(desktop.close);
     // Otherwise a desktop that attaches late shows its own page, and the agent drives another.
-    if (!desktop && desktopChannel.available) {
+    if (!connection && desktopChannel.available) {
       await runPromise(
         manager
           .markHeadless({ threadId: ThreadId.make(snapshot.threadId), tabId: snapshot.tabId })
@@ -934,7 +946,7 @@ const make = Effect.gen(function* () {
       if (!desktop) void recordFrameCopies(tab, frame);
     });
     // An adopted popup's frames may have loaded before the tab listened.
-    if (adopted) for (const frame of page.frames()) void recordFrameCopies(tab, frame);
+    if (adopted && !desktop) for (const frame of page.frames()) void recordFrameCopies(tab, frame);
     page.on("requestfailed", (request) => {
       const errorText = request.failure()?.errorText ?? "";
       pushBounded(tab.networkEntries, {
@@ -1011,6 +1023,15 @@ const make = Effect.gen(function* () {
     reportLiveTabs();
     // A desktop page navigates on its own and can finish loading before these listeners attach.
     if (desktop) void page.waitForLoadState("load").then(() => reportLoaded(tab), constVoid);
+    // Popups opened before the connection fired their `popup` event before the listener above.
+    if (connection) {
+      for (const candidate of page.context().pages()) {
+        if (candidate === page) continue;
+        void candidate.opener().then((opener) => {
+          if (opener === page) return adoptPopup(tab, candidate);
+        }, constVoid);
+      }
+    }
     // Existing desktop and popup PDFs can start loading before interception attaches.
     if (
       snapshot.navStatus._tag === "Loading" &&
@@ -1321,6 +1342,8 @@ const make = Effect.gen(function* () {
   };
 
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
+    if (adoptedPopups.has(popup)) return;
+    adoptedPopups.add(popup);
     if (opener.closing) {
       await popup.close().catch(constVoid);
       return;
@@ -1339,10 +1362,13 @@ const make = Effect.gen(function* () {
         ...(opener.control.agentId === null
           ? {}
           : { automationOwner: opener.control.agentId, reveal: false }),
+        // The popup's page already exists; a desktop hosting its own webview would load it again.
+        headless: desktopChannel.available,
         beforePublish: (snapshot) =>
           adoptedPages.set(tabKey(snapshot.threadId, snapshot.tabId), {
             page: popup,
             openerTabId: opener.tabId,
+            native: opener.desktop !== null,
           }),
       }),
     ).then(

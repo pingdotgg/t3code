@@ -44,7 +44,11 @@ export class DesktopBrowserChannel extends Context.Service<
     readonly detached: Stream.Stream<DesktopTabKey>;
     readonly attached: Stream.Stream<DesktopTabKey>;
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
-    readonly endpoint: (key: DesktopTabKey) => Effect.Effect<string, never, Scope.Scope>;
+    /** With `popups`, the tab's popup windows become pages of the same connection. */
+    readonly endpoint: (
+      key: DesktopTabKey,
+      options?: { readonly popups: boolean },
+    ) => Effect.Effect<string, never, Scope.Scope>;
     readonly pointer: (
       key: DesktopTabKey,
       pointer: { readonly phase: "move" | "click"; readonly x: number; readonly y: number },
@@ -134,7 +138,10 @@ const make = Effect.gen(function* () {
     Effect.forkScoped,
   );
 
-  const endpoint = Effect.fn("DesktopBrowserChannel.endpoint")(function* (key: DesktopTabKey) {
+  const endpoint = Effect.fn("DesktopBrowserChannel.endpoint")(function* (
+    key: DesktopTabKey,
+    options?: { readonly popups: boolean },
+  ) {
     const id = keyOf(key);
     const secret = NodeCrypto.randomBytes(24).toString("base64url");
     const server = yield* NodeSocketServer.makeWebSocket({
@@ -156,6 +163,8 @@ const make = Effect.gen(function* () {
         yield* command({ type: "release", ...key });
       }),
     );
+    // Written before any CDP, so popups already open are there when Playwright connects.
+    if (options?.popups) yield* command({ type: "popups", ...key });
     // The relay serves one Playwright connection; a second would see the first's sessions.
     let connected = false;
     yield* server

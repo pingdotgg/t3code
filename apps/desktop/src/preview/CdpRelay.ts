@@ -16,11 +16,23 @@ export interface CdpRelayTarget {
   readonly userAgent: () => string;
   /** The desktop and its server share a disk; download paths need no translation. */
   readonly setDownloadDirectory: (directory: string | null) => void;
+  /** Only a popup closes this way; the tab's own page closes with its preview tab. */
+  readonly close?: () => void;
+}
+
+type CdpRelayEvent = (method: string, params: unknown, sessionId: string | undefined) => void;
+
+export interface CdpRelayPopup {
+  readonly event: CdpRelayEvent;
+  /** Its window closed, or its debugger went away. */
+  readonly remove: () => void;
 }
 
 export interface CdpRelayConnection {
   readonly receive: (raw: string) => void;
-  readonly event: (method: string, params: unknown, sessionId: string | undefined) => void;
+  readonly event: CdpRelayEvent;
+  /** A window the page opened; Playwright sees it as the page's popup. */
+  readonly addPopup: (target: CdpRelayTarget) => CdpRelayPopup;
 }
 
 interface CdpCommand {
@@ -70,6 +82,20 @@ const ACKNOWLEDGED = new Set([
   "Browser.cancelDownload",
 ]);
 
+interface RelayedTarget {
+  readonly target: CdpRelayTarget;
+  /** The session it is announced on. */
+  readonly sessionId: string;
+  /** Known once announced; a closed target cannot be asked for it. */
+  targetId: string | null;
+  removed: boolean;
+}
+
+type RelaySession =
+  | { readonly kind: "browser" }
+  /** Relay-created page sessions share one real debugger; `parent` is the session that attached it. */
+  | { readonly kind: "page"; readonly owner: RelayedTarget; readonly parent: string | undefined };
+
 export function createCdpRelayConnection(
   target: CdpRelayTarget,
   write: (message: string) => void,
@@ -97,25 +123,71 @@ export function createCdpRelayConnection(
     closed = true;
     close();
   };
-  let attached = false;
+  let autoAttached = false;
   let downloadEventsEnabled = false;
-  /** Relay-created page sessions share one real debugger; child frame sessions retain their own ids. */
-  const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
+  let downloads: {
+    readonly behavior: "deny" | "default";
+    readonly directory: string | null;
+  } | null = null;
+  const page: RelayedTarget = {
+    target,
+    sessionId: PAGE_SESSION_ID,
+    targetId: null,
+    removed: false,
+  };
+  /** The page first, then its popups in the order they opened. */
+  const targets = new Set([page]);
+  const sessions = new Map<string, RelaySession>([
+    [PAGE_SESSION_ID, { kind: "page", owner: page, parent: undefined }],
+  ]);
+  /** Child frame and worker sessions, by the debugger that attached them; others are the page's. */
+  const children = new Map<string, RelayedTarget>();
   let sessionSequence = 0;
-  const newSession = (kind: "browser" | "page") => {
-    const sessionId = `t3-preview-${kind}-${++sessionSequence}`;
-    sessions.set(sessionId, kind);
+  const newSession = (session: RelaySession) => {
+    const sessionId = `t3-preview-${session.kind}-${++sessionSequence}`;
+    sessions.set(sessionId, session);
     return sessionId;
   };
-  const targetInfo = async () => ({
-    targetId: await target.targetId(),
+  const announced = (relayed: RelayedTarget) => relayed.targetId !== null && !relayed.removed;
+  const targetInfo = async (relayed: RelayedTarget) => ({
+    targetId: await relayed.target.targetId(),
     type: "page",
-    title: target.title(),
-    url: target.url(),
+    title: relayed.target.title(),
+    url: relayed.target.url(),
     attached: true,
-    canAccessOpener: false,
+    ...(relayed === page
+      ? { canAccessOpener: false }
+      : { canAccessOpener: true, openerId: await target.targetId() }),
     browserContextId: BROWSER_CONTEXT_ID,
   });
+  const attachedEvent = (relayed: RelayedTarget, info: { readonly targetId: string }) => {
+    relayed.targetId = info.targetId;
+    sessions.set(relayed.sessionId, { kind: "page", owner: relayed, parent: undefined });
+    return {
+      method: "Target.attachedToTarget",
+      params: { sessionId: relayed.sessionId, targetInfo: info, waitingForDebugger: false },
+    };
+  };
+  /** Popups follow the page, one at a time, so Playwright already knows their opener. */
+  let announcing = Promise.resolve();
+  const announcePopup = (relayed: RelayedTarget) => {
+    announcing = announcing.then(() =>
+      targetInfo(relayed).then(
+        (info) => {
+          if (!relayed.removed && relayed.targetId === null) send(attachedEvent(relayed, info));
+        },
+        () => {},
+      ),
+    );
+  };
+  const findTarget = async (targetId: unknown) => {
+    for (const relayed of targets) {
+      if (relayed === page || announced(relayed)) {
+        if ((await relayed.target.targetId()) === targetId) return relayed;
+      }
+    }
+    return undefined;
+  };
 
   const browserCommand = async (command: CdpCommand): Promise<unknown> => {
     if (ACKNOWLEDGED.has(command.method)) return {};
@@ -123,13 +195,15 @@ export function createCdpRelayConnection(
       case "Browser.setDownloadBehavior": {
         const directory = command.params?.["downloadPath"];
         const allowed = command.params?.["behavior"] !== "deny" && typeof directory === "string";
+        const behavior = command.params?.["behavior"] === "deny" ? "deny" : "default";
         // Browser-scoped behavior targets Electron's app session; preview paths belong to will-download.
-        const result = await target.send(
-          "Page.setDownloadBehavior",
-          { behavior: command.params?.["behavior"] === "deny" ? "deny" : "default" },
-          undefined,
+        const [result] = await Promise.all(
+          [...targets].map((relayed) =>
+            relayed.target.send("Page.setDownloadBehavior", { behavior }, undefined),
+          ),
         );
-        target.setDownloadDirectory(allowed ? directory : null);
+        downloads = { behavior, directory: allowed ? directory : null };
+        for (const relayed of targets) relayed.target.setDownloadDirectory(downloads.directory);
         downloadEventsEnabled = command.params?.["eventsEnabled"] === true;
         return result;
       }
@@ -155,33 +229,43 @@ export function createCdpRelayConnection(
       case "Target.getBrowserContexts":
         return { browserContextIds: [] };
       case "Target.getTargets":
-        return { targetInfos: [await targetInfo()] };
+        return {
+          targetInfos: await Promise.all(
+            [...targets]
+              .filter((relayed) => relayed === page || announced(relayed))
+              .map(targetInfo),
+          ),
+        };
       case "Target.attachToBrowserTarget":
-        return { sessionId: newSession("browser") };
+        return { sessionId: newSession({ kind: "browser" }) };
       case "Target.attachToTarget": {
-        const targetId = command.params?.["targetId"];
-        if (targetId !== (await target.targetId()))
-          throw new Error("Only this preview tab's page can be attached.");
-        return { sessionId: newSession("page") };
+        const owner = await findTarget(command.params?.["targetId"]);
+        if (!owner) throw new Error("Only this preview tab's page and its popups can be attached.");
+        return { sessionId: newSession({ kind: "page", owner, parent: command.sessionId }) };
       }
       case "Target.detachFromTarget": {
         const sessionId = command.params?.["sessionId"];
-        if (typeof sessionId === "string" && sessionId !== PAGE_SESSION_ID) {
-          sessions.delete(sessionId);
-          target.sessionDetached?.(sessionId);
+        const session = typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
+        if (session?.kind === "page" && sessionId !== session.owner.sessionId) {
+          sessions.delete(sessionId as string);
+          session.owner.target.sessionDetached?.(sessionId as string);
+        } else if (session?.kind === "browser") {
+          sessions.delete(sessionId as string);
         }
         return {};
       }
+      case "Target.closeTarget": {
+        const owner = await findTarget(command.params?.["targetId"]);
+        if (owner === undefined || owner === page || !owner.target.close)
+          throw new Error(`Not supported for a desktop preview tab: ${command.method}`);
+        owner.target.close();
+        return { success: true };
+      }
       case "Target.setAutoAttach": {
-        if (attached) return {};
-        attached = true;
-        const info = await targetInfo();
-        return {
-          [ANNOUNCE]: {
-            method: "Target.attachedToTarget",
-            params: { sessionId: PAGE_SESSION_ID, targetInfo: info, waitingForDebugger: false },
-          },
-        };
+        if (autoAttached) return {};
+        autoAttached = true;
+        const info = await targetInfo(page);
+        return { [ANNOUNCE]: info };
       }
       default:
         throw new Error(`Not supported for a desktop preview tab: ${command.method}`);
@@ -189,16 +273,66 @@ export function createCdpRelayConnection(
   };
 
   const pageCommand = (command: CdpCommand): Promise<unknown> => {
-    const child = sessions.get(command.sessionId!) === "page" ? undefined : command.sessionId;
-    const owner =
-      child === undefined && command.sessionId !== PAGE_SESSION_ID ? command.sessionId : undefined;
-    // Child frames/workers pause on auto-attach until resumed; only the main page can skip this command.
+    const session = sessions.get(command.sessionId!);
+    const child = session?.kind === "page" ? undefined : command.sessionId;
+    const owner = session?.kind === "page" ? session.owner : (children.get(child!) ?? page);
+    const extra = child === undefined && command.sessionId !== owner.sessionId;
+    // Child frames/workers pause on auto-attach until resumed; only a main page can skip this command.
     if (command.method === "Runtime.runIfWaitingForDebugger" && child === undefined) {
       return Promise.resolve({});
     }
     // Playwright asks for this on every page; the host emulates focus only while it is in use.
     if (command.method === "Emulation.setFocusEmulationEnabled") return Promise.resolve({});
-    return target.send(command.method, command.params ?? {}, child, owner);
+    return owner.target.send(
+      command.method,
+      command.params ?? {},
+      child,
+      extra ? command.sessionId : undefined,
+    );
+  };
+
+  const eventFor =
+    (relayed: RelayedTarget): CdpRelayEvent =>
+    (method, params, sessionId) => {
+      const child = (params as { sessionId?: unknown } | null | undefined)?.sessionId;
+      if (method === "Target.attachedToTarget" && typeof child === "string") {
+        children.set(child, relayed);
+      } else if (method === "Target.detachedFromTarget" && typeof child === "string") {
+        children.delete(child);
+      }
+      if (!announced(relayed)) return;
+      if (method.startsWith("Page.download")) method = method.replace("Page.", "Browser.");
+      // Download events are the browser's; Playwright listens on its root session.
+      if (method.startsWith("Browser.download")) {
+        if (downloadEventsEnabled) send({ method, params });
+        return;
+      }
+      // Electron reports the page's own events with an empty session id.
+      if (sessionId) {
+        send({ method, params, sessionId });
+        return;
+      }
+      for (const [id, session] of sessions)
+        if (session.kind === "page" && session.owner === relayed)
+          send({ method, params, sessionId: id });
+    };
+
+  const removePopup = (relayed: RelayedTarget) => {
+    if (relayed.removed) return;
+    relayed.removed = true;
+    targets.delete(relayed);
+    for (const [id, owner] of children) if (owner === relayed) children.delete(id);
+    const targetId = relayed.targetId;
+    if (targetId === null) return;
+    for (const [id, session] of sessions) {
+      if (session.kind !== "page" || session.owner !== relayed) continue;
+      sessions.delete(id);
+      send({
+        method: "Target.detachedFromTarget",
+        params: { sessionId: id, targetId },
+        ...(session.parent === undefined ? {} : { sessionId: session.parent }),
+      });
+    }
   };
 
   return {
@@ -212,19 +346,21 @@ export function createCdpRelayConnection(
       }
       if (!isCommand(command)) return;
       const result =
-        command.sessionId === undefined || sessions.get(command.sessionId) === "browser"
+        command.sessionId === undefined || sessions.get(command.sessionId)?.kind === "browser"
           ? browserCommand(command)
           : pageCommand(command);
       const route = command.sessionId === undefined ? {} : { sessionId: command.sessionId };
       // Reply as commands finish so slow commands cannot block later replies.
       void result.then(
         (value) => {
-          const announce =
+          const info =
             typeof value === "object" && value !== null && ANNOUNCE in value
-              ? (value as { [ANNOUNCE]: Record<string, unknown> })[ANNOUNCE]
+              ? (value as { [ANNOUNCE]: { readonly targetId: string } })[ANNOUNCE]
               : undefined;
-          send({ id: command.id, result: announce ? {} : (value ?? {}), ...route });
-          if (announce) send(announce);
+          send({ id: command.id, result: info ? {} : (value ?? {}), ...route });
+          if (!info) return;
+          send(attachedEvent(page, info));
+          for (const relayed of targets) if (relayed !== page) announcePopup(relayed);
         },
         (cause: unknown) =>
           send({
@@ -237,21 +373,23 @@ export function createCdpRelayConnection(
           }),
       );
     },
-    event: (method, params, sessionId) => {
-      if (!attached) return;
-      if (method.startsWith("Page.download")) method = method.replace("Page.", "Browser.");
-      // Download events are the browser's; Playwright listens on its root session.
-      if (method.startsWith("Browser.download")) {
-        if (downloadEventsEnabled) send({ method, params });
-        return;
+    event: eventFor(page),
+    addPopup: (popupTarget) => {
+      const relayed: RelayedTarget = {
+        target: popupTarget,
+        sessionId: `t3-preview-popup-${++sessionSequence}`,
+        targetId: null,
+        removed: false,
+      };
+      targets.add(relayed);
+      if (downloads !== null) {
+        popupTarget.setDownloadDirectory(downloads.directory);
+        void popupTarget
+          .send("Page.setDownloadBehavior", { behavior: downloads.behavior }, undefined)
+          .catch(() => {});
       }
-      // Electron reports the page's own events with an empty session id.
-      if (sessionId) {
-        send({ method, params, sessionId });
-        return;
-      }
-      for (const [id, kind] of sessions)
-        if (kind === "page") send({ method, params, sessionId: id });
+      if (announced(page)) announcePopup(relayed);
+      return { event: eventFor(relayed), remove: () => removePopup(relayed) };
     },
   };
 }

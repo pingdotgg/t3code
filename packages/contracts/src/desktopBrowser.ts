@@ -18,6 +18,8 @@ export type DesktopBrowserEvent = typeof DesktopBrowserEvent.Type;
 export const DesktopBrowserCommand = Schema.Union([
   Schema.Struct({ type: Schema.Literal("cdp"), ...TabKey, message: Schema.String }),
   Schema.Struct({ type: Schema.Literal("release"), ...TabKey }),
+  /** The server drives this tab for an agent, so the popup windows it opens become tabs too. */
+  Schema.Struct({ type: Schema.Literal("popups"), ...TabKey }),
   Schema.Struct({
     type: Schema.Literal("pointer"),
     ...TabKey,

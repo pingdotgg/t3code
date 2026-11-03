@@ -14,15 +14,17 @@ import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { createCdpRelayConnection, type CdpRelayConnection } from "./CdpRelay.ts";
+import {
+  createCdpRelayConnection,
+  type CdpRelayConnection,
+  type CdpRelayPopup,
+  type CdpRelayTarget,
+} from "./CdpRelay.ts";
 import { sendPageCommand } from "./GuestInput.ts";
 
 const encodeEvent = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserEvent));
 const decodeCommand = Schema.decodeUnknownOption(Schema.fromJsonString(DesktopBrowserCommand));
 const lineEncoder = new TextEncoder();
-const AGENT_INPUT_COMMAND =
-  /"method":"(?:Input\.|Page\.navigate"|Runtime\.(?:evaluate|callFunctionOn)")/;
-/** The same commands as above, by method, for the relay's sends. */
 const AGENT_INPUT_METHOD = /^(?:Input\.|Page\.navigate$|Runtime\.(?:evaluate|callFunctionOn)$)/;
 const AGENT_DOWNLOAD_WINDOW_MS = 5_000;
 const FOCUS_IDLE = "5 seconds";
@@ -39,10 +41,10 @@ export interface DesktopBrowserTabDebugger {
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
 
-interface AttachedTab {
-  readonly key: DesktopBrowserTabKey;
+/** A page the relay drives: the tab's own, or a popup it opened. */
+interface AttachedTarget {
+  readonly tab: AttachedTab;
   readonly debuggee: DesktopBrowserTabDebugger;
-  relay: CdpRelayConnection | null;
   screenshotTurn: object | null;
   /** Each holds focus and painting while `held` and whoever queued it still waits on it. */
   readonly waitingScreenshots: Array<{
@@ -61,8 +63,6 @@ interface AttachedTab {
     object,
     { readonly owner: string | undefined; readonly paints: boolean }
   >;
-  /** Whether the client keeps the guest painting, as published on `painting`. */
-  painting: boolean;
   /**
    * Driven by the agent since its thread's last turn ended or the guest last throttled. A
    * turn's start can reach us after its first command, so this holds focus once it does.
@@ -80,6 +80,29 @@ interface AttachedTab {
   readonly onNewDocument: () => void;
 }
 
+/** Sessions of one relay connection, which its page and popups share. */
+interface RelayOwners {
+  readonly detached: Set<string>;
+  /** Viewers and recordings stream; the agent's own sessions never do. */
+  readonly streaming: Set<string>;
+}
+
+interface AttachedTab extends AttachedTarget {
+  readonly key: DesktopBrowserTabKey;
+  relay: CdpRelayConnection | null;
+  owners: RelayOwners;
+  /** Whether the client keeps the guest painting, as published on `painting`. */
+  painting: boolean;
+  /** Set while the server drives the tab for an agent, whose popups become its tabs too. */
+  showsPopups: boolean;
+  readonly popups: Map<Electron.WebContents, AttachedPopup>;
+}
+
+interface AttachedPopup extends AttachedTarget {
+  relayed: CdpRelayPopup | null;
+  readonly onDetach: () => void;
+}
+
 export class DesktopBrowserHost extends Context.Service<
   DesktopBrowserHost,
   {
@@ -87,6 +110,8 @@ export class DesktopBrowserHost extends Context.Service<
     readonly handleCommandLine: (line: string) => Effect.Effect<void>;
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
     readonly detach: (key: DesktopBrowserTabKey) => void;
+    /** A guest opened a popup window; a tab the server drives for an agent shows it as a tab too. */
+    readonly openedPopup: (opener: Electron.WebContents, popup: Electron.WebContents) => void;
     readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     readonly pointers: Stream.Stream<{
@@ -117,15 +142,21 @@ export const make = Effect.gen(function* () {
   }>();
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const tabs = new Map<string, AttachedTab>();
+  /** Every guest's open popups, so a tab the server starts driving later still shows them. */
+  const openedPopups = new Map<Electron.WebContents, Set<Electron.WebContents>>();
   /** Threads whose agent turn runs, by the server's account. */
   const agentTurns = new Set<string>();
   const emit = (event: DesktopBrowserEventType) => runFork(PubSub.publish(outbox, event));
 
-  const nextScreenshot = (tab: AttachedTab) => {
-    tab.screenshotTurn = null;
-    tab.waitingScreenshots.shift()?.start();
-    releaseFocusWhenIdle(tab);
-    syncPainting(tab);
+  const isAttached = (target: AttachedTarget) =>
+    tabs.get(keyOf(target.tab.key)) === target.tab &&
+    (target === target.tab || target.tab.popups.get(target.debuggee.webContents) === target);
+
+  const nextScreenshot = (target: AttachedTarget) => {
+    target.screenshotTurn = null;
+    target.waitingScreenshots.shift()?.start();
+    releaseFocusWhenIdle(target);
+    syncPainting(target);
   };
 
   /**
@@ -135,38 +166,38 @@ export const make = Effect.gen(function* () {
    * gets one at a time. One whose relay or session has since gone is dropped unsent.
    */
   const takeScreenshot = (
-    tab: AttachedTab,
+    target: AttachedTarget,
     relay: CdpRelayConnection,
     ownerLive: () => boolean,
     /** Sends only while `current` holds; holds focus and painting only while `held`. */
     capture: (current: () => boolean, held: boolean) => Promise<unknown>,
   ) =>
     new Promise<unknown>((resolve, reject) => {
-      const live = () => tab.relay === relay && ownerLive();
+      const live = () => target.tab.relay === relay && isAttached(target) && ownerLive();
       const waiting = {
         start: () => {
           if (!live()) {
             reject(new Error("The preview connection that asked for this screenshot closed."));
-            nextScreenshot(tab);
+            nextScreenshot(target);
             return;
           }
           const turn = {};
-          tab.screenshotTurn = turn;
-          capture(() => tab.screenshotTurn === turn && live(), waiting.held)
+          target.screenshotTurn = turn;
+          capture(() => target.screenshotTurn === turn && live(), waiting.held)
             .finally(() => {
-              if (tab.screenshotTurn === turn) nextScreenshot(tab);
+              if (target.screenshotTurn === turn) nextScreenshot(target);
             })
             .then(resolve, reject);
         },
         live,
         held: true,
       };
-      if (tab.screenshotTurn === null) waiting.start();
+      if (target.screenshotTurn === null) waiting.start();
       else {
         // The one ahead may be abandoned mid-capture; it needs frames to finish and free its turn.
-        tab.waitingScreenshots.push(waiting);
-        setFocusEmulation(tab, true);
-        syncPainting(tab);
+        target.waitingScreenshots.push(waiting);
+        setFocusEmulation(target, true);
+        syncPainting(target);
       }
     });
 
@@ -175,44 +206,44 @@ export const make = Effect.gen(function* () {
    * never throttle. Without it, a hidden guest paints no frames and focus() fires no focus
    * events, so the guest is emulated focused while the server drives it or streams it.
    */
-  const setFocusEmulation = (tab: AttachedTab, enabled: boolean) => {
-    if (tab.focusEmulated === enabled) return;
-    tab.focusEmulated = enabled;
+  const setFocusEmulation = (target: AttachedTarget, enabled: boolean) => {
+    if (target.focusEmulated === enabled) return;
+    target.focusEmulated = enabled;
     // A guest that refuses it, or a debugger already gone, behaves as unfocused.
-    const change: Promise<void> = tab.debuggee.debugger
+    const change: Promise<void> = target.debuggee.debugger
       .sendCommand("Emulation.setFocusEmulationEnabled", { enabled })
       .then(
         () => undefined,
         () => undefined,
       )
       .finally(() => {
-        if (tab.focusChange === change) tab.focusChange = null;
+        if (target.focusChange === change) target.focusChange = null;
       });
-    tab.focusChange = change;
+    target.focusChange = change;
   };
 
-  const waitingHolds = (tab: AttachedTab) =>
-    tab.waitingScreenshots.some((waiting) => waiting.held && waiting.live());
+  const waitingHolds = (target: AttachedTarget) =>
+    target.waitingScreenshots.some((waiting) => waiting.held && waiting.live());
 
-  const releaseFocusWhenIdle = (tab: AttachedTab) => {
-    if (tab.focusReleasing) return;
-    tab.focusReleasing = true;
+  const releaseFocusWhenIdle = (target: AttachedTarget) => {
+    if (target.focusReleasing) return;
+    target.focusReleasing = true;
     runFork(
       Effect.gen(function* () {
         let uses: number;
         do {
-          uses = tab.focusUses;
+          uses = target.focusUses;
           yield* Effect.sleep(FOCUS_IDLE);
-        } while (uses !== tab.focusUses);
-        tab.focusReleasing = false;
+        } while (uses !== target.focusUses);
+        target.focusReleasing = false;
         // The last pending command to settle starts another idle wait.
-        if (tab.focusPending.size > 0 || tab.screencasts.size > 0 || waitingHolds(tab)) {
+        if (target.focusPending.size > 0 || target.screencasts.size > 0 || waitingHolds(target)) {
           return;
         }
         // The agent pauses to think between steps; its tab stays focused until the turn ends.
-        if (tab.agentUsed && agentTurns.has(tab.key.threadId)) return;
-        tab.agentUsed = false;
-        if (tabs.get(keyOf(tab.key)) === tab) setFocusEmulation(tab, false);
+        if (target.agentUsed && agentTurns.has(target.tab.key.threadId)) return;
+        target.agentUsed = false;
+        if (isAttached(target)) setFocusEmulation(target, false);
       }),
     );
   };
@@ -221,8 +252,11 @@ export const make = Effect.gen(function* () {
    * Electron composites no offscreen guest, so its screenshot or screencast waits for a frame
    * that never comes. The client paints the guest behind the app while one is pending; the
    * capture then finishes on its own, and the guest goes back offscreen once none is.
+   * A popup is a window of its own, which the client does not paint.
    */
-  const syncPainting = (tab: AttachedTab) => {
+  const syncPainting = (target: AttachedTarget) => {
+    const tab = target.tab;
+    if (target !== tab) return;
     const active =
       tabs.get(keyOf(tab.key)) === tab &&
       (tab.screencasts.size > 0 ||
@@ -235,22 +269,22 @@ export const make = Effect.gen(function* () {
 
   /** A command may wait on the page's next frame, so the guest stays focused until it settles. */
   const holdFocus = <A>(
-    tab: AttachedTab,
+    target: AttachedTarget,
     method: string,
     owner: string | undefined,
     work: () => Promise<A>,
   ) => {
     const pending = {};
-    tab.focusPending.set(pending, { owner, paints: method === "Page.captureScreenshot" });
-    tab.focusUses += 1;
-    setFocusEmulation(tab, true);
-    releaseFocusWhenIdle(tab);
-    syncPainting(tab);
+    target.focusPending.set(pending, { owner, paints: method === "Page.captureScreenshot" });
+    target.focusUses += 1;
+    setFocusEmulation(target, true);
+    releaseFocusWhenIdle(target);
+    syncPainting(target);
     return work().finally(() => {
-      if (!tab.focusPending.delete(pending)) return;
-      tab.focusUses += 1;
-      releaseFocusWhenIdle(tab);
-      syncPainting(tab);
+      if (!target.focusPending.delete(pending)) return;
+      target.focusUses += 1;
+      releaseFocusWhenIdle(target);
+      syncPainting(target);
     });
   };
 
@@ -259,27 +293,29 @@ export const make = Effect.gen(function* () {
    * also end every hold: a released relay has no one waiting, and a new document answers
    * nothing pending from the old one. A released relay's screencast has no viewer to stop it.
    */
-  const dropFocusHolds = (tab: AttachedTab) => {
-    tab.focusPending.clear();
-    releaseFocusWhenIdle(tab);
-    syncPainting(tab);
+  const dropFocusHolds = (target: AttachedTarget) => {
+    target.focusPending.clear();
+    releaseFocusWhenIdle(target);
+    syncPainting(target);
   };
 
   const dropRelay = (tab: AttachedTab) => {
     tab.relay = null;
+    tab.showsPopups = false;
+    for (const popup of tab.popups.values()) hidePopup(popup);
     tab.screencasts.clear();
     tab.agentUsed = false;
     dropFocusHolds(tab);
   };
 
   /** A detached session, such as a closed viewer, waits on nothing it sent. */
-  const dropSessionHolds = (tab: AttachedTab, owner: string) => {
-    tab.screencasts.delete(owner);
-    for (const [pending, hold] of tab.focusPending) {
-      if (hold.owner === owner) tab.focusPending.delete(pending);
+  const dropSessionHolds = (target: AttachedTarget, owner: string) => {
+    target.screencasts.delete(owner);
+    for (const [pending, hold] of target.focusPending) {
+      if (hold.owner === owner) target.focusPending.delete(pending);
     }
-    releaseFocusWhenIdle(tab);
-    syncPainting(tab);
+    releaseFocusWhenIdle(target);
+    syncPainting(target);
   };
 
   /**
@@ -291,80 +327,96 @@ export const make = Effect.gen(function* () {
     agentTurns.delete(threadId);
     for (const tab of tabs.values()) {
       if (tab.key.threadId !== threadId) continue;
-      tab.agentUsed = false;
-      // Still sent in turn, so the queue keeps moving, but no longer kept painting.
-      for (const waiting of tab.waitingScreenshots) waiting.held = false;
-      dropFocusHolds(tab);
+      for (const target of [tab, ...tab.popups.values()]) {
+        target.agentUsed = false;
+        // Still sent in turn, so the queue keeps moving, but no longer kept painting.
+        for (const waiting of target.waitingScreenshots) waiting.held = false;
+        dropFocusHolds(target);
+      }
     }
+  };
+
+  /** One relay drives the tab's page and its popups; each keeps its own focus and screenshots. */
+  const relayTarget = (
+    target: AttachedTarget,
+    relay: () => CdpRelayConnection,
+    owners: RelayOwners,
+  ): CdpRelayTarget => {
+    const { webContents, debugger: debuggee } = target.debuggee;
+    const live = () => target.tab.relay === relay() && isAttached(target);
+    const send = (method: string, params: Record<string, unknown>, sessionId?: string) =>
+      sendPageCommand(webContents, debuggee, method, params, sessionId);
+    return {
+      send: (method, params, sessionId, owner) => {
+        // A child session's screencast is not the page's, such as a late one on a detached session.
+        if (sessionId === undefined && method === "Page.startScreencast") {
+          target.screencasts.add(owner);
+          if (owner !== undefined) owners.streaming.add(owner);
+        } else if (sessionId === undefined && method === "Page.stopScreencast") {
+          target.screencasts.delete(owner);
+        }
+        if (AGENT_INPUT_METHOD.test(method)) {
+          target.agentInputAt = performance.now();
+          // A person's input through a viewer, or Playwright's own housekeeping, is not the agent's.
+          if (owner === undefined || !owners.streaming.has(owner)) target.agentUsed = true;
+        }
+        // Waits for focus emulation; insertText and other non-CDP input would not queue behind it.
+        const forward = (current?: () => boolean) => {
+          const change = target.focusChange;
+          const run = () =>
+            live() && (current === undefined || current())
+              ? send(method, params, sessionId)
+              : Promise.reject(new Error("The page this screenshot was for has moved on."));
+          return change === null ? run() : change.then(run);
+        };
+        return method === "Page.captureScreenshot"
+          ? takeScreenshot(
+              target,
+              relay(),
+              () => owner === undefined || !owners.detached.has(owner),
+              (current, held) =>
+                held ? holdFocus(target, method, owner, () => forward(current)) : forward(current),
+            )
+          : method === "Page.startScreencast"
+            ? holdFocus(target, method, owner, forward).catch((cause: unknown) => {
+                // A viewer can outlive a refused stream; nothing is streaming for it.
+                if (sessionId === undefined && live()) target.screencasts.delete(owner);
+                releaseFocusWhenIdle(target);
+                syncPainting(target);
+                throw cause;
+              })
+            : holdFocus(target, method, owner, forward);
+      },
+      sessionDetached: (owner) => {
+        owners.detached.add(owner);
+        dropSessionHolds(target, owner);
+      },
+      targetId: () =>
+        debuggee
+          .sendCommand("Target.getTargetInfo")
+          .then((result: { targetInfo: { targetId: string } }) => result.targetInfo.targetId),
+      url: () => webContents.getURL(),
+      title: () => webContents.getTitle(),
+      userAgent: () => webContents.getUserAgent(),
+      setDownloadDirectory: (directory) => {
+        target.downloadDirectory = directory;
+      },
+      ...(target === target.tab
+        ? {}
+        : {
+            close: () => {
+              if (!webContents.isDestroyed()) webContents.close();
+            },
+          }),
+    };
   };
 
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
-    const { webContents, debugger: debuggee } = tab.debuggee;
-    const send = (method: string, params: Record<string, unknown>, sessionId?: string) =>
-      sendPageCommand(webContents, debuggee, method, params, sessionId);
-    const detachedOwners = new Set<string>();
-    /** Viewers and recordings stream; the agent's own sessions never do. */
-    const streamingOwners = new Set<string>();
+    const { debugger: debuggee } = tab.debuggee;
+    tab.owners = { detached: new Set(), streaming: new Set() };
     const relay: CdpRelayConnection = createCdpRelayConnection(
-      {
-        send: (method, params, sessionId, owner) => {
-          // A child session's screencast is not the page's, such as a late one on a detached session.
-          if (sessionId === undefined && method === "Page.startScreencast") {
-            tab.screencasts.add(owner);
-            if (owner !== undefined) streamingOwners.add(owner);
-          } else if (sessionId === undefined && method === "Page.stopScreencast") {
-            tab.screencasts.delete(owner);
-          }
-          // A person's input through a viewer, or Playwright's own housekeeping, is not the agent's.
-          if (
-            AGENT_INPUT_METHOD.test(method) &&
-            (owner === undefined || !streamingOwners.has(owner))
-          ) {
-            tab.agentUsed = true;
-          }
-          // Waits for focus emulation; insertText and other non-CDP input would not queue behind it.
-          const forward = (current?: () => boolean) => {
-            const change = tab.focusChange;
-            const run = () =>
-              tab.relay === relay && (current === undefined || current())
-                ? send(method, params, sessionId)
-                : Promise.reject(new Error("The page this screenshot was for has moved on."));
-            return change === null ? run() : change.then(run);
-          };
-          return method === "Page.captureScreenshot"
-            ? takeScreenshot(
-                tab,
-                relay,
-                () => owner === undefined || !detachedOwners.has(owner),
-                (current, held) =>
-                  held ? holdFocus(tab, method, owner, () => forward(current)) : forward(current),
-              )
-            : method === "Page.startScreencast"
-              ? holdFocus(tab, method, owner, forward).catch((cause: unknown) => {
-                  // A viewer can outlive a refused stream; nothing is streaming for it.
-                  if (sessionId === undefined && tab.relay === relay) tab.screencasts.delete(owner);
-                  releaseFocusWhenIdle(tab);
-                  syncPainting(tab);
-                  throw cause;
-                })
-              : holdFocus(tab, method, owner, forward);
-        },
-        sessionDetached: (owner) => {
-          detachedOwners.add(owner);
-          dropSessionHolds(tab, owner);
-        },
-        targetId: () =>
-          debuggee
-            .sendCommand("Target.getTargetInfo")
-            .then((result: { targetInfo: { targetId: string } }) => result.targetInfo.targetId),
-        url: () => webContents.getURL(),
-        title: () => webContents.getTitle(),
-        userAgent: () => webContents.getUserAgent(),
-        setDownloadDirectory: (directory) => {
-          tab.downloadDirectory = directory;
-        },
-      },
+      relayTarget(tab, () => relay, tab.owners),
       (message) => {
         if (tab.relay === relay && tabs.get(keyOf(tab.key)) === tab) {
           emit({ type: "cdp", ...tab.key, message });
@@ -390,17 +442,127 @@ export const make = Effect.gen(function* () {
       },
     );
     tab.relay = relay;
+    showPopups(tab);
     return relay;
+  };
+
+  const freshTarget = (debuggee: DesktopBrowserTabDebugger) => ({
+    debuggee,
+    screenshotTurn: null,
+    waitingScreenshots: [],
+    downloadDirectory: null,
+    pendingDownloadGuid: null,
+    agentInputAt: Number.NEGATIVE_INFINITY,
+    focusEmulated: false,
+    focusChange: null,
+    focusUses: 0,
+    focusPending: new Map(),
+    agentUsed: false,
+    focusReleasing: false,
+    screencasts: new Set<string | undefined>(),
+  });
+
+  const listen = <T extends Omit<AttachedTarget, "onMessage" | "onNewDocument">>(
+    target: T,
+    relayed: () => { readonly event: CdpRelayConnection["event"] } | null,
+  ): T & Pick<AttachedTarget, "onMessage" | "onNewDocument"> =>
+    Object.assign(target, {
+      onMessage: (_event: Electron.Event, method: string, params: unknown, sessionId: string) => {
+        if (method === "Page.downloadWillBegin") {
+          const guid = (params as { guid?: unknown } | undefined)?.guid;
+          target.pendingDownloadGuid = typeof guid === "string" ? guid : null;
+        }
+        relayed()?.event(method, params, sessionId);
+      },
+      // A screenshot pending when the page loads a new document, a reload included, can
+      // stay unanswered. A crashed page lands here once it reloads, well after its renderer died.
+      onNewDocument: () => {
+        const listening = target as T & AttachedTarget;
+        // Before the next screenshot starts, so its own hold survives.
+        dropFocusHolds(listening);
+        if (listening.screenshotTurn !== null) nextScreenshot(listening);
+      },
+    });
+
+  const showPopup = (tab: AttachedTab, webContents: Electron.WebContents) => {
+    const relay = tab.relay;
+    if (!relay || !tab.showsPopups || tab.popups.has(webContents) || webContents.isDestroyed())
+      return;
+    // Kept for the popup's lifetime; `webContents.debugger` throws once it is destroyed.
+    const debuggee = webContents.debugger;
+    // DevTools, or another client, already holds its debugger.
+    if (debuggee.isAttached()) return;
+    try {
+      debuggee.attach("1.3");
+    } catch {
+      return;
+    }
+    const popup: AttachedPopup = listen(
+      {
+        ...freshTarget({ webContents, debugger: debuggee }),
+        tab,
+        relayed: null,
+        onDetach: () => hidePopup(popup, true),
+      },
+      () => popup.relayed,
+    );
+    tab.popups.set(webContents, popup);
+    debuggee.on("message", popup.onMessage);
+    debuggee.on("detach", popup.onDetach);
+    webContents.on("did-navigate", popup.onNewDocument);
+    popup.relayed = relay.addPopup(relayTarget(popup, () => relay, tab.owners));
+  };
+
+  /** Detaching the debugger also ends the popup's streams, emulation and paused children. */
+  const hidePopup = (popup: AttachedPopup, debuggerGone = false) => {
+    const { tab, debuggee } = popup;
+    if (tab.popups.get(debuggee.webContents) !== popup) return;
+    tab.popups.delete(debuggee.webContents);
+    debuggee.debugger.off("message", popup.onMessage);
+    debuggee.debugger.off("detach", popup.onDetach);
+    debuggee.webContents.off("did-navigate", popup.onNewDocument);
+    popup.relayed?.remove();
+    popup.screencasts.clear();
+    dropFocusHolds(popup);
+    if (!debuggerGone && !debuggee.webContents.isDestroyed() && debuggee.debugger.isAttached()) {
+      debuggee.debugger.detach();
+    }
+  };
+
+  const showPopups = (tab: AttachedTab) => {
+    for (const popup of openedPopups.get(tab.debuggee.webContents) ?? []) showPopup(tab, popup);
+  };
+
+  const openedPopup = (opener: Electron.WebContents, popup: Electron.WebContents) => {
+    const popups = openedPopups.get(opener) ?? new Set();
+    openedPopups.set(opener, popups);
+    popups.add(popup);
+    popup.once("destroyed", () => {
+      popups.delete(popup);
+      if (popups.size === 0 && openedPopups.get(opener) === popups) openedPopups.delete(opener);
+      for (const tab of tabs.values()) {
+        const shown = tab.popups.get(popup);
+        if (shown) hidePopup(shown, true);
+      }
+    });
+    for (const tab of tabs.values()) if (tab.debuggee.webContents === opener) showPopup(tab, popup);
+  };
+
+  const targetOf = (source: Electron.WebContents) => {
+    for (const tab of tabs.values()) {
+      if (tab.debuggee.webContents === source) return tab;
+      const popup = tab.popups.get(source);
+      if (popup) return popup;
+    }
+    return undefined;
   };
 
   // CDP supplies the path before this runs; otherwise Electron opens a Save dialog.
   const placeDownload = (source: Electron.WebContents, item: Electron.DownloadItem) => {
-    const tab = [...tabs.values()].find(
-      (candidate) => candidate.debuggee.webContents === source && candidate.downloadDirectory,
-    );
-    if (!tab?.downloadDirectory || !tab.pendingDownloadGuid) return false;
-    item.setSavePath(NodePath.join(tab.downloadDirectory, tab.pendingDownloadGuid));
-    tab.pendingDownloadGuid = null;
+    const target = targetOf(source);
+    if (!target?.downloadDirectory || !target.pendingDownloadGuid) return false;
+    item.setSavePath(NodePath.join(target.downloadDirectory, target.pendingDownloadGuid));
+    target.pendingDownloadGuid = null;
     return true;
   };
 
@@ -408,6 +570,7 @@ export const make = Effect.gen(function* () {
     const id = keyOf(key);
     const tab = tabs.get(id);
     if (!tab) return;
+    for (const popup of tab.popups.values()) hidePopup(popup);
     tabs.delete(id);
     tab.relay = null;
     tab.debuggee.debugger.off("message", tab.onMessage);
@@ -420,38 +583,21 @@ export const make = Effect.gen(function* () {
     const id = keyOf(key);
     if (tabs.get(id)?.debuggee.webContents === debuggee.webContents) return;
     detach(key);
-    const tab: AttachedTab = {
-      key,
-      debuggee,
-      relay: null,
-      screenshotTurn: null,
-      waitingScreenshots: [],
-      downloadDirectory: null,
-      pendingDownloadGuid: null,
-      agentInputAt: Number.NEGATIVE_INFINITY,
-      focusEmulated: false,
-      focusChange: null,
-      focusUses: 0,
-      focusPending: new Map(),
-      painting: false,
-      agentUsed: false,
-      focusReleasing: false,
-      screencasts: new Set(),
-      onMessage: (_event, method, params, sessionId) => {
-        if (method === "Page.downloadWillBegin") {
-          const guid = (params as { guid?: unknown } | undefined)?.guid;
-          tab.pendingDownloadGuid = typeof guid === "string" ? guid : null;
-        }
-        tab.relay?.event(method, params, sessionId);
+    const tab: AttachedTab = listen(
+      {
+        ...freshTarget(debuggee),
+        get tab() {
+          return tab;
+        },
+        key,
+        relay: null,
+        owners: { detached: new Set(), streaming: new Set() },
+        painting: false,
+        showsPopups: false,
+        popups: new Map(),
       },
-      // A screenshot pending when the page loads a new document, a reload included, can
-      // stay unanswered. A crashed page lands here once it reloads, well after its renderer died.
-      onNewDocument: () => {
-        // Before the next screenshot starts, so its own hold survives.
-        dropFocusHolds(tab);
-        if (tab.screenshotTurn !== null) nextScreenshot(tab);
-      },
-    };
+      () => tab.relay,
+    );
     tabs.set(id, tab);
     debuggee.debugger.on("message", tab.onMessage);
     debuggee.webContents.on("did-navigate", tab.onNewDocument);
@@ -469,22 +615,29 @@ export const make = Effect.gen(function* () {
       }
       const tab = tabs.get(keyOf(command.value));
       if (!tab) return;
-      if (command.value.type === "pointer") {
-        const { threadId, tabId, phase, x, y } = command.value;
-        runFork(PubSub.publish(pointers, { key: { threadId, tabId }, phase, x, y }));
-        return;
+      switch (command.value.type) {
+        case "pointer": {
+          const { threadId, tabId, phase, x, y } = command.value;
+          runFork(PubSub.publish(pointers, { key: { threadId, tabId }, phase, x, y }));
+          return;
+        }
+        case "release":
+          dropRelay(tab);
+          return;
+        case "popups":
+          tab.showsPopups = true;
+          if (tab.relay) showPopups(tab);
+          return;
+        case "cdp":
+          relayFor(tab).receive(command.value.message);
       }
-      if (command.value.type === "release") {
-        dropRelay(tab);
-        return;
-      }
-      if (AGENT_INPUT_COMMAND.test(command.value.message)) tab.agentInputAt = performance.now();
-      relayFor(tab).receive(command.value.message);
     });
 
   const humanStartedDownload = (source: Electron.WebContents) => {
-    const tab = [...tabs.values()].find((candidate) => candidate.debuggee.webContents === source);
-    return tab !== undefined && performance.now() - tab.agentInputAt > AGENT_DOWNLOAD_WINDOW_MS;
+    const target = targetOf(source);
+    return (
+      target !== undefined && performance.now() - target.agentInputAt > AGENT_DOWNLOAD_WINDOW_MS
+    );
   };
 
   const announceAll = Effect.suspend(() => {
@@ -514,6 +667,7 @@ export const make = Effect.gen(function* () {
     handleCommandLine,
     attach,
     detach,
+    openedPopup,
     placeDownload,
     humanStartedDownload,
   });

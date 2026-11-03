@@ -67,6 +67,9 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
     async connectDesktopPage(endpoint: string) {
       const context = makeContext(undefined, desktopPageUrl);
       context.page.viewportSize.mockReturnValue(null);
+      const popups = desktopPopupsNext.splice(0);
+      for (const popup of popups) popup.page.opener = async () => context.page;
+      context.pages = () => [context.page, ...popups.map((popup) => popup.page)];
       desktopConnections.push({ endpoint, context });
       return { browser: { close: async () => {} }, page: context.page as unknown as Page };
     }
@@ -206,6 +209,7 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       initialNavigation = null;
       await pending?.();
     }),
+    opener: async (): Promise<unknown> => null,
     goBack: vi.fn(async () => {}),
     goForward: vi.fn(async () => {}),
     reload: vi.fn(async () => {}),
@@ -235,6 +239,7 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
     sessions,
     cssViewport,
     newPage: async () => page as unknown as Page,
+    pages: (): ReadonlyArray<unknown> => [page],
     grantPermissions: vi.fn(async () => {}),
     newCDPSession: async (target: unknown) => {
       const session = makeSession(
@@ -308,6 +313,9 @@ let pageSetupFailure: Error | null = null;
 let initialNavigation: (() => Promise<void>) | null = null;
 let desktopRendersNext = false;
 let desktopPageUrl = "about:blank";
+/** Popup windows already open when the next desktop page connects. */
+const desktopPopupsNext: Array<ReturnType<typeof makeContext>> = [];
+const desktopEndpoints: Array<{ tabId: string; popups: boolean | undefined }> = [];
 /** Replaces the answer to the desktop page's size reads. */
 let desktopSizeAnswer: (() => Promise<Record<string, unknown>>) | null = null;
 const desktopDetaches = new NodeEvents.EventEmitter();
@@ -379,12 +387,17 @@ const dependencies = Layer.mergeAll(
       ),
     ),
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
-    endpoint: (key) =>
-      Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
+    endpoint: (key, options) =>
+      Effect.acquireRelease(
         Effect.sync(() => {
-          releasedDesktopTabs.push(key.tabId);
-          desktopReleased.resolve();
+          desktopEndpoints.push({ tabId: key.tabId, popups: options?.popups });
+          return `ws://desktop/${key.tabId}`;
         }),
+        () =>
+          Effect.sync(() => {
+            releasedDesktopTabs.push(key.tabId);
+            desktopReleased.resolve();
+          }),
       ),
     pointer: () => Effect.void,
     turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
@@ -457,6 +470,8 @@ beforeEach(() => {
   desktopTabs.clear();
   desktopRendersNext = false;
   desktopPageUrl = "about:blank";
+  desktopPopupsNext.length = 0;
+  desktopEndpoints.length = 0;
   desktopSizeAnswer = null;
   desktopDetachReady = Promise.withResolvers<void>();
   desktopReleased = Promise.withResolvers<void>();
@@ -619,6 +634,75 @@ it.effect("a tab the desktop does not draw is marked headless, so the desktop st
 
       expect(headlessOf(tabId)).toBe(true);
       expect(headlessOf(desktopTab.tabId)).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("an agent's desktop tab's popup windows become its tabs, drawn by the desktop", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const nextOpened = Effect.gen(function* () {
+        let event = yield* PubSub.take(events);
+        while (event.type !== "opened") event = yield* PubSub.take(events);
+        return event.snapshot;
+      });
+      const existing = makeContext(undefined, "https://example.com/popout");
+      desktopPopupsNext.push(existing);
+      desktopRendersNext = true;
+      const opener = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      yield* nextOpened;
+      const existingTab = yield* nextOpened;
+      const later = makeContext(undefined, "https://example.com/auth");
+      const openerPage = desktopConnections[0]!.context.page;
+      openerPage.emit("popup", later.page);
+      openerPage.emit("popup", existing.page);
+      const laterTab = yield* nextOpened;
+
+      // Streamed from its first snapshot: the desktop never loads the popup in a webview of its own.
+      expect([existingTab.headless, laterTab.headless]).toEqual([true, true]);
+      expect(desktopEndpoints).toEqual([{ tabId: opener.tabId, popups: true }]);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId: existingTab.tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabs).toEqual(
+        expect.arrayContaining(
+          [existingTab, laterTab].map((popup) =>
+            expect.objectContaining({
+              tabId: popup.tabId,
+              openerTabId: opener.tabId,
+              ownedByCaller: true,
+            }),
+          ),
+        ),
+      );
+      expect(status.tabs).toHaveLength(4);
+      // A native window keeps its own size and the person's file picker.
+      expect(existing.page.setViewportSize).not.toHaveBeenCalled();
+      existing.page.openFileChooser();
+      expect(existing.page.nativeFileChooser).toHaveBeenCalledOnce();
+
+      yield* broker.invoke({ scope, tabId: existingTab.tabId, operation: "close", input: {} });
+      expect(existing.page.close).toHaveBeenCalled();
+      expect(releasedDesktopTabs).toEqual([]);
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions.map((session) => session.tabId)).toContain(laterTab.tabId);
+      expect(sessions.map((session) => session.tabId)).not.toContain(existingTab.tabId);
+
+      // A person's desktop tab keeps its popup windows to itself.
+      desktopRendersNext = true;
+      const human = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      yield* broker.invoke({ scope, tabId: human.tabId, operation: "status", input: {} });
+      expect(desktopEndpoints.at(-1)).toEqual({ tabId: human.tabId, popups: false });
     }),
   ).pipe(Effect.provide(layer)),
 );

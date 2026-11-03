@@ -33,6 +33,7 @@ const command = (
 
 const makeDebuggee = (
   options: {
+    readonly targetId?: string;
     readonly deferFocus?: boolean;
     readonly refuse?: (method: string, sessionId: string | undefined) => boolean;
   } = {},
@@ -55,7 +56,7 @@ const makeDebuggee = (
           return;
         }
         if (method === "Target.getTargetInfo") {
-          resolve({ targetInfo: { targetId: "GUEST" } });
+          resolve({ targetInfo: { targetId: options.targetId ?? "GUEST" } });
           return;
         }
         if (method === "Emulation.setFocusEmulationEnabled") {
@@ -68,11 +69,23 @@ const makeDebuggee = (
         pending.push(() => resolve({ method }));
         sendWaiters.shift()?.();
       }),
+    attached: false,
+    isAttached: () => debuggee.attached,
+    attach: () => {
+      debuggee.attached = true;
+    },
+    detach: vi.fn(() => {
+      debuggee.attached = false;
+    }),
   });
+  let destroyed = false;
   const webContents = Object.assign(new NodeEvents.EventEmitter(), {
+    debugger: debuggee,
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
     getUserAgent: () => "Electron",
+    isDestroyed: () => destroyed,
+    close: vi.fn(),
   });
   return {
     tab: {
@@ -80,6 +93,11 @@ const makeDebuggee = (
       debugger: debuggee as unknown as Electron.Debugger,
     },
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
+    debuggee,
+    destroy: () => {
+      destroyed = true;
+      webContents.emit("destroyed");
+    },
     navigate: () => webContents.emit("did-navigate"),
     /** Ids of the commands the debugger received, in order. */
     sent,
@@ -969,11 +987,117 @@ describe("DesktopBrowserHost", () => {
             id: 2,
             method: "Input.dispatchMouseEvent",
             params: { type: "mousePressed", x: 1, y: 1 },
+            sessionId: "t3-preview-page",
           }),
         }),
       );
       expect(host.humanStartedDownload(debuggee.tab.webContents)).toBe(false);
     }),
+  );
+
+  it.effect("drives an agent tab's popup windows through its relay, each on its own", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const page = makeDebuggee();
+      const early = makeDebuggee({ targetId: "EARLY" });
+      const late = makeDebuggee({ targetId: "LATE" });
+      const human = makeDebuggee();
+      const humanPopup = makeDebuggee({ targetId: "HUMAN-POPUP" });
+      const humanKey = { threadId: "thread-1", tabId: "tab-human" };
+      const events = yield* Queue.unbounded<DesktopBrowserEvent>();
+      yield* host.events.pipe(
+        Stream.runForEach((line) =>
+          Queue.offer(events, decodeEvent(new TextDecoder().decode(line))),
+        ),
+        Effect.forkScoped,
+      );
+      const cdp = (tabKey: typeof key, message: Record<string, unknown>) =>
+        host.handleCommandLine(
+          encodeJson({ type: "cdp", ...tabKey, message: encodeJson(message) }),
+        );
+      const nextCdp = Effect.gen(function* () {
+        let event = yield* Queue.take(events);
+        while (event.type !== "cdp") event = yield* Queue.take(events);
+        return JSON.parse(event.message) as Record<string, unknown>;
+      });
+      host.attach(key, page.tab);
+      host.attach(humanKey, human.tab);
+      yield* Queue.takeN(events, 2);
+      host.openedPopup(page.tab.webContents, early.tab.webContents);
+      host.openedPopup(human.tab.webContents, humanPopup.tab.webContents);
+
+      yield* host.handleCommandLine(encodeJson({ type: "popups", ...key }));
+      yield* cdp(key, { id: 1, method: "Target.setAutoAttach" });
+      yield* cdp(humanKey, { id: 1, method: "Target.setAutoAttach" });
+      const announced: Array<Record<string, unknown>> = [];
+      while (announced.length < 3) {
+        const message = yield* nextCdp;
+        if (message["method"] === "Target.attachedToTarget") announced.push(message);
+      }
+      host.openedPopup(page.tab.webContents, late.tab.webContents);
+      let lateAnnounced = yield* nextCdp;
+      while (lateAnnounced["method"] !== "Target.attachedToTarget") lateAnnounced = yield* nextCdp;
+      announced.push(lateAnnounced);
+      const popups = announced
+        .map((message) => message["params"] as { sessionId: string; targetInfo: object })
+        .filter((params) => params.sessionId !== "t3-preview-page");
+      expect(popups.map((params) => params.targetInfo)).toEqual([
+        expect.objectContaining({ targetId: "EARLY", openerId: "GUEST" }),
+        expect.objectContaining({ targetId: "LATE", openerId: "GUEST" }),
+      ]);
+      // A person's tab keeps its popups to itself.
+      expect(humanPopup.debuggee.attached).toBe(false);
+      expect(early.debuggee.attached).toBe(true);
+
+      const [earlySession, lateSession] = popups.map((params) => params.sessionId);
+      yield* cdp(key, {
+        id: 2,
+        method: "Page.captureScreenshot",
+        params: { id: 2 },
+        sessionId: earlySession,
+      });
+      yield* cdp(key, {
+        id: 3,
+        method: "Page.captureScreenshot",
+        params: { id: 3 },
+        sessionId: lateSession,
+      });
+      yield* settle;
+      // The early popup's pending screenshot neither blocks the late one's nor focuses the page.
+      expect([early.sent, late.sent, page.sent]).toEqual([[2], [3], []]);
+      expect([early.focusEmulation, late.focusEmulation, page.focusEmulation]).toEqual([
+        [true],
+        [true],
+        [],
+      ]);
+
+      yield* cdp(key, {
+        id: 4,
+        method: "Browser.setDownloadBehavior",
+        params: { behavior: "allowAndName", downloadPath: "/srv/downloads" },
+      });
+      yield* settle;
+      for (const debuggee of [page, early, late]) debuggee.release();
+      let reply = yield* nextCdp;
+      while (reply["id"] !== 4) reply = yield* nextCdp;
+      const paths: Array<string> = [];
+      const item = {
+        setSavePath: (path: string) => void paths.push(path),
+      } as unknown as Electron.DownloadItem;
+      late.emit("Page.downloadWillBegin", { guid: "guid-late" });
+      expect(host.placeDownload(page.tab.webContents, item)).toBe(false);
+      expect(host.placeDownload(late.tab.webContents, item)).toBe(true);
+      expect(paths).toEqual(["/srv/downloads/guid-late"]);
+
+      late.destroy();
+      let closed = yield* nextCdp;
+      while (closed["method"] !== "Target.detachedFromTarget") closed = yield* nextCdp;
+      expect(closed["params"]).toEqual({ sessionId: lateSession, targetId: "LATE" });
+
+      yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
+      expect(early.debuggee.detach).toHaveBeenCalledOnce();
+      expect(late.debuggee.detach).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped),
   );
 
   it.effect("detaches only the tab whose CDP event is too large to relay", () =>

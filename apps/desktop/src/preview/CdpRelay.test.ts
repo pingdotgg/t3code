@@ -170,6 +170,164 @@ describe("CDP relay extra sessions", () => {
   });
 });
 
+describe("CDP relay popups", () => {
+  const makePopup = (
+    targetId: string,
+    send: CdpRelayTarget["send"],
+    close: () => void = () => {},
+    setDownloadDirectory: CdpRelayTarget["setDownloadDirectory"] = () => {},
+  ): CdpRelayTarget => ({
+    ...makeTarget(send, setDownloadDirectory),
+    targetId: async () => targetId,
+    url: () => `http://localhost:4719/${targetId}`,
+    close,
+  });
+  const resultOf = (written: Array<Record<string, unknown>>, id: number) =>
+    written.find((message) => message["id"] === id)!;
+
+  it("announces the page's popups after it, as its popups, and routes them separately", async () => {
+    const pageSend = vi.fn(async () => ({}));
+    const earlySend = vi.fn(async () => ({}));
+    const lateSend = vi.fn(async () => ({}));
+    const closeLate = vi.fn();
+    const directories: Array<string | null> = [];
+    const written: Array<Record<string, unknown>> = [];
+    const relay = makeRelay(makeTarget(pageSend), (raw) => written.push(JSON.parse(raw)));
+    const early = relay.addPopup(makePopup("EARLY", earlySend));
+    relay.receive(
+      JSON.stringify({
+        id: 1,
+        method: "Browser.setDownloadBehavior",
+        params: { behavior: "allowAndName", downloadPath: "/srv/artifacts", eventsEnabled: true },
+      }),
+    );
+    relay.receive(JSON.stringify({ id: 2, method: "Target.setAutoAttach", params: {} }));
+    await settle();
+    const late = relay.addPopup(
+      makePopup("LATE", lateSend, closeLate, (directory) => directories.push(directory)),
+    );
+    await settle();
+
+    const announced = written.filter((m) => m["method"] === "Target.attachedToTarget");
+    expect(announced.map((m) => m["params"])).toEqual([
+      expect.objectContaining({
+        sessionId: "t3-preview-page",
+        targetInfo: expect.not.objectContaining({ openerId: expect.anything() }),
+      }),
+      expect.objectContaining({
+        targetInfo: expect.objectContaining({ targetId: "EARLY", openerId: "GUEST-TARGET" }),
+      }),
+      expect.objectContaining({
+        targetInfo: expect.objectContaining({ targetId: "LATE", openerId: "GUEST-TARGET" }),
+      }),
+    ]);
+    const [, earlySession, lateSession] = announced.map(
+      (m) => (m["params"] as { sessionId: string }).sessionId,
+    );
+    // A popup opened after the server chose where downloads go saves there too.
+    expect(directories).toEqual(["/srv/artifacts"]);
+    expect(lateSend).toHaveBeenCalledWith(
+      "Page.setDownloadBehavior",
+      { behavior: "default" },
+      undefined,
+    );
+
+    relay.receive(JSON.stringify({ id: 3, method: "Target.getTargets" }));
+    relay.receive(JSON.stringify({ id: 4, method: "Target.attachToBrowserTarget" }));
+    await settle();
+    expect(
+      (resultOf(written, 3)["result"] as { targetInfos: Array<{ targetId: string }> }).targetInfos,
+    ).toEqual([
+      expect.objectContaining({ targetId: "GUEST-TARGET" }),
+      expect.objectContaining({ targetId: "EARLY" }),
+      expect.objectContaining({ targetId: "LATE" }),
+    ]);
+    const browserSession = (resultOf(written, 4)["result"] as { sessionId: string }).sessionId;
+    relay.receive(
+      JSON.stringify({
+        id: 5,
+        method: "Target.attachToTarget",
+        params: { targetId: "LATE", flatten: true },
+        sessionId: browserSession,
+      }),
+    );
+    relay.receive(
+      JSON.stringify({ id: 6, method: "Target.closeTarget", params: { targetId: "GUEST-TARGET" } }),
+    );
+    relay.receive(
+      JSON.stringify({ id: 7, method: "Target.attachToTarget", params: { targetId: "OTHER" } }),
+    );
+    await settle();
+    const extra = (resultOf(written, 5)["result"] as { sessionId: string }).sessionId;
+    expect(resultOf(written, 6)).toHaveProperty("error");
+    expect(resultOf(written, 7)).toHaveProperty("error");
+
+    relay.receive(JSON.stringify({ id: 8, method: "Page.enable", sessionId: earlySession }));
+    relay.receive(JSON.stringify({ id: 9, method: "Page.startScreencast", sessionId: extra }));
+    relay.receive(JSON.stringify({ id: 10, method: "Page.enable", sessionId: "t3-preview-page" }));
+    await settle();
+    expect(earlySend.mock.calls.at(-1)).toEqual(["Page.enable", {}, undefined, undefined]);
+    expect(lateSend.mock.calls.at(-1)).toEqual(["Page.startScreencast", {}, undefined, extra]);
+    expect(pageSend.mock.calls.at(-1)).toEqual(["Page.enable", {}, undefined, undefined]);
+
+    // A frame's session belongs to the popup whose debugger attached it.
+    late.event(
+      "Target.attachedToTarget",
+      { sessionId: "late-frame", targetInfo: { type: "iframe" } },
+      "",
+    );
+    relay.receive(JSON.stringify({ id: 11, method: "DOM.enable", sessionId: "late-frame" }));
+    await settle();
+    expect(lateSend.mock.calls.at(-1)).toEqual(["DOM.enable", {}, "late-frame", undefined]);
+
+    written.length = 0;
+    early.event("Page.loadEventFired", { timestamp: 1 }, "");
+    late.event("Page.downloadWillBegin", { guid: "g1", frameId: "LATE" }, "");
+    expect(written).toEqual([
+      { method: "Page.loadEventFired", params: { timestamp: 1 }, sessionId: earlySession },
+      { method: "Browser.downloadWillBegin", params: { guid: "g1", frameId: "LATE" } },
+    ]);
+
+    relay.receive(
+      JSON.stringify({ id: 12, method: "Target.closeTarget", params: { targetId: "LATE" } }),
+    );
+    await settle();
+    expect(closeLate).toHaveBeenCalledOnce();
+    written.length = 0;
+    late.remove();
+    late.event("Page.loadEventFired", {}, "");
+    expect(written).toEqual([
+      {
+        method: "Target.detachedFromTarget",
+        params: { sessionId: lateSession, targetId: "LATE" },
+      },
+      {
+        method: "Target.detachedFromTarget",
+        params: { sessionId: extra, targetId: "LATE" },
+        sessionId: browserSession,
+      },
+    ]);
+    relay.receive(JSON.stringify({ id: 13, method: "Target.getTargets" }));
+    await settle();
+    expect(
+      (resultOf(written, 13)["result"] as { targetInfos: Array<{ targetId: string }> }).targetInfos,
+    ).toHaveLength(2);
+  });
+
+  it("never announces a popup that closed before the page was", async () => {
+    const written: Array<Record<string, unknown>> = [];
+    const relay = makeRelay(makeTarget(vi.fn()), (raw) => written.push(JSON.parse(raw)));
+    relay.addPopup(makePopup("GONE", vi.fn())).remove();
+    relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
+    await settle();
+    expect(written.filter((m) => m["method"] !== undefined)).toEqual([
+      expect.objectContaining({
+        params: expect.objectContaining({ sessionId: "t3-preview-page" }),
+      }),
+    ]);
+  });
+});
+
 describe("CDP relay downloads", () => {
   it("captures preview downloads without changing the default browser context", async () => {
     const send = vi.fn(async () => ({}));
