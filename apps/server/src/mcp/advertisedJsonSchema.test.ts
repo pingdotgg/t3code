@@ -31,13 +31,18 @@ it("drops JSON noise, merges tagged unions, and keeps null where the field accep
       limit: { type: "integer" },
       every: { type: "object", properties: { ms: { type: "integer" } }, required: ["ms"] },
       target: {
-        type: "object",
-        properties: {
-          kind: { type: "string", enum: ["url", "number"] },
-          url: { type: "string" },
-          number: { type: "integer" },
-        },
-        required: ["kind"],
+        anyOf: [
+          {
+            type: "object",
+            properties: {
+              kind: { type: "string", enum: ["url", "number"] },
+              url: { type: "string" },
+              number: { type: "integer" },
+            },
+            required: ["kind"],
+          },
+          { type: "null" },
+        ],
       },
     },
     required: ["beforeRunId", "every"],
