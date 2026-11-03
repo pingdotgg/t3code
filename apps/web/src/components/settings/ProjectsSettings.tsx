@@ -79,11 +79,11 @@ const SKELETON_LINES = (
   </span>
 );
 
-function AddProjectButton() {
+function AddProjectButton({ primary = false }: { primary?: boolean }) {
   return (
     <Button
       size="sm"
-      variant="secondary"
+      variant={primary ? "default" : "secondary"}
       onClick={() => openCommandPalette({ open: "add-project" })}
     >
       <FolderPlusIcon />
@@ -108,11 +108,11 @@ function ProjectChooser() {
           description="A project is a folder T3 Code works in. Add one to set its name, icon, checkouts and actions here."
         >
           <div className="flex flex-wrap justify-center gap-2">
-            <AddProjectButton />
+            <AddProjectButton primary />
             {scratchTarget !== null ? (
               <Button
                 size="sm"
-                variant="ghost"
+                variant="secondary"
                 onClick={() => void startScratchThread(scratchTarget)}
               >
                 <MessageSquareDashedIcon />
