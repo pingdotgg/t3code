@@ -9760,13 +9760,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Queued run ${command.queuedRunId} is not queued.`,
       });
     }
-    if (queuedRun.freshContext === true) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: "A message that starts a fresh session can't steer the current turn.",
-      });
-    }
     const queuedRootNode =
       queuedRun.rootNodeId === null
         ? undefined
@@ -9841,6 +9834,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         targetRunId: stops ? target.id : undefined,
         reason: "Skipped compaction to send a queued message",
         now,
+      });
+    }
+    // Skipping compaction starts the message as its own turn; steering would join the current one.
+    if (queuedRun.freshContext === true) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "A message that starts a fresh session can't steer the current turn.",
       });
     }
     if (goalCommand !== null) {
