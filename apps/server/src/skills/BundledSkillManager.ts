@@ -9,9 +9,10 @@ import {
 } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -33,8 +34,8 @@ const Marker = Schema.Struct({
 const decodeMarker = Schema.decodeUnknownOption(Schema.fromJsonString(Marker));
 const encodeMarker = Schema.encodeSync(Schema.fromJsonString(Marker));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-const decodeClaude = Schema.decodeUnknownEffect(ClaudeSettings);
-const decodeCodex = Schema.decodeUnknownEffect(CodexSettings);
+const decodeClaude = Schema.decodeUnknownOption(ClaudeSettings);
+const decodeCodex = Schema.decodeUnknownOption(CodexSettings);
 
 export class BundledSkillSources extends Context.Reference<
   ReadonlyArray<BundledSkillSource> | undefined
@@ -53,10 +54,12 @@ export class BundledSkillManager extends Context.Service<
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const settings = yield* Settings.ServerSettingsService;
   const home = yield* HostProcess.HomeDirectory;
   const environment = yield* HostProcess.Environment;
+  const platform = yield* HostProcess.Platform;
+  const secrets = yield* SecretResolver.SecretResolver;
   const sources =
     (yield* BundledSkillSources) ??
     (yield* loadBundledSkillSources().pipe(
@@ -66,7 +69,7 @@ const make = Effect.gen(function* () {
   const hash = Effect.fn("BundledSkillManager.hash")(function* (value: unknown) {
     return Hex.encode(
       yield* crypto
-        .digest("SHA-256", new TextEncoder().encode(encodeJson(value)))
+        .digest(Digest.sha256, new TextEncoder().encode(encodeJson(value)))
         .pipe(Effect.orDie),
     );
   });
@@ -83,42 +86,58 @@ const make = Effect.gen(function* () {
     const entries = Object.entries(deriveProviderInstanceConfigMap(config)).filter(
       ([, entry]) => entry.driver === "codex" || entry.driver === "claudeAgent",
     );
-    return yield* Effect.forEach(entries, ([id, entry]) =>
+    const resolved = yield* Effect.forEach(entries, ([id, entry]) =>
       Effect.gen(function* () {
-        const env = yield* mergeProviderInstanceEnvironment(entry.environment, environment);
-        let directory: string;
-        if (entry.driver === "codex") {
-          const config = yield* decodeCodex(entry.config ?? {}).pipe(
-            Effect.mapError(
-              (cause) => new SkillManagementError({ reason: "unsupported_provider", cause }),
-            ),
+        const config =
+          entry.driver === "codex"
+            ? Option.getOrUndefined(decodeCodex(entry.config ?? {}))
+            : Option.getOrUndefined(decodeClaude(entry.config ?? {}));
+        if (!config) return undefined;
+        const usesEnvironmentHome =
+          !config.homePath.trim() &&
+          !(
+            "shadowHomePath" in config &&
+            (config.setupMode === "managed" || config.shadowHomePath.trim())
           );
+        const homeVariable = entry.driver === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR";
+        let variables = entry.environment;
+        if (usesEnvironmentHome) {
+          const variable = variables?.findLast(
+            (variable) =>
+              (platform === "win32" ? variable.name.toUpperCase() : variable.name) === homeVariable,
+          );
+          if (variable && typeof variable.value !== "string") {
+            const [value] = yield* secrets.read([variable.value]);
+            if (value === undefined) return undefined;
+            variables = variables?.map((candidate) =>
+              candidate === variable ? { ...candidate, value } : candidate,
+            );
+          }
+        }
+        const env = yield* mergeProviderInstanceEnvironment(variables, environment);
+        const inheritedHome =
+          entry.driver === "codex"
+            ? expandHomePath(env.CODEX_HOME?.trim() || "", home)
+            : env.CLAUDE_CONFIG_DIR?.trim();
+        // Relative environment homes depend on the thread cwd, so they have no provider-wide target.
+        if (usesEnvironmentHome && inheritedHome && !path.isAbsolute(inheritedHome))
+          return undefined;
+        let directory: string;
+        if ("shadowHomePath" in config) {
           const layout = yield* resolveCodexHomeLayout(config).pipe(
             Effect.provideService(Path.Path, path),
           );
           directory = path.join(
-            config.setupMode === "managed" || config.homePath.trim() || config.shadowHomePath.trim()
-              ? layout.sharedHomePath
-              : path.resolve(
-                  expandHomePath(env.CODEX_HOME?.trim() || path.join(home, ".codex"), home),
-                ),
+            usesEnvironmentHome
+              ? inheritedHome || path.join(home, ".codex")
+              : layout.sharedHomePath,
             "skills",
           );
         } else {
-          const config = yield* decodeClaude(entry.config ?? {}).pipe(
-            Effect.mapError(
-              (cause) => new SkillManagementError({ reason: "unsupported_provider", cause }),
-            ),
-          );
           directory = path.join(
-            path.resolve(
-              expandHomePath(
-                config.homePath.trim() ||
-                  env.CLAUDE_CONFIG_DIR?.trim() ||
-                  path.join(home, ".claude"),
-                home,
-              ),
-            ),
+            config.homePath.trim()
+              ? path.resolve(expandHomePath(config.homePath.trim(), home))
+              : inheritedHome || path.join(home, ".claude"),
             "skills",
           );
         }
@@ -129,6 +148,7 @@ const make = Effect.gen(function* () {
         };
       }),
     );
+    return resolved.filter((target) => target !== undefined);
   });
 
   const observe = Effect.fn("BundledSkillManager.observe")(function* (

@@ -1,7 +1,9 @@
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, SecretProviderId } from "@t3tools/contracts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -61,7 +63,16 @@ const install = Effect.fn("test.install")(function* (
   });
 });
 
-it.layer(NodeServices.layer)("bundled skill installation", (it) => {
+it.layer(
+  Layer.mergeAll(
+    NodeServices.layer,
+    NodeCrypto.layer,
+    Layer.succeed(SecretResolver.SecretResolver, {
+      read: () => Effect.succeed([]),
+      invalidate: () => Effect.void,
+    }),
+  ),
+)("bundled skill installation", (it) => {
   it.effect("managed Codex uses its shared home instead of inherited CODEX_HOME", () =>
     Effect.gen(function* () {
       const { home, path } = yield* setup;
@@ -327,6 +338,82 @@ it.layer(NodeServices.layer)("bundled skill installation", (it) => {
       expect(catalog.targets.find((target) => target.instanceId === "claudeAgent")?.directory).toBe(
         path.join(home, "custom-claude", "skills"),
       );
+      for (const driver of ["codex", "claudeAgent"] as const) {
+        const name = driver === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR";
+        for (const reference of ["home", "missing"]) {
+          const secretManager = yield* Skills.BundledSkillManager.pipe(
+            Effect.provide(
+              Skills.layer.pipe(
+                Layer.provide(
+                  Layer.succeed(SecretResolver.SecretResolver, {
+                    read: (references) =>
+                      Effect.succeed(
+                        references.map((ref) =>
+                          ref.reference === "home" ? path.join(home, "secret-home") : undefined,
+                        ),
+                      ),
+                    invalidate: () => Effect.void,
+                  }),
+                ),
+                Layer.provide(
+                  Settings.layerTest({
+                    providerInstances: {
+                      [instanceId]: {
+                        driver: ProviderDriverKind.make(driver),
+                        environment: [
+                          {
+                            name,
+                            value: { provider: SecretProviderId.make("vault"), reference },
+                            sensitive: true,
+                          },
+                        ],
+                      },
+                      [ProviderInstanceId.make("invalid")]: {
+                        driver: ProviderDriverKind.make(driver),
+                        config: { homePath: 42 },
+                      },
+                    },
+                  }),
+                ),
+                Layer.provide(Layer.succeed(Skills.BundledSkillSources, [source])),
+              ),
+            ),
+            Effect.provideService(HostProcess.Environment, {}),
+          );
+          const targets = (yield* secretManager.catalog).targets;
+          expect(targets.some((target) => target.instanceId === "invalid")).toBe(false);
+          expect(targets.find((target) => target.instanceId === instanceId)?.directory).toBe(
+            reference === "home" ? path.join(home, "secret-home", "skills") : undefined,
+          );
+        }
+        for (const value of ["~/profile", "relative-profile"]) {
+          const relativeManager = yield* Skills.BundledSkillManager.pipe(
+            Effect.provide(
+              Skills.layer.pipe(
+                Layer.provide(
+                  Settings.layerTest({
+                    providerInstances: {
+                      [instanceId]: { driver: ProviderDriverKind.make(driver) },
+                    },
+                  }),
+                ),
+                Layer.provide(Layer.succeed(Skills.BundledSkillSources, [source])),
+              ),
+            ),
+            Effect.provideService(HostProcess.Environment, { [name]: value }),
+            Effect.provideService(HostProcess.HomeDirectory, home),
+          );
+          expect(
+            (yield* relativeManager.catalog).targets.find(
+              (target) => target.instanceId === instanceId,
+            )?.directory,
+          ).toBe(
+            driver === "codex" && value === "~/profile"
+              ? path.join(home, "profile", "skills")
+              : undefined,
+          );
+        }
+      }
     }),
   );
 });
