@@ -1,6 +1,10 @@
 import { assert, it } from "@effect/vitest";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  codexAppServerEnvironment,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -152,4 +156,20 @@ it("ignores custom models that shadow a preferred slug", () => {
   ]);
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
+});
+
+it("exempts loopback from the user's proxy so Codex reaches T3's MCP server", () => {
+  const environment = codexAppServerEnvironment({
+    HTTPS_PROXY: "http://proxy.corp.example:8080",
+    HTTP_PROXY: "http://proxy.corp.example:8080",
+    NO_PROXY: "intranet.corp.example",
+  });
+  const hosts = (value: string | undefined) => (value ?? "").split(",").map((host) => host.trim());
+
+  for (const key of ["NO_PROXY", "no_proxy"]) {
+    for (const loopback of ["127.0.0.1", "localhost", "::1"]) {
+      assert.include(hosts(environment[key]), loopback, `${key} must exempt ${loopback}`);
+    }
+  }
+  assert.include(hosts(environment.NO_PROXY), "intranet.corp.example");
 });
