@@ -574,7 +574,7 @@ it.effect.each(["on a branch", "detached", "unborn"] as const)(
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const spawnedArgs: Array<ReadonlyArray<string>> = [];
         const spawner = ChildProcessSpawner.make((command) => {
-          if (ChildProcess.isStandardCommand(command)) spawnedArgs.push(command.args);
+          if (ChildProcess.isStandardCommand(command)) spawnedArgs.push(command.args.map(String));
           return delegate.spawn(command);
         });
         const driver = yield* makeGitVcsDriverCore().pipe(
