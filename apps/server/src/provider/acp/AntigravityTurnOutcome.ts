@@ -92,12 +92,7 @@ function turnFailure(
   stopReason: EffectAcpSchema.StopReason,
   step: LastStep | undefined,
   now: DateTime.Utc,
-):
-  | {
-      readonly failure: OrchestrationV2ProviderFailure;
-      readonly threadDisposition: "reusable" | "broken";
-    }
-  | undefined {
+): OrchestrationV2ProviderFailure | undefined {
   const errorText =
     step?.type === ERROR_STEP_TYPE
       ? new TextDecoder().decode(step.payload ?? new Uint8Array())
@@ -106,49 +101,62 @@ function turnFailure(
   if (errorText === undefined && stopReason !== "refusal") return undefined;
   const text = errorText ?? "";
   const apiError = API_ERROR.exec(text);
-  const reusable = (failure: OrchestrationV2ProviderFailure) =>
-    ({ failure, threadDisposition: "reusable" }) as const;
-  if (FAILED_CHECKPOINT.test(text)) {
-    return {
-      failure: makeProviderFailure({
-        class: "provider_error",
-        message:
-          "Antigravity could not summarize this conversation, so its saved session can no longer continue. The next message starts a fresh Antigravity session with this thread's context.",
-        code: "CHECKPOINT_FAILED",
-        retryable: true,
-      }),
-      threadDisposition: "broken",
-    };
-  }
   if (stopReason === "refusal" || QUOTA_EXHAUSTED.test(text)) {
-    return reusable(
-      makeProviderFailure({
-        class: "usage_limit",
-        message: "You have reached your Antigravity quota for this period.",
-        code: apiError?.[3] ?? "QUOTA_EXHAUSTED",
-        retryable: true,
-        resetAt: resetAtFrom(text, now) ?? null,
-      }),
-    );
+    return makeProviderFailure({
+      class: "usage_limit",
+      message: "You have reached your Antigravity quota for this period.",
+      code: apiError?.[3] ?? "QUOTA_EXHAUSTED",
+      retryable: true,
+      resetAt: resetAtFrom(text, now) ?? null,
+    });
   }
   if (apiError === null) {
-    return reusable(
-      makeProviderFailure({
-        class: "provider_error",
-        message: "Antigravity stopped this turn because of an error.",
-      }),
-    );
+    return makeProviderFailure({
+      class: "provider_error",
+      message: "Antigravity stopped this turn because of an error.",
+    });
   }
   const [, httpStatus, message, status] = apiError;
   const rateLimited = httpStatus === "429" || status === "RESOURCE_EXHAUSTED";
-  return reusable(
-    makeProviderFailure({
-      class: rateLimited ? "usage_limit" : "provider_error",
-      message: message!.trim(),
-      code: status ?? null,
-      retryable: rateLimited || Number(httpStatus) >= 500,
-    }),
-  );
+  return makeProviderFailure({
+    class: rateLimited ? "usage_limit" : "provider_error",
+    message: message!.trim(),
+    code: status ?? null,
+    retryable: rateLimited || Number(httpStatus) >= 500,
+  });
+}
+
+function turnOutcome(
+  stopReason: EffectAcpSchema.StopReason,
+  step: LastStep | undefined,
+  now: DateTime.Utc,
+):
+  | {
+      readonly failure: OrchestrationV2ProviderFailure;
+      readonly threadDisposition: "reusable" | "broken";
+    }
+  | undefined {
+  const failure = turnFailure(stopReason, step, now);
+  if (failure === undefined) return undefined;
+  const text =
+    step?.type === ERROR_STEP_TYPE
+      ? new TextDecoder().decode(step.payload ?? new Uint8Array())
+      : "";
+  if (!FAILED_CHECKPOINT.test(text)) return { failure, threadDisposition: "reusable" };
+  return {
+    // A quota failure keeps its reset time so usage-limit recovery can resume the thread.
+    failure:
+      failure.class === "usage_limit"
+        ? failure
+        : makeProviderFailure({
+            class: "provider_error",
+            message:
+              "Antigravity could not summarize this conversation, so its saved session can no longer continue. The next message starts a fresh Antigravity session with this thread's context.",
+            code: "CHECKPOINT_FAILED",
+            retryable: true,
+          }),
+    threadDisposition: "broken",
+  };
 }
 
 const conversationSegments = ["antigravity-acp", "conversations"];
@@ -164,7 +172,7 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
   sessionId: string,
 ) {
   const typedOnly = (result: EffectAcpSchema.PromptResponse) =>
-    DateTime.now.pipe(Effect.map((now) => turnFailure(result.stopReason, undefined, now)));
+    DateTime.now.pipe(Effect.map((now) => turnOutcome(result.stopReason, undefined, now)));
   if (!NATIVE_SESSION_ID.test(sessionId)) return typedOnly;
   const segments = [...conversationSegments, `${sessionId}.db`];
   const before = yield* Effect.tryPromise(async () => {
@@ -217,6 +225,6 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
           Effect.orElseSucceed(() => undefined),
         )
       : undefined;
-    return turnFailure(result.stopReason, step, yield* DateTime.now);
+    return turnOutcome(result.stopReason, step, yield* DateTime.now);
   });
 });

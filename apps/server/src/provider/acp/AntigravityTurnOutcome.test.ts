@@ -230,6 +230,29 @@ describe("watchAntigravityPromptOutcome", () => {
       const outcome = yield* check({ stopReason: "end_turn" });
       assert.equal(outcome?.threadDisposition, "broken");
       assert.equal(outcome?.failure.class, "provider_error");
+
+      // A checkpoint that failed on quota still reports the quota and its reset time.
+      const quotaCheck = yield* watchAntigravityPromptOutcome(profileDirectory, sessionId);
+      const quotaDatabase = new NodeSqlite.DatabaseSync(
+        path.join(conversations, `${sessionId}.db`),
+      );
+      try {
+        const insert = quotaDatabase.prepare("INSERT INTO steps VALUES (?, ?, ?)");
+        insert.run(845, USER_INPUT, Buffer.from("Continue."));
+        insert.run(
+          846,
+          ERROR_MESSAGE,
+          errorPayload(
+            "context summarization: checkpoint step 841 failed: Error 429, Message: Quota exhausted for test model., Status: RESOURCE_EXHAUSTED, Details: [map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:googleapis.com metadata:map[quotaResetDelay:3600s] reason:QUOTA_EXHAUSTED]]",
+          ),
+        );
+      } finally {
+        quotaDatabase.close();
+      }
+      const quotaOutcome = yield* quotaCheck({ stopReason: "end_turn" });
+      assert.equal(quotaOutcome?.threadDisposition, "broken");
+      assert.equal(quotaOutcome?.failure.class, "usage_limit");
+      assert.notEqual(quotaOutcome?.failure.resetAt ?? null, null);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
