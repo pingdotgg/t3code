@@ -89,6 +89,12 @@ export const ThreadPullRequestWatch = Schema.Struct({
   ),
   /** Checks still pending when required ones passed early, owed one wake once all settle. */
   owedChecks: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /**
+   * Checks waiting for someone to approve or act on them, the agent told once: a workflow run's
+   * URL, kept through reads that miss it until one of its jobs finishes, or else a check's name,
+   * kept while a read lists it or could not list everything.
+   */
+  awaitingApproval: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   remarksThrough: IsoDateTime,
   /** Reported remarks at remarksThrough, so late arrivals at that timestamp still count. */
   remarkIds: Schema.Array(TrimmedNonEmptyString),
