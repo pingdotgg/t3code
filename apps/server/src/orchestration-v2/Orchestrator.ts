@@ -2356,7 +2356,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   // A hold waits for a person to review what they queued. Nobody reviews messages from agents,
   // the server or scheduled tasks, so a later completed run releases those unless it was stopped.
-  // A restart that cut a compaction held what was queued behind it; redoing it releases them all.
+  // A restart that cut a compaction held what was queued behind it; redoing it releases those.
   const releaseUnattendedHolds = Effect.fn("Orchestrator.releaseUnattendedHolds")(function* (
     threadId: ThreadId,
     completedRun: OrchestrationV2Run,
@@ -2387,16 +2387,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .filter((message) => message.createdBy !== "user" || message.scheduledTaskId !== undefined)
         .map((message) => message.id),
     );
-    const resumedCompaction =
-      completedRun.restartContinuationOfRunId !== undefined &&
+    const restartHeld = new Set<RunId>();
+    if (
       messages.some(
         (message) =>
           message.id === completedRun.userMessageId && isCompactionCommandMessage(message),
-      );
+      )
+    ) {
+      // Each restart in a continuation chain records only the holds it added.
+      const visited = new Set<RunId>();
+      let sourceId = completedRun.restartContinuationOfRunId;
+      while (sourceId !== undefined && !visited.has(sourceId)) {
+        visited.add(sourceId);
+        const source = projection.runs.find((run) => run.id === sourceId);
+        for (const id of source?.restartHeldRunIds ?? []) restartHeld.add(id);
+        sourceId = source?.restartContinuationOfRunId;
+      }
+    }
     const now = yield* DateTime.now;
-    const released = resumedCompaction
-      ? held
-      : held.filter((run) => unattended.has(run.userMessageId));
+    const released = held.filter(
+      (run) => unattended.has(run.userMessageId) || restartHeld.has(run.id),
+    );
     if (released.length === 0) return;
     yield* writeSystemEvents(
       released.map((run) => ({

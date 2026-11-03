@@ -5384,7 +5384,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
       const end = (
         key: string,
-        status: "completed" | "failed",
+        status: "completed" | "failed" | "cancelled",
         revision = "",
         patch: Partial<OrchestrationV2Run> = {},
       ) =>
@@ -5534,24 +5534,31 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("a compaction resumed after a restart releases the user's held queue", () =>
+  it.effect("a compaction resumed after a restart releases only what that restart held", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("runtime-layer-held-queue-resumed-compaction");
       const { send, runFor, end, startedRunIds, releasedAfter, awaitHeld } =
         yield* queueTestThread(threadId);
-      yield* send("cut", "agent", true);
+      yield* send("failed", "agent", true);
       yield* send("user", "user", false);
-      yield* end("cut", "failed");
+      yield* end("failed", "failed");
       yield* awaitHeld("user");
-      const cut = yield* runFor("cut");
+      const user = yield* runFor("user");
+      // An idle compaction ran past a failure's hold; the restart that cut it added no hold.
+      yield* send("idle", "agent", true);
+      yield* end("idle", "cancelled");
       yield* send(" /compact", "agent", true);
-      yield* end(" /compact", "completed");
-      yield* send("/compact", "agent", true);
-      assert.equal((yield* runFor("/compact")).status, "starting");
-      // A compaction that is not a continuation leaves the hold for the user.
+      yield* end(" /compact", "completed", "", {
+        restartContinuationOfRunId: (yield* runFor("idle")).id,
+      });
       assert.isTrue((yield* runFor("user")).queueHeld);
-      yield* end("/compact", "completed", "", { restartContinuationOfRunId: cut.id });
-      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("user")).id);
+      yield* send("cut", "agent", true);
+      yield* end("cut", "cancelled", "", { restartHeldRunIds: [user.id] });
+      yield* send("/compact", "agent", true);
+      yield* end("/compact", "completed", "", {
+        restartContinuationOfRunId: (yield* runFor("cut")).id,
+      });
+      assert.equal(yield* Queue.take(startedRunIds), user.id);
       yield* releasedAfter("user", "/compact");
     }),
   );
