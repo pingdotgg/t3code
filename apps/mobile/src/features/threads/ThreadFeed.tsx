@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "../../state/change-request-terminology";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -2576,6 +2577,7 @@ function useThreadFeedPresentation(
   expandedTurnIds: ReadonlySet<RunId>,
   expandedWorkGroups: Record<string, boolean>,
 ) {
+  const requestTerms = useChangeRequestTerms();
   const [feedCache] = useState(createThreadFeedCache);
   return appendPendingThreadMessages(
     deriveThreadFeedPresentation(
@@ -2590,6 +2592,7 @@ function useThreadFeedPresentation(
       props.activeWorkStartedAt,
       props.runlessWorkActive ?? false,
       feedCache,
+      requestTerms,
     ),
     props.feed,
     props.queuedMessages,
