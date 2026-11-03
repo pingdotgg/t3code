@@ -66,9 +66,13 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   const discovered = yield* Deferred.make<void, AcpErrors.AcpError>();
   const closed = yield* Deferred.make<void>();
   const authenticateCalled = yield* Deferred.make<void>();
+  const sessionRequested = yield* Deferred.make<void>();
   const events: string[] = [];
   let receiveAuthorizationUrl:
     | ((url: string) => Effect.Effect<void, AcpErrors.AcpError>)
+    | undefined;
+  let logRequest:
+    | ((event: AcpSessionRuntime.AcpSessionRequestLogEvent) => Effect.Effect<void>)
     | undefined;
   let forwarded = 0;
   let catalog = ["previous-account-model"];
@@ -77,6 +81,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     makeRuntime: (input) =>
       Effect.gen(function* () {
         receiveAuthorizationUrl = input.onAuthorizationUrl;
+        logRequest = input.requestLogger;
         events.push("process-open");
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
@@ -96,6 +101,13 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
           start: () =>
             Effect.gen(function* () {
               events.push("authenticate");
+              yield* (
+                input.requestLogger?.({
+                  method: "authenticate",
+                  payload: { methodId: "oauth-personal" },
+                  status: "started",
+                }) ?? Effect.void
+              );
               yield* Deferred.succeed(authenticateCalled, undefined);
               if (options.interactive !== false && input.onAuthorizationUrl) {
                 for (const url of options.authorizationUrls ?? [authorizationUrl]) {
@@ -103,7 +115,16 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
                 }
               }
               yield* Deferred.await(authenticated);
+              yield* (
+                input.requestLogger?.({
+                  method: "authenticate",
+                  payload: { methodId: "oauth-personal" },
+                  status: "succeeded",
+                  result: {},
+                }) ?? Effect.void
+              );
               events.push("session-new");
+              yield* Deferred.succeed(sessionRequested, undefined);
               yield* Deferred.await(discovered);
               return started;
             }),
@@ -135,6 +156,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     discovered,
     closed,
     authenticateCalled,
+    sessionRequested,
     events,
     catalog: () => catalog,
     forwarded: () => forwarded,
@@ -143,6 +165,10 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
         receiveAuthorizationUrl
           ? receiveAuthorizationUrl(url)
           : Effect.die("Authorization URL receiver is not ready."),
+      ),
+    logRequest: (event: AcpSessionRuntime.AcpSessionRequestLogEvent) =>
+      Effect.suspend(() =>
+        logRequest ? logRequest(event) : Effect.die("Request logger is not ready."),
       ),
   };
 });
@@ -289,6 +315,97 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
       yield* TestClock.adjust("300 seconds");
       const failed = yield* phase(harness.auth, "failed");
       assert.equal(failed.message, "Google sign-in expired. Start sign-in again.");
+    }),
+  );
+
+  it.effect("does not blame the network when stored sign-in succeeds but no session opens", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ interactive: false });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.await(harness.sessionRequested);
+
+      yield* TestClock.adjust("300 seconds");
+      const failed = yield* phase(harness.auth, "failed");
+      assert.notInclude(failed.message ?? "", "could not reach Google");
+      assert.match(failed.message ?? "", /session/i);
+    }),
+  );
+
+  it.effect("shows verification as soon as authenticate succeeds", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ interactive: false });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.await(harness.sessionRequested);
+
+      const current = yield* harness.auth.controller
+        .subscribe(owner)
+        .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+      assert.equal(current.phase, "verifying");
+      assert.equal(current.message, "Checking Antigravity access and models.");
+    }),
+  );
+
+  it.effect("ignores a late duplicate Google link once sign-in authenticates", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.await(harness.sessionRequested);
+
+      yield* harness.receiveAuthorizationUrl(authorizationUrl);
+      const current = yield* harness.auth.controller
+        .subscribe(owner)
+        .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+      assert.equal(current.phase, "verifying");
+      assert.isNull(current.authorizationUrl);
+    }),
+  );
+
+  it.effect("accepts the new Google link and redirect when the agent authenticates again", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const state = yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* harness.auth.controller.complete(owner, { flowId: state.flowId!, callbackUrl });
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.await(harness.sessionRequested);
+
+      const retryUrl = authorizationUrl.replace("state=test-state", "state=retry-state");
+      yield* harness.logRequest({
+        method: "authenticate",
+        payload: { methodId: "oauth-personal" },
+        status: "started",
+      });
+      yield* harness.receiveAuthorizationUrl(retryUrl);
+      const current = yield* harness.auth.controller
+        .subscribe(owner)
+        .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+      assert.equal(current.phase, "waiting");
+      assert.equal(current.authorizationUrl, retryUrl);
+
+      yield* harness.auth.controller.complete(owner, {
+        flowId: state.flowId!,
+        callbackUrl: callbackUrl.replace("state=test-state", "state=retry-state"),
+      });
+      assert.equal(harness.forwarded(), 2);
+    }),
+  );
+
+  it.effect("does not call a completed Google sign-in expired when no session opens", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.await(harness.sessionRequested);
+
+      yield* TestClock.adjust("300 seconds");
+      const failed = yield* phase(harness.auth, "failed");
+      assert.notInclude(failed.message ?? "", "expired");
+      assert.match(failed.message ?? "", /session/i);
     }),
   );
 
