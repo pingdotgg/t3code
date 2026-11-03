@@ -29,4 +29,10 @@ describe("parseT3ProjectFile", () => {
       }`),
     ).toEqual({ defaultThreadEnvMode: "worktree" });
   });
+
+  it("reads the worktree sparse-checkout pattern path", () => {
+    expect(parseT3ProjectFile(`{ "worktreeSparsePatternsPath": " .t3/sparse-checkout " }`)).toEqual(
+      { worktreeSparsePatternsPath: ".t3/sparse-checkout" },
+    );
+  });
 });
