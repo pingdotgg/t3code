@@ -46,9 +46,10 @@ describe("getProviderSlashMenuEntries", () => {
       path: "/Users/matt/.agents/skills/ask-matt/SKILL.md",
       enabled: true,
     };
-    expect(
-      getProviderSlashMenuEntries([askMatt], [], true).skills.map((skill) => skill.name),
-    ).toEqual(["ask-matt"]);
+    const entries = getProviderSlashMenuEntries([askMatt], [{ name: "ask-matt" }], true);
+
+    expect(entries.skills.map((skill) => skill.name)).toEqual(["ask-matt"]);
+    expect(entries.slashCommands).toEqual([]);
   });
 
   it("shows one row when enabled skills share a name", () => {
