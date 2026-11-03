@@ -13,6 +13,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  BundledSkillId,
   ComposerContextRecord,
   DeviceOperationError,
   DeviceSummary,
@@ -253,6 +254,7 @@ export const McpToolUseCase = Schema.Struct({
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
+    skills: Schema.optional(Schema.Array(BundledSkillId)),
     priorTurns: Schema.optional(
       Schema.Array(
         Schema.Struct({
@@ -288,6 +290,25 @@ export const McpToolUseCase = Schema.Struct({
   notes: Schema.optional(Schema.String),
 });
 export type McpToolUseCase = typeof McpToolUseCase.Type;
+
+export const loadCaseSkills = Effect.fn("evaluateMcpToolUse.loadCaseSkills")(function* (
+  testCase: McpToolUseCase,
+) {
+  if (!testCase.setup.skills?.length) return testCase;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const skills = yield* Effect.forEach(testCase.setup.skills, (name) =>
+    fs.readFileString(path.join(import.meta.dirname, "../../.agents/skills", name, "SKILL.md")),
+  );
+  return {
+    ...testCase,
+    setup: {
+      ...testCase.setup,
+      context: [testCase.setup.context, ...skills].filter(Boolean).join("\n\n"),
+    },
+  };
+});
+
 const AnyBlock = Schema.StructWithRest(
   Schema.Struct({ type: Schema.String, text: Schema.optional(Schema.String) }),
   Rest,
@@ -2141,6 +2162,7 @@ const main = Effect.gen(function* () {
   if (selectedCases.length === 0) return yield* Effect.die(new Error("No case matches --case."));
   const selected = yield* Effect.forEach(selectedCases, (testCase) =>
     Effect.gen(function* () {
+      testCase = yield* loadCaseSkills(testCase);
       const priorTurns = yield* Effect.forEach(testCase.setup.priorTurns ?? [], (turn) =>
         Effect.gen(function* () {
           const toolCalls = yield* Effect.forEach(turn.toolCalls ?? [], (call) =>
