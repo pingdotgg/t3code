@@ -154,14 +154,17 @@ function keepUnchangedFile(
   next: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>,
   now: number,
 ) {
-  return shown._tag === "Success" &&
-    next._tag === "Success" &&
-    !next.waiting &&
-    next.value.fileRevision !== undefined &&
-    next.value.fileRevision === shown.value.fileRevision &&
-    shown.value.expiresAt - now > KEEP_URL_MIN_LIFE_MS
-    ? AsyncResult.success(shown.value)
-    : next;
+  if (
+    shown._tag !== "Success" ||
+    next._tag !== "Success" ||
+    next.value.fileRevision === undefined ||
+    next.value.fileRevision !== shown.value.fileRevision ||
+    shown.value.expiresAt - now <= KEEP_URL_MIN_LIFE_MS
+  ) {
+    return next;
+  }
+  const kept = AsyncResult.success(shown.value);
+  return next.waiting ? AsyncResult.waiting(kept) : kept;
 }
 
 /**
@@ -181,6 +184,11 @@ export function makeRevisionedAssetUrlFamily(
   // purpose: pruning would forget the revision and re-mint on the next mount.
   // It holds one short entry per file shown, and goes with the registry.
   const mintedUnder = new WeakMap<AtomRegistry.AtomRegistry, Map<string, string | null>>();
+  // Also per resource: a new revision builds a new node, which must keep the URL on screen.
+  const shownUnder = new WeakMap<
+    AtomRegistry.AtomRegistry,
+    Map<string, AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>>
+  >();
   const family = Atom.family((key: string) => {
     const [environmentId, resource, revision] = decodeRevisionedAssetUrlKey(JSON.parse(key));
     const resourceKey = JSON.stringify([environmentId, resource]);
@@ -201,9 +209,15 @@ export function makeRevisionedAssetUrlFamily(
           minted.set(resourceKey, revision);
           if (isSettled(current)) get.refresh(query);
         }
-        let shown = get.once(query);
+        let shownByResource = shownUnder.get(get.registry);
+        if (shownByResource === undefined) {
+          shownByResource = new Map();
+          shownUnder.set(get.registry, shownByResource);
+        }
         const show = (value: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>) => {
-          shown = keepUnchangedFile(shown, value, now());
+          const previous = shownByResource.get(resourceKey);
+          const shown = previous === undefined ? value : keepUnchangedFile(previous, value, now());
+          shownByResource.set(resourceKey, shown);
           return shown;
         };
         get.subscribe(query, (value) => {
@@ -213,7 +227,7 @@ export function makeRevisionedAssetUrlFamily(
           minted.set(resourceKey, revision);
           get.refresh(query);
         });
-        return shown;
+        return show(get.once(query));
       },
       { initialValueTarget: query },
       // No idle TTL: each mount rebuilds the node, so a revision read again after

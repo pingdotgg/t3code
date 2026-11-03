@@ -368,12 +368,19 @@ describe("makeRevisionedAssetUrlFamily", () => {
 
     const unchanged = mount("mutation-2");
     settle("file-a");
-    expect(url("mutation-2")).toBe("/a/2");
+    expect(url("mutation-2")).toBe("/a/0");
     unchanged();
 
-    const edited = mount("mutation-3");
+    // The query now holds /a/3; a later revision must still keep the URL on screen.
+    const stillUnchanged = mount("mutation-3");
+    expect(url("mutation-3")).toBe("/a/0");
+    settle("file-a");
+    expect(url("mutation-3")).toBe("/a/0");
+    stillUnchanged();
+
+    const edited = mount("mutation-4");
     settle("file-b");
-    expect(url("mutation-3")).toBe("/a/4");
+    expect(url("mutation-4")).toBe("/a/5");
     edited();
   });
 });
