@@ -247,6 +247,7 @@ import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import {
+  SETTINGS_SEARCH_TITLE_KEYS,
   settingsForThisPlatform,
   SETTINGS_SECTION_LABELS,
   SETTINGS_SECTION_LABEL_KEYS,
@@ -1699,7 +1700,11 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: `setting:${item.id}`,
     searchTerms: [item.title, SETTINGS_SECTION_LABELS[item.to], ...(item.searchTerms ?? [])],
-    title: item.title,
+    title: (() => {
+      const titleKey =
+        SETTINGS_SEARCH_TITLE_KEYS[item.id as keyof typeof SETTINGS_SEARCH_TITLE_KEYS];
+      return titleKey ? t(titleKey) : item.title;
+    })(),
     description: t("settings.commandPalette.sectionDescription", {
       section: t(SETTINGS_SECTION_LABEL_KEYS[item.to]),
     }),
