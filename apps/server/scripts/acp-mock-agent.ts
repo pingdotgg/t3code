@@ -593,7 +593,10 @@ const program = Effect.gen(function* () {
         // Background work that outlives session/new, like Kimi's OAuth token rotation.
         yield* Effect.sleep("1500 millis").pipe(
           Effect.andThen(
-            Effect.sync(() => NodeFS.writeFileSync(postSessionWorkMarkerPath, "done")),
+            Effect.sync(() => {
+              NodeFS.writeFileSync(`${postSessionWorkMarkerPath}.tmp`, "done");
+              NodeFS.renameSync(`${postSessionWorkMarkerPath}.tmp`, postSessionWorkMarkerPath);
+            }),
           ),
           Effect.forkDetach,
         );

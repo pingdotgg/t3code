@@ -382,10 +382,14 @@ describe("ACP Registry probe", () => {
     const markerDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-acp-probe-"));
     const markerPath = NodePath.join(markerDir, "post-session-work");
     const markerWritten = Effect.callback<void>((resume) => {
-      const watcher = NodeFS.watch(markerDir, () => {
-        if (NodeFS.existsSync(markerPath)) resume(Effect.void);
-      });
-      if (NodeFS.existsSync(markerPath)) resume(Effect.void);
+      const resumeOnMarker = () => {
+        if (!NodeFS.existsSync(markerPath)) return;
+        // Deleting a still-watched directory raises EPERM on Windows.
+        watcher.close();
+        resume(Effect.void);
+      };
+      const watcher = NodeFS.watch(markerDir, resumeOnMarker);
+      resumeOnMarker();
       return Effect.sync(() => watcher.close());
     });
 
