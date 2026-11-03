@@ -10,7 +10,7 @@ import * as DateTime from "effect/DateTime";
 /** Bounds consecutive comment-only wakes to stop bot reply loops; check, conflict, or push news resets it. */
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
 /** How long a head may go without any check before the agent is told none reported. */
-const PULL_REQUEST_WATCH_NO_CHECKS_MS = 15 * 60_000;
+export const PULL_REQUEST_WATCH_NO_CHECKS_MS = 15 * 60_000;
 const LISTED_ITEMS = 10;
 const SNIPPET_LENGTH = 200;
 
@@ -160,7 +160,11 @@ function snippet(body: string): string {
     .replaceAll(/<!--[\s\S]*?-->/g, " ")
     .replaceAll(/\s+/g, " ")
     .trim();
-  return text.length <= SNIPPET_LENGTH ? text : `${text.slice(0, SNIPPET_LENGTH - 3)}...`;
+  if (text.length <= SNIPPET_LENGTH) return text;
+  // Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
+  const last = text.charCodeAt(SNIPPET_LENGTH - 4);
+  const end = last >= 0xd800 && last <= 0xdbff ? SNIPPET_LENGTH - 4 : SNIPPET_LENGTH - 3;
+  return `${text.slice(0, end)}...`;
 }
 
 function listed<T>(items: ReadonlyArray<T>, line: (item: T) => string): Array<string> {

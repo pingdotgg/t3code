@@ -35,18 +35,42 @@ describe("semver helpers", () => {
     expect(compareSemverVersions("2.1.111-beta.1", "2.1.111")).toBeLessThan(0);
   });
 
+  it("preserves hyphens within prerelease identifiers", () => {
+    expect(normalizeSemverVersion("20-alpha-1")).toBe("20.0.0-alpha-1");
+    expect(parseSemver("1.2.3-alpha-1.2")).toEqual({
+      major: 1,
+      minor: 2,
+      patch: 3,
+      prerelease: ["alpha-1", "2"],
+    });
+    expect(parseSemver("1.2.3-x-y-z.--")?.prerelease).toEqual(["x-y-z", "--"]);
+  });
+
+  it("distinguishes releases whose identifiers differ after a hyphen", () => {
+    expect(compareSemverVersions("1.2.3-alpha-1", "1.2.3-alpha-2")).toBeLessThan(0);
+    expect(compareSemverVersions("1.2.3-alpha-2", "1.2.3-alpha-1")).toBeGreaterThan(0);
+    expect(compareSemverVersions("1.2.3-alpha-1.2", "1.2.3-alpha-1.10")).toBeLessThan(0);
+    expect(compareSemverVersions("1.2.3-alpha.1+build-2", "1.2.3-alpha.1+build-3")).toBe(0);
+  });
+
   it("supports comparison comparators", () => {
     expect(satisfiesSemverRange("24.9.0", ">=24.0 <24.10")).toBe(true);
     expect(satisfiesSemverRange("24.10.0", ">=24.0 <24.10")).toBe(false);
   });
 
   it("honors caret range upper bounds for zero-major versions", () => {
+    expect(satisfiesSemverRange("0.5.0", "^0")).toBe(true);
+    expect(satisfiesSemverRange("0.0.4", "^0.0")).toBe(true);
+    expect(satisfiesSemverRange("1.0.0", "^0")).toBe(false);
+    expect(satisfiesSemverRange("0.1.0", "^0.0")).toBe(false);
     expect(satisfiesSemverRange("0.2.3", "^0.2.3")).toBe(true);
     expect(satisfiesSemverRange("0.2.9", "^0.2.3")).toBe(true);
     expect(satisfiesSemverRange("0.3.0", "^0.2.3")).toBe(false);
     expect(satisfiesSemverRange("0.5.0", "^0.2.3")).toBe(false);
     expect(satisfiesSemverRange("0.0.3", "^0.0.3")).toBe(true);
     expect(satisfiesSemverRange("0.0.4", "^0.0.3")).toBe(false);
+    expect(satisfiesSemverRange("0.0.0", "^0.0.0")).toBe(true);
+    expect(satisfiesSemverRange("0.0.1", "^0.0.0")).toBe(false);
   });
 
   it("keeps the range checker stringifiable and executable as plain JavaScript", () => {
@@ -56,6 +80,8 @@ describe("semver helpers", () => {
     expect(source).toContain("function satisfiesSemverRange");
     expect(source).not.toContain(": string");
     expect(source).not.toContain(": boolean");
+    expect(recreated("0.5.0", "^0")).toBe(true);
+    expect(recreated("0.0.4", "^0.0")).toBe(true);
     expect(recreated("24.10.0", ">=24.10")).toBe(true);
     expect(recreated("24.9.9", ">=24.10")).toBe(false);
   });
