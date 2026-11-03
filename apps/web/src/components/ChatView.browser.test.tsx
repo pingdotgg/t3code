@@ -4,7 +4,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { AppRoot } from "~/AppRoot";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
@@ -16,7 +16,9 @@ import { getRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
+  dispatchedCommands,
   installFakeEnvironment,
+  threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { render } from "../../test/render";
@@ -64,4 +66,42 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+it("choosing /side from the slash menu starts a side chat right away", async () => {
+  const thread = threadWithHistory("thread-29976", 1);
+  using _environment = installFakeEnvironment([thread], { sideChats: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  const container = document.createElement("div");
+  container.style.cssText = "height: 900px; width: 1400px;";
+  // AppRoot brings its own router.
+  await using _app = await render(<AppRoot router={router} />, { container, router: false });
+  await expect.element(page.getByText("Answer 0 for thread-29976.")).toBeVisible();
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
+  await userEvent.type(editor, "/sid");
+  await expect.element(page.getByText("/side", { exact: true })).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+
+  await expect
+    .poll(() =>
+      dispatchedCommands().filter(
+        (command) =>
+          typeof command === "object" &&
+          command !== null &&
+          "type" in command &&
+          command.type === "thread.fork" &&
+          "sideChat" in command &&
+          command.sideChat === true,
+      ),
+    )
+    .toHaveLength(1);
+  await expect.element(editor).not.toHaveTextContent("/side");
 });

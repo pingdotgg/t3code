@@ -249,6 +249,27 @@ describe("workspace area focus", () => {
     expect(document.activeElement).toBe(clickedRow);
   });
 
+  it("focuses the composer of a chat embedded in a panel surface, not its header buttons", () => {
+    using fixture = setup();
+    fixture.area("composer", 2);
+    const panel = fixture.area("panel", 4);
+    const content = document.createElement("div");
+    content.setAttribute("data-right-panel-surface-content", "");
+    const header = document.createElement("button");
+    header.textContent = "Bring back";
+    header.setAttribute("aria-disabled", "true");
+    content.append(header);
+    panel.element.append(content);
+    fixture.area("conversation", 1, content);
+    const embeddedComposer = fixture.area("composer", 2, content);
+    const editor = document.createElement("div");
+    editor.contentEditable = "true";
+    editor.textContent = " ";
+    embeddedComposer.element.append(editor);
+    expect(fixture.controller.focus("panel")).toBe(true);
+    expect(document.activeElement).toBe(editor);
+  });
+
   it("waits for a requested area to mount", async () => {
     using fixture = setup();
     fixture.area("composer", 2);

@@ -318,7 +318,21 @@ const json = (body: unknown, status = 200) =>
 const threadSubscribers = new Map<string, Queue.Queue<OrchestrationV2ThreadStreamItem>>();
 let terminalMetadataSubscriber: Queue.Queue<TerminalMetadataStreamEvent> | null = null;
 let threads: ReadonlyArray<FakeThread> = [];
+let sideChats = false;
+let dispatched: unknown[] = [];
 let sequence = 1;
+
+const currentServerConfig = (): ServerConfig =>
+  sideChats
+    ? {
+        ...serverConfig,
+        environment: {
+          ...serverConfig.environment,
+          capabilities: { ...serverConfig.environment.capabilities, sideChats: true },
+        },
+      }
+    : serverConfig;
+
 let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
 
 const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>) => () => void) =>
@@ -382,7 +396,11 @@ const handlers: Record<string, (input: never) => unknown> = {
       };
     }),
   [WS_METHODS.subscribeServerConfig]: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig }]),
+    subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
+  [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: unknown) => {
+    dispatched.push(command);
+    return Effect.never;
+  },
 };
 
 // Unanswered calls stay pending, like a server that has not replied yet.
@@ -397,9 +415,9 @@ const client = new Proxy(handlers, {
 
 const session: EnvironmentConnectionLease["session"] = {
   client: client as unknown as WsRpcProtocolClient,
-  initialConfig: Effect.succeed(serverConfig),
+  initialConfig: Effect.sync(currentServerConfig),
   subscribeServerConfig: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig }]),
+    subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
   ready: Effect.void,
   probe: Effect.void,
   inboundFrames: Effect.succeed(0),
@@ -433,8 +451,13 @@ const encodedDescriptor = Schema.encodeSync(ExecutionEnvironmentDescriptor)(
 );
 
 /** Serves the environment's HTTP API and these threads until disposed. */
-export function installFakeEnvironment(fixtures: ReadonlyArray<FakeThread>): Disposable {
+export function installFakeEnvironment(
+  fixtures: ReadonlyArray<FakeThread>,
+  options: { readonly sideChats?: boolean } = {},
+): Disposable {
   threads = fixtures;
+  sideChats = options.sideChats ?? false;
+  dispatched = [];
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);
@@ -456,6 +479,7 @@ export function installFakeEnvironment(fixtures: ReadonlyArray<FakeThread>): Dis
     [Symbol.dispose]: () => {
       globalThis.fetch = realFetch;
       threads = [];
+      sideChats = false;
     },
   };
 }
@@ -465,6 +489,11 @@ type ThreadEvent = Extract<OrchestrationV2ThreadStreamItem, { readonly kind: "ev
 export async function emitTerminalMetadata(event: TerminalMetadataStreamEvent): Promise<void> {
   if (terminalMetadataSubscriber === null) throw new Error("No terminal metadata subscription");
   await Effect.runPromise(Queue.offer(terminalMetadataSubscriber, event));
+}
+
+/** Orchestration commands the app has dispatched; none of them is answered. */
+export function dispatchedCommands(): ReadonlyArray<unknown> {
+  return dispatched;
 }
 
 /** Whether the app holds a live subscription to the thread, so events reach it. */
