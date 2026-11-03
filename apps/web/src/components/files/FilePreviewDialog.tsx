@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { PanelRightIcon, XIcon } from "lucide-react";
-import { lazy, Suspense } from "react";
+import { createContext, lazy, Suspense } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { useRightPanelStore } from "../../rightPanelStore";
@@ -44,6 +44,10 @@ export function openFilePreviewDialog(
     revealRequestId: (previous?.revealRequestId ?? 0) + 1,
   });
 }
+
+// Surfaces that own file navigation, like the side panel, open chat file links in place.
+export const FileLinkOpenerContext =
+  createContext<typeof openFilePreviewDialog>(openFilePreviewDialog);
 
 function closeFilePreviewDialog(): void {
   appAtomRegistry.set(filePreviewDialogAtom, null);

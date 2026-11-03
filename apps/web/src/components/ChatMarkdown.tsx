@@ -151,7 +151,7 @@ import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
 import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
-import { openFilePreviewDialog } from "./files/FilePreviewDialog";
+import { FileLinkOpenerContext } from "./files/FilePreviewDialog";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
@@ -796,6 +796,7 @@ function useChatMarkdownState({
     });
     return metadata._tag === "Success" && metadata.value.entries[0] === null ? match : null;
   };
+  const openFileLink = use(FileLinkOpenerContext);
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;
     // Every open supersedes pending lookups, including synchronous opens.
@@ -803,7 +804,7 @@ function useChatMarkdownState({
     const openAt = (path: string) =>
       path === "." || path.endsWith("/")
         ? useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line)
-        : openFilePreviewDialog(threadRef, path, fileLinkMeta.line);
+        : openFileLink(threadRef, path, fileLinkMeta.line);
     if (
       fileLinkMeta.workspaceLookupPath === null ||
       !cwd ||

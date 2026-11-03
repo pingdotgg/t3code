@@ -91,10 +91,13 @@ vi.mock(import("../hooks/useTheme"), async (original) => {
 });
 
 const { openFilePreviewDialog } = vi.hoisted(() => ({ openFilePreviewDialog: vi.fn() }));
-vi.mock(import("./files/FilePreviewDialog"), async (original) => ({
-  ...(await original()),
-  openFilePreviewDialog,
-}));
+vi.mock(import("./files/FilePreviewDialog"), async (original) => {
+  const { createContext } = await import("react");
+  return {
+    ...(await original()),
+    FileLinkOpenerContext: createContext(openFilePreviewDialog) as never,
+  };
+});
 
 const settingsOverrides = vi.hoisted(() => ({ mathRenderingEnabled: false }));
 vi.mock(import("../hooks/useSettings"), async (original) => {

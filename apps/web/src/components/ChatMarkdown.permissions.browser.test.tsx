@@ -28,10 +28,13 @@ const state = vi.hoisted(() => ({
   pullRequests: [] as ThreadPullRequestLink[],
 }));
 
-vi.mock(import("./files/FilePreviewDialog"), async (original) => ({
-  ...(await original()),
-  openFilePreviewDialog: state.openFileDialog,
-}));
+vi.mock(import("./files/FilePreviewDialog"), async (original) => {
+  const { createContext } = await import("react");
+  return {
+    ...(await original()),
+    FileLinkOpenerContext: createContext(state.openFileDialog) as never,
+  };
+});
 vi.mock(import("../state/use-atom-query-runner"), async (original) => ({
   ...(await original()),
   useAtomQueryRunner: (() => state.search) as never,
