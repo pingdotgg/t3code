@@ -46,6 +46,16 @@ Settings that are environment-wide stay read-only while a project is selected. W
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
 
+## Add an existing checkout
+
+**Add project → Local folder** points a project at a folder already on disk. Nothing is cloned or
+moved, and uncommitted work stays as it is. For a Git checkout, T3 Code first shows its branch and
+whether it is the main checkout or a linked worktree.
+
+If the folder sits inside a repository, you choose between the repository root and that folder. A
+folder that already has a project opens that project instead. A main checkout and its worktrees stay
+separate projects. Removing a project leaves its folder on disk.
+
 ## Pin and archive projects
 
 Pinned projects come first in the project pickers: the project picker on a new thread, the
