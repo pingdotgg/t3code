@@ -1922,13 +1922,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       if (item.command === "side" || item.command === "btw") {
         if (props.sideChatDisabledReason) return;
+        const openImmediately =
+          snapshot.value.slice(0, trigger.rangeStart).trim() === "" &&
+          snapshot.value.slice(trigger.rangeEnd).trim() === "";
+        const replacement = `/${item.command} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
         const applied = applyPromptReplacement(
           trigger.rangeStart,
-          trigger.rangeEnd,
-          `/${item.command} `,
-          { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
+          replacementRangeEnd,
+          replacement,
+          {
+            expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+            focusEditorAfterReplace: !openImmediately,
+          },
         );
-        if (applied) setComposerHighlightedItemId(null);
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          if (openImmediately) submitComposer();
+        }
         return;
       }
       return;
