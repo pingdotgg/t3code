@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -109,7 +110,10 @@ const layerCleanup = Layer.effect(
         ),
     };
   }),
-).pipe(Layer.provide(layerConfig), Layer.provide(NodeServices.layer));
+).pipe(
+  Layer.provide(layerConfig),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
 class RecordedAnalytics extends Context.Service<
   RecordedAnalytics,
   Ref.Ref<ReadonlyArray<Readonly<Record<string, unknown>>>>
@@ -142,7 +146,7 @@ const layerTest = GuestShareService.layer.pipe(
   Layer.provideMerge(layerAnalytics),
   Layer.provide(ServerSecretStore.layer),
   Layer.provideMerge(layerConfig),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const threadId = ThreadId.make("thread:guest-share-service");

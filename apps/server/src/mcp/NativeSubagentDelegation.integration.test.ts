@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -280,6 +281,7 @@ const makeHarness = (name: string) =>
           ServerSettings.layerTest(),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
           NodeServices.layer,
+          NodeCrypto.layer,
         ),
       ),
     );
