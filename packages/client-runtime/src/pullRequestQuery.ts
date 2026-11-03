@@ -29,6 +29,11 @@ function splitQualifierList(raw: string): string[] {
     .filter((part) => part.length > 0);
 }
 
+/** `me` and `@me` both name the viewer; logins are case-insensitive. */
+function authorKey(login: string): string {
+  return login.toLowerCase().replace(/^@me$/, "me");
+}
+
 function boundedNames(names: ReadonlyArray<string>): string[] {
   return names
     .slice(0, MAX_QUALIFIER_VALUES)
@@ -64,7 +69,7 @@ export function parsePullRequestQuery(raw: string): {
         if (negated) break;
         const login = value.slice(0, MAX_QUALIFIER_LENGTH).trim();
         if (author === undefined) author = login;
-        else if (author?.toLowerCase() !== login.toLowerCase()) author = null;
+        else if (author === null || authorKey(author) !== authorKey(login)) author = null;
         continue;
       }
       case "draft":
@@ -86,6 +91,7 @@ export function parsePullRequestQuery(raw: string): {
       }
       // GitHub's own search qualifiers, not labels: the list sets scope and order itself.
       case "is":
+      case "archived":
       case "state":
       case "repo":
       case "org":

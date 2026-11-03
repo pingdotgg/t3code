@@ -57,7 +57,7 @@ describe("reading qualifiers out of a typed query", () => {
   it("ignores GitHub's own search qualifiers instead of reading them as labels", () => {
     expect(
       parsePullRequestQuery(
-        "is:pr state:open repo:org/repo org:org user:alice sort:updated-desc -repo:org/fork -state:closed fix",
+        "is:pr state:open archived:false repo:org/repo org:org user:alice sort:updated-desc -repo:org/fork -state:closed fix",
       ),
     ).toEqual({ text: "fix", filters: {} });
   });
@@ -70,6 +70,7 @@ describe("reading qualifiers out of a typed query", () => {
   it("sets no author when the query names more than one", () => {
     expect(parsePullRequestQuery("author:alice author:bob").filters).toEqual({});
     expect(parsePullRequestQuery("author:alice author:alice").filters).toEqual({ author: "alice" });
+    expect(parsePullRequestQuery("author:me author:@me").filters).toEqual({ author: "me" });
   });
 
   it("cuts a typed query back to what the contract carries", () => {
