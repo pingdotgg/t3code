@@ -2310,6 +2310,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerCommandKeyHandler({
       keybindings,
       sendShortcut: settings.sendShortcut,
+      composerRichTextEnabled: settings.composerRichTextEnabled,
       routeKind,
       phase,
       canSteer,
