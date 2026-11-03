@@ -20,6 +20,7 @@ import {
   type DraftId,
   composerFileMatchesReattachMarker,
   composerFileNeedsReattach,
+  composerTargetKey,
   useComposerDraftStore,
 } from "../../composerDraftStore";
 import { type PendingUserInput } from "../../session-logic";
@@ -134,10 +135,14 @@ export function useComposerContextImport(input: {
   const loadThreadTranscript = useAtomCommand(orchestrationEnvironment.threadTranscript, {
     reportFailure: false,
   });
-  const countReservedAttachments = () => {
+  const countReservedAttachments = (draftTarget = attachmentDraftTarget) => {
+    const targetKey = composerTargetKey(draftTarget);
     const questionRequest = pendingUserInputs[0];
     const otherQuestionKeys =
-      questionAttachmentTarget && questionRequest && activeThreadId
+      questionAttachmentTarget &&
+      targetKey === attachmentTargetKey &&
+      questionRequest &&
+      activeThreadId
         ? questionRequest.questions
             .map((question) =>
               questionAttachmentDraftId(
@@ -149,12 +154,12 @@ export function useComposerContextImport(input: {
             )
             .filter((key) => key !== questionAttachmentTarget)
         : [];
-    const draft = getComposerDraft(attachmentDraftTarget);
+    const draft = getComposerDraft(draftTarget);
     return (
       (draft?.images.length ?? 0) +
       (draft?.files.length ?? 0) +
-      countPreparingComposerImages(attachmentTargetKey) +
-      (pendingThreadImportsRef.current.get(attachmentTargetKey) ?? 0) +
+      countPreparingComposerImages(targetKey) +
+      (pendingThreadImportsRef.current.get(targetKey) ?? 0) +
       countQuestionAttachments(otherQuestionKeys)
     );
   };

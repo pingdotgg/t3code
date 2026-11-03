@@ -2687,7 +2687,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         importComposerThreadAttachment({
           targetKey,
           pendingImports: pendingThreadImportsRef.current,
-          countReservedAttachments: countReservedAttachmentsStable,
+          countReservedAttachments: () => countReservedAttachmentsStable(draftTarget),
           load: async () => {
             const result = await loadThreadTranscript({
               environmentId: ref.environmentId,

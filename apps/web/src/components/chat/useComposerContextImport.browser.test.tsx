@@ -3,6 +3,7 @@ import {
   type ComposerContextRecord,
   ComposerContextId,
   EnvironmentId,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -303,4 +304,40 @@ it("imports a restored thread's transcript into the draft the restore names", as
   );
   expect([...rewritten.values()]).toEqual([null]);
   expect(importThreadTranscript).toHaveBeenCalledWith(ref, target);
+});
+
+it("counts the attachments of the draft a restore names, not the open question's", async () => {
+  const target = DraftId.make("stash-limit-target");
+  const question = DraftId.make("stash-limit-question");
+  const store = useComposerDraftStore.getState();
+  using _draft = { [Symbol.dispose]: () => store.clearComposerContent(question) };
+  store.addFiles(
+    question,
+    Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS }, (_, index) => {
+      const file = new File([`${index}`], `answer-${index}.txt`, { type: "text/plain" });
+      return {
+        type: "file" as const,
+        id: `answer-${index}`,
+        name: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size,
+        file,
+      };
+    }),
+  );
+  let importer!: Importer;
+  await using _screen = await render(
+    <Harness
+      input={{
+        ...importInput(question, { current: "" }),
+        composerDraftTarget: target,
+        questionAttachmentTarget: question,
+      }}
+      ready={(value) => {
+        importer = value;
+      }}
+    />,
+  );
+  expect(importer.countReservedAttachments()).toBe(PROVIDER_SEND_TURN_MAX_ATTACHMENTS);
+  expect(importer.countReservedAttachments(target)).toBe(0);
 });

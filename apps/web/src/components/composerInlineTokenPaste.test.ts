@@ -77,6 +77,30 @@ describe("importPastedComposerText", () => {
     ).toBe(`\\\`${formatComposerContextReference({ ...sourceThread, contextId: localId })}\\\``);
   });
 
+  it("imports a reference whose label holds backticks", () => {
+    const thread = threadContextRecord(
+      { environmentId: sourceThread.environmentId, threadId: ThreadId.make("thread-code") },
+      "Fix `foo` bug",
+    );
+    const fragment = encodeComposerContextFragment({
+      version: 1,
+      source: { environmentId: thread.environmentId },
+      records: [thread],
+    });
+    const localId = ComposerContextId.make("thread-local");
+    expect(
+      importPastedComposerText(
+        clipboard({
+          "text/plain": `Quote with \`, see ${formatComposerContextReference(thread)}`,
+          [COMPOSER_CONTEXT_CLIPBOARD_MIME]: fragment ?? "",
+        }),
+        (pasted) => new Map(pasted.records.map((record) => [record.contextId, localId])),
+      ),
+    ).toBe(
+      `Quote with \`, see ${formatComposerContextReference({ ...thread, contextId: localId })}`,
+    );
+  });
+
   it("keeps a context reference whose record the draft already holds", () => {
     expect(
       importPastedComposerText(

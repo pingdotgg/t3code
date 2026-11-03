@@ -80,7 +80,10 @@ function codeOffsetTest(text: string): (offset: number) => boolean {
   let ranges: Array<readonly [number, number]> | null = null;
   let next = 0;
   return (offset) => {
-    ranges ??= markdownCodeRanges(text);
+    // The editor holds each reference as an atom, so backticks in its label never open code.
+    ranges ??= markdownCodeRanges(
+      replaceComposerContextReferences(text, (occurrence) => " ".repeat(occurrence.source.length)),
+    );
     while (next < ranges.length && ranges[next]![1] <= offset) next += 1;
     return next < ranges.length && ranges[next]![0] <= offset;
   };
