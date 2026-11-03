@@ -55,6 +55,8 @@ import {
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_V2_WS_METHODS,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
+  CLIENT_CAPABILITIES_QUERY_PARAM,
+  SETTINGS_SECRET_REFERENCES_CAPABILITY,
   ORCHESTRATION_PROTOCOL_VERSION,
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
@@ -697,6 +699,11 @@ function hasCompatibleOrchestrationProtocol(url: URL): boolean {
   );
 }
 
+function readSettingsClient(url: URL) {
+  const capabilities = url.searchParams.get(CLIENT_CAPABILITIES_QUERY_PARAM)?.split(",") ?? [];
+  return { secretReferences: capabilities.includes(SETTINGS_SECRET_REFERENCES_CAPABILITY) };
+}
+
 function shouldUseBoundedThreadSnapshot(input: {
   readonly acceptBoundedSnapshot?: boolean;
   readonly acceptDeferredWork?: boolean;
@@ -1282,6 +1289,7 @@ export const layerWsRpc = (
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
   reportProfiles: ServerBrowser.ProfileReporter,
+  settingsClient: { readonly secretReferences: boolean },
 ) =>
   Layer.effectContext(
     Effect.gen(function* () {
@@ -1797,6 +1805,7 @@ export const layerWsRpc = (
           : commandProviders;
         const settings = ServerSettings.redactServerSettingsForClient(
           yield* serverSettings.getSettings,
+          settingsClient,
         );
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
@@ -2591,7 +2600,7 @@ export const layerWsRpc = (
             const settings = yield* providerInstanceMutation === undefined
               ? serverSettings.updateSettings(nextPatch)
               : serverSettings.updateProviderInstance(providerInstanceMutation, nextPatch);
-            return ServerSettings.redactServerSettingsForClient(settings);
+            return ServerSettings.redactServerSettingsForClient(settings, settingsClient);
           }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) => sourceControlDiscovery.discover,
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
@@ -3249,7 +3258,9 @@ export const layerWsRpc = (
                     )
                   : Stream.empty;
               const settingsUpdates = settingsChanges.pipe(
-                Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
+                Stream.map((settings) =>
+                  ServerSettings.redactServerSettingsForClient(settings, settingsClient),
+                ),
                 Stream.map((settings) => ({
                   version: 1 as const,
                   type: "settingsUpdated" as const,
@@ -3436,7 +3447,13 @@ export const layer = Layer.unwrap(
           return httpEffect;
         }).pipe(
           Effect.provide(
-            layerWsRpc(session, clientAnalyticsProps, serverBrowser, reportProfiles).pipe(
+            layerWsRpc(
+              session,
+              clientAnalyticsProps,
+              serverBrowser,
+              reportProfiles,
+              readSettingsClient(requestUrl.value),
+            ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.
               Layer.provide(DefectReporter.layer),
