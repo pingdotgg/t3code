@@ -2312,6 +2312,8 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
    sidebar implementations (default and legacy) read these, including the
    portaled mobile sheets and the settings navigation. */
 [data-app-sidebar] {
+  --sidebar-thread-title-foreground: var(--app-theme-text, #18181b);
+  --sidebar-shelf-foreground: var(--app-theme-sidebar-muted-foreground, #71717a);
   --sidebar-status-done: #047857;
   --sidebar-status-input: #4f46e5;
   --sidebar-status-approval: #b45309;
@@ -2325,6 +2327,8 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --sidebar-muted-foreground: var(--muted-foreground);
 
   @variant dark {
+    --sidebar-thread-title-foreground: var(--app-theme-text, #f1f3f7);
+    --sidebar-shelf-foreground: var(--app-theme-sidebar-muted-foreground, #a3a3a3);
     --sidebar-status-done: #6ee7b7;
     --sidebar-status-input: #a5b4fc;
     --sidebar-status-approval: #fcd34d;
