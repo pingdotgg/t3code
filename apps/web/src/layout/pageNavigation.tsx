@@ -15,11 +15,14 @@ import {
 import { useLayoutStore } from "./layoutStore";
 import { readPullRequestListPreferences } from "../components/pullRequest/pullRequestListPreferences";
 
-export function layoutPageKind(pathname: string): LayoutPageContent["kind"] | null {
-  if (pathname === "/settings" || pathname.startsWith("/settings/")) return "settings";
-  if (pathname === "/usage") return "usage";
-  if (pathname === "/pull-requests") return "pull-requests";
-  return null;
+/** The page tab a URL shows in the layout. Settings and Usage open as modals over it instead. */
+export function layoutRoutePage(location: {
+  pathname: string;
+  href: string;
+}): LayoutPageContent | null {
+  return location.pathname === "/pull-requests"
+    ? { kind: "pull-requests", href: location.href }
+    : null;
 }
 
 export function layoutPageHref(content: LayoutPageContent): string {
@@ -29,8 +32,7 @@ export function layoutPageHref(content: LayoutPageContent): string {
   if (content.href === undefined && content.kind === "pull-requests") {
     url.search = defaultStringifySearch(readPullRequestListPreferences());
   }
-  if (content.kind === "pull-requests") url.searchParams.set("pane", "1");
-  else url.searchParams.delete("pane");
+  url.searchParams.delete("pane");
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
