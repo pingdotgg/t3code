@@ -1,0 +1,745 @@
+import {
+  type EnvironmentId,
+  isValidMcpServerName,
+  type McpServerConfig,
+  type McpServerProjectOverride,
+  type McpServerTransport,
+  type McpServerVariable,
+  type ProviderDriverKind,
+  type ProviderInstanceId,
+  type ServerProvider,
+  type ServerProviderSkill,
+  type SkillFolderInfo,
+} from "@t3tools/contracts";
+import { resolveProviderSkillSourceKind } from "@t3tools/client-runtime/providerSkills";
+
+export type ToolsTab = "skills" | "mcp";
+
+/**
+ * `tab` picks the tab; `skill` is the skill whose page is open on the Skills
+ * tab, and `server` the MCP server whose page is open on the MCP servers tab.
+ */
+export function validateToolsSearch(raw: Record<string, unknown>): {
+  tab?: ToolsTab;
+  skill?: string;
+  server?: string;
+} {
+  const tab = raw.tab === "mcp" || raw.tab === "skills" ? raw.tab : undefined;
+  const skill =
+    tab !== "mcp" && typeof raw.skill === "string" && raw.skill.length > 0 ? raw.skill : undefined;
+  const server =
+    tab === "mcp" && typeof raw.server === "string" && raw.server.length > 0
+      ? raw.server
+      : undefined;
+  return {
+    ...(tab === undefined ? {} : { tab }),
+    ...(skill === undefined ? {} : { skill }),
+    ...(server === undefined ? {} : { server }),
+  };
+}
+
+/** Where a skill lives, the groups the Skills tab shows in order. */
+export type SkillGroupKind = "project" | "personal" | "plugin" | "system";
+
+export const SKILL_GROUP_LABELS: Readonly<Record<SkillGroupKind, string>> = {
+  project: "This project",
+  personal: "Global",
+  plugin: "Plugins",
+  system: "Built in",
+};
+
+/** What each section means, beside its name. */
+export const SKILL_GROUP_HINTS: Readonly<Record<SkillGroupKind, string>> = {
+  project: "Lives in this repo",
+  personal: "In all your projects",
+  plugin: "From the agents' plugins",
+  system: "Ships with the agent",
+};
+
+export interface SkillProviderRef {
+  readonly instanceId: ProviderInstanceId;
+  readonly driver: ProviderDriverKind;
+  readonly displayName: string;
+}
+
+/**
+ * One row of the Skills tab: every provider instance that loads a skill of
+ * this name, merged. Skills are switched by name, so two folders holding a
+ * skill of the same name are one row; their paths are listed as copies.
+ */
+export interface SkillRow {
+  readonly name: string;
+  readonly description: string | undefined;
+  readonly group: SkillGroupKind;
+  readonly paths: ReadonlyArray<string>;
+  readonly providers: ReadonlyArray<SkillProviderRef>;
+  /** Off in the provider's own settings (e.g. Claude's `skillOverrides`). */
+  readonly disabledByProvider: boolean;
+}
+
+function skillGroup(skill: ServerProviderSkill): SkillGroupKind {
+  switch (resolveProviderSkillSourceKind(skill)) {
+    case "project":
+    case "repo":
+      return "project";
+    case "personal":
+      return "personal";
+    case "app":
+      return "plugin";
+    case "system":
+    case "other":
+      // Some providers report plugin skills with no scope; their folder is the
+      // only sign. A repository folder named `plugins` already has a scope.
+      return skill.scope?.trim().toLowerCase() === "plugin" ||
+        skill.path.replaceAll("\\", "/").includes("/plugins/")
+        ? "plugin"
+        : "system";
+  }
+}
+
+const GROUP_ORDER: ReadonlyArray<SkillGroupKind> = ["project", "personal", "plugin", "system"];
+
+const isFilePath = (path: string) => path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
+
+/**
+ * The skills every enabled provider on one environment finds, for the checkout at `cwd`.
+ * A provider's own list is read where it was launched, so project skills show only from a
+ * scan of `cwd`. A skill any provider reaches from a project folder is a project skill.
+ */
+export function collectSkillRows(
+  providers: ReadonlyArray<ServerProvider>,
+  cwd: string | null,
+): ReadonlyArray<SkillRow> {
+  const rows = new Map<
+    string,
+    {
+      name: string;
+      description: string | undefined;
+      group: SkillGroupKind;
+      paths: Set<string>;
+      providers: Map<ProviderInstanceId, SkillProviderRef>;
+      disabledByProvider: boolean;
+    }
+  >();
+  for (const provider of providers) {
+    if (!provider.enabled) continue;
+    const snapshot =
+      cwd === null
+        ? undefined
+        : provider.workspaceSnapshots?.find((candidate) => candidate.cwd === cwd);
+    for (const skill of snapshot?.skills ?? provider.skills) {
+      const key = skill.name.trim().toLowerCase();
+      if (key.length === 0) continue;
+      const group = skillGroup(skill);
+      if (group === "project" && snapshot === undefined) continue;
+      const ref: SkillProviderRef = {
+        instanceId: provider.instanceId,
+        driver: provider.driver,
+        displayName: provider.displayName ?? provider.instanceId,
+      };
+      // Pi reports a synthetic `pi:skill:<name>` id instead of a file.
+      const path = isFilePath(skill.path) ? skill.path : null;
+      const existing = rows.get(key);
+      if (existing === undefined) {
+        rows.set(key, {
+          name: skill.name.trim(),
+          description: skill.description ?? skill.shortDescription,
+          group,
+          paths: new Set(path === null ? [] : [path]),
+          providers: new Map([[provider.instanceId, ref]]),
+          disabledByProvider: !skill.enabled,
+        });
+        continue;
+      }
+      if (GROUP_ORDER.indexOf(group) < GROUP_ORDER.indexOf(existing.group)) existing.group = group;
+      existing.description ??= skill.description ?? skill.shortDescription;
+      if (path !== null) existing.paths.add(path);
+      existing.providers.set(provider.instanceId, ref);
+      // Off only when every provider that has it turned it off itself.
+      existing.disabledByProvider &&= !skill.enabled;
+    }
+  }
+  return [...rows.values()]
+    .map((row) => ({
+      name: row.name,
+      description: row.description,
+      group: row.group,
+      paths: [...row.paths].toSorted(),
+      providers: [...row.providers.values()].toSorted((left, right) =>
+        left.displayName.localeCompare(right.displayName),
+      ),
+      disabledByProvider: row.disabledByProvider,
+    }))
+    .toSorted(
+      (left, right) =>
+        GROUP_ORDER.indexOf(left.group) - GROUP_ORDER.indexOf(right.group) ||
+        left.name.localeCompare(right.name),
+    );
+}
+
+/** One environment's skill rows, from that environment's providers and checkout. */
+export interface EnvironmentSkillRows {
+  readonly environmentId: EnvironmentId;
+  readonly rows: ReadonlyArray<SkillRow>;
+}
+
+/** A skill row across environments: shown from one of them, present on some. */
+export interface FleetSkillRow {
+  readonly row: SkillRow;
+  /** The environment whose copy the row, its details and its page show. */
+  readonly environmentId: EnvironmentId;
+  /** Every listed environment that has a skill by this name, in list order. */
+  readonly on: ReadonlyArray<EnvironmentId>;
+}
+
+/**
+ * Merge each environment's rows by skill name. A row shows the copy on the
+ * first environment listed that has it, so the primary environment goes
+ * first; `on` says where else the name is. Plugin and built-in skills belong
+ * to their agents, so only the first environment's are kept.
+ */
+export function mergeEnvironmentSkillRows(
+  environments: ReadonlyArray<EnvironmentSkillRows>,
+): ReadonlyArray<FleetSkillRow> {
+  const byName = new Map<
+    string,
+    { row: SkillRow; environmentId: EnvironmentId; on: EnvironmentId[] }
+  >();
+  for (const [index, { environmentId, rows }] of environments.entries()) {
+    for (const row of rows) {
+      const own = row.group === "project" || row.group === "personal";
+      if (!own && index > 0) continue;
+      const key = row.name.toLowerCase();
+      const existing = byName.get(key);
+      if (existing === undefined) {
+        byName.set(key, { row, environmentId, on: [environmentId] });
+      } else if (!existing.on.includes(environmentId)) {
+        existing.on.push(environmentId);
+      }
+    }
+  }
+  const order = environments.map((environment) => environment.environmentId);
+  return [...byName.values()]
+    .map(({ row, environmentId, on }) => ({
+      row,
+      environmentId,
+      on: on.toSorted((left, right) => order.indexOf(left) - order.indexOf(right)),
+    }))
+    .toSorted(
+      (left, right) =>
+        GROUP_ORDER.indexOf(left.row.group) - GROUP_ORDER.indexOf(right.row.group) ||
+        left.row.name.localeCompare(right.row.name),
+    );
+}
+
+export function groupSkillRows(
+  rows: ReadonlyArray<SkillRow>,
+): ReadonlyArray<{ readonly group: SkillGroupKind; readonly rows: ReadonlyArray<SkillRow> }> {
+  return GROUP_ORDER.flatMap((group) => {
+    const groupRows = rows.filter((row) => row.group === group);
+    return groupRows.length === 0 ? [] : [{ group, rows: groupRows }];
+  });
+}
+
+export function filterSkillRows(rows: ReadonlyArray<SkillRow>, query: string) {
+  const needle = query.trim().toLowerCase();
+  if (needle.length === 0) return rows;
+  return rows.filter(
+    (row) =>
+      row.name.toLowerCase().includes(needle) ||
+      (row.description?.toLowerCase().includes(needle) ?? false),
+  );
+}
+
+/** What the server knows about a row's folders: see `skills.inspect`. */
+export interface SkillRowDetails {
+  /** The copy shown first: the installed one, else the first found; null when none was inspected. */
+  readonly folder: SkillFolderInfo | null;
+  /** Each distinct folder holding a skill of this name, the shown one first. */
+  readonly copies: ReadonlyArray<SkillFolderInfo>;
+  /** Some copy holds a script an agent could run. */
+  readonly scripts: boolean;
+  /** Two copies of the name have different SKILL.md text. */
+  readonly conflict: boolean;
+  /** Set when the `skills` CLI installed the row's skill, so it can be updated. */
+  readonly installed: NonNullable<SkillFolderInfo["installed"]> | null;
+  /**
+   * The level to remove the skill from: where the CLI installed it, else
+   * where a copy sits in the agents' own skill folders. Null for a plugin's
+   * or an agent's built-in skill.
+   */
+  readonly removable: NonNullable<SkillFolderInfo["location"]> | null;
+}
+
+const NO_DETAILS: SkillRowDetails = {
+  folder: null,
+  copies: [],
+  scripts: false,
+  conflict: false,
+  installed: null,
+  removable: null,
+};
+
+export function skillRowDetails(
+  row: SkillRow,
+  folders: ReadonlyMap<string, SkillFolderInfo>,
+): SkillRowDetails {
+  const infos = row.paths.flatMap((path) => {
+    const info = folders.get(path);
+    return info === undefined ? [] : [info];
+  });
+  if (infos.length === 0) return NO_DETAILS;
+  // Two agents reaching one folder through a link report two paths for one copy.
+  const byFolder = new Map(infos.map((info) => [info.folder, info]));
+  const copies = [...byFolder.values()].toSorted(
+    (left, right) => Number(right.installed !== undefined) - Number(left.installed !== undefined),
+  );
+  const installed = copies.find((info) => info.installed !== undefined)?.installed ?? null;
+  return {
+    folder: copies[0] ?? null,
+    copies,
+    scripts: copies.some((info) => info.scripts),
+    conflict: new Set(copies.map((info) => info.hash)).size > 1,
+    installed,
+    removable: installed?.target ?? copies.find((info) => info.location)?.location ?? null,
+  };
+}
+
+/**
+ * A group's rows split by the source the `skills` CLI installed them from,
+ * so a pack of skills reads as one block with one switch. Rows with no
+ * recorded source come first, under no heading.
+ */
+export function splitRowsBySource<Row>(
+  rows: ReadonlyArray<Row>,
+  sourceOf: (row: Row) => string | null,
+): ReadonlyArray<{ readonly source: string | null; readonly rows: ReadonlyArray<Row> }> {
+  const bySource = new Map<string | null, Row[]>();
+  for (const row of rows) {
+    const source = sourceOf(row);
+    const list = bySource.get(source) ?? [];
+    list.push(row);
+    bySource.set(source, list);
+  }
+  return [...bySource.entries()]
+    .toSorted(([left], [right]) =>
+      left === null ? -1 : right === null ? 1 : left.localeCompare(right),
+    )
+    .map(([source, sourceRows]) => ({ source, rows: sourceRows }));
+}
+
+/** An enabled agent on the page, as its icon and name show it. */
+export interface SkillAgent {
+  readonly instanceId: ProviderInstanceId;
+  readonly driverKind: ProviderDriverKind;
+  readonly displayName: string;
+  readonly accentColor?: string | undefined;
+  /** Always true: only enabled agents are listed. The instance badge reads it. */
+  readonly enabled: boolean;
+}
+
+export function skillAgents(providers: ReadonlyArray<ServerProvider>): ReadonlyArray<SkillAgent> {
+  return providers
+    .filter((provider) => provider.enabled)
+    .map((provider) => ({
+      instanceId: provider.instanceId,
+      driverKind: provider.driver,
+      displayName: provider.displayName ?? provider.instanceId,
+      ...(provider.accentColor === undefined ? {} : { accentColor: provider.accentColor }),
+      enabled: true,
+    }));
+}
+
+/** Which enabled agents load a skill, and which don't. */
+export interface SkillAvailability {
+  /** Every enabled agent loads it, so the row shows one mark instead of every icon. */
+  readonly everyone: boolean;
+  readonly agents: ReadonlyArray<SkillAgent>;
+  readonly missing: ReadonlyArray<SkillAgent>;
+}
+
+export function skillAvailability(
+  row: SkillRow,
+  agents: ReadonlyArray<SkillAgent>,
+): SkillAvailability {
+  const loads = new Set(row.providers.map((provider) => provider.instanceId));
+  const present = agents.filter((agent) => loads.has(agent.instanceId));
+  const missing = agents.filter((agent) => !loads.has(agent.instanceId));
+  return { everyone: agents.length > 0 && missing.length === 0, agents: present, missing };
+}
+
+const joinNames = (names: ReadonlyArray<string>) =>
+  names.length <= 1
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
+export function availabilityNote(value: SkillAvailability): string {
+  return value.everyone
+    ? "Available to all your agents"
+    : value.agents.length === 0
+      ? "No enabled agent loads this skill"
+      : `Not available to ${joinNames(value.missing.map((agent) => agent.displayName))}`;
+}
+
+/**
+ * What to do about a skill that needs a look, or null. Only a name used by
+ * different skills does: its one switch can't tell them apart, and removing
+ * or renaming a copy fixes it. Which agents load a skill is shown, not flagged.
+ */
+export function skillConflict(row: SkillRow, details: SkillRowDetails): string | null {
+  return details.conflict
+    ? `Different skills are named “${row.name}”, and its switch turns them all on or off. Remove or rename the copy you don't want.`
+    : null;
+}
+
+/** Rows with no recorded source show first; a pack collapses past this many rows. */
+export const SOURCE_GROUP_PREVIEW = 3;
+
+/** The tree's usual order (folders first, then names), with the root SKILL.md on top. */
+export function compareSkillFiles(
+  left: {
+    readonly path: string;
+    readonly isDirectory: boolean;
+    readonly segments: readonly string[];
+  },
+  right: {
+    readonly path: string;
+    readonly isDirectory: boolean;
+    readonly segments: readonly string[];
+  },
+): number {
+  const pinned = Number(right.path === "SKILL.md") - Number(left.path === "SKILL.md");
+  if (pinned !== 0) return pinned;
+  const shared = Math.min(left.segments.length, right.segments.length);
+  for (let depth = 0; depth < shared; depth += 1) {
+    const a = left.segments[depth] ?? "";
+    const b = right.segments[depth] ?? "";
+    if (a === b) continue;
+    const aFolder = depth < left.segments.length - 1 || left.isDirectory;
+    const bFolder = depth < right.segments.length - 1 || right.isDirectory;
+    if (aFolder !== bFolder) return aFolder ? -1 : 1;
+    return (
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }) || (a < b ? -1 : 1)
+    );
+  }
+  return left.segments.length - right.segments.length;
+}
+
+const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
+
+/** SKILL.md without its header, for the rendered view. */
+export function skillBody(contents: string): string {
+  const match = FRONTMATTER.exec(contents);
+  return (match === null ? contents : contents.slice(match[0].length)).replace(
+    /^(?:[ \t]*\r?\n)*/,
+    "",
+  );
+}
+
+// ── MCP servers ────────────────────────────────────────────────────
+
+/** Where a server in the effective list comes from at the current scope. */
+export type McpServerOrigin =
+  /** Defined on the environment; at project scope, inherited unchanged. */
+  | "environment"
+  /** Added by the project, or replacing the environment's server of that name. */
+  | "project"
+  /** The environment's server, switched on or off for the project. */
+  | "project-switch";
+
+export interface McpServerRow {
+  readonly name: string;
+  readonly config: McpServerConfig;
+  readonly origin: McpServerOrigin;
+  /** The project replaces an environment server of the same name. */
+  readonly replacesEnvironment: boolean;
+}
+
+export function listMcpServerRows(input: {
+  readonly environment: Readonly<Record<string, McpServerConfig>>;
+  readonly project: Readonly<Record<string, McpServerProjectOverride>> | null;
+}): ReadonlyArray<McpServerRow> {
+  const rows = new Map<string, McpServerRow>();
+  for (const [name, config] of Object.entries(input.environment)) {
+    rows.set(name, { name, config, origin: "environment", replacesEnvironment: false });
+  }
+  for (const [name, entry] of Object.entries(input.project ?? {})) {
+    const inherited = Object.hasOwn(input.environment, name) ? input.environment[name] : undefined;
+    if (entry.transport !== undefined) {
+      rows.set(name, {
+        name,
+        config: { enabled: entry.enabled, transport: entry.transport },
+        origin: "project",
+        replacesEnvironment: inherited !== undefined,
+      });
+    } else if (inherited !== undefined) {
+      rows.set(name, {
+        name,
+        config: { ...inherited, enabled: entry.enabled },
+        origin: "project-switch",
+        replacesEnvironment: false,
+      });
+    }
+  }
+  return [...rows.values()].toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+// ── Server editor draft ────────────────────────────────────────────
+
+export interface McpVariableDraft {
+  readonly id: string;
+  readonly name: string;
+  readonly value: string;
+  readonly sensitive: boolean;
+  /** A stored secret the user has not replaced. */
+  readonly stored: boolean;
+  /** The variable name its stored secret was saved under, kept through renames and toggles. */
+  readonly storedName?: string;
+}
+
+export interface McpServerDraft {
+  readonly name: string;
+  readonly type: McpServerTransport["type"];
+  readonly command: string;
+  readonly args: string;
+  readonly url: string;
+  readonly env: ReadonlyArray<McpVariableDraft>;
+  readonly headers: ReadonlyArray<McpVariableDraft>;
+}
+
+let variableDraftId = 0;
+export const nextMcpVariableDraftId = () => `mcp-var-${variableDraftId++}`;
+
+const variableDrafts = (variables: ReadonlyArray<McpServerVariable>) =>
+  variables.map((variable) => ({
+    id: nextMcpVariableDraftId(),
+    name: variable.name,
+    value: variable.valueRedacted ? "" : variable.value,
+    sensitive: variable.sensitive,
+    stored: variable.valueRedacted === true,
+    ...(variable.valueRedacted ? { storedName: variable.name } : {}),
+  }));
+
+export const EMPTY_MCP_SERVER_DRAFT: McpServerDraft = {
+  name: "",
+  type: "stdio",
+  command: "",
+  args: "",
+  url: "",
+  env: [],
+  headers: [],
+};
+
+export function mcpServerDraftFrom(name: string, config: McpServerConfig): McpServerDraft {
+  const transport = config.transport;
+  return transport.type === "stdio"
+    ? {
+        ...EMPTY_MCP_SERVER_DRAFT,
+        name,
+        type: "stdio",
+        command: transport.command,
+        args: formatArgs(transport.args),
+        env: variableDrafts(transport.env),
+      }
+    : {
+        ...EMPTY_MCP_SERVER_DRAFT,
+        name,
+        type: "http",
+        url: transport.url,
+        headers: variableDrafts(transport.headers),
+      };
+}
+
+/** Arguments on one line; an argument with whitespace or quotes is double-quoted. */
+export function formatArgs(args: ReadonlyArray<string>): string {
+  return args
+    .map((arg) =>
+      arg.length === 0 || /[\s"'\\]/.test(arg) ? `"${arg.replaceAll(/(["\\])/g, "\\$1")}"` : arg,
+    )
+    .join(" ");
+}
+
+/** Split an argument line on whitespace, honoring single and double quotes. */
+export function parseArgs(line: string): ReadonlyArray<string> {
+  const args: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  let started = false;
+  for (let index = 0; index < line.length; index++) {
+    const char = line[index]!;
+    if (quote !== null) {
+      if (char === quote) quote = null;
+      else if (char === "\\" && quote === '"' && index + 1 < line.length) current += line[++index];
+      else current += char;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      started = true;
+    } else if (/\s/.test(char)) {
+      if (started) args.push(current);
+      current = "";
+      started = false;
+    } else {
+      current += char;
+      started = true;
+    }
+  }
+  if (started) args.push(current);
+  return args;
+}
+
+/**
+ * A stored secret the user did not replace goes back redacted. When the server
+ * or the variable was renamed, `storedAs` tells the server where the secret was
+ * saved so it moves with the rename.
+ */
+function variablesFromDrafts(
+  drafts: ReadonlyArray<McpVariableDraft>,
+  server: { readonly name: string; readonly storedName: string | null },
+): McpServerVariable[] {
+  return drafts.flatMap((draft) => {
+    const name = draft.name.trim();
+    if (name.length === 0) return [];
+    if (draft.sensitive && draft.stored && draft.value.length === 0) {
+      const storedName = draft.storedName ?? name;
+      const renamed = server.storedName !== null && server.storedName !== server.name;
+      return [
+        {
+          name,
+          value: "",
+          sensitive: true,
+          valueRedacted: true,
+          ...(renamed || storedName !== name
+            ? { storedAs: { server: server.storedName ?? server.name, variable: storedName } }
+            : {}),
+        },
+      ];
+    }
+    return [{ name, value: draft.value, sensitive: draft.sensitive }];
+  });
+}
+
+export type McpServerDraftResult =
+  | { readonly ok: true; readonly name: string; readonly transport: McpServerTransport }
+  | { readonly ok: false; readonly field: "name" | "command" | "url"; readonly message: string };
+
+/** `storedName` is the server's saved name when editing, so renames keep its secrets. */
+export function mcpServerFromDraft(
+  draft: McpServerDraft,
+  takenNames: ReadonlySet<string>,
+  storedName: string | null = null,
+): McpServerDraftResult {
+  const name = draft.name.trim();
+  if (!isValidMcpServerName(name)) {
+    return {
+      ok: false,
+      field: "name",
+      message:
+        name === "t3-code"
+          ? "t3-code is reserved for T3 Code's own server."
+          : "Use lowercase letters, digits, - or _, starting with a letter.",
+    };
+  }
+  if (takenNames.has(name)) {
+    return { ok: false, field: "name", message: "A server with this name already exists." };
+  }
+  if (draft.type === "stdio") {
+    const command = draft.command.trim();
+    if (command.length === 0) {
+      return { ok: false, field: "command", message: "Enter the command that starts the server." };
+    }
+    return {
+      ok: true,
+      name,
+      transport: {
+        type: "stdio",
+        command,
+        args: [...parseArgs(draft.args)],
+        env: variablesFromDrafts(draft.env, { name, storedName }),
+      },
+    };
+  }
+  const url = draft.url.trim();
+  if (!/^https?:\/\/\S+$/i.test(url)) {
+    return { ok: false, field: "url", message: "Enter an http:// or https:// URL." };
+  }
+  return {
+    ok: true,
+    name,
+    transport: {
+      type: "http",
+      url,
+      headers: variablesFromDrafts(draft.headers, { name, storedName }),
+    },
+  };
+}
+
+/**
+ * Read the JSON snippet MCP vendors publish (`{"mcpServers": {...}}`, a bare
+ * `{"name": {...}}` map, or one server object) into a draft. Values in `env`
+ * and `headers` are marked sensitive, since that is where keys go.
+ */
+export function parseMcpServerJson(text: string): McpServerDraft | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  let record = parsed as Record<string, unknown>;
+  for (const key of ["mcpServers", "servers", "mcp"]) {
+    const nested = record[key];
+    if (typeof nested === "object" && nested !== null && !Array.isArray(nested)) {
+      record = nested as Record<string, unknown>;
+      break;
+    }
+  }
+  const isServer = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" &&
+    value !== null &&
+    ("command" in value || "url" in value || "serverUrl" in value || "httpUrl" in value);
+  const [name, server] = isServer(record)
+    ? ["", record]
+    : (Object.entries(record).find(([, value]) => isServer(value)) ?? ["", undefined]);
+  if (server === undefined || !isServer(server)) return null;
+  const toVariables = (value: unknown) =>
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? Object.entries(value as Record<string, unknown>).map(([key, entry]) => ({
+          id: nextMcpVariableDraftId(),
+          name: key,
+          value: typeof entry === "string" ? entry : String(entry),
+          sensitive: true,
+          stored: false,
+        }))
+      : [];
+  const url = server.url ?? server.serverUrl ?? server.httpUrl;
+  if (typeof url === "string") {
+    return {
+      ...EMPTY_MCP_SERVER_DRAFT,
+      name: name.toLowerCase(),
+      type: "http",
+      url,
+      headers: toVariables(server.headers),
+    };
+  }
+  const commandValue = server.command;
+  const commandParts = Array.isArray(commandValue)
+    ? commandValue.filter((part): part is string => typeof part === "string")
+    : typeof commandValue === "string"
+      ? [commandValue]
+      : [];
+  const [command = "", ...commandArgs] = commandParts;
+  const args = Array.isArray(server.args)
+    ? server.args.filter((arg): arg is string => typeof arg === "string")
+    : [];
+  return {
+    ...EMPTY_MCP_SERVER_DRAFT,
+    name: name.toLowerCase(),
+    type: "stdio",
+    command,
+    args: formatArgs([...commandArgs, ...args]),
+    env: toVariables(server.env ?? server.environment),
+  };
+}

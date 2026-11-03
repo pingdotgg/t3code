@@ -257,6 +257,7 @@ import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
+import { mergeProjectDisabledSkills } from "@t3tools/shared/projectSettings";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -440,6 +441,8 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  /** The thread's project, for its Settings → Tools skill switches. */
+  skillsProjectId: ProjectId | null;
   pullRequestProjectId: ProjectId | null;
   pullRequestRepository: string | null;
   threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
@@ -565,6 +568,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     keybindings,
     terminalOpen,
     gitCwd,
+    skillsProjectId,
     pullRequestProjectId,
     pullRequestRepository,
     threadPullRequests,
@@ -948,12 +952,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = selectedProviderEntry?.snapshot ?? null;
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
-  const selectedProviderSkills = selectedProviderStatus
+  // Skills switched off in Settings → Tools leave the menu; the server keeps
+  // them out of the session where the provider allows it.
+  const disabledSkillNames = new Set(
+    mergeProjectDisabledSkills(
+      settings.disabledSkills,
+      skillsProjectId === null
+        ? undefined
+        : settings.projectSettingsOverrides[skillsProjectId]?.disabledSkills,
+    ).map((name) => name.toLowerCase()),
+  );
+  const providerSkills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SKILLS;
-  const selectedProviderSlashCommands = selectedProviderStatus
+  const selectedProviderSkills =
+    disabledSkillNames.size === 0
+      ? providerSkills
+      : providerSkills.filter((skill) => !disabledSkillNames.has(skill.name.toLowerCase()));
+  const providerSlashCommands = selectedProviderStatus
     ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SLASH_COMMANDS;
+  // Claude also lists each skill as a slash command; a disabled one leaves both.
+  const selectedProviderSlashCommands =
+    disabledSkillNames.size === 0
+      ? providerSlashCommands
+      : providerSlashCommands.filter(
+          (command) => !disabledSkillNames.has(command.name.toLowerCase()),
+        );
   const { refresh: refreshWorkspaceSnapshotOnTyping, scanning: workspaceSkillsScanning } =
     useProviderWorkspaceSnapshotRefresh({
       environmentId,

@@ -1429,6 +1429,49 @@ export function createServerEnvironmentAtoms<R, E>(
           ]),
       },
     }),
+    // Skills installed from a source: read-only facts about the skill folders
+    // the agents report, and the installs that change them.
+    inspectSkills: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:skills:inspect",
+      tag: WS_METHODS.skillsInspect,
+      staleTimeMs: 30_000,
+      idleTtlMs: 5 * 60_000,
+    }),
+    // An MCP server's tools, read by starting it; needs `providers:manage`.
+    listMcpServerTools: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:mcp-servers:list-tools",
+      tag: WS_METHODS.mcpServersListTools,
+      staleTimeMs: 5 * 60_000,
+      idleTtlMs: 5 * 60_000,
+    }),
+    previewSkills: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:preview",
+      tag: WS_METHODS.skillsPreview,
+    }),
+    installSkills: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:install",
+      tag: WS_METHODS.skillsInstall,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
+    updateSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:update",
+      tag: WS_METHODS.skillsUpdate,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
+    removeSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:remove",
+      tag: WS_METHODS.skillsRemove,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
+    exportSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:export",
+      tag: WS_METHODS.skillsExport,
+    }),
+    importSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:import",
+      tag: WS_METHODS.skillsImport,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",
       tag: WS_METHODS.serverUpdateProvider,

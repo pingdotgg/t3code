@@ -6,6 +6,7 @@ import {
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
   AuthSettingsWriteScope,
+  AuthProvidersManageScope,
   AuthSourceControlWriteScope,
   AuthTerminalOperateScope,
   type AuthEnvironmentScope,
@@ -54,6 +55,14 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
 
   // Starts an agent session on this environment that can read its logs and database.
   [WS_METHODS.serverPrepareTriage]: AuthOrchestrationOperateScope,
+
+  // Skills from a source may carry scripts every agent on the environment can
+  // run, the same reach as adding an MCP server.
+  [WS_METHODS.skillsInstall]: AuthProvidersManageScope,
+  [WS_METHODS.skillsUpdate]: AuthProvidersManageScope,
+  [WS_METHODS.skillsRemove]: AuthProvidersManageScope,
+  [WS_METHODS.skillsImport]: AuthProvidersManageScope,
+
   [WS_METHODS.scheduledTasksUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,

@@ -616,9 +616,11 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
 
     const canWriteServerPatch =
       environmentId === null ||
-      requiredScopesForServerSettingsPatch(serverPatch).every((scope) =>
-        readEnvironmentScope(environmentId, scope),
-      );
+      requiredScopesForServerSettingsPatch(
+        serverPatch,
+        environments.find((target) => target.environmentId === environmentId)?.serverConfig
+          ?.settings,
+      ).every((scope) => readEnvironmentScope(environmentId, scope));
     if (Object.keys(serverPatch).length > 0 && !canWriteServerPatch) {
       options?.onFailed?.();
       toastManager.add({
@@ -669,9 +671,10 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           const session = appAtomRegistry.get(environmentSession.sessionStateAtom(targetId));
           if (
             session._tag !== "Initial" &&
-            !requiredScopesForServerSettingsPatch(sharedPatch).every((scope) =>
-              readEnvironmentScope(targetId, scope),
-            )
+            !requiredScopesForServerSettingsPatch(
+              sharedPatch,
+              target?.serverConfig?.settings,
+            ).every((scope) => readEnvironmentScope(targetId, scope))
           ) {
             deniedLabels.push(target?.label ?? targetId);
             continue;

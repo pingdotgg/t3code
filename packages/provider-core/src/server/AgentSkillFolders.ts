@@ -1,0 +1,115 @@
+/**
+ * Where each agent reads skills (relative to home or the project root, in lookup order),
+ * and the `skills` CLI agent id that links an install there; ids and folders follow
+ * vercel-labs/skills' `src/agents.ts`. The CLI writes every install to `.agents/skills`.
+ */
+import type { ProviderDriverKind } from "@t3tools/contracts";
+
+/** The folder the `skills` CLI installs into, at home and in a project. */
+export const STANDARD_SKILL_FOLDER = ".agents/skills";
+
+export interface AgentSkillFolders {
+  /** Folders under the home folder, in the order the agent looks. */
+  readonly home: ReadonlyArray<string>;
+  /** Folders under a project root, in the order the agent looks. */
+  readonly project: ReadonlyArray<string>;
+  /**
+   * The `skills` CLI agent that links an install into a folder this agent
+   * reads, when `.agents/skills` alone doesn't reach it at that level.
+   */
+  readonly installAgent?: { readonly home?: string; readonly project?: string };
+}
+
+const AGENT_SKILL_FOLDERS: Readonly<Record<string, AgentSkillFolders>> = {
+  claudeAgent: {
+    home: [".claude/skills"],
+    project: [".claude/skills"],
+    installAgent: { home: "claude-code", project: "claude-code" },
+  },
+  codex: {
+    home: [STANDARD_SKILL_FOLDER, ".codex/skills"],
+    project: [STANDARD_SKILL_FOLDER, ".codex/skills"],
+  },
+  cursor: {
+    home: [".cursor/skills", STANDARD_SKILL_FOLDER, ".codex/skills", ".claude/skills"],
+    project: [".cursor/skills", STANDARD_SKILL_FOLDER, ".codex/skills", ".claude/skills"],
+  },
+  opencode: {
+    home: [".config/opencode/skills", ".claude/skills", STANDARD_SKILL_FOLDER],
+    project: [".opencode/skills", ".claude/skills", STANDARD_SKILL_FOLDER],
+  },
+  grok: {
+    home: [".grok/skills", STANDARD_SKILL_FOLDER],
+    project: [".grok/skills"],
+    installAgent: { project: "grok" },
+  },
+  antigravity: {
+    home: [".gemini/config/skills", ".gemini/antigravity-cli/skills"],
+    project: [".gemini/skills", STANDARD_SKILL_FOLDER, ".agent/skills"],
+    installAgent: { home: "antigravity-cli" },
+  },
+  pi: {
+    home: [".pi/agent/skills", STANDARD_SKILL_FOLDER],
+    project: [".pi/skills", STANDARD_SKILL_FOLDER],
+  },
+};
+
+/** The folders a driver reads, or undefined for a driver this table doesn't know. */
+const agentSkillFolders = (driver: ProviderDriverKind): AgentSkillFolders | undefined =>
+  AGENT_SKILL_FOLDERS[driver];
+
+/**
+ * Every folder some agent reads skills from at a level. A skill directly in
+ * one is the user's own, as opposed to a plugin's or an agent's built-in one.
+ */
+export function agentSkillFolderRoots(level: "home" | "project"): ReadonlyArray<string> {
+  return [
+    ...new Set([
+      STANDARD_SKILL_FOLDER,
+      ...Object.values(AGENT_SKILL_FOLDERS).flatMap((folders) => folders[level]),
+    ]),
+  ];
+}
+
+/**
+ * Where each `skills` CLI agent links an install, by level, as its
+ * `src/agents.ts` does; `universal` writes `.agents/skills` itself.
+ */
+const CLI_AGENT_LINK_FOLDERS: Readonly<
+  Record<string, { readonly home?: string; readonly project?: string }>
+> = {
+  "claude-code": { home: ".claude/skills", project: ".claude/skills" },
+  grok: { project: ".grok/skills" },
+  "antigravity-cli": { home: ".gemini/antigravity-cli/skills" },
+};
+
+/**
+ * The folders a skill copied into `.agents/skills` by hand needs links in, so
+ * every listed driver sees it: the ones a `skills` CLI install would link.
+ */
+export function skillLinkFolders(
+  drivers: ReadonlyArray<ProviderDriverKind>,
+  level: "home" | "project",
+): ReadonlyArray<string> {
+  return skillsCliInstallAgents(drivers, level).flatMap((agent) => {
+    const folder = CLI_AGENT_LINK_FOLDERS[agent]?.[level];
+    return folder === undefined ? [] : [folder];
+  });
+}
+
+/**
+ * The `skills` CLI agents an install names so every listed driver can use the
+ * skill: `universal` writes `.agents/skills`, and each driver that doesn't read
+ * it at that level adds the agent that links into its own folder.
+ */
+export function skillsCliInstallAgents(
+  drivers: ReadonlyArray<ProviderDriverKind>,
+  level: "home" | "project",
+): ReadonlyArray<string> {
+  const agents = new Set(["universal"]);
+  for (const driver of drivers) {
+    const agent = agentSkillFolders(driver)?.installAgent?.[level];
+    if (agent !== undefined) agents.add(agent);
+  }
+  return [...agents];
+}

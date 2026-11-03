@@ -1,0 +1,29 @@
+import * as Effect from "effect/Effect";
+import { Argument, Command } from "effect/cli";
+
+/**
+ * `t3 skills-cli <args…>` runs the bundled `skills` CLI (vercel-labs/skills, what
+ * `npx skills` runs), so installs need no Node or npm of their own. The server spawns
+ * it as a child, which keeps its `process.exit` and prompts out of the server.
+ */
+export async function runSkillsCli(args: ReadonlyArray<string>): Promise<void> {
+  // The CLI calls `process.exit` right after printing its `--json` result, and POSIX
+  // pipe writes are async, so a large result was cut at 64 KiB. A blocking pipe
+  // finishes each write first. Do not defer exit instead: the CLI relies on it.
+  const stdout = process.stdout as typeof process.stdout & {
+    readonly _handle?: { readonly setBlocking?: (blocking: boolean) => void };
+  };
+  stdout._handle?.setBlocking?.(true);
+  // The CLI reads its command from argv[2] onward.
+  process.argv = [process.argv[0] ?? "node", "skills", ...args];
+  await import("skills/dist/cli.mjs");
+}
+
+/** Real invocations dispatch through the bin.ts fast path before the CLI graph loads. */
+export const skillsCliCommand = Command.make("skills-cli", {
+  args: Argument.String("args").pipe(Argument.variadic()),
+}).pipe(
+  Command.withDescription("Run the bundled skills installer."),
+  Command.unlisted,
+  Command.withHandler(({ args }) => Effect.promise(() => runSkillsCli(args))),
+);

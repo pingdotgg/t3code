@@ -59,6 +59,12 @@ import {
   readSecretFieldValues,
   sourceControlHostSecretName,
 } from "./sourceControl/sourceControlHostSecrets.ts";
+import {
+  materializeMcpServerSecrets,
+  mcpServerSecretNames,
+  planMcpServerSecrets,
+  redactMcpServerSecrets,
+} from "./mcpServerSecrets.ts";
 
 import { mapSettingsSecrets, SECRET_REDACTED, type SettingsSecret } from "./settingsSecrets.ts";
 
@@ -137,7 +143,10 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
       ? { value: "", redacted: secret.redacted || secret.value.length > 0 }
       : { value: secret.value, redacted: false },
   );
-  return { ...redacted, secretProviders: withoutUnknownSecretProviderConfigs(redacted) };
+  return redactMcpServerSecrets({
+    ...redacted,
+    secretProviders: withoutUnknownSecretProviderConfigs(redacted),
+  });
 }
 
 // A newer kind's config may hold credentials this build cannot recognize, so it never leaves the server.
@@ -236,6 +245,14 @@ export class ServerSettingsService extends Context.Service<
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /**
+     * Patch settings with a patch built from the latest settings inside the
+     * write lock, so a change derived from them can't undo a concurrent one.
+     */
+    readonly updateSettingsWith: (
+      patch: (current: ServerSettings) => ServerSettingsPatch,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
     readonly updateProviderInstance: (
       mutation: ProviderInstanceMutation,
       patch?: ServerSettingsPatch,
@@ -297,6 +314,10 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     updateSettings: (patch) =>
       updateTestSettings((currentSettings) =>
         Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
+      ),
+    updateSettingsWith: (patch) =>
+      updateTestSettings((currentSettings) =>
+        Effect.succeed(applyServerSettingsPatch(currentSettings, patch(currentSettings))),
       ),
     updateProviderInstance: (mutation, patch = {}) =>
       updateTestSettings((currentSettings) =>
@@ -934,13 +955,27 @@ const make = Effect.gen(function* () {
           Option.isSome(value) ? textDecoder.decode(value.value) : "",
         );
       }
-      return mapSettingsSecrets(settings, (secret) => ({
-        value:
-          secret.sensitive && secret.redacted
-            ? (storedSecrets.get(secret.secretName) ?? "")
-            : secret.value,
-        redacted: secret.sensitive && secret.kind === "environment" && secret.redacted,
-      }));
+      const mcpSecrets = new Map<string, string>();
+      for (const secretName of mcpServerSecretNames(settings)) {
+        const value = yield* secretStore
+          .get(secretName)
+          .pipe(
+            Effect.mapError(
+              (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+            ),
+          );
+        if (Option.isSome(value)) mcpSecrets.set(secretName, textDecoder.decode(value.value));
+      }
+      return materializeMcpServerSecrets(
+        mapSettingsSecrets(settings, (secret) => ({
+          value:
+            secret.sensitive && secret.redacted
+              ? (storedSecrets.get(secret.secretName) ?? "")
+              : secret.value,
+          redacted: secret.sensitive && secret.kind === "environment" && secret.redacted,
+        })),
+        mcpSecrets,
+      );
     },
   );
 
@@ -992,6 +1027,8 @@ const make = Effect.gen(function* () {
     readonly environmentVariable?: string;
   } & (
     | { readonly kind: "write"; readonly value: Uint8Array }
+    // A renamed MCP server or variable: the value moves to the new name.
+    | { readonly kind: "copy"; readonly from: string }
     | { readonly kind: "remove"; readonly operation: "remove-secret" | "remove-stale-secret" }
   );
 
@@ -1049,7 +1086,22 @@ const make = Effect.gen(function* () {
             : {}),
         });
       }
-      return { settings, changes };
+      // MCP server variables keep their own secret names, which follow a rename.
+      const mcp = planMcpServerSecrets(current, settings);
+      for (const change of mcp.changes) {
+        changes.push(
+          change.kind === "write"
+            ? {
+                kind: "write",
+                secretName: change.secretName,
+                value: textEncoder.encode(change.value),
+              }
+            : change.kind === "copy"
+              ? { kind: "copy", secretName: change.secretName, from: change.from }
+              : { kind: "remove", secretName: change.secretName, operation: "remove-secret" },
+        );
+      }
+      return { settings: mcp.settings, changes };
     });
 
   const rollbackSettingsSecretWrites = (
@@ -1086,51 +1138,75 @@ const make = Effect.gen(function* () {
       readonly environmentVariable?: string;
     }> = [];
     const rollback = Effect.suspend(() => rollbackSettingsSecretWrites(applied));
+    const readSecret = (change: SecretChange, secretName: string) =>
+      secretStore.get(secretName).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerSettingsError({
+              settingsPath,
+              operation: "read-secret",
+              providerInstanceId: change.providerInstanceId,
+              environmentVariable: change.environmentVariable,
+              cause,
+            }),
+        ),
+      );
+    const apply = (copied: ReadonlyMap<string, Option.Option<Uint8Array>>) =>
+      Effect.forEach(
+        changes,
+        (change) =>
+          Effect.gen(function* () {
+            let value: Uint8Array | undefined;
+            if (change.kind === "write") value = change.value;
+            if (change.kind === "copy") {
+              const source = copied.get(change.secretName) ?? Option.none();
+              if (Option.isNone(source)) return;
+              value = source.value;
+            }
+            const previousValue = yield* readSecret(change, change.secretName);
+            // A store operation may mutate before reporting an error (for example chmod after rename).
+            applied.push({ ...change, previousValue });
+            yield* (
+              value !== undefined
+                ? secretStore.set(change.secretName, value)
+                : secretStore.remove(change.secretName)
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    operation: change.kind === "remove" ? change.operation : "write-secret",
+                    providerInstanceId: change.providerInstanceId,
+                    environmentVariable: change.environmentVariable,
+                    cause,
+                  }),
+              ),
+            );
+          }),
+        { discard: true },
+      );
+    // Every copy reads its source before anything is written or removed, so a
+    // rename that swaps two names, or drops the old one, still moves both values.
     return Effect.forEach(
-      changes,
+      changes.filter((change) => change.kind === "copy"),
       (change) =>
-        Effect.gen(function* () {
-          const previousValue = yield* secretStore.get(change.secretName).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServerSettingsError({
-                  settingsPath,
-                  operation: "read-secret",
-                  providerInstanceId: change.providerInstanceId,
-                  environmentVariable: change.environmentVariable,
-                  cause,
-                }),
-            ),
-          );
-          // A store operation may mutate before reporting an error (for example chmod after rename).
-          applied.push({ ...change, previousValue });
-          yield* (
-            change.kind === "write"
-              ? secretStore.set(change.secretName, change.value)
-              : secretStore.remove(change.secretName)
-          ).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServerSettingsError({
-                  settingsPath,
-                  operation: change.kind === "write" ? "write-secret" : change.operation,
-                  providerInstanceId: change.providerInstanceId,
-                  environmentVariable: change.environmentVariable,
-                  cause,
-                }),
-            ),
-          );
-        }),
-      { discard: true },
+        readSecret(change, change.from).pipe(
+          Effect.map((source) => [change.secretName, source] as const),
+        ),
     ).pipe(
+      Effect.flatMap((sources) => apply(new Map(sources))),
       Effect.tapError(() => rollback),
       Effect.as(rollback),
     );
   };
 
+  /** `patchOf` may build the patch from the latest settings, read inside the write lock. */
   const updateAndPersistSettings = (
-    patch: ServerSettingsPatch,
-    update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
+    patchOf: ServerSettingsPatch | ((current: ServerSettings) => ServerSettingsPatch),
+    update: (
+      current: ServerSettings,
+      patch: ServerSettingsPatch,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
@@ -1142,7 +1218,8 @@ const make = Effect.gen(function* () {
             cause: parseFailure.value,
           });
         }
-        const updated = yield* update(current);
+        const patch = typeof patchOf === "function" ? patchOf(current) : patchOf;
+        const updated = yield* update(current, patch);
         // Vet before secrets: a variable the policy hides from clients is not one they removed.
         const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
         if (vetted._tag === "Locked") {
@@ -1308,6 +1385,12 @@ const make = Effect.gen(function* () {
     getSettings: getMaterializedSettings,
     updateSettings: (patch) =>
       updateAndPersistSettings(patch, (current) =>
+        ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(
+          Effect.as(applyServerSettingsPatch(current, patch)),
+        ),
+      ),
+    updateSettingsWith: (patchOf) =>
+      updateAndPersistSettings(patchOf, (current, patch) =>
         ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(
           Effect.as(applyServerSettingsPatch(current, patch)),
         ),
