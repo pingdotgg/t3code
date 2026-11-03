@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { HttpClient, HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
@@ -112,6 +113,7 @@ const withService = <A, E>(
         HttpClient.make(() => Effect.die("unused")),
       ),
       NodeServices.layer,
+      NodeCrypto.layer,
     );
     return yield* Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
@@ -288,6 +290,7 @@ it.effect("unlinks on startup and refuses to link when the policy turns Connect 
         HttpClient.make(() => Effect.die("unused")),
       ),
       NodeServices.layer,
+      NodeCrypto.layer,
     );
     yield* Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
