@@ -1012,28 +1012,182 @@ describe("EnvironmentSupervisor", () => {
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("keeps a long-resume socket that delivers a frame during a slow host check", () =>
+  it.effect(
+    "keeps a long-resume socket that delivers a frame during a slow host check and closes the replacement",
+    () =>
+      Effect.gen(function* () {
+        const frames = yield* Ref.make(0);
+        const replacementRequested = yield* Deferred.make<void>();
+        const harness = yield* makeHarness({
+          prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+          initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
+          probe: (attempt) => (attempt === 1 ? Effect.sleep("2500 millis") : Effect.void),
+          ready: (attempt) =>
+            attempt === 2
+              ? Deferred.succeed(replacementRequested, undefined).pipe(Effect.andThen(Effect.never))
+              : Effect.void,
+          inboundFrames: Ref.get(frames),
+          checkHost: () => Effect.sleep("2 seconds").pipe(Effect.as("answered")),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        yield* harness.wake("application-active-long");
+        yield* TestClock.adjust("700 millis");
+        expect(yield* Deferred.isDone(replacementRequested)).toBe(true);
+        yield* Ref.update(frames, (count) => count + 1);
+        // The frame check polls every 100 ms, well before the probe answers.
+        yield* TestClock.adjust("100 millis");
+        expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+        yield* TestClock.adjust("5 seconds");
+
+        expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+        expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+        expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(1);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  const makeDeadRemoteSocketHarness = Effect.fn("test.makeDeadRemoteSocketHarness")(function* (
+    replacementReady: (
+      requested: Deferred.Deferred<void>,
+    ) => Effect.Effect<void, ConnectionAttemptError>,
+  ) {
+    const replacementRequested = yield* Deferred.make<void>();
+    const harness = yield* makeHarness({
+      prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
+      probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+      ready: (attempt) =>
+        attempt === 2
+          ? Deferred.succeed(replacementRequested, undefined).pipe(
+              Effect.andThen(replacementReady(replacementRequested)),
+            )
+          : Effect.void,
+      // A dead pooled connection hangs the host check along with the socket.
+      checkHost: () => Effect.never,
+    });
+    const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+      initiallyDesired: true,
+    }).pipe(Effect.provide(harness.dependencies));
+    yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+    return { harness, supervisor, replacementRequested };
+  });
+
+  it.effect(
+    "swaps to a replacement that is ready before the probe of a dead remote socket gives up",
+    () =>
+      Effect.gen(function* () {
+        const ready = yield* Deferred.make<void>();
+        const { harness, supervisor, replacementRequested } = yield* makeDeadRemoteSocketHarness(
+          () => Deferred.await(ready),
+        );
+
+        yield* harness.wake("application-active-long");
+        yield* TestClock.adjust("499 millis");
+        expect(yield* Deferred.isDone(replacementRequested)).toBe(false);
+        yield* TestClock.adjust("1 millis");
+        expect(yield* Deferred.isDone(replacementRequested)).toBe(true);
+        // The old session keeps serving until the replacement is ready.
+        expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+          phase: "connected",
+          generation: 1,
+        });
+
+        yield* Deferred.succeed(ready, undefined);
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === 2,
+        );
+        expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+        expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+        expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("adopts a replacement that is still connecting when the probe gives up", () =>
     Effect.gen(function* () {
-      const frames = yield* Ref.make(0);
+      const ready = yield* Deferred.make<void>();
+      const { harness, supervisor, replacementRequested } = yield* makeDeadRemoteSocketHarness(() =>
+        Deferred.await(ready),
+      );
+
+      yield* harness.wake("application-active-long");
+      yield* TestClock.adjust("1500 millis");
+      expect(yield* Deferred.isDone(replacementRequested)).toBe(true);
+      yield* Deferred.succeed(ready, undefined);
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("leaves a dead remote socket to its probe when the replacement fails", () =>
+    Effect.gen(function* () {
+      const { harness, supervisor } = yield* makeDeadRemoteSocketHarness(() =>
+        Effect.fail(transient()),
+      );
+
+      yield* harness.wake("application-active-long");
+      yield* TestClock.adjust("1499 millis");
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+      });
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+
+      yield* TestClock.adjust("1 millis");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(yield* Ref.get(harness.prepareCount)).toBe(3);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each([
+    { name: "LAN", entry: LAN_ENTRY },
+    {
+      name: "loopback",
+      entry: {
+        ...TARGET_ENTRY,
+        target: new PrimaryConnectionTarget({
+          ...TARGET,
+          httpBaseUrl: "http://127.0.0.1:3773",
+          wsBaseUrl: "ws://127.0.0.1:3773",
+        }),
+      },
+    },
+  ])("waits for the probe of a dead $name socket after a long resume", ({ entry }) =>
+    Effect.gen(function* () {
       const harness = yield* makeHarness({
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
         initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
-        probe: (attempt) => (attempt === 1 ? Effect.sleep("2500 millis") : Effect.void),
-        inboundFrames: Ref.get(frames),
-        checkHost: () => Effect.sleep("2 seconds").pipe(Effect.as("answered")),
+        probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+        checkHost: () => Effect.succeed("silent"),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(entry, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       yield* harness.wake("application-active-long");
-      yield* TestClock.adjust("700 millis");
-      yield* Ref.update(frames, (count) => count + 1);
-      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust("1499 millis");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
 
-      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(1);
+      yield* TestClock.adjust("1 millis");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

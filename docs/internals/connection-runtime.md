@@ -23,13 +23,22 @@ socket without a close event, so a probe still unanswered after 500 ms asks the
 host for its public descriptor over a fresh request, again each second until it
 answers. If the host answers while the socket delivers no frame, the socket is
 dead and is replaced, even while the network reports offline: at once on
-loopback and LAN, and 2.5 seconds after the check starts elsewhere, where one
-lost packet can stall a live socket. Without that evidence the probe deadline
-decides: 3 seconds on loopback and LAN routes and after a long mobile
-suspension, when the data on screen is stale; 15 seconds elsewhere, because a
-tailnet over DERP or a VPN can be slower than that on a live socket. A long
-suspension's probe that times out also replaces the socket regardless of the
-network report. The web and desktop foreground probe skips the fresh request,
+loopback and LAN and after a long mobile suspension, and 2.5 seconds after the
+check starts elsewhere, where one lost packet can stall a live socket. A frame
+during the check shows the socket is alive. Without that evidence the probe
+deadline decides: 3 seconds on loopback and LAN routes; 15 seconds elsewhere,
+because a tailnet over DERP or a VPN can be slower than that on a live socket;
+1.5 seconds after a long suspension, when the data on screen is stale and
+pooled connections are often dead too (3 seconds once a frame has arrived). A
+long suspension's probe that times out also replaces the socket regardless of
+the network report. Replacing a dead remote socket costs a full connect chain
+(descriptor, ticket, socket, server config), so after a long suspension on a
+remote route a probe still unanswered at 500 ms starts that chain beside it
+instead of after it. Whichever settles first wins: a probe answer or a frame on
+the old socket closes the replacement, a ready replacement swaps in at once, and
+a replacement that fails leaves the probe to decide. One still connecting when
+the old socket is given up on is adopted by the next attempt, never connected
+twice. The web and desktop foreground probe skips the fresh request,
 because a busy host can answer it before a queued probe. Foregrounding also
 wakes a pending retry immediately. A long suspension restarts an in-flight
 attempt; a short one leaves it alone.
