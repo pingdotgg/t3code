@@ -124,7 +124,6 @@ import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControl
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useOpenLink } from "~/browser/useOpenLink";
-import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -142,8 +141,6 @@ interface GitActionsControlProps {
   repositoryName?: string;
   /** Keeps the thread's branch in step with this checkout. Off for repos other than home. */
   syncThreadBranch?: boolean;
-  /** Refreshes this repo's status after the agent changes the workspace; home is refreshed by the chat view. */
-  workspaceMutationId?: string | null;
 }
 
 interface PendingRepositoryAction {
@@ -1038,7 +1035,6 @@ export default function GitActionsControl({
   workspaceMutationId = null,
   repositoryName,
   syncThreadBranch = true,
-  workspaceMutationId,
 }: GitActionsControlProps) {
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
   const updateThreadMetadata = useAtomCommand(
@@ -1152,12 +1148,6 @@ export default function GitActionsControl({
     reportFailure: false,
   });
   const { data: gitStatus, error: gitStatusError } = gitStatusQuery;
-  useWorkspaceMutationRefresh({
-    enabled: workspaceMutationId !== undefined && gitCwd !== null,
-    mutationId: workspaceMutationId ?? null,
-    refresh: gitStatusQuery.refresh,
-    resourceKey: `git-status:${activeThreadRef?.threadId ?? ""}:${gitCwd ?? ""}`,
-  });
   const sourceControlPresentation = getSourceControlPresentation(gitStatus?.sourceControlProvider);
   const changeRequestTerminology = sourceControlPresentation.terminology;
   const SourceControlIcon = sourceControlPresentation.Icon;

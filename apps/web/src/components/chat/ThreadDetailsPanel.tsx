@@ -67,8 +67,6 @@ interface ThreadDetailsPanelProps extends Pick<
   isGitRepo: boolean;
   /** The thread's repos in a multi-repo project, home first; each gets its own Git section. */
   workspaceRepositories: ReadonlyArray<WorkspaceRepository>;
-  /** Changes when the agent may have edited the workspace; the other repos' Git status follows it. */
-  workspaceMutationId?: string | null;
   envLocked: boolean;
   availableEnvironments: readonly EnvironmentOption[];
   autoEnvironmentLabel?: string | undefined;
@@ -261,10 +259,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                               activeThreadRef={activeThreadRef}
                               repositoryName={repository.name}
                               syncThreadBranch={repository.kind === "home"}
-                              {...(repository.kind !== "home" &&
-                              props.workspaceMutationId !== undefined
-                                ? { workspaceMutationId: props.workspaceMutationId }
-                                : {})}
                               {...(props.draftId ? { draftId: props.draftId } : {})}
                               {...(props.onOpenChanges
                                 ? { onOpenChanges: () => props.onOpenChanges?.(diffRepository) }

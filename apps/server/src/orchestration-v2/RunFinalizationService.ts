@@ -75,18 +75,28 @@ const make = Effect.gen(function* () {
         ),
       );
     const cwd = projection.checkpointScopes.find((scope) => scope.id === input.scopeId)?.cwd;
-    if (cwd !== undefined) {
-      // Retrying a display refresh after the checkpoint is durable blocks the next turn.
-      yield* observer.refresh({ cwd, threadId: input.threadId, runId: input.runId }).pipe(
-        Effect.catchTags({
-          RunFinalizationRefreshError: (cause) =>
-            Effect.logWarning("Failed to refresh workspace after checkpoint capture", {
-              ...input,
-              cause,
-            }),
-        }),
-      );
-    }
+    // The agent may have edited every repo of a multi-repo thread, not just the root folder.
+    const cwds = new Set([
+      ...(cwd === undefined ? [] : [cwd]),
+      ...projection.checkpointScopes.flatMap((scope) =>
+        scope.kind === "repository" ? [scope.cwd] : [],
+      ),
+    ]);
+    yield* Effect.forEach(
+      cwds,
+      (refreshCwd) =>
+        // Retrying a display refresh after the checkpoint is durable blocks the next turn.
+        observer.refresh({ cwd: refreshCwd, threadId: input.threadId, runId: input.runId }).pipe(
+          Effect.catchTags({
+            RunFinalizationRefreshError: (cause) =>
+              Effect.logWarning("Failed to refresh workspace after checkpoint capture", {
+                ...input,
+                cause,
+              }),
+          }),
+        ),
+      { concurrency: 4, discard: true },
+    );
   });
   return RunFinalizationService.of({ finalize });
 });

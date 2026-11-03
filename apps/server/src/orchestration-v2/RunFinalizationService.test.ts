@@ -23,7 +23,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
 
-it.effect("completes finalization when the post-checkpoint workspace refresh fails", () => {
+it.effect("completes finalization when the post-checkpoint workspace refreshes fail", () => {
   const threadId = ThreadId.make("thread_refresh_failure");
   const runId = RunId.make("run_refresh_failure");
   const scopeId = CheckpointScopeId.make("scope_refresh_failure");
@@ -41,14 +41,22 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
           getCheckpointContext: () =>
             Effect.succeed({
               runs: [],
-              checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],
+              checkpointScopes: [
+                { id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" },
+                {
+                  id: CheckpointScopeId.make("scope_api"),
+                  runId: null,
+                  kind: "repository" as const,
+                  cwd: "/api",
+                },
+              ],
               checkpoints: [],
             }),
         }),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
-          refresh: () =>
+          refresh: ({ cwd }) =>
             Effect.gen(function* () {
-              captured.push("refresh");
+              captured.push(`refresh:${cwd}`);
               return yield* new RunFinalization.RunFinalizationRefreshError({
                 cwd: "/repo",
                 cause: new Error("Git command timed out"),
@@ -62,7 +70,8 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
   return Effect.gen(function* () {
     const service = yield* RunFinalization.RunFinalizationService;
     yield* service.finalize({ threadId, runId, scopeId });
-    assert.deepEqual(captured, ["checkpoint", "refresh"]);
+    // A failed refresh of one folder still refreshes the thread's other repos.
+    assert.sameMembers(captured, ["checkpoint", "refresh:/repo", "refresh:/api"]);
   }).pipe(Effect.provide(layer));
 });
 
