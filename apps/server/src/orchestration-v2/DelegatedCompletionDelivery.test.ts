@@ -542,6 +542,32 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         const sibling = projection.subagents.find((task) => task.id === siblingTaskId)!;
         assert.equal(sibling.completionDelivery?.state, "claimed");
         assert.deepEqual(parentRun.delegatedCompletion?.delivery?.taskIds, [siblingTaskId]);
+
+        const successorDelivery = parentRun.delegatedCompletion!.delivery!;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "server",
+          commandId: CommandId.make("open-cohort-successor-wake-start"),
+          threadId,
+          messageId: successorDelivery.messageId,
+          text: "Delegated task completed",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+          delegatedCompletion: {
+            parentRunId: originRunId,
+            generation: successorDelivery.generation,
+            taskIds: successorDelivery.taskIds,
+          },
+        });
+        yield* orchestrator.resumeQueuedRuns;
+
+        const successorRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === successorDelivery.messageId,
+        )!;
+        assert.isDefined(successorRun);
+        assert.equal(successorRun.status, "starting");
       }),
   );
 
