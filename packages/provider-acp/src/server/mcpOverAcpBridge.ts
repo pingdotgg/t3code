@@ -5,7 +5,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type * as AcpSchema from "effect-acp/compat";
 
-import { responsePayloads } from "@t3tools/shared/mcpResponsePayloads";
+import { discardResponseBody, responsePayloads } from "@t3tools/shared/mcpResponsePayloads";
 
 const T3_SERVER_ID = "t3-code";
 const MAX_CONNECTIONS = 16;
@@ -134,14 +134,44 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
       connection.protocolVersion === null ? connection.mutex.withPermits(1)(effect) : effect,
     );
 
+  // A rejected request still answers with its JSON-RPC error, e.g. the supported protocol versions.
+  const rejectionPayloads = Effect.fn("mcpOverAcpBridge.rejectionPayloads")(function* (
+    response: Response,
+    id: number | undefined,
+  ) {
+    const payloads =
+      id === undefined
+        ? []
+        : yield* Stream.runCollect(responsePayloads(response, bridgeError)).pipe(
+            Effect.orElseSucceed(() => []),
+          );
+    yield* discardResponseBody(response);
+    const answered = payloads.some((payload) => {
+      const envelope = asEnvelope(payload);
+      return envelope !== null && envelope.id === id && envelope.error !== undefined;
+    });
+    if (!answered) {
+      return yield* Effect.fail(
+        new AcpMcpOverAcpError(`T3 Code MCP endpoint responded with HTTP ${response.status}.`),
+      );
+    }
+    return [...payloads];
+  });
+
   const send = (
     connection: Connection,
-    message: unknown,
+    request: AcpSchema.MessageMcpRequest | AcpSchema.MessageMcpNotification,
+    id?: number,
   ): Effect.Effect<ReadonlyArray<unknown>, AcpMcpOverAcpError> =>
     untilNegotiated(
       connection,
       Effect.gen(function* () {
-        const body = JSON.stringify(message);
+        const body = JSON.stringify({
+          jsonrpc: "2.0",
+          ...(id === undefined ? {} : { id }),
+          method: request.method,
+          ...(request.params == null ? {} : { params: request.params }),
+        });
         if (Buffer.byteLength(body) > MAX_MESSAGE_BYTES) {
           return yield* Effect.fail(new AcpMcpOverAcpError("MCP-over-ACP message exceeds 8 MiB."));
         }
@@ -166,15 +196,9 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
           catch: bridgeError,
         });
         connection.sessionId = response.headers.get("mcp-session-id") ?? connection.sessionId;
-        if (!response.ok) {
-          yield* Effect.promise(
-            () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
-          );
-          return yield* Effect.fail(
-            new AcpMcpOverAcpError(`T3 Code MCP endpoint responded with HTTP ${response.status}.`),
-          );
-        }
-        const payloads = [...(yield* Stream.runCollect(responsePayloads(response, bridgeError)))];
+        const payloads = response.ok
+          ? [...(yield* Stream.runCollect(responsePayloads(response, bridgeError)))]
+          : yield* rejectionPayloads(response, id);
         for (const payload of payloads) {
           connection.protocolVersion = protocolVersionOf(payload) ?? connection.protocolVersion;
         }
@@ -207,9 +231,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         ),
       );
     }
-    yield* Effect.promise(
-      () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
-    );
+    yield* discardResponseBody(response);
   });
 
   const disconnect = Effect.fn("mcpOverAcpBridge.disconnect")(function* (
@@ -234,12 +256,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
     message: Effect.fn("mcpOverAcpBridge.message")(function* (request) {
       const connection = yield* connectionFor(request);
       const id = ++connection.nextRequestId;
-      const payloads = yield* send(connection, {
-        jsonrpc: "2.0",
-        id,
-        method: request.method,
-        ...(request.params == null ? {} : { params: request.params }),
-      });
+      const payloads = yield* send(connection, request, id);
       const response = payloads.find((payload) => asEnvelope(payload)?.id === id);
       const envelope = asEnvelope(response);
       if (envelope === null) {
@@ -259,11 +276,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
     }),
     notification: Effect.fn("mcpOverAcpBridge.notification")(function* (request) {
       const connection = yield* connectionFor(request);
-      yield* send(connection, {
-        jsonrpc: "2.0",
-        method: request.method,
-        ...(request.params == null ? {} : { params: request.params }),
-      });
+      yield* send(connection, request);
     }),
     disconnect,
     dispose: Effect.suspend(() =>

@@ -179,6 +179,61 @@ describe("AcpMcpOverAcpBridge", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("returns an endpoint rejection's JSON-RPC error so the agent can fall back", () =>
+    Effect.gen(function* () {
+      const unsupported = {
+        code: -32022,
+        message: "Unsupported protocol version '2026-07-28'",
+        data: { supported: ["2025-06-18"], requested: "2026-07-28" },
+      };
+      const requests: Array<{ readonly method: unknown; readonly headers: Headers }> = [];
+      const bridge = yield* makeAcpMcpOverAcpBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        allocateConnectionId: Effect.succeed("connection-1"),
+        fetchImplementation: (_url, init) => {
+          const request = JSON.parse(String(init?.body)) as {
+            readonly id?: unknown;
+            readonly method?: unknown;
+          };
+          requests.push({ method: request.method, headers: new Headers(init?.headers) });
+          const reply = (outcome: object, init: ResponseInit) =>
+            new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, ...outcome }), {
+              ...init,
+              headers: { "content-type": "application/json", ...init.headers },
+            });
+          if (request.method === "server/discover") {
+            return Promise.resolve(reply({ error: unsupported }, { status: 400 }));
+          }
+          return Promise.resolve(
+            reply(
+              {
+                result:
+                  request.method === "initialize"
+                    ? { protocolVersion: "2025-06-18" }
+                    : { tools: [] },
+              },
+              { headers: { "mcp-session-id": "session-42" } },
+            ),
+          );
+        },
+      });
+      const message = (method: string, requestId: string) =>
+        bridge.message({ serverId: "t3-code", requestId, method });
+
+      expect(yield* message("server/discover", "mcp-1")).toEqual({ error: unsupported });
+      expect(yield* message("initialize", "mcp-2")).toEqual({
+        result: { protocolVersion: "2025-06-18" },
+      });
+      expect(yield* message("tools/list", "mcp-3")).toEqual({ result: { tools: [] } });
+      expect(requests.map((request) => request.headers.get("mcp-session-id"))).toEqual([
+        null,
+        null,
+        "session-42",
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("closes the current-draft session its notifications ride on when disposed", () =>
     Effect.gen(function* () {
       const requests: Array<{ readonly method: string; readonly headers: Headers }> = [];
@@ -222,31 +277,49 @@ describe("AcpMcpOverAcpBridge", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("rejects unknown servers, connections, and oversized messages", () =>
-    Effect.gen(function* () {
-      const bridge = yield* makeAcpMcpOverAcpBridge({
-        endpoint: "http://127.0.0.1:1/mcp",
-        authorization: "Bearer bridge-test",
-        allocateConnectionId: Effect.succeed("connection-1"),
-        fetchImplementation: () => Promise.resolve(new Response(null, { status: 202 })),
-      });
+  it.effect(
+    "rejects unknown servers, connections, endpoint rejections, and oversized messages",
+    () =>
+      Effect.gen(function* () {
+        const bridge = yield* makeAcpMcpOverAcpBridge({
+          endpoint: "http://127.0.0.1:1/mcp",
+          authorization: "Bearer bridge-test",
+          allocateConnectionId: Effect.succeed("connection-1"),
+          fetchImplementation: (_url, init) => {
+            const { id } = JSON.parse(String(init?.body)) as { readonly id?: unknown };
+            const error = { code: -32020, message: "MCP-Protocol-Version header is required" };
+            return Promise.resolve(
+              new Response(JSON.stringify({ jsonrpc: "2.0", id, error }), {
+                status: 400,
+                headers: { "content-type": "application/json" },
+              }),
+            );
+          },
+        });
 
-      expect(yield* bridge.connect({ serverId: "other" }).pipe(Effect.flip)).toMatchObject({
-        _tag: "AcpMcpOverAcpError",
-      });
-      expect(
-        yield* bridge.message({ connectionId: "missing", method: "tools/list" }).pipe(Effect.flip),
-      ).toMatchObject({ _tag: "AcpMcpOverAcpError" });
+        expect(yield* bridge.connect({ serverId: "other" }).pipe(Effect.flip)).toMatchObject({
+          _tag: "AcpMcpOverAcpError",
+        });
+        expect(
+          yield* bridge
+            .message({ connectionId: "missing", method: "tools/list" })
+            .pipe(Effect.flip),
+        ).toMatchObject({ _tag: "AcpMcpOverAcpError" });
 
-      const connected = yield* bridge.connect({ serverId: "t3-code" });
-      const failure = yield* bridge
-        .message({
-          connectionId: connected.connectionId,
-          method: "tools/call",
-          params: { payload: "x".repeat(8 * 1024 * 1024) },
-        })
-        .pipe(Effect.flip);
-      expect(failure.message).toContain("exceeds 8 MiB");
-    }),
+        const connected = yield* bridge.connect({ serverId: "t3-code" });
+        expect(
+          yield* bridge
+            .message({ connectionId: connected.connectionId, method: "tools/list" })
+            .pipe(Effect.flip),
+        ).toMatchObject({ message: "MCP-Protocol-Version header is required" });
+        const failure = yield* bridge
+          .message({
+            connectionId: connected.connectionId,
+            method: "tools/call",
+            params: { payload: "x".repeat(8 * 1024 * 1024) },
+          })
+          .pipe(Effect.flip);
+        expect(failure.message).toContain("exceeds 8 MiB");
+      }),
   );
 });
