@@ -978,6 +978,7 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
   const showThinking =
     !turnEnded &&
     !pendingRequest &&
+    !window.answering &&
     !workingWindowItemIsLive(window.items.at(-1)) &&
     !isCompacting &&
     !isPreparingWorktree &&
