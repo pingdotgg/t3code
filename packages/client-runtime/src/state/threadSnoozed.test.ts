@@ -473,6 +473,13 @@ describe("settledThreadLabel", () => {
       "Settled 49m ago: PR acme/api#12 merged · PR acme/web#12 merged",
     ],
     [
+      "one repository and number on two hosts",
+      { ...mergedByReason, url: "https://github.com/acme/api/pull/12" },
+      [link("merged", "https://git.example.com/acme/api/pull/12")],
+      "49m ago",
+      "Settled 49m ago: PR github.com/acme/api#12 merged · PR git.example.com/acme/api#12 merged",
+    ],
+    [
       "a GitLab merge request, from a reason recorded without its URL",
       { type: "pull-request", state: "merged", number: 7 } as const,
       [link("merged", "https://gitlab.com/owner/repo/-/merge_requests/7")],

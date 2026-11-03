@@ -354,7 +354,13 @@ export function settledThreadLabel(
   const state = link?.snapshot?.state;
   const ended =
     link !== null && (state === "merged" || state === "closed")
-      ? { term: linkTerm, repository: link.repository, number: link.number, state }
+      ? {
+          term: linkTerm,
+          host: link.host,
+          repository: link.repository,
+          number: link.number,
+          state,
+        }
       : null;
   const settledBy = reason?.type === "pull-request" ? reason : null;
   const settledByUrl =
@@ -364,6 +370,7 @@ export function settledThreadLabel(
       ? null
       : {
           term: settledByUrl?.definition.changeRequest.shortLabel ?? linkTerm,
+          host: settledByUrl?.link.host ?? null,
           repository: settledByUrl?.link.repository ?? null,
           number: settledBy.number,
           state: settledBy.state,
@@ -374,10 +381,19 @@ export function settledThreadLabel(
     (settledBy?.url === undefined || link === null
       ? cause.number === ended.number && cause.state === ended.state
       : sourceControlClients.isSameChangeRequest(settledBy.url, link.url));
-  // Two different pull requests with one number need their repositories to tell them apart.
+  // Two different pull requests with one number need their repositories, and their hosts when
+  // the repositories match too, to tell them apart.
   const qualify = !sameChangeRequest && cause !== null && cause.number === ended?.number;
-  const describe = (pr: NonNullable<typeof cause>) =>
-    `${pr.term} ${qualify && pr.repository !== null ? pr.repository : ""}#${pr.number} ${pr.state}`;
+  const withHost = qualify && cause?.repository === ended?.repository;
+  const describe = (pr: NonNullable<typeof cause>) => {
+    const repository =
+      !qualify || pr.repository === null
+        ? ""
+        : withHost && pr.host !== null
+          ? `${pr.host}/${pr.repository}`
+          : pr.repository;
+    return `${pr.term} ${repository}#${pr.number} ${pr.state}`;
+  };
   const head =
     reason?.type === "inactive"
       ? `Settled after ${reason.days} idle ${reason.days === 1 ? "day" : "days"}`
