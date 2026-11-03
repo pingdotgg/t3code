@@ -277,7 +277,7 @@ export const McpToolUseCase = Schema.Struct({
       Schema.Struct({ parentThreadId: Schema.String, digest: Schema.Array(Schema.String) }),
     ),
   }),
-  /** Empty to resume directly after the last prior tool result. */
+  /** Empty to resume a top-level thread without side-chat context after its last tool result. */
   prompt: Schema.String,
   /** Records for the context chips `prompt` links, projected as T3 sends them. */
   promptContext: Schema.optional(Schema.Struct({ records: Schema.Array(ComposerContextRecord) })),
@@ -884,6 +884,11 @@ export const buildMessages = (sample: Sample) => {
   };
   const { role, context, delegateRole, priorTurns = [] } = testCase.setup;
   const sideChat = testCase.setup.sideChat;
+  if (testCase.prompt === "" && (role !== "top" || sideChat !== undefined)) {
+    throw new Error(
+      `${testCase.id}: Empty-prompt replay requires a top-level thread without side-chat context.`,
+    );
+  }
   const sideChatContext =
     sideChat === undefined
       ? undefined
@@ -897,7 +902,6 @@ export const buildMessages = (sample: Sample) => {
       ? "You are a subagent started by the parent agent's Agent tool. Your final message goes to the parent agent, not to the user."
       : undefined,
     context,
-    testCase.prompt === "" ? sideChatContext : undefined,
   ];
   const reminders = base.reminders.toSpliced(base.gitStatusAt, 0, reminder(gitStatus(testCase)));
   push("user", ...reminders, ...notes.flatMap((note) => (note ? [reminder(note)] : [])));

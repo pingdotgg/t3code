@@ -397,27 +397,25 @@ it("replays earlier capability results with the model under test as the caller",
   const resumed = buildMessages(makeSample({ ...testCase, prompt: "" }, base));
   assert.equal(resumed.at(-1)?.role, "user");
   assert.equal(resumed.at(-1)?.content.at(-1)?.type, "tool_result");
-  const sideChatResume = buildMessages(
-    makeSample(
-      {
-        ...testCase,
-        prompt: "",
-        setup: {
-          ...testCase.setup,
-          sideChat: {
-            parentThreadId: "thread-parent",
-            digest: ["The permissions fix is committed."],
-          },
-        },
-      },
-      base,
-    ),
-  );
-  assert.include(
-    sideChatResume[0]?.content.map((block) => block.text).join("\n"),
-    "The permissions fix is committed.",
-  );
-  assert.equal(sideChatResume.at(-1)?.content.at(-1)?.type, "tool_result");
+  for (const setup of [
+    {
+      ...testCase.setup,
+      sideChat: { parentThreadId: "thread-parent", digest: ["The permissions fix is committed."] },
+    },
+    { ...testCase.setup, role: "native-subagent" as const },
+    { ...testCase.setup, role: "delegated-child" as const },
+  ]) {
+    assert.throws(
+      () =>
+        buildMessages(
+          makeSample(
+            { ...testCase, prompt: "", setup },
+            { ...base, subagentContext: "Hook context" },
+          ),
+        ),
+      /Empty-prompt replay/,
+    );
+  }
 });
 
 it("gives each launched thread its own id, and reading it back shows that thread's brief", () => {
