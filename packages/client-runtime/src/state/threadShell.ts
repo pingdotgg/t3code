@@ -12,7 +12,7 @@ import {
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Atom } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 import { presentThreadShell, threadRuntimeIsActive } from "./models.ts";
@@ -198,6 +198,42 @@ function sameApartFromStreaming(
       after,
     )
   );
+}
+
+/**
+ * Resolves with the server's reason once a title regeneration request ends without a new
+ * title, or null when it lands, is superseded, the thread goes away, or it times out.
+ */
+export function awaitTitleRegenerationFailure(input: {
+  readonly registry: AtomRegistry.AtomRegistry;
+  readonly atom: Atom.Atom<EnvironmentThreadShell | null>;
+  readonly requestId: string;
+  readonly timeoutMs?: number;
+}): Promise<string | null> {
+  return new Promise((resolve) => {
+    let pending = false;
+    let settled = false;
+    let unsubscribe: (() => void) | null = null;
+    const finish = (failure: string | null) => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timeout);
+      unsubscribe?.();
+      resolve(failure);
+    };
+    const inspect = (shell: EnvironmentThreadShell | null) => {
+      if (shell === null) return finish(null);
+      if (shell.titleRegenerationFailure?.requestId === input.requestId) {
+        return finish(shell.titleRegenerationFailure.message);
+      }
+      if (shell.titleRegeneration?.requestId === input.requestId) pending = true;
+      else if (pending) finish(null);
+    };
+    const timeout = globalThis.setTimeout(() => finish(null), input.timeoutMs ?? 180_000);
+    unsubscribe = input.registry.subscribe(input.atom, inspect);
+    if (settled) unsubscribe();
+    else inspect(input.registry.get(input.atom));
+  });
 }
 
 export function createEnvironmentThreadShellAtoms(input: {

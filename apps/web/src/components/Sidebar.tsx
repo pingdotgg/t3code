@@ -55,6 +55,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
+  CommandId,
   ProjectId,
   type ScopedThreadRef,
   type ThreadId,
@@ -101,7 +102,7 @@ import { useShortcutModifierState } from "../shortcutModifierState";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { isMacPlatform } from "~/lib/utils";
+import { isMacPlatform, randomUUID } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
@@ -150,6 +151,7 @@ import {
   useProjects,
   useServerConfigs,
   useQuietThreadShells,
+  waitForTitleRegenerationFailure,
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -2440,12 +2442,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         return;
       }
       if (clicked.value === "regenerate-title") {
+        const failures: Array<Promise<string | null>> = [];
         for (const thread of regeneratableTitleThreads) {
+          const commandId = CommandId.make(randomUUID());
           const result = await updateThreadMetadata({
             environmentId: thread.environmentId,
-            input: { threadId: thread.id, regenerateTitle: true },
+            input: { threadId: thread.id, regenerateTitle: true, commandId },
           });
-          if (result._tag === "Success") continue;
+          if (result._tag === "Success") {
+            failures.push(
+              waitForTitleRegenerationFailure(
+                scopeThreadRef(thread.environmentId, thread.id),
+                commandId,
+              ),
+            );
+            continue;
+          }
           if (!isAtomCommandInterrupted(result)) {
             const error = squashAtomCommandFailure(result);
             toastManager.add(
@@ -2459,6 +2471,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         clearSelection();
+        void Promise.all(failures).then((outcomes) => {
+          const messages = outcomes.filter((message) => message !== null);
+          if (messages.length === 0) return;
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title:
+                messages.length === 1
+                  ? "Failed to regenerate a thread title"
+                  : `Failed to regenerate ${messages.length} thread titles`,
+              description: messages[0],
+            }),
+          );
+        });
         return;
       }
       if (clicked.value === "settle") {
@@ -2771,20 +2797,34 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "regenerate-title": {
             if (isRegeneratingTitle) return;
+            const commandId = CommandId.make(randomUUID());
             const result = await updateThreadMetadata({
               environmentId: threadRef.environmentId,
-              input: { threadId: threadRef.threadId, regenerateTitle: true },
+              input: { threadId: threadRef.threadId, regenerateTitle: true, commandId },
             });
-            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              const error = squashAtomCommandFailure(result);
+            if (result._tag === "Failure") {
+              if (!isAtomCommandInterrupted(result)) {
+                const error = squashAtomCommandFailure(result);
+                toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title: "Failed to regenerate thread title",
+                    description: error instanceof Error ? error.message : "An error occurred.",
+                  }),
+                );
+              }
+              return;
+            }
+            void waitForTitleRegenerationFailure(threadRef, commandId).then((failure) => {
+              if (failure === null) return;
               toastManager.add(
                 stackedThreadToast({
                   type: "error",
                   title: "Failed to regenerate thread title",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  description: failure,
                 }),
               );
-            }
+            });
             return;
           }
           case "mark-unread":

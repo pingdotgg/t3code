@@ -119,7 +119,9 @@ vi.mock("../../state/thread-order", () => ({
     };
   },
 }));
+vi.mock("../../lib/uuid", () => ({ uuidv4: () => "command" }));
 vi.mock("../../state/threads", () => ({
+  waitForTitleRegenerationFailure: async () => null,
   environmentThreadShells: {
     threadShellsAtom: "thread-shells",
     navigationThreadShellsAtom: "thread-shells",
