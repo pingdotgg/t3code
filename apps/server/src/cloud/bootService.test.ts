@@ -395,10 +395,13 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("does not enable lingering for root under sudo", () =>
+  it.effect.each([
+    { logind: "does not know root", linger: undefined },
+    { logind: "has root lingering disabled", linger: "no" },
+  ])("does not enable lingering for root under sudo when logind $logind", ({ linger }) =>
     Effect.gen(function* () {
       const { makeService, commands, control } = yield* makeHarness();
-      control.linger = undefined;
+      control.linger = linger;
       control.managerReachable = false;
       const service = yield* makeService(undefined, "1.2.3", undefined, false, undefined, true);
 

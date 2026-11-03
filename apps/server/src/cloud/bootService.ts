@@ -776,11 +776,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (firstProblem === undefined) return;
     // Logind reports a user without a session, whose manager is not running yet, as linger-unavailable.
     const withoutSession =
-      problems.includes("linger-unavailable") &&
-      problems.includes("user-manager-unavailable") &&
-      !rootUnderSudo;
+      problems.includes("linger-unavailable") && problems.includes("user-manager-unavailable");
     const lingerDisabled = problems.includes("linger-disabled");
-    if (!lingerDisabled && !withoutSession) {
+    if (rootUnderSudo || (!lingerDisabled && !withoutSession)) {
       return yield* new BootServicePrerequisiteError({ problem: firstProblem });
     }
     yield* runStep("enabling lingering for this user", "loginctl", [
