@@ -86,6 +86,36 @@ Add the environment as a custom MCP app in ChatGPT's apps settings:
    need a client ID or secret.
 4. Create the app, then approve the sign-in page that opens.
 
+ChatGPT can instead reach the environment through an
+[OpenAI secure MCP tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels).
+The tunnel presents its own address to ChatGPT, so sign-in fails with
+`invalid_target` until the environment accepts that address. Find the
+`/oauth/mcp/authorize` URL in your browser history or developer tools. Take its
+`resource` query parameter and URL-decode the value once before putting it in
+`T3CODE_MCP_RESOURCE_ALIASES` in the
+[service environment](./background-service.md#configure-the-service-environment).
+Do not paste the percent-encoded query representation, or log or share the full
+authorization URL: it can contain sensitive state.
+Do not infer the value from the tunnel hostname or assume ChatGPT displays it;
+the tunnel's resource address can differ from its authorization-server address.
+
+Separate several URLs with commas. Each must be a canonical HTTPS URL without
+credentials, a query or a fragment, such as
+`https://gateway.example/v1/mcp/tunnel_abc`. Invalid entries prevent startup.
+Keep the previous `service.env` and restore it if startup fails after changing
+this setting.
+
+Only list alternate routes to this same environment. Sessions remain
+environment-wide: a sign-in through any alias can use the whole environment.
+Removing an alias stops new sign-ins through it but does not end existing
+sessions; [revoke those](#remove-an-agent) separately. Leaving T3 Connect enabled
+alongside the private tunnel also leaves a public, authenticated route.
+
+The approving browser must reach the authorization-server address advertised
+through the tunnel client's origin. If that address is `127.0.0.1` on a headless
+remote host, opening it on your desktop reaches your desktop instead. Resource
+aliases do not change discovery or make that browser address reachable.
+
 ## Other agents and bots
 
 Any agent that supports remote MCP servers over HTTP with OAuth can connect. Give
