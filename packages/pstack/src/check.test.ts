@@ -5,11 +5,12 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 import { checkPack } from "./check.ts";
-import { fileFingerprint, packFiles, type UpstreamManifest } from "./files.ts";
+import { fileFingerprint, packFiles, readManifest, type UpstreamManifest } from "./files.ts";
 import {
   parsePstackRoleDefaults,
   pstackContentHash,
   pstackPackEntries,
+  PSTACK_PACKAGED_PRUNED_DIR,
   PSTACK_SKILL_PREFIX,
   PSTACK_LAYOUT_VERSION,
 } from "./index.ts";
@@ -183,22 +184,48 @@ describe("checkPack", () => {
 });
 
 describe("pack interface", () => {
-  it("omits gitignore metadata from delivery while verifying its upstream bytes", () => {
+  it("omits gitignore metadata and desktop-pruned fixtures from delivery while verifying upstream bytes", () => {
     using pack = fixture();
     pack.write("upstream/.gitignore", "node_modules/\n");
     pack.write("upstream/skills/.gitignore", "local/\n");
     pack.write("upstream/skills/bun.lock", "lockfile\n");
+    pack.write("upstream/skills/statechart/scripts/statechart.ts", "export {};\n");
+    pack.write("upstream/skills/statechart/scripts/test/chart.test.ts", "test\n");
     pack.seal();
     expect(checkPack(pack.root)).toEqual([]);
     const paths = pstackPackEntries(pack.root).map(({ packPath }) => packPath);
     expect(paths).not.toContain(".gitignore");
     expect(paths).not.toContain("skills/.gitignore");
     expect(paths).toContain("skills/bun.lock");
+    expect(paths).toContain("skills/statechart/scripts/statechart.ts");
+    expect(paths).not.toContain("skills/statechart/scripts/test/chart.test.ts");
     pack.write("upstream/.gitignore", "changed\n");
     expect(checkPack(pack.root)).toContain("Hash mismatch: .gitignore");
     NodeFS.rmSync(NodePath.join(pack.root, "upstream/.gitignore"));
     expect(checkPack(pack.root)).toContain("Missing upstream file: .gitignore");
     expect(() => pstackPackEntries(pack.root)).not.toThrow();
+  });
+
+  it("delivers a complete pack when packaging pruned the statechart test corpus", () => {
+    using pack = fixture();
+    pack.write("upstream/skills/statechart/scripts/statechart.ts", "export {};\n");
+    pack.write(`upstream/${PSTACK_PACKAGED_PRUNED_DIR}/corpus/Counter/chart.mmd`, "chart\n");
+    pack.seal();
+    expect(checkPack(pack.root)).toEqual([]);
+    NodeFS.rmSync(NodePath.join(pack.root, "upstream", PSTACK_PACKAGED_PRUNED_DIR), {
+      recursive: true,
+    });
+    const entries = pstackPackEntries(pack.root);
+    expect(entries.map(({ packPath }) => packPath)).toContain(
+      "skills/statechart/scripts/statechart.ts",
+    );
+    expect(entries.filter(({ sourcePath }) => !NodeFS.existsSync(sourcePath))).toEqual([]);
+  });
+
+  it("prunes a corpus the shipped snapshot actually carries", () => {
+    const pruned = (packPath: string) => packPath.startsWith(`${PSTACK_PACKAGED_PRUNED_DIR}/`);
+    expect(Object.keys(readManifest(packageDir).files).some(pruned)).toBe(true);
+    expect(pstackPackEntries(packageDir).some(({ packPath }) => pruned(packPath))).toBe(false);
   });
 
   it("invalidates the delivery stamp from the adapter layout", () => {

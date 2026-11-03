@@ -48,5 +48,7 @@ the current capabilities before choosing another target.
   no longer need from the scheduled tasks list.
 - Steps that need a Cursor-only feature, such as Bugbot setup or a Cursor cloud machine, are skipped
   with a one-line note in the reply.
-- If you also installed pstack directly in Claude Code or Cursor, the T3 Code `pstack:` skills
-  replace those in the composer. Only the T3 Code skills can mix providers.
+- If you also installed pstack as a Codex or Claude Code plugin, T3 Code turns that plugin off in
+  the sessions it starts while pstack is on, so agents see one copy. Your own Codex and Claude Code
+  sessions outside T3 Code keep it. A Cursor install is only replaced in the composer. Only the
+  T3 Code skills can mix providers.
