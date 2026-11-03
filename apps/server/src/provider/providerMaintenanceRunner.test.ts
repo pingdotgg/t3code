@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { ServerProviderUpdateError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -15,6 +16,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -755,6 +757,41 @@ describe("providerMaintenanceRunner", () => {
       ),
   );
 
+  // A native updater such as `claude update` downloads a ~300 MB binary and
+  // prints nothing while it does. Killed mid-download, it leaves a truncated
+  // binary behind that later updates mistake for an install.
+  it.effect.each([
+    { runFor: "6 minutes", status: "succeeded", message: "Provider updated." },
+    { runFor: "31 minutes", status: "failed", message: "Update timed out after 30 minutes." },
+  ] as const)("lets a slow installer run for $runFor", ({ runFor, status, message }) => {
+    const started = Deferred.makeUnsafe<void>();
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseNativeCliProvider);
+      const updater = yield* makeTestRunner(registry);
+
+      const update = yield* updater.updateProvider(NATIVE_CLI_DRIVER).pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust(runFor);
+      const result = yield* Fiber.join(update);
+
+      assert.strictEqual(result.providers[0]?.updateState?.status, status);
+      assert.strictEqual(result.providers[0]?.updateState?.message, message);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.0.0"),
+          layerMockSpawner(() => ({
+            exitCode: Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.sleep(runFor)),
+              Effect.as(ChildProcessSpawner.ExitCode(0)),
+            ),
+          })),
+        ),
+      ),
+    );
+  });
+
   it.effect("prevents concurrent updates for the same provider", () => {
     const startedLatch: { resolve: () => void } = { resolve: () => {} };
     const releaseLatch: { resolve: () => void } = { resolve: () => {} };
@@ -856,17 +893,31 @@ describe("providerMaintenanceRunner", () => {
       ),
   );
 
-  it.effect("resolves npm to a .cmd shim and routes through the shell on win32", () => {
+  it.effect("resolves npm to a .cmd shim from the provider's PATH on win32", () => {
     const captured: Array<{
       readonly command: string;
       readonly args: ReadonlyArray<string>;
       readonly shell: boolean | string | undefined;
+      readonly env: NodeJS.ProcessEnv | undefined;
     }> = [];
     return Effect.gen(function* () {
       const { registry } = yield* makeRegistry(baseProvider, {
         installedVersionAfterUpdate: "1.0.0",
       });
-      const runner = yield* makeTestRunner(registry);
+      const runner = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider: CODEX_DRIVER,
+              packageName: "@openai/codex",
+              updateExecutable: "npm",
+              updateArgs: ["install", "-g", "@openai/codex@latest"],
+              updateLockKey: "npm-global",
+              env: { PATH: "C:\\fake\\npm" },
+            }),
+          ),
+      });
 
       const result = yield* runner.updateProvider(CODEX_DRIVER);
 
@@ -879,17 +930,21 @@ describe("providerMaintenanceRunner", () => {
       );
       assert.deepEqual(call.args, []);
       assert.strictEqual(call.shell, true);
+      assert.deepStrictEqual(call.env, { PATH: "C:\\fake\\npm" });
       assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(HostProcess.Platform, "win32"),
+          // Only the provider's PATH has npm.
           Layer.succeed(HostProcess.Environment, {
-            PATH: "C:\\fake\\npm",
+            PATH: "C:\\Windows\\System32",
             PATHEXT: ".COM;.EXE;.BAT;.CMD",
           }),
-          Layer.succeed(SpawnExecutableResolution, (command) =>
-            command === "npm" ? "C:\\fake\\npm\\npm.cmd" : undefined,
+          Layer.succeed(SpawnExecutableResolution, (command, _platform, env) =>
+            command === "npm" && env.PATH === "C:\\fake\\npm"
+              ? "C:\\fake\\npm\\npm.cmd"
+              : undefined,
           ),
           layerLatestVersionHttpClient("1.0.0"),
           Layer.succeed(
@@ -898,12 +953,16 @@ describe("providerMaintenanceRunner", () => {
               const childProcess = command as unknown as {
                 readonly command: string;
                 readonly args: ReadonlyArray<string>;
-                readonly options: { readonly shell?: boolean | string | undefined };
+                readonly options: {
+                  readonly shell?: boolean | string | undefined;
+                  readonly env?: NodeJS.ProcessEnv | undefined;
+                };
               };
               captured.push({
                 command: childProcess.command,
                 args: childProcess.args,
                 shell: childProcess.options.shell,
+                env: childProcess.options.env,
               });
               return Effect.succeed(mockHandle({ stdout: "updated" }));
             }),
