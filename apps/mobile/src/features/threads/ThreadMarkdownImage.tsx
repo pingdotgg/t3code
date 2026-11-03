@@ -19,6 +19,7 @@ import { PresentationSource } from "../../components/ui/NativePresentation";
 import { useMediaActions } from "../../state/mediaActions";
 import type { MediaActionsSource } from "../../lib/mediaActionsSource";
 import { useAssetUrlState } from "../../state/assets";
+import { WorkspaceMutationIdContext } from "./workspaceMutationIdContext";
 import { assetImageCacheKey } from "../../lib/assetImageSource";
 import {
   MARKDOWN_IMAGE_MAX_WIDTH,
@@ -280,7 +281,7 @@ export function ThreadMarkdownImage(props: {
   const withGallery = useFilePreviewGallery();
   const revision =
     props.resource._tag === "media-file" || props.resource._tag === "draft-workspace-file"
-      ? use(MarkdownImageRevisionContext)
+      ? JSON.stringify([use(WorkspaceMutationIdContext), use(MarkdownImageRevisionContext)])
       : undefined;
   const assetUrl = useAssetUrlState(props.environmentId, props.resource, revision);
   const resourceKey =
