@@ -590,9 +590,15 @@ const make = Effect.gen(function* () {
     const url = tab.page.url();
     // Chromium's error page loads after `requestfailed` and must not clear LoadFailed.
     if (url === "about:blank" || url.startsWith("chrome-error://")) return;
+    // A navigation that starts and fails during the title read leaves the URL unchanged.
+    const generation = tab.navigationGeneration;
     const title = (await tab.page.title().catch(() => "")).slice(0, 512);
-    if (tab.loading || tab.page.url() !== url) return;
-    report(tab, { _tag: "Success", url: url.slice(0, 2048), title });
+    if (tab.navigationGeneration !== generation || tab.loading || tab.page.url() !== url) return;
+    report(tab, {
+      _tag: "Success",
+      url: ServerBrowserPage.withoutDataPayload(url).slice(0, 2048),
+      title,
+    });
   };
 
   const reportLiveTabs = () => {
@@ -985,6 +991,8 @@ const make = Effect.gen(function* () {
     page.on("crash", () => dropTab(tab, true));
     tabs.set(key, tab);
     reportLiveTabs();
+    // A desktop page navigates on its own and can finish loading before these listeners attach.
+    if (desktop) void page.waitForLoadState("load").then(() => reportLoaded(tab), constVoid);
     // Existing desktop and popup PDFs can start loading before interception attaches.
     if (
       snapshot.navStatus._tag === "Loading" &&
@@ -1560,7 +1568,7 @@ const make = Effect.gen(function* () {
         ...profileStatus(),
       };
     }
-    const url = tab.page.url();
+    const url = ServerBrowserPage.withoutDataPayload(tab.page.url());
     const viewport = tab.desktop ? await layoutSize(tab) : tab.page.viewportSize();
     const status = {
       available: true,
@@ -1584,7 +1592,10 @@ const make = Effect.gen(function* () {
         .filter((candidate) => candidate.threadId === tab.threadId)
         .map((candidate) => ({
           tabId: candidate.tabId,
-          url: candidate.page.url() === "about:blank" ? null : candidate.page.url(),
+          url:
+            candidate.page.url() === "about:blank"
+              ? null
+              : ServerBrowserPage.withoutDataPayload(candidate.page.url()),
           ...(candidate.openerTabId === undefined ? {} : { openerTabId: candidate.openerTabId }),
           owner: tabOwner(candidate),
           ownedByCaller: candidate.control.agentId === agentSessionId,
@@ -2628,16 +2639,35 @@ const make = Effect.gen(function* () {
                   : {}),
               });
             } else {
-              const dispatch = () => dispatchViewerInput(tab, session, viewer, message);
+              const dispatch = (input: Record<string, unknown>) =>
+                dispatchViewerInput(tab, session, viewer, input);
               if (
                 message.type === "mouse" &&
                 message.action === "move" &&
                 message.button === "none" &&
                 message.buttons === 0
               ) {
-                await tab.control.humanLatest(viewer.id, `hover:${modifiersOf(message)}`, dispatch);
+                await tab.control.humanLatest(
+                  viewer.id,
+                  `hover:${modifiersOf(message)}`,
+                  message,
+                  dispatch,
+                );
+              } else if (message.type === "wheel") {
+                // A reversal stays separate so scrolling clamped at an edge behaves as if unmerged.
+                await tab.control.humanLatest(
+                  viewer.id,
+                  `wheel:${num(message.x)}:${num(message.y)}:${modifiersOf(message)}:${Math.sign(num(message.deltaX))}:${Math.sign(num(message.deltaY))}`,
+                  message,
+                  dispatch,
+                  (waiting, next) => ({
+                    ...next,
+                    deltaX: num(waiting.deltaX) + num(next.deltaX),
+                    deltaY: num(waiting.deltaY) + num(next.deltaY),
+                  }),
+                );
               } else {
-                await tab.control.human(viewer.id, dispatch);
+                await tab.control.human(viewer.id, () => dispatch(message));
               }
             }
           } catch {

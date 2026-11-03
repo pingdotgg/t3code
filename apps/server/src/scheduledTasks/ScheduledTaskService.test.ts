@@ -2,7 +2,7 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as NodeUtil from "node:util";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import {
   ProjectId,
   ProviderInstanceId,
@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -29,6 +30,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
 
@@ -189,6 +191,7 @@ it.effect(
             Layer.provideMerge(
               ScheduledTaskService.layer,
               Layer.mergeAll(
+                ManagedPolicy.layerTest(),
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({
                   launch: () =>
                     Ref.updateAndGet(dispatched, (n) => n + 1).pipe(
@@ -282,6 +285,7 @@ it.effect(
             Layer.provideMerge(
               ScheduledTaskService.layer,
               Layer.mergeAll(
+                ManagedPolicy.layerTest(),
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({
                   launch: () =>
                     Ref.updateAndGet(dispatched, (n) => n + 1).pipe(
@@ -346,6 +350,7 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             sendToThread: () =>
@@ -413,6 +418,7 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             sendToThread: (input) =>
@@ -473,6 +479,140 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
         [promoted, scratch, promoted],
       );
       assert.equal(new Set(attempts.map((attempt) => attempt.commandId)).size, 1);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("refuses saving an enabled task above the policy ceiling", () =>
+  Effect.gen(function* () {
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            limits: { maxRuntimeMode: "auto-accept-edits" },
+          }),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const save = (enabled: boolean) =>
+        service.upsert({
+          id: ScheduledTaskId.make("task:above-ceiling"),
+          title: "Nightly",
+          prompt: "Check progress",
+          enabled,
+          schedule: { type: "interval", everyMs: 60_000 },
+          projectId: ProjectId.make("project:test"),
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        });
+      const refused = yield* save(true).pipe(Effect.flip);
+      assert.equal(refused.message, "Example Corp limits threads to Auto-accept edits.");
+      assert.lengthOf((yield* service.list()).tasks, 0);
+      // A disabled task does not run, so it can still be saved.
+      yield* save(false);
+      assert.lengthOf((yield* service.list()).tasks, 1);
+      // Nor can it be switched back on while its mode is above the ceiling.
+      const reenabled = yield* service
+        .setEnabled({ id: ScheduledTaskId.make("task:above-ceiling"), enabled: true })
+        .pipe(Effect.flip);
+      assert.equal(reenabled.message, "Example Corp limits threads to Auto-accept edits.");
+      // A task bound to a thread runs in that thread's mode, so its own is not checked.
+      yield* service.upsert({
+        id: ScheduledTaskId.make("task:bound"),
+        title: "Follow up",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        threadId: ThreadId.make("thread:bound"),
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a run interrupted right after it reserves the task does not block the next run", () =>
+  Effect.gen(function* () {
+    const launches = yield* Ref.make(0);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            launch: () =>
+              Ref.update(launches, (n) => n + 1).pipe(
+                Effect.as({ threadId: ThreadId.make("thread:launched"), resumed: false } as never),
+              ),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:interrupted-reservation"),
+        title: "Check in",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+
+      // The reservation is the first Set.add of the task id; interrupt the run right there.
+      const add = Set.prototype.add;
+      let interrupted = false;
+      const first = yield* Effect.gen(function* () {
+        using _reserve = vi.spyOn(Set.prototype, "add").mockImplementation(function (
+          this: Set<unknown>,
+          value: unknown,
+        ) {
+          const result = add.call(this, value);
+          if (value === task.id && !interrupted) {
+            interrupted = true;
+            Fiber.getCurrent()?.interruptUnsafe();
+          }
+          return result;
+        });
+        return yield* service
+          .runNow({ id: task.id })
+          .pipe(Effect.forkChild, Effect.flatMap(Fiber.await));
+      });
+      assert.isTrue(interrupted);
+      assert.isTrue(Exit.hasInterrupts(first));
+
+      const second = yield* service.runNow({ id: task.id });
+      assert.equal(second.threadId, ThreadId.make("thread:launched"));
+      assert.equal(yield* Ref.get(launches), 1);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
