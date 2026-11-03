@@ -152,7 +152,9 @@ it.effect.each([
     assert.deepEqual(refs.refs, []);
   }).pipe(
     Effect.provide(
-      layerServerConfig.pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+      layerServerConfig.pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
     ),
   ),
 );
