@@ -1,4 +1,3 @@
-import { vi } from "vite-plus/test";
 import { NodeHttpServer } from "@effect/platform-node";
 import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -75,8 +74,8 @@ const probeHandlers = McpToolAccess.toLayer(ProbeToolkit, {
   ),
 });
 
-const serveB = (descriptor: ExecutionEnvironmentDescriptor) =>
-  servePeer(descriptor, McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers));
+const serveB = (descriptor: ExecutionEnvironmentDescriptor, origin?: string) =>
+  servePeer(descriptor, McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers), origin);
 
 /** Environment A, which links to B. */
 const makeA = (
@@ -585,9 +584,9 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
 it.effect("links through an advertised HTTP MagicDNS candidate while refusing numeric CGNAT", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const b = yield* serveB(box);
-      const originalFetch = globalThis.fetch;
-      using _fetch = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const b = yield* serveB(box, "http://box.tail.ts.net:3773");
+      const originalFetch = yield* FetchHttpClient.Fetch;
+      const mappedFetch: typeof globalThis.fetch = (input, init) => {
         const request = new Request(input, init);
         const url = new URL(request.url);
         if (url.hostname === "box.tail.ts.net") {
@@ -596,8 +595,10 @@ it.effect("links through an advertised HTTP MagicDNS candidate while refusing nu
           return originalFetch(new Request(url, request));
         }
         return originalFetch(input, init);
-      });
-      const a = yield* makeA(laptop);
+      };
+      const a = yield* makeA(laptop).pipe(
+        Effect.provideService(FetchHttpClient.Fetch, mappedFetch),
+      );
       const pairing = yield* b.auth.issuePairingCredential();
       const origin = "http://box.tail.ts.net:3773";
       const linked = yield* a.links.link({

@@ -144,12 +144,14 @@ const TailscaleStatusSelf = Schema.Struct({
 });
 
 const TailscaleStatusJson = Schema.Struct({
+  BackendState: Schema.optional(Schema.Unknown),
   Self: Schema.optional(TailscaleStatusSelf),
 });
 
 export type TailscaleStatusJson = typeof TailscaleStatusJson.Type;
 
 export interface TailscaleStatus {
+  readonly running: boolean;
   readonly magicDnsName: string | null;
   readonly tailnetIpv4Addresses: readonly string[];
   /**
@@ -219,6 +221,7 @@ export const parseTailscaleStatus = (
 
       const capMap = parsed.Self?.CapMap;
       return {
+        running: parsed.BackendState === "Running",
         magicDnsName: normalizeMagicDnsName(parsed),
         tailnetIpv4Addresses,
         httpsServeEnabled:
@@ -369,6 +372,24 @@ export const parseTailscaleSshEnabled = (
 export const readTailscaleSshEnabled = readTailscaleOutput("debug", ["debug", "prefs"]).pipe(
   Effect.flatMap(parseTailscaleSshEnabled),
 );
+
+export function buildTailscaleDirectBaseUrl(input: {
+  readonly status: TailscaleStatus | null;
+  readonly boundAddresses: readonly string[];
+  readonly port: number;
+}): string | null {
+  const status = input.status;
+  if (!status?.running || !status.magicDnsName) return null;
+  if (
+    !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.ts\.net$/iu.test(
+      status.magicDnsName,
+    )
+  )
+    return null;
+  if (!status.tailnetIpv4Addresses.some((address) => input.boundAddresses.includes(address)))
+    return null;
+  return `http://${status.magicDnsName}:${input.port}/`;
+}
 
 export function buildTailscaleHttpsBaseUrl(input: {
   readonly magicDnsName: string;

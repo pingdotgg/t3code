@@ -1,6 +1,8 @@
 import type { ServerDirectEndpoint } from "@t3tools/contracts";
 import {
   buildTailscaleHttpsBaseUrl,
+  buildTailscaleDirectBaseUrl,
+  type TailscaleStatus,
   probeTailscaleHttpsEndpoint,
   readTailscaleStatus,
 } from "@t3tools/tailscale";
@@ -130,45 +132,64 @@ export const make = Effect.gen(function* () {
     : Effect.succeed(false);
   yield* Effect.forkDetach(onCloudVm);
 
+  const cachedStatus = yield* Ref.make<TailscaleStatus | null>(null);
   const servedEndpoint = yield* Ref.make<Option.Option<string>>(Option.none());
   const resolveAvailable = Effect.fn("DirectEndpoints.resolveAvailable")(function* () {
+    const interfaces = NodeOS.networkInterfaces();
     const endpoints = [
       ...resolveBoundEndpoints({
         platform,
         host: config.host,
         port: config.port,
-        interfaces: NodeOS.networkInterfaces(),
+        interfaces,
         onCloudVm: yield* onCloudVm,
       }),
     ];
     const servedUrl = yield* Ref.get(servedEndpoint);
     if (Option.isSome(servedUrl)) endpoints.push({ kind: "tailnet", httpBaseUrl: servedUrl.value });
+    const directUrl = buildTailscaleDirectBaseUrl({
+      status: yield* Ref.get(cachedStatus),
+      port: config.port,
+      boundAddresses: endpoints.flatMap((endpoint) => {
+        const address = new URL(endpoint.httpBaseUrl).hostname;
+        return Object.values(interfaces).some((entries) =>
+          entries?.some((entry) => !entry.internal && entry.address === address),
+        )
+          ? [address]
+          : [];
+      }),
+    });
+    if (directUrl !== null) endpoints.push({ kind: "tailnet", httpBaseUrl: directUrl });
     return endpoints;
   });
 
   const resolve = Effect.gen(function* () {
-    // Serve setup can fail without stopping startup; advertise only after it answers as this server.
-    if (config.tailscaleServeEnabled) {
-      const servedUrl = yield* readTailscaleStatus.pipe(
-        Effect.map((status) => status.magicDnsName),
-        Effect.flatMap((magicDnsName) => {
-          if (magicDnsName === null) return Effect.succeed(null);
-          const httpBaseUrl = buildTailscaleHttpsBaseUrl({
-            magicDnsName,
-            servePort: config.tailscaleServePort,
-          });
-          return probeTailscaleHttpsEndpoint({ baseUrl: httpBaseUrl }).pipe(
-            Effect.map((reachable) => (reachable ? httpBaseUrl : null)),
-          );
+    if (isLoopbackHost(config.host) && !config.tailscaleServeEnabled)
+      return yield* resolveAvailable();
+    const discovered = yield* readTailscaleStatus.pipe(
+      Effect.flatMap((status) =>
+        Effect.gen(function* () {
+          let servedUrl: string | null = null;
+          if (config.tailscaleServeEnabled && status.magicDnsName !== null) {
+            const url = buildTailscaleHttpsBaseUrl({
+              magicDnsName: status.magicDnsName,
+              servePort: config.tailscaleServePort,
+            });
+            if (yield* probeTailscaleHttpsEndpoint({ baseUrl: url })) servedUrl = url;
+          }
+          return { status, servedUrl };
         }),
-        Effect.timeoutOption(TAILSCALE_ENDPOINT_TIMEOUT),
-        Effect.map(Option.flatMap(Option.fromNullishOr)),
-        Effect.orElseSucceed(() => Option.none<string>()),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-      );
-      yield* Ref.set(servedEndpoint, servedUrl);
-    }
+      ),
+      Effect.timeoutOption(TAILSCALE_ENDPOINT_TIMEOUT),
+      Effect.orElseSucceed(() => Option.none()),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+    yield* Ref.set(cachedStatus, Option.isSome(discovered) ? discovered.value.status : null);
+    yield* Ref.set(
+      servedEndpoint,
+      Option.flatMap(discovered, (value) => Option.fromNullishOr(value.servedUrl)),
+    );
     return yield* resolveAvailable();
   });
 

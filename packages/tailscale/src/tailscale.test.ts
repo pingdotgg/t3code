@@ -194,6 +194,7 @@ describe("tailscale", () => {
     Effect.gen(function* () {
       const status = yield* parseTailscaleStatus(tailscaleStatusJson);
       assert.deepEqual(status, {
+        running: false,
         magicDnsName: "desktop.tail.ts.net",
         tailnetIpv4Addresses: ["100.100.100.100"],
         httpsServeEnabled: null,

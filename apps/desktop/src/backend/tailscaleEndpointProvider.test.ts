@@ -83,29 +83,57 @@ describe("tailscale endpoint provider", () => {
 
 it.effect("advertises direct MagicDNS only for a running Self on the listener interface", () =>
   Effect.gen(function* () {
-    for (const [bindHost, backendState, ip, expected] of [
-      ["0.0.0.0", "Running", "100.74.126.34", true],
-      ["100.74.126.34", "Running", "100.74.126.34", true],
-      ["127.0.0.1", "Running", "100.74.126.34", false],
-      ["192.168.1.2", "Running", "100.74.126.34", false],
-      ["0.0.0.0", "Stopped", "100.74.126.34", false],
-      ["0.0.0.0", "Unknown", "100.74.126.34", false],
-      ["::1", "Running", "100.74.126.34", false],
-      ["0.0.0.0", "Running", "100.85.0.1", false],
-    ] as const) {
+    for (const serveEnabled of [false, true]) {
+      for (const [bindHost, backendState, ip, expected] of [
+        ["0.0.0.0", "Running", "100.74.126.34", true],
+        ["100.74.126.34", "Running", "100.74.126.34", true],
+        ["127.0.0.1", "Running", "100.74.126.34", false],
+        ["192.168.1.2", "Running", "100.74.126.34", false],
+        ["0.0.0.0", "Stopped", "100.74.126.34", false],
+        ["0.0.0.0", "Unknown", "100.74.126.34", false],
+        ["::1", "Running", "100.74.126.34", false],
+        ["0.0.0.0", "Running", "100.85.0.1", false],
+      ] as const) {
+        const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
+          port: 3773,
+          bindHost,
+          serveEnabled,
+          probe: () => Effect.succeed(true),
+          networkInterfaces: { tailscale0: protonAndTailscaleInterfaces.tailscale0 },
+          statusJson: JSON.stringify({
+            BackendState: backendState,
+            Self: { DNSName: "desktop.tail.ts.net.", TailscaleIPs: [ip] },
+          }),
+        });
+        assert.strictEqual(
+          endpoints.some((e) => e.httpBaseUrl === "http://desktop.tail.ts.net:3773/"),
+          expected,
+        );
+        if (expected && serveEnabled) {
+          const urls = endpoints.map((endpoint) => endpoint.httpBaseUrl);
+          assert.isBelow(
+            urls.indexOf("https://desktop.tail.ts.net/"),
+            urls.indexOf("http://desktop.tail.ts.net:3773/"),
+          );
+        }
+      }
+    }
+    for (const statusJson of [
+      null,
+      "not-json",
+      "{}",
+      JSON.stringify({
+        BackendState: "Running",
+        Self: { DNSName: "evil.example/path", TailscaleIPs: ["100.74.126.34"] },
+      }),
+    ]) {
       const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
         port: 3773,
-        bindHost,
-        networkInterfaces: { tailscale0: protonAndTailscaleInterfaces.tailscale0 },
-        statusJson: JSON.stringify({
-          BackendState: backendState,
-          Self: { DNSName: "desktop.tail.ts.net.", TailscaleIPs: [ip] },
-        }),
+        bindHost: "0.0.0.0",
+        networkInterfaces: protonAndTailscaleInterfaces,
+        statusJson,
       });
-      assert.strictEqual(
-        endpoints.some((e) => e.httpBaseUrl === "http://desktop.tail.ts.net:3773/"),
-        expected,
-      );
+      assert.isFalse(endpoints.some((endpoint) => endpoint.label === "Tailscale MagicDNS"));
     }
   }).pipe(Effect.provide(layerUnusedTailscaleExternalServices)),
 );
