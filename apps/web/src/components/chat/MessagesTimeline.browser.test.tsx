@@ -1,6 +1,6 @@
 import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
-import { cdp, page, userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import {
   ComposerContextId,
   EnvironmentId,
@@ -834,32 +834,10 @@ function usageLimitEntries(resetAt: string) {
 }
 
 describe("MessagesTimeline usage limit notice", () => {
-  it("labels the retry time with the viewer's timezone", async () => {
+  it("preserves the provider's usage limit message", async () => {
     await using screen = await renderTimeline(usageLimitEntries("2026-03-17T19:30:00.000Z"));
-    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    expect(screen.text()).toMatch(/Usage limit reached\. Retry after .+\./);
-    expect(screen.text()).toContain(`(${timeZone})`);
-  });
-
-  it("keeps the retry time in the named zone after the viewer's timezone changes", async () => {
-    const resetAt = "2026-07-01T19:30:00.000Z";
-    const session = cdp();
-    await session.send("Emulation.setTimezoneOverride", { timezoneId: "Europe/Madrid" });
-    try {
-      {
-        await using _madrid = await renderTimeline(usageLimitEntries(resetAt));
-      }
-      await session.send("Emulation.setTimezoneOverride", { timezoneId: "America/New_York" });
-      await using screen = await renderTimeline(usageLimitEntries(resetAt));
-      const newYorkTime = new Date(resetAt).toLocaleTimeString(undefined, {
-        hour: "numeric",
-        minute: "2-digit",
-        timeZone: "America/New_York",
-      });
-      expect(screen.text()).toContain(`${newYorkTime} (America/New_York)`);
-    } finally {
-      await session.send("Emulation.setTimezoneOverride", { timezoneId: "" });
-    }
+    expect(screen.text()).toContain("Limited at");
+    expect(screen.text()).toContain("You've hit your usage limit.");
   });
 });
 
