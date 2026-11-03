@@ -1,4 +1,3 @@
-import * as NodeSqlite from "node:sqlite";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -46,8 +45,6 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
-
-import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as DatabaseStorage from "../persistence/DatabaseStorage.ts";
@@ -253,46 +250,41 @@ it.effect("discovers on the reader worker and deletes on the writer", () =>
     const path = yield* Path.Path;
     const filename = path.join(yield* fs.makeTempDirectoryScoped(), "fixture.sqlite");
     yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
       yield* seedCompaction();
-      // Establish the reader before recording main-thread statements.
-      yield* sql`SELECT 1`.pipe(NodeSqliteClient.readOnly);
-      const reads: string[] = [];
-      const writes: string[] = [];
-      const all = NodeSqlite.StatementSync.prototype.all;
-      const run = NodeSqlite.StatementSync.prototype.run;
-      yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          const readSpy = vi
-            .spyOn(NodeSqlite.StatementSync.prototype, "all")
-            .mockImplementation(function (this: NodeSqlite.StatementSync, ...params) {
-              reads.push(this.sourceSQL);
-              return all.apply(this, params);
-            });
-          const writeSpy = vi
-            .spyOn(NodeSqlite.StatementSync.prototype, "run")
-            .mockImplementation(function (this: NodeSqlite.StatementSync, ...params) {
-              writes.push(this.sourceSQL);
-              return run.apply(this, params);
-            });
-          return { readSpy, writeSpy };
-        }),
-        ({ readSpy, writeSpy }) =>
-          Effect.sync(() => {
-            readSpy.mockRestore();
-            writeSpy.mockRestore();
-          }),
-      );
+      const statements: Array<{ readonly query: unknown; readonly connection: unknown }> = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (time, exit) => {
+            end(time, exit);
+            const query = span.attributes.get("db.query.text");
+            if (query === undefined) return;
+            statements.push({ query, connection: span.attributes.get("db.connection") });
+          };
+          return span;
+        },
+      });
       const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-      const result = yield* maintenance.compactEventStore();
+      const result = yield* maintenance
+        .compactEventStore()
+        .pipe(
+          Effect.withTracer(tracer),
+          Effect.provideService(Statement.SpanPropagationEnabled, true),
+        );
       assert.equal(result.deletedEventCount, 148);
       assert.equal(result.deletedReceiptCount, 100);
+      const connectionsFor = (pattern: RegExp) =>
+        new Set(
+          statements
+            .filter(({ query }) => typeof query === "string" && pattern.test(query))
+            .map(({ connection }) => connection),
+        );
+      assert.deepEqual(connectionsFor(/^\s*(SELECT|WITH)\b/), new Set(["reader"]));
       assert.deepEqual(
-        reads.filter((query) => /\bSELECT\b/.test(query)),
-        [],
+        connectionsFor(/^\s*DELETE FROM orchestration_(events|command_receipts)\b/),
+        new Set(["writer"]),
       );
-      assert(writes.some((query) => query.includes("DELETE FROM orchestration_events")));
-      assert(writes.some((query) => query.includes("DELETE FROM orchestration_command_receipts")));
     }).pipe(
       Effect.provide(
         ProjectionMaintenance.layer.pipe(
