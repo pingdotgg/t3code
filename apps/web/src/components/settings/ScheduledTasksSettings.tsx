@@ -904,7 +904,7 @@ function ScheduledTaskRow({
       title={task.title}
       description={<span className="line-clamp-2">{task.prompt}</span>}
       status={
-        <div className="grid gap-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span>{scheduleLabel(task.schedule)}</span>
           <span>
             {task.blockedByPolicy !== undefined ? (
