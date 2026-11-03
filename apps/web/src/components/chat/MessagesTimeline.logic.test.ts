@@ -2858,6 +2858,7 @@ describe("v2 run and attempt history", () => {
     const checkpoint = (run: typeof r1, checkpointTurnCount: number) => ({
       runId: run.runId,
       completedAt: run.at,
+      assistantMessageId: null,
       checkpointTurnCount,
       checkpointRef: `checkpoint-${checkpointTurnCount}` as never,
       status: "ready" as const,
