@@ -1032,8 +1032,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.equal(settings.textGenerationModelSelection.instanceId, "claudeAgent");
       assert.deepEqual(settings.speechPostProcessingModelSelection, {
         instanceId: ProviderInstanceId.make("claudeAgent"),
-        model: "claude-haiku-4-5",
-        options: [{ id: "thinking", value: false }],
+        model: "claude-haiku-5-5",
+        options: [{ id: "effort", value: "low" }],
       });
     }).pipe(Effect.provide(layerServerSettings())),
   );

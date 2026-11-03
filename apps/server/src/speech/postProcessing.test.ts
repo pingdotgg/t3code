@@ -88,11 +88,18 @@ describe("postProcessTranscript", () => {
         driver: ProviderDriverKind.make("claudeAgent"),
         models: [
           {
-            slug: "claude-haiku-4-5",
+            slug: "claude-haiku-5-5",
             name: "Haiku",
             isCustom: false,
             capabilities: {
-              optionDescriptors: [{ id: "thinking", label: "Thinking", type: "boolean" }],
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [{ id: "low", label: "Low" }],
+                },
+              ],
             },
           },
         ],
@@ -106,8 +113,8 @@ describe("postProcessTranscript", () => {
       ).toBe("Clean text.");
       expect(generate.mock.calls[0]?.[0].modelSelection).toEqual({
         instanceId: "claudeAgent",
-        model: "claude-haiku-4-5",
-        options: [{ id: "thinking", value: false }],
+        model: "claude-haiku-5-5",
+        options: [{ id: "effort", value: "low" }],
       });
     }),
   );

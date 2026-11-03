@@ -98,7 +98,7 @@ describe("serverSettings helpers", () => {
   it("uses voice defaults in the configured fallback order, including custom instances", () => {
     const entries = [
       ["codex", { model: "gpt-6-luna", options: [{ id: "reasoningEffort", value: "low" }] }],
-      ["claudeAgent", { model: "claude-haiku-4-5", options: [{ id: "thinking", value: false }] }],
+      ["claudeAgent", { model: "claude-haiku-5-5", options: [{ id: "effort", value: "low" }] }],
       ["cursor", { model: "composer-2", options: [{ id: "reasoning", value: "low" }] }],
       ["grok", { model: "grok-build", options: [{ id: "reasoningEffort", value: "low" }] }],
       ["muse", { model: "default", options: [] }],

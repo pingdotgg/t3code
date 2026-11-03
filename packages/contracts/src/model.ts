@@ -149,8 +149,8 @@ export const DEFAULT_SPEECH_POST_PROCESSING_MODELS: Partial<
     options: [{ id: "reasoningEffort", value: DEFAULT_SPEECH_POST_PROCESSING_REASONING_EFFORT }],
   },
   [CLAUDE_DRIVER_KIND]: {
-    model: "claude-haiku-4-5",
-    options: [{ id: "thinking", value: false }],
+    model: "claude-haiku-5-5",
+    options: [{ id: "effort", value: "low" }],
   },
   [CURSOR_DRIVER_KIND]: {
     model: "composer-2",
