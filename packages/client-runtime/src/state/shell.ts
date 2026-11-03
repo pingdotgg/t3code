@@ -27,7 +27,8 @@ import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
-import { subscribeDynamic } from "../rpc/client.ts";
+import { subscribeDynamicWithSession } from "../rpc/client.ts";
+import type { RpcSession } from "../rpc/session.ts";
 import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
 import type { DeferredShellSnapshot } from "./shellPullRequests.ts";
 import {
@@ -141,6 +142,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   // shell last came from, or that a cache resume has completed for; null otherwise.
   const authoritativeOmission = yield* Ref.make<string | null>(null);
   const activeSubscription = yield* Ref.make<{
+    readonly session: RpcSession;
     readonly omissionKey: string;
     readonly serverVersion: string | null;
   } | null>(null);
@@ -255,7 +257,13 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const applyItems = Effect.fn("EnvironmentShellState.applyItems")(function* (
     items: ReadonlyArray<OrchestrationV2ShellStreamItem>,
     pendingLinkIds?: ReadonlySet<ThreadId>,
+    producer?: RpcSession,
   ) {
+    // Read once under the lock: a resubscribe can rewrite it while this batch applies.
+    const subscription = yield* Ref.get(activeSubscription);
+    // A batch buffered across a session change must not take the new session's vouch; the new
+    // subscription resumes or reloads on its own.
+    if (producer !== undefined && subscription?.session !== producer) return;
     const initial = yield* SubscriptionRef.get(state);
     let waiting = yield* Ref.get(awaitingCompletion);
     let next = initial;
@@ -336,7 +344,6 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     const previousVouch = yield* Ref.get(lineageVouch);
     let vouch = previousVouch;
     if (receivedAuthoritativeSnapshot) {
-      const subscription = yield* Ref.get(activeSubscription);
       vouch =
         subscription?.serverVersion == null
           ? undefined
@@ -444,7 +451,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
 
   yield* setSynchronizing;
   yield* Effect.forkScoped(
-    subscribeDynamic(
+    subscribeDynamicWithSession(
       ORCHESTRATION_V2_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
         const { omitIdleSubagents, omitOlderSettled, serverVersion } =
@@ -462,7 +469,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
             })),
           );
         const omissionKey = `${omitIdleSubagents}:${omitOlderSettled}`;
-        yield* Ref.set(activeSubscription, { omissionKey, serverVersion });
+        yield* Ref.set(activeSubscription, { session, omissionKey, serverVersion });
         yield* Ref.set(pendingCacheResume, null);
         yield* Ref.set(awaitingCompletion, true);
         yield* setSynchronizing;
@@ -549,7 +556,25 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
-    ).pipe(Stream.runForEachArray((items) => applyItems(items))),
+    ).pipe(
+      // A buffered chunk can span a session change, so apply each session's run separately.
+      Stream.runForEachArray(
+        Effect.fnUntraced(function* (entries) {
+          let start = 0;
+          while (start < entries.length) {
+            const producer = entries[start]![0];
+            let end = start + 1;
+            while (end < entries.length && entries[end]![0] === producer) end++;
+            yield* applyItems(
+              entries.slice(start, end).map(([, item]) => item),
+              undefined,
+              producer,
+            );
+            start = end;
+          }
+        }),
+      ),
+    ),
   );
   yield* SubscriptionRef.changes(supervisor.state).pipe(
     Stream.runForEach((connectionState) => {
