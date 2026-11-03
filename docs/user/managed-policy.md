@@ -232,7 +232,8 @@ so restart T3 Code after that.
 
 `providers.allowedDrivers` lists the providers that may run, by ID: `codex` (Codex),
 `claudeAgent` (Claude), `cursor` (Cursor), `grok` (Grok), `opencode` (OpenCode), `antigravity`
-(Antigravity), `fx` (fx), `pi` (Pi), `muse` (Muse Code), and `acpRegistry` (ACP Registry).
+(Antigravity), `fx` (fx), `kiro` (Kiro), `pi` (Pi), `muse` (Muse Code), and `acpRegistry` (ACP
+Registry).
 `t3 policy check` rejects an ID this version does not know. Threads on other providers stay,
 marked unavailable, and users can still turn those providers off.
 
