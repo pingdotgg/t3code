@@ -439,7 +439,7 @@ describe("readCursorAccountUsage", () => {
         [() => Response.json(fullPage), "Cursor account usage could not be read."],
         [
           () => new Response(null, { status: 401 }),
-          "Sign in to Cursor again to read account usage.",
+          "Cursor rejected this server's Cursor CLI login. Run agent login on the server or sign in with Cursor in provider settings, then refresh.",
         ],
       ] as const) {
         let open = 0;

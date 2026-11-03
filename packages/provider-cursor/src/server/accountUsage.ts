@@ -180,20 +180,28 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
     if (!Number.isFinite(sinceMs) || !Number.isFinite(endDate) || sinceMs < 0 || sinceMs > endDate)
       return yield* invalid("Invalid date window");
     // The web dashboard rejects API-key tokens; Cursor's RPC API accepts them.
-    const pageRequest =
+    const { pageRequest, rejected } =
       typeof credentialSource !== "string" && credentialSource.kind === "apiKey"
-        ? HttpClientRequest.post(
-            `${DEFAULT_CURSOR_API_ENDPOINT}/aiserver.v1.DashboardService/GetFilteredUsageEvents`,
-          ).pipe(
-            HttpClientRequest.bearerToken(accessToken),
-            HttpClientRequest.setHeader("connect-protocol-version", "1"),
-          )
-        : HttpClientRequest.post(DASHBOARD_USAGE_URL).pipe(
-            HttpClientRequest.setHeaders({
-              Origin: "https://cursor.com",
-              Cookie: `WorkosCursorSessionToken=${encodeURIComponent(`${userId}::${accessToken}`)}`,
-            }),
-          );
+        ? {
+            pageRequest: HttpClientRequest.post(
+              `${DEFAULT_CURSOR_API_ENDPOINT}/aiserver.v1.DashboardService/GetFilteredUsageEvents`,
+            ).pipe(
+              HttpClientRequest.bearerToken(accessToken),
+              HttpClientRequest.setHeader("connect-protocol-version", "1"),
+            ),
+            rejected:
+              "Cursor sign-in expired or was rejected. Sign in again or update CURSOR_API_KEY in provider settings.",
+          }
+        : {
+            pageRequest: HttpClientRequest.post(DASHBOARD_USAGE_URL).pipe(
+              HttpClientRequest.setHeaders({
+                Origin: "https://cursor.com",
+                Cookie: `WorkosCursorSessionToken=${encodeURIComponent(`${userId}::${accessToken}`)}`,
+              }),
+            ),
+            rejected:
+              "Cursor rejected this server's Cursor CLI login. Run agent login on the server or sign in with Cursor in provider settings, then refresh.",
+          };
     const records: UsageRecord[] = [];
     const occurrences = new Map<string, number>();
     const pages: unknown[][] = [];
@@ -227,7 +235,7 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
             accountKey,
             records: [],
             missing: false,
-            error: "Sign in to Cursor again to read account usage.",
+            error: rejected,
           } satisfies CursorAccountUsageReadResult;
         }
         if (response.status < 200 || response.status >= 300)
