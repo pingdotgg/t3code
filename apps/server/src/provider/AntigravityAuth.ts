@@ -33,7 +33,12 @@ import type { ProviderAuthController } from "./ProviderAuthService.ts";
 const AUTH_TIMEOUT_MS = 300_000;
 // A healthy agent shows the Google link or finishes within seconds. Its bundled Python has no
 // IPv4 fallback race, so a host with broken IPv6 waits about two minutes per Google request.
+// An agent that never answers initialize is hung locally, so the network is not to blame.
 const NO_RESPONSE_HINT_MS = 30_000;
+const NOT_STARTED_MESSAGE =
+  "Antigravity has not responded after 30 seconds. Its runtime may be stuck starting on this machine.";
+const NOT_RESPONDING_MESSAGE =
+  "Antigravity did not respond. Its runtime may not run on this machine.";
 const NO_RESPONSE_MESSAGE =
   "Antigravity has not reached Google after 30 seconds. Check this machine's network connection. Broken IPv6 is a common cause.";
 const UNREACHABLE_MESSAGE =
@@ -53,6 +58,7 @@ interface AuthFlow {
   readonly expiresAtMillis: number;
   state: ProviderAuthState;
   pending: AntigravityAuthorizationUrl | undefined;
+  initialized: boolean;
   callbackSent: boolean;
   fiber: Fiber.Fiber<void> | undefined;
   forwarding: Fiber.Fiber<void, ProviderSetupError> | undefined;
@@ -276,7 +282,10 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
           lock.withPermits(1)(
             Effect.gen(function* () {
               if (activeFlow !== flow || flow.state.phase !== "starting") return;
-              yield* publishFlow(flow, { ...flow.state, message: NO_RESPONSE_MESSAGE });
+              yield* publishFlow(flow, {
+                ...flow.state,
+                message: flow.initialized ? NO_RESPONSE_MESSAGE : NOT_STARTED_MESSAGE,
+              });
             }),
           ),
         ),
@@ -285,6 +294,8 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
       const runtime = yield* options.makeRuntime({
         onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url),
       });
+      yield* runtime.initialize();
+      flow.initialized = true;
       const started = yield* runtime.start();
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
@@ -309,9 +320,11 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             Effect.fail(
               setupError(
                 "start",
-                flow.state.phase === "starting"
-                  ? UNREACHABLE_MESSAGE
-                  : "Google sign-in expired. Start sign-in again.",
+                flow.state.phase !== "starting"
+                  ? "Google sign-in expired. Start sign-in again."
+                  : flow.initialized
+                    ? UNREACHABLE_MESSAGE
+                    : NOT_RESPONDING_MESSAGE,
               ),
             ),
         }),
@@ -398,6 +411,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               expiresAtMillis,
               state,
               pending: undefined,
+              initialized: false,
               callbackSent: false,
               fiber: undefined,
               forwarding: undefined,
