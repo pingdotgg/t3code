@@ -258,7 +258,7 @@ describe("threadHasNoPendingWake", () => {
   const runId = RunId.make("run-ended");
   const ended = { ...v2ThreadShell, latestRunId: runId, status: "completed" as const };
   const present = (shell: Partial<OrchestrationV2ThreadShell>) =>
-    presentThreadShell(environmentId, { ...ended, ...shell });
+    presentThreadShell(environmentId, { ...ended, hasHeldQueue: false, ...shell });
   const request = (kind: "user_input" | "dynamic_tool_call") => ({
     id: RuntimeRequestId.make("request-open"),
     kind,
@@ -319,9 +319,17 @@ describe("threadHasNoPendingWake", () => {
 
   it("is not idle while a child thread asks for approval or input", () => {
     for (const childRequest of ["approval", "user_input"] as const) {
-      const shell = presentThreadShell(environmentId, ended, childRequest);
+      const shell = presentThreadShell(
+        environmentId,
+        { ...ended, hasHeldQueue: false },
+        childRequest,
+      );
       expect(threadHasNoPendingWake(shell, false)).toBe(false);
     }
+  });
+
+  it("is not idle when an older server does not report its held queue", () => {
+    expect(threadHasNoPendingWake(presentThreadShell(environmentId, ended), false)).toBe(false);
   });
 
   it("is not idle while a scheduled task can run into it, or before the task list loads", () => {

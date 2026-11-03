@@ -64,7 +64,8 @@ export function threadHasNoPendingWake(
     return false;
   }
   // A held queue keeps its messages out of the latest run, so the earlier turn still reads ended.
-  if (thread.hasHeldQueue === true) return false;
+  // Older servers omit it, and an unknown queue never reads as idle.
+  if (thread.hasHeldQueue !== false) return false;
   return thread.pendingBackgroundTasks.length === 0 && hasScheduledWake === false;
 }
 
