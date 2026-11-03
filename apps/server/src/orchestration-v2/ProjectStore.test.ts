@@ -34,6 +34,7 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
             workspaceRoot: "/tmp/project-null-options",
             defaultModelSelection: modelSelection,
             scripts: [],
+            trackedFolders: [],
             createdAt: "2026-03-24T00:00:00.000Z",
             updatedAt: "2026-03-24T00:00:00.000Z",
           },

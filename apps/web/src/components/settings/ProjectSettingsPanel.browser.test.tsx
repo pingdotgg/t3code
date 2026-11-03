@@ -198,6 +198,7 @@ function setup() {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     scripts: [],
+    trackedFolders: [],
   }));
   state.update.mockImplementation(async ({ environmentId, input }) => {
     const { projectId, ...updates } = input;

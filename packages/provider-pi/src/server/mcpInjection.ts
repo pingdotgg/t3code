@@ -10,6 +10,7 @@ import {
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
+  T3_PI_WORKSPACE_INSTRUCTIONS_ENV,
 } from "./mcpExtensionSource.ts";
 
 const RESERVED_PI_LAUNCH_ARGUMENTS = new Set([
@@ -259,6 +260,8 @@ export function buildPiRpcLaunch(input: {
   readonly disableExtensions?: boolean;
   readonly disableTools?: boolean;
   readonly runtimeMode?: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
+  /** The multi-repo block the extension appends to the system prompt. */
+  readonly workspaceInstructions?: string;
 }): {
   readonly args: ReadonlyArray<string>;
   readonly env: NodeJS.ProcessEnv;
@@ -297,6 +300,7 @@ export function buildPiRpcLaunch(input: {
   delete environment[T3_MCP_URL_ENV];
   delete environment[T3_MCP_BEARER_ENV];
   delete environment[T3_PI_MCP_EXTENSION_PATH_ENV];
+  delete environment[T3_PI_WORKSPACE_INSTRUCTIONS_ENV];
 
   return {
     args,
@@ -304,6 +308,9 @@ export function buildPiRpcLaunch(input: {
       ...environment,
       ...(hasT3Extension && input.extensionPath !== undefined
         ? { [T3_PI_MCP_EXTENSION_PATH_ENV]: input.extensionPath }
+        : {}),
+      ...(hasT3Extension && input.workspaceInstructions
+        ? { [T3_PI_WORKSPACE_INSTRUCTIONS_ENV]: input.workspaceInstructions }
         : {}),
       ...(hasT3Extension && input.runtimeMode !== undefined
         ? {

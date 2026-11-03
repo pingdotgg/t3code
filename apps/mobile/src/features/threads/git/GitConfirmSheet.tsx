@@ -15,24 +15,28 @@ import { AppText as Text } from "../../../components/ui/AppText";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useThreadSelection } from "../../../state/use-thread-selection";
+import { gitRepositoryFromRouteParams, type GitRepositoryRouteParams } from "./gitRepositoryRoute";
 import { SheetActionButton } from "./gitSheetComponents";
 
-type GitConfirmSheetProps = StaticScreenProps<{
-  readonly environmentId: string;
-  readonly threadId: string;
-  readonly confirmAction?: string;
-  readonly branchName?: string;
-  readonly includesCommit?: string;
-  readonly commitMessage?: string;
-  readonly filePaths?: string;
-}>;
+type GitConfirmSheetProps = StaticScreenProps<
+  {
+    readonly environmentId: string;
+    readonly threadId: string;
+    readonly confirmAction?: string;
+    readonly branchName?: string;
+    readonly includesCommit?: string;
+    readonly commitMessage?: string;
+    readonly filePaths?: string;
+  } & GitRepositoryRouteParams
+>;
 
 export function GitConfirmSheet(props: GitConfirmSheetProps) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
-  const gitState = useSelectedThreadGitState();
-  const gitActions = useSelectedThreadGitActions();
+  const repository = gitRepositoryFromRouteParams(props.route.params);
+  const gitState = useSelectedThreadGitState(repository?.target);
+  const gitActions = useSelectedThreadGitActions(repository?.target);
   const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
   const { selectedThreadProject } = useThreadSelection();
   const terminology = sourceControlClients.get(
@@ -135,7 +139,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
           <View className="android:gap-2 android:rounded-[20px] android:bg-card android:p-3 ios:items-center ios:gap-1 ios:px-5 ios:pb-3 ios:pt-4">
             {Platform.OS !== "android" ? (
               <Text className="text-xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
-                Confirm
+                {repository ? `Confirm · ${repository.name}` : "Confirm"}
               </Text>
             ) : null}
             <Text className="android:text-xl android:font-t3-medium ios:text-center ios:text-3xl ios:font-t3-bold">
@@ -170,7 +174,10 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
           </View>
         </ScrollView>
       </ScreenContent>
-      <SheetHeader title="Confirm action" onClose={() => navigation.goBack()} />
+      <SheetHeader
+        title={repository ? `Confirm action in ${repository.name}` : "Confirm action"}
+        onClose={() => navigation.goBack()}
+      />
     </View>
   );
 }

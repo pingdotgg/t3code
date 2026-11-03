@@ -31,6 +31,7 @@ import {
   CloudDownloadIcon,
   CloudUploadIcon,
   FileDiffIcon,
+  GitBranchIcon,
   GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
@@ -115,6 +116,7 @@ import {
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_LABEL_CLASS,
+  THREAD_DETAILS_PANEL_STATIC_ROW_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./chat/threadDetailsPanelStyles";
@@ -132,6 +134,92 @@ interface GitActionsControlProps {
   showChanges?: boolean;
   onOpenChanges?: () => void;
   workspaceMutationId?: string | null;
+  /**
+   * Set for one repo of a multi-repo thread: dialogs name it, and push and PR actions confirm
+   * the repo, branch and remote first.
+   */
+  repositoryName?: string;
+  /** Keeps the thread's branch in step with this checkout. Off for repos other than home. */
+  syncThreadBranch?: boolean;
+}
+
+interface PendingRepositoryAction {
+  action: Extract<GitStackedAction, "push" | "create_pr" | "commit_push" | "commit_push_pr">;
+  commitMessage?: string;
+  onConfirmed?: () => void;
+  filePaths?: string[];
+}
+
+function isRepositoryPushAction(
+  action: GitStackedAction,
+): action is PendingRepositoryAction["action"] {
+  return (
+    action === "push" ||
+    action === "create_pr" ||
+    action === "commit_push" ||
+    action === "commit_push_pr"
+  );
+}
+
+function repositoryActionLabel(
+  action: PendingRepositoryAction["action"],
+  pullRequestLabel: string,
+): string {
+  switch (action) {
+    case "push":
+      return "Push";
+    case "commit_push":
+      return "Commit & push";
+    case "create_pr":
+      return `Create ${pullRequestLabel}`;
+    case "commit_push_pr":
+      return `Commit, push & create ${pullRequestLabel}`;
+  }
+}
+
+/**
+ * Where a push from `cwd` goes: the branch's upstream remote, else `origin` or the first remote,
+ * as the server picks without a push remote setting. Read only while `enabled`.
+ */
+function usePushRemoteName(input: {
+  readonly environmentId: ScopedThreadRef["environmentId"] | null;
+  readonly cwd: string | null;
+  readonly refName: string | null;
+  readonly enabled: boolean;
+}): string | null {
+  const checkout =
+    input.enabled && input.environmentId !== null && input.cwd !== null
+      ? { environmentId: input.environmentId, cwd: input.cwd }
+      : null;
+  const localRefs = useEnvironmentQuery(
+    checkout !== null && input.refName !== null
+      ? vcsEnvironment.listRefs({
+          environmentId: checkout.environmentId,
+          input: { cwd: checkout.cwd, refKind: "local", query: input.refName, limit: 20 },
+        })
+      : null,
+  );
+  const remoteRefs = useEnvironmentQuery(
+    checkout === null
+      ? null
+      : vcsEnvironment.listRefs({
+          environmentId: checkout.environmentId,
+          input: { cwd: checkout.cwd, refKind: "remote", limit: 100 },
+        }),
+  );
+  if (checkout === null) return null;
+  const remotes = [
+    ...new Set(remoteRefs.data?.refs.flatMap((ref) => (ref.remoteName ? [ref.remoteName] : []))),
+  ];
+  const upstreamRef = localRefs.data?.refs.find((ref) => ref.name === input.refName)?.upstreamRef;
+  // Remote names may hold `/`, so a known remote that prefixes the upstream wins.
+  const upstreamRemote = upstreamRef?.startsWith("refs/remotes/")
+    ? (remotes
+        .filter((remote) => upstreamRef.startsWith(`refs/remotes/${remote}/`))
+        .toSorted((left, right) => right.length - left.length)[0] ??
+      upstreamRef.slice("refs/remotes/".length).split("/")[0])
+    : undefined;
+  return upstreamRemote ?? (remotes.includes("origin") ? "origin" : (remotes[0] ?? null));
 }
 
 interface PendingDefaultBranchAction {
@@ -148,6 +236,7 @@ interface RunGitActionWithToastInput {
   commitMessage?: string;
   onConfirmed?: () => void;
   skipDefaultBranchPrompt?: boolean;
+  skipRepositoryPrompt?: boolean;
   statusOverride?: VcsStatusResult | null;
   featureBranch?: boolean;
   filePaths?: string[];
@@ -944,6 +1033,8 @@ export default function GitActionsControl({
   showChanges = true,
   onOpenChanges,
   workspaceMutationId = null,
+  repositoryName,
+  syncThreadBranch = true,
 }: GitActionsControlProps) {
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
   const updateThreadMetadata = useAtomCommand(
@@ -987,6 +1078,8 @@ export default function GitActionsControl({
   const [inlineSuccess, setInlineSuccess] = useState<InlineGitActionSuccess | null>(null);
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
+  const [pendingRepositoryAction, setPendingRepositoryAction] =
+    useState<PendingRepositoryAction | null>(null);
   const sourceControlScope = { environmentId: activeEnvironmentId, cwd: gitCwd };
   const vcsActionState = useAtomValue(vcsActionManager.stateAtom(sourceControlScope));
   const inlineSuccessExpired = useDeadlinePassed(inlineSuccess?.expiresAtMs ?? null);
@@ -994,7 +1087,7 @@ export default function GitActionsControl({
     inlineSuccess?.scopeKey === successScopeKey && !inlineSuccessExpired ? inlineSuccess : null;
 
   const persistThreadBranchSync = (branch: string | null, manualSelection = false) => {
-    if (!activeThreadRef) {
+    if (!activeThreadRef || !syncThreadBranch) {
       return;
     }
 
@@ -1159,6 +1252,14 @@ export default function GitActionsControl({
   ]);
 
   const isDefaultRef = gitStatusForActions?.isDefaultRef ?? false;
+  const pushRemoteName = usePushRemoteName({
+    environmentId: activeEnvironmentId,
+    cwd: gitCwd,
+    refName: gitStatusForActions?.refName ?? null,
+    enabled:
+      repositoryName !== undefined &&
+      (pendingRepositoryAction !== null || pendingDefaultBranchAction !== null),
+  });
 
   const gitActionMenuItems = buildMenuItems(
     gitStatusForActions,
@@ -1214,6 +1315,7 @@ export default function GitActionsControl({
     commitMessage,
     onConfirmed,
     skipDefaultBranchPrompt = false,
+    skipRepositoryPrompt = false,
     statusOverride,
     featureBranch = false,
     filePaths,
@@ -1251,6 +1353,21 @@ export default function GitActionsControl({
         action,
         branchName: actionBranch,
         includesCommit,
+        ...(commitMessage ? { commitMessage } : {}),
+        ...(onConfirmed ? { onConfirmed } : {}),
+        ...(filePaths ? { filePaths } : {}),
+      });
+      return;
+    }
+    // The default-branch prompt above already names the target.
+    if (
+      repositoryName !== undefined &&
+      !skipRepositoryPrompt &&
+      !skipDefaultBranchPrompt &&
+      isRepositoryPushAction(action)
+    ) {
+      setPendingRepositoryAction({
+        action,
         ...(commitMessage ? { commitMessage } : {}),
         ...(onConfirmed ? { onConfirmed } : {}),
         ...(filePaths ? { filePaths } : {}),
@@ -1318,6 +1435,19 @@ export default function GitActionsControl({
       ...(filePaths ? { filePaths } : {}),
       featureBranch,
       skipDefaultBranchPrompt: true,
+    });
+  };
+
+  const continuePendingRepositoryAction = () => {
+    if (!pendingRepositoryAction || !canWriteSourceControl) return;
+    const { action, commitMessage, onConfirmed, filePaths } = pendingRepositoryAction;
+    setPendingRepositoryAction(null);
+    void runGitActionWithToast({
+      action,
+      ...(commitMessage ? { commitMessage } : {}),
+      ...(onConfirmed ? { onConfirmed } : {}),
+      ...(filePaths ? { filePaths } : {}),
+      skipRepositoryPrompt: true,
     });
   };
 
@@ -1556,8 +1686,20 @@ export default function GitActionsControl({
 
   if (!gitCwd) return null;
 
+  // A tracked repo's section shows its own branch; only the home repo's branch row can switch it.
+  const repositoryBranchRow =
+    repositoryName !== undefined && !syncThreadBranch && isRepo && gitStatusForActions ? (
+      <div className={THREAD_DETAILS_PANEL_STATIC_ROW_CLASS}>
+        <GitBranchIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+        <span className={cn("truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+          {gitStatusForActions.refName ?? "(detached HEAD)"}
+        </span>
+      </div>
+    ) : null;
+
   return (
     <>
+      {repositoryBranchRow}
       {!showActions ? null : !isRepo ? (
         <ThreadDetailsControl
           size="xs"
@@ -1709,7 +1851,7 @@ export default function GitActionsControl({
           size="sm"
           part="row"
           disabled={!onOpenChanges}
-          onClick={onOpenChanges}
+          onClick={() => onOpenChanges?.()}
         >
           <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
           <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
@@ -1771,6 +1913,12 @@ export default function GitActionsControl({
           <DialogPanel>
             <div className="space-y-3 rounded-xl bg-zinc-25 p-3 text-sm ring-1 ring-black/5 dark:bg-white/[0.035] dark:ring-white/5">
               <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
+                {repositoryName !== undefined ? (
+                  <>
+                    <span className="text-muted-foreground">Repository</span>
+                    <span className="font-medium">{repositoryName}</span>
+                  </>
+                ) : null}
                 <span className="text-muted-foreground">Branch</span>
                 <span className="flex items-center justify-between gap-2">
                   <span className="font-medium">
@@ -1940,6 +2088,55 @@ export default function GitActionsControl({
       ) : null}
 
       <Dialog
+        open={pendingRepositoryAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingRepositoryAction(null);
+        }}
+      >
+        <DialogPopup className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {pendingRepositoryAction
+                ? `${repositoryActionLabel(
+                    pendingRepositoryAction.action,
+                    changeRequestTerminology.shortLabel,
+                  )} in ${repositoryName ?? "this repository"}?`
+                : null}
+            </DialogTitle>
+          </DialogHeader>
+          <DialogPanel>
+            <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1 text-sm">
+              <span className="text-muted-foreground">Repository</span>
+              <span className="min-w-0 truncate font-medium">{repositoryName}</span>
+              <span className="text-muted-foreground">Branch</span>
+              <span className="min-w-0 truncate font-medium">
+                {gitStatusForActions?.refName ?? "(detached HEAD)"}
+              </span>
+              <span className="text-muted-foreground">Remote</span>
+              <span className="min-w-0 truncate font-medium">{pushRemoteName ?? "None found"}</span>
+            </div>
+          </DialogPanel>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setPendingRepositoryAction(null)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={!canWriteSourceControl}
+              onClick={continuePendingRepositoryAction}
+            >
+              {pendingRepositoryAction
+                ? repositoryActionLabel(
+                    pendingRepositoryAction.action,
+                    changeRequestTerminology.shortLabel,
+                  )
+                : null}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+
+      <Dialog
         open={pendingDefaultBranchAction !== null}
         onOpenChange={(open) => {
           if (!open) setPendingDefaultBranchAction(null);
@@ -1951,6 +2148,13 @@ export default function GitActionsControl({
               {pendingDefaultBranchActionCopy?.title ?? "Run action on default branch?"}
             </DialogTitle>
             <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
+            {repositoryName !== undefined && pendingDefaultBranchAction ? (
+              <p className="text-xs text-muted-foreground">
+                {`${repositoryName} · ${pendingDefaultBranchAction.branchName}${
+                  pushRemoteName === null ? "" : ` → ${pushRemoteName}`
+                }`}
+              </p>
+            ) : null}
             {featureBranchUnavailableReason && (
               <p className="text-xs text-muted-foreground">{featureBranchUnavailableReason}</p>
             )}

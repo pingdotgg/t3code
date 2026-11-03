@@ -336,10 +336,39 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  // A multi-repo thread names files in its other repos from its cwd, such as `../app/src/a.ts`.
+  const resolveThreadRootTarget = Effect.fn("WorkspaceFileSystem.resolveThreadRootTarget")(
+    function* (input: ProjectReadFileInput, outside: WorkspacePaths.WorkspacePathOutsideRootError) {
+      const requestedPath = input.relativePath.trim();
+      if (path.isAbsolute(requestedPath) || isNetworkPath(requestedPath)) return yield* outside;
+      const cwd = path.resolve(input.cwd);
+      const absolutePath = path.resolve(cwd, requestedPath);
+      const root = (yield* workspaceEntries.threadRoots(input.cwd)).find(
+        (candidate) =>
+          candidate.path !== absolutePath &&
+          KnownWorkspaces.isWithinRoot(path, absolutePath, candidate.path),
+      );
+      if (root === undefined) return yield* outside;
+      const target = yield* resolveReadTarget({
+        ...input,
+        cwd: root.path,
+        relativePath: path.relative(root.path, absolutePath),
+      });
+      return {
+        ...target,
+        relativePath: path.relative(cwd, absolutePath).split(path.sep).join("/"),
+      };
+    },
+  );
+
   const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
     "WorkspaceFileSystem.readFile",
   )(function* (input) {
-    const target = yield* resolveReadTarget(input);
+    const target = yield* resolveReadTarget(input).pipe(
+      Effect.catchTags({
+        WorkspacePathOutsideRootError: (outside) => resolveThreadRootTarget(input, outside),
+      }),
+    );
     const absentResult = {
       relativePath: target.relativePath,
       contents: "",

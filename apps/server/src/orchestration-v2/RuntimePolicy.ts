@@ -12,11 +12,19 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
+import {
+  isMultiRepoWorkspace,
+  type ThreadWorkspace,
+  WorkspaceRepositories,
+} from "../workspace/WorkspaceRepositories.ts";
+import { TaskFolderStore } from "../workspace/TaskFolders.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 
 export class RuntimePolicyResolveError extends Schema.TaggedError<RuntimePolicyResolveError>()(
@@ -136,6 +144,44 @@ export const layerEnforcingCeiling: Layer.Layer<
     });
   }),
 );
+/** The repos and references a provider sees. Undefined keeps single-repo policies unchanged. */
+function runtimeWorkspace(
+  path: Path.Path,
+  cwd: string,
+  workspace: ThreadWorkspace,
+): ProviderAdapter.ProviderAdapterV2RuntimeWorkspace | undefined {
+  if (!isMultiRepoWorkspace(workspace)) return undefined;
+  const taskRoot = workspace.taskFolder?.root;
+  const home = workspace.repositories.find((repository) => repository.kind === "home");
+  return {
+    repositories: workspace.repositories.map((repository) => ({
+      name: repository.name,
+      // Instructions match the policy cwd by string to mark the agent's working directory.
+      path: path.resolve(repository.cwd) === path.resolve(cwd) ? cwd : repository.cwd,
+    })),
+    referenceFolders: workspace.references.map((reference) => ({
+      name: reference.name,
+      path: reference.path,
+    })),
+    extraRoots: workspace.repositories
+      .map((repository) => repository.cwd)
+      .filter(
+        (root) =>
+          !isWithinRoot(path, root, cwd) &&
+          // A task folder thread must never write to the original checkouts.
+          (taskRoot === undefined || isWithinRoot(path, root, taskRoot)),
+      ),
+    relativePathsDiffer:
+      workspace.taskFolder !== null &&
+      home !== undefined &&
+      workspace.repositories.some(
+        (repository) =>
+          repository.kind === "repository" &&
+          path.relative(home.originalPath, repository.originalPath).split(path.sep).join("/") !==
+            repository.relativePath,
+      ),
+  };
+}
 
 export const layerFromProjectStore: Layer.Layer<
   RuntimePolicyV2,
@@ -143,6 +189,8 @@ export const layerFromProjectStore: Layer.Layer<
   | ProjectStore.ProjectStoreV2
   | ProviderInstanceRegistry.ProviderInstanceRegistry
   | ServerSettings.ServerSettingsService
+  | WorkspaceRepositories
+  | Path.Path
 > = Layer.effect(
   RuntimePolicyV2,
   Effect.gen(function* () {
@@ -151,6 +199,17 @@ export const layerFromProjectStore: Layer.Layer<
     // The same ceiling the orchestrator enforces, fixed for the server's life.
     const { managedPolicy } = yield* ServerSettings.ServerSettingsService;
     const maxRuntimeMode = managedPolicy?.limits?.maxRuntimeMode;
+    const workspaceRepositories = yield* WorkspaceRepositories;
+    const taskFolders = yield* Effect.serviceOption(TaskFolderStore);
+    const path = yield* Path.Path;
+    // A task folder keeps its repos even after the project stops tracking them.
+    const inTaskFolder = (worktreePath: string | null) =>
+      worktreePath === null || Option.isNone(taskFolders)
+        ? Effect.succeed(false)
+        : taskFolders.value.findContaining(path.resolve(worktreePath)).pipe(
+            Effect.map(Option.isSome),
+            Effect.orElseSucceed(() => false),
+          );
     return RuntimePolicyV2.of({
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
         yield* refuseAboveCeiling(managedPolicy, input.thread);
@@ -159,36 +218,47 @@ export const layerFromProjectStore: Layer.Layer<
           instance === undefined
             ? undefined
             : (yield* instance.snapshot.getSnapshot).supportedRuntimeModes;
-        const cwd =
-          input.thread.worktreePath ??
-          (yield* projects.get(input.thread.projectId).pipe(
-            Effect.mapError(
-              (cause) =>
-                new RuntimePolicyResolveError({
+        const resolveError = (cause: unknown) =>
+          new RuntimePolicyResolveError({
+            projectId: input.thread.projectId,
+            providerInstanceId: input.modelSelection.instanceId,
+            cause,
+          });
+        const projectLookup = projects
+          .get(input.thread.projectId)
+          .pipe(Effect.map(Option.getOrUndefined), Effect.mapError(resolveError));
+        const project =
+          input.thread.worktreePath === null
+            ? yield* projectLookup
+            : // A worktree thread needs the project only to find its other repos.
+              yield* projectLookup.pipe(Effect.orElseSucceed(() => undefined));
+        const cwd = input.thread.worktreePath ?? project?.workspaceRoot;
+        if (cwd === undefined) return yield* resolveError("Project not found.");
+        // Projects without tracked folders skip the Git detection the lookup runs.
+        const workspace =
+          project === undefined ||
+          (project.trackedFolders.length === 0 && !(yield* inTaskFolder(input.thread.worktreePath)))
+            ? undefined
+            : yield* workspaceRepositories
+                .resolveThreadWorkspace({
                   projectId: input.thread.projectId,
-                  providerInstanceId: input.modelSelection.instanceId,
-                  cause,
-                }),
-            ),
-            Effect.flatMap(
-              Option.match({
-                onNone: () =>
-                  Effect.fail(
-                    new RuntimePolicyResolveError({
-                      projectId: input.thread.projectId,
-                      providerInstanceId: input.modelSelection.instanceId,
-                      cause: "Project not found.",
-                    }),
+                  worktreePath: input.thread.worktreePath,
+                })
+                .pipe(
+                  Effect.map((resolved) => runtimeWorkspace(path, cwd, resolved)),
+                  // The turn can still run in its own cwd, as a single-repo thread does.
+                  Effect.catch((cause) =>
+                    Effect.logWarning("Could not resolve the thread's repositories.", cause).pipe(
+                      Effect.as(undefined),
+                    ),
                   ),
-                onSome: (project) => Effect.succeed(project.workspaceRoot),
-              }),
-            ),
-          ));
+                );
         return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
           cwd,
           ...(maxRuntimeMode === undefined ? {} : { maxRuntimeMode }),
+          ...(workspace === undefined ? {} : { workspace }),
         });
       }),
     });

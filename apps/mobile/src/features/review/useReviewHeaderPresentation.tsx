@@ -1,5 +1,8 @@
 import { useEnvironmentQuery } from "../../state/query";
-import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
+import {
+  useSelectedThreadGitActions,
+  type ThreadGitRepositoryTarget,
+} from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { vcsEnvironment } from "../../state/vcs";
@@ -24,12 +27,14 @@ export function useReviewHeaderPresentation(props: {
   readonly subtitle: string;
   readonly androidSubtitle: string;
   readonly selectedThreadCwd: string | null;
+  /** The reviewed repo of a multi-repo thread, so the Git menu acts on it. */
+  readonly gitRepository?: ThreadGitRepositoryTarget;
   readonly selectedSection: ReviewSectionItem | null;
   readonly onRefresh: () => Promise<void>;
 }): ReviewHeaderPresentation {
   const { selectedThread } = useThreadSelection();
-  const gitState = useSelectedThreadGitState();
-  const gitActions = useSelectedThreadGitActions();
+  const gitState = useSelectedThreadGitState(props.gitRepository);
+  const gitActions = useSelectedThreadGitActions(props.gitRepository);
   const gitStatusQuery = useEnvironmentQuery(
     selectedThread !== null && props.selectedThreadCwd !== null
       ? vcsEnvironment.status({
@@ -44,7 +49,7 @@ export function useReviewHeaderPresentation(props: {
   const gitMenu = useThreadGitMenuDefinition({
     environmentId: props.environmentId,
     threadId: props.threadId,
-    currentBranch: selectedThread?.branch ?? null,
+    currentBranch: props.gitRepository?.home === false ? null : (selectedThread?.branch ?? null),
     gitStatus: gitStatusQuery.data,
     gitOperationLabel: gitState.gitOperationLabel,
     onPull: gitActions.onPullSelectedThreadBranch,

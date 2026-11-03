@@ -7,6 +7,7 @@ import {
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
@@ -35,6 +36,12 @@ import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
+import {
+  keptTaskFolderRepositories,
+  taskFolderDeleteConfirmation,
+  type TaskFolderRepositoryState,
+} from "../lib/multiRepo";
+import { readWorkspaceRepositories } from "../lib/readWorkspaceRepositories";
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentServerConfigLoaded,
@@ -332,6 +339,31 @@ export function useThreadActions() {
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
+  // Null unless the worktree is a task folder, which holds one worktree per repo.
+  const readTaskFolderRepositories = async (project: EnvironmentProject, worktreePath: string) => {
+    const workspace = await readWorkspaceRepositories(project, worktreePath);
+    if (!workspace?.taskFolder) return null;
+    const repositories: TaskFolderRepositoryState[] = [];
+    for (let start = 0; start < workspace.repositories.length; start += 4) {
+      const batch = workspace.repositories.slice(start, start + 4);
+      const statuses = await Promise.all(
+        batch.map((repository) =>
+          refreshVcsStatus({
+            environmentId: project.environmentId,
+            input: { cwd: repository.cwd, localOnly: true },
+          }),
+        ),
+      );
+      batch.forEach((repository, index) => {
+        const status = statuses[index];
+        repositories.push({
+          name: repository.name,
+          hasChanges: status?._tag === "Success" ? status.value.hasWorkingTreeChanges : null,
+        });
+      });
+    }
+    return { root: workspace.taskFolder.root, repositories };
+  };
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const confirmThreadUnpin = useClientSettings((settings) => settings.confirmThreadUnpin);
@@ -550,15 +582,24 @@ export function useThreadActions() {
     const automaticWorktreeCleanup = environmentSettings
       ? resolveWorktreeCleanup(environmentSettings, thread.projectId).worktreeOnDelete
       : false;
+    const taskFolder =
+      canDeleteWorktree && !automaticWorktreeCleanup && orphanedWorktreePath && threadProject
+        ? await readTaskFolderRepositories(threadProject, orphanedWorktreePath)
+        : null;
     if (canDeleteWorktree && localApi && !automaticWorktreeCleanup) {
       const confirmationResult = await settlePromise(() =>
         localApi.dialogs.confirm(
-          [
-            "This thread is the only one linked to this worktree:",
-            displayWorktreePath ?? orphanedWorktreePath,
-            "",
-            "Delete the worktree too?",
-          ].join("\n"),
+          taskFolder
+            ? taskFolderDeleteConfirmation({
+                root: formatWorktreePathForDisplay(taskFolder.root),
+                repositories: taskFolder.repositories,
+              })
+            : [
+                "This thread is the only one linked to this worktree:",
+                displayWorktreePath ?? orphanedWorktreePath,
+                "",
+                "Delete the worktree too?",
+              ].join("\n"),
           { variant: "destructive" },
         ),
       );
@@ -641,7 +682,8 @@ export function useThreadActions() {
           input: {
             cwd: threadProject.workspaceRoot,
             path: orphanedWorktreePath,
-            force: true,
+            // A task folder repo with changes must survive; the server then keeps the folder.
+            force: taskFolder === null,
           },
         })
       : AsyncResult.failure(
@@ -676,17 +718,36 @@ export function useThreadActions() {
         error,
       });
       toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: removalFailed
-            ? "Failed to delete worktree"
-            : "Worktree deleted, but Git status refresh failed",
-          description: removalFailed
-            ? `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`
-            : message,
-        }),
+        stackedThreadToast(
+          removalFailed && taskFolder
+            ? {
+                // The server keeps any task folder repo it could not remove cleanly, and says which.
+                type: "info",
+                title: "Kept repos with changes",
+                description: `${message} They stay in ${formatWorktreePathForDisplay(taskFolder.root)}.`,
+              }
+            : {
+                type: "error",
+                title: removalFailed
+                  ? "Failed to delete worktree"
+                  : "Worktree deleted, but Git status refresh failed",
+                description: removalFailed
+                  ? `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`
+                  : message,
+              },
+        ),
       );
       // Cleanup has its own toast; reporting its failure would falsely imply deletion failed.
+    }
+    const kept = taskFolder ? keptTaskFolderRepositories(taskFolder.repositories) : [];
+    if (taskFolder && removeResult._tag === "Success" && kept.length > 0) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title: `Kept ${kept.join(", ")}`,
+          description: `Repos with changes stay in ${formatWorktreePathForDisplay(taskFolder.root)}.`,
+        }),
+      );
     }
     return deleteResult;
   };

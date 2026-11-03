@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import {
@@ -6,6 +7,8 @@ import {
   EventId,
   MessageId,
   NodeId,
+  type OrchestrationV2Checkpoint,
+  type OrchestrationV2CheckpointScope,
   type OrchestrationV2DomainEvent,
   ProviderDriverKind,
   ProviderTurnId,
@@ -28,7 +31,11 @@ import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { TaskFolderStore } from "../workspace/TaskFolders.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -218,6 +225,8 @@ it.effect.each([
       staleCheckpoints: [],
       rootNodes: [],
       providerTurns: [],
+      repositoryScopes: [],
+      repositoryCheckpoints: [],
     } as unknown as ProjectionStore.ProjectionCheckpointRollbackContext;
     const testLayer = CheckpointRollbackService.layer.pipe(
       Layer.provide(
@@ -268,6 +277,8 @@ it.effect.each([
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getThread: () => Effect.succeed(projection.thread),
             getCheckpointRollbackContext: () => Effect.succeed(projection),
+            getCheckpointContext: () =>
+              Effect.succeed({ runs: [], checkpointScopes: [], checkpoints: [] }),
             getShellSnapshot: () =>
               Effect.succeed({
                 schemaVersion: 1,
@@ -730,4 +741,304 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
         }),
     );
   },
+);
+
+const layerVcsProcessTest = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
+const layerRealCheckpoints = CheckpointService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      CheckpointStore.layer.pipe(
+        Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(layerVcsProcessTest))),
+        Layer.provide(NodeServices.layer),
+      ),
+      IdAllocator.layer,
+      NodeCrypto.layer,
+      NodeServices.layer,
+    ),
+  ),
+);
+
+it.effect.each(["restores", "undo", "missing-ref"] as const)(
+  "rewinds every repo of a task folder, scenario=%s",
+  (scenario) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const vcsProcess = yield* VcsProcess.VcsProcess;
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      const now = yield* DateTime.now;
+      const task = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-rollback-task-folder-" }),
+      );
+      const home = path.join(task, "home");
+      const git = (cwd: string, args: ReadonlyArray<string>) =>
+        vcsProcess
+          .run({ operation: "CheckpointRollbackService.test.git", command: "git", cwd, args })
+          .pipe(Effect.map((result) => result.stdout.trim()));
+      const write = (cwd: string, text: string) =>
+        fileSystem.writeFileString(path.join(cwd, "a.txt"), `${text}\n`);
+      const read = (cwd: string) =>
+        fileSystem.readFileString(path.join(cwd, "a.txt")).pipe(Effect.map((text) => text.trim()));
+      for (const repository of [home, path.join(home, "api"), path.join(task, "web")]) {
+        yield* fileSystem.makeDirectory(repository, { recursive: true });
+        yield* git(repository, ["init", "--quiet"]);
+        yield* git(repository, ["config", "user.email", "test@test.com"]);
+        yield* git(repository, ["config", "user.name", "Test"]);
+        yield* write(repository, "initial");
+        yield* git(repository, ["add", "a.txt"]);
+        yield* git(repository, ["commit", "--quiet", "-m", "initial"]);
+      }
+
+      const threadId = ThreadId.make("rollback-task-folder");
+      const providerThreadId = ProviderThreadId.make("rollback-task-folder-provider");
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const runId = (ordinal: number) => RunId.make(`rollback-task-folder-run-${ordinal}`);
+      const nodeId = NodeId.make("rollback-task-folder-node");
+      const rootScope = yield* checkpoints.prepareRootRunScope({
+        threadId,
+        runId: runId(2),
+        rootNodeId: nodeId,
+        providerThreadId,
+        cwd: home,
+        createdAt: now,
+      });
+      const [apiScope, webScope] = yield* checkpoints.prepareRepositoryScopes({
+        rootScope,
+        repositories: [
+          { name: "api", cwd: path.join(home, "api"), originalPath: "/tracked/api" },
+          { name: "web", cwd: path.join(task, "web"), originalPath: "/tracked/web" },
+        ],
+      });
+      if (apiScope === undefined || webScope === undefined) return yield* Effect.die("no scopes");
+      const repositoryScopes = [apiScope, webScope];
+      const records: Array<OrchestrationV2Checkpoint> = [];
+      const baseline = (scope: OrchestrationV2CheckpointScope, ordinalWithinScope: number) =>
+        Effect.gen(function* () {
+          yield* checkpoints.captureBaseline({
+            scope,
+            ordinalWithinScope,
+            ...(scope === rootScope ? { repositoryScopes } : {}),
+          });
+          const record = yield* checkpoints.materializeBaselineCheckpoint({
+            scope,
+            ordinalWithinScope,
+          });
+          if (record !== null) records.push(record);
+        });
+      const capture = (scope: OrchestrationV2CheckpointScope, ordinal: number) =>
+        checkpoints
+          .capture({
+            scope,
+            runId: runId(ordinal),
+            nodeId,
+            ordinalWithinScope: ordinal,
+            appRunOrdinal: scope === rootScope ? ordinal : null,
+            capturedAt: now,
+            ...(scope === rootScope ? { repositoryScopes } : {}),
+          })
+          .pipe(Effect.tap((checkpoint) => Effect.sync(() => records.push(checkpoint))));
+
+      // Run 1 edits home and api; web joins at run 2 after the user edited it.
+      yield* baseline(rootScope, 0);
+      yield* baseline(apiScope, 0);
+      yield* write(home, "turn 1");
+      yield* write(apiScope.cwd, "turn 1");
+      yield* capture(rootScope, 1);
+      yield* capture(apiScope, 1);
+      yield* write(webScope.cwd, "before run 2");
+      yield* baseline(webScope, 1);
+      for (const scope of [rootScope, apiScope, webScope]) yield* write(scope.cwd, "turn 2");
+      for (const scope of [rootScope, apiScope, webScope]) yield* capture(scope, 2);
+      const refOf = (scope: OrchestrationV2CheckpointScope, ordinal: number) =>
+        records.find(
+          (record) => record.scopeId === scope.id && record.ordinalWithinScope === ordinal,
+        )!.ref;
+      if (scenario === "missing-ref") {
+        yield* git(webScope.cwd, ["update-ref", "-d", refOf(webScope, 1)]);
+      }
+
+      const target = records.find(
+        (record) => record.scopeId === rootScope.id && record.ordinalWithinScope === 0,
+      )!;
+      const thread = {
+        id: threadId,
+        projectId: ProjectId.make("rollback-task-folder-project"),
+        worktreePath: home,
+        branch: null,
+        activeProviderThreadId: providerThreadId,
+        modelSelection: { instanceId: providerInstanceId, model: "test" },
+      };
+      const providerThread = {
+        id: providerThreadId,
+        driver: ProviderDriverKind.make("codex"),
+        providerSessionId: ProviderSessionId.make("rollback-task-folder-session"),
+        providerInstanceId,
+        nativeThreadRef: null,
+      };
+      const context = {
+        thread,
+        providerThread,
+        providerSession: undefined,
+        checkpoint: target,
+        scope: rootScope,
+        targetAttempt: undefined,
+        providerTurns: [],
+        rolledBackAttemptIds: [],
+        runsToRollback: [1, 2].map((ordinal) => ({
+          id: runId(ordinal),
+          ordinal,
+          status: "completed",
+          rootNodeId: NodeId.make(`rollback-task-folder-node-${ordinal}`),
+          providerInstanceId,
+        })),
+        rootNodes: [],
+        staleCheckpoints: records.filter(
+          (record) => record.scopeId === rootScope.id && record.ordinalWithinScope > 0,
+        ),
+        repositoryScopes,
+        repositoryCheckpoints: records.filter((record) => record.scopeId !== rootScope.id),
+      } as unknown as ProjectionStore.ProjectionCheckpointRollbackContext;
+      const calls: Array<string> = [];
+      const written: Array<OrchestrationV2DomainEvent> = [];
+      let failWebRestore = scenario === "undo";
+      const layerTest = layerCheckpointRollbackService.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            ThreadCommandExecutor.layer,
+            IdAllocator.layer,
+            Layer.succeed(CheckpointService.CheckpointServiceV2, {
+              ...checkpoints,
+              restore: (input) => {
+                calls.push(`restore:${input.scope.label ?? "home"}`);
+                if (input.scope.id === webScope.id && failWebRestore) {
+                  failWebRestore = false;
+                  return Effect.fail(
+                    new CheckpointService.CheckpointRestoreError({
+                      scopeId: input.scope.id,
+                      checkpointId: input.checkpoint.id,
+                      cause: "disk full",
+                    }),
+                  );
+                }
+                return checkpoints.restore(input);
+              },
+            }),
+            Layer.mock(EventSink.EventSinkV2)({
+              write: ({ events }) => Effect.sync(() => (written.push(...events), [])),
+            }),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThread: () => Effect.succeed(thread as never),
+              getCheckpointRollbackContext: () => Effect.succeed(context),
+              getCheckpointContext: () =>
+                Effect.succeed({
+                  runs: [],
+                  checkpoints: [],
+                  checkpointScopes: [rootScope, ...repositoryScopes],
+                }),
+              getShellSnapshot: () =>
+                Effect.succeed({
+                  schemaVersion: 1,
+                  snapshotSequence: 0,
+                  threads: [],
+                  archivedThreads: [],
+                }),
+            }),
+            Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+              open: () =>
+                Effect.succeed({
+                  rollbackThread: () =>
+                    Effect.sync(() => {
+                      calls.push("provider");
+                      return { providerThread };
+                    }),
+                } as never),
+            }),
+            Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+              resolve: () => Effect.succeed({} as never),
+            }),
+            Layer.mock(TaskFolderStore)({
+              findContaining: () => Effect.succeedSome({ root: task } as never),
+            }),
+          ),
+        ),
+      );
+      const result = yield* CheckpointRollbackService.CheckpointRollbackServiceV2.pipe(
+        Effect.flatMap((service) =>
+          service
+            .execute({
+              threadId,
+              providerThreadId,
+              checkpointId: target.id,
+              scopeId: rootScope.id,
+            })
+            .pipe(Effect.flip, Effect.option),
+        ),
+        Effect.provide(layerTest),
+      );
+
+      const contents = yield* Effect.forEach([home, apiScope.cwd, webScope.cwd], read);
+      const hasRef = (scope: OrchestrationV2CheckpointScope, ordinal: number) =>
+        git(scope.cwd, ["rev-parse", "--verify", "--quiet", refOf(scope, ordinal)]).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+      if (scenario === "restores") {
+        assert.isTrue(Option.isNone(result));
+        // web goes back to its first baseline, taken when it joined at run 2.
+        assert.deepEqual(contents, ["initial", "initial", "before run 2"]);
+        assert.deepEqual(calls, ["provider", "restore:home", "restore:api", "restore:web"]);
+        assert.deepEqual(
+          yield* Effect.forEach(
+            [
+              [apiScope, 1],
+              [apiScope, 2],
+              [webScope, 1],
+              [webScope, 2],
+            ] as const,
+            ([scope, ordinal]) => hasRef(scope, ordinal),
+          ),
+          [false, false, true, false],
+        );
+        assert.sameMembers(
+          written.flatMap((event) =>
+            event.type === "checkpoint.captured" && event.payload.status === "stale"
+              ? [
+                  `${event.payload.scopeId === rootScope.id ? "home" : event.payload.scopeId === apiScope.id ? "api" : "web"}:${event.payload.ordinalWithinScope}`,
+                ]
+              : [],
+          ),
+          ["home:1", "home:2", "api:1", "api:2", "web:2"],
+        );
+        return;
+      }
+      const error = Option.getOrThrow(result);
+      assert.isEmpty(written);
+      assert.deepEqual(contents, ["turn 2", "turn 2", "turn 2"]);
+      if (scenario === "undo") {
+        assert.equal(error.reason, "repository-restore-failed");
+        assert.deepEqual(calls, [
+          "provider",
+          "restore:home",
+          "restore:api",
+          "restore:web",
+          "restore:home",
+          "restore:api",
+          "restore:web",
+        ]);
+        assert.equal(
+          CheckpointRollbackService.rollbackFailureClientMessage(error),
+          "Could not restore files in web. Every repo is back to how it was before the rewind.",
+        );
+        return;
+      }
+      assert.equal(error.reason, "repository-checkpoint-unavailable");
+      assert.deepEqual(calls, []);
+      assert.equal(
+        CheckpointRollbackService.rollbackFailureClientMessage(error),
+        "Cannot restore files: web has no checkpoint for that turn. Rewind the conversation without restoring files instead.",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(layerRealCheckpoints, layerVcsProcessTest, NodeServices.layer)),
+    ),
 );

@@ -8,7 +8,11 @@ import {
 } from "@t3tools/provider-acp-registry/testing";
 import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
 import { AcpRegistryCatalog } from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
-import { decodeAcpReplayTranscript, makeAcpReplayRuntime } from "./AcpAdapterV2.testkit.ts";
+import {
+  decodeAcpReplayTranscript,
+  makeAcpReplayCompletenessAssertion,
+  makeAcpReplayRuntime,
+} from "./AcpAdapterV2.testkit.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -2030,6 +2034,111 @@ describe("AcpAdapterV2", () => {
       );
       assert.equal(Option.getOrThrow(terminal).status, "completed");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live.each([true, false])(
+    "sends the thread's other repos to an ACP agent only when it advertises them: %s",
+    (advertised) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-roots-" });
+        const statusPath = path.join(directory, "status.json");
+        const driver = ProviderDriverKind.make("acpRegistry");
+        const transcript = yield* decodeAcpReplayTranscript(
+          {
+            provider: driver,
+            protocol: "acp.ndjson-jsonrpc",
+            version: "1",
+            scenario: "multi-repo-roots",
+            entries: [
+              {
+                type: "expect_outbound",
+                frame: { kind: "request", method: "initialize", params: "<any>" },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  kind: "response",
+                  method: "initialize",
+                  result: {
+                    protocolVersion: 1,
+                    agentCapabilities: advertised
+                      ? { sessionCapabilities: { additionalDirectories: {} } }
+                      : {},
+                    authMethods: [],
+                  },
+                },
+              },
+              {
+                type: "expect_outbound",
+                frame: {
+                  kind: "request",
+                  method: "session/new",
+                  params: {
+                    cwd: "<workspace>",
+                    mcpServers: "<any>",
+                    ...(advertised ? { additionalDirectories: ["/work/api"] } : {}),
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  kind: "response",
+                  method: "session/new",
+                  result: { sessionId: "multi-repo-session" },
+                },
+              },
+            ],
+          },
+          driver,
+        );
+        const instanceId = ProviderInstanceId.make("acp-roots-test");
+        const adapter = yield* makeAcpRegistryAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          settings: DROID_SETTINGS,
+          environment: {},
+          makeRuntime: makeAcpReplayRuntime({
+            transcript,
+            statusPath,
+            fileSystem,
+            scriptPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+            ),
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+          }),
+        }).pipe(
+          Effect.provide(
+            Layer.mock(AcpRegistryCatalog)({ resolve: () => Effect.die("runtime is injected") }),
+          ),
+        );
+        const threadId = ThreadId.make("acp-roots-thread");
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "auto-accept-edits",
+          interactionMode: "default",
+          cwd: directory,
+          workspace: {
+            repositories: [
+              { name: "web", path: directory },
+              { name: "api", path: "/work/api" },
+            ],
+            referenceFolders: [{ name: "design", path: "/notes/design" }],
+            extraRoots: ["/work/api"],
+            relativePathsDiffer: false,
+          },
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+          providerSessionId: ProviderSessionId.make("acp-roots-session"),
+        });
+        yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+        yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live.each(["failed", "recovered", "cancelled"] as const)(

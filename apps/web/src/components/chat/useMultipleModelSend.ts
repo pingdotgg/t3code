@@ -20,6 +20,8 @@ import {
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import { releaseDraftAttachments } from "../../lib/attachmentUploadQueue";
 import type { buildMessageContext } from "../../lib/composerContextRecords";
+import { readLaunchRepositories } from "../../lib/readWorkspaceRepositories";
+import { worktreeRepositorySelectionKey } from "../../worktreeRepositorySelectionStore";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -133,6 +135,17 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
         text: messageText,
         attachments: attachmentsSnapshot,
       });
+      const launchRepositories = await readLaunchRepositories(
+        project,
+        worktreeRepositorySelectionKey(draftId, scopeThreadRef(environmentId, threadId)),
+      );
+      const prepareWorktree = {
+        projectCwd: project.workspaceRoot,
+        baseBranch: branch,
+        requireWorktree: true,
+        ...(startFromOrigin ? { startFromOrigin: true } : {}),
+        ...(launchRepositories ? { repositories: launchRepositories } : {}),
+      };
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
@@ -187,12 +200,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                       worktreePath: null,
                       createdAt: createdAt,
                     },
-                    prepareWorktree: {
-                      projectCwd: project.workspaceRoot,
-                      baseBranch: branch,
-                      requireWorktree: true,
-                      ...(startFromOrigin ? { startFromOrigin: true } : {}),
-                    },
+                    prepareWorktree,
                     runSetupScript: true,
                   },
                   createdAt: createdAt,

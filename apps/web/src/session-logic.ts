@@ -3,6 +3,7 @@ import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/mod
 import {
   type AssetResource,
   type OrchestrationV2Checkpoint,
+  type OrchestrationV2CheckpointScope,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
@@ -1046,10 +1047,16 @@ export function deriveRevertTurnCountByUserMessageId(input: {
 export function findRevertCheckpoint(
   checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>,
   turnCount: number,
+  scopes: ReadonlyArray<Pick<OrchestrationV2CheckpointScope, "id" | "kind">> = [],
 ): OrchestrationV2Checkpoint | undefined {
+  // Repository scopes share ordinals with the root scope; rewind always targets the root.
+  const repositoryScopeIds = new Set(
+    scopes.filter((scope) => scope.kind === "repository").map((scope) => scope.id),
+  );
   return checkpoints.findLast(
     (checkpoint) =>
       checkpoint.status === "ready" &&
+      !repositoryScopeIds.has(checkpoint.scopeId) &&
       (turnCount === 0
         ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
         : checkpoint.appRunOrdinal === turnCount),

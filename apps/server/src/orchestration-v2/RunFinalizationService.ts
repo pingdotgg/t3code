@@ -3,13 +3,16 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
+import { TaskFolderStore } from "../workspace/TaskFolders.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 
 export class RunFinalizationError extends Schema.TaggedError<RunFinalizationError>()(
   "RunFinalizationError",
@@ -98,8 +101,39 @@ export const layerObserver = Layer.effect(
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const pullRequestLookups = yield* FiberMap.make<string>();
+    const projects = yield* ProjectStore.ProjectStoreV2;
+    const taskFolders = yield* TaskFolderStore;
+    // Only folders a client watches hold a status to refresh; the others return at once.
+    const refreshTrackedPullRequests = Effect.fn(
+      "RunFinalizationService.refreshTrackedPullRequests",
+    )(function* (projectId: ProjectId) {
+      const project = Option.getOrUndefined(
+        yield* projects.get(projectId).pipe(Effect.orElseSucceed(() => Option.none())),
+      );
+      if (project === undefined || project.trackedFolders.length === 0) return;
+      const records = yield* taskFolders.list({ projectId }).pipe(Effect.orElseSucceed(() => []));
+      const cwds = new Set([
+        ...project.trackedFolders.map((folder) => folder.path),
+        ...records.flatMap((record) =>
+          record.repositories.flatMap((repository) =>
+            repository.kind === "repository" ? [repository.worktreePath] : [],
+          ),
+        ),
+      ]);
+      yield* Effect.forEach(
+        cwds,
+        (cwd) => vcsStatus.refreshPullRequestStatus(cwd).pipe(Effect.ignore),
+        { concurrency: 4, discard: true },
+      );
+    });
     return {
-      refreshAfterTurn: pullRequests.refreshAfterTurn,
+      refreshAfterTurn: Effect.fn("RunFinalizationService.refreshAfterTurn")(function* (
+        projectId: ProjectId,
+      ) {
+        yield* pullRequests.refreshAfterTurn(projectId);
+        // Forked: host lookups must not hold up the end of a turn.
+        yield* refreshTrackedPullRequests(projectId).pipe(Effect.forkDetach);
+      }),
       refresh: Effect.fn("RunFinalizationService.refresh")(
         function* ({ cwd, threadId, runId }) {
           const [, local] = yield* Effect.all(

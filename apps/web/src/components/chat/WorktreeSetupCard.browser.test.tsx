@@ -36,6 +36,7 @@ function snapshot(overrides: Partial<WorktreeSetupSnapshot>): WorktreeSetupSnaps
         tail: [],
       },
     ],
+    repositories: [],
     error: null,
     sequence: 1,
     ...overrides,

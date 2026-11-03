@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
   statusRefreshes: 0,
   readRefs: vi.fn(),
   cachedRefs: [] as VcsListRefsResult["refs"],
+  gitCwds: [] as string[],
 }));
 
 vi.mock("react", () => ({
@@ -93,7 +94,8 @@ vi.mock("./vcs", () => ({
       state.afterGitAction?.();
       return AsyncResult.success({ refName: state.branch });
     },
-    createRef: async ({ input }: { input: { refName: string } }) => {
+    createRef: async ({ input }: { input: { cwd: string; refName: string } }) => {
+      state.gitCwds.push(input.cwd);
       state.branch = input.refName;
       state.afterGitAction?.();
       return AsyncResult.success({ refName: state.branch });
@@ -109,18 +111,20 @@ vi.mock("./vcs", () => ({
   },
   vcsActionManager: {
     track: (_registry: unknown, _target: unknown, _operation: unknown, run: () => unknown) => run(),
-    runStackedAction: () => async (input: { action: string; featureBranch?: boolean }) => {
-      if (input.featureBranch) state.branch = "feature";
-      if (input.action === "commit") state.commits += 1;
-      if (input.action === "push") state.pushes += 1;
-      state.afterGitAction?.();
-      return AsyncResult.success({
-        branch: input.featureBranch
-          ? { status: "created", name: "feature" }
-          : { status: "skipped_not_requested" },
-        toast: { title: "Done", description: "Done", cta: { kind: "none" } },
-      });
-    },
+    runStackedAction:
+      (target: { cwd: string }) => async (input: { action: string; featureBranch?: boolean }) => {
+        state.gitCwds.push(target.cwd);
+        if (input.featureBranch) state.branch = "feature";
+        if (input.action === "commit") state.commits += 1;
+        if (input.action === "push") state.pushes += 1;
+        state.afterGitAction?.();
+        return AsyncResult.success({
+          branch: input.featureBranch
+            ? { status: "created", name: "feature" }
+            : { status: "skipped_not_requested" },
+          toast: { title: "Done", description: "Done", cta: { kind: "none" } },
+        });
+      },
   },
 }));
 
@@ -140,6 +144,22 @@ describe("thread Git mutation permissions", () => {
     state.results = [];
     state.afterGitAction = undefined;
     state.statusRefreshes = 0;
+    state.gitCwds = [];
+  });
+
+  it("acts on a tracked repo's cwd without changing the thread's branch", async () => {
+    // Without task permission: only home's branch is the thread's branch.
+    const actions = useSelectedThreadGitActions({ cwd: "/infra", home: false });
+    expect(actions.canChangeThreadBranch).toBe(true);
+    expect(
+      await actions.onRunSelectedThreadGitAction({ action: "commit", featureBranch: true }),
+    ).not.toBeNull();
+    expect(await actions.onCreateSelectedThreadBranch("feature/infra")).toEqual({
+      refName: "feature/infra",
+    });
+    expect(state.gitCwds).toEqual(["/infra", "/infra"]);
+    expect(state.metadataRequests).toEqual([]);
+    expect(state.thread.branch).toBe("main");
   });
 
   it.each([false, true])(

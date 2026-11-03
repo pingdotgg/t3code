@@ -40,6 +40,8 @@ import {
   pipelineEscalationMessage,
   pipelineHandoffInstructions,
 } from "../../apps/server/src/pipelines/pipelineTemplate.ts";
+import { ProviderAdapterV2RuntimeWorkspace } from "@t3tools/provider-core/server/ProviderAdapter";
+import { buildWorkspaceInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
@@ -326,6 +328,8 @@ export const McpToolUseCase = Schema.Struct({
       ),
     ),
     world: Schema.optional(McpToolUseWorld),
+    /** A multi-repo thread's folders, as T3 lists them. `<cwd>` in a path is the working directory. */
+    workspace: Schema.optional(ProviderAdapterV2RuntimeWorkspace),
     /**
      * Canned tool results by bare name, T3 or native. `"default"` uses the runner's result. For a
      * device tool, a T3 `DeviceError` (`{"_tag": ..., "cause": null}`) fails it inside T3.
@@ -514,11 +518,38 @@ const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?:
       !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
   );
 
+/** A case's workspace, placed at the template's working directory. */
+type CaseWorkspace = {
+  readonly cwd: string;
+  readonly workspace: ProviderAdapterV2RuntimeWorkspace;
+};
+
+const placeWorkspace = (
+  workspace: ProviderAdapterV2RuntimeWorkspace,
+  cwd: string,
+): CaseWorkspace => {
+  const at = (path: string) => path.replace("<cwd>", cwd);
+  const folder = ({ name, path }: { readonly name: string; readonly path: string }) => ({
+    name,
+    path: at(path),
+  });
+  return {
+    cwd,
+    workspace: {
+      ...workspace,
+      repositories: workspace.repositories.map(folder),
+      referenceFolders: workspace.referenceFolders.map(folder),
+      extraRoots: workspace.extraRoots.map(at),
+    },
+  };
+};
+
 /**
  * T3's Claude Code options for an eval thread: its system prompt append and its hooks. `device` says
- * whether the thread holds the `device` capability, as agent device access decides.
+ * whether the thread holds the `device` capability, as agent device access decides. `workspace`
+ * is a multi-repo thread's folder list.
  */
-const claudeQueryOptions = (model: Model, device = true) => {
+const claudeQueryOptions = (model: Model, device = true, workspace?: CaseWorkspace) => {
   // Refs whose device text follows the capability read deviceToolsAvailable; older ones ignore it.
   const input: Parameters<typeof makeClaudeQueryOptions>[0] & {
     readonly deviceToolsAvailable?: boolean;
@@ -526,7 +557,8 @@ const claudeQueryOptions = (model: Model, device = true) => {
     modelSelection: { instanceId: ProviderInstanceId.make(CLAUDE_PROVIDER), model },
     nativeThreadId: "mcp-tool-use-eval",
     resume: false,
-    cwd: null,
+    cwd: workspace?.cwd ?? null,
+    ...(workspace === undefined ? {} : { workspace: workspace.workspace }),
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
     deviceToolsAvailable: device,
   };
@@ -534,8 +566,8 @@ const claudeQueryOptions = (model: Model, device = true) => {
 };
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
-export const t3SystemAppend = (model: Model, device = true) => {
-  const { systemPrompt } = claudeQueryOptions(model, device);
+export const t3SystemAppend = (model: Model, device = true, workspace?: CaseWorkspace) => {
+  const { systemPrompt } = claudeQueryOptions(model, device, workspace);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
@@ -622,6 +654,7 @@ export const buildBase = (
     readonly nativeSubagent?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
     readonly deviceAccess?: boolean;
+    readonly workspace?: ProviderAdapterV2RuntimeWorkspace | undefined;
   },
 ) => {
   const t3 = visibleT3Tools(options);
@@ -645,7 +678,6 @@ export const buildBase = (
     .toSorted()
     .join("\n");
   const { model } = options;
-  const append = options.nativeSubagent ? "" : t3SystemAppend(model, options.deviceAccess);
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -653,6 +685,15 @@ export const buildBase = (
   const home = /^\/(?:home|Users)\/[^/]+/.exec(cwd)?.[0];
   const anonymize = (value: string) =>
     home === undefined ? value : value.replaceAll(home, home.replace(/[^/]+$/, "user"));
+  const append = options.nativeSubagent
+    ? ""
+    : t3SystemAppend(
+        model,
+        options.deviceAccess,
+        options.workspace === undefined
+          ? undefined
+          : placeWorkspace(options.workspace, anonymize(cwd)),
+      );
   const system = systemTexts.map((value) => {
     // T3's append is the tail of its block: runtime info, PR linking, then orchestration.
     const at = value.indexOf(RUNTIME_MARKER);
@@ -712,6 +753,7 @@ const buildCodexBase = (
     readonly links?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
     readonly deviceAccess?: boolean;
+    readonly workspace?: ProviderAdapterV2RuntimeWorkspace | undefined;
   },
 ): Base => {
   const t3 = visibleT3Tools(options);
@@ -752,6 +794,11 @@ const buildCodexBase = (
   input.push(
     ...Object.entries(context).map(([key, entry]) => message(`<${key}>${entry.value}</${key}>`)),
   );
+  // The adapter sends the repo list as its own context entry, as buildCodexTurnStartParams does.
+  if (options.workspace !== undefined) {
+    const block = buildWorkspaceInstructions(placeWorkspace(options.workspace, clean(cwd)));
+    input.push(message(`<t3_code_workspace>${block}</t3_code_workspace>`));
+  }
   const nativeTools = input
     .flatMap((item) =>
       item.type === "additional_tools" && Array.isArray(item.tools)
@@ -2508,6 +2555,7 @@ const main = Effect.gen(function* () {
     role: McpToolUseCase["setup"]["role"],
     deviceAccess: boolean,
     links: boolean,
+    workspace?: ProviderAdapterV2RuntimeWorkspace,
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -2519,6 +2567,7 @@ const main = Effect.gen(function* () {
               subagent: role === "delegated-child",
               links,
               deviceAccess,
+              workspace,
             }),
           ),
         )
@@ -2531,6 +2580,7 @@ const main = Effect.gen(function* () {
               nativeSubagent: role === "native-subagent",
               links,
               deviceAccess,
+              workspace,
             });
             return role === "native-subagent"
               ? Effect.promise(() => t3SubagentContext(flags.model, deviceAccess)).pipe(
@@ -2545,6 +2595,7 @@ const main = Effect.gen(function* () {
   const base = yield* buildFor("top", true, false);
   const bases = new Map<string, Base>([["top:true:false", base]]);
   for (const testCase of selected) {
+    if (testCase.setup.workspace !== undefined) continue;
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
     const [role = "top", access, links] = key.split(":") as [
@@ -2554,7 +2605,23 @@ const main = Effect.gen(function* () {
     ];
     bases.set(key, yield* buildFor(role, access === "true", links === "true"));
   }
-  const baseFor = (testCase: McpToolUseCase) => bases.get(baseKey(testCase)) ?? base;
+  // Multi-repo cases see their own repo list, so each gets its own base.
+  const workspaceBases = new Map<string, Base>();
+  for (const testCase of selected) {
+    const { workspace } = testCase.setup;
+    if (workspace === undefined) continue;
+    const [role = "top", access, links] = baseKey(testCase).split(":") as [
+      McpToolUseCase["setup"]["role"],
+      string,
+      string,
+    ];
+    workspaceBases.set(
+      testCase.id,
+      yield* buildFor(role, access === "true", links === "true", workspace),
+    );
+  }
+  const baseFor = (testCase: McpToolUseCase) =>
+    workspaceBases.get(testCase.id) ?? bases.get(baseKey(testCase)) ?? base;
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";
   if (flags["dry-run"]) {
     // One JSON line per case. Without --case this also checks that every case builds.

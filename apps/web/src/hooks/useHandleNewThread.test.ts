@@ -207,6 +207,9 @@ vi.mock("../providerInstances", () => ({ resolveDefaultProviderModelSelection: (
 vi.mock("../lib/t3ProjectFileDefaults", () => ({
   readT3ProjectFile: () => testState.projectFileRead,
 }));
+vi.mock("../lib/readWorkspaceRepositories", () => ({
+  readWorkspaceRepositories: async () => null,
+}));
 vi.mock("../lib/utils", () => ({
   newDraftId: () => "draft-delayed",
   newThreadId: () => "thread-delayed",

@@ -27,6 +27,7 @@ import { MuseSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -603,6 +604,44 @@ describe("MuseAdapterV2", () => {
       Effect.provide(testLayer),
       Effect.provideService(HostProcess.Platform, "darwin"),
     ),
+  );
+
+  it.effect("pins turns to the thread's other repos and lists them for the model", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const web = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-muse-web-" });
+      const api = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-muse-api-" });
+      const fake = yield* makeFakeMuse();
+      const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        ...runtimePolicy,
+        cwd: web,
+        workspace: {
+          repositories: [
+            { name: "web", path: web },
+            { name: "api", path: api },
+          ],
+          referenceFolders: [{ name: "design", path: "/notes/design" }],
+          extraRoots: [api],
+          relativePathsDiffer: false,
+        },
+      });
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        policy,
+      );
+      yield* startConversation(harness, fake);
+      const turnStart = fake.calls.find((call) => call.method === "turn/start");
+      // Reference folders are listed for the model but never become workspace roots.
+      assert.deepStrictEqual(turnStart?.params.workspaceRoots, [
+        yield* fileSystem.realPath(web),
+        yield* fileSystem.realPath(api),
+      ]);
+      assert.include(JSON.stringify(turnStart?.params.input), `- api (Git repository): ${api}`);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
   it.effect("stops at a Meta usage limit until every exhausted window resets", () =>

@@ -1,5 +1,6 @@
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
-import { type RunId } from "@t3tools/contracts";
+import { fileBasename } from "@t3tools/shared/path";
+import { groupChangedFilesByRepository } from "@t3tools/client-runtime/state/thread-repositories";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { memo, use, useState } from "react";
 import { type ChatMessage, type TurnDiffSummary } from "../../types";
@@ -11,9 +12,11 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { McpAppFrame } from "./McpAppFrame";
 import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
-import { ChangedFilesCard } from "./ChangedFilesTree";
+import { ChangedFilesCard, type OpenTurnDiffHandler } from "./ChangedFilesTree";
+import { OutsideEditsNotice } from "./OutsideEditsNotice";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
 import { useAssistantMessageText, useProject, useThreadShell } from "../../state/entities";
+import { useThreadWorkspaceRepositories } from "../../state/threadRepositories";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantCitationSource } from "./AssistantCitationSource";
 import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
@@ -337,16 +340,20 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
   routeThreadKey: string;
   resolvedTheme: "light" | "dark";
   displayThreadKey?: string;
-  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
+  onOpenTurnDiff: OpenTurnDiffHandler;
 }) {
   if (!turnSummary) return null;
-  const checkpointFiles = turnSummary.files;
-  if (checkpointFiles.length === 0) return null;
+  if (
+    turnSummary.files.length === 0 &&
+    turnSummary.outsideEdits.length === 0 &&
+    turnSummary.repositories.every((repository) => repository.files.length === 0)
+  ) {
+    return null;
+  }
 
   return (
     <AssistantChangedFilesSectionInner
       turnSummary={turnSummary}
-      checkpointFiles={checkpointFiles}
       routeThreadKey={routeThreadKey}
       resolvedTheme={resolvedTheme}
       onOpenTurnDiff={onOpenTurnDiff}
@@ -356,17 +363,15 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
 
 function AssistantChangedFilesSectionInner({
   turnSummary,
-  checkpointFiles,
   routeThreadKey,
   resolvedTheme,
   onOpenTurnDiff,
 }: {
   turnSummary: TurnDiffSummary;
-  checkpointFiles: TurnDiffSummary["files"];
   routeThreadKey: string;
   resolvedTheme: "light" | "dark";
   displayThreadKey?: string;
-  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
+  onOpenTurnDiff: OpenTurnDiffHandler;
 }) {
   const ctx = use(TimelineRowCtx);
   const persistedExpanded = useUiStateStore(
@@ -381,33 +386,58 @@ function AssistantChangedFilesSectionInner({
       ? { environmentId: thread.environmentId, projectId: thread.projectId }
       : null,
   );
+  const workspace = useThreadWorkspaceRepositories(ctx.threadRef);
   const onFileContextMenu = useFileContextMenuHandler(ctx.activeThreadEnvironmentId);
+  const repositories = groupChangedFilesByRepository({
+    summary: turnSummary,
+    repositories: workspace?.repositories ?? null,
+    homeName: fileBasename(activeProject?.workspaceRoot ?? ctx.workspaceRoot ?? ""),
+  });
+  const hasFiles = repositories.groups.length > 0;
+  const onOpenRepositoryChanges = ctx.onOpenRepositoryChanges;
 
   return (
-    <ChangedFilesCard
-      runId={turnSummary.runId}
-      files={checkpointFiles}
-      totals={checkpointFileTotals(turnSummary)}
-      allDirectoriesExpanded={allDirectoriesExpanded}
-      resolvedTheme={resolvedTheme}
-      onToggleAllDirectories={() =>
-        setExpanded(routeThreadKey, turnSummary.runId, !allDirectoriesExpanded)
-      }
-      onOpenTurnDiff={onOpenTurnDiff}
-      onFileContextMenu={(filePath, event) =>
-        onFileContextMenu(
-          {
-            environmentId: ctx.activeThreadEnvironmentId,
-            filePath,
-            workspaceRoot: ctx.workspaceRoot,
-            repositoryRoot:
-              thread?.worktreePath == null
-                ? activeProject?.repositoryIdentity?.rootPath
-                : undefined,
-          },
-          event,
-        )
-      }
-    />
+    <>
+      {hasFiles ? (
+        <ChangedFilesCard
+          runId={turnSummary.runId}
+          files={turnSummary.files}
+          totals={checkpointFileTotals(turnSummary)}
+          repositories={repositories.multiRepo ? repositories : undefined}
+          allDirectoriesExpanded={allDirectoriesExpanded}
+          resolvedTheme={resolvedTheme}
+          onToggleAllDirectories={() =>
+            setExpanded(routeThreadKey, turnSummary.runId, !allDirectoriesExpanded)
+          }
+          onOpenTurnDiff={onOpenTurnDiff}
+          onFileContextMenu={(filePath, event, cwd) =>
+            onFileContextMenu(
+              {
+                environmentId: ctx.activeThreadEnvironmentId,
+                filePath,
+                workspaceRoot: cwd ?? ctx.workspaceRoot,
+                repositoryRoot:
+                  cwd === null && thread?.worktreePath == null
+                    ? activeProject?.repositoryIdentity?.rootPath
+                    : undefined,
+              },
+              event,
+            )
+          }
+        />
+      ) : null}
+      {turnSummary.outsideEdits.length > 0 ? (
+        <OutsideEditsNotice
+          edits={turnSummary.outsideEdits}
+          project={activeProject}
+          onReview={
+            onOpenRepositoryChanges === undefined
+              ? undefined
+              : (edit) =>
+                  onOpenRepositoryChanges({ key: edit.root, name: edit.name, cwd: edit.root })
+          }
+        />
+      ) : null}
+    </>
   );
 }

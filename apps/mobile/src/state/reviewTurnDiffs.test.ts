@@ -11,7 +11,17 @@ const threadId = ThreadId.make("thread-1");
 
 const answer = (
   registry: AtomRegistry.AtomRegistry,
-  range: { fromTurnCount: number; toTurnCount: number; diff: string },
+  range: {
+    fromTurnCount: number;
+    toTurnCount: number;
+    diff: string;
+    repositories?: ReadonlyArray<{
+      name: string;
+      repositoryPath: string;
+      relativePath: string;
+      diff: string;
+    }>;
+  },
   ignoreWhitespace = false,
 ) =>
   recordReviewTurnDiffAnswer(
@@ -35,6 +45,41 @@ describe("recordReviewTurnDiffAnswer", () => {
           cached,
         ),
       ).toEqual({ "turn:1": "turn one", "turn:2": "turn two", "turn:3": undefined });
+      registry.dispose();
+    }),
+  );
+
+  it.effect("keeps each tracked repo's patch for its own review sections", () =>
+    Effect.gen(function* () {
+      const registry = AtomRegistry.make();
+      const infra = { name: "infra", repositoryPath: "/code/infra", relativePath: "../infra" };
+      yield* answer(registry, {
+        fromTurnCount: 0,
+        toTurnCount: 1,
+        diff: "",
+        repositories: [{ ...infra, diff: "infra patch" }],
+      });
+      const atom = lastReviewTurnDiffsAtom(environmentId, threadId);
+      const cached = registry.get(atom);
+      const checkpoints = [{ checkpointTurnCount: 1 }];
+
+      expect(reviewTurnDiffsBySectionId(checkpoints, cached)).toEqual({ "turn:1": "" });
+      expect(
+        reviewTurnDiffsBySectionId(checkpoints, cached, {
+          name: "infra",
+          cwd: "/code/infra",
+          history: { repositoryPath: "/code/infra" },
+        }),
+      ).toEqual({ "repo:/code/infra|turn:1": "infra patch" });
+
+      // A repeated answer decodes new arrays; the stored value stays, so review does not rerender.
+      yield* answer(registry, {
+        fromTurnCount: 0,
+        toTurnCount: 1,
+        diff: "",
+        repositories: [{ ...infra, diff: "infra patch" }],
+      });
+      expect(registry.get(atom)).toBe(cached);
       registry.dispose();
     }),
   );

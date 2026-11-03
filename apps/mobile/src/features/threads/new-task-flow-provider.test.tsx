@@ -118,6 +118,7 @@ function project(environment: string, id: string): EnvironmentProject {
     defaultModelSelection: null,
     defaultThreadEnvMode: "worktree",
     scripts: [],
+    trackedFolders: [],
     createdAt: "2026-10-26T00:00:00Z",
     updatedAt: "2026-10-26T00:00:00Z",
   };

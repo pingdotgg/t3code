@@ -1,9 +1,10 @@
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import {
   type ManagedPolicySummary,
   type ModelSelection,
   type OrchestrationV2AppThread,
   ProjectId,
+  type ProjectTrackedFolder,
   ProviderInstanceId,
   type RuntimeMode,
   type ServerProvider,
@@ -12,12 +13,19 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import {
+  type ThreadRepository,
+  type ThreadWorkspace,
+  WorkspaceRepositories,
+} from "../workspace/WorkspaceRepositories.ts";
+import { TaskFolderStore } from "../workspace/TaskFolders.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 
@@ -78,9 +86,23 @@ const providerInstanceFor = (instanceId: ProviderInstanceId) =>
     },
   }) as ProviderInstance;
 
-const layerWithPolicy = (policy?: ManagedPolicySummary) =>
-  RuntimePolicy.layerFromProjectStore.pipe(
-    Layer.provide(ServerSettings.layerTest({}, policy)),
+const makeLayer = (input: {
+  readonly workspaceRoot: string;
+  readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
+  readonly workspace?: ThreadWorkspace;
+  /** Provides a task folder store that records this workspace's task folder. */
+  readonly recordTaskFolder?: boolean;
+  readonly policy?: ManagedPolicySummary;
+}) => {
+  const workspace = input.workspace;
+  const taskFolder = workspace?.taskFolder ?? null;
+  return RuntimePolicy.layerFromProjectStore.pipe(
+    Layer.provide(ServerSettings.layerTest({}, input.policy)),
+    Layer.provide(
+      input.recordTaskFolder === true && taskFolder !== null
+        ? Layer.mock(TaskFolderStore)({ findContaining: () => Effect.succeedSome(taskFolder) })
+        : Layer.empty,
+    ),
     Layer.provide(
       Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
         getInstance: (instanceId) => Effect.succeed(providerInstanceFor(instanceId)),
@@ -96,7 +118,8 @@ const layerWithPolicy = (policy?: ManagedPolicySummary) =>
           Effect.succeedSome({
             projectId,
             title: "Project",
-            workspaceRoot: "/project-root",
+            workspaceRoot: input.workspaceRoot,
+            trackedFolders: input.trackedFolders ?? [],
             defaultModelSelection: null,
             defaultThreadEnvMode: null,
             autoPull: false,
@@ -111,11 +134,25 @@ const layerWithPolicy = (policy?: ManagedPolicySummary) =>
           }),
       }),
     ),
+    Layer.provide(
+      // Without a workspace, a call fails the test: single-repo threads must not look up repos.
+      Layer.mock(WorkspaceRepositories)(
+        workspace === undefined ? {} : { resolveThreadWorkspace: () => Effect.succeed(workspace) },
+      ),
+    ),
+    Layer.provide(Path.layer),
   );
+};
 
-const layerTest = layerWithPolicy();
+const repository = (
+  name: string,
+  cwd: string,
+  originalPath: string,
+  relativePath: string,
+  kind: ThreadRepository["kind"] = "repository",
+): ThreadRepository => ({ name, cwd, originalPath, relativePath, kind });
 
-it.layer(layerTest)("RuntimePolicyV2", (it) => {
+it.layer(makeLayer({ workspaceRoot: "/project-root" }))("RuntimePolicyV2", (it) => {
   it.effect("asks for Antigravity command approval when a stored Auto thread falls back", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;
@@ -159,10 +196,13 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
 });
 
 it.layer(
-  layerWithPolicy({
-    organization: "Example Corp",
-    lockedSettings: [],
-    limits: { maxRuntimeMode: "auto-accept-edits" },
+  makeLayer({
+    workspaceRoot: "/project-root",
+    policy: {
+      organization: "Example Corp",
+      lockedSettings: [],
+      limits: { maxRuntimeMode: "auto-accept-edits" },
+    },
   }),
 )("RuntimePolicyV2 under a runtime mode ceiling", (it) => {
   it.effect("refuses to start a turn above the ceiling, such as one resumed after a restart", () =>
@@ -185,5 +225,136 @@ it.layer(
       assert.equal(allowed.runtimeMode, "auto-accept-edits");
       assert.equal(allowed.maxRuntimeMode, "auto-accept-edits");
     }),
+  );
+});
+
+const resolvePolicy = (worktreePath: string | null) =>
+  Effect.gen(function* () {
+    const policy = yield* RuntimePolicy.RuntimePolicyV2;
+    return yield* policy.resolve({
+      thread: makeThread({ now: yield* DateTime.now, worktreePath }),
+      modelSelection,
+    });
+  });
+
+describe("RuntimePolicyV2 workspace", () => {
+  it.effect("keeps single-repo policies to today's fields without a repo lookup", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* resolvePolicy(null), {
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: "/work/web",
+      });
+      assert.deepStrictEqual(yield* resolvePolicy("/worktrees/web/fix"), {
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: "/worktrees/web/fix",
+      });
+    }).pipe(Effect.provide(makeLayer({ workspaceRoot: "/work/web" }))),
+  );
+
+  it.effect("gives a local thread its other checkouts and lists references read-only", () =>
+    Effect.gen(function* () {
+      const policy = yield* resolvePolicy(null);
+      assert.deepStrictEqual(policy.workspace, {
+        repositories: [
+          { name: "web", path: "/work/web" },
+          { name: "ui", path: "/work/web/packages/ui" },
+          { name: "api", path: "/work/api" },
+        ],
+        referenceFolders: [{ name: "design", path: "/notes/design" }],
+        // The child repo is inside the cwd, and references are never writable.
+        extraRoots: ["/work/api"],
+        relativePathsDiffer: false,
+      });
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          workspaceRoot: "/work/web",
+          trackedFolders: [
+            { path: "/work/web/packages/ui", name: "ui" },
+            { path: "/work/api", name: "api" },
+            { path: "/notes/design", name: "design" },
+          ],
+          workspace: {
+            cwd: "/work/web",
+            repositories: [
+              repository("web", "/work/web", "/work/web", "", "home"),
+              repository("ui", "/work/web/packages/ui", "/work/web/packages/ui", "packages/ui"),
+              repository("api", "/work/api", "/work/api", "../api"),
+            ],
+            references: [{ name: "design", path: "/notes/design" }],
+            taskFolder: null,
+          },
+        }),
+      ),
+    ),
+  );
+
+  it.effect("gives a task folder thread its worktrees and never the original checkouts", () =>
+    Effect.gen(function* () {
+      const policy = yield* resolvePolicy("/tasks/fix/web");
+      assert.deepStrictEqual(policy.workspace?.extraRoots, ["/tasks/fix/api"]);
+      // `../api` from the web worktree is not `../../srv/api` from the original web checkout.
+      assert.isTrue(policy.workspace?.relativePathsDiffer);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          workspaceRoot: "/work/web",
+          trackedFolders: [
+            { path: "/srv/api", name: "api" },
+            { path: "/srv/tools", name: "tools" },
+          ],
+          workspace: {
+            cwd: "/tasks/fix/web",
+            repositories: [
+              repository("web", "/tasks/fix/web", "/work/web", "", "home"),
+              repository("api", "/tasks/fix/api", "/srv/api", "../api"),
+              repository("tools", "/srv/tools", "/srv/tools", "../../../srv/tools"),
+            ],
+            references: [],
+            taskFolder: {
+              root: "/tasks/fix",
+              projectId,
+              homeWorktreePath: "/tasks/fix/web",
+              repositories: [],
+              createdAt: "2026-06-21T00:00:00.000Z",
+              updatedAt: "2026-06-21T00:00:00.000Z",
+            },
+          },
+        }),
+      ),
+    ),
+  );
+
+  it.effect("keeps a task folder's repos after the project stops tracking them", () =>
+    Effect.gen(function* () {
+      const policy = yield* resolvePolicy("/tasks/fix/web");
+      assert.deepStrictEqual(policy.workspace?.extraRoots, ["/tasks/fix/api"]);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          workspaceRoot: "/work/web",
+          trackedFolders: [],
+          recordTaskFolder: true,
+          workspace: {
+            cwd: "/tasks/fix/web",
+            repositories: [
+              repository("web", "/tasks/fix/web", "/work/web", "", "home"),
+              repository("api", "/tasks/fix/api", "/work/web/api", "api"),
+            ],
+            references: [],
+            taskFolder: {
+              root: "/tasks/fix",
+              projectId,
+              homeWorktreePath: "/tasks/fix/web",
+              repositories: [],
+              createdAt: "2026-06-21T00:00:00.000Z",
+              updatedAt: "2026-06-21T00:00:00.000Z",
+            },
+          },
+        }),
+      ),
+    ),
   );
 });

@@ -5,9 +5,11 @@ import type {
   ProjectScript,
   ResolvedKeybindingsConfig,
   ThreadId,
+  WorkspaceRepository,
 } from "@t3tools/contracts";
 
 import type { DraftId } from "../../composerDraftStore";
+import type { DiffPanelRepository } from "../../diffPanelStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
 import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
@@ -63,6 +65,8 @@ interface ThreadDetailsPanelProps extends Pick<
   gitCwd: string | null;
   workspaceMutationId: string | null;
   isGitRepo: boolean;
+  /** The thread's repos in a multi-repo project, home first; each gets its own Git section. */
+  workspaceRepositories: ReadonlyArray<WorkspaceRepository>;
   envLocked: boolean;
   availableEnvironments: readonly EnvironmentOption[];
   autoEnvironmentLabel?: string | undefined;
@@ -76,7 +80,8 @@ interface ThreadDetailsPanelProps extends Pick<
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest: () => void;
-  onOpenChanges?: () => void;
+  /** Opens the diff, on one repo of a multi-repo thread. */
+  onOpenChanges?: (repository?: DiffPanelRepository) => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -95,6 +100,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     props.activeProjectScripts && visible.scripts ? props.gitCwd : null,
   );
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
+  const multiRepo = props.workspaceRepositories.length > 1;
+  // A lone tracked repo beside a plain home folder takes the home section's place.
+  const soleRepository =
+    props.workspaceRepositories.length === 1 && props.workspaceRepositories[0]!.kind !== "home"
+      ? props.workspaceRepositories[0]!
+      : null;
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
     environmentId: props.environmentId,
@@ -160,6 +171,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             props.activeProjectName !== undefined &&
             (visible.gitActions || (visible.changes && props.isGitRepo)),
         };
+        const showRepositoryGit =
+          props.activeProjectName !== undefined && (visible.gitActions || visible.changes);
         return (
           <>
             <div className="group/details-items">
@@ -213,7 +226,54 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 </ThreadDetailsSection>
               ) : null}
 
-              {props.gitCwd && (show.branch || show.git) ? (
+              {props.gitCwd && multiRepo
+                ? props.workspaceRepositories.map((repository, index) => {
+                    const showRepositoryBranch = repository.kind === "home" && show.branch;
+                    if (!showRepositoryBranch && !showRepositoryGit) return null;
+                    const diffRepository = {
+                      key: repository.kind === "home" ? "home" : repository.originalPath,
+                      name: repository.name,
+                      cwd: repository.cwd,
+                    };
+                    return (
+                      <ThreadDetailsSection
+                        key={repository.cwd}
+                        headingId={`thread-details-repository-${index}-heading`}
+                        title={repository.name}
+                        separated={density === "full" || index > 0}
+                      >
+                        <div className="flex flex-col">
+                          {showRepositoryBranch ? (
+                            <BranchToolbar
+                              layout="panel"
+                              panelSection="branch"
+                              {...branchToolbarProps}
+                            />
+                          ) : null}
+                          {showRepositoryGit ? (
+                            <GitActionsControl
+                              compact={density !== "full"}
+                              showActions={visible.gitActions}
+                              showChanges={visible.changes}
+                              gitCwd={repository.cwd}
+                              activeThreadRef={activeThreadRef}
+                              repositoryName={repository.name}
+                              syncThreadBranch={repository.kind === "home"}
+                              {...(props.draftId ? { draftId: props.draftId } : {})}
+                              {...(props.onOpenChanges
+                                ? { onOpenChanges: () => props.onOpenChanges?.(diffRepository) }
+                                : {})}
+                            />
+                          ) : null}
+                        </div>
+                      </ThreadDetailsSection>
+                    );
+                  })
+                : null}
+
+              {props.gitCwd &&
+              !multiRepo &&
+              (show.branch || (soleRepository ? showRepositoryGit : show.git)) ? (
                 <ThreadDetailsSection
                   headingId="thread-details-version-control-heading"
                   title="Version Control"
@@ -224,7 +284,20 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                     {show.branch ? (
                       <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
                     ) : null}
-                    {show.git ? (
+                    {soleRepository ? (
+                      showRepositoryGit ? (
+                        <GitActionsControl
+                          compact={density !== "full"}
+                          showActions={visible.gitActions}
+                          showChanges={visible.changes}
+                          gitCwd={soleRepository.cwd}
+                          activeThreadRef={activeThreadRef}
+                          syncThreadBranch={false}
+                          {...(props.draftId ? { draftId: props.draftId } : {})}
+                          {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+                        />
+                      ) : null
+                    ) : show.git ? (
                       <GitActionsControl
                         compact={density !== "full"}
                         showActions={visible.gitActions}

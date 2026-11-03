@@ -1,7 +1,10 @@
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
 import {
   GitManagerError,
@@ -33,6 +36,7 @@ import * as GitManager from "./GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import { TaskFolderStore } from "../workspace/TaskFolders.ts";
 
 export class GitWorkflowService extends Context.Service<
   GitWorkflowService,
@@ -70,6 +74,7 @@ export class GitWorkflowService extends Context.Service<
     ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
     readonly preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
+      options?: GitManager.PreparePullRequestThreadOptions,
     ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
     readonly listRefs: (
       input: VcsListRefsInput,
@@ -176,6 +181,37 @@ export const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const taskFolders = yield* Effect.serviceOption(TaskFolderStore);
+
+  // A task folder row records its branch, so a switch in the row's worktree moves the row too.
+  const recordRowBranch = (paths: ReadonlyArray<string>, branch: string | null) => {
+    if (Option.isNone(taskFolders)) return Effect.void;
+    const store = taskFolders.value;
+    const matches = (worktreePath: string) =>
+      paths.some((candidate) => path.resolve(candidate) === path.resolve(worktreePath));
+    return store.findContaining(path.resolve(paths[0]!)).pipe(
+      Effect.flatMap((record) =>
+        Option.isNone(record) ||
+        !record.value.repositories.some((row) => matches(row.worktreePath) && row.branch !== branch)
+          ? Effect.void
+          : DateTime.now.pipe(
+              Effect.flatMap((now) =>
+                store.upsert({
+                  ...record.value,
+                  repositories: record.value.repositories.map((row) =>
+                    matches(row.worktreePath) ? { ...row, branch } : row,
+                  ),
+                  updatedAt: DateTime.formatIso(now),
+                }),
+              ),
+            ),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Task folder branch update failed", { cwd: paths[0], cause }),
+      ),
+    );
+  };
 
   // Nested projects and path aliases must share the checkout's branch-mutation lease.
   const withCheckoutLease = <A, E, R>(rootPath: string, effect: Effect.Effect<A, E, R>) =>
@@ -381,6 +417,12 @@ export const make = Effect.gen(function* () {
           withCheckoutLease(
             handle.repository.rootPath,
             gitManager.runStackedAction(input, options),
+          ).pipe(
+            Effect.tap((result) =>
+              !input.featureBranch || result.branch.name === undefined
+                ? Effect.void
+                : recordRowBranch([input.cwd, handle.repository.rootPath], result.branch.name),
+            ),
           ),
         ),
       );
@@ -390,15 +432,15 @@ export const make = Effect.gen(function* () {
       gitManager.resolvePullRequest,
     ),
     preparePullRequestThread: Effect.fn("GitWorkflowService.preparePullRequestThread")(
-      function (input) {
+      function (input, options) {
         return ensureGit("GitWorkflowService.preparePullRequestThread", input.cwd).pipe(
           Effect.flatMap((handle) =>
             input.mode === "local"
               ? withCheckoutLease(
                   handle.repository.rootPath,
-                  gitManager.preparePullRequestThread(input),
+                  gitManager.preparePullRequestThread(input, options),
                 )
-              : gitManager.preparePullRequestThread(input),
+              : gitManager.preparePullRequestThread(input, options),
           ),
         );
       },
@@ -475,7 +517,11 @@ export const make = Effect.gen(function* () {
       return ensureGitCommand("GitWorkflowService.createRef", input.cwd).pipe(
         Effect.flatMap((handle) =>
           input.switchRef
-            ? withCheckoutLease(handle.repository.rootPath, git.createRef(input))
+            ? withCheckoutLease(handle.repository.rootPath, git.createRef(input)).pipe(
+                Effect.tap((result) =>
+                  recordRowBranch([input.cwd, handle.repository.rootPath], result.refName),
+                ),
+              )
             : git.createRef(input),
         ),
       );
@@ -483,7 +529,11 @@ export const make = Effect.gen(function* () {
     switchRef: Effect.fn("GitWorkflowService.switchRef")(function (input) {
       return ensureGitCommand("GitWorkflowService.switchRef", input.cwd).pipe(
         Effect.flatMap((handle) =>
-          withCheckoutLease(handle.repository.rootPath, Effect.scoped(git.switchRef(input))),
+          withCheckoutLease(handle.repository.rootPath, Effect.scoped(git.switchRef(input))).pipe(
+            Effect.tap((result) =>
+              recordRowBranch([input.cwd, handle.repository.rootPath], result.refName),
+            ),
+          ),
         ),
       );
     }),

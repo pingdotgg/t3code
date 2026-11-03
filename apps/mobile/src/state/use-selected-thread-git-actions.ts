@@ -52,7 +52,14 @@ const selectedThreadStatusRevalidation = createVcsStatusRevalidationAtomFamily({
     ),
 });
 
-export function useSelectedThreadGitActions() {
+/** One repo of a multi-repo thread. Omitted means the thread's own cwd. */
+export interface ThreadGitRepositoryTarget {
+  readonly cwd: string;
+  /** Only home's branch is the thread's branch; other repos never update thread metadata. */
+  readonly home: boolean;
+}
+
+export function useSelectedThreadGitActions(repository?: ThreadGitRepositoryTarget) {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -71,8 +78,11 @@ export function useSelectedThreadGitActions() {
     selectedThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
-  const canChangeThreadBranch = canWriteSourceControl && canOperateThread;
-  const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const updatesThreadBranch = repository === undefined || repository.home;
+  const canChangeThreadBranch = canWriteSourceControl && (canOperateThread || !updatesThreadBranch);
+  const worktree = useSelectedThreadWorktree();
+  const { selectedThreadWorktreePath } = worktree;
+  const selectedThreadCwd = repository?.cwd ?? worktree.selectedThreadCwd;
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
       environmentId: selectedThread?.environmentId ?? null,
@@ -81,7 +91,9 @@ export function useSelectedThreadGitActions() {
     { reportFailure: false },
   );
 
-  const selectedThreadGitRootCwd = selectedThreadProject?.workspaceRoot ?? null;
+  const selectedThreadGitRootCwd = updatesThreadBranch
+    ? (selectedThreadProject?.workspaceRoot ?? null)
+    : selectedThreadCwd;
   const branchTarget = {
     environmentId: selectedThread?.environmentId ?? null,
     cwd: selectedThreadGitRootCwd,
@@ -177,6 +189,7 @@ export function useSelectedThreadGitActions() {
       !selectedThreadCwd ||
       !readEnvironmentScope(selectedThread.environmentId, AuthSourceControlWriteScope) ||
       (options?.changesThreadBranch === true &&
+        updatesThreadBranch &&
         !readEnvironmentScope(selectedThread.environmentId, AuthOrchestrationOperateScope))
     ) {
       return null;
@@ -235,9 +248,10 @@ export function useSelectedThreadGitActions() {
     };
   }): Promise<AtomCommandResult<void, unknown>> => {
     // Git already changed; refresh even if metadata updates fail so the sheet shows the current branch.
-    const updateResult = input.nextThreadState
-      ? await updateThreadGitContext(input.thread, input.nextThreadState)
-      : AsyncResult.success(undefined);
+    const updateResult =
+      input.nextThreadState && updatesThreadBranch
+        ? await updateThreadGitContext(input.thread, input.nextThreadState)
+        : AsyncResult.success(undefined);
     branchState.refresh();
     await refreshSelectedThreadGitStatus({ quiet: true, cwd: input.cwd });
     return AsyncResult.isFailure(updateResult)

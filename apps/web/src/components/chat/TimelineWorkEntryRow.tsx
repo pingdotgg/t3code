@@ -207,7 +207,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const { workEntry, workspaceRoot, displayLabel } = props;
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
-  const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
+  const {
+    retryableWorkspacePreparationRunIds,
+    onRetryWorkspacePreparation,
+    failedWorktreeRepositories,
+  } = ctx;
   const threadTarget = useThreadReadTarget(workEntry, ctx.activeThreadEnvironmentId);
   const createdThread =
     workEntry.projectedItem?.item.type === "thread_created"
@@ -287,7 +291,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           </p>
         ) : null}
         {retryRunId !== null && onRetryWorkspacePreparation ? (
-          <div className="ms-7 pb-1">
+          <div className="ms-7 flex flex-wrap gap-1 pb-1">
             <Button
               type="button"
               size="xs"
@@ -297,6 +301,17 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               <RotateCcwIcon aria-hidden />
               Retry
             </Button>
+            {failedWorktreeRepositories.map((repository) => (
+              <Button
+                key={repository.path}
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={() => onRetryWorkspacePreparation(retryRunId, [repository.path])}
+              >
+                Start without {repository.name}
+              </Button>
+            ))}
           </div>
         ) : null}
       </WorkLogRow>

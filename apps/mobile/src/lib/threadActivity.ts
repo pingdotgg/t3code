@@ -2140,6 +2140,19 @@ function setsEqual<T>(left: ReadonlySet<T>, right: ReadonlySet<T>): boolean {
   return true;
 }
 
+/** A turn shows its changes when any repo changed or the agent edited a repo without history. */
+export function turnHasChanges(
+  summary: Pick<ThreadCheckpointSummary, "status" | "files" | "repositories" | "outsideEdits">,
+): boolean {
+  return (
+    (summary.status === "ready" && summary.files.length > 0) ||
+    summary.repositories.some(
+      (repository) => repository.status === "ready" && repository.files.length > 0,
+    ) ||
+    summary.outsideEdits.length > 0
+  );
+}
+
 // Summaries are re-derived whenever messages change, including streamed text,
 // so a new array often holds the same checkpoints.
 function checkpointSummariesEqual(
@@ -2159,6 +2172,8 @@ function checkpointSummariesEqual(
       summary.completedAt === other.completedAt &&
       summary.status === other.status &&
       summary.files === other.files &&
+      summary.repositories === other.repositories &&
+      summary.outsideEdits === other.outsideEdits &&
       summary.assistantMessageId === other.assistantMessageId
     );
   });
@@ -2416,7 +2431,7 @@ export function buildThreadFeed(
   }
   const checkpointByMessageId = new Map(
     (options?.checkpointSummaries ?? [])
-      .filter((checkpoint) => checkpoint.status === "ready" && checkpoint.files.length > 0)
+      .filter(turnHasChanges)
       .map((checkpoint) => [checkpoint.assistantMessageId, checkpoint]),
   );
   const grouped = groupAdjacentActivities(

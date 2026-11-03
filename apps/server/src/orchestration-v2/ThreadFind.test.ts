@@ -62,6 +62,7 @@ const createProject = (projectId: ProjectId) =>
         workspaceRoot: `/work/${projectId}`,
         defaultModelSelection: null,
         scripts: [],
+        trackedFolders: [],
         createdAt: DateTime.formatIso(at(0)),
         updatedAt: DateTime.formatIso(at(0)),
       },

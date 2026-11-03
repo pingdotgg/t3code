@@ -596,6 +596,52 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.notEqual(rotatedKey, initialKey);
   });
 
+  it("opens a new query with the thread's other repos when they change", () => {
+    const workspace = (extraRoots: ReadonlyArray<string>) => ({
+      repositories: [
+        { name: "web", path: "/work/web" },
+        ...extraRoots.map((root) => ({ name: NodePath.basename(root), path: root })),
+      ],
+      referenceFolders: [{ name: "design", path: "/notes/design" }],
+      extraRoots,
+      relativePathsDiffer: false,
+    });
+    const queryPolicy = (extraRoots?: ReadonlyArray<string>) =>
+      ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: "/work/web",
+          ...(extraRoots === undefined ? {} : { workspace: workspace(extraRoots) }),
+        }),
+      );
+    const key = (extraRoots?: ReadonlyArray<string>) =>
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(queryPolicy(extraRoots), {});
+    assert.equal(key(["/work/api"]), key(["/work/api"]));
+    assert.notEqual(key(["/work/api"]), key(["/work/api", "/work/docs"]));
+    assert.notEqual(key(), key(["/work/api"]));
+
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-multi-repo",
+      resume: true,
+      cwd: "/work/web",
+      attachmentsDir: "/attachments",
+      workspace: workspace(["/work/api"]),
+    });
+    // Reference folders are listed in the prompt but never granted.
+    assert.deepEqual(options.additionalDirectories, ["/work/web", "/work/api", "/attachments"]);
+    const systemPrompt = options.systemPrompt;
+    const append =
+      typeof systemPrompt === "object" &&
+      !Array.isArray(systemPrompt) &&
+      systemPrompt.type === "preset"
+        ? systemPrompt.append
+        : undefined;
+    assert.include(append, "- api (Git repository): /work/api");
+    assert.include(append, "- design (read-only reference): /notes/design");
+  });
+
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
     const readOnlyToolNames = [
       ...Object.values(OrchestratorToolkit.tools),

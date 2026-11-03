@@ -45,6 +45,24 @@ import type {
   ProviderSelectionTransitionPlan,
 } from "./selectionTransition.ts";
 
+const ProviderAdapterV2WorkspaceFolder = Schema.Struct({
+  name: Schema.String,
+  path: Schema.String,
+});
+
+/** The other folders of a multi-repo thread. Single-repo threads omit it. */
+export const ProviderAdapterV2RuntimeWorkspace = Schema.Struct({
+  /** Git repos, home first. `path` is where the agent works on the repo. */
+  repositories: Schema.Array(ProviderAdapterV2WorkspaceFolder),
+  /** Plain folders the agent may read but never write. */
+  referenceFolders: Schema.Array(ProviderAdapterV2WorkspaceFolder),
+  /** Repo paths outside `cwd`. Adapters grant them as writable roots where the provider can. */
+  extraRoots: Schema.Array(Schema.String),
+  /** True when `../` paths between the repos differ from the original checkouts. */
+  relativePathsDiffer: Schema.Boolean,
+});
+export type ProviderAdapterV2RuntimeWorkspace = typeof ProviderAdapterV2RuntimeWorkspace.Type;
+
 export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -56,6 +74,8 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
    * it; adapters use it to refuse native mode choices a user makes beside T3 Code's own.
    */
   maxRuntimeMode: Schema.optional(RuntimeMode),
+  reasoningEffort: Schema.optional(Schema.String),
+  workspace: Schema.optional(ProviderAdapterV2RuntimeWorkspace),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 

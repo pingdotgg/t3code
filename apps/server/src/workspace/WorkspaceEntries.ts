@@ -1,9 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as RcMap from "effect/RcMap";
 import * as Schema from "effect/Schema";
@@ -26,8 +28,12 @@ import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/p
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { isWithinRoot } from "./KnownWorkspaces.ts";
+import { TaskFolderStore } from "./TaskFolders.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as WorkspaceRepositories from "./WorkspaceRepositories.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
 export class WorkspaceEntriesWindowsPathUnsupportedError extends Schema.TaggedError<WorkspaceEntriesWindowsPathUnsupportedError>()(
@@ -93,6 +99,13 @@ export const WorkspaceEntriesError = Schema.Union([
 ]);
 export type WorkspaceEntriesError = typeof WorkspaceEntriesError.Type;
 
+/** A repository or reference a multi-repo thread reaches outside its cwd's own index. */
+export interface WorkspaceThreadRoot {
+  readonly path: string;
+  /** From the cwd with `/` separators, such as `api` or `../app`. */
+  readonly prefix: string;
+}
+
 export class WorkspaceEntries extends Context.Service<
   WorkspaceEntries,
   {
@@ -112,6 +125,8 @@ export class WorkspaceEntries extends Context.Service<
       input: ProjectSearchContentsInput,
     ) => Effect.Effect<ProjectSearchContentsResult, WorkspaceEntriesError>;
     readonly refresh: (cwd: string) => Effect.Effect<void>;
+    /** Empty unless `cwd` is the cwd of a multi-repo project's thread. Cached briefly. */
+    readonly threadRoots: (cwd: string) => Effect.Effect<ReadonlyArray<WorkspaceThreadRoot>>;
   }
 >()("t3/workspace/WorkspaceEntries") {}
 
@@ -152,12 +167,36 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   );
 });
 
+/** Interleaves ranked results from several indexes, since their scores are not comparable. */
+const mergeSearchResults = (
+  results: ReadonlyArray<ProjectSearchEntriesResult>,
+  limit: number,
+): ProjectSearchEntriesResult => {
+  const seen = new Set<string>();
+  const entries: Array<ProjectEntry> = [];
+  let overflow = false;
+  const depth = Math.max(0, ...results.map((result) => result.entries.length));
+  for (let rank = 0; rank < depth; rank++) {
+    for (const result of results) {
+      const entry = result.entries[rank];
+      if (entry === undefined || seen.has(entry.path)) continue;
+      seen.add(entry.path);
+      if (entries.length < limit) entries.push(entry);
+      else overflow = true;
+    }
+  }
+  return { entries, truncated: overflow || results.some((result) => result.truncated) };
+};
+
 /** @public */
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
   const vcsProcess = yield* VcsProcess.VcsProcess;
+  const projectStore = yield* ProjectStore.ProjectStoreV2;
+  const taskFolders = yield* TaskFolderStore;
+  const workspaceRepositories = yield* WorkspaceRepositories.WorkspaceRepositories;
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
@@ -165,43 +204,110 @@ export const make = Effect.gen(function* () {
     return yield* workspacePaths.normalizeWorkspaceRoot(cwd);
   });
 
+  const resolveThreadRoots = Effect.fn("WorkspaceEntries.resolveThreadRoots")(function* (
+    cwd: string,
+  ) {
+    const project = Option.getOrUndefined(
+      yield* projectStore
+        .findActiveByWorkspaceRoot(cwd)
+        .pipe(Effect.orElseSucceed(() => Option.none())),
+    );
+    const taskFolder =
+      project === undefined
+        ? Option.getOrUndefined(
+            yield* taskFolders.findContaining(cwd).pipe(Effect.orElseSucceed(() => Option.none())),
+          )
+        : undefined;
+    const target =
+      project !== undefined && project.trackedFolders.length > 0
+        ? { projectId: project.projectId, worktreePath: null }
+        : taskFolder !== undefined && taskFolder.homeWorktreePath === cwd
+          ? { projectId: taskFolder.projectId, worktreePath: cwd }
+          : undefined;
+    if (target === undefined) return [];
+    const workspace = yield* workspaceRepositories
+      .resolveThreadWorkspace(target)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (workspace === undefined) return [];
+    // A plain-folder home's own index already walks into the repos it holds.
+    const homeIsGit = workspace.repositories.some((repository) => repository.kind === "home");
+    return [
+      ...workspace.repositories.flatMap((repository) =>
+        repository.kind === "repository" ? [repository.cwd] : [],
+      ),
+      ...workspace.references.map((reference) => reference.path),
+    ].flatMap((root): ReadonlyArray<WorkspaceThreadRoot> =>
+      root === cwd || (!homeIsGit && isWithinRoot(path, root, cwd))
+        ? []
+        : [{ path: root, prefix: path.relative(cwd, root).split(path.sep).join("/") }],
+    );
+  });
+
+  // Search runs per keystroke, so Git detection runs once per cwd until a refresh.
+  const threadRootsCache = yield* Cache.make({
+    capacity: 256,
+    timeToLive: "1 minute",
+    lookup: (cwd: string) => resolveThreadRoots(cwd),
+  });
+
+  const threadRoots: WorkspaceEntries["Service"]["threadRoots"] = Effect.fn(
+    "WorkspaceEntries.threadRoots",
+  )(function* (cwd) {
+    const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    return normalizedCwd === undefined ? [] : yield* Cache.get(threadRootsCache, normalizedCwd);
+  });
+
+  const refreshIndexes = Effect.fn("WorkspaceEntries.refreshIndexes")(function* (
+    cwd: string,
+    normalizedCwd: string,
+  ) {
+    for (const variant of WorkspaceSearchIndex.WORKSPACE_SEARCH_INDEX_VARIANTS) {
+      const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, variant);
+      if (!(yield* RcMap.has(workspaceSearchIndexes.rcMap, indexKey))) {
+        continue;
+      }
+      const recoverRefreshFailure = Effect.fn("WorkspaceEntries.recoverRefreshFailure")(function* (
+        cause:
+          | WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed
+          | WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut
+          | WorkspaceSearchIndex.WorkspaceSearchIndexRefreshFailed,
+      ) {
+        yield* Effect.logWarning("Failed to refresh workspace search index", {
+          cwd,
+          variant,
+          cause,
+        });
+        yield* workspaceSearchIndexes.invalidate(indexKey);
+      });
+      yield* Effect.gen(function* () {
+        const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
+        yield* searchIndex.refresh();
+      }).pipe(
+        Effect.provide(workspaceSearchIndexes.get(indexKey)),
+        Effect.catchTags({
+          WorkspaceSearchIndexCreateFailed: recoverRefreshFailure,
+          WorkspaceSearchIndexScanTimedOut: recoverRefreshFailure,
+          WorkspaceSearchIndexRefreshFailed: recoverRefreshFailure,
+        }),
+      );
+    }
+  });
+
   const refresh: WorkspaceEntries["Service"]["refresh"] = Effect.fn("WorkspaceEntries.refresh")(
     function* (cwd) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(
         Effect.orElseSucceed(() => cwd),
       );
-      for (const variant of WorkspaceSearchIndex.WORKSPACE_SEARCH_INDEX_VARIANTS) {
-        const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, variant);
-        if (!(yield* RcMap.has(workspaceSearchIndexes.rcMap, indexKey))) {
-          continue;
-        }
-        const recoverRefreshFailure = Effect.fn("WorkspaceEntries.recoverRefreshFailure")(
-          function* (
-            cause:
-              | WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed
-              | WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut
-              | WorkspaceSearchIndex.WorkspaceSearchIndexRefreshFailed,
-          ) {
-            yield* Effect.logWarning("Failed to refresh workspace search index", {
-              cwd,
-              variant,
-              cause,
-            });
-            yield* workspaceSearchIndexes.invalidate(indexKey);
-          },
-        );
-        yield* Effect.gen(function* () {
-          const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-          yield* searchIndex.refresh();
-        }).pipe(
-          Effect.provide(workspaceSearchIndexes.get(indexKey)),
-          Effect.catchTags({
-            WorkspaceSearchIndexCreateFailed: recoverRefreshFailure,
-            WorkspaceSearchIndexScanTimedOut: recoverRefreshFailure,
-            WorkspaceSearchIndexRefreshFailed: recoverRefreshFailure,
-          }),
-        );
-      }
+      yield* refreshIndexes(cwd, normalizedCwd);
+      // A turn or a write may have changed which repos the thread reaches, so resolve again.
+      yield* Cache.invalidate(threadRootsCache, normalizedCwd);
+      const roots = yield* Cache.get(threadRootsCache, normalizedCwd);
+      yield* Effect.forEach(roots, (root) => refreshIndexes(root.path, root.path), {
+        concurrency: 4,
+        discard: true,
+      });
     },
   );
 
@@ -254,22 +360,58 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // Runs per keystroke inside the search span, so it adds no span of its own.
+  const searchIndex = Effect.fnUntraced(function* (
+    root: string,
+    query: string,
+    input: ProjectSearchEntriesInput,
+  ) {
+    return yield* Effect.gen(function* () {
+      const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
+      return yield* searchIndex.search(query, input.limit, input.kind, input.imageOnly);
+    }).pipe(
+      Effect.provide(
+        workspaceSearchIndexes.get(WorkspaceSearchIndex.workspaceSearchIndexKey(root, "paths")),
+      ),
+    );
+  });
+
   const search: WorkspaceEntries["Service"]["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
       const normalizedQuery = normalizeSearchQuery(input.query, {
         trimLeadingPattern: /^[@./]+/,
       });
-      return yield* Effect.gen(function* () {
-        const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-        return yield* searchIndex.search(normalizedQuery, input.limit, input.kind, input.imageOnly);
-      }).pipe(
-        Effect.provide(
-          workspaceSearchIndexes.get(
-            WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths"),
-          ),
-        ),
+      // Image search picks the project's own icon, so it stays in the cwd.
+      const roots = input.imageOnly ? [] : yield* Cache.get(threadRootsCache, normalizedCwd);
+      if (roots.length === 0) return yield* searchIndex(normalizedCwd, normalizedQuery, input);
+      const searchRoot = (root: WorkspaceThreadRoot) => {
+        // `../app/src` loses its leading `../` above; a query naming the root searches inside it.
+        const name = root.prefix.replace(/^(?:\.\.\/)+/, "");
+        const query = normalizedQuery.startsWith(`${name}/`)
+          ? normalizedQuery.slice(name.length + 1)
+          : normalizedQuery;
+        return normalizeWorkspaceRoot(root.path).pipe(
+          Effect.flatMap((rootPath) => searchIndex(rootPath, query, input)),
+          Effect.map((result) => ({
+            ...result,
+            entries: result.entries.map((entry) => ({
+              ...entry,
+              path: `${root.prefix}/${entry.path}`,
+            })),
+          })),
+          // A missing or unreadable repo leaves the others searchable.
+          Effect.orElseSucceed((): ProjectSearchEntriesResult => ({
+            entries: [],
+            truncated: false,
+          })),
+        );
+      };
+      const results = yield* Effect.all(
+        [searchIndex(normalizedCwd, normalizedQuery, input), ...roots.map(searchRoot)],
+        { concurrency: 4 },
       );
+      return mergeSearchResults(results, input.limit);
     },
   );
 
@@ -289,176 +431,199 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const listDirectory = Effect.fn("WorkspaceEntries.listDirectory")(function* (
+    normalizedCwd: string,
+    directoryPath: string,
+  ): Effect.fn.Return<ProjectListEntriesResult, WorkspaceEntriesError> {
+    const toError = (cause: unknown) =>
+      new WorkspaceEntriesReadDirectoryError({
+        cwd: normalizedCwd,
+        partialPath: directoryPath,
+        parentPath: path.resolve(normalizedCwd, directoryPath),
+        cause,
+      });
+    const target =
+      directoryPath === ""
+        ? { absolutePath: normalizedCwd, relativePath: "" }
+        : yield* workspacePaths
+            .resolveRelativePathWithinRoot({
+              workspaceRoot: normalizedCwd,
+              relativePath: directoryPath,
+            })
+            .pipe(Effect.mapError(toError));
+    const { entries, throughSymlink, nestedGitRoots } = yield* Effect.tryPromise({
+      try: async () => {
+        const root = await NodeFSP.realpath(normalizedCwd);
+        const directory = await NodeFSP.realpath(target.absolutePath);
+        const relative = path.relative(root, directory);
+        if (
+          relative === ".." ||
+          relative.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(relative) ||
+          relative.split(path.sep).includes(".git") ||
+          target.relativePath.split("/").includes(".git")
+        ) {
+          throw new Error("Directory must be inside the workspace and outside .git.");
+        }
+        const children = await NodeFSP.readdir(directory, { withFileTypes: true });
+        const isSameOrInside = (parent: string, child: string) => {
+          const relativeChild = path.relative(parent, child);
+          return (
+            relativeChild !== ".." &&
+            !relativeChild.startsWith(`..${path.sep}`) &&
+            !path.isAbsolute(relativeChild)
+          );
+        };
+        // Reject canonical ancestors so "Expand all folders" cannot follow a cycle.
+        let visitedFolders: Promise<ReadonlyArray<string>> | undefined;
+        const loadVisitedFolders = () =>
+          (visitedFolders ??= (async () => {
+            const folders = [root];
+            let current = normalizedCwd;
+            for (const segment of target.relativePath.split("/").filter(Boolean)) {
+              current = path.join(current, segment);
+              folders.push(await NodeFSP.realpath(current));
+            }
+            return folders;
+          })());
+        const resolveSymlinkKind = async (
+          name: string,
+        ): Promise<ProjectEntry["kind"] | undefined> => {
+          const resolved = await NodeFSP.realpath(path.join(directory, name)).catch(
+            () => undefined,
+          );
+          if (
+            resolved === undefined ||
+            !isSameOrInside(root, resolved) ||
+            path.relative(root, resolved).split(path.sep).includes(".git")
+          ) {
+            return undefined;
+          }
+          const stat = await NodeFSP.stat(resolved).catch(() => undefined);
+          if (stat?.isFile()) return "file";
+          if (!stat?.isDirectory()) return undefined;
+          const folders = await loadVisitedFolders();
+          return folders.some((folder) => isSameOrInside(resolved, folder))
+            ? undefined
+            : "directory";
+        };
+        // Bound filesystem work for directories such as pnpm node_modules.
+        const kinds: Array<ProjectEntry["kind"] | undefined> = [];
+        for (let offset = 0; offset < children.length; offset += SYMLINK_RESOLVE_BATCH_SIZE) {
+          kinds.push(
+            ...(await Promise.all(
+              children
+                .slice(offset, offset + SYMLINK_RESOLVE_BATCH_SIZE)
+                .map(async (child): Promise<ProjectEntry["kind"] | undefined> => {
+                  if (child.name === ".git") return undefined;
+                  if (child.isDirectory()) return "directory";
+                  if (child.isFile()) return "file";
+                  return child.isSymbolicLink() ? resolveSymlinkKind(child.name) : undefined;
+                }),
+            )),
+          );
+        }
+        const nestedGitRoots: Array<string> = [];
+        const segments = target.relativePath.split("/").filter(Boolean);
+        for (let index = 1; index <= segments.length; index += 1) {
+          const candidate = segments.slice(0, index).join("/");
+          const dotGit = await NodeFSP.lstat(path.join(normalizedCwd, candidate, ".git")).catch(
+            () => null,
+          );
+          if (dotGit) nestedGitRoots.push(candidate);
+        }
+        return {
+          nestedGitRoots,
+          entries: children.flatMap((child, index): ProjectEntry[] => {
+            const kind = kinds[index];
+            if (kind === undefined) return [];
+            return [
+              {
+                path: target.relativePath ? `${target.relativePath}/${child.name}` : child.name,
+                kind,
+              },
+            ];
+          }),
+          // Git refuses to classify paths beyond a symbolic link.
+          throughSymlink: relative !== target.relativePath.split("/").join(path.sep),
+        };
+      },
+      catch: toError,
+    });
+    let gitRoot = "";
+    let gitPrefix = "";
+    // stdin avoids argument limits; ignore classification is optional without git/repositories.
+    const checkIgnore = (paths: ReadonlyArray<string>) =>
+      vcsProcess
+        .run({
+          operation: "WorkspaceEntries.list",
+          command: "git",
+          args: ["-c", "core.fsmonitor=false", "check-ignore", "-z", "--stdin"],
+          cwd: path.join(normalizedCwd, gitRoot),
+          stdin: `${paths.map((entryPath) => entryPath.slice(gitPrefix.length)).join("\0")}\0`,
+          allowNonZeroExit: true,
+          timeoutMs: 10_000,
+          maxOutputBytes: 16 * 1024 * 1024,
+        })
+        .pipe(Effect.orElseSucceed(() => undefined));
+    // Git refuses paths inside a submodule (128) but still answers for nested clones.
+    for (const nestedGitRoot of nestedGitRoots) {
+      if ((yield* checkIgnore([`${nestedGitRoot}/.git`]))?.exitCode !== 128) continue;
+      gitRoot = nestedGitRoot;
+      gitPrefix = `${gitRoot}/`;
+    }
+    const directoryGitPath = target.relativePath.slice(gitPrefix.length);
+    // Check ignored folders once to avoid child index lookups; exit 0 guarantees no tracked descendants.
+    // Symlinks and pathspec magic still need per-child checks.
+    if (
+      entries.length > IGNORE_CHECK_CHUNK_SIZE &&
+      directoryGitPath !== "" &&
+      !throughSymlink &&
+      !/^:|[*?[\\]/.test(directoryGitPath) &&
+      (yield* checkIgnore([target.relativePath]))?.exitCode === 0
+    ) {
+      return {
+        entries: entries.map((entry) => ({ ...entry, ignored: true })),
+        truncated: false,
+      };
+    }
+    const ignored = new Set<string>();
+    for (let offset = 0; offset < entries.length; offset += IGNORE_CHECK_CHUNK_SIZE) {
+      const result = yield* checkIgnore(
+        entries.slice(offset, offset + IGNORE_CHECK_CHUNK_SIZE).map((entry) => entry.path),
+      );
+      if (!result || (result.exitCode !== 0 && result.exitCode !== 1)) break;
+      for (const ignoredPath of result.stdout.split("\0")) ignored.add(gitPrefix + ignoredPath);
+    }
+    return {
+      entries: entries.map((entry) =>
+        ignored.has(entry.path) ? { ...entry, ignored: true } : entry,
+      ),
+      truncated: false,
+    };
+  });
+
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
       if (input.directoryPath !== undefined) {
-        const directoryPath = input.directoryPath;
-        const toError = (cause: unknown) =>
-          new WorkspaceEntriesReadDirectoryError({
-            cwd: normalizedCwd,
-            partialPath: directoryPath,
-            parentPath: path.resolve(normalizedCwd, directoryPath),
-            cause,
-          });
-        const target =
-          directoryPath === ""
-            ? { absolutePath: normalizedCwd, relativePath: "" }
-            : yield* workspacePaths
-                .resolveRelativePathWithinRoot({
-                  workspaceRoot: normalizedCwd,
-                  relativePath: directoryPath,
-                })
-                .pipe(Effect.mapError(toError));
-        const { entries, throughSymlink, nestedGitRoots } = yield* Effect.tryPromise({
-          try: async () => {
-            const root = await NodeFSP.realpath(normalizedCwd);
-            const directory = await NodeFSP.realpath(target.absolutePath);
-            const relative = path.relative(root, directory);
-            if (
-              relative === ".." ||
-              relative.startsWith(`..${path.sep}`) ||
-              path.isAbsolute(relative) ||
-              relative.split(path.sep).includes(".git") ||
-              target.relativePath.split("/").includes(".git")
-            ) {
-              throw new Error("Directory must be inside the workspace and outside .git.");
-            }
-            const children = await NodeFSP.readdir(directory, { withFileTypes: true });
-            const isSameOrInside = (parent: string, child: string) => {
-              const relativeChild = path.relative(parent, child);
-              return (
-                relativeChild !== ".." &&
-                !relativeChild.startsWith(`..${path.sep}`) &&
-                !path.isAbsolute(relativeChild)
-              );
-            };
-            // Reject canonical ancestors so "Expand all folders" cannot follow a cycle.
-            let visitedFolders: Promise<ReadonlyArray<string>> | undefined;
-            const loadVisitedFolders = () =>
-              (visitedFolders ??= (async () => {
-                const folders = [root];
-                let current = normalizedCwd;
-                for (const segment of target.relativePath.split("/").filter(Boolean)) {
-                  current = path.join(current, segment);
-                  folders.push(await NodeFSP.realpath(current));
-                }
-                return folders;
-              })());
-            const resolveSymlinkKind = async (
-              name: string,
-            ): Promise<ProjectEntry["kind"] | undefined> => {
-              const resolved = await NodeFSP.realpath(path.join(directory, name)).catch(
-                () => undefined,
-              );
-              if (
-                resolved === undefined ||
-                !isSameOrInside(root, resolved) ||
-                path.relative(root, resolved).split(path.sep).includes(".git")
-              ) {
-                return undefined;
-              }
-              const stat = await NodeFSP.stat(resolved).catch(() => undefined);
-              if (stat?.isFile()) return "file";
-              if (!stat?.isDirectory()) return undefined;
-              const folders = await loadVisitedFolders();
-              return folders.some((folder) => isSameOrInside(resolved, folder))
-                ? undefined
-                : "directory";
-            };
-            // Bound filesystem work for directories such as pnpm node_modules.
-            const kinds: Array<ProjectEntry["kind"] | undefined> = [];
-            for (let offset = 0; offset < children.length; offset += SYMLINK_RESOLVE_BATCH_SIZE) {
-              kinds.push(
-                ...(await Promise.all(
-                  children
-                    .slice(offset, offset + SYMLINK_RESOLVE_BATCH_SIZE)
-                    .map(async (child): Promise<ProjectEntry["kind"] | undefined> => {
-                      if (child.name === ".git") return undefined;
-                      if (child.isDirectory()) return "directory";
-                      if (child.isFile()) return "file";
-                      return child.isSymbolicLink() ? resolveSymlinkKind(child.name) : undefined;
-                    }),
-                )),
-              );
-            }
-            const nestedGitRoots: Array<string> = [];
-            const segments = target.relativePath.split("/").filter(Boolean);
-            for (let index = 1; index <= segments.length; index += 1) {
-              const candidate = segments.slice(0, index).join("/");
-              const dotGit = await NodeFSP.lstat(path.join(normalizedCwd, candidate, ".git")).catch(
-                () => null,
-              );
-              if (dotGit) nestedGitRoots.push(candidate);
-            }
-            return {
-              nestedGitRoots,
-              entries: children.flatMap((child, index): ProjectEntry[] => {
-                const kind = kinds[index];
-                if (kind === undefined) return [];
-                return [
-                  {
-                    path: target.relativePath ? `${target.relativePath}/${child.name}` : child.name,
-                    kind,
-                  },
-                ];
-              }),
-              // Git refuses to classify paths beyond a symbolic link.
-              throughSymlink: relative !== target.relativePath.split("/").join(path.sep),
-            };
-          },
-          catch: toError,
-        });
-        let gitRoot = "";
-        let gitPrefix = "";
-        // stdin avoids argument limits; ignore classification is optional without git/repositories.
-        const checkIgnore = (paths: ReadonlyArray<string>) =>
-          vcsProcess
-            .run({
-              operation: "WorkspaceEntries.list",
-              command: "git",
-              args: ["-c", "core.fsmonitor=false", "check-ignore", "-z", "--stdin"],
-              cwd: path.join(normalizedCwd, gitRoot),
-              stdin: `${paths.map((entryPath) => entryPath.slice(gitPrefix.length)).join("\0")}\0`,
-              allowNonZeroExit: true,
-              timeoutMs: 10_000,
-              maxOutputBytes: 16 * 1024 * 1024,
-            })
-            .pipe(Effect.orElseSucceed(() => undefined));
-        // Git refuses paths inside a submodule (128) but still answers for nested clones.
-        for (const nestedGitRoot of nestedGitRoots) {
-          if ((yield* checkIgnore([`${nestedGitRoot}/.git`]))?.exitCode !== 128) continue;
-          gitRoot = nestedGitRoot;
-          gitPrefix = `${gitRoot}/`;
-        }
-        const directoryGitPath = target.relativePath.slice(gitPrefix.length);
-        // Check ignored folders once to avoid child index lookups; exit 0 guarantees no tracked descendants.
-        // Symlinks and pathspec magic still need per-child checks.
-        if (
-          entries.length > IGNORE_CHECK_CHUNK_SIZE &&
-          directoryGitPath !== "" &&
-          !throughSymlink &&
-          !/^:|[*?[\\]/.test(directoryGitPath) &&
-          (yield* checkIgnore([target.relativePath]))?.exitCode === 0
-        ) {
-          return {
-            entries: entries.map((entry) => ({ ...entry, ignored: true })),
-            truncated: false,
-          };
-        }
-        const ignored = new Set<string>();
-        for (let offset = 0; offset < entries.length; offset += IGNORE_CHECK_CHUNK_SIZE) {
-          const result = yield* checkIgnore(
-            entries.slice(offset, offset + IGNORE_CHECK_CHUNK_SIZE).map((entry) => entry.path),
-          );
-          if (!result || (result.exitCode !== 0 && result.exitCode !== 1)) break;
-          for (const ignoredPath of result.stdout.split("\0")) ignored.add(gitPrefix + ignoredPath);
-        }
+        const absolutePath = path.resolve(normalizedCwd, input.directoryPath);
+        const root = isWithinRoot(path, absolutePath, normalizedCwd)
+          ? undefined
+          : (yield* Cache.get(threadRootsCache, normalizedCwd)).find((candidate) =>
+              isWithinRoot(path, absolutePath, candidate.path),
+            );
+        if (root === undefined) return yield* listDirectory(normalizedCwd, input.directoryPath);
+        const listed = yield* listDirectory(
+          root.path,
+          path.relative(root.path, absolutePath).split(path.sep).join("/"),
+        );
         return {
-          entries: entries.map((entry) =>
-            ignored.has(entry.path) ? { ...entry, ignored: true } : entry,
-          ),
-          truncated: false,
+          ...listed,
+          entries: listed.entries.map((entry) => ({
+            ...entry,
+            path: `${root.prefix}/${entry.path}`,
+          })),
         };
       }
       return yield* Effect.gen(function* () {
@@ -523,7 +688,15 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  return WorkspaceEntries.of({ browse, list, listIgnoredFiles, refresh, search, searchContents });
+  return WorkspaceEntries.of({
+    browse,
+    list,
+    listIgnoredFiles,
+    refresh,
+    search,
+    searchContents,
+    threadRoots,
+  });
 });
 
 export const layer = Layer.effect(WorkspaceEntries, make).pipe(

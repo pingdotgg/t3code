@@ -255,6 +255,59 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
     }),
   );
+
+  it.effect("lets a multi-repo turn write to the thread's other repos, never references", () =>
+    Effect.gen(function* () {
+      const workspace = {
+        repositories: [
+          { name: "web", path: "/work/web" },
+          { name: "api", path: "/work/api" },
+        ],
+        referenceFolders: [{ name: "design", path: "/notes/design" }],
+        extraRoots: ["/work/api"],
+        relativePathsDiffer: false,
+      };
+      const build = (
+        runtimeMode: "approval-required" | "auto-accept-edits" | "full-access",
+        sandboxPolicy?: unknown,
+      ) =>
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-multi-repo",
+          codexInput: [{ type: "text", text: "test" }],
+          runtimePolicy: {
+            runtimeMode,
+            interactionMode: "default",
+            cwd: "/work/web",
+            workspace,
+            ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
+          },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        });
+
+      const edits = yield* build("auto-accept-edits");
+      assert.deepEqual(edits.sandboxPolicy, {
+        type: "workspaceWrite",
+        writableRoots: ["/work/api"],
+      });
+      // The repo list reaches the model even without T3's MCP tools.
+      assert.include(
+        edits.additionalContext?.["t3_code_workspace"]?.value,
+        "- design (read-only reference): /notes/design",
+      );
+      const explicit = yield* build("auto-accept-edits", {
+        type: "workspaceWrite",
+        writableRoots: ["/tmp/scratch", "/work/api"],
+        networkAccess: true,
+      });
+      assert.deepEqual(explicit.sandboxPolicy, {
+        type: "workspaceWrite",
+        writableRoots: ["/tmp/scratch", "/work/api"],
+        networkAccess: true,
+      });
+      assert.deepEqual((yield* build("approval-required")).sandboxPolicy, { type: "readOnly" });
+      assert.deepEqual((yield* build("full-access")).sandboxPolicy, { type: "dangerFullAccess" });
+    }),
+  );
 });
 
 describe("CodexAdapterV2 native protocol logging", () => {

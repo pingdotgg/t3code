@@ -21,6 +21,9 @@ import {
 } from "../../providerInstances";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { firstManagedDenial } from "../../state/managedPolicy";
+import { useProject } from "../../state/entities";
+import { useWorkspaceRepositories } from "../../state/threadRepositories";
+import { isMultiRepoWithGitHome } from "../../lib/multiRepo";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -114,6 +117,20 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const effective = target
     ? resolveProjectSettings(target.settings, null, null, null).settings
     : null;
+  const workspaceSource = useScopedSettingSource(["defaultThreadEnvMode"]);
+  const scopedProject = useProject(
+    isProjectScope && target?.projectId
+      ? { environmentId: target.environmentId, projectId: target.projectId }
+      : null,
+  );
+  const scopedWorkspace = useWorkspaceRepositories(
+    target && scopedProject
+      ? { environmentId: target.environmentId, project: scopedProject, worktreePath: null }
+      : null,
+  );
+  // Mirrors resolveNewThreadEnvMode: several repos with a Git home start in a task folder.
+  const multiRepoWorktreeDefault =
+    workspaceSource === "environment" && isMultiRepoWithGitHome(scopedWorkspace);
 
   const modelDisabledReason = useScopedModelDisabledReason(settings, entries);
   const effortDisabledReason = selection
@@ -210,7 +227,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       title="Workspace"
       description={
         isProjectScope
-          ? "Where new threads in this project start."
+          ? multiRepoWorktreeDefault
+            ? "Where new threads in this project start. With several repos, a new worktree is the default."
+            : "Where new threads in this project start."
           : "Where new threads start. Projects and their t3.json can override it."
       }
       resetAction={
@@ -223,7 +242,13 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       }
       control={
         <Select
-          value={mixedWorkspace ? null : (effective?.defaultThreadEnvMode ?? null)}
+          value={
+            mixedWorkspace
+              ? null
+              : multiRepoWorktreeDefault
+                ? "worktree"
+                : (effective?.defaultThreadEnvMode ?? null)
+          }
           onValueChange={(value) => {
             if (value === "local" || value === "worktree")
               updateSettings({ defaultThreadEnvMode: value });

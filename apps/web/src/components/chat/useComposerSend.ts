@@ -63,7 +63,12 @@ import { recordPromptSent } from "../GitHubStarPrompt";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { readLaunchRepositories } from "../../lib/readWorkspaceRepositories";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import {
+  useWorktreeRepositorySelectionStore,
+  worktreeRepositorySelectionKey,
+} from "../../worktreeRepositorySelectionStore";
 import {
   beginBackgroundDraftSubmissionByRef,
   clearBackgroundDraftSubmissionByRef,
@@ -1306,7 +1311,14 @@ export function useComposerSend(input: ComposerSendInput) {
 
     let backgroundDraftOpened = false;
     let turnStartSucceeded = false;
+    const repositorySelectionKey = worktreeRepositorySelectionKey(
+      draftId,
+      scopeThreadRef(environmentId, threadIdForSend),
+    );
     if (failure === null && turnAttachmentsResult._tag === "Success") {
+      const launchRepositories = baseBranchForWorktree
+        ? await readLaunchRepositories(activeProject, repositorySelectionKey)
+        : undefined;
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
           ? {
@@ -1336,6 +1348,7 @@ export function useComposerSend(input: ComposerSendInput) {
                         ? { branch: draftThread.linearIssue.branchName }
                         : {}),
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                      ...(launchRepositories ? { repositories: launchRepositories } : {}),
                     },
                     runSetupScript: true,
                   }
@@ -1414,6 +1427,9 @@ export function useComposerSend(input: ComposerSendInput) {
               title,
             }),
           );
+        }
+        if (baseBranchForWorktree) {
+          useWorktreeRepositorySelectionStore.getState().clear(repositorySelectionKey);
         }
         setKeepFullHistory(routeThreadKey, false);
         if (freshArm !== undefined) disarmFreshSession(routeThreadKey, freshArm);

@@ -1,5 +1,6 @@
 import {
   worktreeSetupStageLabel,
+  type WorktreeSetupRepository,
   type WorktreeSetupSnapshot,
   type WorktreeSetupStage,
 } from "@t3tools/contracts";
@@ -221,6 +222,32 @@ function StageRow({
   );
 }
 
+function RepositoryRow({ repository }: { repository: WorktreeSetupRepository }) {
+  return (
+    <WorkLogRow
+      data-worktree-setup-repository={repository.path}
+      data-worktree-setup-status={repository.status}
+      icon={
+        <span className={cn("text-icon-muted", repository.status === "pending" && "opacity-40")}>
+          <StageIcon status={repository.status} />
+        </span>
+      }
+      label={
+        <span className={cn("block truncate", stageRowClassName(repository.status))}>
+          {repository.name}
+        </span>
+      }
+      trailing={
+        repository.detail ? (
+          <span className="min-w-0 truncate text-xs text-muted-foreground">
+            {repository.detail}
+          </span>
+        ) : null
+      }
+    />
+  );
+}
+
 const OUTPUT_TAIL_LINES = 4;
 const OUTPUT_TAIL_SLOTS = Array.from({ length: OUTPUT_TAIL_LINES }, (_, slot) => slot);
 
@@ -330,6 +357,10 @@ export function WorktreeSetupCard({
     setupStage !== undefined &&
     (setupStage.status === "failed" ||
       (setupStage.status === "running" && setupStage.tail.length > 0));
+  // Task folder repos get their worktrees during checkout, before the setup script runs.
+  const repositoriesAfterStage = snapshot.stages.some((stage) => stage.id === "checkout")
+    ? "checkout"
+    : null;
 
   return (
     <section aria-label="Worktree setup" data-worktree-setup-phase={snapshot.phase}>
@@ -349,8 +380,18 @@ export function WorktreeSetupCard({
               {stage.id === "setup-script" && showTail ? (
                 <OutputTail lines={stage.tail} failed={stage.status === "failed"} />
               ) : null}
+              {stage.id === repositoriesAfterStage
+                ? snapshot.repositories.map((repository) => (
+                    <RepositoryRow key={repository.path} repository={repository} />
+                  ))
+                : null}
             </div>
           ))}
+          {repositoriesAfterStage === null
+            ? snapshot.repositories.map((repository) => (
+                <RepositoryRow key={repository.path} repository={repository} />
+              ))
+            : null}
         </div>
       )}
 

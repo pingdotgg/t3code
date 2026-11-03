@@ -139,14 +139,22 @@ export function useWorktreeSetup(input: {
     });
     return result._tag === "Success" && result.value.cancelled;
   });
-  const retryPreparation = useStableCallback((runId: RunId) => {
-    if (!threadRef || retryingWorkspacePreparationRunIds.has(runId)) return;
-    retryingWorkspacePreparationRunIds.add(runId);
-    void retryWorkspacePreparation({
-      environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, runId },
-    }).finally(() => retryingWorkspacePreparationRunIds.delete(runId));
-  });
+  // "Start without <repo>" retries with those tracked repos left out of the task folder.
+  const retryPreparation = useStableCallback(
+    (runId: RunId, skipRepositoryPaths?: ReadonlyArray<string>) => {
+      if (!threadRef || retryingWorkspacePreparationRunIds.has(runId)) return;
+      retryingWorkspacePreparationRunIds.add(runId);
+      const retry = {
+        threadId: threadRef.threadId,
+        runId,
+        ...(skipRepositoryPaths && skipRepositoryPaths.length > 0 ? { skipRepositoryPaths } : {}),
+      };
+      void retryWorkspacePreparation({
+        environmentId: threadRef.environmentId,
+        input: retry,
+      }).finally(() => retryingWorkspacePreparationRunIds.delete(runId));
+    },
+  );
   // Failed bootstrap deletes threads and terminals; expose terminals only for active threads.
   const setupThreadRef =
     worktreeSetup && threadRef && worktreeSetup.threadId === threadRef.threadId ? threadRef : null;

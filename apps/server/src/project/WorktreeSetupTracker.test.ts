@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as WorktreeSetupTracker from "./WorktreeSetupTracker.ts";
 
@@ -138,6 +139,43 @@ describe("WorktreeSetupTracker", () => {
       expect(yield* tracker.cancel(threadId)).toBe(false);
       expect((yield* tracker.get(threadId))?.phase).toBe("running");
       yield* Fiber.interrupt(fiber);
+    }),
+  );
+
+  it.effect("keeps a failed repo listed past retention until the next attempt begins", () =>
+    Effect.gen(function* () {
+      const tracker = yield* WorktreeSetupTracker.make;
+      yield* tracker.begin({
+        threadId,
+        branch: "task",
+        baseRef: "main",
+        stages: ["checkout"],
+        fiber: null,
+        repositories: [
+          { name: "app", path: "/repo/app" },
+          { name: "api", path: "/api" },
+        ],
+      });
+      yield* tracker.repository(threadId, "/repo/app", "done");
+      yield* tracker.repository(threadId, "/api", "failed", "invalid reference: main");
+      yield* tracker.finish(threadId, "failed", "Could not create the worktree for api.");
+      yield* TestClock.adjust("1 minute");
+      expect((yield* tracker.get(threadId))?.repositories).toEqual([
+        { name: "app", path: "/repo/app", status: "done", detail: null },
+        { name: "api", path: "/api", status: "failed", detail: "invalid reference: main" },
+      ]);
+
+      yield* tracker.begin({
+        threadId,
+        branch: "task",
+        baseRef: "main",
+        stages: ["agent"],
+        fiber: null,
+      });
+      expect((yield* tracker.get(threadId))?.repositories).toEqual([]);
+      yield* tracker.finish(threadId, "done");
+      yield* TestClock.adjust("1 minute");
+      expect(yield* tracker.get(threadId)).toBeNull();
     }),
   );
 });

@@ -1,12 +1,14 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 
 import * as ServerConfig from "./config.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { TaskFolderStore } from "./workspace/TaskFolders.ts";
 
 /** Null for filesystem roots or settings not absolute on this host, including synced foreign-platform paths. */
 export function resolveWorktreesDirectory(
@@ -44,12 +46,14 @@ export function managedWorktreesDirectories(
   return [...directories];
 }
 
-// Client paths/branches are untrusted; recreate only real paths matching managed-folder/repo/branch.
+// Client paths/branches are untrusted; recreate only real paths matching managed-folder/repo/branch,
+// or a recorded row of a task folder whose root matches it.
 export const makeIsManagedWorktreePath = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const taskFolders = yield* Effect.serviceOption(TaskFolderStore);
 
   // Match Git's symlink-following location: nearest real ancestor plus missing path components.
   const realLocation = (target: string): Effect.Effect<string> =>
@@ -82,16 +86,26 @@ export const makeIsManagedWorktreePath = Effect.gen(function* () {
       ),
       realLocation,
     );
-    const candidate = yield* realLocation(worktreePath);
-    return roots.some((root) => {
-      if (isFilesystemRoot(root, path)) return false;
-      const relative = path.relative(root, candidate);
-      const segments = relative.split(path.sep);
-      return (
-        !path.isAbsolute(relative) &&
-        segments.length === 2 &&
-        segments.every((segment) => segment !== "" && segment !== "..")
-      );
-    });
+    const isManaged = (candidate: string) =>
+      roots.some((root) => {
+        if (isFilesystemRoot(root, path)) return false;
+        const relative = path.relative(root, candidate);
+        const segments = relative.split(path.sep);
+        return (
+          !path.isAbsolute(relative) &&
+          segments.length === 2 &&
+          segments.every((segment) => segment !== "" && segment !== "..")
+        );
+      });
+    if (isManaged(yield* realLocation(worktreePath))) return true;
+    if (Option.isNone(taskFolders)) return false;
+    const record = yield* taskFolders.value
+      .findContaining(worktreePath)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    return (
+      Option.isSome(record) &&
+      record.value.repositories.some((row) => row.worktreePath === worktreePath) &&
+      isManaged(yield* realLocation(record.value.root))
+    );
   });
 });

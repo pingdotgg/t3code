@@ -90,6 +90,17 @@ capture workspace state without adding commits to the user's branch. A revert mu
 workspace state with the provider conversation. A provider that cannot roll back its conversation
 must reject that operation before changing the filesystem.
 
+A project with [tracked folders](../../apps/server/src/workspace/WorkspaceRepositories.ts) gives
+each tracked Git repo its own `repository` checkpoint scope under the thread's root scope. Turn
+lookups go through the root scope's run, because a plain-folder workspace root has no ready root
+checkpoint. Repos are resolved at run start, so a repo added later starts at its first baseline and
+history never changes when the list does. Restore across repos is not atomic: preflight every repo,
+keep a pre-rewind ref in each, and report per repo.
+[Task folders](../../apps/server/src/workspace/TaskFolders.ts) are keyed by their root in a
+service-owned table, not per thread, so shared subagents and existing-worktree threads read the
+same rows. Create the home worktree first and remove child worktrees first: removing the home
+worktree deletes the worktrees nested inside it, uncommitted work included.
+
 Thread settlement is server-owned. The
 [settlement service](../../apps/server/src/orchestration-v2/ThreadSettlementService.ts) evaluates PR
 and inactivity settings without a connected client. Merge notifications invalidate cached PR state

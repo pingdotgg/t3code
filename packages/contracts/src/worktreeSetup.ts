@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -40,6 +41,16 @@ export type WorktreeSetupStage = typeof WorktreeSetupStage.Type;
 export const WorktreeSetupPhase = Schema.Literals(["running", "done", "failed", "cancelled"]);
 export type WorktreeSetupPhase = typeof WorktreeSetupPhase.Type;
 
+/** One tracked repo of a multi-repo task folder. Single-repo worktrees list none. */
+export const WorktreeSetupRepository = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  /** The project's tracked path; send it back in `prepared-run.retry.skipRepositoryPaths`. */
+  path: TrimmedNonEmptyString,
+  status: Schema.Literals(["pending", "running", "done", "failed"]),
+  detail: Schema.NullOr(Schema.String.check(Schema.isMaxLength(WORKTREE_SETUP_DETAIL_MAX_LENGTH))),
+});
+export type WorktreeSetupRepository = typeof WorktreeSetupRepository.Type;
+
 export const WorktreeSetupSnapshot = Schema.Struct({
   threadId: ThreadId,
   phase: WorktreeSetupPhase,
@@ -56,6 +67,9 @@ export const WorktreeSetupSnapshot = Schema.Struct({
     }),
   ),
   stages: Schema.Array(WorktreeSetupStage),
+  repositories: Schema.Array(WorktreeSetupRepository).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
   error: Schema.NullOr(Schema.String.check(Schema.isMaxLength(WORKTREE_SETUP_ERROR_MAX_LENGTH))),
   sequence: NonNegativeInt,
 });

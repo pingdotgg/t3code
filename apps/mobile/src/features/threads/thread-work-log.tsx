@@ -48,6 +48,7 @@ import {
   type RunId,
   type ThreadId,
   type ToolActivityIcon,
+  type WorktreeSetupRepository,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -477,6 +478,8 @@ interface ThreadWorkLogProps {
   readonly renderImage: MarkdownImageRenderer;
   readonly renderReasoning: (text: string) => ReactNode;
   readonly onPressPreview: (source: FilePreviewSource) => void;
+  /** Repos a failed task folder setup could not prepare, offered as "Start without". */
+  readonly failedSetupRepositories: ReadonlyArray<WorktreeSetupRepository>;
 }
 
 export function ThreadWorkLog(props: ThreadWorkLogProps) {
@@ -495,6 +498,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
       renderReasoning={props.renderReasoning}
       onPressPreview={props.onPressPreview}
       themeAppearance={props.themeAppearance}
+      failedSetupRepositories={props.failedSetupRepositories}
     />
   );
 
@@ -772,6 +776,7 @@ function WorkspacePreparationRetryButton(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly runId: RunId;
+  readonly failedRepositories: ReadonlyArray<WorktreeSetupRepository>;
 }) {
   const retryable = useAtomValue(
     environmentThreadDetails.threadAtom(scopeThreadRef(props.environmentId, props.threadId)),
@@ -783,23 +788,35 @@ function WorkspacePreparationRetryButton(props: {
   const retry = useAtomCommand(threadEnvironment.retryWorkspacePreparation, "retry setup");
   const [busy, setBusy] = useState(false);
   if (!retryable) return null;
+  const retryWithout = (skipRepositoryPaths: ReadonlyArray<string>) => {
+    setBusy(true);
+    void Haptics.selectionAsync();
+    const input = {
+      threadId: props.threadId,
+      runId: props.runId,
+      ...(skipRepositoryPaths.length > 0 ? { skipRepositoryPaths } : {}),
+    };
+    void retry({ environmentId: props.environmentId, input }).finally(() => setBusy(false));
+  };
   return (
-    <View className="ml-7 mt-2">
+    <View className="ml-7 mt-2 flex-row flex-wrap gap-2">
       <Button
         label="Retry"
         tone="secondary"
         accessibilityLabel="Retry workspace preparation"
         disabled={busy}
-        onPress={() => {
-          setBusy(true);
-          void Haptics.selectionAsync();
-          void retry({
-            environmentId: props.environmentId,
-            input: { threadId: props.threadId, runId: props.runId },
-          }).finally(() => setBusy(false));
-        }}
+        onPress={() => retryWithout([])}
         icon="arrow.clockwise"
       />
+      {props.failedRepositories.map((repository) => (
+        <Button
+          key={repository.path}
+          label={`Start without ${repository.name}`}
+          tone="secondary"
+          disabled={busy}
+          onPress={() => retryWithout([repository.path])}
+        />
+      ))}
     </View>
   );
 }
@@ -959,6 +976,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               environmentId={props.environmentId}
               threadId={failureItem.threadId}
               runId={failureItem.runId}
+              failedRepositories={props.failedSetupRepositories}
             />
           ) : null}
         </View>

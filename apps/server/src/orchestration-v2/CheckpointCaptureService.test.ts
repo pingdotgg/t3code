@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
@@ -15,21 +16,29 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as CheckpointDiffQuery from "../checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
 import { VcsProcessTimeoutError } from "@t3tools/contracts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 
 const layerProjectionStoreTest = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
@@ -269,12 +278,15 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           Layer.provide(
             Layer.mergeAll(
               IdAllocator.layer,
+              NodeServices.layer,
+              Layer.mock(ProjectStore.ProjectStoreV2)({}),
               refLookupFails
                 ? CheckpointService.layer.pipe(
                     Layer.provide(
                       Layer.mergeAll(
                         IdAllocator.layer,
                         NodeCrypto.layer,
+                        NodeServices.layer,
                         Layer.mock(CheckpointStore.CheckpointStore)({
                           listAuthoredPaths: () => Effect.succeed(null),
                           isGitRepository: () => Effect.succeed(true),
@@ -448,6 +460,8 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         Layer.provide(
           Layer.mergeAll(
             IdAllocator.layer,
+            NodeServices.layer,
+            Layer.mock(ProjectStore.ProjectStoreV2)({}),
             Layer.mock(CheckpointService.CheckpointServiceV2)({
               materializeBaselineCheckpoint: () => Effect.die("a discarded run has no baseline"),
               capture: () => Effect.die("a discarded run must not be captured"),
@@ -870,6 +884,8 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         Layer.provide(
           Layer.mergeAll(
             IdAllocator.layer,
+            NodeServices.layer,
+            Layer.mock(ProjectStore.ProjectStoreV2)({}),
             Layer.mock(CheckpointService.CheckpointServiceV2)({
               materializeBaselineCheckpoint: () =>
                 Effect.die("baseline materialization must be skipped when ordinal 0 is ready"),
@@ -1311,5 +1327,507 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         const checkpoint = checkpoints.find((candidate) => candidate.id === runs[0]?.checkpointId);
         assert.equal(checkpoint?.status, "missing");
       }),
+  );
+});
+
+const layerVcsProcessTest = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
+const layerCheckpointServiceTest = CheckpointService.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      CheckpointStore.layer.pipe(
+        Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(layerVcsProcessTest))),
+        Layer.provide(NodeServices.layer),
+      ),
+      IdAllocator.layer,
+      NodeCrypto.layer,
+      NodeServices.layer,
+    ),
+  ),
+);
+const layerMultiRepoTest = Layer.mergeAll(
+  layerProjectionStoreTest,
+  layerCheckpointServiceTest,
+  layerVcsProcessTest,
+  IdAllocator.layer,
+  NodeCrypto.layer,
+  NodeServices.layer,
+);
+
+/**
+ * A run in a plain home folder that tracks two child repos (`api`, `web`), with an untracked
+ * sibling repo beside home. Baselines are taken the way run start takes them.
+ */
+const seedPlainHomeRun = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const vcsProcess = yield* VcsProcess.VcsProcess;
+  const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+  const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+  const ids = yield* IdAllocator.IdAllocatorV2;
+  const now = yield* DateTime.now;
+  const parent = yield* fileSystem.realPath(
+    yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-capture-multi-repo-" }),
+  );
+  const home = path.join(parent, "home");
+  const git = (cwd: string, args: ReadonlyArray<string>) =>
+    vcsProcess
+      .run({ operation: "CheckpointCaptureService.test.git", command: "git", cwd, args })
+      .pipe(Effect.map((result) => result.stdout.trim()));
+  for (const repository of [
+    path.join(home, "api"),
+    path.join(home, "web"),
+    path.join(parent, "other"),
+  ]) {
+    yield* fileSystem.makeDirectory(repository, { recursive: true });
+    yield* git(repository, ["init", "--quiet"]);
+    yield* git(repository, ["config", "user.email", "test@test.com"]);
+    yield* git(repository, ["config", "user.name", "Test"]);
+    yield* fileSystem.writeFileString(path.join(repository, "README.md"), "# initial\n");
+    yield* git(repository, ["add", "."]);
+    yield* git(repository, ["commit", "--quiet", "-m", "initial"]);
+  }
+  yield* fileSystem.writeFileString(path.join(home, "notes.md"), "plain home\n");
+
+  const threadId = ThreadId.make("thread:capture-multi-repo");
+  const multiRepoProjectId = ProjectId.make("project:capture-multi-repo");
+  const multiRepoRunId = RunId.make("run:capture-multi-repo");
+  const nodeId = NodeId.make("node:capture-multi-repo");
+  const multiRepoProviderThreadId = ProviderThreadId.make("provider-thread:capture-multi-repo");
+  const run: OrchestrationV2Run = {
+    id: multiRepoRunId,
+    threadId,
+    ordinal: 1,
+    providerInstanceId,
+    modelSelection,
+    providerThreadId: multiRepoProviderThreadId,
+    userMessageId: MessageId.make("message:capture-multi-repo"),
+    rootNodeId: nodeId,
+    activeAttemptId: null,
+    status: "waiting",
+    requestedAt: now,
+    startedAt: now,
+    completedAt: null,
+    checkpointId: null,
+    contextHandoffId: null,
+  };
+  const rootScope = yield* checkpoints.prepareRootRunScope({
+    threadId,
+    runId: multiRepoRunId,
+    rootNodeId: nodeId,
+    providerThreadId: multiRepoProviderThreadId,
+    cwd: home,
+    createdAt: now,
+  });
+  const repositoryScopes = yield* checkpoints.prepareRepositoryScopes({
+    rootScope,
+    repositories: ["api", "web"].map((name) => ({
+      name,
+      cwd: path.join(home, name),
+      originalPath: path.join(home, name),
+    })),
+  });
+  let sequence = 0;
+  const apply = (event: Omit<OrchestrationV2DomainEvent, "id" | "threadId" | "occurredAt">) =>
+    projectionStore.apply({
+      ...event,
+      id: EventId.make(`event:capture-multi-repo:${sequence++}`),
+      threadId,
+      occurredAt: now,
+    } as OrchestrationV2DomainEvent);
+  yield* apply({
+    type: "thread.created",
+    payload: {
+      createdBy: "user",
+      creationSource: "web",
+      id: threadId,
+      projectId: multiRepoProjectId,
+      title: "Multi-repo capture",
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+  });
+  yield* apply({ type: "run.updated", runId: multiRepoRunId, payload: run });
+  const rootNode = {
+    id: nodeId,
+    threadId,
+    runId: multiRepoRunId,
+    parentNodeId: null,
+    rootNodeId: nodeId,
+    kind: "root_turn" as const,
+    status: "waiting" as const,
+    countsForRun: true,
+    providerThreadId: multiRepoProviderThreadId,
+    providerTurnId: null,
+    nativeItemRef: null,
+    runtimeRequestId: null,
+    checkpointScopeId: rootScope.id,
+    startedAt: now,
+    completedAt: null,
+  };
+  yield* apply({ type: "node.updated", runId: multiRepoRunId, payload: rootNode });
+  yield* apply({
+    type: "provider-thread.updated",
+    driver,
+    payload: {
+      id: multiRepoProviderThreadId,
+      driver,
+      providerInstanceId,
+      providerSessionId: null,
+      appThreadId: threadId,
+      ownerNodeId: nodeId,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "idle",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+  });
+  for (const scope of [rootScope, ...repositoryScopes]) {
+    yield* apply({ type: "checkpoint-scope.created", runId: multiRepoRunId, payload: scope });
+    yield* checkpoints.captureBaseline({
+      scope,
+      ordinalWithinScope: 0,
+      ...(scope === rootScope ? { repositoryScopes } : {}),
+    });
+  }
+
+  // The turn edits both repos, an untracked sibling repo and a plain file in home.
+  yield* fileSystem.writeFileString(path.join(home, "api", "README.md"), "# api edit\n");
+  yield* fileSystem.makeDirectory(path.join(home, "web", "src"));
+  yield* fileSystem.writeFileString(path.join(home, "web", "src", "app.ts"), "export {};\n");
+  yield* fileSystem.writeFileString(path.join(parent, "other", "x.ts"), "export {};\n");
+  yield* fileSystem.writeFileString(path.join(home, "notes.md"), "plain home edit\n");
+  for (const [ordinal, fileName] of [
+    path.join(home, "api", "README.md"),
+    "web/src/app.ts",
+    path.join(parent, "other", "x.ts"),
+    "notes.md",
+  ].entries()) {
+    yield* apply({
+      type: "turn-item.updated",
+      runId: multiRepoRunId,
+      payload: {
+        id: TurnItemId.make(`turn-item:capture-multi-repo:${ordinal}`),
+        threadId,
+        runId: multiRepoRunId,
+        nodeId,
+        providerThreadId: multiRepoProviderThreadId,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 100 + ordinal,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "file_change",
+        fileName,
+      },
+    });
+  }
+
+  const committed: Array<ReadonlyArray<OrchestrationV2DomainEvent>> = [];
+  const failNextCommit = yield* Ref.make(false);
+  const captureLayer = CheckpointCaptureService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(CheckpointService.CheckpointServiceV2, checkpoints),
+        Layer.succeed(IdAllocator.IdAllocatorV2, ids),
+        Layer.succeed(ProjectionStore.ProjectionStoreV2, projectionStore),
+        NodeServices.layer,
+        Layer.mock(ProjectStore.ProjectStoreV2)({
+          get: () =>
+            Effect.succeedSome({
+              workspaceRoot: home,
+              trackedFolders: ["api", "web"].map((name) => ({ name, path: path.join(home, name) })),
+            } as never),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          commitCommand: (input) =>
+            Effect.gen(function* () {
+              if (yield* Ref.getAndSet(failNextCommit, false)) {
+                return yield* Effect.die("commit failed");
+              }
+              for (const event of input.events)
+                yield* projectionStore.apply(event).pipe(Effect.orDie);
+              committed.push(input.events);
+              return { committed: true } as never;
+            }),
+        }),
+      ),
+    ),
+  );
+  const capture = CheckpointCaptureService.CheckpointCaptureServiceV2.pipe(
+    Effect.flatMap((service) =>
+      service.execute({ threadId, runId: multiRepoRunId, scopeId: rootScope.id }),
+    ),
+    Effect.provide(captureLayer),
+  );
+  /** Starts run 2 the way run start does, and returns its capture. */
+  const startNextRun = Effect.gen(function* () {
+    const nextRunId = RunId.make("run:capture-multi-repo:2");
+    const nextNodeId = NodeId.make("node:capture-multi-repo:2");
+    yield* apply({
+      type: "run.updated",
+      runId: nextRunId,
+      payload: {
+        ...run,
+        id: nextRunId,
+        ordinal: 2,
+        userMessageId: MessageId.make("message:capture-multi-repo:2"),
+        rootNodeId: nextNodeId,
+      },
+    });
+    yield* apply({
+      type: "node.updated",
+      runId: nextRunId,
+      payload: { ...rootNode, id: nextNodeId, runId: nextRunId, rootNodeId: nextNodeId },
+    });
+    for (const scope of repositoryScopes) {
+      yield* apply({
+        type: "checkpoint-scope.created",
+        runId: nextRunId,
+        payload: { ...scope, runId: nextRunId },
+      });
+    }
+    for (const scope of [rootScope, ...repositoryScopes]) {
+      yield* checkpoints.captureBaseline({
+        scope,
+        ordinalWithinScope: 1,
+        ...(scope === rootScope ? { repositoryScopes } : {}),
+      });
+    }
+    yield* fileSystem.writeFileString(path.join(home, "api", "README.md"), "# api second edit\n");
+    return yield* CheckpointCaptureService.CheckpointCaptureServiceV2.pipe(
+      Effect.flatMap((service) =>
+        service.execute({ threadId, runId: nextRunId, scopeId: rootScope.id }),
+      ),
+      Effect.provide(captureLayer),
+    );
+  });
+  return {
+    parent,
+    home,
+    threadId,
+    rootScope,
+    repositoryScopes,
+    committed,
+    failNextCommit,
+    capture,
+    startNextRun,
+    git,
+  };
+});
+
+it.layer(layerMultiRepoTest)("CheckpointCaptureServiceV2 multi-repo", (it) => {
+  it.effect("keeps each turn's record in a plain home folder when the next run captures", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const run = yield* seedPlainHomeRun;
+      yield* run.capture;
+      yield* run.startNextRun;
+
+      // A plain home has no Git, so no baseline record may replace turn 1's root checkpoint.
+      const { checkpoints } = yield* projectionStore.getCheckpointContext(run.threadId);
+      const firstTurn = checkpoints.find(
+        (checkpoint) =>
+          checkpoint.scopeId === run.rootScope.id && checkpoint.ordinalWithinScope === 1,
+      );
+      assert.deepEqual(
+        { runId: firstTurn?.runId, appRunOrdinal: firstTurn?.appRunOrdinal },
+        { runId: RunId.make("run:capture-multi-repo"), appRunOrdinal: 1 },
+      );
+      const secondRun = (run.committed.at(-1) ?? []).flatMap((event) =>
+        event.type === "checkpoint.captured" ? [event.payload] : [],
+      );
+      assert.deepEqual(
+        secondRun
+          .filter((checkpoint) => checkpoint.scopeId === run.rootScope.id)
+          .map((checkpoint) => checkpoint.ordinalWithinScope),
+        [2],
+      );
+      assert.deepEqual(
+        secondRun
+          .find(
+            (checkpoint) =>
+              checkpoint.scopeId === run.repositoryScopes[0]?.id &&
+              checkpoint.ordinalWithinScope === 2,
+          )
+          ?.files.map((file) => file.path),
+        ["README.md"],
+      );
+    }),
+  );
+
+  it.effect("captures each tracked repo of a plain home folder and diffs them per repo", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const run = yield* seedPlainHomeRun;
+      yield* run.capture;
+
+      const checkpoints = run.committed
+        .flat()
+        .flatMap((event) => (event.type === "checkpoint.captured" ? [event.payload] : []));
+      const root = checkpoints.find(
+        (checkpoint) => checkpoint.scopeId === run.rootScope.id && checkpoint.runId !== null,
+      );
+      assert.equal(root?.status, "missing");
+      assert.equal(root?.appRunOrdinal, 1);
+      assert.deepEqual(root?.outsideEdits, [
+        {
+          root: path.join(run.parent, "other"),
+          name: "other",
+          tracked: false,
+          files: ["x.ts"],
+          fileCount: 1,
+        },
+      ]);
+      assert.deepEqual(
+        run.repositoryScopes.map((scope) => {
+          const captured = checkpoints.filter((checkpoint) => checkpoint.scopeId === scope.id);
+          return {
+            label: scope.label,
+            records: captured.map(
+              ({ ordinalWithinScope, appRunOrdinal, status, runId, files }) => ({
+                ordinalWithinScope,
+                appRunOrdinal,
+                status,
+                hasRun: runId !== null,
+                files: files.map((file) => file.path),
+              }),
+            ),
+          };
+        }),
+        [
+          {
+            label: "api",
+            records: [
+              {
+                ordinalWithinScope: 0,
+                appRunOrdinal: null,
+                status: "ready",
+                hasRun: false,
+                files: [],
+              },
+              {
+                ordinalWithinScope: 1,
+                appRunOrdinal: null,
+                status: "ready",
+                hasRun: true,
+                files: ["README.md"],
+              },
+            ],
+          },
+          {
+            label: "web",
+            records: [
+              {
+                ordinalWithinScope: 0,
+                appRunOrdinal: null,
+                status: "ready",
+                hasRun: false,
+                files: [],
+              },
+              {
+                ordinalWithinScope: 1,
+                appRunOrdinal: null,
+                status: "ready",
+                hasRun: true,
+                files: ["src/app.ts"],
+              },
+            ],
+          },
+        ],
+      );
+
+      const query = yield* CheckpointDiffQuery.make.pipe(
+        Effect.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getCheckpointContext: (threadId) =>
+              projectionStore.getCheckpointContext(threadId).pipe(Effect.orDie),
+          }),
+        ),
+      );
+      const turn = yield* query.getTurnDiff({
+        threadId: run.threadId,
+        fromTurnCount: 0,
+        toTurnCount: 1,
+      });
+      assert.equal(turn.diff, "");
+      assert.deepEqual(
+        turn.repositories?.map(({ name, repositoryPath, relativePath, diff }) => ({
+          name,
+          repositoryPath,
+          relativePath,
+          files: [...diff.matchAll(/^\+\+\+ b\/(.+)$/gm)].map((match) => match[1]),
+        })),
+        [
+          {
+            name: "api",
+            repositoryPath: path.join(run.home, "api"),
+            relativePath: "api",
+            files: ["README.md"],
+          },
+          {
+            name: "web",
+            repositoryPath: path.join(run.home, "web"),
+            relativePath: "web",
+            files: ["src/app.ts"],
+          },
+        ],
+      );
+      const fullThread = yield* query.getFullThreadDiff({ threadId: run.threadId, toTurnCount: 1 });
+      assert.deepEqual(fullThread.repositories, turn.repositories);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps refs a failed capture already wrote and fills only the missing ones", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const run = yield* seedPlainHomeRun;
+      const [api, web] = run.repositoryScopes;
+      if (api === undefined || web === undefined) return yield* Effect.die("missing scopes");
+      const ref = (scopeId: CheckpointScopeId) =>
+        CheckpointService.checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: 1 });
+
+      yield* Ref.set(run.failNextCommit, true);
+      yield* run.capture.pipe(Effect.exit);
+      assert.deepEqual(run.committed, []);
+      const apiCommit = yield* run.git(api.cwd, ["rev-parse", yield* ref(api.id)]);
+      // The retry finds api captured and web not, and the workspace has moved on since.
+      yield* run.git(web.cwd, ["update-ref", "-d", yield* ref(web.id)]);
+      yield* fileSystem.writeFileString(path.join(api.cwd, "README.md"), "# after the run\n");
+      yield* fileSystem.writeFileString(path.join(web.cwd, "later.ts"), "export {};\n");
+
+      yield* run.capture;
+      assert.equal(yield* run.git(api.cwd, ["rev-parse", yield* ref(api.id)]), apiCommit);
+      assert.equal(yield* run.git(api.cwd, ["show", `${apiCommit}:README.md`]), "# api edit");
+      assert.deepEqual(
+        (yield* run.git(web.cwd, ["ls-tree", "-r", "--name-only", yield* ref(web.id)])).split("\n"),
+        ["README.md", "later.ts", "src/app.ts"],
+      );
+      assert.lengthOf(run.committed, 1);
+    }).pipe(Effect.scoped),
   );
 });

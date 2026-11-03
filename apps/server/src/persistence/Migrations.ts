@@ -2,6 +2,7 @@ import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ensureLinearSchema } from "./LinearSchema.ts";
+import { ensureMultiRepoSchema } from "./MultiRepoSchema.ts";
 import { ensurePipelineSchema } from "./PipelineSchema.ts";
 import { reconcileV2PreviewMigration } from "./reconcileV2PreviewMigration.ts";
 
@@ -240,6 +241,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   if (toMigrationInclusive === undefined) {
     yield* ensurePipelineSchema;
     yield* ensureLinearSchema;
+    yield* ensureMultiRepoSchema;
   }
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0

@@ -119,6 +119,7 @@ const project: OrchestrationProjectShell = {
   repositoryIdentity: null,
   defaultModelSelection: null,
   scripts: [],
+  trackedFolders: [],
   createdAt: "2026-03-17T19:12:28.000Z",
   updatedAt: "2026-03-17T19:12:28.000Z",
 };

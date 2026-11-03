@@ -134,6 +134,7 @@ import type {
 import { delegatedTaskResultRun, runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as TaskFolderService from "../workspace/TaskFolderService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
@@ -1223,6 +1224,8 @@ const make = Effect.gen(function* () {
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
+  // Optional so hosts and tests without task folders keep single-repo delegates.
+  const taskFolders = yield* Effect.serviceOption(TaskFolderService.TaskFolderService);
 
   const requireProject = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -2176,7 +2179,7 @@ const make = Effect.gen(function* () {
   const worktreeStrategyFromCheckout = Effect.fn(
     "OrchestratorMcpService.worktreeStrategyFromCheckout",
   )(function* (input: {
-    readonly project: { readonly title: string; readonly workspaceRoot: string };
+    readonly project: TaskFolderService.TaskFolderProject & { readonly title: string };
     readonly checkoutPath: string | null;
     readonly unresolvedMessage: string;
     readonly outsideProjectMessage: (where: string) => string;
@@ -2200,10 +2203,17 @@ const make = Effect.gen(function* () {
           ),
         );
     }
+    // A multi-repo checkout gets its own task folder, each repo at the checkout's HEAD there.
+    const repositories = Option.isNone(taskFolders)
+      ? null
+      : yield* taskFolders.value
+          .repositoryHeads({ project, worktreePath: checkoutPath })
+          .pipe(Effect.mapError((error) => failure("invalid_request", error.detail)));
     return {
       type: "worktree",
       baseRef: base.commitSha,
       startFromOrigin: false,
+      ...(repositories === null ? {} : { repositories }),
     } satisfies OrchestrationV2ThreadLaunchWorkspaceStrategy;
   });
 

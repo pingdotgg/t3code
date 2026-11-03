@@ -131,6 +131,8 @@ export interface AcpSessionRuntimeOptions {
   readonly sessionMeta?: (
     initializeResult: EffectAcpSchema.InitializeResponse,
   ) => EffectAcpSchema.NewSessionRequest["_meta"] | undefined;
+  /** A thread's other repos; sent with `additionalDirectories` only to agents that advertise them. */
+  readonly extraRoots?: ReadonlyArray<string>;
   readonly transformStdout?: EffectAcpClient.AcpClientOptions["transformStdout"];
   readonly transformSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
@@ -2151,10 +2153,16 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
 
   const sessionSetupFields = (initializeResult: EffectAcpSchema.InitializeResponse) => {
     const meta = options.sessionMeta?.(initializeResult);
+    const directories = [
+      ...new Set([
+        ...(options.additionalDirectories ?? []),
+        ...(initializeResult.agentCapabilities?.sessionCapabilities?.additionalDirectories == null
+          ? []
+          : (options.extraRoots ?? [])),
+      ]),
+    ];
     return {
-      ...(options.additionalDirectories?.length
-        ? { additionalDirectories: options.additionalDirectories }
-        : {}),
+      ...(directories.length > 0 ? { additionalDirectories: directories } : {}),
       ...(meta == null ? {} : { _meta: meta }),
     };
   };

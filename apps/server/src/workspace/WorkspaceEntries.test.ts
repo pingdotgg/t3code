@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { FileFinder } from "@ff-labs/fff-node";
 import { it, afterEach, describe, expect } from "@effect/vitest";
+import { EventId, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -12,9 +13,14 @@ import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as TaskFolders from "./TaskFolders.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as WorkspaceRepositories from "./WorkspaceRepositories.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -23,6 +29,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 const layerTest = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+  Layer.provideMerge(
+    WorkspaceRepositories.layer.pipe(
+      Layer.provide(GitVcsDriver.layer),
+      Layer.provideMerge(Layer.mergeAll(ProjectStore.layer, TaskFolders.layer)),
+      Layer.provideMerge(SqlitePersistence.layerMemory),
+    ),
+  ),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provide(
@@ -71,6 +84,39 @@ const git = (cwd: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) 
     });
     return result.stdout.trim();
   });
+
+const createProject = Effect.fn("WorkspaceEntriesTest.createProject")(function* (
+  workspaceRoot: string,
+  trackedFolders: ReadonlyArray<string>,
+) {
+  const path = yield* Path.Path;
+  const projectId = ProjectId.make(`project:${workspaceRoot}`);
+  yield* (yield* ProjectStore.ProjectStoreV2).apply({
+    sequence: 1,
+    eventId: EventId.make(`event:${workspaceRoot}`),
+    aggregateKind: "project",
+    aggregateId: projectId,
+    occurredAt: "2026-10-27T00:00:00.000Z",
+    commandId: null,
+    causationEventId: null,
+    correlationId: null,
+    metadata: {},
+    type: "project.created",
+    payload: {
+      projectId,
+      title: path.basename(workspaceRoot),
+      workspaceRoot,
+      defaultModelSelection: null,
+      scripts: [],
+      trackedFolders: trackedFolders.map((folder) => ({
+        path: folder,
+        name: path.basename(folder),
+      })),
+      createdAt: "2026-10-27T00:00:00.000Z",
+      updatedAt: "2026-10-27T00:00:00.000Z",
+    },
+  });
+});
 
 const searchWorkspaceEntries = (input: {
   cwd: string;
@@ -494,6 +540,48 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(paths).toContain("src");
         expect(paths).toContain("src/keep.ts");
         expect(paths.some((entryPath) => entryPath.startsWith(".convex/"))).toBe(false);
+      }),
+    );
+
+    it.effect("covers a multi-repo thread's repos and references, named from its cwd", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const base = yield* makeTempDir({ prefix: "t3code-workspace-multi-repo-" });
+        const home = path.join(base, "home");
+        const api = path.join(home, "api");
+        const app = path.join(base, "app");
+        const docs = path.join(base, "docs");
+        yield* writeTextFile(home, ".gitignore", "/api/\n");
+        yield* git(home, ["init"]);
+        yield* writeTextFile(api, "src/payments.ts");
+        yield* git(api, ["init"]);
+        yield* writeTextFile(app, "src/checkout.ts");
+        yield* git(app, ["init"]);
+        yield* writeTextFile(docs, "guide.md");
+        yield* createProject(home, [api, app, docs]);
+        const search = (query: string) =>
+          searchWorkspaceEntries({ cwd: home, query, limit: 20 }).pipe(
+            Effect.map((result) => result.entries.map((entry) => entry.path)),
+          );
+
+        expect(yield* search("payments")).toContain("api/src/payments.ts");
+        expect(yield* search("checkout")).toContain("../app/src/checkout.ts");
+        expect(yield* search("../app/src/check")).toContain("../app/src/checkout.ts");
+        expect(yield* search("guide")).toContain("../docs/guide.md");
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        expect(yield* workspaceEntries.list({ cwd: home, directoryPath: "../app/src" })).toEqual({
+          entries: [{ path: "../app/src/checkout.ts", kind: "file" }],
+          truncated: false,
+        });
+
+        yield* writeTextFile(app, "src/refunds.ts");
+        yield* workspaceEntries.refresh(home);
+        expect(yield* search("refunds")).toContain("../app/src/refunds.ts");
+
+        // A single-repo project's search stays inside its own folder.
+        yield* createProject(app, []);
+        const single = yield* searchWorkspaceEntries({ cwd: app, query: "guide", limit: 20 });
+        expect(single.entries).toEqual([]);
       }),
     );
   });

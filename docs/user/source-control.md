@@ -173,6 +173,30 @@ For a local Git repository without a remote, **Publish Repository** creates a ho
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
 make your first commit before pushing.
 
+## Projects with several repositories
+
+A project can track more than one Git repository: for example a folder that holds `api/` and
+`web/`, a context repository next to `../app`, or checkouts at unrelated paths on the same
+machine. The project's own folder stays the agent's working folder, and the other repositories are
+listed for the agent so it can work in all of them in one thread.
+
+- **Start:** when you add a folder, T3 Code lists the repositories it finds one level down, and the
+  folders of a `.code-workspace` file in it. Pick the ones to track. Change the list later in the
+  project's settings under **Repositories**. A plain folder outside the project folder is tracked
+  as a read-only reference.
+- **Review:** changed files, diffs, and Git actions are grouped by repository. Each repository has
+  its own branch, commit, push, and pull request. When an agent edits a repository the project
+  does not track, the turn says so and offers to track it. Edits made through shell commands can
+  be missed.
+- **New worktree:** a new thread gets its own copy of the project. Each tracked repository gets a
+  worktree on the thread's branch, laid out like your project folder, so paths such as `../app`
+  keep working. Use **Repos** in the composer to leave a repository out. Threads never share these
+  copies unless you choose an existing worktree. Worktrees need the project folder to be a Git
+  repository; for a plain folder, choose **Initialize Git and commit home files** to create one.
+  It ignores the tracked repositories and `.env` files, and shows the files before it commits.
+- **Local threads** work in your real checkouts, which every local thread shares. Rewinding a local
+  thread rewinds only the conversation.
+
 ## Create a pull request
 
 Use a thread's Git actions to commit, push, and create a pull request. T3 Code can generate commit

@@ -179,6 +179,7 @@ const boxProjects = (seen: Ref.Ref<Seen>) =>
             workspaceRoot: input.workspaceRoot,
             defaultModelSelection: null,
             scripts: [],
+            trackedFolders: [],
             createdAt: "2026-10-18T00:00:00.000Z",
             updatedAt: "2026-10-18T00:00:00.000Z",
             deletedAt: null,

@@ -32,6 +32,7 @@ import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManag
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import { TaskFolderStore, type TaskFolderRecord } from "./workspace/TaskFolders.ts";
 import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ServerActivation } from "./serverActivation.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
@@ -354,6 +355,8 @@ const cleanupFixture = (
     let gitInspections = 0;
     let snapshotReads = 0;
     let terminalListener: ((event: TerminalMetadataStreamEvent) => Effect.Effect<void>) | undefined;
+    let taskFolders: ReadonlyArray<TaskFolderRecord> = [];
+    const forgottenTaskFolders: Array<string> = [];
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
     const activated = yield* Deferred.make<void>();
     const context = yield* Layer.build(StorageCleanup.layer).pipe(
@@ -475,6 +478,23 @@ const cleanupFixture = (
           }),
       } as unknown as TerminalManager.TerminalManager["Service"]),
       Effect.provideService(ServerActivation, Deferred.await(activated)),
+      Effect.provideService(TaskFolderStore, {
+        list: () => Effect.sync(() => taskFolders),
+        get: (root) =>
+          Effect.sync(() =>
+            Option.fromUndefinedOr(taskFolders.find((record) => record.root === root)),
+          ),
+        upsert: (record) =>
+          Effect.sync(() => {
+            taskFolders = [...taskFolders.filter((entry) => entry.root !== record.root), record];
+          }),
+        remove: (root) =>
+          Effect.sync(() => {
+            forgottenTaskFolders.push(root);
+            taskFolders = taskFolders.filter((entry) => entry.root !== root);
+          }),
+        findContaining: () => Effect.die("unused"),
+      }),
     );
     return {
       service: Context.get(context, StorageCleanup.StorageCleanup),
@@ -561,6 +581,11 @@ const cleanupFixture = (
       fullStatusCalls: () => fullStatusCalls,
       snapshotReads: () => snapshotReads,
       sessionLiveChecks: () => sessionLiveChecks,
+      setTaskFolders: (records: ReadonlyArray<TaskFolderRecord>) => {
+        taskFolders = records;
+      },
+      taskFolders: () => taskFolders,
+      forgottenTaskFolders,
       activate: (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) => {
         events = domainEvents;
         return Deferred.succeed(activated, undefined);
@@ -2855,3 +2880,178 @@ it.live("keeps saved usage data when removing a settled checkout", () =>
     }),
   ),
 );
+
+describe("task folder cleanup", () => {
+  const row = (
+    kind: "home" | "repository",
+    name: string,
+    originalPath: string,
+    worktreePath: string,
+    relativePath: string,
+  ) => ({
+    kind,
+    name,
+    originalPath,
+    worktreePath,
+    relativePath,
+    baseRef: "main",
+    branch: "feature",
+  });
+
+  // A child repo nested in the home worktree. Home does not ignore it, so only the
+  // cleanup's own exclusion keeps it out of home's status.
+  const taskFolderFixture = (storageCleanup?: StorageCleanupSettings) =>
+    Effect.gen(function* () {
+      const fixture = yield* cleanupFixture(storageCleanup);
+      const { command, fs, repo, worktree } = fixture;
+      const child = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-app-" }),
+      );
+      yield* command(child, ["init", "-b", "main"]);
+      yield* command(child, ["config", "user.email", "cleanup@example.test"]);
+      yield* command(child, ["config", "user.name", "Cleanup test"]);
+      yield* fs.writeFileString(`${child}/app.txt`, "app\n");
+      yield* command(child, ["add", "."]);
+      yield* command(child, ["commit", "-m", "initial"]);
+      const childWorktree = `${worktree}/app`;
+      yield* command(child, ["worktree", "add", "-b", "feature", childWorktree]);
+      fixture.setTaskFolders([
+        {
+          root: worktree,
+          projectId: ProjectId.make("project-1"),
+          homeWorktreePath: worktree,
+          repositories: [
+            row("home", "home", repo, worktree, ""),
+            row("repository", "app", child, childWorktree, "app"),
+          ],
+          createdAt: "2026-06-01T00:00:00.000Z",
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        },
+      ]);
+      return { ...fixture, child, childWorktree };
+    });
+
+  it.live("removes every repo of an eligible task folder, children first", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, childWorktree, child, command, taskFolders } =
+          yield* taskFolderFixture();
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({ outcome: "removed", path: worktree });
+        expect(yield* fs.exists(worktree)).toBe(false);
+        expect((yield* command(child, ["worktree", "list"])).stdout).not.toContain(childWorktree);
+        // A live thread keeps its rows so turn start can recreate the folder.
+        expect(taskFolders()).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.live("keeps the whole task folder when a child repo has uncommitted work", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, childWorktree } = yield* taskFolderFixture();
+        yield* fs.writeFileString(`${childWorktree}/notes.txt`, "unsaved\n");
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "In app: has uncommitted changes (1 file)",
+        });
+        expect(yield* fs.exists(`${childWorktree}/notes.txt`)).toBe(true);
+        expect(yield* fs.exists(`${worktree}/tracked.txt`)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("checks the unchanged rule against each repo's own default branch", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, child, childWorktree, command } = yield* taskFolderFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeUnchanged: true,
+        });
+        for (const cwd of [repo, child]) {
+          const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-remote-" });
+          yield* command(remote, ["init", "--bare", "-b", "main"]);
+          yield* command(cwd, ["remote", "add", "origin", remote]);
+          yield* command(cwd, ["push", "origin", "main"]);
+        }
+        yield* fs.writeFileString(`${childWorktree}/app.txt`, "unmerged\n");
+        yield* command(childWorktree, ["commit", "-am", "unmerged app work"]);
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "In app: has commits beyond the default branch",
+        });
+        expect(yield* fs.readFileString(`${childWorktree}/app.txt`)).toBe("unmerged\n");
+      }),
+    ),
+  );
+
+  it.live("forgets a deleted thread's folder after removing it", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* taskFolderFixture();
+        fixture.setThreads([]);
+        fixture.setDeletedThreads([
+          shell({ branch: "feature", worktreePath: fixture.worktree, deletedAt: at(-DAY_MS) }),
+        ]);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome: "removed",
+          reason: "Thread was deleted",
+        });
+        expect(fixture.forgottenTaskFolders).toEqual([fixture.worktree]);
+      }),
+    ),
+  );
+
+  it.live("keeps a sibling task folder whose root holds other files", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const { command, fs, repo, config } = fixture;
+        const api = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-api-" }),
+        );
+        yield* command(api, ["init", "-b", "main"]);
+        yield* command(api, [
+          "-c",
+          "user.email=t@t",
+          "-c",
+          "user.name=t",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "i",
+        ]);
+        const root = `${config.worktreesDir}/web/task`;
+        yield* command(repo, ["worktree", "add", "-b", "task", `${root}/web`]);
+        yield* command(api, ["worktree", "add", "-b", "task", `${root}/api`]);
+        fixture.setThreads([shell({ branch: "task", worktreePath: `${root}/web` })]);
+        fixture.setTaskFolders([
+          {
+            root,
+            projectId: ProjectId.make("project-1"),
+            homeWorktreePath: `${root}/web`,
+            repositories: [
+              { ...row("home", "web", repo, `${root}/web`, ""), branch: "task" },
+              { ...row("repository", "api", api, `${root}/api`, "../api"), branch: "task" },
+            ],
+            createdAt: "2026-06-01T00:00:00.000Z",
+            updatedAt: "2026-06-01T00:00:00.000Z",
+          },
+        ]);
+        yield* fs.writeFileString(`${root}/notes.txt`, "mine\n");
+        const kept = yield* fixture.service.runNow;
+        expect(kept.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Task folder holds files outside its worktrees",
+        });
+        yield* fs.remove(`${root}/notes.txt`);
+        const removed = yield* fixture.service.runNow;
+        expect(removed.entries[0]).toMatchObject({ outcome: "removed", path: `${root}/web` });
+        expect(yield* fs.exists(root)).toBe(false);
+      }),
+    ),
+  );
+});

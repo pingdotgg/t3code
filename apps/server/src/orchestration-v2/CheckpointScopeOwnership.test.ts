@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import {
   CheckpointId,
   EventId,
@@ -26,6 +27,7 @@ const layerProjection = Layer.mergeAll(
   SqlitePersistence.layerMemory,
   IdAllocator.layer,
   NodeCrypto.layer,
+  Path.layer,
 );
 it.effect("resolves the thread baseline after a second root run replaces scope ownership", () =>
   Effect.gen(function* () {

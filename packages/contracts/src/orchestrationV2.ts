@@ -671,6 +671,12 @@ export const OrchestrationV2RunBackgroundWorkCancelled = Schema.Struct({
 export type OrchestrationV2RunBackgroundWorkCancelled =
   typeof OrchestrationV2RunBackgroundWorkCancelled.Type;
 
+export const OrchestrationV2LaunchRepository = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  baseRef: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationV2LaunchRepository = typeof OrchestrationV2LaunchRepository.Type;
+
 export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("root"),
@@ -686,6 +692,13 @@ export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
     baseRef: TrimmedNonEmptyString,
     branch: Schema.optional(TrimmedNonEmptyString),
     startFromOrigin: Schema.optional(Schema.Boolean),
+    /**
+     * Tracked Git folders that get a worktree, by their tracked path. Omitted means every tracked
+     * Git folder. `baseRef` overrides that folder's default branch. Ignored for single-repo projects.
+     */
+    repositories: Schema.optional(
+      Schema.Array(OrchestrationV2LaunchRepository).check(Schema.isMaxLength(64)),
+    ),
   }),
 ]);
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
@@ -960,10 +973,22 @@ export const OrchestrationV2CheckpointScope = Schema.Struct({
   nodeId: NodeId,
   parentScopeId: Schema.NullOr(CheckpointScopeId),
   providerThreadId: Schema.NullOr(ProviderThreadId),
-  kind: Schema.Literals(["root_run", "subagent", "tool", "provider_thread", "manual"]),
+  kind: Schema.Literals([
+    "root_run",
+    "subagent",
+    "tool",
+    "provider_thread",
+    "manual",
+    // One per tracked Git folder of a multi-repo thread, child of the thread's root scope.
+    "repository",
+  ]),
   ordinalWithinParent: NonNegativeInt,
   advancesAppRunCount: Schema.Boolean,
   cwd: TrimmedNonEmptyString,
+  /** Repository scopes: the repo's display name. */
+  label: Schema.optional(TrimmedNonEmptyString),
+  /** Repository scopes: the project's tracked path, stable when `cwd` is a task folder worktree. */
+  repositoryPath: Schema.optional(TrimmedNonEmptyString),
   createdAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2CheckpointScope = typeof OrchestrationV2CheckpointScope.Type;
@@ -1422,6 +1447,22 @@ export const OrchestrationV2CheckpointFileTotals = Schema.Struct({
   deletions: NonNegativeInt,
 });
 export type OrchestrationV2CheckpointFileTotals = typeof OrchestrationV2CheckpointFileTotals.Type;
+export const ORCHESTRATION_V2_OUTSIDE_EDIT_FILES_MAX = 20;
+
+/** Found from the run's reported file changes, so shell edits can be missing. */
+export const OrchestrationV2CheckpointOutsideEdit = Schema.Struct({
+  /** The repo's Git toplevel on the server. */
+  root: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  /** True when the repo is a folder the project already tracks. */
+  tracked: Schema.Boolean,
+  /** Paths relative to `root`, capped at ORCHESTRATION_V2_OUTSIDE_EDIT_FILES_MAX. */
+  files: Schema.Array(TrimmedNonEmptyString).check(
+    Schema.isMaxLength(ORCHESTRATION_V2_OUTSIDE_EDIT_FILES_MAX),
+  ),
+  fileCount: NonNegativeInt,
+});
+export type OrchestrationV2CheckpointOutsideEdit = typeof OrchestrationV2CheckpointOutsideEdit.Type;
 
 export const OrchestrationV2Checkpoint = Schema.Struct({
   id: CheckpointId,
@@ -1436,6 +1477,10 @@ export const OrchestrationV2Checkpoint = Schema.Struct({
   status: Schema.Literals(["ready", "missing", "error", "stale"]),
   files: Schema.Array(OrchestrationV2CheckpointFileSummary),
   filesTotal: Schema.optionalKey(OrchestrationV2CheckpointFileTotals),
+  /** Root checkpoints: Git repos the run edited that have no checkpoint for this run. */
+  outsideEdits: Schema.optional(
+    Schema.Array(OrchestrationV2CheckpointOutsideEdit).check(Schema.isMaxLength(32)),
+  ),
   capturedAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2Checkpoint = typeof OrchestrationV2Checkpoint.Type;
@@ -3274,6 +3319,10 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
+    /** "Start without <repo>": tracked paths to leave out of the task folder on this retry. */
+    skipRepositoryPaths: Schema.optional(
+      Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(64)),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("subagent.stop"),

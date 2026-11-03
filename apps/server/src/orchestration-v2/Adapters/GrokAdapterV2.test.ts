@@ -41,6 +41,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { WorkspaceRepositories } from "../../workspace/WorkspaceRepositories.ts";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
 import { acpCompletedTurnShouldTerminalizeTool } from "@t3tools/provider-acp/server/adapter";
 import {
@@ -343,10 +344,11 @@ describe("Grok launch permission mode", () => {
           RuntimePolicy.layerFromProjectStore.pipe(
             Layer.provide(ServerSettings.layerTest()),
             Layer.provide(
-              Layer.mock(ProjectStore.ProjectStoreV2)({
-                get: () => Effect.die("the thread has a worktree"),
-              }),
+              Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeedNone }),
             ),
+            // A project without tracked folders never looks up repositories.
+            Layer.provide(Layer.mock(WorkspaceRepositories)({})),
+            Layer.provide(Path.layer),
             Layer.provide(
               Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
                 getInstance: () =>

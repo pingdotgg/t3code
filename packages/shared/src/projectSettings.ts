@@ -166,14 +166,24 @@ function resolveProjectOverrides(
   return { settings: effective as ServerSettings, sources, overrides };
 }
 
-/** New name-only projects use their checkout until the first thread, even when the default is worktree. */
+/**
+ * New name-only projects use their checkout until the first thread, even when the default is worktree.
+ * Multi-repo projects with a Git home start in a task folder unless the project or t3.json picks a mode.
+ */
 export function resolveNewThreadEnvMode(input: {
   readonly projectSettings: ResolvedProjectSettings<ResolvedServerSettings>;
   readonly workspaceRoot: string | null;
   readonly newProjectsRoot: string | null | undefined;
   readonly projectHasThreads: boolean;
+  readonly multiRepoWithGitHome?: boolean;
 }): ThreadEnvMode {
   const configured = input.projectSettings.settings.defaultThreadEnvMode;
+  if (
+    input.multiRepoWithGitHome === true &&
+    input.projectSettings.sources.defaultThreadEnvMode === "environment"
+  ) {
+    return "worktree";
+  }
   if (
     configured === "local" ||
     input.projectHasThreads ||

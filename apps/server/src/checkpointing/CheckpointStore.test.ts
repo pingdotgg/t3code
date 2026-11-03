@@ -479,6 +479,74 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
     );
   });
 
+  describe("child repositories", () => {
+    it.effect("leaves tracked child repos out of the parent checkpoint and its restore", () =>
+      Effect.gen(function* () {
+        const home = yield* makeTmpDir();
+        yield* initRepoWithCommit(home);
+        yield* writeTextFile(NodePath.join(home, ".gitignore"), "ignored-child/\n");
+        yield* git(home, ["add", ".gitignore"]);
+        yield* git(home, ["commit", "-m", "ignore a child"]);
+        const fileSystem = yield* FileSystem.FileSystem;
+        for (const child of ["child", "ignored-child"]) {
+          yield* fileSystem.makeDirectory(NodePath.join(home, child));
+          yield* initRepoWithCommit(NodePath.join(home, child));
+        }
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-child-repositories");
+        const refs = {
+          cwd: home,
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
+          toCheckpointRef: checkpointRefForThreadTurn(threadId, 1),
+        };
+        const excludePaths = ["child", "ignored-child"];
+
+        yield* checkpointStore.captureCheckpoint({
+          cwd: home,
+          checkpointRef: refs.fromCheckpointRef,
+          excludePaths,
+        });
+        yield* writeTextFile(NodePath.join(home, "README.md"), "# home edit\n");
+        yield* writeTextFile(NodePath.join(home, "child", "README.md"), "# child edit\n");
+        yield* writeTextFile(NodePath.join(home, "ignored-child", "new.ts"), "export {};\n");
+        yield* checkpointStore.captureCheckpoint({
+          cwd: home,
+          checkpointRef: refs.toCheckpointRef,
+          excludePaths,
+        });
+
+        // Without the exclusion Git stages the child as an embedded repo (a gitlink).
+        expect(
+          (yield* git(home, ["ls-tree", "-r", "--name-only", refs.toCheckpointRef])).split("\n"),
+        ).toEqual([".gitignore", "README.md"]);
+        const numstat = yield* checkpointStore.diffCheckpoints({
+          ...refs,
+          ignoreWhitespace: false,
+          format: "numstat",
+        });
+        expect(parseTurnDiffFilesFromNumstat(numstat).map((file) => file.path)).toEqual([
+          "README.md",
+        ]);
+
+        expect(
+          yield* checkpointStore.restoreCheckpoint({
+            cwd: home,
+            checkpointRef: refs.fromCheckpointRef,
+            excludePaths,
+          }),
+        ).toBe(true);
+        expect(yield* fileSystem.readFileString(NodePath.join(home, "README.md"))).toBe("# test\n");
+        expect(yield* fileSystem.readFileString(NodePath.join(home, "child", "README.md"))).toBe(
+          "# child edit\n",
+        );
+        expect(yield* fileSystem.exists(NodePath.join(home, "ignored-child", "new.ts"))).toBe(true);
+        expect(yield* git(NodePath.join(home, "child"), ["status", "--porcelain"])).toBe(
+          "M README.md",
+        );
+      }),
+    );
+  });
+
   describe("listAuthoredPaths", () => {
     it.effect("leaves out paths that only a merged upstream changed", () =>
       Effect.gen(function* () {

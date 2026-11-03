@@ -38,8 +38,9 @@ interface MarkdownFileLinkProps {
   copyMarkdown: string;
   theme: "light" | "dark";
   threadRef?: ScopedThreadRef | undefined;
-  onOpen?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
-  onOpenInPanel: (panelPath: string, line: number | undefined) => void;
+  /** `anchor` places a picker when the link matches files in several repos. */
+  onOpen?: ((anchor?: LinkAnchor) => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
+  onOpenInPanel: (panelPath: string, line: number | undefined, anchor?: LinkAnchor) => void;
   resolveCopyPaths: () => Promise<ReturnType<typeof markdownFileCopyPaths>>;
   openInEditorMenuLabel: string;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
@@ -49,6 +50,16 @@ interface MarkdownFileLinkProps {
 }
 
 const MARKDOWN_FILE_LINK_CLASS_NAME = "chat-markdown-file-link";
+
+interface LinkAnchor {
+  readonly x: number;
+  readonly y: number;
+}
+
+function linkAnchor(element: Element): LinkAnchor {
+  const bounds = element.getBoundingClientRect();
+  return { x: bounds.left, y: bounds.bottom };
+}
 
 export const MarkdownFileLink = memo(function MarkdownFileLink({
   environmentId,
@@ -72,13 +83,13 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   revealLabel,
   resolveCopyPaths,
 }: MarkdownFileLinkProps) {
-  const handleOpenInEditor = () => {
+  const handleOpenInEditor = (anchor?: LinkAnchor) => {
     if (!onOpen) {
       return;
     }
     void (async () => {
       try {
-        const result = await onOpen();
+        const result = await onOpen(anchor);
         if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
           return;
         }
@@ -110,16 +121,16 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
     })();
   };
 
-  const handleOpenInFilePreview = () => {
+  const handleOpenInFilePreview = (anchor: LinkAnchor) => {
     if (threadRef && panelPath) {
-      onOpenInPanel(panelPath, line);
+      onOpenInPanel(panelPath, line, anchor);
       return;
     }
     if (onOpenMedia) {
       onOpenMedia();
       return;
     }
-    handleOpenInEditor();
+    handleOpenInEditor(anchor);
   };
 
   const handleOpenInBrowser = () => {
@@ -268,7 +279,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         return;
       }
       if (clicked === "open") {
-        handleOpenInEditor();
+        handleOpenInEditor(position);
         return;
       }
       if (clicked === "open-in-browser") {
@@ -340,15 +351,16 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                const anchor = linkAnchor(event.currentTarget);
                 if (onOpen && shouldOpenMarkdownFileLinkInEditor(event)) {
-                  handleOpenInEditor();
+                  handleOpenInEditor(anchor);
                   return;
                 }
                 if (useBrowserPrimaryAction) {
                   handleOpenInBrowser();
                   return;
                 }
-                handleOpenInFilePreview();
+                handleOpenInFilePreview(anchor);
               }}
               onContextMenu={handleContextMenu}
             >

@@ -1,6 +1,7 @@
 import { Button } from "../../components/ui/Button";
 import {
   worktreeSetupStageLabel,
+  type WorktreeSetupRepository,
   type WorktreeSetupSnapshot,
   type WorktreeSetupStage,
 } from "@t3tools/contracts";
@@ -138,6 +139,9 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
                 animate={!detailsOpen}
               />
             ))}
+          {snapshot.repositories.map((repository) => (
+            <RepositoryRow key={repository.path} repository={repository} compact />
+          ))}
         </View>
       ) : null}
       {detailsOpen ? (
@@ -221,6 +225,9 @@ function SetupDetailsSheet({
               ) : null}
             </View>
           ))}
+        {snapshot.repositories.map((repository) => (
+          <RepositoryRow key={repository.path} repository={repository} />
+        ))}
         {snapshot.phase === "failed" && snapshot.error ? (
           <Text selectable className="ml-8 mt-2 text-xs text-danger-foreground">
             {snapshot.error}
@@ -336,6 +343,54 @@ function StageRow({
           style={{ fontVariant: ["tabular-nums"] }}
         >
           {elapsed(stage.startedAt, stage.endedAt, now)}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+const repositoryIcons: Record<WorktreeSetupRepository["status"], AppSymbolName> = {
+  pending: "circle",
+  running: "clock",
+  done: "checkmark",
+  failed: "xmark",
+};
+
+/** One repo of a task folder. Static icons: the checkout stage above already shows progress. */
+function RepositoryRow({
+  repository,
+  compact = false,
+}: {
+  repository: WorktreeSetupRepository;
+  compact?: boolean;
+}) {
+  const failed = repository.status === "failed";
+  return (
+    <View
+      accessibilityLabel={`${repository.name}, ${repository.status}`}
+      className={compact ? "min-h-8 flex-row items-center" : "min-h-11 flex-row items-center"}
+      style={{ columnGap: 8, opacity: repository.status === "pending" ? 0.4 : 1 }}
+    >
+      <View className="w-6 items-center">
+        <SymbolView
+          name={repositoryIcons[repository.status]}
+          size={14}
+          tintColorClassName={failed ? "accent-danger-foreground" : "accent-icon-muted"}
+        />
+      </View>
+      <Text
+        numberOfLines={1}
+        className={
+          failed
+            ? "flex-1 text-sm text-danger-foreground"
+            : "flex-1 text-sm text-foreground-secondary"
+        }
+      >
+        {repository.name}
+      </Text>
+      {repository.detail ? (
+        <Text numberOfLines={1} className="max-w-[40%] shrink text-2xs text-foreground-secondary">
+          {repository.detail}
         </Text>
       ) : null}
     </View>

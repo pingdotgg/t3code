@@ -1,4 +1,5 @@
 // Client-supplied worktrees count only under managed folders or when Git lists them for the project.
+// Tracked folders and task folder roots count too: threads of multi-repo projects work in them.
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
@@ -14,6 +15,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "../worktreesDirectory.ts";
+import { TaskFolderStore } from "./TaskFolders.ts";
 
 export class UnknownWorkspaceError extends Schema.TaggedError<UnknownWorkspaceError>()(
   "UnknownWorkspaceError",
@@ -55,6 +57,7 @@ export const make = Effect.gen(function* () {
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const sql = yield* SqlClient.SqlClient;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const taskFolders = yield* TaskFolderStore;
 
   // Missing roots keep lexical paths; other resolution failures and filesystem roots grant nothing.
   const resolveRoot = (value: string) => {
@@ -89,6 +92,15 @@ export const make = Effect.gen(function* () {
       const projects = yield* projectStore.listShells().pipe(Effect.orElseSucceed(() => []));
       for (const project of projects) {
         if (within(yield* resolveRoot(project.workspaceRoot))) return true;
+      }
+      for (const project of projects) {
+        for (const folder of project.trackedFolders) {
+          if (within(yield* resolveRoot(folder.path))) return true;
+        }
+      }
+      const records = yield* taskFolders.list().pipe(Effect.orElseSucceed(() => []));
+      for (const record of records) {
+        if (within(yield* resolveRoot(record.root))) return true;
       }
 
       const threads = yield* sql<{ readonly worktreePath: string; readonly projectId: string }>`

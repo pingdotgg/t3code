@@ -264,6 +264,53 @@ describe("resolveNewThreadEnvMode", () => {
       expect(resolveNewThreadEnvMode({ ...newProject, projectSettings })).toBe("worktree");
     }
   });
+
+  it("starts multi-repo projects in a worktree unless the project or t3.json picks a mode", () => {
+    const multiRepo = {
+      ...newProject,
+      workspaceRoot: "/code/app",
+      projectHasThreads: true,
+      multiRepoWithGitHome: true,
+    };
+    const environmentLocal = resolveProjectSettings(
+      { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: "local" },
+      projectId,
+      null,
+      null,
+    );
+    expect(
+      resolveNewThreadEnvMode({
+        ...multiRepo,
+        projectSettings: resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, null),
+      }),
+    ).toBe("worktree");
+    expect(resolveNewThreadEnvMode({ ...multiRepo, projectSettings: environmentLocal })).toBe(
+      "worktree",
+    );
+    for (const projectSettings of [
+      resolveProjectSettings(
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "local" } },
+        },
+        projectId,
+        null,
+        null,
+      ),
+      resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, {
+        defaultThreadEnvMode: "local",
+      }),
+    ]) {
+      expect(resolveNewThreadEnvMode({ ...multiRepo, projectSettings })).toBe("local");
+    }
+    expect(
+      resolveNewThreadEnvMode({
+        ...multiRepo,
+        multiRepoWithGitHome: false,
+        projectSettings: environmentLocal,
+      }),
+    ).toBe("local");
+  });
 });
 
 describe("projectSettingsOverrides patches", () => {

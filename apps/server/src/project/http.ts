@@ -25,7 +25,8 @@ const failProjectMutation = Effect.fn("environment.projects.failMutation")(funct
     cause._tag === "ProjectNotFoundError" ||
     cause._tag === "ProjectConflictError" ||
     cause._tag === "ProjectNotEmptyError" ||
-    cause._tag === "ProjectInvalidError"
+    cause._tag === "ProjectInvalidError" ||
+    cause._tag === "ProjectTrackedFoldersInvalidError"
   ) {
     return yield* failEnvironmentInvalidRequest("invalid_command");
   }

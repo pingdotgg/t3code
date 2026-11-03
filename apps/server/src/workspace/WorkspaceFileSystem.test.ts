@@ -10,14 +10,20 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { EventId, ProjectId } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as KnownWorkspaces from "./KnownWorkspaces.ts";
+import * as TaskFolders from "./TaskFolders.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as WorkspaceRepositories from "./WorkspaceRepositories.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { vi } from "vite-plus/test";
@@ -60,6 +66,13 @@ const layerProject = WorkspaceFileSystem.layer.pipe(
 const layerTest = Layer.empty.pipe(
   Layer.provideMerge(layerProject),
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+  Layer.provideMerge(
+    WorkspaceRepositories.layer.pipe(
+      Layer.provide(GitVcsDriver.layer),
+      Layer.provideMerge(Layer.mergeAll(ProjectStore.layer, TaskFolders.layer)),
+      Layer.provideMerge(SqlitePersistence.layerMemory),
+    ),
+  ),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
   Layer.provideMerge(
@@ -227,6 +240,60 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         yield* injectShortReads(target);
         const error = yield* files.readFile({ cwd, relativePath: "short.txt" }).pipe(Effect.flip);
         expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceBinaryFileError);
+      }),
+    );
+
+    it.effect("reads a multi-repo thread's other repos by paths from its cwd", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* makeTempDir;
+        const home = path.join(base, "home");
+        const app = path.join(base, "app");
+        yield* writeTextFile(home, "README.md", "# Home\n");
+        yield* writeTextFile(app, "src/checkout.ts", "export {};\n");
+        yield* writeTextFile(base, "secret.txt", "not tracked\n");
+        yield* fileSystem.makeDirectory(path.join(app, ".git"));
+        const projectId = ProjectId.make(`project:${home}`);
+        yield* (yield* ProjectStore.ProjectStoreV2).apply({
+          sequence: 1,
+          eventId: EventId.make(`event:${home}`),
+          aggregateKind: "project",
+          aggregateId: projectId,
+          occurredAt: "2026-10-27T00:00:00.000Z",
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "project.created",
+          payload: {
+            projectId,
+            title: "home",
+            workspaceRoot: home,
+            defaultModelSelection: null,
+            scripts: [],
+            trackedFolders: [{ path: app, name: "app" }],
+            createdAt: "2026-10-27T00:00:00.000Z",
+            updatedAt: "2026-10-27T00:00:00.000Z",
+          },
+        });
+
+        expect(
+          yield* workspaceFileSystem.readFile({
+            cwd: home,
+            relativePath: "../app/src/checkout.ts",
+          }),
+        ).toEqual({
+          relativePath: "../app/src/checkout.ts",
+          contents: "export {};\n",
+          byteLength: 11,
+          truncated: false,
+        });
+        const outside = yield* workspaceFileSystem
+          .readFile({ cwd: home, relativePath: "../secret.txt" })
+          .pipe(Effect.flip);
+        expect(outside._tag).toBe("WorkspacePathOutsideRootError");
       }),
     );
 

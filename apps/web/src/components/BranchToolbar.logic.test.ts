@@ -236,6 +236,28 @@ describe("resolveBranchSelectionTarget", () => {
     }
   });
 
+  it("keeps a task folder thread in its worktree for any ref", () => {
+    const taskFolder = "/worktrees/app/fix-login";
+    for (const refName of [
+      { isDefault: true, worktreePath: "/repo" },
+      { isDefault: false, worktreePath: "/worktrees/app/other" },
+      { isDefault: false, worktreePath: null },
+    ]) {
+      expect(
+        resolveBranchSelectionTarget({
+          activeProjectCwd: "/repo",
+          activeWorktreePath: taskFolder,
+          refName,
+          keepWorktree: true,
+        }),
+      ).toEqual({
+        checkoutCwd: taskFolder,
+        nextWorktreePath: taskFolder,
+        reuseExistingWorktree: false,
+      });
+    }
+  });
+
   it("keeps checkout in the current worktree for non-default refs", () => {
     expect(
       resolveBranchSelectionTarget({

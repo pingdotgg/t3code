@@ -47,6 +47,46 @@ describe("resolveFileChipTarget", () => {
   });
 });
 
+describe("resolveFileChipTarget in a multi-repo thread", () => {
+  // Task folder layout: the agent runs in the home worktree next to its sibling repos.
+  const repositories = {
+    roots: ["/tasks/fix/app", "/tasks/fix/infra", "/code/docs"],
+    editedPaths: ["/tasks/fix/infra/src/main.ts", "/tasks/fix/app/src/main.ts"],
+  };
+
+  it("opens the newest edited file that ends with the link", () => {
+    expect(resolveFileChipTarget("src/main.ts:4", "/tasks/fix/app", repositories)).toEqual({
+      fullPath: "/tasks/fix/infra/src/main.ts",
+    });
+    expect(resolveFileChipTarget("app/src/main.ts", "/tasks/fix/app", repositories)).toEqual({
+      fullPath: "/tasks/fix/app/src/main.ts",
+      relativePath: "src/main.ts",
+    });
+    // Not edited: the link keeps today's join with the thread's cwd.
+    expect(resolveFileChipTarget("README.md", "/tasks/fix/app", repositories)).toEqual({
+      fullPath: "/tasks/fix/app/README.md",
+      relativePath: "README.md",
+    });
+  });
+
+  it("follows ../ links only into the thread's repos and reference folders", () => {
+    expect(resolveFileChipTarget("../infra/vars.tf", "/tasks/fix/app", repositories)).toEqual({
+      fullPath: "/tasks/fix/infra/vars.tf",
+    });
+    expect(
+      resolveFileChipTarget("../../../code/docs/a.md", "/tasks/fix/app", repositories),
+    ).toEqual({ fullPath: "/code/docs/a.md" });
+    expect(resolveFileChipTarget("../secrets/key.pem", "/tasks/fix/app", repositories)).toBeNull();
+    expect(resolveFileChipTarget("../infra/vars.tf", "/tasks/fix/app")).toBeNull();
+    expect(
+      resolveFileChipTarget("../infra/vars.tf", "C:\\tasks\\app", {
+        roots: ["C:\\tasks\\infra"],
+        editedPaths: [],
+      }),
+    ).toEqual({ fullPath: "C:\\tasks\\infra\\vars.tf" });
+  });
+});
+
 describe("file chip downloads", () => {
   const threadId = ThreadId.make("thread-1");
 

@@ -3139,6 +3139,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               workspaceRoot: "/elsewhere",
               defaultModelSelection: null,
               scripts: [],
+              trackedFolders: [],
               createdAt: DateTime.formatIso(createdAt),
               updatedAt: DateTime.formatIso(createdAt),
             },
@@ -5335,6 +5336,73 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           "remote.fork-seed.url",
         ])).stdout.trim(),
       ).toBe(forkDir);
+    }),
+  );
+
+  it.effect("lets the caller check out the pull request branch, as a task folder does", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/task-folder"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "task-folder.txt"), "pr\n");
+      yield* runGit(repoDir, ["add", "task-folder.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Task folder PR"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/task-folder"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/task-folder"]);
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          pullRequest: {
+            number: 90,
+            title: "Task folder PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/90",
+            baseRefName: "main",
+            headRefName: "feature/task-folder",
+            state: "open",
+            isCrossRepository: false,
+            headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+            headRepositoryOwnerLogin: "pingdotgg",
+          },
+          repositoryCloneUrls: {
+            "pingdotgg/codething-mvp": { url: remoteDir, sshUrl: remoteDir },
+          },
+        },
+      });
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const checkoutPath = NodePath.join(yield* makeTempDir("t3code-task-folder-"), "web");
+
+      const result = yield* manager.preparePullRequestThread(
+        { cwd: repoDir, reference: "90", mode: "worktree" },
+        {
+          checkout: (branch) =>
+            driver
+              .execute({
+                operation: "GitManager.test.checkout",
+                cwd: repoDir,
+                args: ["worktree", "add", checkoutPath, branch],
+              })
+              .pipe(
+                Effect.as({
+                  worktreePath: checkoutPath,
+                  branch,
+                  pullRequestWorktreePath: checkoutPath,
+                  projectCwd: repoDir,
+                }),
+              ),
+        },
+      );
+
+      expect(result).toMatchObject({
+        worktreePath: checkoutPath,
+        branch: "feature/task-folder",
+        isOnPullRequestHead: true,
+      });
+      expect(
+        (yield* runGit(checkoutPath, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
+      ).toBe("origin/feature/task-folder");
     }),
   );
 

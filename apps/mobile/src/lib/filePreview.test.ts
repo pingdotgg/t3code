@@ -182,6 +182,15 @@ vi.mock("../state/entities", () => ({
 vi.mock("../state/use-thread-selection", () => ({
   useThreadSelection: () => ({ selectedThread: null }),
 }));
+vi.mock("../state/use-thread-repositories", () => ({
+  useThreadRepositoriesForThread: () => ({
+    repositories: [],
+    references: [],
+    taskFolder: null,
+    multiRepository: false,
+    loading: false,
+  }),
+}));
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/use-atom-command", () => ({}));
 vi.mock("../state/v2-item-support", () => ({}));

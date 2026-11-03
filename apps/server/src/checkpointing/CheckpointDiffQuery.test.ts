@@ -65,6 +65,7 @@ function layerFor(input: {
       ),
     ),
     Layer.provideMerge(NodeCrypto.layer),
+    Layer.provideMerge(Path.layer),
   );
 }
 
@@ -159,6 +160,7 @@ it.effect.each([false, true])(
       const result = yield* query.getTurnDiff({ threadId, fromTurnCount: 2, toTurnCount: 3 });
 
       assert.strictEqual(result.diff, "diff --git a/file b/file");
+      assert.isFalse("repositories" in result);
       yield* query.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 3 });
       yield* query.getFullThreadDiff({ threadId, toTurnCount: 3 });
       assert.deepEqual(
@@ -189,6 +191,91 @@ it.effect.each([false, true])(
     }).pipe(Effect.provide(layer));
   },
 );
+
+it.effect("diffs each repo over the turns it took part in", () => {
+  const runId = (ordinal: number) => RunId.make(`run:checkpoint-diff-repos:${ordinal}`);
+  const rootScopeId = CheckpointScopeId.make("scope:checkpoint-diff-repos:root");
+  const record = (
+    scopeId: CheckpointScopeId,
+    ordinalWithinScope: number,
+    run: number | null,
+    appRunOrdinal: number | null = null,
+  ): ProjectionCheckpointContext["checkpoints"][number] => ({
+    scopeId,
+    runId: run === null ? null : runId(run),
+    ordinalWithinScope,
+    appRunOrdinal,
+    status: "ready",
+    ref: CheckpointRef.make(`refs/t3/test/${scopeId}/${ordinalWithinScope}`),
+  });
+  const repository = (name: string) => ({
+    id: CheckpointScopeId.make(name),
+    runId: runId(3),
+    kind: "repository" as const,
+    cwd: `/work/home/${name}`,
+    label: name,
+    repositoryPath: `/tracked/${name}`,
+  });
+  const projection: ProjectionCheckpointContext = {
+    runs: [1, 2, 3].map((ordinal) => ({ id: runId(ordinal), ordinal, status: "completed" })),
+    checkpointScopes: [
+      { id: rootScopeId, runId: runId(3), kind: "root_run", cwd: "/work/home" },
+      repository("api"),
+      repository("web"),
+      repository("docs"),
+    ],
+    checkpoints: [
+      ...[1, 2, 3].map((ordinal) => ({
+        ...record(rootScopeId, ordinal, ordinal, ordinal),
+        status: "missing" as const,
+      })),
+      record(CheckpointScopeId.make("api"), 0, null),
+      ...[1, 2, 3].map((ordinal) => record(CheckpointScopeId.make("api"), ordinal, ordinal)),
+      // web joined at run 3; docs left after run 1.
+      record(CheckpointScopeId.make("web"), 2, null),
+      record(CheckpointScopeId.make("web"), 3, 3),
+      record(CheckpointScopeId.make("docs"), 0, null),
+      record(CheckpointScopeId.make("docs"), 1, 1),
+    ],
+  };
+  const layer = layerFor({
+    projection: Effect.succeed(projection),
+    diffCheckpoints: (input) =>
+      Effect.succeed(
+        input.format === "numstat"
+          ? ""
+          : `${input.cwd}: ${input.fromCheckpointRef.split("/").pop()}->${input.toCheckpointRef.split("/").pop()}`,
+      ),
+  });
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const summarize = (result: {
+      readonly diff: string;
+      readonly repositories?: ReadonlyArray<{
+        readonly relativePath: string;
+        readonly diff: string;
+      }>;
+    }) => ({
+      diff: result.diff,
+      repositories: result.repositories?.map(({ relativePath, diff }) => `${relativePath} ${diff}`),
+    });
+    assert.deepEqual(
+      summarize(yield* query.getTurnDiff({ threadId, fromTurnCount: 2, toTurnCount: 3 })),
+      {
+        diff: "",
+        repositories: ["api /work/home/api: 2->3", "web /work/home/web: 2->3"],
+      },
+    );
+    assert.deepEqual(summarize(yield* query.getFullThreadDiff({ threadId, toTurnCount: 3 })), {
+      diff: "",
+      repositories: [
+        "api /work/home/api: 0->3",
+        "web /work/home/web: 2->3",
+        "docs /work/home/docs: 0->1",
+      ],
+    });
+  }).pipe(Effect.provide(layer));
+});
 
 const layerVcsProcess = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 const layerStore = CheckpointStore.layer.pipe(

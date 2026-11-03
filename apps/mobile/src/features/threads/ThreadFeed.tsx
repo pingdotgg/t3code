@@ -41,7 +41,10 @@ import {
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
-import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import type {
+  ThreadCheckpointOutsideEdit,
+  ThreadCheckpointSummary,
+} from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
@@ -58,6 +61,8 @@ import {
   type RunId,
   type ScheduledTaskId,
   type ScopedThreadRef,
+  type WorkspaceRepository,
+  type WorktreeSetupRepository,
 } from "@t3tools/contracts";
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
@@ -167,6 +172,14 @@ import { markdownFileEmbedLabel, resolveMarkdownMediaPreview } from "../../lib/m
 import { attachmentVideoPreviewSource } from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "./CopyTextButton";
 import { getReviewSectionIdForCheckpoint } from "../review/reviewModel";
+import { reviewSectionPrefixForCwd } from "../review/reviewRepositories";
+import { useThreadRepositoriesForThread } from "../../state/use-thread-repositories";
+import {
+  groupTurnChangesByRepository,
+  outsideEditLabel,
+  turnRepositorySectionId,
+  type TurnRepositoryChanges as TurnRepositoryChangeGroups,
+} from "./turnRepositoryChanges";
 import { setReviewSelectedSectionId } from "../review/reviewState";
 import { Menu } from "../../components/ui/Menu";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
@@ -217,6 +230,7 @@ import {
   ThreadWorkLog,
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
+import { failedWorktreeSetupRepositories } from "./worktree-setup-state";
 import {
   appendGuestPendingMessages,
   appendPendingThreadMessages,
@@ -253,7 +267,12 @@ import { useModelMentions } from "../../state/model-mentions";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { environmentThreadShells, threadEnvironment } from "../../state/threads";
+import {
+  environmentThreadDetails,
+  environmentThreadShells,
+  threadEnvironment,
+} from "../../state/threads";
+import { findRepositoryFileLinkCandidates } from "@t3tools/client-runtime/state/thread-repositories";
 import { ThreadWorkflowOpening, useWorkflowOpening } from "./thread-workflow-opening";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
@@ -265,7 +284,14 @@ import {
 } from "../files/filePath";
 import { waitForThreadShell } from "./threadForkNavigation";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
-import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fileChipMenu";
+import {
+  fileChipClipboardPath,
+  fileChipMenu,
+  resolveFileChipTarget,
+  resolveRepositoryFileLinkPath,
+  threadEditedFilePaths,
+  type FileChipRepositories,
+} from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import {
@@ -1656,7 +1682,12 @@ function renderFeedEntry(
     readonly onToggleWorkGroup: (groupId: string, anchorKey?: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
-    readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
+    readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary, sectionId?: string) => void;
+    readonly onReviewOutsideEdit: (edit: ThreadCheckpointOutsideEdit) => void;
+    /** Null before the thread's repo list loads, and for single-repo threads. */
+    readonly threadRepositories: ReadonlyArray<WorkspaceRepository> | null;
+    readonly homeRepositoryName: string;
+    readonly failedSetupRepositories: ReadonlyArray<WorktreeSetupRepository>;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPlaybackStart: () => void;
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
@@ -1702,8 +1733,16 @@ function renderFeedEntry(
     );
   }
 
+  const turnChanges = entry.checkpointSummary
+    ? groupTurnChangesByRepository(
+        entry.checkpointSummary,
+        props.threadRepositories,
+        props.homeRepositoryName,
+      )
+    : null;
+
   if (entry.type === "run-fold") {
-    return (
+    const foldRow = (
       <View className="mb-1 flex-row items-center border-b border-border-subtle px-2">
         <RunFoldButton
           key={entry.id}
@@ -1714,13 +1753,29 @@ function renderFeedEntry(
           rowSizing={props.workRowSizing}
           iconColor={iconSubtleColor}
         />
-        {entry.checkpointSummary ? (
+        {entry.checkpointSummary && turnChanges ? (
           <TurnDiffStat
             checkpoint={entry.checkpointSummary}
+            changes={turnChanges}
             onOpenTurnDiff={props.onOpenTurnDiff}
           />
         ) : null}
       </View>
+    );
+    return entry.checkpointSummary &&
+      turnChanges &&
+      showsRepositoryChanges(entry.checkpointSummary, turnChanges) ? (
+      <>
+        {foldRow}
+        <TurnRepositoryChanges
+          checkpoint={entry.checkpointSummary}
+          changes={turnChanges}
+          onOpenTurnDiff={props.onOpenTurnDiff}
+          onReviewOutsideEdit={props.onReviewOutsideEdit}
+        />
+      </>
+    ) : (
+      foldRow
     );
   }
 
@@ -1775,7 +1830,7 @@ function renderFeedEntry(
   }
 
   if (entry.type === "work-toggle") {
-    return (
+    const toggle = (
       <ThreadWorkGroupToggle
         environmentId={props.environmentId}
         rowSizing={props.workRowSizing}
@@ -1792,15 +1847,31 @@ function renderFeedEntry(
         shimmer={entry.shimmer}
         thought={entry.thought}
         trailing={
-          entry.checkpointSummary ? (
+          entry.checkpointSummary && turnChanges ? (
             <TurnDiffStat
               checkpoint={entry.checkpointSummary}
+              changes={turnChanges}
               onOpenTurnDiff={props.onOpenTurnDiff}
             />
           ) : null
         }
         onToggle={() => props.onToggleWorkGroup(entry.groupId, entry.id)}
       />
+    );
+    return entry.checkpointSummary &&
+      turnChanges &&
+      showsRepositoryChanges(entry.checkpointSummary, turnChanges) ? (
+      <>
+        {toggle}
+        <TurnRepositoryChanges
+          checkpoint={entry.checkpointSummary}
+          changes={turnChanges}
+          onOpenTurnDiff={props.onOpenTurnDiff}
+          onReviewOutsideEdit={props.onReviewOutsideEdit}
+        />
+      </>
+    ) : (
+      toggle
     );
   }
 
@@ -1884,6 +1955,13 @@ function renderFeedEntry(
       props.terminalAssistantMessageIds.has(message.id) &&
       !assistantTurnStillInProgress &&
       !message.streaming;
+    const messageTurnChanges = message.checkpointSummary
+      ? groupTurnChangesByRepository(
+          message.checkpointSummary,
+          props.threadRepositories,
+          props.homeRepositoryName,
+        )
+      : null;
 
     if (isUser && props.workflowOpening?.messageId === message.id) {
       return (
@@ -2273,10 +2351,22 @@ function renderFeedEntry(
           onPressPreview={props.onPressPreview}
           onPlaybackStart={props.onPlaybackStart}
         />
-        {showAssistantMeta && message.checkpointSummary ? (
+        {showAssistantMeta && messageTurnChanges && message.checkpointSummary ? (
           <TurnDiffStat
             checkpoint={message.checkpointSummary}
+            changes={messageTurnChanges}
             onOpenTurnDiff={props.onOpenTurnDiff}
+          />
+        ) : null}
+        {showAssistantMeta &&
+        messageTurnChanges &&
+        message.checkpointSummary &&
+        showsRepositoryChanges(message.checkpointSummary, messageTurnChanges) ? (
+          <TurnRepositoryChanges
+            checkpoint={message.checkpointSummary}
+            changes={messageTurnChanges}
+            onOpenTurnDiff={props.onOpenTurnDiff}
+            onReviewOutsideEdit={props.onReviewOutsideEdit}
           />
         ) : null}
         {showAssistantMeta ? (
@@ -2333,23 +2423,41 @@ function renderFeedEntry(
       renderImage={props.renderViewedImage}
       renderReasoning={props.renderReasoning}
       onPressPreview={props.onPressPreview}
+      failedSetupRepositories={props.failedSetupRepositories}
     />
   );
 }
 
+function showsRepositoryChanges(
+  checkpoint: ThreadCheckpointSummary,
+  changes: TurnRepositoryChangeGroups,
+): boolean {
+  return changes.multiRepo || checkpoint.outsideEdits.length > 0;
+}
+
 function TurnDiffStat(props: {
   readonly checkpoint: ThreadCheckpointSummary;
-  readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
+  readonly changes: TurnRepositoryChangeGroups;
+  readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary, sectionId?: string) => void;
 }) {
   const { files } = props.checkpoint;
-  const additions = files.reduce((total, file) => total + file.additions, 0);
-  const deletions = files.reduce((total, file) => total + file.deletions, 0);
-  const fileCountLabel = `${files.length} file${files.length === 1 ? "" : "s"} changed`;
+  // Multi-repo turns sum every repo and open the first repo that changed.
+  const grouped = props.changes.multiRepo ? props.changes : null;
+  const additions = grouped?.additions ?? files.reduce((total, file) => total + file.additions, 0);
+  const deletions = grouped?.deletions ?? files.reduce((total, file) => total + file.deletions, 0);
+  const fileCount =
+    grouped?.changed.reduce((total, change) => total + change.fileCount, 0) ?? files.length;
+  // A turn whose only edits are outside the thread's repos shows just its notices.
+  if (fileCount === 0) return null;
+  const fileCountLabel = `${fileCount} file${fileCount === 1 ? "" : "s"} changed`;
+  const sectionId = grouped
+    ? turnRepositorySectionId(props.checkpoint, grouped.changed[0])
+    : undefined;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Review ${fileCountLabel}, ${additions} additions, ${deletions} deletions`}
-      onPress={() => props.onOpenTurnDiff(props.checkpoint)}
+      onPress={() => props.onOpenTurnDiff(props.checkpoint, sectionId)}
       className="min-h-11 shrink-0 flex-row items-center gap-2 px-2 active:bg-subtle"
     >
       <Text className="font-t3-medium text-xs tabular-nums text-adaptive-emerald-700-300">
@@ -2360,6 +2468,82 @@ function TurnDiffStat(props: {
       </Text>
       <SymbolView name="chevron.right" size={12} tintColorClassName="accent-foreground-muted" />
     </Pressable>
+  );
+}
+
+/** A turn's changes by repo, home first, then edits in repos the thread has no history for. */
+function TurnRepositoryChanges(props: {
+  readonly checkpoint: ThreadCheckpointSummary;
+  readonly changes: TurnRepositoryChangeGroups;
+  readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary, sectionId?: string) => void;
+  readonly onReviewOutsideEdit: (edit: ThreadCheckpointOutsideEdit) => void;
+}) {
+  const { checkpoint } = props;
+  const { changed, unchanged, failed, multiRepo: listsRepositories } = props.changes;
+  return (
+    <View className="mb-2 px-2">
+      {listsRepositories
+        ? changed.map((change) => (
+            <Pressable
+              key={change.cwd ?? ""}
+              accessibilityRole="button"
+              accessibilityLabel={`Review ${change.name}: ${change.fileCount} file${change.fileCount === 1 ? "" : "s"} changed, ${change.additions} additions, ${change.deletions} deletions`}
+              onPress={() =>
+                props.onOpenTurnDiff(checkpoint, turnRepositorySectionId(checkpoint, change))
+              }
+              className="min-h-9 flex-row items-center gap-2 active:bg-subtle"
+            >
+              <Text
+                numberOfLines={1}
+                className="min-w-0 flex-1 font-t3-medium text-xs text-foreground-secondary"
+              >
+                {change.name}
+              </Text>
+              <Text className="font-t3-medium text-xs tabular-nums text-adaptive-emerald-700-300">
+                +{formatDiffCount(change.additions)}
+              </Text>
+              <Text className="font-t3-medium text-xs tabular-nums text-adaptive-rose-700-300">
+                −{formatDiffCount(change.deletions)}
+              </Text>
+              <SymbolView
+                name="chevron.right"
+                size={12}
+                tintColorClassName="accent-foreground-muted"
+              />
+            </Pressable>
+          ))
+        : null}
+      {listsRepositories && unchanged.length > 0 ? (
+        <Text numberOfLines={1} className="py-1 text-xs text-foreground-muted">
+          No changes in {unchanged.join(", ")}
+        </Text>
+      ) : null}
+      {listsRepositories && failed.length > 0 ? (
+        <Text numberOfLines={1} className="py-1 text-xs text-foreground-muted">
+          Could not read changes in {failed.join(", ")}
+        </Text>
+      ) : null}
+      {checkpoint.outsideEdits.map((edit) => (
+        <View key={edit.root} className="min-h-9 flex-row items-center gap-2 py-1">
+          <SymbolView
+            name="exclamationmark.triangle"
+            size={12}
+            tintColorClassName="accent-warning-foreground"
+          />
+          <Text className="min-w-0 flex-1 text-xs text-foreground-secondary">
+            {outsideEditLabel(edit)}
+          </Text>
+          {edit.tracked ? (
+            <Button
+              label="Review"
+              tone="text"
+              accessibilityLabel={`Review uncommitted changes in ${edit.name}`}
+              onPress={() => props.onReviewOutsideEdit(edit)}
+            />
+          ) : null}
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -2705,10 +2889,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const navigation = useNavigation();
   const openLinkedThread = useOpenLinkedThread();
   const onOpenTurnDiff = useCallback(
-    (checkpoint: ThreadCheckpointSummary) => {
+    (checkpoint: ThreadCheckpointSummary, sectionId?: string) => {
       setReviewSelectedSectionId(
         scopedThreadKey(props.environmentId, props.threadId),
-        getReviewSectionIdForCheckpoint(checkpoint),
+        sectionId ?? getReviewSectionIdForCheckpoint(checkpoint),
       );
       navigation.navigate("ThreadReview", {
         environmentId: props.environmentId,
@@ -2717,6 +2901,44 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     },
     [navigation, props.environmentId, props.threadId],
   );
+  const onReviewOutsideEdit = useCallback(
+    (edit: ThreadCheckpointOutsideEdit) => {
+      setReviewSelectedSectionId(
+        scopedThreadKey(props.environmentId, props.threadId),
+        `${reviewSectionPrefixForCwd(edit.root)}git:working-tree`,
+      );
+      navigation.navigate("ThreadReview", {
+        environmentId: props.environmentId,
+        threadId: props.threadId,
+        outsideRepositoryRoot: edit.root,
+        outsideRepositoryName: edit.name,
+      });
+    },
+    [navigation, props.environmentId, props.threadId],
+  );
+  const threadRepositories = useThreadRepositoriesForThread(
+    scopeThreadRef(props.environmentId, props.threadId),
+    props.workspaceRoot ?? null,
+  );
+  const homeRepositoryName =
+    threadRepositories.repositories.find((repository) => repository.kind === "home")?.name ??
+    "Home";
+  const failedSetupRepositories = failedWorktreeSetupRepositories(props.worktreeSetup?.snapshot);
+  // Read on demand: edited paths come from the whole thread, which links rarely need.
+  const fileChipRepositories = (): FileChipRepositories | null => {
+    const { repositories, references, multiRepository } = threadRepositories;
+    if (!multiRepository && references.length === 0) return null;
+    const thread = appAtomRegistry.get(
+      environmentThreadDetails.threadAtom(scopeThreadRef(props.environmentId, props.threadId)),
+    );
+    return {
+      roots: [
+        ...repositories.map((repository) => repository.cwd),
+        ...references.map((reference) => reference.path),
+      ],
+      editedPaths: threadEditedFilePaths(thread?.projection.turnItems ?? []),
+    };
+  };
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
@@ -2917,7 +3139,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
     const presentation = resolveMarkdownLinkPresentation(href);
     if (presentation.kind === "file") {
-      const path = resolveFileLinkPath(props.workspaceRoot, presentation.path);
+      const repositories = fileChipRepositories();
+      const repositoryPath = repositories
+        ? resolveRepositoryFileLinkPath(presentation.path, props.workspaceRoot, repositories)
+        : null;
+      const path = repositoryPath ?? resolveFileLinkPath(props.workspaceRoot, presentation.path);
       if (path === null) return;
       const relativePath = resolveWorkspaceRelativeFilePath(props.workspaceRoot, path);
       const openAt = (target: string) => {
@@ -2930,61 +3156,115 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ...(presentation.line ? { line: String(presentation.line) } : {}),
         });
       };
+      // Single-cwd lookup: bare names search the workspace, other paths join the thread's cwd.
+      const openJoined = () => {
+        if (
+          props.workspaceRoot &&
+          relativePath &&
+          !/[\\/]$/.test(presentation.path) &&
+          workspaceLinkLookupQuery(presentation.path, props.workspaceRoot) !== null &&
+          readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
+        ) {
+          const workspaceRoot = props.workspaceRoot;
+          const originalPath = resolveWorkspaceFilePath(props.workspaceRoot, relativePath);
+          void executeAtomQuery(
+            appAtomRegistry,
+            projectEnvironment.searchEntries({
+              environmentId: props.environmentId,
+              input: {
+                cwd: workspaceRoot,
+                query: workspaceLinkLookupQuery(relativePath, workspaceRoot) ?? relativePath,
+                kind: "file",
+                limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
+              },
+            }),
+            { signal: request.signal, reportFailure: false, reportDefect: false },
+          ).then(
+            (result) => {
+              const match =
+                result._tag === "Success"
+                  ? pickWorkspaceLinkMatch(relativePath, workspaceRoot, result.value.entries)
+                  : null;
+              if (!match || match === relativePath) {
+                openAt(relativePath);
+                return;
+              }
+              if (request.signal.aborted) return;
+              void executeAtomQuery(
+                appAtomRegistry,
+                projectEnvironment.fileMetadata({
+                  environmentId: props.environmentId,
+                  input: { path: originalPath },
+                }),
+                { signal: request.signal, reportFailure: false, reportDefect: false },
+              ).then(
+                (metadata) =>
+                  openAt(
+                    metadata._tag === "Success" &&
+                      (needsWorkspaceBasenameLookup(relativePath)
+                        ? metadata.value?.kind !== "directory"
+                        : metadata.value === null)
+                      ? match
+                      : relativePath,
+                  ),
+                () => openAt(relativePath),
+              );
+            },
+            () => openAt(relativePath),
+          );
+        } else openAt(relativePath ?? path);
+      };
+      if (repositoryPath !== null) {
+        openAt(relativePath ?? path);
+        return;
+      }
       if (
-        props.workspaceRoot &&
+        repositories &&
         relativePath &&
-        !/[\\/]$/.test(presentation.path) &&
-        workspaceLinkLookupQuery(presentation.path, props.workspaceRoot) !== null &&
         readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
       ) {
-        const workspaceRoot = props.workspaceRoot;
-        const originalPath = resolveWorkspaceFilePath(props.workspaceRoot, relativePath);
-        void executeAtomQuery(
-          appAtomRegistry,
-          projectEnvironment.searchEntries({
-            environmentId: props.environmentId,
-            input: {
-              cwd: workspaceRoot,
-              query: workspaceLinkLookupQuery(relativePath, workspaceRoot) ?? relativePath,
-              kind: "file",
-              limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
-            },
-          }),
-          { signal: request.signal, reportFailure: false, reportDefect: false },
-        ).then(
-          (result) => {
-            const match =
-              result._tag === "Success"
-                ? pickWorkspaceLinkMatch(relativePath, workspaceRoot, result.value.entries)
-                : null;
-            if (!match || match === relativePath) {
-              openAt(relativePath);
-              return;
-            }
-            if (request.signal.aborted) return;
-            void executeAtomQuery(
-              appAtomRegistry,
-              projectEnvironment.fileMetadata({
-                environmentId: props.environmentId,
-                input: { path: originalPath },
-              }),
-              { signal: request.signal, reportFailure: false, reportDefect: false },
-            ).then(
-              (metadata) =>
-                openAt(
-                  metadata._tag === "Success" &&
-                    (needsWorkspaceBasenameLookup(relativePath)
-                      ? metadata.value?.kind !== "directory"
-                      : metadata.value === null)
-                    ? match
-                    : relativePath,
+        // Not an edited file: the first repo or reference folder that holds the path wins.
+        void findRepositoryFileLinkCandidates({
+          path: relativePath,
+          editedPaths: [],
+          repositories: [
+            ...threadRepositories.repositories,
+            ...threadRepositories.references.map((reference) => ({
+              name: reference.name,
+              cwd: reference.path,
+            })),
+          ],
+          exists: (paths) =>
+            Promise.all(
+              paths.map((candidate) =>
+                executeAtomQuery(
+                  appAtomRegistry,
+                  projectEnvironment.fileMetadata({
+                    environmentId: props.environmentId,
+                    input: { path: candidate },
+                  }),
+                  { signal: request.signal, reportFailure: false, reportDefect: false },
+                ).then(
+                  (result) =>
+                    result._tag === "Success" &&
+                    result.value !== null &&
+                    result.value.kind !== "directory",
+                  () => false,
                 ),
-              () => openAt(relativePath),
+              ),
+            ),
+        }).then((candidates) => {
+          const candidate = candidates[0];
+          if (candidate === undefined) openJoined();
+          else
+            openAt(
+              resolveWorkspaceRelativeFilePath(props.workspaceRoot, candidate.path) ??
+                candidate.path,
             );
-          },
-          () => openAt(relativePath),
-        );
-      } else openAt(relativePath ?? path);
+        }, openJoined);
+        return;
+      }
+      openJoined();
       return;
     }
 
@@ -3044,7 +3324,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ],
         };
       }
-      const target = resolveFileChipTarget(href, props.workspaceRoot);
+      const target = resolveFileChipTarget(href, props.workspaceRoot, fileChipRepositories());
       return target ? fileChipMenu(target) : undefined;
     },
     onFileContextMenuAction: (href, actionId) => {
@@ -3061,7 +3341,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         else if (actionId === "copy-thread-link") copyTextWithHaptic(hostedThreadLink(thread));
         return;
       }
-      const target = resolveFileChipTarget(href, props.workspaceRoot);
+      const target = resolveFileChipTarget(href, props.workspaceRoot, fileChipRepositories());
       if (!target) return;
       switch (actionId) {
         case "copy-full-path":
@@ -3644,6 +3924,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onToggleWorkRow,
             onToggleTurnFold,
             onOpenTurnDiff,
+            onReviewOutsideEdit,
+            threadRepositories:
+              threadRepositories.repositories.length > 0 ? threadRepositories.repositories : null,
+            homeRepositoryName,
+            failedSetupRepositories,
             onPressPreview,
             onPlaybackStart: onInlinePlaybackStart,
             markdownLinkHandlers,

@@ -18,10 +18,24 @@ export const TurnCountRange = Schema.Struct({
   ),
 );
 
+/** One tracked repo's patch in a multi-repo thread. */
+export const ThreadTurnRepositoryDiff = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  /** The project's tracked path, stable across task folders. */
+  repositoryPath: TrimmedNonEmptyString,
+  /** From the thread's cwd, with `/` separators. */
+  relativePath: Schema.String,
+  diff: Schema.String,
+});
+export type ThreadTurnRepositoryDiff = typeof ThreadTurnRepositoryDiff.Type;
+
 export const ThreadTurnDiff = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
+    /** The home repo's patch; empty when the home folder is not a Git repo. */
     diff: Schema.String,
+    /** Tracked repos with changes in the range. Absent for single-repo threads. */
+    repositories: Schema.optionalKey(Schema.Array(ThreadTurnRepositoryDiff)),
   }),
   { unsafePreserveChecks: true },
 );

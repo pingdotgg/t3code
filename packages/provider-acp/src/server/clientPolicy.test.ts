@@ -84,6 +84,30 @@ describe("acpPermissionDisposition", () => {
     );
   });
 
+  it("lets the thread's other repos take writes and keeps reference folders read-only", () => {
+    const otherRepo = NodePath.resolve(process.cwd(), "acp-other-repo");
+    const reference = NodePath.resolve(process.cwd(), "acp-reference-folder");
+    const multiRepo: AcpRuntimePolicy = {
+      ...policy,
+      sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false },
+      workspace: { extraRoots: [otherRepo] },
+    };
+    const editIn = (root: string) =>
+      acpPermissionDisposition(
+        multiRepo,
+        permissionRequest("edit", [{ path: NodePath.join(root, "index.ts") }]),
+      );
+    assert.equal(editIn(otherRepo), "allow");
+    assert.equal(editIn(reference), "deny");
+    assert.equal(
+      acpPermissionDisposition(
+        multiRepo,
+        permissionRequest("read", [{ path: NodePath.join(reference, "notes.md") }]),
+      ),
+      "allow",
+    );
+  });
+
   it("keeps non-mutating workspace permissions and denials unchanged", () => {
     assert.equal(acpPermissionDisposition(policy, permissionRequest("read")), "allow");
     assert.equal(acpPermissionDisposition(policy, permissionRequest("execute")), "deny");

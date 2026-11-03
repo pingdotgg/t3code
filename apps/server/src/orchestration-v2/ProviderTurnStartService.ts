@@ -32,6 +32,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
+import * as TaskFolderService from "../workspace/TaskFolderService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import { pipelineCoordinatorNote } from "../pipelines/pipelineCoordinator.ts";
@@ -163,6 +164,8 @@ export const layer: Layer.Layer<
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+    // Optional so hosts and tests without task folders keep single-worktree recovery.
+    const taskFolders = yield* Effect.serviceOption(TaskFolderService.TaskFolderService);
 
     const resolveRecreateBase = Effect.fn("ProviderTurnStartService.resolveRecreateBase")(
       function* (cwd: string) {
@@ -629,7 +632,21 @@ export const layer: Layer.Layer<
         }
       }
       const { worktreePath, branch } = projection.thread;
-      if (worktreePath !== null && branch !== null) {
+      // A task folder recreates whatever is missing, home first, even when home still exists.
+      const repairedTaskFolder =
+        worktreePath !== null &&
+        Option.isSome(taskFolders) &&
+        (yield* taskFolders.value.repair(worktreePath).pipe(
+          Effect.catchCause((cause) =>
+            // Falls back to recreating the single worktree below.
+            Effect.logWarning("provider turn start could not repair the task folder", {
+              threadId: projection.thread.id,
+              worktreePath,
+              cause,
+            }).pipe(Effect.as(false)),
+          ),
+        ));
+      if (!repairedTaskFolder && worktreePath !== null && branch !== null) {
         const exists = yield* fileSystem
           .exists(worktreePath)
           .pipe(Effect.orElseSucceed(() => true));

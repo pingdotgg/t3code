@@ -469,7 +469,10 @@ export function createEnvironmentThreadDetailAtoms<E>(
   });
 
   const checkpointSummariesAtomFamily = Atom.family((key: string) => {
-    let previous: Pick<OrchestrationV2ThreadProjection, "checkpoints" | "messages"> | null = null;
+    let previous: Pick<
+      OrchestrationV2ThreadProjection,
+      "checkpoints" | "checkpointScopes" | "messages"
+    > | null = null;
     let value = EMPTY_CHECKPOINT_SUMMARIES;
     return Atom.make((get) => {
       const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
@@ -478,11 +481,14 @@ export function createEnvironmentThreadDetailAtoms<E>(
         value = EMPTY_CHECKPOINT_SUMMARIES;
       } else if (
         projection.checkpoints !== previous?.checkpoints ||
+        projection.checkpointScopes !== previous?.checkpointScopes ||
         projection.messages !== previous?.messages
       ) {
-        const { checkpoints, messages } = projection;
-        previous = { checkpoints, messages };
-        value = deriveThreadCheckpointSummaries(previous);
+        const { checkpoints, checkpointScopes, messages } = projection;
+        previous = { checkpoints, checkpointScopes, messages };
+        const next = deriveThreadCheckpointSummaries(previous);
+        // Streaming text changes `messages` without changing any summary.
+        if (!arrayElementsEqual(value, next)) value = next;
       }
       return value;
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-checkpoint-summaries:${key}`));

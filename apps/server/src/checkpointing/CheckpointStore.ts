@@ -10,12 +10,15 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 export interface CaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /** Child repo folders, relative to `cwd`, that have their own checkpoints. */
+  readonly excludePaths?: ReadonlyArray<string>;
 }
 
 export interface RestoreCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
   readonly fallbackToHead?: boolean;
+  readonly excludePaths?: ReadonlyArray<string>;
 }
 
 export interface DiffCheckpointsInput {
@@ -52,7 +55,7 @@ export class CheckpointStore extends Context.Service<
     ) => Effect.Effect<void, CheckpointStoreError>;
 
     readonly hasCheckpointRef: (
-      input: Omit<RestoreCheckpointInput, "fallbackToHead">,
+      input: Omit<RestoreCheckpointInput, "fallbackToHead" | "excludePaths">,
     ) => Effect.Effect<boolean, CheckpointStoreError>;
 
     readonly restoreCheckpoint: (

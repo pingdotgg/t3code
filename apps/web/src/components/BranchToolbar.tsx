@@ -40,7 +40,12 @@ import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSele
 import { openAddProjectToMachine } from "./AddProjectToMachineDialog";
 import { type AddProjectTarget, useAddProjectTargets } from "../hooks/useAddProjectTargets";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
+import { ComposerReposControl } from "./chat/ComposerReposControl";
+import { useHomeGitInit } from "./HomeGitInitDialog";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
+import { trackedGitRepositories } from "../lib/multiRepo";
+import { useWorkspaceRepositories } from "../state/threadRepositories";
+import { worktreeRepositorySelectionKey } from "../worktreeRepositorySelectionStore";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
@@ -685,6 +690,22 @@ export const BranchToolbar = memo(function BranchToolbar({
     canPickEnvironment: hasMultipleEnvironments,
   });
   const [attachStrip, labelsOverflow] = useLabelsOverflow();
+  // Only threads still choosing a workspace need the repo list; started ones are locked.
+  const homeWorkspace = useWorkspaceRepositories(
+    envModeLocked || activeWorktreePath !== null
+      ? null
+      : { environmentId, project: activeProject, worktreePath: null },
+  );
+  const trackedRepositories = trackedGitRepositories(homeWorkspace).filter(
+    (repository) => !repository.missing,
+  );
+  const homeIsGitRepository =
+    homeWorkspace?.repositories.some((repository) => repository.kind === "home") ?? true;
+  const homeGitInit = useHomeGitInit(activeProject, () => onEnvModeChange("worktree"));
+  const offerHomeGitInit =
+    trackedRepositories.length > 0 && !homeIsGitRepository && homeGitInit.canInitialize;
+  const onInitializeHomeGit = offerHomeGitInit ? () => void homeGitInit.start() : undefined;
+  const multiRepoChoice = showGitControls && homeIsGitRepository && trackedRepositories.length > 0;
 
   if (!activeProject) return null;
 
@@ -766,7 +787,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           />
         </div>
       ) : null}
-      {showGitControls || showEnvironmentIndicator ? (
+      {showGitControls || showEnvironmentIndicator || onInitializeHomeGit ? (
         <div
           className={cn(
             "min-h-7 min-w-10 items-center gap-1 sm:min-h-6",
@@ -785,7 +806,7 @@ export const BranchToolbar = memo(function BranchToolbar({
                 {...(showEnvironmentPicker ? { onEnvironmentChange } : {})}
                 {...(addTargets.length > 0 ? { onAddToMachine: () => onAddToMachine(null) } : {})}
               />
-              {showGitControls ? (
+              {showGitControls || onInitializeHomeGit ? (
                 <Separator
                   orientation="vertical"
                   className="mx-0.5 h-3.5!"
@@ -794,20 +815,37 @@ export const BranchToolbar = memo(function BranchToolbar({
               ) : null}
             </>
           )}
-          {showGitControls ? (
+          {showGitControls || onInitializeHomeGit ? (
             <BranchToolbarEnvModeSelector
               forceNewWorktree={forceNewWorktree}
               envLocked={envModeLocked}
-              effectiveEnvMode={effectiveEnvMode}
+              // A plain home sends from its checkout whatever mode the draft holds.
+              effectiveEnvMode={onInitializeHomeGit ? "local" : effectiveEnvMode}
               activeWorktreePath={activeWorktreePath}
               onEnvModeChange={onEnvModeChange}
               previousWorktreeLabel={previousWorktreeLabel}
               previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
               onUsePreviousWorktree={onUsePreviousWorktree}
+              onInitializeHomeGit={onInitializeHomeGit}
             />
           ) : null}
         </div>
       ) : null}
+
+      {multiRepoChoice && effectiveEnvMode === "worktree" ? (
+        <ComposerReposControl
+          selectionKey={worktreeRepositorySelectionKey(draftId, threadRef)}
+          repositories={trackedRepositories}
+        />
+      ) : multiRepoChoice && !forceNewWorktree ? (
+        <span
+          className="min-w-0 shrink truncate px-1 text-muted-foreground/70 text-xs"
+          data-composer-context-control
+        >
+          Shares your checkouts
+        </span>
+      ) : null}
+      {homeGitInit.dialog}
 
       {showGitControls ? (
         <BranchToolbarBranchSelector

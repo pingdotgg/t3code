@@ -132,7 +132,7 @@ vi.mock("../state/entities", () => ({
     state.threads
       .filter((thread) => thread.environmentId === environmentId)
       .map((thread) => ({ environmentId, threadId: thread.id })),
-  readProject: () => ({ workspaceRoot: "/project" }),
+  readProject: () => ({ workspaceRoot: "/project", trackedFolders: [] }),
 }));
 vi.mock("../components/Sidebar.logic", () => ({
   getFallbackThreadIdAfterDelete: () => null,

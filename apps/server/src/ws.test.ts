@@ -129,7 +129,9 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as WorkspaceRepositories from "./workspace/WorkspaceRepositories.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
+import * as TaskFolderService from "./workspace/TaskFolderService.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
@@ -288,6 +290,7 @@ it.live.each(["thread", "shell"] as const)(
         workspaceRoot: "/tmp/replay",
         defaultModelSelection: null,
         scripts: [],
+        trackedFolders: [],
         createdAt: now,
         updatedAt: now,
       } satisfies OrchestrationProjectShell;
@@ -865,7 +868,9 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
   Layer.mock(WorkspaceEntries.WorkspaceEntries)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
+  Layer.mock(WorkspaceRepositories.WorkspaceRepositories)({}),
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
+  Layer.mock(TaskFolderService.TaskFolderService)({}),
 );
 
 const layerConfigSources = Layer.mergeAll(

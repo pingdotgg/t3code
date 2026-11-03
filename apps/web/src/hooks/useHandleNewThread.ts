@@ -35,7 +35,9 @@ import {
   resolveNewThreadModelSelectionOverride,
 } from "../lib/chatThreadActions";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { isMultiRepoWithGitHome } from "../lib/multiRepo";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
+import { readWorkspaceRepositories } from "../lib/readWorkspaceRepositories";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
@@ -193,16 +195,21 @@ export function createNewThreadHandler(router: AnyRouter) {
     const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
       // Environment queries wait for a connection, so reading the project file on an
       // offline machine would never settle and the draft would never open.
-      const consultProjectFile =
+      const connectedProject =
         project !== undefined &&
-        projectSettings.settings.defaultThreadEnvMode === null &&
         appAtomRegistry
           .get(environmentSummaries.connectedEnvironmentIdsAtom)
-          .includes(project.environmentId);
-      const projectFile = consultProjectFile
-        ? await readT3ProjectFile(project.environmentId, project.workspaceRoot)
-        : null;
+          .includes(project.environmentId)
+          ? project
+          : null;
+      const [projectFile, workspace] = await Promise.all([
+        connectedProject !== null && projectSettings.settings.defaultThreadEnvMode === null
+          ? readT3ProjectFile(connectedProject.environmentId, connectedProject.workspaceRoot)
+          : null,
+        connectedProject === null ? null : readWorkspaceRepositories(connectedProject, null),
+      ]);
       return resolveNewThreadEnvMode({
+        multiRepoWithGitHome: isMultiRepoWithGitHome(workspace),
         projectSettings: resolveProjectSettings(
           targetServerSettings,
           project?.id ?? null,

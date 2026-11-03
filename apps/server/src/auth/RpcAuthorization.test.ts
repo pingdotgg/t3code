@@ -6,6 +6,7 @@ import {
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
+  ProjectId,
   ProviderInstanceId,
   SecretProviderId,
   ThreadId,
@@ -471,4 +472,55 @@ it.effect("denies manual cleanup before the handler without settings permission"
     });
     expect(handled).toBe(false);
   }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "lets readers list and scan repositories, but only source control writers create one",
+  () =>
+    Effect.gen(function* () {
+      expect(requiredScopeForRpcMethod(WS_METHODS.workspaceListRepositories)).toBe(
+        AuthOrchestrationReadScope,
+      );
+      for (const method of [
+        WS_METHODS.workspaceScanFolders,
+        WS_METHODS.workspacePreviewHomeGitInit,
+      ]) {
+        expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemReadScope);
+      }
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<
+            keyof typeof RPC_REQUIRED_SCOPES,
+            typeof WS_METHODS.workspaceInitializeHomeGit
+          > => tag !== WS_METHODS.workspaceInitializeHomeGit,
+        ),
+      );
+      let handled = 0;
+      const handler = group.toLayerHandler(WS_METHODS.workspaceInitializeHomeGit, () =>
+        Effect.sync(() => {
+          handled++;
+          return { commitSha: "abc123", fileCount: 1 };
+        }),
+      );
+      const input = { projectId: ProjectId.make("project") };
+      const reader = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.merge(
+            handler,
+            RpcAuthorization.layer([AuthOrchestrationReadScope, AuthFilesystemReadScope]),
+          ),
+        ),
+      );
+      expect(
+        yield* reader[WS_METHODS.workspaceInitializeHomeGit](input).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthSourceControlWriteScope });
+      expect(handled).toBe(0);
+      const writer = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handler, RpcAuthorization.layer([AuthSourceControlWriteScope]))),
+      );
+      yield* writer[WS_METHODS.workspaceInitializeHomeGit](input);
+      expect(handled).toBe(1);
+    }).pipe(Effect.scoped),
 );

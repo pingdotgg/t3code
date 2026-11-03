@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
@@ -17,6 +18,7 @@ import {
   type OrchestrationV2StoredEvent,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
@@ -39,6 +41,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -47,6 +50,8 @@ import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 
 import { toPersistenceSqlError } from "../persistence/Errors.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import { WorkspaceRepositories } from "../workspace/WorkspaceRepositories.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
@@ -1429,6 +1434,171 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
         assert.equal(errorItem.payload.failure.message, "Run preparation failed.");
       }
     }),
+);
+
+it.effect("starts a checkpoint scope and a baseline for every tracked repo of the run", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:run-execution-repositories");
+    const runId = RunId.make("run:run-execution-repositories");
+    const attemptId = RunAttemptId.make("attempt:run-execution-repositories");
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const providerThreadId = ProviderThreadId.make("provider-thread:run-execution-repositories");
+    const rootNodeId = NodeId.make("node:run-execution-repositories");
+    const now = yield* DateTime.now;
+    const rootScope: OrchestrationV2CheckpointScope = {
+      id: CheckpointScopeId.make("checkpoint-scope:run-execution-repositories:root"),
+      threadId,
+      runId,
+      nodeId: rootNodeId,
+      parentScopeId: null,
+      providerThreadId,
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd: "/work/home",
+      createdAt: now,
+    };
+    const written = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+    const captures = yield* Ref.make<ReadonlyArray<CheckpointStore.CaptureCheckpointInput>>([]);
+    const repository = (name: string, cwd: string) => ({
+      name,
+      cwd,
+      originalPath: cwd,
+      relativePath: name,
+      kind: "repository" as const,
+    });
+    const layerTest = RunExecutionService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          McpAppModelContext.layerEmpty,
+          PreviewAgentActivity.layer,
+          CheckpointService.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                IdAllocator.layer,
+                NodeCrypto.layer,
+                Path.layer,
+                Layer.mock(CheckpointStore.CheckpointStore)({
+                  isGitRepository: () => Effect.succeed(true),
+                  hasCheckpointRef: () => Effect.succeed(false),
+                  captureCheckpoint: (input) =>
+                    Ref.update(captures, (current) => [...current, input]),
+                }),
+              ),
+            ),
+          ),
+          layerTurnItemPositionsTest,
+          Layer.mock(EventSink.EventSinkV2)({
+            write: (input) =>
+              Ref.update(written, (current) => [...current, ...input.events]).pipe(Effect.as([])),
+          }),
+          IdAllocator.layer,
+          Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+            ingestNormalized: () => Effect.succeed([]),
+          }),
+          ServerSettings.layerTest(),
+          Layer.mock(WorkspaceRepositories)({
+            resolveThreadWorkspace: () =>
+              Effect.succeed({
+                cwd: "/work/home",
+                repositories: [
+                  { ...repository("home", "/work/home"), relativePath: "", kind: "home" as const },
+                  repository("api", "/work/home/api"),
+                  repository("web", "/work/web"),
+                ],
+                references: [],
+                taskFolder: null,
+              }),
+          }),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+      yield* runExecution.startRootRun({
+        commandId: CommandId.make("command:run-execution-repositories"),
+        appThread: {
+          ...rootAppThread(threadId),
+          projectId: ProjectId.make("project:run-execution-repositories"),
+          worktreePath: null,
+        },
+        providerSessionId: ProviderSessionId.make("session:run-execution-repositories"),
+        session: {
+          events: Stream.never,
+          startTurn: () => Effect.die("the provider turn must not start"),
+        } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
+        run: {
+          id: runId,
+          threadId,
+          ordinal: 3,
+          providerInstanceId,
+          status: "running",
+        } as OrchestrationV2Run,
+        rootNode: { id: rootNodeId, status: "running" } as OrchestrationV2ExecutionNode,
+        checkpointScope: rootScope,
+        providerThread: { id: providerThreadId, driver } as OrchestrationV2ProviderThread,
+        attempt: {
+          id: attemptId,
+          providerTurnId: null,
+          status: "running",
+        } as OrchestrationV2RunAttempt,
+        attemptId,
+        providerTurnOrdinal: 1,
+        shouldStartProviderTurn: () => Effect.succeed(false),
+        message: {
+          messageId: MessageId.make("message:run-execution-repositories"),
+          text: "Edit both repos.",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: "/work/home",
+          approvalPolicy: "never",
+          sandboxPolicy: { type: "readOnly", access: { type: "fullAccess" }, networkAccess: false },
+        },
+      });
+    }).pipe(Effect.provide(layerTest));
+
+    const scopes = (yield* Ref.get(written)).flatMap((event) =>
+      event.type === "checkpoint-scope.created" ? [event.payload] : [],
+    );
+    assert.deepEqual(
+      scopes.map(
+        ({ kind, parentScopeId, runId, cwd, label, repositoryPath, advancesAppRunCount }) => ({
+          kind,
+          parentScopeId,
+          runId,
+          cwd,
+          label,
+          repositoryPath,
+          advancesAppRunCount,
+        }),
+      ),
+      ["api", "web"].map((name) => ({
+        kind: "repository" as const,
+        parentScopeId: rootScope.id,
+        runId,
+        cwd: name === "api" ? "/work/home/api" : "/work/web",
+        label: name,
+        repositoryPath: name === "api" ? "/work/home/api" : "/work/web",
+        advancesAppRunCount: false,
+      })),
+    );
+    const expectedCaptures = yield* Effect.forEach(
+      [{ scope: rootScope, excludePaths: ["api"] }, ...scopes.map((scope) => ({ scope }))],
+      ({ scope, ...exclusions }) =>
+        CheckpointService.checkpointRefForScopeOrdinal({
+          scopeId: scope.id,
+          ordinalWithinScope: 2,
+        }).pipe(Effect.map((checkpointRef) => ({ cwd: scope.cwd, checkpointRef, ...exclusions }))),
+    ).pipe(Effect.provide(NodeCrypto.layer));
+    assert.sameDeepMembers([...(yield* Ref.get(captures))], expectedCaptures);
+  }),
 );
 
 it.effect("ingests new member threads of an owned child after the root turn terminalizes", () =>

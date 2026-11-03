@@ -2,6 +2,7 @@ import {
   MessageId,
   RuntimeRequestId,
   CheckpointId,
+  CheckpointRef,
   CheckpointScopeId,
   NodeId,
   PlanId,
@@ -28,6 +29,7 @@ import {
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   deriveRevertTurnCountByUserMessageId,
   derivePhase,
+  findRevertCheckpoint,
   isLatestRunSettled,
   selectHandoffImageResources,
   selectMessageImageResources,
@@ -234,6 +236,8 @@ describe("V2 session presentation", () => {
           checkpointRef: "checkpoint-run-1" as never,
           status: "ready",
           files: [],
+          repositories: [],
+          outsideEdits: [],
           assistantMessageId,
           completedAt: "2026-06-20T00:00:03.000Z",
         },
@@ -272,6 +276,8 @@ describe("V2 session presentation", () => {
       checkpointRef: `checkpoint-${ordinal}` as never,
       status,
       files: [],
+      repositories: [],
+      outsideEdits: [],
       assistantMessageId: MessageId.make(`assistant-${ordinal}`),
       completedAt: "2026-06-20T00:00:09.000Z",
     });
@@ -1786,4 +1792,50 @@ it("renders automatic completion as a work entry instead of a user bubble", () =
       ],
     })[0]?.kind,
   ).toBe("message");
+});
+
+describe("findRevertCheckpoint", () => {
+  const rootScopeId = CheckpointScopeId.make("scope-root");
+  const repoScopeId = CheckpointScopeId.make("scope-repo-api");
+  const checkpoint = (input: {
+    readonly id: string;
+    readonly scopeId: CheckpointScopeId;
+    readonly ordinalWithinScope: number;
+    readonly appRunOrdinal: number | null;
+  }) => ({
+    id: CheckpointId.make(input.id),
+    threadId: ThreadId.make("thread-1"),
+    scopeId: input.scopeId,
+    runId: null,
+    nodeId: NodeId.make("node-1"),
+    parentCheckpointId: null,
+    ordinalWithinScope: input.ordinalWithinScope,
+    appRunOrdinal: input.appRunOrdinal,
+    ref: CheckpointRef.make(`refs/t3/checkpoints/${input.id}`),
+    status: "ready" as const,
+    files: [],
+    capturedAt: DateTime.makeUnsafe("2026-10-27T00:00:00.000Z"),
+  });
+
+  it("rewinds to the root scope's start when repository scopes also have a start checkpoint", () => {
+    const rootStart = checkpoint({
+      id: "root-0",
+      scopeId: rootScopeId,
+      ordinalWithinScope: 0,
+      appRunOrdinal: null,
+    });
+    // Repository baselines are written before the root's, but a later snapshot can list them last.
+    const repoStart = checkpoint({
+      id: "repo-0",
+      scopeId: repoScopeId,
+      ordinalWithinScope: 0,
+      appRunOrdinal: null,
+    });
+    const scopes = [
+      { id: rootScopeId, kind: "root_run" as const },
+      { id: repoScopeId, kind: "repository" as const },
+    ];
+
+    expect(findRevertCheckpoint([rootStart, repoStart], 0, scopes)?.id).toBe(rootStart.id);
+  });
 });

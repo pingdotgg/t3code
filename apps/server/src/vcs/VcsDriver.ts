@@ -14,12 +14,16 @@ import * as VcsProcess from "./VcsProcess.ts";
 export interface VcsCaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /** Folders below `cwd` (relative, `/`-separated) that other checkpoints own, such as child repos. */
+  readonly excludePaths?: ReadonlyArray<string>;
 }
 
 export interface VcsRestoreCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
   readonly fallbackToHead?: boolean;
+  /** Left untouched by the restore; pass the same paths the capture excluded. */
+  readonly excludePaths?: ReadonlyArray<string>;
 }
 
 export const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
@@ -51,7 +55,7 @@ export interface VcsDeleteCheckpointRefsInput {
 export interface VcsCheckpointOps {
   readonly captureCheckpoint: (input: VcsCaptureCheckpointInput) => Effect.Effect<void, VcsError>;
   readonly hasCheckpointRef: (
-    input: Omit<VcsRestoreCheckpointInput, "fallbackToHead">,
+    input: Omit<VcsRestoreCheckpointInput, "fallbackToHead" | "excludePaths">,
   ) => Effect.Effect<boolean, VcsError>;
   readonly restoreCheckpoint: (
     input: VcsRestoreCheckpointInput,

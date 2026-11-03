@@ -22,6 +22,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   OrchestrationV2ThreadProjectionJson,
+  type OrchestrationV2LaunchRepository,
   ScheduledTaskId,
   type ServerProvider,
   ThreadId,
@@ -65,6 +66,8 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
+import * as TaskFolderService from "../workspace/TaskFolderService.ts";
+import type { TaskFolderRecord } from "../workspace/TaskFolders.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const projectId = ProjectId.make("project:launch-test");
@@ -85,6 +88,7 @@ const project = {
   scripts: [],
   pinnedAt: null,
   archivedAt: null,
+  trackedFolders: [],
   createdAt: "2026-06-20T00:00:00.000Z",
   updatedAt: "2026-06-20T00:00:00.000Z",
   deletedAt: null,
@@ -132,6 +136,7 @@ interface HarnessOptions {
   readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly providers?: ReadonlyArray<ServerProvider>;
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
+  readonly taskFolders?: Partial<TaskFolderService.TaskFolderService["Service"]>;
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -224,6 +229,10 @@ function makeHarness(options: HarnessOptions = {}) {
       generateThreadTitle,
       generateBranchName,
     }),
+    Layer.mock(TaskFolderService.TaskFolderService)({
+      plan: () => Effect.succeed(null),
+      ...options.taskFolders,
+    }),
     layerServerSettings,
     ProviderRegistryMock.layer(options.providers),
     options.managedFolders ??
@@ -259,6 +268,7 @@ function makeHarness(options: HarnessOptions = {}) {
               scripts: project.scripts,
               pinnedAt: null,
               archivedAt: null,
+              trackedFolders: project.trackedFolders,
               createdAt: project.createdAt,
               updatedAt: project.updatedAt,
               deletedAt: project.deletedAt,
@@ -2531,3 +2541,225 @@ it.effect("replays an accepted send after the project disables the instance", ()
     }
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
 });
+
+const taskFolderPlan: TaskFolderService.TaskFolderPlan = {
+  projectId,
+  homeName: "repo",
+  homePath: "/repo",
+  repositories: [
+    { name: "app", originalPath: "/repo/app", baseRef: undefined },
+    { name: "api", originalPath: "/api", baseRef: undefined },
+  ],
+};
+
+const taskFolderRecord = (
+  branch: string,
+  names: ReadonlyArray<"app" | "api">,
+): TaskFolderRecord => ({
+  root: "/worktrees/repo/task",
+  projectId,
+  homeWorktreePath: "/worktrees/repo/task/repo",
+  repositories: [
+    {
+      kind: "home",
+      name: "repo",
+      originalPath: "/repo",
+      worktreePath: "/worktrees/repo/task/repo",
+      relativePath: "",
+      baseRef: "main",
+      branch,
+    },
+    ...names.map((name) => ({
+      kind: "repository" as const,
+      name,
+      originalPath: name === "app" ? "/repo/app" : "/api",
+      worktreePath: name === "app" ? "/worktrees/repo/task/repo/app" : "/worktrees/repo/task/api",
+      relativePath: name === "app" ? "app" : "../api",
+      baseRef: "main",
+      branch,
+    })),
+  ],
+  createdAt: "2026-06-20T00:00:00.000Z",
+  updatedAt: "2026-06-20T00:00:00.000Z",
+});
+
+it.effect("binds a multi-repo thread to its task folder and names a repo that failed", () =>
+  Effect.gen(function* () {
+    const setupStarted = yield* Deferred.make<void>();
+    const completeInputs: Array<
+      Parameters<TaskFolderService.TaskFolderService["Service"]["complete"]>[0]
+    > = [];
+    const harness = makeHarness({
+      runSetup: () =>
+        Deferred.succeed(setupStarted, undefined).pipe(Effect.as({ status: "no-script" as const })),
+      taskFolders: {
+        plan: () => Effect.succeed(taskFolderPlan),
+        create: (input, progress) =>
+          Effect.gen(function* () {
+            yield* progress?.onRepository?.("/repo/app", "done", null) ?? Effect.void;
+            yield* (
+              progress?.onRepository?.("/api", "failed", "invalid reference: main") ?? Effect.void
+            );
+            return {
+              record: taskFolderRecord(input.branch, ["app"]),
+              failed: [{ name: "api", originalPath: "/api", detail: "invalid reference: main" }],
+              startedFromOrigin: false,
+            };
+          }),
+        complete: (input) =>
+          Effect.sync(() => {
+            completeInputs.push(input);
+            return Option.some({ record: taskFolderRecord("t3/task", ["app"]), failed: [] });
+          }),
+        renameBranch: () => Effect.never,
+      },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const input = launchInput({
+        command: "launch:task-folder",
+        thread: "thread:task-folder",
+        message: "Work across repos",
+        workspace: { type: "worktree", baseRef: "main" },
+      });
+      const launched = yield* launches.launch(input);
+      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.status === "failed",
+        ),
+        Stream.runHead,
+      );
+      const failed = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(failed.thread.worktreePath, "/worktrees/repo/task/repo");
+      assert.include(
+        failed.turnItems.find((item) => item.type === "error")?.failure.message ?? "",
+        "api (invalid reference: main)",
+      );
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
+      assert.equal(harness.runSetup.mock.calls.length, 0);
+      // The failed repo stays visible so "Start without api" can name it.
+      assert.deepEqual(
+        (yield* tracker.get(launched.threadId))?.repositories.map((entry) => [
+          entry.path,
+          entry.status,
+        ]),
+        [
+          ["/repo/app", "done"],
+          ["/api", "failed"],
+        ],
+      );
+
+      yield* launches.retryPreparation({
+        commandId: CommandId.make("launch:task-folder:retry"),
+        threadId: launched.threadId,
+        runId: failed.runs[0]!.id,
+        skipRepositoryPaths: ["/api"],
+      });
+      yield* Deferred.await(setupStarted);
+      assert.deepEqual(
+        completeInputs.map((entry) => entry.skipRepositoryPaths),
+        [["/api"]],
+      );
+      assert.equal(completeInputs[0]?.homeWorktreePath, "/worktrees/repo/task/repo");
+      assert.equal(harness.runSetup.mock.calls[0]?.[0].worktreePath, "/worktrees/repo/task/repo");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("renames the task branch through the task folder", () =>
+  Effect.gen(function* () {
+    const renamed = yield* Deferred.make<string>();
+    const harness = makeHarness({
+      taskFolders: {
+        plan: () => Effect.succeed(taskFolderPlan),
+        create: (input) =>
+          Effect.succeed({
+            record: taskFolderRecord(input.branch, ["app", "api"]),
+            failed: [],
+            startedFromOrigin: false,
+          }),
+        renameBranch: (input) =>
+          Deferred.succeed(renamed, input.oldBranch).pipe(
+            Effect.as(Option.some({ branch: input.newBranch })),
+          ),
+      },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "launch:task-folder-rename",
+          thread: "thread:task-folder-rename",
+          message: "Fix the login flow",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      const oldBranch = yield* Deferred.await(renamed);
+      assert.match(oldBranch, /^t3\/[0-9a-f]{8}$/);
+      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "thread.metadata-updated" &&
+            stored.event.payload.branch === "generated-branch",
+        ),
+        Stream.runHead,
+      );
+      assert.equal(harness.renameBranch.mock.calls.length, 0);
+      assert.equal(
+        (yield* threads.getThreadProjection(launched.threadId)).thread.branch,
+        "generated-branch",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("starts a scheduled worktree task in a task folder with its chosen repos", () =>
+  Effect.gen(function* () {
+    const planned = yield* Deferred.make<
+      ReadonlyArray<OrchestrationV2LaunchRepository> | undefined
+    >();
+    const harness = makeHarness({
+      taskFolders: {
+        plan: (input) => Deferred.succeed(planned, input.repositories).pipe(Effect.as(null)),
+      },
+    });
+    const layerScheduledTasks = ScheduledTasks.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          harness.layer,
+          NodeCrypto.layer,
+          Scheduler.layer,
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const tasks = yield* ScheduledTasks.ScheduledTaskService;
+      const { task } = yield* tasks.upsert({
+        title: "Nightly sweep",
+        prompt: "Sweep both repos.",
+        enabled: false,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId,
+        threadId: null,
+        workspaceStrategy: {
+          type: "worktree",
+          baseRef: "main",
+          repositories: [{ path: "/api", baseRef: "release" }],
+        },
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* tasks.runNow({ id: task.id });
+      assert.deepEqual(yield* Deferred.await(planned), [{ path: "/api", baseRef: "release" }]);
+    }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerScheduledTasks)));
+  }),
+);

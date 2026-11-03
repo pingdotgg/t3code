@@ -2882,6 +2882,31 @@ describe("OpenCodeAdapterV2", () => {
     });
   });
 
+  it("opens the thread's other repos like the workspace and leaves writes to the edit rule", () => {
+    const workspace = {
+      repositories: [{ name: "api", path: "/work/api" }],
+      referenceFolders: [{ name: "design", path: "/notes/design" }],
+      extraRoots: ["/work/api/"],
+      relativePathsDiffer: false,
+    };
+    for (const mode of ["approval-required", "auto-accept-edits"] as const) {
+      const rules = openCodePermissionRules(runtimePolicy(mode, { workspace }));
+      assert.deepInclude(rules, {
+        permission: "external_directory",
+        pattern: "/work/api/*",
+        action: "allow",
+      });
+      assert.isFalse(rules.some((rule) => rule.pattern.startsWith("/notes/design")));
+    }
+    assert.equal(
+      permissionAction(
+        openCodePermissionRules(runtimePolicy("approval-required", { workspace })),
+        "edit",
+      ),
+      "ask",
+    );
+  });
+
   it("preserves OpenCode's recursion guard on task-created child sessions", () => {
     const childRules = openCodeChildPermissionRules(runtimePolicy("full-access"), [
       { permission: "task", pattern: "*", action: "deny" },

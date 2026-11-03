@@ -2,7 +2,9 @@ import type { EnvironmentId, OrchestrationGetTurnDiffResult, ThreadId } from "@t
 import * as Effect from "effect/Effect";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
-const EMPTY_TURN_DIFFS = Object.freeze<Readonly<Record<number, string>>>({});
+import { sameReviewTurnDiff, type ReviewTurnDiff } from "../features/review/reviewRepositories";
+
+const EMPTY_TURN_DIFFS = Object.freeze<Readonly<Record<number, ReviewTurnDiff>>>({});
 
 // The last answered diff of each single turn, keyed by its turn count, so review keeps showing
 // turns it already loaded while the environment is disconnected and no turn query is mounted.
@@ -33,6 +35,10 @@ export const recordReviewTurnDiffAnswer = (
     }
     const atom = lastReviewTurnDiffsAtom(target.environmentId, value.threadId);
     const current = registry.get(atom);
-    if (current[value.toTurnCount] === value.diff) return;
-    registry.set(atom, { ...current, [value.toTurnCount]: value.diff });
+    const next: ReviewTurnDiff = {
+      diff: value.diff,
+      ...(value.repositories ? { repositories: value.repositories } : {}),
+    };
+    if (sameReviewTurnDiff(current[value.toTurnCount], next)) return;
+    registry.set(atom, { ...current, [value.toTurnCount]: next });
   });

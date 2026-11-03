@@ -25,6 +25,8 @@ import { shortcutLabelForCommand } from "../keybindings";
 import { primaryServerKeybindingsAtom } from "../state/server";
 
 const PREVIOUS_WORKTREE_SELECT_VALUE = "previous-worktree";
+const INITIALIZE_HOME_GIT_SELECT_VALUE = "initialize-home-git";
+export const INITIALIZE_HOME_GIT_LABEL = "Initialize Git and commit home files";
 
 interface BranchToolbarEnvModeSelectorProps {
   forceNewWorktree?: boolean;
@@ -35,6 +37,8 @@ interface BranchToolbarEnvModeSelectorProps {
   previousWorktreeLabel?: string | null;
   previousWorktreeBranch?: string | null;
   onUsePreviousWorktree?: () => void;
+  /** Set for a plain home with tracked repos: it replaces "New worktree" until home is a Git repo. */
+  onInitializeHomeGit?: (() => void) | undefined;
 }
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
@@ -46,6 +50,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   previousWorktreeLabel,
   previousWorktreeBranch = null,
   onUsePreviousWorktree,
+  onInitializeHomeGit,
 }: BranchToolbarEnvModeSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const shortcutLabel = shortcutLabelForCommand(
@@ -58,7 +63,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       value: "local",
       label: resolveCurrentWorkspaceLabel(activeWorktreePath),
     },
-    { value: "worktree", label: resolveEnvModeLabel("worktree") },
+    onInitializeHomeGit
+      ? { value: INITIALIZE_HOME_GIT_SELECT_VALUE, label: INITIALIZE_HOME_GIT_LABEL }
+      : { value: "worktree", label: resolveEnvModeLabel("worktree") },
     ...(showPreviousWorktree && previousWorktreeLabel
       ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
       : []),
@@ -113,6 +120,10 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           onUsePreviousWorktree?.();
           return;
         }
+        if (value === INITIALIZE_HOME_GIT_SELECT_VALUE) {
+          onInitializeHomeGit?.();
+          return;
+        }
         onEnvModeChange(value as EnvMode);
       }}
       items={envModeItems}
@@ -165,12 +176,21 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               {resolveCurrentWorkspaceLabel(activeWorktreePath)}
             </span>
           </SelectItem>
-          <SelectItem value="worktree">
-            <span className="inline-flex items-center gap-1.5">
-              <FolderGit2Icon className="size-3" />
-              {resolveEnvModeLabel("worktree")}
-            </span>
-          </SelectItem>
+          {onInitializeHomeGit ? (
+            <SelectItem value={INITIALIZE_HOME_GIT_SELECT_VALUE}>
+              <span className="inline-flex items-center gap-1.5">
+                <FolderGit2Icon className="size-3" />
+                {INITIALIZE_HOME_GIT_LABEL}
+              </span>
+            </SelectItem>
+          ) : (
+            <SelectItem value="worktree">
+              <span className="inline-flex items-center gap-1.5">
+                <FolderGit2Icon className="size-3" />
+                {resolveEnvModeLabel("worktree")}
+              </span>
+            </SelectItem>
+          )}
           {showPreviousWorktree && previousWorktreeLabel ? (
             <SelectItem value={PREVIOUS_WORKTREE_SELECT_VALUE}>
               <PreviousWorktreeItemContent branch={previousWorktreeBranch} />

@@ -112,6 +112,21 @@ export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
   readonly headSha?: string | null;
 };
 
+export interface PreparePullRequestThreadOptions {
+  /** Creates the worktree for the PR branch, such as a multi-repo task folder, instead of one checkout. */
+  readonly checkout?: (branch: string) => Effect.Effect<
+    {
+      /** The thread's worktree and branch. */
+      readonly worktreePath: string;
+      readonly branch: string;
+      readonly pullRequestWorktreePath: string;
+      /** The project folder whose setup script runs in `worktreePath`. */
+      readonly projectCwd: string;
+    },
+    GitManagerServiceError
+  >;
+}
+
 interface SourceControlTextGenerationSettings {
   readonly modelSelection: ModelSelection;
   readonly projectId: ProjectId | null;
@@ -148,6 +163,7 @@ export class GitManager extends Context.Service<
     ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
     readonly preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
+      options?: PreparePullRequestThreadOptions,
     ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
     readonly runStackedAction: (
       input: GitRunStackedActionInput,
@@ -2866,15 +2882,15 @@ export const make = Effect.gen(function* () {
 
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
-  )(function* (input) {
-    const maybeRunSetupScript = (worktreePath: string) => {
+  )(function* (input, options) {
+    const maybeRunSetupScript = (worktreePath: string, projectCwd = input.cwd) => {
       if (!input.threadId) {
         return Effect.void;
       }
       return projectSetupScriptRunner
         .runForThread({
           threadId: input.threadId,
-          projectCwd: input.cwd,
+          projectCwd,
           worktreePath,
         })
         .pipe(
@@ -3108,6 +3124,18 @@ export const make = Effect.gen(function* () {
           detail:
             "This PR branch is already checked out in the main repo. Use Local, or switch the main repo off that branch before creating a worktree thread.",
         });
+      }
+
+      if (options?.checkout !== undefined) {
+        const checkout = yield* options.checkout(localPullRequestBranch);
+        yield* ensureExistingWorktreeUpstream(checkout.pullRequestWorktreePath);
+        yield* maybeRunSetupScript(checkout.worktreePath, checkout.projectCwd);
+        return {
+          pullRequest,
+          branch: checkout.branch,
+          worktreePath: checkout.worktreePath,
+          isOnPullRequestHead: true,
+        };
       }
 
       const worktree = yield* gitCore.createWorktree(

@@ -2,14 +2,18 @@ import {
   CheckpointId,
   CheckpointScopeId,
   latestProviderTurnForAttempt,
+  type OrchestrationV2Checkpoint,
+  type OrchestrationV2CheckpointScope,
   type OrchestrationV2DomainEvent,
   ProviderThreadId,
   ThreadId,
   VcsProcessExitError,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -20,12 +24,18 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import type * as ServerConfig from "../config.ts";
 import type * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
+import { TaskFolderStore } from "../workspace/TaskFolders.ts";
+import * as TaskFolderService from "../workspace/TaskFolderService.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
 } from "./CheckpointRestoreSafety.ts";
-import { CheckpointRestoreError, CheckpointServiceV2 } from "./CheckpointService.ts";
+import {
+  CheckpointRestoreError,
+  CheckpointServiceV2,
+  type RestorableCheckpoint,
+} from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
@@ -48,15 +58,27 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
       "provider-turn-unavailable",
       "unexpected-failure",
       "shared-workspace",
+      "repository-checkpoint-unavailable",
+      "repository-restore-failed",
     ]),
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
     checkpointId: CheckpointId,
+    /** The repo a multi-repo restore stopped at. */
+    repository: Schema.optional(Schema.String),
+    /** Repos that kept the rewound files because putting them back failed too. */
+    notPutBack: Schema.optional(Schema.Array(Schema.String)),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
     switch (this.reason) {
+      case "repository-checkpoint-unavailable":
+        return `Cannot restore files: ${this.repository} has no checkpoint for that turn. Rewind the conversation without restoring files instead.`;
+      case "repository-restore-failed":
+        return this.notPutBack === undefined || this.notPutBack.length === 0
+          ? `Could not restore files in ${this.repository}. Every repo is back to how it was before the rewind.`
+          : `Could not restore files in ${this.repository}, and ${this.notPutBack.join(", ")} could not be put back as they were.`;
       case "rollback-target-invalid":
         return `Rollback target ${this.checkpointId} for provider thread ${this.providerThreadId} on thread ${this.threadId} is incomplete or invalid.`;
       case "active-provider-changed":
@@ -77,15 +99,20 @@ const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
 const isRuntimePolicyAboveCeilingError = Schema.is(RuntimePolicyAboveCeilingError);
 
 /**
- * The message clients see when a rollback fails. Only a held Git index lock
- * gets its own explanation; other reasons carry internal ids or raw Git
- * output, so they fall back to the generic message.
+ * The message clients see when a rollback fails. A held Git index lock and
+ * multi-repo restores, which name repos, get their own explanation; other
+ * reasons carry internal ids or raw Git output, so they fall back to the
+ * generic message.
  */
 export function rollbackFailureClientMessage(error: CheckpointRollbackExecutionError): string {
   if (isRuntimePolicyAboveCeilingError(error.cause)) return error.cause.message;
   const restoreCause = isCheckpointRestoreError(error.cause) ? error.cause.cause : undefined;
-  return isVcsProcessExitError(restoreCause) && restoreCause.detail === GIT_INDEX_LOCKED_DETAIL
-    ? GIT_INDEX_LOCKED_DETAIL
+  if (isVcsProcessExitError(restoreCause) && restoreCause.detail === GIT_INDEX_LOCKED_DETAIL) {
+    return GIT_INDEX_LOCKED_DETAIL;
+  }
+  return error.reason === "repository-checkpoint-unavailable" ||
+    error.reason === "repository-restore-failed"
+    ? error.message
     : ROLLBACK_FAILED_MESSAGE;
 }
 
@@ -135,6 +162,9 @@ export const layer: Layer.Layer<
     const path = yield* Path.Path;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+    // Unwired in most tests; repository scopes then only have to differ from their tracked folders.
+    const taskFolders = yield* Effect.serviceOption(TaskFolderStore);
+    const taskFolderService = yield* Effect.serviceOption(TaskFolderService.TaskFolderService);
 
     const execute = Effect.fn("orchestrationV2.checkpointRollback.execute")(function* (input: {
       readonly threadId: ThreadId;
@@ -151,6 +181,7 @@ export const layer: Layer.Layer<
         providerThread.providerSessionId === null ||
         checkpoint === undefined ||
         scope === undefined ||
+        scope.kind === "repository" ||
         checkpoint.scopeId !== scope.id ||
         checkpoint.status !== "ready"
       ) {
@@ -216,8 +247,14 @@ export const layer: Layer.Layer<
             });
 
       const { worktreePath, branch } = context.thread;
+      // A task folder recreates its home worktree first, then any missing repo, as turn start does.
+      const repairedTaskFolder =
+        worktreePath != null &&
+        Option.isSome(taskFolderService) &&
+        (yield* taskFolderService.value.repair(worktreePath));
       // Recreated only where the server would have made it, as turn start does.
       if (
+        !repairedTaskFolder &&
         worktreePath != null &&
         branch != null &&
         !(yield* fileSystem.exists(worktreePath)) &&
@@ -241,6 +278,7 @@ export const layer: Layer.Layer<
           projections,
           projects,
           path,
+          ...(Option.isSome(taskFolders) ? { taskFolders: taskFolders.value } : {}),
         }))
       ) {
         return yield* new CheckpointRollbackExecutionError({
@@ -250,6 +288,72 @@ export const layer: Layer.Layer<
           checkpointId: input.checkpointId,
         });
       }
+
+      const { repositoryScopes } = context;
+      const rollbackError = (
+        reason: "repository-checkpoint-unavailable" | "repository-restore-failed",
+        details: { readonly repository: string; readonly notPutBack?: ReadonlyArray<string> },
+        cause?: unknown,
+      ) =>
+        new CheckpointRollbackExecutionError({
+          reason,
+          threadId: input.threadId,
+          providerThreadId: input.providerThreadId,
+          checkpointId: input.checkpointId,
+          ...details,
+          ...(cause === undefined ? {} : { cause }),
+        });
+      // Checked and snapshotted before the provider rewinds, so a missing ref changes nothing.
+      const repositoryRestores =
+        input.restoreFiles === false || repositoryScopes.length === 0
+          ? []
+          : yield* Effect.gen(function* () {
+              const targets = yield* Effect.forEach(
+                [
+                  { scope, checkpoint: Option.some<RestorableCheckpoint>(checkpoint) },
+                  ...repositoryScopes.map((repositoryScope) => ({
+                    scope: repositoryScope,
+                    checkpoint: repositoryRestoreTarget(
+                      context.repositoryCheckpoints,
+                      repositoryScope,
+                      checkpoint.ordinalWithinScope,
+                    ),
+                  })),
+                ],
+                (target) =>
+                  Effect.gen(function* () {
+                    if (Option.isNone(target.checkpoint)) return [];
+                    // A repo whose checkout is gone has nothing left to restore.
+                    if (target.scope !== scope && !(yield* fileSystem.exists(target.scope.cwd))) {
+                      return [];
+                    }
+                    if (
+                      target.checkpoint.value.status !== "ready" ||
+                      !(yield* checkpoints.hasCheckpointRef({
+                        scope: target.scope,
+                        checkpoint: target.checkpoint.value,
+                      }))
+                    ) {
+                      return yield* rollbackError("repository-checkpoint-unavailable", {
+                        repository: repositoryLabel(target.scope),
+                      });
+                    }
+                    return [{ scope: target.scope, checkpoint: target.checkpoint.value }];
+                  }),
+                { concurrency: 4 },
+              ).pipe(Effect.map((found) => found.flat()));
+              return yield* Effect.forEach(
+                targets,
+                (target) =>
+                  checkpoints
+                    .savePreRewind({
+                      scope: target.scope,
+                      ...(target.scope === scope ? { repositoryScopes } : {}),
+                    })
+                    .pipe(Effect.map((preRewind) => ({ ...target, preRewind }))),
+                { concurrency: 4 },
+              );
+            });
 
       const modelSelection = context.thread.modelSelection;
       const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
@@ -289,10 +393,75 @@ export const layer: Layer.Layer<
               target: rollbackTarget,
               providerThreadTurns,
             });
-      if (input.restoreFiles !== false) yield* checkpoints.restore({ scope, checkpoint });
+      if (input.restoreFiles !== false) {
+        if (repositoryScopes.length === 0) {
+          yield* checkpoints.restore({ scope, checkpoint });
+        } else {
+          // One repo at a time; on failure every repo touched so far goes back to its pre-rewind ref.
+          for (const [index, target] of repositoryRestores.entries()) {
+            const restored = yield* Effect.exit(
+              checkpoints.restore({
+                scope: target.scope,
+                checkpoint: target.checkpoint,
+                ...(target.scope === scope ? { repositoryScopes } : {}),
+              }),
+            );
+            if (Exit.isSuccess(restored)) continue;
+            const notPutBack = yield* Effect.forEach(
+              repositoryRestores.slice(0, index + 1),
+              (done) =>
+                checkpoints
+                  .restore({
+                    scope: done.scope,
+                    checkpoint: done.preRewind,
+                    ...(done.scope === scope ? { repositoryScopes } : {}),
+                  })
+                  .pipe(
+                    Effect.as([]),
+                    Effect.catch((cause) =>
+                      Effect.logWarning("orchestration V2 rewind undo failed", {
+                        scopeId: done.scope.id,
+                        cause: String(cause),
+                      }).pipe(Effect.as([repositoryLabel(done.scope)])),
+                    ),
+                  ),
+            ).pipe(Effect.map((names) => names.flat()));
+            return yield* rollbackError(
+              "repository-restore-failed",
+              { repository: repositoryLabel(target.scope), notPutBack },
+              Cause.squash(restored.cause),
+            );
+          }
+        }
+      }
       if (staleCheckpoints.length > 0) {
         yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
       }
+      const staleRepositoryCheckpoints = context.repositoryCheckpoints.filter(
+        (candidate) =>
+          candidate.status === "ready" &&
+          candidate.runId !== null &&
+          candidate.ordinalWithinScope > checkpoint.ordinalWithinScope,
+      );
+      yield* Effect.forEach(
+        repositoryScopes,
+        (repositoryScope) => {
+          const stale = staleRepositoryCheckpoints.filter(
+            (candidate) => candidate.scopeId === repositoryScope.id,
+          );
+          return stale.length === 0
+            ? Effect.void
+            : checkpoints.deleteStaleRefs({ scope: repositoryScope, checkpoints: stale }).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("orchestration V2 stale repository refs kept", {
+                    scopeId: repositoryScope.id,
+                    cause: String(cause),
+                  }),
+                ),
+              );
+        },
+        { concurrency: 4, discard: true },
+      );
 
       // Lock against full-row thread writes that could restore the old native session after rollback.
       yield* threadCommands.withLock(
@@ -323,7 +492,7 @@ export const layer: Layer.Layer<
               },
             }),
           );
-          for (const staleCheckpoint of staleCheckpoints) {
+          for (const staleCheckpoint of [...staleCheckpoints, ...staleRepositoryCheckpoints]) {
             events.push(
               yield* makeEvent({
                 type: "checkpoint.captured",
@@ -396,3 +565,24 @@ export const layer: Layer.Layer<
     });
   }),
 );
+
+const repositoryLabel = (scope: OrchestrationV2CheckpointScope) => scope.label ?? scope.cwd;
+
+/**
+ * The checkpoint that puts a repo back to how it was at the target ordinal: its own record there,
+ * or, for a repo first used later, the baseline its first run took. None when no later run used it.
+ */
+function repositoryRestoreTarget(
+  repositoryCheckpoints: ReadonlyArray<OrchestrationV2Checkpoint>,
+  repositoryScope: Pick<OrchestrationV2CheckpointScope, "id">,
+  targetOrdinal: number,
+): Option.Option<OrchestrationV2Checkpoint> {
+  return Option.fromUndefinedOr(
+    repositoryCheckpoints
+      .filter(
+        (candidate) =>
+          candidate.scopeId === repositoryScope.id && candidate.ordinalWithinScope >= targetOrdinal,
+      )
+      .toSorted((left, right) => left.ordinalWithinScope - right.ordinalWithinScope)[0],
+  );
+}

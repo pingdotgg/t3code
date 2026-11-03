@@ -13,6 +13,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
+import * as TaskFolders from "../workspace/TaskFolders.ts";
 import * as ReviewService from "./ReviewService.ts";
 
 function layer(input: {
@@ -27,7 +28,7 @@ function layer(input: {
 }) {
   const projectRoots = input.projectRoots ?? [];
   return ReviewService.layer.pipe(
-    Layer.provide(KnownWorkspaces.layer),
+    Layer.provide(KnownWorkspaces.layer.pipe(Layer.provide(TaskFolders.layer))),
     Layer.provide(
       Layer.effectDiscard(
         Effect.gen(function* () {
@@ -62,6 +63,7 @@ function layer(input: {
                   workspaceRoot,
                   defaultModelSelection: null,
                   scripts: [],
+                  trackedFolders: [],
                   createdAt: "2026-01-01T00:00:00.000Z",
                   updatedAt: "2026-01-01T00:00:00.000Z",
                 })),

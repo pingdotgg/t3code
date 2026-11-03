@@ -28,6 +28,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
+import * as TaskFolderService from "../workspace/TaskFolderService.ts";
 import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
 
 export class WorktreeMcpService extends Context.Service<
@@ -75,6 +76,8 @@ const make = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+  // Optional so hosts and tests without task folders keep single-repo handoffs.
+  const taskFolders = yield* Effect.serviceOption(TaskFolderService.TaskFolderService);
 
   // Serialize handoffs per thread to avoid creating two worktrees and orphaning one.
   const handoffThreadsInFlight = new Set<string>();
@@ -224,11 +227,19 @@ const make = Effect.gen(function* () {
 
     const startFromOrigin =
       input.startFromOrigin ?? (yield* readDefaultStartFromOrigin(project.id));
+    const folders = Option.getOrUndefined(taskFolders);
+    const folderPlan =
+      folders === undefined
+        ? null
+        : yield* folders
+            .plan({ project })
+            .pipe(asOperationFailed("Unable to read the project's repositories"));
 
     let worktreeBaseRef = baseRef;
     let baseRefName = baseRef;
     let startedFromOrigin = false;
-    if (startFromOrigin) {
+    // A task folder fetches each repo's own base while it creates the worktrees.
+    if (startFromOrigin && folderPlan === null) {
       const resolvedRemoteBase = yield* gitWorkflow
         .fetchWorktreeBaseCommit({ cwd: projectCwd, refName: baseRef })
         .pipe(asOperationFailed(`Unable to fetch the remote base of '${baseRef}'`));
@@ -244,17 +255,34 @@ const make = Effect.gen(function* () {
     // Mask interruption after worktree creation through setup; binding can detach and interrupt the caller.
     return yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
-        const worktree = yield* restore(
-          gitWorkflow
-            .createWorktree({
-              cwd: projectCwd,
-              refName: worktreeBaseRef,
-              newRefName: input.branch,
-              baseRefName,
-              path: null,
-            })
-            .pipe(asOperationFailed("Unable to create the worktree")),
-        );
+        const folder =
+          folders === undefined || folderPlan === null
+            ? null
+            : yield* restore(
+                folders
+                  .create({ plan: folderPlan, branch: input.branch, baseRef, startFromOrigin })
+                  .pipe(asOperationFailed("Unable to create the worktrees")),
+              );
+        const worktree =
+          folder === null
+            ? yield* restore(
+                gitWorkflow
+                  .createWorktree({
+                    cwd: projectCwd,
+                    refName: worktreeBaseRef,
+                    newRefName: input.branch,
+                    baseRefName,
+                    path: null,
+                  })
+                  .pipe(asOperationFailed("Unable to create the worktree")),
+              )
+            : {
+                worktree: {
+                  path: folder.record.homeWorktreePath,
+                  refName: folder.record.repositories[0]?.branch ?? input.branch,
+                },
+              };
+        if (folder !== null) startedFromOrigin = folder.startedFromOrigin;
         const worktreePath = worktree.worktree.path;
 
         const reportFailed = (logMessage: string) =>
@@ -268,17 +296,36 @@ const make = Effect.gen(function* () {
           });
 
         const removeCreatedWorktree = Effect.suspend(() =>
-          gitWorkflow.removeWorktree({ cwd: projectCwd, path: worktreePath, force: true }).pipe(
-            Effect.andThen(
-              Effect.suspend(() =>
-                gitWorkflow.deleteLocalBranch({
-                  cwd: projectCwd,
-                  refName: worktree.worktree.refName,
-                  force: true,
-                }),
+          folder === null
+            ? gitWorkflow.removeWorktree({ cwd: projectCwd, path: worktreePath, force: true }).pipe(
+                Effect.andThen(
+                  Effect.suspend(() =>
+                    gitWorkflow.deleteLocalBranch({
+                      cwd: projectCwd,
+                      refName: worktree.worktree.refName,
+                      force: true,
+                    }),
+                  ),
+                ),
+              )
+            : folders!.remove({ path: worktreePath, force: true }).pipe(
+                Effect.flatMap((removal) =>
+                  Option.isSome(removal) && removal.value.removed
+                    ? Effect.forEach(
+                        folder.record.repositories,
+                        (row) =>
+                          row.branch === null
+                            ? Effect.void
+                            : gitWorkflow.deleteLocalBranch({
+                                cwd: row.originalPath,
+                                refName: row.branch,
+                                force: true,
+                              }),
+                        { discard: true },
+                      )
+                    : Effect.void,
+                ),
               ),
-            ),
-          ),
         ).pipe(Effect.ignoreCause({ log: true }));
 
         const recheckAndBind = Effect.gen(function* () {
@@ -383,6 +430,12 @@ const make = Effect.gen(function* () {
             );
         }
 
+        const missing =
+          folder === null || folder.failed.length === 0
+            ? ""
+            : ` These repositories have no worktree: ${folder.failed
+                .map((failure) => `${failure.name} (${failure.detail})`)
+                .join("; ")}.`;
         const result: WorktreeMcpHandoffResult = {
           worktreePath,
           branch: worktree.worktree.refName,
@@ -391,9 +444,10 @@ const make = Effect.gen(function* () {
           setupScript,
           continuation,
           note:
-            continuation.status === "scheduled"
+            (continuation.status === "scheduled"
               ? "Handoff recorded. Changing the workspace detaches this provider session, so the current turn ends shortly after this call; the queued continuation prompt then starts the next turn inside the worktree with the conversation preserved. The worktree is not removed automatically when the thread is deleted."
-              : "Handoff recorded. Changing the workspace detaches this provider session, so the current turn ends shortly after this call; the conversation continues inside the worktree when the thread receives its next message. Pass continuationPrompt to resume automatically. The worktree is not removed automatically when the thread is deleted.",
+              : "Handoff recorded. Changing the workspace detaches this provider session, so the current turn ends shortly after this call; the conversation continues inside the worktree when the thread receives its next message. Pass continuationPrompt to resume automatically. The worktree is not removed automatically when the thread is deleted.") +
+            missing,
         };
         return result;
       }),

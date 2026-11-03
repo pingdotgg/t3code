@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
@@ -44,6 +45,28 @@ export const ProjectScript = Schema.Struct({
   autoOpenPreview: Schema.optional(Schema.Boolean),
 });
 export type ProjectScript = typeof ProjectScript.Type;
+
+export const PROJECT_TRACKED_FOLDERS_MAX = 64;
+
+/**
+ * A folder the project tracks besides its home folder. Paths are absolute and only valid on the
+ * project's own environment. Git folders get history, diffs and Git actions; plain folders outside
+ * the home folder are read-only reference for the agent.
+ */
+export const ProjectTrackedFolder = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+});
+export type ProjectTrackedFolder = typeof ProjectTrackedFolder.Type;
+
+export const ProjectTrackedFolders = Schema.Array(ProjectTrackedFolder).check(
+  Schema.isMaxLength(PROJECT_TRACKED_FOLDERS_MAX),
+);
+
+/** Older servers and stored events omit the list; that means a single-folder project. */
+export const ProjectTrackedFoldersWithDefault = ProjectTrackedFolders.pipe(
+  Schema.withDecodingDefaultKey(Effect.succeed([])),
+);
 
 export const ProjectIconColor = Schema.Literals([
   "gray",
@@ -164,6 +187,7 @@ export const Project = Schema.Struct({
   scripts: Schema.Array(ProjectScript),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   archivedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  trackedFolders: ProjectTrackedFoldersWithDefault,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -182,6 +206,7 @@ export const ProjectCreatePayload = Schema.Struct({
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  trackedFolders: Schema.optional(ProjectTrackedFolders),
 });
 export type ProjectCreatePayload = typeof ProjectCreatePayload.Type;
 
@@ -200,6 +225,7 @@ export const ProjectUpdatePayload = Schema.Struct({
       description: "Threads and files are kept.",
     }),
   ),
+  trackedFolders: Schema.optional(ProjectTrackedFolders),
 });
 export type ProjectUpdatePayload = typeof ProjectUpdatePayload.Type;
 

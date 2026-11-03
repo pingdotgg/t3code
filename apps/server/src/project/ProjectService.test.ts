@@ -9,6 +9,7 @@ import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
@@ -104,7 +105,7 @@ const layerTestFor = (
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
-    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(layerEnrichmentCompletions),
   );
 
@@ -499,6 +500,83 @@ it.layer(layerTest)("ProjectService", (it) => {
         Option.getOrThrow(yield* service.getById(other)).workspaceRoot,
         "/work/conflict-mover",
       );
+    }),
+  );
+
+  it.effect("normalizes tracked folders and rejects ones that would overlap home", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-tracked-" });
+      yield* fileSystem.writeFileString(
+        `${home}/.gitmodules`,
+        '[submodule "vendor"]\n\tpath = vendor\n',
+      );
+      const projectId = ProjectId.make("project:tracked-folders");
+      const created = yield* service.create({
+        commandId: CommandId.make("command:tracked-folders:create"),
+        projectId,
+        title: "Tracked",
+        workspaceRoot: home,
+        // Neither folder exists yet; they show as missing until located.
+        trackedFolders: [
+          { path: `${home}/api/../api`, name: "API" },
+          { path: `${home}-sibling/app`, name: " " },
+        ],
+      });
+      const expected = [
+        { path: `${home}/api`, name: "API" },
+        { path: `${home}-sibling/app`, name: "app" },
+      ];
+      assert.deepEqual(created.trackedFolders, expected);
+
+      const rejections = [
+        [[{ path: "relative/api", name: "api" }], "must be an absolute path"],
+        [[{ path: home, name: "home" }], "already part of the project"],
+        [[{ path: `${home}/..`, name: "parent" }], "contains the home folder"],
+        [
+          [
+            { path: `${home}/api`, name: "a" },
+            { path: `${home}/api/`, name: "b" },
+          ],
+          "listed twice",
+        ],
+        [[{ path: `${home}/vendor`, name: "vendor" }], "submodule of the home repo"],
+        [
+          Array.from({ length: 65 }, (_, index) => ({ path: `/elsewhere/${index}`, name: "x" })),
+          "at most 64",
+        ],
+      ] as const;
+      for (const [index, [trackedFolders, detail]] of rejections.entries()) {
+        const error = yield* service
+          .update({
+            commandId: CommandId.make(`command:tracked-folders:reject:${index}`),
+            projectId,
+            trackedFolders,
+          })
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "ProjectTrackedFoldersInvalidError");
+        assert.include(error.message, detail);
+      }
+      const moved = yield* service
+        .update({
+          commandId: CommandId.make("command:tracked-folders:move-home"),
+          projectId,
+          workspaceRoot: `${home}/api`,
+        })
+        .pipe(Effect.flip);
+      assert.equal(moved._tag, "ProjectTrackedFoldersInvalidError");
+      assert.deepEqual(
+        Option.getOrThrow(yield* service.getById(projectId)).trackedFolders,
+        expected,
+      );
+
+      const cleared = yield* service.update({
+        commandId: CommandId.make("command:tracked-folders:clear"),
+        projectId,
+        trackedFolders: [],
+      });
+      assert.deepEqual(cleared.trackedFolders, []);
     }),
   );
 

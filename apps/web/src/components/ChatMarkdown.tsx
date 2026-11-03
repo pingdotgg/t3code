@@ -156,6 +156,10 @@ import { cn } from "../lib/utils";
 import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
+import {
+  readThreadEditedFilePaths,
+  readThreadWorkspaceRepositories,
+} from "../state/threadRepositories";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
 import { assetEnvironment } from "../state/assets";
@@ -177,6 +181,7 @@ import {
   workspaceLinkLookupQuery,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import { resolvePullRequestPreviewTarget } from "@t3tools/client-runtime/change-request-links";
+import { findRepositoryFileLinkCandidates } from "@t3tools/client-runtime/state/thread-repositories";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { useOpenLink } from "../browser/useOpenLink";
@@ -794,12 +799,106 @@ function useChatMarkdownState({
       ? pickWorkspaceLinkMatch(workspaceRelativePath, cwd, result.value.entries)
       : null;
   };
-  const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
+  // In a multi-repo thread a relative link can name a file in any repo: files the thread edited
+  // come first, then repos holding the path. Several matches ask which one; null keeps the join.
+  const repositoryFileLinkThread = (fileLinkMeta: MarkdownFileLinkMeta) =>
+    threadRef !== undefined &&
+    fileLinkMeta.workspaceLookupPath !== null &&
+    readThreadWorkspaceRepositories(threadRef) !== null
+      ? threadRef
+      : null;
+  const resolveRepositoryFileLink = async (
+    fileLinkMeta: MarkdownFileLinkMeta,
+    anchor: { readonly x: number; readonly y: number } | undefined,
+  ): Promise<{ readonly path: string } | "cancelled" | null> => {
+    const linkThreadRef = repositoryFileLinkThread(fileLinkMeta);
+    const workspace =
+      linkThreadRef === null ? null : readThreadWorkspaceRepositories(linkThreadRef);
+    if (
+      linkThreadRef === null ||
+      workspace === null ||
+      fileLinkMeta.workspaceLookupPath === null ||
+      environmentId === null ||
+      !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
+    ) {
+      return null;
+    }
+    const candidates = await findRepositoryFileLinkCandidates({
+      path: fileLinkMeta.workspaceLookupPath,
+      editedPaths: readThreadEditedFilePaths(linkThreadRef),
+      repositories: [
+        ...workspace.repositories,
+        ...workspace.references.map((reference) => ({ name: reference.name, cwd: reference.path })),
+      ],
+      exists: async (paths) => {
+        const metadata = await getFilesystemMetadata({
+          environmentId,
+          input: { paths: [...paths] },
+        });
+        return metadata._tag === "Success"
+          ? metadata.value.entries.map((entry) => entry !== null)
+          : paths.map(() => false);
+      },
+    });
+    const [first] = candidates;
+    if (first === undefined) return null;
+    if (candidates.length === 1 || anchor === undefined) return { path: first.path };
+    const picked = await readLocalApi()?.contextMenu.show(
+      [
+        { id: "header", label: "Open which file?", header: true, disabled: true },
+        ...candidates.map((candidate, index) => ({
+          id: `candidate:${index}`,
+          label: `${candidate.repositoryName ?? "Outside the project"} · ${candidate.path}`,
+        })),
+      ],
+      anchor,
+    );
+    const choice = candidates[Number(picked?.slice("candidate:".length) ?? Number.NaN)];
+    return choice === undefined ? "cancelled" : { path: choice.path };
+  };
+  const resolveFileLinkHostPath = async (
+    fileLinkMeta: MarkdownFileLinkMeta,
+    anchor?: { readonly x: number; readonly y: number },
+  ) => {
+    const repositoryMatch = await resolveRepositoryFileLink(fileLinkMeta, anchor);
+    if (repositoryMatch === "cancelled") return null;
+    if (repositoryMatch !== null) return { absolutePath: repositoryMatch.path, matched: true };
+    return resolveMarkdownFileHostPath({
+      meta: fileLinkMeta,
+      cwd,
+      findWorkspaceMatch: () => findWorkspaceFileMatch(fileLinkMeta),
+    });
+  };
+  const openFileInPanel = (
+    fileLinkMeta: MarkdownFileLinkMeta,
+    panelPath: string,
+    anchor?: { readonly x: number; readonly y: number },
+  ) => {
     if (!threadRef) return;
     // Every open supersedes pending lookups, including synchronous opens.
     const isLatestLookup = claimWorkspaceBasenameLookup();
     const openAt = (path: string) =>
       useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
+    if (repositoryFileLinkThread(fileLinkMeta) !== null) {
+      void (async () => {
+        const repositoryMatch = await resolveRepositoryFileLink(fileLinkMeta, anchor);
+        if (!isLatestLookup() || repositoryMatch === "cancelled") return;
+        if (repositoryMatch !== null) {
+          openAt(repositoryMatch.path);
+          return;
+        }
+        const match =
+          fileLinkMeta.workspaceLookupPath !== null &&
+          cwd &&
+          (needsWorkspaceBasenameLookup(panelPath) ||
+            stripRepeatedWorkspacePrefix(panelPath, cwd) !== null)
+            ? await findWorkspaceFileMatch(fileLinkMeta)
+            : null;
+        if (!isLatestLookup()) return;
+        openAt(match ?? panelPath);
+      })();
+      return;
+    }
     if (
       fileLinkMeta.workspaceLookupPath === null ||
       !cwd ||
@@ -819,12 +918,11 @@ function useChatMarkdownState({
     copyMarkdown: string,
     mediaSource?: string,
   ) => {
-    const resolveHostPath = () =>
-      resolveMarkdownFileHostPath({
-        meta: fileLinkMeta,
-        cwd,
-        findWorkspaceMatch: () => findWorkspaceFileMatch(fileLinkMeta),
-      });
+    const resolveHostPath = async () =>
+      (await resolveFileLinkHostPath(fileLinkMeta)) ?? {
+        absolutePath: fileLinkMeta.filePath,
+        matched: false,
+      };
     const isAppBundle = isMacOS && fileLinkMeta.filePath.endsWith(".app");
     const canOpenApp =
       environmentId !== null &&
@@ -875,16 +973,18 @@ function useChatMarkdownState({
                   input: { cwd: (await resolveHostPath()).absolutePath, editor: "file-manager" },
                 })
             : canUseShellActions
-              ? async () =>
-                  openInPreferredEditor(
-                    markdownFileEditorTarget(fileLinkMeta, await resolveHostPath()),
-                  )
+              ? async (anchor) => {
+                  const hostPath = await resolveFileLinkHostPath(fileLinkMeta, anchor);
+                  return hostPath === null
+                    ? AsyncResult.success(undefined)
+                    : openInPreferredEditor(markdownFileEditorTarget(fileLinkMeta, hostPath));
+                }
               : undefined
         }
         resolveCopyPaths={async () =>
           markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
         }
-        onOpenInPanel={(path) => openFileInPanel(fileLinkMeta, path)}
+        onOpenInPanel={(path, _line, anchor) => openFileInPanel(fileLinkMeta, path, anchor)}
         onOpenMedia={
           threadRef && canPreviewMedia
             ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)

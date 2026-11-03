@@ -1,7 +1,10 @@
 import { ThreadId, type WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { resolveVisibleWorktreeSetup } from "@t3tools/client-runtime/worktree-setup";
 import { describe, expect, it } from "vite-plus/test";
-import { resolveWorktreeSetupSnapshot } from "./worktree-setup-state";
+import {
+  failedWorktreeSetupRepositories,
+  resolveWorktreeSetupSnapshot,
+} from "./worktree-setup-state";
 
 const threadId = ThreadId.make("setup-thread");
 const running: WorktreeSetupSnapshot = {
@@ -15,6 +18,7 @@ const running: WorktreeSetupSnapshot = {
   worktreePath: null,
   setupScript: null,
   stages: [],
+  repositories: [],
   error: null,
 };
 
@@ -67,6 +71,20 @@ describe("mobile worktree setup handoff", () => {
       ).toBeNull();
     },
   );
+
+  it("offers to start without the repos a failed task folder setup could not prepare", () => {
+    const repositories = [
+      { name: "app", path: "/code/app", status: "done" as const, detail: null },
+      { name: "infra", path: "/code/infra", status: "failed" as const, detail: "fatal: bad ref" },
+    ];
+    expect(failedWorktreeSetupRepositories({ ...running, phase: "failed", repositories })).toEqual([
+      repositories[1],
+    ]);
+    // While it runs, and for single-repo worktrees, there is nothing to leave out.
+    expect(failedWorktreeSetupRepositories({ ...running, repositories })).toEqual([]);
+    expect(failedWorktreeSetupRepositories({ ...running, phase: "failed" })).toEqual([]);
+    expect(failedWorktreeSetupRepositories(null)).toEqual([]);
+  });
 
   it("does not carry a previous thread's progress across navigation", () => {
     const otherId = ThreadId.make("other-thread");

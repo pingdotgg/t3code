@@ -8,6 +8,7 @@ export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
+export const T3_PI_WORKSPACE_INSTRUCTIONS_ENV = "T3_PI_WORKSPACE_INSTRUCTIONS";
 
 // These tools trigger file-change approvals, bypassed by Auto-accept edits.
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
@@ -22,6 +23,7 @@ const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
+const WORKSPACE_INSTRUCTIONS_ENV = ${JSON.stringify(T3_PI_WORKSPACE_INSTRUCTIONS_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
 const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
 const PROTOCOL = "2025-06-18";
@@ -59,6 +61,25 @@ function runtimeMode(): RuntimeMode {
     value === "full-access"
     ? value
     : "full-access";
+}
+
+type AgentStartEvent = {
+  readonly systemPrompt: string;
+  readonly systemPromptOptions?: {
+    readonly sections?: Record<string, string> | null;
+    readonly forceSystemPrompt?: string;
+  };
+};
+
+// Keep guidance in the system prompt so leading slash commands still expand.
+function withInstructions(event: AgentStartEvent, instructions: Record<string, string>) {
+  const sections = event.systemPromptOptions?.sections;
+  if (sections && typeof sections === "object" && event.systemPromptOptions?.forceSystemPrompt === undefined) {
+    // A full prompt override bypasses Pi's later section rendering.
+    Object.assign(sections, instructions);
+    return undefined;
+  }
+  return { systemPrompt: [event.systemPrompt, ...Object.values(instructions)].join("\\n\\n") };
 }
 
 function toolInputSummary(input: unknown): string {
@@ -369,6 +390,10 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
   });
 
+  const workspace = env(WORKSPACE_INSTRUCTIONS_ENV);
+  const workspaceInstructions: Record<string, string> =
+    workspace === undefined ? {} : { t3_code_workspace: workspace };
+
   const endpoint = env(URL_ENV);
   const token = env(TOKEN_ENV);
   if (endpoint === undefined || token === undefined) {
@@ -378,6 +403,10 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
         "warning",
       );
     });
+    // Repo paths matter without T3 tools too.
+    if (workspace !== undefined) {
+      pi.on("before_agent_start", (event) => withInstructions(event, workspaceInstructions));
+    }
     return;
   }
 
@@ -484,16 +513,12 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
   });
 
-  // Keep guidance in the system prompt so leading slash commands still expand.
   pi.on("before_agent_start", (event, ctx) => {
     reconcileDiscovery(ctx);
-    const sections = event.systemPromptOptions?.sections;
-    if (sections && typeof sections === "object" && event.systemPromptOptions?.forceSystemPrompt === undefined) {
-      // A full prompt override bypasses Pi's later section rendering.
-      sections.t3_code_orchestration = ORCHESTRATION_INSTRUCTIONS;
-      return undefined;
-    }
-    return { systemPrompt: event.systemPrompt + "\\n\\n" + ORCHESTRATION_INSTRUCTIONS };
+    return withInstructions(event, {
+      t3_code_orchestration: ORCHESTRATION_INSTRUCTIONS,
+      ...workspaceInstructions,
+    });
   });
 }
 `;

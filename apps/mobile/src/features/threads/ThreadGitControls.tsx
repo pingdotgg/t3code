@@ -84,6 +84,8 @@ export type ThreadGitMenuProps = {
   readonly hasThread?: boolean;
   readonly gitStatus: VcsStatusResult | null;
   readonly gitOperationLabel: string | null;
+  /** Multi-repo threads act per repo in the Git sheet, so the menu offers no quick action. */
+  readonly repositoryCount?: number;
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
   readonly onMergeBack?: () => void;
@@ -236,9 +238,17 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     });
   };
 
+  const repositoryCount = props.repositoryCount ?? 0;
+  const multiRepository = repositoryCount > 0;
+
   return {
-    currentBranchLabel,
-    isRepo,
+    currentBranchLabel: multiRepository
+      ? `${repositoryCount} repositor${repositoryCount === 1 ? "y" : "ies"}`
+      : currentBranchLabel,
+    statusLabel: multiRepository ? undefined : compactMenuStatus(gitStatus),
+    moreLabel: multiRepository ? "Commit, push, and PR per repository" : "Commit, files, branches",
+    multiRepository,
+    canReview: (multiRepository || isRepo) && props.hasThread !== false,
     openGitInspector,
     openReview,
     quickAction,
@@ -314,24 +324,28 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
         title: compactMenuBranchLabel(model.currentBranchLabel),
         icon: "point.topleft.down.curvedto.point.bottomright.up",
         disabled: true,
-        subtitle: compactMenuStatus(props.gitStatus),
+        subtitle: model.statusLabel,
         onPress: () => {},
       },
-      {
-        id: "git-quick-action",
-        title: model.quickAction.label,
-        icon: model.quickActionIcon,
-        disabled: model.quickAction.disabled,
-        subtitle: model.quickActionHint ?? undefined,
-        onPress: () => {
-          void model.runQuickAction();
-        },
-      },
+      ...(model.multiRepository
+        ? []
+        : [
+            {
+              id: "git-quick-action",
+              title: model.quickAction.label,
+              icon: model.quickActionIcon,
+              disabled: model.quickAction.disabled,
+              subtitle: model.quickActionHint ?? undefined,
+              onPress: () => {
+                void model.runQuickAction();
+              },
+            },
+          ]),
       {
         id: "git-review",
         title: "Review changes",
         icon: "text.bubble",
-        disabled: !model.isRepo || props.hasThread === false,
+        disabled: !model.canReview,
         subtitle:
           props.hasThread === false
             ? "Available after the first message"
@@ -354,10 +368,7 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
         title: "More",
         icon: "ellipsis",
         disabled: props.hasThread === false,
-        subtitle:
-          props.hasThread === false
-            ? "Available after the first message"
-            : "Commit, files, branches",
+        subtitle: props.hasThread === false ? "Available after the first message" : model.moreLabel,
         onPress: model.openGitInspector,
       },
     ],

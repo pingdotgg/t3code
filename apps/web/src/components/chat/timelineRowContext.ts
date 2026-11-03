@@ -1,7 +1,9 @@
-import type { ToolCallDiffTarget } from "../../diffPanelStore";
+import type { DiffPanelRepository, ToolCallDiffTarget } from "../../diffPanelStore";
+import type { OpenTurnDiffHandler } from "./ChangedFilesTree";
 import type {
   ProviderApprovalDecision,
   RuntimeRequestId,
+  WorktreeSetupRepository,
   WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import {
@@ -70,7 +72,9 @@ export interface TimelineRowSharedState {
   displayThreadKey?: string;
   onOpenToolDiff: ((target: ToolCallDiffTarget) => void) | undefined;
   /** Unset where there is no diff to open, so the timeline shows no "Open diff" button. */
-  onOpenTurnDiff: ((runId: RunId, filePath?: string) => void) | undefined;
+  onOpenTurnDiff: OpenTurnDiffHandler | undefined;
+  /** Opens one repo's uncommitted changes; unset where there is no diff panel. */
+  onOpenRepositoryChanges: ((repository: DiffPanelRepository) => void) | undefined;
   /**
    * Draws a published HTML visual. Unset, the row loads it from the environment; the guest page
    * loads it through its own route.
@@ -95,7 +99,11 @@ export interface TimelineRowSharedState {
   onToggleWorkEntry: (anchorKey: string, collapsed: boolean) => void;
   onCancelWorktreeSetup: (() => void) | null;
   retryableWorkspacePreparationRunIds: ReadonlySet<RunId>;
-  onRetryWorkspacePreparation: ((runId: RunId) => void) | null;
+  onRetryWorkspacePreparation:
+    | ((runId: RunId, skipRepositoryPaths?: ReadonlyArray<string>) => void)
+    | null;
+  /** Task folder repos whose worktree failed, each offered as "Start without <repo>". */
+  failedWorktreeRepositories: ReadonlyArray<WorktreeSetupRepository>;
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
   workGroupViewState: WorkGroupViewState;

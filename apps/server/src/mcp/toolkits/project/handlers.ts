@@ -43,7 +43,9 @@ function projectFailure(error: Project.ProjectServiceError) {
         ? "The project was not found."
         : error._tag === "ProjectConflictError"
           ? "The workspace is already registered to a project."
-          : "The project is not empty; force=true is required to delete it.";
+          : error._tag === "ProjectTrackedFoldersInvalidError"
+            ? error.message
+            : "The project is not empty; force=true is required to delete it.";
   return new OrchestratorMcpFailure({ code: "invalid_request", message });
 }
 
@@ -317,7 +319,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           if (
             input.scripts !== undefined ||
             input.createWorkspaceRootIfMissing !== undefined ||
-            input.defaultModelSelection !== undefined
+            input.defaultModelSelection !== undefined ||
+            input.trackedFolders !== undefined
           )
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",

@@ -2872,6 +2872,46 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.equal((yield* Fiber.join(created)).nativeThreadRef?.nativeId, SESSION);
     }).pipe(Effect.scoped),
   );
+  it.effect("opens the thread's other repos like the workspace, never its references", () =>
+    Effect.gen(function* () {
+      const workspaceRules = [
+        { action: "shell", resource: "*", effect: "ask" },
+        { action: "edit", resource: "*", effect: "ask" },
+        { action: "external_directory", resource: "*", effect: "ask" },
+        { action: "external_directory", resource: "/work/api/*", effect: "allow" },
+        ...buildPaths,
+        ...mcpRules,
+      ];
+      const runtime = yield* openCode2ReplayRuntime([
+        ...opening,
+        out("agent.list", "<any>"),
+        reply("agent.list", agentList),
+        out("session.create", {
+          location: { directory: WORK },
+          model: { providerID: "opencode", id: "big-pickle" },
+          permissions: workspaceRules,
+        }),
+        replyData("session.create", sessionInfo({ permissions: workspaceRules })),
+      ]);
+      const created = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: bigPickle,
+        runtimePolicy: {
+          ...policy("approval-required"),
+          workspace: {
+            repositories: [
+              { name: "opencode2", path: WORK },
+              { name: "api", path: "/work/api" },
+            ],
+            referenceFolders: [{ name: "design", path: "/notes/design" }],
+            extraRoots: ["/work/api"],
+            relativePathsDiffer: false,
+          },
+        },
+      });
+      assert.equal(created.nativeThreadRef?.nativeId, SESSION);
+    }).pipe(Effect.scoped),
+  );
   const reconnected = (
     active: Record<string, unknown>,
     ended?: "succeeded",

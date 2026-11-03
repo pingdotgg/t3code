@@ -239,6 +239,7 @@ const makeImporter = Effect.fn(function* (
                 workspaceRoot: "/workspace/project",
                 defaultModelSelection: null,
                 scripts: [],
+                trackedFolders: [],
                 createdAt: timestamp,
                 updatedAt: timestamp,
                 deletedAt: null,

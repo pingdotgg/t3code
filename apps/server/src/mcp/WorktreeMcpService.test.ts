@@ -34,6 +34,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
+import * as TaskFolderService from "../workspace/TaskFolderService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 
@@ -84,6 +85,7 @@ const project: Project = {
   workspaceRoot,
   defaultModelSelection: null,
   scripts: [],
+  trackedFolders: [],
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
   deletedAt: null,
@@ -117,6 +119,7 @@ interface HarnessOptions {
   readonly deleteLocalBranchFails?: boolean;
   readonly createWorktreeGate?: Effect.Effect<void>;
   readonly existsFails?: boolean;
+  readonly taskFolders?: Partial<TaskFolderService.TaskFolderService["Service"]>;
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -331,6 +334,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
           refreshStatus,
         } satisfies Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>),
+        Layer.mock(TaskFolderService.TaskFolderService)({
+          plan: () => Effect.succeed(null),
+          ...options.taskFolders,
+        }),
         NodeServices.layer,
         NodeCrypto.layer,
         options.existsFails
@@ -703,6 +710,59 @@ describe("t3_worktree_handoff", () => {
       const result = yield* runHandoff(harness, { branch: "feature/setup-dies" });
       expect(result.setupScript).toEqual({ status: "failed", detail: "setup runner defect" });
       expect(harness.dispatch).toHaveBeenCalled();
+    });
+  });
+
+  it.effect("hands a multi-repo thread a task folder and names the repos it left out", () => {
+    const home = "/worktrees/project/feature-multi";
+    const record = {
+      root: home,
+      projectId,
+      homeWorktreePath: home,
+      repositories: [
+        {
+          kind: "home" as const,
+          name: "project",
+          originalPath: workspaceRoot,
+          worktreePath: home,
+          relativePath: "",
+          baseRef: "dev",
+          branch: "feature/multi",
+        },
+      ],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const create = vi.fn((_input: TaskFolderService.TaskFolderCreateInput) =>
+      Effect.succeed({
+        record,
+        failed: [{ name: "api", originalPath: "/repo/api", detail: "invalid reference: nope" }],
+        startedFromOrigin: false,
+      }),
+    );
+    const harness = makeHarness({
+      taskFolders: {
+        plan: () =>
+          Effect.succeed({
+            projectId,
+            homeName: "project",
+            homePath: workspaceRoot,
+            repositories: [{ name: "api", originalPath: "/repo/api", baseRef: undefined }],
+          }),
+        create,
+      },
+    });
+    return Effect.gen(function* () {
+      const result = yield* runHandoff(harness, { branch: "feature/multi" });
+      expect(result.worktreePath).toBe(home);
+      expect(result.branch).toBe("feature/multi");
+      expect(result.note).toContain("api (invalid reference: nope)");
+      expect(create.mock.calls[0]?.[0]).toMatchObject({ branch: "feature/multi", baseRef: "dev" });
+      expect(harness.createWorktree).not.toHaveBeenCalled();
+      expect(harness.fetchWorktreeBaseCommit).not.toHaveBeenCalled();
+      expect(harness.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ worktreePath: home, branch: "feature/multi" }),
+      );
     });
   });
 });

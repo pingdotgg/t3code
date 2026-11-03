@@ -9,6 +9,7 @@ import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useProjectHasThreads } from "../../state/project-has-threads";
+import { useThreadRepositories } from "../../state/use-thread-repositories";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { environmentSession } from "../../state/session";
@@ -59,6 +60,11 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
     t3ProjectFile,
   );
   const projectHasThreads = useProjectHasThreads(project);
+  const homeRepositories = useThreadRepositories({
+    environmentId: project?.environmentId ?? null,
+    project,
+    cwd: project?.workspaceRoot ?? null,
+  });
   const defaultWorkspaceMode = isScratch
     ? "local"
     : resolveNewThreadEnvMode({
@@ -66,11 +72,14 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
         workspaceRoot: project?.workspaceRoot ?? null,
         newProjectsRoot: serverConfig?.newProjectsRoot,
         projectHasThreads,
+        multiRepoWithGitHome:
+          homeRepositories.repositories.some((repository) => repository.kind === "home") &&
+          homeRepositories.multiRepository,
       });
   // While t3.json loads, the environment default is provisional; t3.json may replace it.
   const defaultWorkspaceModeSettled =
     projectSettings.sources.defaultThreadEnvMode !== "environment" ||
-    (!t3ProjectFileQuery.isPending && !fileAccessPending);
+    (!t3ProjectFileQuery.isPending && !fileAccessPending && !homeRepositories.loading);
   return {
     serverConfig,
     isScratch,

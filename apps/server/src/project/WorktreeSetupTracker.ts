@@ -1,5 +1,6 @@
 import type {
   ThreadId,
+  WorktreeSetupRepository,
   WorktreeSetupSnapshot,
   WorktreeSetupStage,
   WorktreeSetupStageId,
@@ -30,7 +31,15 @@ export class WorktreeSetupTracker extends Context.Service<
       readonly baseRef: string | null;
       readonly stages: ReadonlyArray<WorktreeSetupStageId>;
       readonly fiber: Fiber.Fiber<unknown, unknown> | null;
+      /** Tracked repos of a multi-repo task folder, by tracked path. */
+      readonly repositories?: ReadonlyArray<Pick<WorktreeSetupRepository, "name" | "path">>;
     }) => Effect.Effect<void>;
+    readonly repository: (
+      threadId: ThreadId,
+      path: string,
+      status: WorktreeSetupRepository["status"],
+      detail?: string | null,
+    ) => Effect.Effect<void>;
     readonly update: (
       threadId: ThreadId,
       mutate: (snapshot: WorktreeSetupSnapshot) => WorktreeSetupSnapshot,
@@ -157,6 +166,12 @@ export const make = Effect.gen(function* () {
         worktreePath: null,
         setupScript: null,
         stages: ordered.map(emptyStage),
+        repositories: (input.repositories ?? []).map((repository) => ({
+          name: repository.name,
+          path: repository.path,
+          status: "pending",
+          detail: null,
+        })),
         error: null,
         sequence: (lastSequenceByThread.get(input.threadId) ?? -1) + 1,
       };
@@ -216,6 +231,25 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const repository: WorktreeSetupTracker["Service"]["repository"] = (
+    threadId,
+    path,
+    status,
+    detail,
+  ) =>
+    update(threadId, (snapshot) => ({
+      ...snapshot,
+      repositories: snapshot.repositories.map((entry) =>
+        entry.path === path
+          ? {
+              ...entry,
+              status,
+              ...(detail === undefined ? {} : { detail: clampDetail(detail) }),
+            }
+          : entry,
+      ),
+    }));
+
   const appendTail: WorktreeSetupTracker["Service"]["appendTail"] = (threadId, stageId, line) =>
     update(threadId, (snapshot) => ({
       ...snapshot,
@@ -258,6 +292,8 @@ export const make = Effect.gen(function* () {
     }));
     if (!snapshot) return null;
     yield* clearRetention(threadId);
+    // "Start without <repo>" needs the failed repo until the next attempt begins.
+    if (snapshot.repositories.some((entry) => entry.status === "failed")) return snapshot;
     const fiber = yield* remove(threadId).pipe(
       Effect.delay(FINISHED_RETENTION),
       Effect.ensuring(
@@ -322,6 +358,7 @@ export const make = Effect.gen(function* () {
 
   return WorktreeSetupTracker.of({
     begin,
+    repository,
     update,
     stage,
     stageStatus,

@@ -347,6 +347,10 @@
       "types": "./src/state/review.ts",
       "default": "./src/state/review.ts"
     },
+    "./state/workspaceRepositories": {
+      "types": "./src/state/workspaceRepositories.ts",
+      "default": "./src/state/workspaceRepositories.ts"
+    },
     "./state/runtime": {
       "types": "./src/state/runtime.ts",
       "default": "./src/state/runtime.ts"
@@ -422,6 +426,10 @@
     "./state/thread-checkpoints": {
       "types": "./src/state/threadCheckpoints.ts",
       "default": "./src/state/threadCheckpoints.ts"
+    },
+    "./state/thread-repositories": {
+      "types": "./src/state/threadRepositories.ts",
+      "default": "./src/state/threadRepositories.ts"
     },
     "./state/thread-execution": {
       "types": "./src/state/threadExecution.ts",

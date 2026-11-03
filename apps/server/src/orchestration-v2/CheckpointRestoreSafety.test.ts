@@ -90,6 +90,8 @@ it.effect.each([
       checkpoint: { id: checkpointId, scopeId, status: "ready", appRunOrdinal: null },
       scope: { id: scopeId, cwd },
       runsToRollback: [{ id: "later-run", ordinal: 1, status: "completed", rootNodeId: null }],
+      repositoryScopes: [],
+      repositoryCheckpoints: [],
     } as unknown as ProjectionCheckpointRollbackContext;
     const layerTest = CheckpointRollbackService.layer.pipe(
       Layer.provide(
@@ -195,6 +197,8 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
         fileSystem,
         path,
         projections: {
+          getCheckpointContext: () =>
+            Effect.succeed({ runs: [], checkpointScopes: [], checkpoints: [] }),
           getShellSnapshot: () => Effect.succeed({ threads: [], archivedThreads: [] }),
         } as never,
         projects: {} as never,
@@ -251,4 +255,97 @@ it.effect.each([
       );
       assert.equal(result, isolated);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each([
+  { case: "isolated", isolated: true },
+  { case: "original-checkout", isolated: false },
+  { case: "outside-task-folder", isolated: false },
+  { case: "no-task-folder", isolated: false },
+  { case: "tracked-by-local-thread", isolated: false },
+] as const)("checks each repo of a task folder thread, case=$case", (scenario) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.realPath(
+      yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-restore-repos-" }),
+    );
+    const folder = (...segments: ReadonlyArray<string>) => path.join(parent, ...segments);
+    for (const created of ["task/home/api", "task/web", "elsewhere/web", "originals/web"]) {
+      yield* fs.makeDirectory(folder(created), { recursive: true });
+    }
+    const threadId = ThreadId.make("restore-repos-current");
+    const otherThreadId = ThreadId.make("restore-repos-local");
+    const otherProjectId = ProjectId.make("restore-repos-other-project");
+    const webCwd =
+      scenario.case === "original-checkout"
+        ? folder("originals", "web")
+        : scenario.case === "outside-task-folder"
+          ? folder("elsewhere", "web")
+          : folder("task", "web");
+    const repositoryScope = (name: string, cwd: string, repositoryPath: string) => ({
+      id: CheckpointScopeId.make(`restore-repos-${name}`),
+      runId: null,
+      kind: "repository" as const,
+      cwd,
+      label: name,
+      repositoryPath,
+    });
+    const isolated = yield* isCheckpointRestoreIsolated(
+      { id: threadId, worktreePath: folder("task", "home") },
+      { cwd: folder("task", "home") },
+      {
+        fileSystem: fs,
+        path,
+        projections: {
+          getCheckpointContext: (id: ThreadId) =>
+            Effect.succeed({
+              runs: [],
+              checkpoints: [],
+              checkpointScopes:
+                id === threadId
+                  ? [
+                      repositoryScope(
+                        "api",
+                        folder("task", "home", "api"),
+                        folder("originals", "api"),
+                      ),
+                      repositoryScope("web", webCwd, folder("originals", "web")),
+                    ]
+                  : [],
+            }),
+          getShellSnapshot: () =>
+            Effect.succeed({
+              threads: [
+                {
+                  id: otherThreadId,
+                  projectId: otherProjectId,
+                  worktreePath: null,
+                  deletedAt: null,
+                },
+              ],
+              archivedThreads: [],
+            }),
+          getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),
+        } as never,
+        projects: {
+          get: () =>
+            Effect.succeedSome({
+              workspaceRoot: folder("originals", "home"),
+              trackedFolders:
+                scenario.case === "tracked-by-local-thread"
+                  ? [{ name: "web", path: folder("task", "web") }]
+                  : [{ name: "api", path: folder("originals", "api") }],
+            }),
+        } as never,
+        taskFolders: {
+          findContaining: () =>
+            scenario.case === "no-task-folder"
+              ? Effect.succeedNone
+              : Effect.succeedSome({ root: folder("task") } as never),
+        },
+      },
+    );
+    assert.equal(isolated, scenario.isolated);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
