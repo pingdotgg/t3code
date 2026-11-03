@@ -43,12 +43,18 @@ import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
 import { useQuietThreadShell } from "../../state/entities";
+import { isThreadListedActive } from "@t3tools/client-runtime/state/thread-settled";
+import { useNowAfter } from "~/hooks/useDeadline";
 import { useThreadHasNoPendingWake } from "../../hooks/useThreadHasNoPendingWake";
 
 // Its own component, so shell updates during a turn re-render only the badge.
 function ThreadIdleBadge(props: { threadRef: ScopedThreadRef }) {
   const shell = useQuietThreadShell(props.threadRef);
-  if (!useThreadHasNoPendingWake(shell)) return null;
+  // A clock read in render would stay frozen in the compiler's cache; this one moves when a snooze ends.
+  const now = new Date(useNowAfter(Date.parse(shell?.snoozedUntil ?? "") || null)).toISOString();
+  // Settled and snoozed threads keep their own state, as their sidebar and mobile rows do.
+  const listedActive = shell !== null && isThreadListedActive(shell, { now });
+  if (!useThreadHasNoPendingWake(shell, listedActive)) return null;
   return (
     <Tooltip>
       <TooltipTrigger render={<Badge variant="outline" size="sm" />}>Idle</TooltipTrigger>
