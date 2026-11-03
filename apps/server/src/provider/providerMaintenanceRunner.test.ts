@@ -274,46 +274,63 @@ function layerFailingLatestLookupAfterFirst() {
 }
 
 describe("providerMaintenanceRunner", () => {
-  it.effect("runs the allowlisted provider update command and records success", () => {
-    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
-    return Effect.gen(function* () {
-      const { registry, updateStatesRef } = yield* makeRegistry(baseNativeCliProvider);
-      const updater = yield* makeTestRunner(registry);
+  it.effect.each([undefined, "stable", "latest"])(
+    "runs the allowlisted provider update command and records success for channel %s",
+    (releaseChannel) => {
+      const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+      return Effect.gen(function* () {
+        const { registry, updateStatesRef } = yield* makeRegistry(baseNativeCliProvider);
+        const updater = yield* makeTestRunner({
+          ...registry,
+          getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+            Effect.succeed({
+              ...lifecycleFor(provider),
+              ...(releaseChannel ? { releaseChannel } : {}),
+            }),
+        });
 
-      const result = yield* updater.updateProvider(NATIVE_CLI_DRIVER);
-      assert.deepStrictEqual(calls, [
-        {
-          command: "native-agent",
-          args: ["update"],
-        },
-      ]);
-      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
-      assert.deepStrictEqual(
-        (yield* Ref.get(updateStatesRef)).map((state) => [state.status, state.message]),
-        [
-          ["queued", "Waiting for another provider update to finish."],
-          ["running", "Checking for the latest version"],
-          ["running", "Running native-agent update"],
-          ["running", "Verifying the installed version"],
-          ["succeeded", "Provider updated."],
-        ],
-      );
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layerNonWindowsPlatform,
-          layerLatestVersionHttpClient("1.0.0"),
-          layerMockSpawner((command, args) => {
-            calls.push({ command, args });
-            return { stdout: "updated" };
-          }),
+        const result = yield* updater.updateProvider(NATIVE_CLI_DRIVER);
+        assert.deepStrictEqual(calls, [
+          {
+            command: "native-agent",
+            args: ["update"],
+          },
+        ]);
+        assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+        assert.deepStrictEqual(
+          (yield* Ref.get(updateStatesRef)).map((state) => [state.status, state.message]),
+          [
+            ["queued", "Waiting for another provider update to finish."],
+            ["running", "Checking for the latest version"],
+            ["running", "Running native-agent update"],
+            ["running", "Verifying the installed version"],
+            [
+              "succeeded",
+              releaseChannel
+                ? `Provider updated on the ${releaseChannel} release channel.`
+                : "Provider updated.",
+            ],
+          ],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerNonWindowsPlatform,
+            layerLatestVersionHttpClient("1.0.0"),
+            layerMockSpawner((command, args) => {
+              calls.push({ command, args });
+              return { stdout: "updated" };
+            }),
+          ),
         ),
-      ),
-    );
-  });
+      );
+    },
+  );
 
   it.effect.each([
-    { name: "current", probe: {}, skip: true },
+    { name: "current", probe: {}, skip: true, releaseChannel: undefined },
+    { name: "stable channel current", probe: {}, skip: true, releaseChannel: "stable" },
+    { name: "latest channel current", probe: {}, skip: true, releaseChannel: "latest" },
     { name: "failed", probe: { status: "error" }, skip: false },
     { name: "behind", probe: { version: "2.1.309" }, skip: false },
     { name: "unknown", probe: { version: null }, skip: false },
@@ -324,7 +341,9 @@ describe("providerMaintenanceRunner", () => {
     },
     { name: "installed behind", probe: { installedVersion: "2.1.309" }, skip: false },
     { name: "installed unknown", probe: { installedVersion: null }, skip: false },
-  ] as const)("only skips a successful fresh current probe: $name", ({ probe, skip }) => {
+  ] as const)("only skips a successful fresh current probe: $name", (row) => {
+    const { probe, skip } = row;
+    const releaseChannel = "releaseChannel" in row ? row.releaseChannel : undefined;
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     const refreshedInstanceIds: Array<ProviderInstanceId> = [];
     return Effect.gen(function* () {
@@ -359,15 +378,16 @@ describe("providerMaintenanceRunner", () => {
           );
         },
         getProviderMaintenanceCapabilitiesForInstance: () =>
-          Effect.succeed(
-            makeProviderMaintenanceCapabilities({
+          Effect.succeed({
+            ...makeProviderMaintenanceCapabilities({
               provider: CODEX_DRIVER,
               packageName: "@anthropic-ai/claude-code",
               updateExecutable: "claude",
               updateArgs: ["update"],
               updateLockKey: "claudeAgent-native",
             }),
-          ),
+            ...(releaseChannel ? { releaseChannel } : {}),
+          }),
       });
 
       const result = yield* updater.updateProvider(CODEX_DRIVER);
@@ -375,13 +395,16 @@ describe("providerMaintenanceRunner", () => {
       assert.deepStrictEqual(calls, skip ? [] : [{ command: "claude", args: ["update"] }]);
       if (!skip) return;
       assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
-      assert.strictEqual(result.providers[0]?.updateState?.message, "Already up to date.");
+      const expectedMessage = releaseChannel
+        ? `Already up to date on the ${releaseChannel} release channel.`
+        : "Already up to date.";
+      assert.strictEqual(result.providers[0]?.updateState?.message, expectedMessage);
       assert.deepStrictEqual(
         (yield* Ref.get(updateStatesRef)).map((state) => [state.status, state.message]),
         [
           ["queued", "Waiting for another provider update to finish."],
           ["running", "Checking for the latest version"],
-          ["succeeded", "Already up to date."],
+          ["succeeded", expectedMessage],
         ],
       );
     }).pipe(

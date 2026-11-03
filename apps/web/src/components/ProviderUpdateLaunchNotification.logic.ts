@@ -200,7 +200,8 @@ export interface ProviderUpdateRun {
 export function getProviderUpdateRunOutcome(
   run: ProviderUpdateRun,
 ):
-  | { readonly status: "interrupted" | "updated" }
+  | { readonly status: "interrupted" }
+  | { readonly status: "updated"; readonly line: string | null }
   | { readonly status: "failed"; readonly line: string } {
   if (isAtomCommandInterrupted(run.result)) return { status: "interrupted" };
   const label = `${run.machineLabel} · ${PROVIDER_DISPLAY_NAMES[run.driver] ?? run.driver}`;
@@ -215,7 +216,10 @@ export function getProviderUpdateRunOutcome(
     (provider) => provider.instanceId === run.instanceId,
   )?.updateState;
   return updateState?.status === "succeeded"
-    ? { status: "updated" }
+    ? {
+        status: "updated",
+        line: updateState.message ? `${label}: ${updateState.message}` : null,
+      }
     : {
         status: "failed",
         line: `${label}: ${updateState?.message ?? "Provider update did not finish."}`,
@@ -240,7 +244,9 @@ export function getProviderUpdateRunToastView(runs: ReadonlyArray<ProviderUpdate
     return {
       type: "success",
       title: settled.length === 1 ? "Provider updated" : `${settled.length} providers updated`,
-      description: getProviderUpdatedDescription(settled.length),
+      description:
+        settled.flatMap((outcome) => (outcome.line ? [outcome.line] : [])).join("\n") ||
+        getProviderUpdatedDescription(settled.length),
     };
   }
   return {
@@ -398,7 +404,10 @@ export function getProviderUpdateSidebarPillView(
         succeededProviders.length === 1
           ? getProviderUpdatedTitle(succeededProvider)
           : `${succeededProviders.length} providers updated`,
-      description: getProviderUpdatedDescription(succeededProviders.length),
+      description:
+        succeededProviders.length === 1 && succeededProvider.updateState?.message
+          ? succeededProvider.updateState.message
+          : getProviderUpdatedDescription(succeededProviders.length),
       dismissAfterVisibleMs: PROVIDER_UPDATE_SUCCESS_VISIBLE_MS,
     });
   }

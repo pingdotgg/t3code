@@ -82,6 +82,7 @@ const resolveClaudeMaintenance = Effect.fn("ClaudeMaintenance.resolve")(function
   const url = `${NATIVE_RELEASES}/${channel}`;
   return {
     ...capabilities,
+    releaseChannel: channel,
     latestVersion: null,
     latestVersionCacheKey: url,
     lookupLatestVersion: client.get(url).pipe(

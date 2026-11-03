@@ -318,6 +318,23 @@ describe("getProviderUpdateRunToastView", () => {
     result,
   });
 
+  it("preserves the release channel explanation in a successful update", () => {
+    const message = "Already up to date on the stable release channel.";
+    const updated = provider({
+      driver: driver("claudeAgent"),
+      advisoryStatus: "current",
+      updateState: updateState("succeeded", message),
+    });
+    expect(
+      getProviderUpdateRunToastView([
+        run("bmax", "claudeAgent", AsyncResult.success({ providers: [updated] })),
+      ]),
+    ).toMatchObject({ description: `bmax · Claude: ${message}` });
+    expect(
+      getProviderUpdateSidebarPillView([updated], { visibleAfterIso: sessionStartedAt }),
+    ).toMatchObject({ description: message });
+  });
+
   it("lists every failed update and ignores interrupted ones", () => {
     const view = getProviderUpdateRunToastView([
       run(

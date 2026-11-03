@@ -525,7 +525,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                     status: "succeeded",
                     startedAt,
                     finishedAt: yield* nowIso,
-                    message: "Already up to date.",
+                    message: fresh.releaseChannel
+                      ? `Already up to date on the ${fresh.releaseChannel} release channel.`
+                      : "Already up to date.",
                   }),
                 );
               }
@@ -589,6 +591,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             const stillOutdated =
               targetVersion === undefined &&
               verifiedProviders.some((verifiedProvider) => isOutdatedProvider(verifiedProvider));
+            const channelSuffix = verified.releaseChannel
+              ? ` on the ${verified.releaseChannel} release channel`
+              : "";
             return yield* finish(
               makeUpdateState({
                 status: couldNotVerify || stillOutdated ? "unchanged" : "succeeded",
@@ -597,8 +602,8 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 message: couldNotVerify
                   ? "Update command completed, but T3 Code could not verify the provider version."
                   : stillOutdated
-                    ? "Update command completed, but T3 Code still detects an outdated provider version."
-                    : "Provider updated.",
+                    ? `Update command completed, but T3 Code still detects an outdated provider version${channelSuffix}.`
+                    : `Provider updated${channelSuffix}.`,
                 output: commandOutput(result),
               }),
             );
