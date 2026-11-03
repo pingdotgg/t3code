@@ -395,6 +395,75 @@ it.effect("paces scheduled compaction while preserving retention state and fixed
 );
 
 it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
+  it.effect("rebuilds live pull request polling membership without dropping its index", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:polling-index-rebuild");
+      const thread = makeThread(threadId, now);
+      yield* eventSink.write({
+        events: [
+          threadCreatedEvent({ id: "event:polling-index:created", thread, now }),
+          {
+            id: EventId.make("event:polling-index:linked"),
+            type: "thread.pull-request-synced",
+            threadId,
+            occurredAt: now,
+            payload: {
+              ...thread,
+              pullRequests: [
+                {
+                  host: "github.com",
+                  repository: "pingdotgg/t3code",
+                  number: 7,
+                  url: "https://github.com/pingdotgg/t3code/pull/7",
+                  source: "agent",
+                  linkedAt: DateTime.formatIso(now),
+                  snapshot: null,
+                  stack: null,
+                },
+              ],
+            },
+          },
+        ],
+      });
+      const pollingQueries: Array<string> = [];
+      const capturePollingQuery: Statement.Transformer = (statement) => {
+        pollingQueries.push(statement.compile()[0]);
+        return Effect.succeed(statement);
+      };
+      const before = yield* store
+        .getThreadsWithPullRequests()
+        .pipe(Effect.provideService(Statement.CurrentTransformer, capturePollingQuery));
+      assert.lengthOf(pollingQueries, 1);
+      const plan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${pollingQueries[0]}`,
+      );
+      assert.ok(
+        plan.some((row) =>
+          row.detail.includes("orchestration_v2_projection_threads_pull_request_poll_idx"),
+        ),
+      );
+      assert.ok(plan.every((row) => !row.detail.includes("TEMP B-TREE")));
+      assert.deepEqual(
+        before.map((thread) => thread.id),
+        [threadId],
+      );
+      yield* sql`DELETE FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}`;
+      assert.deepEqual(yield* store.getThreadsWithPullRequests(), []);
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual(yield* store.getThreadsWithPullRequests(), before);
+      assert.lengthOf(
+        yield* sql`SELECT name FROM sqlite_master WHERE type = 'index'
+          AND name = 'orchestration_v2_projection_threads_pull_request_poll_idx'`,
+        1,
+      );
+    }),
+  );
+
   it.effect("projects oversized tool bodies before both replay and live RPC retention", () =>
     Effect.scoped(
       Effect.gen(function* () {
