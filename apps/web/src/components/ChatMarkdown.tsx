@@ -1049,8 +1049,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
         aria-label="Toggle task"
         checked={checked}
         onChange={(event) => {
-          const listItemStart = Number(event.currentTarget.closest("li")?.dataset.listItemOffset);
-          if (!Number.isSafeInteger(listItemStart)) return;
+          const parsedOffset = Number(event.currentTarget.closest("li")?.dataset.listItemOffset);
+          if (!Number.isSafeInteger(parsedOffset)) return;
+          // The markdown parser skips a leading BOM, so its offsets are one short of `text`.
+          const listItemStart = parsedOffset + (text.startsWith("﻿") ? 1 : 0);
           const markerOffset = findTaskListMarkerOffset(text, listItemStart);
           if (markerOffset === null) return;
           onTaskListChange({ markerOffset, checked: event.currentTarget.checked });
