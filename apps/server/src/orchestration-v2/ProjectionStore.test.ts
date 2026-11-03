@@ -5724,6 +5724,91 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("reads an instance's failure only while its latest finished run failed", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("instance-failure");
+      const original = (yield* store.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      const grokInstanceId = ProviderInstanceId.make("grok-instance-failure");
+      const otherInstanceId = ProviderInstanceId.make("other-instance-failure");
+      const failure = {
+        class: "provider_error" as const,
+        message: "API error (status 402 Payment Required): usage balance exhausted",
+        code: null,
+        retryable: null,
+      };
+      const addRun = Effect.fnUntraced(function* (
+        ordinal: number,
+        status: "completed" | "failed",
+        completedAt: DateTime.Utc,
+      ) {
+        const runId = RunId.make(`run:instance-failure:${ordinal}`);
+        const rootNodeId = NodeId.make(`node:instance-failure:${ordinal}`);
+        yield* store.apply({
+          id: EventId.make(`event:instance-failure:run:${ordinal}`),
+          type: "run.created",
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          driver,
+          providerInstanceId: grokInstanceId,
+          occurredAt: now,
+          payload: {
+            ...original,
+            id: runId,
+            ordinal,
+            providerInstanceId: grokInstanceId,
+            modelSelection: { instanceId: grokInstanceId, model: "grok-build" },
+            rootNodeId,
+            userMessageId: MessageId.make(`message:instance-failure:${ordinal}`),
+            status,
+            startedAt: completedAt,
+            completedAt,
+          },
+        });
+        if (status === "completed") return;
+        yield* store.apply({
+          id: EventId.make(`event:instance-failure:error:${ordinal}`),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`instance-failure:error:${ordinal}`),
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 10 + ordinal,
+            status: "failed",
+            title: "Provider failed",
+            startedAt: completedAt,
+            completedAt,
+            updatedAt: completedAt,
+            type: "error",
+            failure,
+          },
+        });
+      });
+      const read = (since: DateTime.Utc) =>
+        store.getProviderInstanceFailures({
+          instanceIds: [grokInstanceId, otherInstanceId],
+          since,
+        });
+      const failedAt = DateTime.subtract(now, { minutes: 10 });
+      yield* addRun(2, "failed", failedAt);
+      assert.deepEqual(yield* read(DateTime.subtract(now, { hours: 1 })), [
+        { providerInstanceId: grokInstanceId, failedAt, model: "grok-build", failure },
+      ]);
+      assert.deepEqual(yield* read(DateTime.subtract(now, { minutes: 5 })), []);
+      yield* addRun(3, "completed", DateTime.subtract(now, { minutes: 5 }));
+      assert.deepEqual(yield* read(DateTime.subtract(now, { hours: 1 })), []);
+    }),
+  );
+
   it.effect("projects one shared provider session into multiple thread bindings", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;

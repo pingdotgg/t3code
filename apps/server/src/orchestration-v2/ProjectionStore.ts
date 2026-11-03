@@ -30,6 +30,7 @@ import type {
   OrchestrationV2OlderSettledCount,
   OrchestrationV2OlderSettledCursor,
   OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
@@ -185,6 +186,14 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "limitRecovery"
   | "snoozedUntil"
 >;
+
+/** A provider instance whose latest finished run failed. */
+export interface ProjectionProviderInstanceFailure {
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly failedAt: DateTime.Utc;
+  readonly model: string;
+  readonly failure: OrchestrationV2ProviderFailure;
+}
 
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
@@ -528,6 +537,11 @@ export interface ProjectionStoreV2Shape {
   readonly getLimitRecoveryWakeAt: (
     now: DateTime.Utc,
   ) => Effect.Effect<number | null, ProjectionStoreV2Error>;
+  /** Instances whose latest finished run since `since` failed; a later success hides it. */
+  readonly getProviderInstanceFailures: (input: {
+    readonly instanceIds: ReadonlyArray<ProviderInstanceId>;
+    readonly since: DateTime.Utc;
+  }) => Effect.Effect<ReadonlyArray<ProjectionProviderInstanceFailure>, ProjectionStoreV2Error>;
   readonly getSettlementCandidates: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
@@ -4050,6 +4064,57 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
     );
 
+    const getProviderInstanceFailures = Effect.fn("ProjectionStore.getProviderInstanceFailures")(
+      function* (input: {
+        readonly instanceIds: ReadonlyArray<ProviderInstanceId>;
+        readonly since: DateTime.Utc;
+      }) {
+        const since = DateTime.formatIso(input.since);
+        const failures: Array<ProjectionProviderInstanceFailure> = [];
+        for (const instanceId of input.instanceIds) {
+          // One seek per instance on orchestration_v2_projection_runs_instance_finished_idx.
+          const [row] = yield* sql<{
+            readonly status: string;
+            readonly completed_at: string;
+            readonly model: string;
+            readonly failure_payload_json: string | null;
+          }>`
+            SELECT
+              r.status,
+              r.completed_at,
+              json_extract(r.payload_json, '$.modelSelection.model') AS model,
+              (
+                SELECT item.payload_json FROM orchestration_v2_projection_turn_items item
+                WHERE item.thread_id = r.thread_id AND item.run_id = r.run_id
+                  AND item.type = 'error' AND item.status = 'failed'
+                  AND item.node_id IS json_extract(r.payload_json, '$.rootNodeId')
+                ORDER BY item.updated_at DESC, item.ordinal DESC, item.turn_item_id DESC
+                LIMIT 1
+              ) AS failure_payload_json
+            FROM orchestration_v2_projection_runs r
+            WHERE r.provider_instance_id = ${instanceId}
+              AND r.status IN ('completed', 'failed')
+              AND r.completed_at >= ${since}
+            ORDER BY r.completed_at DESC
+            LIMIT 1
+          `;
+          if (row === undefined || row.status !== "failed" || row.failure_payload_json === null) {
+            continue;
+          }
+          const item = yield* decodeTurnItemPayload(row.failure_payload_json);
+          if (item.type !== "error") continue;
+          failures.push({
+            providerInstanceId: instanceId,
+            failedAt: DateTime.makeUnsafe(row.completed_at),
+            model: row.model,
+            failure: item.failure,
+          });
+        }
+        return failures;
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
     const getRecoveryThreadIds = Effect.fn("ProjectionStore.getRecoveryThreadIds")(
       function* (kind: ProjectionRecoveryKind) {
         const candidates = (() => {
@@ -7184,6 +7249,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getProviderControlContext: readOnReader(getProviderControlContext),
       getLimitRecoveryCandidates: readOnReader(getLimitRecoveryCandidates),
       getLimitRecoveryWakeAt: readOnReader(getLimitRecoveryWakeAt),
+      getProviderInstanceFailures: readOnReader(getProviderInstanceFailures),
       getRecoveryThreadIds: readOnReader(getRecoveryThreadIds),
       getUnreadableThreadIds: readOnReader(getUnreadableThreadIds),
       getThreadSnapshot: readOnReader(getThreadSnapshot),
