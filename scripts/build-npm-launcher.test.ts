@@ -175,6 +175,18 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           ["--version|", `serve a b|${launcher}`, `--version|${launcher}`],
         );
 
+        yield* fs.writeFileString(path.join(versionDir, "t3"), "#!/t3-test-missing-loader\n");
+        for (const _attempt of [1, 2]) {
+          const cached = yield* run(process.execPath, [launcher, "serve"], { cwd: root, env });
+          assert.equal(cached.exitCode, 1, cached.stderr);
+          assert.include(cached.stderr, "could not run");
+          assert.equal(release.requests.length, requestsAfterFirst);
+          assert.equal(
+            yield* fs.readFileString(path.join(versionDir, ".install-complete")),
+            `${VERSION}\n`,
+          );
+        }
+
         const ipcServer = path.join(home, "runtime/versions", VERSION, "t3");
         yield* fs.writeFileString(
           ipcServer,
@@ -331,7 +343,7 @@ fs.readFileSync = (file, ...rest) => {
       }),
   );
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "does not publish an unusable release or redownload a complete unusable cache",
+    "does not publish an unusable release",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -365,22 +377,6 @@ fs.readFileSync = (file, ...rest) => {
           if ((yield* HostProcess.Platform) === "linux") {
             assert.include(failed.stderr, "glibc");
             assert.include(failed.stderr, "musl");
-          }
-
-          yield* fs.makeDirectory(dir);
-          yield* fs.writeFileString(path.join(dir, "t3"), "#!/t3-test-missing-loader\n");
-          yield* fs.chmod(path.join(dir, "t3"), 0o755);
-          yield* fs.writeFileString(path.join(dir, ".install-complete"), `${VERSION}\n`);
-          const requests = release.requests.length;
-          for (const _attempt of [1, 2]) {
-            const cached = yield* run(process.execPath, [launcher, "serve"], { cwd: root, env });
-            assert.equal(cached.exitCode, 1, cached.stderr);
-            assert.include(cached.stderr, "could not run");
-            assert.equal(release.requests.length, requests);
-            assert.equal(
-              yield* fs.readFileString(path.join(dir, ".install-complete")),
-              `${VERSION}\n`,
-            );
           }
         }
       }),
