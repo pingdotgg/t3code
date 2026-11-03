@@ -224,12 +224,15 @@ export function subagentResultForRun(
   };
 }
 
-type TaskRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "startedAt" | "delegatedTaskId">;
+type TaskRun = Pick<
+  OrchestrationV2Run,
+  "id" | "ordinal" | "startedAt" | "delegatedTaskId" | "restartContinuationOfRunId"
+>;
 
 /**
- * Each run's task: its bound task; for a delegated-completion wake, the task owning the run whose
- * subagents woke it; otherwise (a user turn) the task whose bound run most recently started before
- * it. A queued bound run owns nothing else yet.
+ * Each run's task: its bound task; for a delegated-completion wake or a restart continuation, the
+ * task owning the run that caused it; otherwise (a user turn) the task whose bound run most recently
+ * started before it. A queued bound run owns nothing else yet.
  */
 export function delegatedRunOwners(
   child: {
@@ -253,7 +256,7 @@ export function delegatedRunOwners(
   let owner = originalTaskId;
   for (const run of child.runs.toSorted((a, b) => start(a) - start(b) || a.ordinal - b.ordinal)) {
     if (run.delegatedTaskId !== undefined && run.startedAt !== null) owner = run.delegatedTaskId;
-    const cause = wokenBy.get(run.id);
+    const cause = wokenBy.get(run.id) ?? run.restartContinuationOfRunId;
     owners.set(
       run.id,
       run.delegatedTaskId ?? (cause === undefined ? undefined : owners.get(cause)) ?? owner,
