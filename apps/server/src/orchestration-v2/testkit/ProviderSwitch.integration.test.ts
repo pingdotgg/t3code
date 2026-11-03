@@ -1767,16 +1767,18 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
-  it.live(
-    "sends a slash command verbatim to a switched ACP provider and hands off context on the next turn",
-    () =>
+  it.live.each([
+    { name: "a slash command", text: "/implement do X", verbatim: true },
+    { name: "a message opening with a path", text: "/usr/lib/foo is broken", verbatim: false },
+  ] as const)(
+    "a switched ACP provider gets $name with the handoff where the command allows it",
+    ({ text: firstMessage, verbatim }) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const cwd = yield* checkpointWorkspace("slash-command-handoff");
+          const cwd = yield* checkpointWorkspace(`slash-command-handoff-${verbatim}`);
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const originalPrompt = "Keep the release marker violet and preserve the existing API.";
           const codexResponse = "I checked the API and found the release configuration.";
-          const slashCommand = "/implement do X";
           const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
             makeTestAdapter({
               instanceId: CODEX_MODEL_SELECTION.instanceId,
@@ -1839,13 +1841,18 @@ describe("orchestration v2 provider switching", () => {
             });
             yield* dispatch("source", originalPrompt, CODEX_MODEL_SELECTION);
             yield* waitForRun(1);
-            yield* dispatch("slash", slashCommand, GROK_MODEL_SELECTION);
+            yield* dispatch("slash", firstMessage, GROK_MODEL_SELECTION);
             yield* waitForRun(2);
             const slashTurn = (yield* Ref.get(capturedTurns)).at(-1)!;
             assert.equal(slashTurn.driver, GROK_DRIVER);
+            if (!verbatim) {
+              assert.include(slashTurn.text, originalPrompt);
+              assert.include(slashTurn.text, `User message:\n${firstMessage}`);
+              return;
+            }
             assert.equal(
               slashTurn.text,
-              slashCommand,
+              firstMessage,
               "ACP only expands a native slash command when the prompt starts with it",
             );
 

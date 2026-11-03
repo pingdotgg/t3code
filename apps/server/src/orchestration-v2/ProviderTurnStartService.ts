@@ -550,7 +550,7 @@ export const layer: Layer.Layer<
           });
         },
       );
-      if (message.attachments.length === 0 && isSlashCommandMessage(message)) {
+      if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =
           message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
         // Preparation may select a new provider; account commands still target the last native session.
