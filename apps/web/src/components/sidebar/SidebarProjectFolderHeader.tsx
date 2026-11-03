@@ -67,8 +67,6 @@ export function SidebarProjectFolderHeader(props: {
       <SidebarMenuButton
         size="project"
         type="button"
-        role="treeitem"
-        tabIndex={-1}
         data-sidebar-row={rowId}
         aria-expanded={!collapsed}
         onClick={() => props.onToggle(group)}

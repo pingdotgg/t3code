@@ -59,9 +59,12 @@ describe("ThemeImportDialog", () => {
     await userEvent.type(page.getByLabelText("Search Open VSX themes"), "night");
 
     await expect.element(page.getByRole("button", { name: "Install Nightfall" })).toBeVisible();
-    expect(searchOpenVsxThemes).toHaveBeenCalledWith(
-      "night",
-      expect.objectContaining({ sortBy: "downloadCount" }),
+    // A slow runner can debounce on a prefix like "ni"; wait for the full query.
+    await vi.waitFor(() =>
+      expect(searchOpenVsxThemes).toHaveBeenLastCalledWith(
+        "night",
+        expect.objectContaining({ sortBy: "downloadCount" }),
+      ),
     );
 
     let completeSearch!: (themes: OpenVsxThemeExtension[]) => void;

@@ -2,6 +2,7 @@ import { InfoIcon } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
 import { observeResize } from "~/lib/observeResize";
@@ -56,6 +57,7 @@ export function ComposerBannerStack({
     ));
   }
   const [first, ...rest] = ordered;
+  const overflowLabel = `${rest.length} other ${rest.length === 1 ? "notice" : "notices"}`;
   if (!first) return null;
   return (
     <ComposerBanner.Attachment key={first.id} data-composer-banner-stack="true" className={FADE_IN}>
@@ -64,17 +66,20 @@ export function ComposerBannerStack({
         overflow={
           rest.length ? (
             <Popover>
-              <PopoverTrigger
-                render={
-                  <Button
-                    variant="ghost-muted"
-                    size="micro"
-                    aria-label={`${rest.length} more notices`}
-                  />
-                }
-              >
-                +{rest.length}
-              </PopoverTrigger>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <PopoverTrigger
+                      render={
+                        <Button variant="ghost-muted" size="micro" aria-label={overflowLabel} />
+                      }
+                    />
+                  }
+                >
+                  +{rest.length}
+                </TooltipTrigger>
+                <TooltipPopup>{overflowLabel}</TooltipPopup>
+              </Tooltip>
               <PopoverPopup side="top" align="end" className="w-[min(40rem,calc(100vw-2rem))]">
                 <ComposerBanner.Scroll>
                   {rest.map((item) => (

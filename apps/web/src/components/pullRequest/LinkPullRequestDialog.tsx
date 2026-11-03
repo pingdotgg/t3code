@@ -119,8 +119,8 @@ function LinkPullRequestPreview({
       <state.Icon aria-hidden className={cn("size-4 shrink-0", state.toneClassName)} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <p className="truncate text-foreground text-label">{preview.title}</p>
-        <div className="text-dim-foreground text-meta">
-          <p>#{preview.number}</p>
+        <div className="flex min-w-0 items-baseline gap-1.5 text-dim-foreground text-meta">
+          <span className="shrink-0">#{preview.number}</span>
           <p className="truncate">
             {author} wants to merge into {preview.baseBranch}
           </p>

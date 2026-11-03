@@ -12,7 +12,16 @@ import {
   type TerminalOutputUpdate,
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
-import { ChevronDown, Copy, MessageSquarePlus, Plus, SquareTerminal, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  Copy,
+  MessageSquarePlus,
+  Plus,
+  SquareSplitHorizontal,
+  SquareSplitVertical,
+  SquareTerminal,
+  Trash2,
+} from "lucide-react";
 import {
   AuthPreviewOperateScope,
   AuthOrchestrationOperateScope,
@@ -77,7 +86,11 @@ import {
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "../keybindings";
-import { DEFAULT_THREAD_TERMINAL_HEIGHT, type ThreadTerminalGroup } from "../types";
+import {
+  DEFAULT_THREAD_TERMINAL_HEIGHT,
+  MAX_TERMINALS_PER_GROUP,
+  type ThreadTerminalGroup,
+} from "../types";
 import { readLocalApi } from "~/localApi";
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "~/lib/terminalCloseConfirm";
 import { getTerminalFocusOwner } from "~/lib/terminalFocus";
@@ -1454,7 +1467,9 @@ function TerminalActionButton({
           <Button
             size="icon-xs"
             variant="ghost-muted"
-            onClick={onClick}
+            onClick={() => {
+              if (!unavailable) onClick();
+            }}
             aria-label={label}
             aria-disabled={unavailable || undefined}
           />
@@ -1493,6 +1508,8 @@ export default function ThreadTerminalDrawer({
   onSplitTerminal,
   onSplitTerminalVertical,
   onNewTerminal,
+  splitShortcutLabel,
+  splitVerticalShortcutLabel,
   newShortcutLabel,
   closeShortcutLabel,
   onActiveTerminalChange,
@@ -1669,6 +1686,25 @@ export default function ThreadTerminalDrawer({
       ...(worktreePath !== undefined ? { worktreePath } : {}),
       ...(runtimeEnv ? { runtimeEnv } : {}),
     };
+  const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
+  const splitTerminalActionLabel = hasReachedSplitLimit
+    ? `Split Terminal Horizontally (max ${MAX_TERMINALS_PER_GROUP} per group)`
+    : splitShortcutLabel
+      ? `Split Terminal Horizontally (${splitShortcutLabel})`
+      : "Split Terminal Horizontally";
+  const splitTerminalVerticalActionLabel = hasReachedSplitLimit
+    ? `Split Terminal Vertically (max ${MAX_TERMINALS_PER_GROUP} per group)`
+    : splitVerticalShortcutLabel
+      ? `Split Terminal Vertically (${splitVerticalShortcutLabel})`
+      : "Split Terminal Vertically";
+  const onSplitTerminalAction = () => {
+    if (!canOperateTerminal || hasReachedSplitLimit) return;
+    onSplitTerminal();
+  };
+  const onSplitTerminalVerticalAction = () => {
+    if (!canOperateTerminal || hasReachedSplitLimit) return;
+    onSplitTerminalVertical();
+  };
   const newTerminalActionLabel = newShortcutLabel
     ? `New Terminal (${newShortcutLabel})`
     : "New Terminal";
@@ -1863,6 +1899,34 @@ export default function ThreadTerminalDrawer({
     </TerminalActionButton>
   );
 
+  // Keep every terminal action in the header so controls never cover shell output.
+  const terminalActions = (
+    <div className="flex items-center gap-0.5">
+      <TerminalActionButton
+        label={splitTerminalActionLabel}
+        onClick={onSplitTerminalAction}
+        unavailable={!canOperateTerminal || hasReachedSplitLimit}
+      >
+        <SquareSplitHorizontal className="size-3.5" />
+      </TerminalActionButton>
+      <TerminalActionButton
+        label={splitTerminalVerticalActionLabel}
+        onClick={onSplitTerminalVerticalAction}
+        unavailable={!canOperateTerminal || hasReachedSplitLimit}
+      >
+        <SquareSplitVertical className="size-3.5" />
+      </TerminalActionButton>
+      {newTerminalButton}
+      <TerminalActionButton
+        label={closeTerminalActionLabel}
+        onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
+        unavailable={!canOperateTerminal}
+      >
+        <Trash2 className="size-3.5" />
+      </TerminalActionButton>
+    </div>
+  );
+
   return (
     <aside
       ref={drawerRef}
@@ -1875,20 +1939,9 @@ export default function ThreadTerminalDrawer({
     >
       {resizeHandle}
 
-      {mode === "panel" ? (
-        // A side panel terminal is a panel tab already, so it draws no strip of
-        // its own; its actions float over the terminal's top-right corner.
-        <div className="pointer-events-none absolute right-2 top-2 z-20">
-          <div className="pointer-events-auto flex items-center rounded-control surface-popover p-0.75">
-            {newTerminalButton}
-            <TerminalActionButton
-              label={closeTerminalActionLabel}
-              onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
-              unavailable={!canOperateTerminal}
-            >
-              <Trash2 className="size-3.5" />
-            </TerminalActionButton>
-          </div>
+      {isPanel ? (
+        <div className="flex h-8 shrink-0 items-center justify-end border-b border-border surface-card px-1.5">
+          {terminalActions}
         </div>
       ) : (
         // The terminal pane's header (pen bKxd4): one tab per terminal, "+"
@@ -1906,7 +1959,7 @@ export default function ThreadTerminalDrawer({
           // the chrome row's line like every other pane header.
           data-pane-header={mode === "pane" ? "" : undefined}
         >
-          <TerminalTabsNotch notch={mode === "pane"} newTerminalButton={newTerminalButton}>
+          <TerminalTabsNotch notch={mode === "pane"} newTerminalButton={terminalActions}>
             {mode === "pane"
               ? siblingTabs.before.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
               : null}
@@ -2057,7 +2110,7 @@ export default function ThreadTerminalDrawer({
                   </MenuPopup>
                 </Menu>
               ) : null}
-              {mode === "pane" ? null : newTerminalButton}
+              {mode === "pane" ? null : terminalActions}
             </TerminalTabStrip>
             {mode === "pane"
               ? siblingTabs.after.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
@@ -2072,7 +2125,7 @@ export default function ThreadTerminalDrawer({
             "flex h-full min-h-0 bg-(--terminal-background)",
             // Text sits 16px in from the pane's edge, in line with its tabs; a
             // panel terminal's starts below its floating actions.
-            mode === "panel" ? "px-4 pt-11" : "px-4 pt-1 pb-1",
+            mode === "panel" ? "px-4 pt-1" : "px-4 pt-1 pb-1",
           )}
         >
           <div className="min-w-0 flex-1">

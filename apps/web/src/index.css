@@ -135,17 +135,18 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-controls-left: calc(env(safe-area-inset-left) + 0.375rem);
   --workspace-controls-right: calc(var(--workspace-controls-edge-right) + 0.75rem);
   --workspace-native-controls-inset: 0px;
-  /* The inset content pane on the chrome (pen mSaSF): 12px from the window
-     edges and the sidebar, and centered on the chrome row at the top. */
-  --workspace-pane-inset: 0.75rem;
-  /* The inset sidebar's extra edge padding, so its content (already inset by
-     --sidebar-content-inset) also starts one pane inset from the window. */
-  --workspace-sidebar-edge-inset: calc(var(--workspace-pane-inset) - var(--sidebar-content-inset));
+  /* The inset content pane on the chrome (pen mSaSF) is centered on the chrome
+     row at the top, and keeps that gap from the other window edges and the
+     sidebar so the pane sits evenly in the window. */
   --workspace-pane-header-height: 2.125rem;
   --workspace-pane-inset-top: max(
     0px,
     calc((var(--workspace-chrome-row-height) - var(--workspace-pane-header-height)) / 2)
   );
+  --workspace-pane-inset: var(--workspace-pane-inset-top);
+  /* The inset sidebar's extra edge padding, so its content (already inset by
+     --sidebar-content-inset) also starts one pane inset from the window. */
+  --workspace-sidebar-edge-inset: calc(var(--workspace-pane-inset) - var(--sidebar-content-inset));
   --workspace-pane-controls-right: calc(
     var(--workspace-controls-edge-right) + var(--workspace-pane-inset) + 0.5rem
   );
@@ -211,6 +212,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-native-controls-inset: calc(var(--workspace-controls-edge-right) + 0.75rem);
   /* The caption buttons already reach past the pane's right edge. */
   --workspace-pane-controls-right: calc(var(--workspace-controls-edge-right) + 0.75rem);
+  /* The 40px caption row leaves only 3px above the pane, too tight for the sides. */
+  --workspace-pane-inset: 0.75rem;
 }
 
 /* Inside the inset pane, headers and their fixed controls use pane geometry.
@@ -356,6 +359,29 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     & [data-pane-notches-merged] [data-pane-notch]::after {
       content: none;
     }
+  }
+}
+
+/* Pane corners that sit in a window corner follow its curve, one pane inset
+   smaller, so the gap stays even around it. The macOS preload reports the
+   window's curve; elsewhere this resolves to the plain pane radius. */
+@media (width >= 48rem) {
+  [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"] {
+    --workspace-pane-window-radius: calc(
+      var(--desktop-window-corner-radius, calc(var(--radius-pane) + var(--workspace-pane-inset))) -
+        var(--workspace-pane-inset)
+    );
+    --workspace-pane-window-shape: var(--desktop-window-corner-shape, round);
+    border-start-end-radius: var(--workspace-pane-window-radius);
+    border-end-end-radius: var(--workspace-pane-window-radius);
+    corner-start-end-shape: var(--workspace-pane-window-shape);
+    corner-end-end-shape: var(--workspace-pane-window-shape);
+  }
+
+  [data-slot="sidebar"][data-variant="inset"][data-state="collapsed"]
+    ~ [data-slot="sidebar-inset"] {
+    border-end-start-radius: var(--workspace-pane-window-radius);
+    corner-end-start-shape: var(--workspace-pane-window-shape);
   }
 }
 
@@ -1399,6 +1425,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   mask-size:
     calc(100% - var(--app-scrollbar-width)) 100%,
     var(--app-scrollbar-width) 100%;
+}
+
+@utility working-window-collapse-fade {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0.5rem, black 2rem);
+  mask-image: linear-gradient(to bottom, transparent 0.5rem, black 2rem);
 }
 
 /* Stage-channel art needs a mask and pseudo-element gradient, so keep the
@@ -4778,6 +4809,12 @@ body {
   margin-bottom: var(--chat-composer-inset, 0px);
 }
 
+/* Only the native track uses this changing inset. Stop it at the list content
+   so composer resizes do not restyle every virtualized row and nested scroller. */
+.messages-timeline-scroll > * {
+  --chat-composer-inset: initial;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: var(--app-scrollbar-width);
@@ -5154,49 +5191,57 @@ body {
   }
 }
 
-/* Markdown tables fit their lane with row separators and horizontal overflow.
-   Word-boundary wrapping keeps columns at least as wide as their longest word. */
+/* Unwrapped tables keep links bounded by their markdown column. */
 .chat-markdown table {
   width: 100%;
   border-collapse: collapse;
   overflow-wrap: normal;
   word-break: normal;
-  font-size: 0.75rem;
 }
 
-/* The rich-answer table (FC7yK) keeps 12px insets, including its outer cells.
-   Top alignment keeps wrapped rows on the same first line. */
-.chat-markdown th,
-.chat-markdown td {
+/* Only the renderer's scroll well can contain a table wider than its lane. */
+.chat-markdown-table-container {
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.chat-markdown-table-container table {
+  width: max-content;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+/* Bound prose at word boundaries without splitting identifiers to fit the lane. */
+.chat-markdown-table-container :is(th, td) {
+  @apply text-body text-foreground;
   padding: 0.5rem 0.75rem;
   text-align: start;
   vertical-align: top;
-}
-
-.chat-markdown thead th {
-  color: var(--contrast-muted-foreground);
-  border-bottom: 1px solid var(--table-row-rule);
-  background: var(--table-header-fill);
-  font-weight: 500;
-}
-
-.chat-markdown tbody td {
-  color: var(--contrast-muted-foreground);
-  border-bottom: 1px solid var(--table-row-rule);
-}
-
-.chat-markdown tbody tr:last-child td {
-  border-bottom: none;
-}
-
-/* Caps a long path, URL, or chip at 24rem; text past the cap wraps. */
-.chat-markdown :is(th, td) {
   max-width: 24rem;
-  overflow-wrap: break-word;
+  overflow-wrap: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-markdown-table-container thead th {
+  @apply text-label;
+  border-bottom: 1px solid var(--border);
+  /* The table token stays neutral when selection surfaces turn blue or glossy. */
+  background: var(--table-header-fill);
+}
+
+.chat-markdown-table-container tbody tr:not(:last-child) td {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.chat-markdown-table-container :is(th, td):not(:last-child) {
+  border-inline-end: 1px solid var(--hairline);
 }
 
 /* Formula cells keep their natural width and scroll with the table. */
-.chat-markdown :is(th, td):has([data-markdown-math]) {
+.chat-markdown-table-container :is(th, td):has([data-markdown-math]) {
   max-width: none;
 }
 
@@ -5372,6 +5417,40 @@ body {
    widgets while the caret is on styled text. */
 .composer-tiptap {
   position: relative;
+}
+
+.composer-prompt-body {
+  grid-template-areas: "attachments" "prompt";
+}
+
+/* The hidden inline copy keeps one wrap boundary when the visible text gains
+   the actions' width. Native layout owns height; the observer reads its entries. */
+.composer-tiptap.composer-wrap-probe {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.composer-wrap-probe::before,
+.composer-prompt-body:not([data-composer-multiline]) [data-testid="composer-editor"]::before {
+  content: "";
+  float: inline-end;
+  width: calc(var(--composer-actions-width, 100px) + 6px);
+  height: 1lh;
+}
+
+.composer-prompt-body[data-composer-multiline] {
+  grid-template-areas: "attachments" "prompt" "actions";
+}
+
+[data-composer-multiline] .composer-prompt-editor {
+  padding-block: 0;
+}
+
+[data-composer-multiline] [data-chat-composer-actions="right"] {
+  grid-area: actions;
 }
 
 .composer-tiptap p {
@@ -5553,13 +5632,12 @@ body {
   --timeline-working-rule: var(--border);
 }
 
-/* Rich answers (board FC7yK): a 15px h3, and 12.5px inline code and table text. */
+/* Rich answers (board FC7yK): a 15px h3 and 12.5px inline code. */
 .chat-markdown h3 {
   font-size: 0.9375rem;
 }
 
-.chat-markdown :not(pre) > code,
-.chat-markdown table {
+.chat-markdown :not(pre) > code {
   font-size: 0.78125rem;
 }
 

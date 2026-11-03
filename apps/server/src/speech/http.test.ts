@@ -94,22 +94,28 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
       const address = server.address as NetAddress.InetAddress;
       const host = address._tag === "InetAddressV6" ? "[::1]" : "127.0.0.1";
       const url = `http://${host}:${address.port}/api/voice/transcribe`;
-      yield* Effect.promise(() =>
-        expect(
-          fetch(url, {
-            method: "POST",
-            headers: { "content-type": "application/octet-stream" },
-            body: new ReadableStream({
-              start(controller) {
-                controller.enqueue(new Uint8Array(SpeechService.MAX_SPEECH_BYTES));
-                controller.enqueue(new Uint8Array(4));
-                controller.close();
-              },
-            }),
-            duplex: "half",
+      // The server either answers 413 or resets the socket mid-upload; both reject the audio.
+      const outcome = yield* Effect.promise(() =>
+        fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array(SpeechService.MAX_SPEECH_BYTES));
+              controller.enqueue(new Uint8Array(4));
+              controller.close();
+            },
           }),
-        ).rejects.toMatchObject({ cause: { code: "UND_ERR_SOCKET" } }),
+          duplex: "half",
+        }).then(
+          (response) => response.status,
+          (error: unknown) =>
+            error instanceof Error && error.cause instanceof Error && "code" in error.cause
+              ? error.cause.code
+              : error,
+        ),
       );
+      expect([413, "UND_ERR_SOCKET"]).toContain(outcome);
       expect(transcribe).not.toHaveBeenCalled();
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeHttpServer.layerTest, dependencies)));
   }),

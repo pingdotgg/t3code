@@ -11,7 +11,7 @@ import {
   PinOffIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { type ReactNode, useRef } from "react";
+import { type KeyboardEventHandler, type ReactNode, useRef } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { shortcutLabelForCommand } from "~/keybindings";
@@ -40,6 +40,7 @@ import {
   useEnvironmentProviders,
 } from "~/state/environments";
 import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
+import { isProjectPinShortcut } from "../ProjectPinButton";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -196,6 +197,7 @@ export function ProjectPickerRows({
   /** The launcher offers usable actions without explanatory copy. */
   readonly concise?: boolean;
 }) {
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const renderProjectRow = (entry: ProjectPickerEntry) => {
     const { group, targetProject } = entry;
     const pinned = model.pinnedKeySet.has(group.projectKey);
@@ -204,7 +206,7 @@ export function ProjectPickerRows({
         key={group.projectKey}
         selected={group.projectKey === selectedProjectKey}
         icon={<ProjectFavicon project={targetProject} className="size-4 shrink-0" />}
-        label={group.displayName}
+        label={targetProject.title}
         badge={
           model.showProjectEnvironments ? (
             <ProjectEnvironmentBadge
@@ -217,6 +219,12 @@ export function ProjectPickerRows({
         detail={formatProjectRootForDisplay(targetProject.workspaceRoot)}
         detailIsPath
         onSelect={() => onChooseEntry(entry)}
+        onKeyDown={(event) => {
+          if (!model.canPinProjectGroup(group) || !isProjectPinShortcut(event, keybindings)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          model.toggleProjectGroupPin(group);
+        }}
         {...(onFocusEntry ? { onFocus: () => onFocusEntry(entry) } : {})}
         action={
           model.canPinProjectGroup(group) ? (
@@ -255,7 +263,7 @@ export function ProjectPickerRows({
           {model.recentEntries.map(renderProjectRow)}
         </>
       ) : null}
-      {model.hiddenProjectCount > 0 ? (
+      {model.menuEntries.length > 0 ? (
         <DraftProjectRow
           icon={<FoldersIcon className="size-4 shrink-0 text-muted-foreground" />}
           label="All projects…"
@@ -308,7 +316,6 @@ export function DraftHeroHeadline({
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const { openScratchProject, scratchWorkspaceRootFor } = useScratchProject();
   const openProjectDraft = useNewThreadHandler();
-  const activeProjectDisplayName = model.activeProjectGroup?.displayName ?? activeProjectTitle;
   const hasResolvedProject = activeProjectTitle !== null;
   const activeProject =
     activeProjectRef === null
@@ -412,7 +419,7 @@ export function DraftHeroHeadline({
   const headingLabel = isScratchDraft
     ? "What should we work on?"
     : hasResolvedProject
-      ? `What should we build in ${activeProjectDisplayName}?`
+      ? `What should we build in ${activeProjectTitle}?`
       : model.canChooseProject
         ? "Choose a project to start"
         : "Add a project to start";
@@ -491,11 +498,13 @@ export function DraftProjectRow(props: {
   readonly disabled?: boolean;
   readonly action?: ReactNode;
   readonly onSelect: () => void;
+  readonly onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
   readonly onFocus?: () => void;
 }) {
   return (
     <div
       role="listitem"
+      onKeyDown={props.onKeyDown}
       data-selected={props.selected ? "" : undefined}
       data-disabled={props.disabled ? "" : undefined}
       className="group/row relative flex h-8.5 shrink-0 items-center rounded-item not-data-disabled:hover:surface-ghost-hover has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-ring data-selected:surface-selected-soft"
@@ -512,7 +521,6 @@ export function DraftProjectRow(props: {
         <span className="min-w-0 shrink truncate font-medium text-label text-foreground group-data-selected/row:text-strong-foreground">
           <DraftProjectName value={props.label} singleLine />
         </span>
-        {props.badge}
         {/* Paths keep their folder name; the rest of the row's width goes to it. */}
         <span className="flex min-w-0 flex-1 justify-end text-dim-foreground text-meta">
           {props.detailIsPath ? (
@@ -521,6 +529,7 @@ export function DraftProjectRow(props: {
             <span className="min-w-0 truncate">{props.detail}</span>
           )}
         </span>
+        {props.badge}
         {props.shortcut ? <Kbd>{props.shortcut}</Kbd> : null}
       </button>
       {props.action ? (

@@ -38,6 +38,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Text } from "../ui/text";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
@@ -124,6 +125,7 @@ function WindowBar({
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
+  const pace = paceOf(window, now);
   const timeLeft = paceRemainingPercent(window, now);
   const [barRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
@@ -172,6 +174,7 @@ function WindowBar({
           {timeLeft !== null ? (
             <span className="text-muted-foreground">The line is where even spending would be.</span>
           ) : null}
+          {pace ? <Text variant="meta">{PACE[pace].label}</Text> : null}
           {resetsAt ? <span className="text-muted-foreground">Resets {resetsAt}</span> : null}
           {resetsIn ? <span className="text-muted-foreground">{resetsIn}</span> : null}
         </div>
@@ -198,26 +201,28 @@ export function LimitWindows({
     <div
       className={
         compact
-          ? "grid grid-cols-[minmax(0,9rem)_minmax(3rem,1fr)_auto] gap-x-3 gap-y-0.5"
-          : "grid grid-cols-[11rem_minmax(0,1fr)_7rem] gap-x-4 gap-y-1"
+          ? "grid grid-cols-[minmax(0,1fr)_minmax(3rem,1fr)_auto] items-center gap-x-3 gap-y-0.5"
+          : "grid grid-cols-[minmax(0,11rem)_minmax(3rem,1fr)_auto] items-center gap-x-4 gap-y-1"
       }
     >
       {windows.map((window) => {
-        const pace = paceOf(window, now);
-        const resetsIn = formatResetsIn(window, now);
+        const [period, ...model] = window.label.split(/\s*\u00b7\s*/);
         return (
           <Fragment key={window.id}>
-            <span className="flex min-w-0 items-center gap-2 text-xs">
-              <span className="truncate text-muted-foreground">{window.label}</span>
-              <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
-                {remainingPercent(window)}% left
-              </span>
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2 wrap-anywhere">
+              <Text variant="meta" tone="muted">
+                {period}
+              </Text>
+              {model.map((name) => (
+                <Text key={name} variant="meta">
+                  {name}
+                </Text>
+              ))}
             </span>
             <WindowBar color={color} window={window} now={now} />
-            <span className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
-              {pace ? <PaceIcon pace={pace} /> : null}
-              <span className="ms-auto shrink-0">{resetsIn ?? ""}</span>
-            </span>
+            <Text variant="meta" numeric>
+              {remainingPercent(window)}% left
+            </Text>
           </Fragment>
         );
       })}

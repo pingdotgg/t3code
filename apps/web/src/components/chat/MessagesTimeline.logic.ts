@@ -624,8 +624,6 @@ type MessagesTimelineRowContent =
       message: ChatMessage;
       projectedItem?: OrchestrationV2ProjectedTurnItem;
       showAssistantMeta: boolean;
-      /** The latest finished reply of a still-running response shows only its timestamp. */
-      showAssistantTimestamp: boolean;
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
@@ -1716,7 +1714,6 @@ export function deriveMessagesTimelineRows(input: {
     turnFolds.values(),
     turnFoldExpanded,
   );
-  const steerReplyIds = steerReplyEntryIds(timelineEntries);
   const collapsedEntryIds = new Set<string>();
   const collapsedFoldMemberIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
@@ -2328,10 +2325,10 @@ export function deriveMessagesTimelineRows(input: {
       timelineEntry.message.role === "assistant" &&
       runIdIsActiveResponse(timelineEntry.message.runId);
 
-    const isTerminalAssistantMessage =
+    const showAssistantMeta =
       timelineEntry.message.role === "assistant" &&
-      terminalAssistantMessageIds.has(timelineEntry.message.id);
-    const showAssistantMeta = isTerminalAssistantMessage && !assistantResponseStillInProgress;
+      terminalAssistantMessageIds.has(timelineEntry.message.id) &&
+      !assistantResponseStillInProgress;
 
     const command =
       timelineEntry.message.role === "user" && !userMessageIsSteer(timelineEntry.message)
@@ -2348,11 +2345,6 @@ export function deriveMessagesTimelineRows(input: {
         ? {}
         : { projectedItem: timelineEntry.projectedItem }),
       showAssistantMeta,
-      showAssistantTimestamp:
-        isTerminalAssistantMessage &&
-        assistantResponseStillInProgress &&
-        !timelineEntry.message.streaming &&
-        !steerReplyIds.has(timelineEntry.id),
       showAssistantCopyButton: showAssistantMeta,
       assistantCopyStreaming: timelineEntry.message.streaming || assistantResponseStillInProgress,
       assistantTurnDiffSummary:
@@ -2586,6 +2578,7 @@ export interface WorkingWindow {
   readonly retryAttempt: number | null;
   /** Stop was requested and the provider has not let go yet. */
   readonly stopping: boolean;
+  readonly answering: boolean;
   readonly historyOpen: boolean;
   /** A standalone /compact owns its progress row and clock. */
   readonly compactCommand?: boolean;
@@ -2617,6 +2610,7 @@ function sameWorkingWindow(a: WorkingWindow | undefined, b: WorkingWindow | unde
     a.key === b.key &&
     a.historyOpen === b.historyOpen &&
     a.stopping === b.stopping &&
+    a.answering === b.answering &&
     a.compactCommand === b.compactCommand &&
     a.retryAttempt === b.retryAttempt &&
     a.failedTests?.count === b.failedTests?.count &&
@@ -2697,9 +2691,9 @@ function rowIsReplacedByWindow(row: MessagesTimelineRow, ids: ReadonlySet<string
 }
 
 /**
- * Moves the running turn's work under the working bar. Tool calls, commentary
- * and subagents become window items. The bar sits after the latest steer;
- * steers and the replies they answered stay above it in timeline order.
+ * Moves the running turn's tool calls, commentary and subagents under the working
+ * bar. Trailing text stays below it as the answer. The bar sits after the latest
+ * steer; steers and their replies stay above it in timeline order.
  * Everything else (plans, resource cards, notices) keeps its row.
  */
 export function applyWorkingWindow(
@@ -2823,6 +2817,7 @@ export function applyWorkingWindow(
     }
   }
 
+  const answer = items.at(-1)?.kind === "text" ? items.pop() : undefined;
   const ids = collectWindowIds(items);
   const windowStartIndex = Math.max(
     workingIndex,
@@ -2842,6 +2837,7 @@ export function applyWorkingWindow(
     failedTests: deriveFailedTests(items),
     retryAttempt: deriveRetryAttempt(items),
     stopping: interruptRequested && !interruptSettled,
+    answering: answer?.kind === "text" && answer.message.streaming,
     historyOpen: historyOpenKey === key,
   };
   return [
@@ -2881,6 +2877,7 @@ export function applyBackgroundActivityGroups(
   const notifications = new Map<RunId, Map<string, OrchestrationV2Notification>>();
   const excluded = new Set<RunId>();
   const entryRuns = new Map<string, RunId>();
+  const activeRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   for (const entry of input.timelineEntries) {
     const item =
       timelineEntryTurnItem(entry) ??
@@ -2900,7 +2897,8 @@ export function applyBackgroundActivityGroups(
       item?.type === "error" ||
       item?.type === "system_notice" ||
       item?.status === "failed" ||
-      (item?.type === "notification" && item.outcome === "failed") ||
+      // A failed check is the wake's subject, not a failure of the agent's response.
+      (item?.type === "notification" && item.outcome === "failed" && runId === activeRunId) ||
       ((item?.type === "approval_request" || item?.type === "user_input_request") &&
         (item.status === "pending" || item.status === "running" || item.status === "waiting")) ||
       (entry.kind === "work" &&
@@ -2909,7 +2907,6 @@ export function applyBackgroundActivityGroups(
       excluded.add(runId);
     }
   }
-  const activeRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const latestRunId = input.latestRun?.runId ?? activeRunId;
   if (
     latestRunId &&
@@ -2919,6 +2916,8 @@ export function applyBackgroundActivityGroups(
   }
   for (const runId of excluded) notifications.delete(runId);
   if (notifications.size === 0) return rows;
+  const pendingRunId =
+    activeRunId !== null && ![...entryRuns.values()].includes(activeRunId) ? activeRunId : null;
   const previousGroupIds = new Map<RunId, string>();
   for (const row of previousRows) {
     if (row.kind !== "background-activity") continue;
@@ -2967,9 +2966,11 @@ export function applyBackgroundActivityGroups(
     while (index < rows.length) {
       const nextRow = rows[index]!;
       const nextRunId = rowRunId(nextRow);
-      if (nextRunId === null || !notifications.has(nextRunId)) break;
+      if (nextRunId === null || (!notifications.has(nextRunId) && nextRunId !== pendingRunId)) {
+        break;
+      }
       runIds.add(nextRunId);
-      const update = notifications.get(nextRunId)!.get(nextRow.id);
+      const update = notifications.get(nextRunId)?.get(nextRow.id);
       if (update) {
         updateIds.add(nextRow.id);
         updates.push(update);
@@ -3000,17 +3001,12 @@ export function applyBackgroundActivityGroups(
     if (expanded) {
       result.push(...groupRows);
     } else {
-      const lastRunId = [...runIds].at(-1);
-      const finalAnswer =
-        activeRunId === lastRunId
-          ? undefined
-          : groupRows.findLast(
-              (row) =>
-                row.kind === "message" &&
-                row.message.role === "assistant" &&
-                row.message.runId === lastRunId &&
-                !row.message.streaming,
-            );
+      const finalAnswer = groupRows.findLast(
+        (row) =>
+          row.kind === "message" &&
+          row.message.role === "assistant" &&
+          (row.message.runId === activeRunId || !row.message.streaming),
+      );
       if (finalAnswer?.kind === "message") {
         result.push(
           ...groupRows.filter(
@@ -3370,7 +3366,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.message === bm.message &&
         a.projectedItem === bm.projectedItem &&
         a.showAssistantMeta === bm.showAssistantMeta &&
-        a.showAssistantTimestamp === bm.showAssistantTimestamp &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&

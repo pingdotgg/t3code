@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   isProviderAvailable,
+  type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshots,
@@ -9,6 +10,7 @@ import {
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   collectLimitAccounts,
+  collectProviderUsageLimits,
   formatResetsIn,
   formatRunsOutIn,
   isLowLimit,
@@ -16,19 +18,25 @@ import {
   remainingPercent,
   tightestSessionLimit,
 } from "@t3tools/shared/usageLimits";
-import { GaugeIcon } from "lucide-react";
+import { GaugeIcon, InfoIcon } from "lucide-react";
+import { useRef, useState } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { ensureLocalApi } from "../../localApi";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Button } from "../ui/button";
+import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { providerClients } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { LimitWindows, ResetCredits } from "../usage/UsageLimits";
 import { ComposerBanner } from "./ComposerBanner";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
+import { Badge } from "../ui/badge";
+import { Text } from "../ui/text";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 function accountLabel(account: UsageLimitsReport["accounts"][number]): string {
+  if (account.email?.trim()) return account.email.trim();
   if (!account.instanceId) return account.label;
   const driver = providerClients.get(account.driver)?.label ?? String(account.driver);
   const instance =
@@ -41,24 +49,30 @@ function AccountSummary({ account }: { readonly account: UsageLimitsReport["acco
   const label = accountLabel(account);
   const driver = providerClients.get(account.driver)?.label ?? String(account.driver);
   return (
-    <>
-      {label.includes("@") ? (
+    <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+      {account.email || label.includes("@") ? (
         <RedactedSensitiveText
           key={label}
           value={label}
           ariaLabel="Toggle account label visibility"
           revealTooltip="Click to reveal account"
           hideTooltip="Click to hide account"
-          className="max-w-full truncate align-bottom font-sans text-xs leading-normal"
+          className="max-w-full wrap-anywhere font-sans text-meta"
         />
       ) : (
-        label
+        <Text variant="meta">{label}</Text>
       )}
-      {account.instanceId && label !== driver ? <span className="block">{driver}</span> : null}
-      {account.plan ? (
-        <span className="ms-1.5 font-normal text-dim-foreground">{account.plan}</span>
+      {account.instanceId && label !== driver ? (
+        <Text variant="meta" tone="muted">
+          {driver}
+        </Text>
       ) : null}
-    </>
+      {account.plan ? (
+        <Text variant="meta" tone="dim">
+          {account.plan}
+        </Text>
+      ) : null}
+    </span>
   );
 }
 
@@ -165,60 +179,121 @@ function UsageLimitsBannerBody({
   readonly report: UsageLimitsReport;
   readonly environmentId: EnvironmentId;
 }) {
-  const now = Date.parse(report.createdAt);
   return (
     <ComposerBanner.Scroll>
       <ComposerBanner.Body className="flex flex-col gap-3 ps-0 pt-0.5 pb-1.5 pe-2">
-        {report.accounts.map((account) => {
-          const resetCreditInput =
-            account.resetCreditInput ??
-            (account.instanceId ? { instanceId: account.instanceId } : undefined);
-          const notice = limitsNotice(account.limits);
-          const externalUsage = account.limits.externalUsage;
-          return (
-            <div key={account.id} className="flex min-w-0 flex-col gap-1">
-              <span className="truncate font-medium text-muted-foreground text-xs">
-                <AccountSummary account={account} />
-              </span>
-              {notice ? (
-                <span className="text-xs text-muted-foreground">{notice}</span>
-              ) : (
-                <LimitWindows
-                  compact
-                  driver={account.driver}
-                  accentColor={account.accentColor}
-                  windows={account.limits.windows}
-                  now={now}
-                />
-              )}
-              {externalUsage ? (
-                <Button
-                  size="sm"
-                  variant="link"
-                  className="self-start"
-                  onClick={() => void ensureLocalApi().shell.openExternal(externalUsage.url)}
-                >
-                  Manage usage
-                </Button>
-              ) : null}
-              {resetCreditInput && account.limits.resetCredits ? (
-                <ResetCredits
-                  environmentId={environmentId}
-                  input={resetCreditInput}
-                  credits={account.limits.resetCredits}
-                  now={now}
-                />
-              ) : null}
-            </div>
-          );
-        })}
-        {report.notices.map((notice) => (
-          <span key={notice} className="text-meta text-muted-foreground">
-            {notice}
-          </span>
-        ))}
+        <UsageLimitsAccounts report={report} environmentId={environmentId} />
       </ComposerBanner.Body>
     </ComposerBanner.Scroll>
+  );
+}
+
+function UsageLimitsAccounts({
+  report,
+  environmentId,
+}: {
+  readonly report: UsageLimitsReport;
+  readonly environmentId: EnvironmentId;
+}) {
+  const now = Date.parse(report.createdAt);
+  return (
+    <>
+      {[false, true].map((unavailable) => {
+        const accounts = report.accounts.filter(
+          (account) => (account.limits.unavailable?.reason === "unsupported") === unavailable,
+        );
+        if (accounts.length === 0) return null;
+        return (
+          <section
+            key={String(unavailable)}
+            className="flex min-w-0 flex-col gap-3"
+            aria-label={unavailable ? "Connections" : "Reported usage"}
+          >
+            {report.accounts.some(
+              (account) => account.limits.unavailable?.reason === "unsupported",
+            ) ? (
+              <Text variant="meta" tone="dim">
+                {unavailable ? "Connections" : "Reported usage"}
+              </Text>
+            ) : null}
+            {accounts.map((account) => {
+              const resetCreditInput =
+                account.resetCreditInput ??
+                (account.instanceId ? { instanceId: account.instanceId } : undefined);
+              const notice =
+                account.limits.unavailable?.reason === "unsupported"
+                  ? "Usage unavailable for this API connection"
+                  : limitsNotice(account.limits);
+              const externalUsage = account.limits.externalUsage;
+              return (
+                <div key={account.id} className="flex min-w-0 flex-col gap-1">
+                  <div className="flex min-w-0 items-start gap-2">
+                    <AccountSummary account={account} />
+                    {account.sourceLabel ? (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              size="icon-xs"
+                              variant="ghost-muted"
+                              aria-label="Account source and ID"
+                            />
+                          }
+                        >
+                          <InfoIcon />
+                        </TooltipTrigger>
+                        <TooltipPopup>
+                          <div className="flex flex-col gap-1">
+                            <Text variant="meta">Source: {account.sourceLabel}</Text>
+                            <Text variant="meta">Account ID: {account.id}</Text>
+                          </div>
+                        </TooltipPopup>
+                      </Tooltip>
+                    ) : null}
+                  </div>
+                  {notice ? (
+                    <Text variant="meta" tone="muted">
+                      {notice}
+                    </Text>
+                  ) : (
+                    <LimitWindows
+                      compact
+                      driver={account.driver}
+                      accentColor={account.accentColor}
+                      windows={account.limits.windows}
+                      now={now}
+                    />
+                  )}
+                  {externalUsage ? (
+                    <Button
+                      size="sm"
+                      variant="link"
+                      className="self-start"
+                      onClick={() => void ensureLocalApi().shell.openExternal(externalUsage.url)}
+                    >
+                      Manage usage
+                    </Button>
+                  ) : null}
+                  {resetCreditInput && account.limits.resetCredits ? (
+                    <ResetCredits
+                      environmentId={environmentId}
+                      input={resetCreditInput}
+                      credits={account.limits.resetCredits}
+                      now={now}
+                    />
+                  ) : null}
+                </div>
+              );
+            })}
+          </section>
+        );
+      })}
+      {report.notices.map((notice) => (
+        <span key={notice} className="text-meta text-muted-foreground">
+          {notice}
+        </span>
+      ))}
+    </>
   );
 }
 
@@ -330,13 +405,70 @@ function LowLimitTiming({ window }: { readonly window: ServerProviderUsageWindow
   const minute = useNowMinute();
   const now = Date.parse(`${minute}:00.000Z`);
   return (
-    <span className="inline-flex flex-col">
-      {[formatResetsIn(window, now), formatRunsOutIn(window, now)]
-        .filter((part) => part !== null)
-        .map((part) => (
-          <span key={part}>{part}</span>
-        ))}
-    </span>
+    <Tooltip>
+      <TooltipTrigger render={<Badge size="lg" variant="warning" tabIndex={0} />}>
+        {remainingPercent(window)}% left
+      </TooltipTrigger>
+      <TooltipPopup>
+        <div className="flex flex-col gap-1">
+          <Text variant="meta">{window.label} window</Text>
+          {[formatResetsIn(window, now), formatRunsOutIn(window, now)]
+            .filter((part) => part !== null)
+            .map((part) => (
+              <Text key={part} variant="meta">
+                {part}
+              </Text>
+            ))}
+        </div>
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+export interface LimitsSource {
+  readonly environmentId: EnvironmentId;
+  readonly instanceId: ProviderInstanceId;
+  readonly providers: readonly ServerProvider[];
+  readonly sources: UsageLimitSourceSnapshots;
+}
+
+function LimitsPopover({ source }: { readonly source: LimitsSource }) {
+  const popupRef = useRef<HTMLDivElement>(null);
+  return (
+    <Popover>
+      <PopoverTrigger render={<Button size="xs" variant="ghost" />}>Limits</PopoverTrigger>
+      <PopoverPopup
+        ref={popupRef}
+        initialFocus={popupRef}
+        aria-label="Usage limits"
+        side="top"
+        align="end"
+        padding="compact"
+        className="w-[min(32rem,calc(100vw-2rem))]"
+      >
+        <LimitsPopoverReport source={source} />
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
+function LimitsPopoverReport({ source }: { readonly source: LimitsSource }) {
+  const [openedAt] = useState(Date.now);
+  const report = collectProviderUsageLimits(
+    source.instanceId,
+    source.providers,
+    source.sources,
+    openedAt,
+  );
+  return (
+    <div className="flex flex-col gap-3">
+      <PopoverTitle>Usage limits</PopoverTitle>
+      {report ? (
+        <UsageLimitsAccounts report={report} environmentId={source.environmentId} />
+      ) : (
+        <span className="text-meta text-muted-foreground">Usage limits are unavailable</span>
+      )}
+    </div>
   );
 }
 
@@ -345,28 +477,28 @@ export function lowLimitBannerItem({
   signal,
   switchTarget,
   onSwitch,
-  onShowLimits,
+  limits,
   onDismissed,
 }: {
   readonly signal: LowLimitSignal;
   readonly switchTarget: ServerProvider | null;
   readonly onSwitch: (provider: ServerProvider) => void;
-  readonly onShowLimits: (() => void) | null;
+  readonly limits: LimitsSource | null;
   readonly onDismissed: () => void;
 }): ComposerBannerStackItem {
   return {
     id: `low-limit:${signal.key}`,
     variant: "warning",
     icon: <GaugeIcon />,
-    title: formatLimitSummary(signal.driver, signal.window),
-    description: <LowLimitTiming window={signal.window} />,
+    title: (
+      <span className="inline-flex items-center gap-2">
+        <Text variant="meta">{providerName(signal.driver)} usage low</Text>
+        <LowLimitTiming window={signal.window} />
+      </span>
+    ),
     actions: (
       <>
-        {onShowLimits ? (
-          <Button size="xs" variant="ghost" onClick={onShowLimits}>
-            Limits
-          </Button>
-        ) : null}
+        {limits ? <LimitsPopover source={limits} /> : null}
         {switchTarget ? (
           <Button size="xs" variant="secondary" onClick={() => onSwitch(switchTarget)}>
             Switch to {providerName(switchTarget.driver, switchTarget.displayName)}

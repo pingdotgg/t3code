@@ -14,7 +14,6 @@ import {
   MESSAGE_HEADING_LEVEL,
   SlashCommandChip,
   WORKING_BAR_CLASS_NAME,
-  WorkFoldChevron,
   WorkingBarControl,
 } from "./TimelineRowParts";
 import {
@@ -63,13 +62,14 @@ import {
   ActivityIcon,
   TerminalIcon,
   UsersIcon,
-  ChevronRightIcon,
   CircleXIcon,
   MessageCircleQuestionMarkIcon,
   RefreshCwIcon,
   ShieldQuestionMarkIcon,
   ArrowDownIcon,
 } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide";
+import { MorphIcon } from "../MorphIcon";
 import { Button } from "../ui/button";
 import { getVirtualizedScrollFadeClassName, ScrollArea } from "../ui/scroll-area";
 import {
@@ -368,7 +368,6 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
     "Working..."
   );
   const historyOpen = window?.historyOpen ?? false;
-  // Like the finished turn's bar, the chevron shows whenever there is work to fold.
   const foldable = window !== undefined && (historyOpen || window.items.length > 0);
   return (
     <div>
@@ -390,7 +389,13 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
             {label}
             {isPreparingWorktree ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
           </span>
-          {foldable ? <WorkFoldChevron expanded={historyOpen} /> : null}
+          {foldable ? (
+            <MorphIcon
+              aria-hidden
+              className="size-3 shrink-0 text-dim-foreground"
+              icon={historyOpen ? ChevronDown : ChevronRight}
+            />
+          ) : null}
         </WorkingBarControl>
         {backgroundWorktreeSetup ? (
           <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
@@ -752,10 +757,7 @@ export function BackgroundActivityTimelineRow({
               );
             })}
           </span>
-          <ChevronRightIcon
-            aria-hidden
-            className={cn("size-3 text-muted-foreground", row.expanded && "rotate-90")}
-          />
+          <span aria-hidden className="size-3 shrink-0" />
         </span>
       }
     />
@@ -896,6 +898,12 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
   }
   const windowRef = useRef<HTMLDivElement>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
+  const [collapseClips, setCollapseClips] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the expanded height before the collapse transition paints its first frame
+  useLayoutEffect(() => {
+    if (open) return;
+    setCollapseClips((windowRef.current?.scrollHeight ?? 0) > WORKING_WINDOW_COLLAPSED_HEIGHT);
+  }, [open]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- older items stay mounted until the collapse transition finishes clipping them
   useEffect(() => {
     if (open || history === null) return;
@@ -951,6 +959,7 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
   const showThinking =
     !turnEnded &&
     !pendingRequest &&
+    !window.answering &&
     !workingWindowItemIsLive(window.items.at(-1)) &&
     !isCompacting &&
     !isPreparingWorktree &&
@@ -968,6 +977,7 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
           open
             ? "[height:calc-size(auto,size)]"
             : "[height:calc-size(auto,min(size,220px))] not-supports-[height:calc-size(auto,size)]:max-h-[220px]",
+          !open && history !== null && collapseClips && "working-window-collapse-fade",
         )}
       >
         {history === null ? (
@@ -989,9 +999,7 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
               />
             ) : null}
             {shown.map(renderItem)}
-            {showThinking ? (
-              <LiveActivityRow label="Thinking" iconName="brain" active />
-            ) : null}
+            {showThinking ? <LiveActivityRow label="Thinking" iconName="brain" active /> : null}
           </>
         )}
       </div>
@@ -1016,20 +1024,15 @@ function CollapsedWorkingWindow({
   const [start, setStart] = useState(() => Math.max(0, items.length - WORKING_WINDOW_TAIL));
   const getViewport = () =>
     rootRef.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- follows streamed content resize and preserves the visible offset when mounting an older batch
+  // Following runs in ResizeObserver after layout; only a prepend needs correction before paint.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- preserves the visible offset when mounting an older batch
   useLayoutEffect(() => {
-    const viewport = getViewport();
-    const content = contentRef.current;
-    if (!viewport || !content) return;
     const prepend = prependRef.current;
-    if (prepend) {
-      viewport.scrollTop = prepend.top + viewport.scrollHeight - prepend.height;
-      prependRef.current = null;
-    }
-    const follow = () => {
-      if (followRef.current) viewport.scrollTop = viewport.scrollHeight;
-    };
-    follow();
+    if (!prepend) return;
+    const viewport = getViewport();
+    if (!viewport) return;
+    viewport.scrollTop = prepend.top + viewport.scrollHeight - prepend.height;
+    prependRef.current = null;
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- content can grow between renders while markdown and command output stream
   useLayoutEffect(() => {
@@ -1038,6 +1041,7 @@ function CollapsedWorkingWindow({
     );
     const content = contentRef.current;
     if (!viewport || !content) return;
+    viewport.scrollTop = viewport.scrollHeight;
     return observeResize([content, viewport], () => {
       if (followRef.current) viewport.scrollTop = viewport.scrollHeight;
     });
@@ -1076,9 +1080,7 @@ function CollapsedWorkingWindow({
               />
             </div>
           ))}
-          {showThinking ? (
-            <LiveActivityRow label="Thinking" iconName="brain" active />
-          ) : null}
+          {showThinking ? <LiveActivityRow label="Thinking" iconName="brain" active /> : null}
         </div>
       </ScrollArea>
       {!following ? (
@@ -1114,6 +1116,7 @@ function workingWindowItemIsLive(item: WorkingWindowItem | undefined): boolean {
 }
 
 const WORKING_WINDOW_TAIL = 12;
+const WORKING_WINDOW_COLLAPSED_HEIGHT = 220;
 
 const WORKING_HISTORY_BATCH = 50;
 

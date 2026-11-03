@@ -52,7 +52,7 @@ import {
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
-import { getMainAppHref, isAppModalPage } from "./sidebar/mainAppLocation";
+import { isAppModalPage } from "./sidebar/mainAppLocation";
 import { selectFocusedTab } from "../layout/layoutModel";
 import { useLayoutStore } from "../layout/layoutStore";
 import { isLayoutDragActive } from "../layout/layoutDrag";
@@ -232,19 +232,11 @@ function registerPullRequestsEscapeCommand(router: AnyRouter): () => void {
           isLayoutDragActive()
         )
           return;
-        const inPane = router.state.location.search.pane === 1;
-        if (
-          inPane &&
-          selectFocusedTab(useLayoutStore.getState().layout)?.content.kind !== "pull-requests"
-        )
+        if (selectFocusedTab(useLayoutStore.getState().layout)?.content.kind !== "pull-requests")
           return;
         event.preventDefault();
         const activeElement = document.activeElement;
         if (activeElement instanceof HTMLElement) activeElement.blur();
-        if (!inPane) {
-          void router.navigate({ href: getMainAppHref() ?? "/" });
-          return;
-        }
         if (router.state.location.state.__TSR_index !== 0) {
           window.history.back();
           return;
@@ -562,10 +554,17 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
       : {}
   ) as CSSProperties;
+  // A fullscreen window has square corners, so the pane keeps its own radius.
+  const windowCornerStyle = (
+    isWindowFullscreen
+      ? { "--desktop-window-corner-radius": "initial", "--desktop-window-corner-shape": "initial" }
+      : {}
+  ) as CSSProperties;
   const sidebarProviderStyle = {
     "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
     ...windowControlsInsetStyle,
+    ...windowCornerStyle,
   } as CSSProperties;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps native traffic-light visibility in step with the committed shell layout and restores it on unmount

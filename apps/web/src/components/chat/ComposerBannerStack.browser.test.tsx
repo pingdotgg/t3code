@@ -27,7 +27,7 @@ it("puts machine notices first, whatever order the notices arrive in", async () 
 
   await expect.element(screen.getByText("Offline", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("Branch changed", { exact: true })).not.toBeInTheDocument();
-  await screen.getByRole("button", { name: "1 more notices" }).click();
+  await screen.getByRole("button", { name: "1 other notice" }).click();
   await expect.element(screen.getByText("Branch changed", { exact: true })).toBeVisible();
 });
 

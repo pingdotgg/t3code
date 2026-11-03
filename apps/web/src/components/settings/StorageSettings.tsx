@@ -108,8 +108,8 @@ export function WorktreesDirectoryRow() {
 const RETENTION_PRESET_DAYS = [1, 3, 7, 14, 30, 60, 90, 180, 365] as const;
 const MIN_RETENTION_DAYS = 1;
 const MAX_RETENTION_DAYS = 3650;
-/** The days a retention starts at when turned on from Off. */
-const DEFAULT_RETENTION_DAYS = 30;
+/** The days a retention starts at when turned on from Off, matching main. */
+const DEFAULT_RETENTION_DAYS = 8;
 
 function formatRetentionDays(days: number): string {
   return `After ${days} ${days === 1 ? "day" : "days"}`;

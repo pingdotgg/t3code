@@ -3,12 +3,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
-import {
-  ActivityShimmerOverlay,
-  WORKING_BAR_CLASS_NAME,
-  WorkFoldChevron,
-  WorkingBarChip,
-} from "./TimelineRowParts";
+import { ActivityShimmerOverlay, WORKING_BAR_CLASS_NAME, WorkingBarChip } from "./TimelineRowParts";
 import {
   AssistantMetaTimelineRow,
   AssistantTimelineRow,
@@ -1819,7 +1814,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
             )}
           >
             {labelContent}
-            <WorkFoldChevron expanded={row.expanded} />
+            <span aria-hidden className="size-3 shrink-0" />
           </button>
         ) : (
           <span className={labelClassName}>{labelContent}</span>

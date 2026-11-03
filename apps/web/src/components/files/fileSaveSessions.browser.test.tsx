@@ -1,5 +1,5 @@
 import { render, fakeTimers } from "../../../test/render";
-import { EnvironmentId } from "@t3tools/contracts";
+import { type AuthSessionState, EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -12,10 +12,18 @@ vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
   ...(await original()),
   runAtomCommand: runAtomCommand as never,
 }));
-vi.mock(import("~/state/session"), async (original) => ({
-  ...(await original()),
-  readEnvironmentScope: () => true,
-}));
+// The real session atom boots the connection runtime, whose endless discovery poll
+// would keep vi.runAllTimersAsync from ever draining once its timers are faked.
+vi.mock(import("~/state/session"), async (original) => {
+  const actual = await original();
+  const reactivity = await import("effect/reactivity");
+  const signedOut = reactivity.Atom.make(reactivity.AsyncResult.initial<AuthSessionState>());
+  return {
+    ...actual,
+    environmentSession: { ...actual.environmentSession, sessionStateAtom: () => signedOut },
+    readEnvironmentScope: () => true,
+  };
+});
 vi.mock(import("./projectFilesQueryState"), async (original) => ({
   ...(await original()),
   confirmProjectFileQueryData: () => true,
@@ -68,9 +76,12 @@ describe("file save sessions in React", () => {
         <MarkdownSurface />
       </StrictMode>,
     );
+    expect(runAtomCommand).toHaveBeenCalledTimes(1);
+    expect(onPendingChange).toHaveBeenLastCalledWith("README.md", true);
     finishWrite();
     getUnsavedFile.mockReturnValue(null);
-    await vi.runAllTimersAsync();
+    // Cover a recovered draft's debounce without draining the connection runtime's recurring polls.
+    await vi.advanceTimersByTimeAsync(500);
 
     expect(runAtomCommand.mock.calls.map(([, , request]) => request)).toEqual([
       {

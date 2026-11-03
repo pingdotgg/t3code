@@ -115,6 +115,8 @@ export function SidebarSectionHeader(props: {
   className?: string;
   dragging?: boolean;
   isDropTarget?: boolean;
+  /** Keeps the header's layout space while removing it from keyboard and accessibility trees. */
+  concealed?: boolean;
   toggle: { expanded: boolean; onToggle: () => void };
 }) {
   const shelf =
@@ -130,9 +132,9 @@ export function SidebarSectionHeader(props: {
       className={cn("relative mx-0.5 h-8", props.className)}
     >
       <CollapsibleSectionHeader
-        role="treeitem"
-        tabIndex={-1}
         data-sidebar-row={`shelf:${shelf}`}
+        aria-hidden={props.concealed ? true : undefined}
+        tabIndex={props.concealed ? -1 : undefined}
         // A click must not focus the toggle: Chromium shows the focus ring on
         // a clicked button once any key is pressed, even a lone modifier.
         onPointerDown={(event) => event.preventDefault()}

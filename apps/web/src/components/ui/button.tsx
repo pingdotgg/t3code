@@ -14,9 +14,11 @@ const buttonVariants = cva(
     },
     variants: {
       size: {
+        chip: "h-5 gap-1 rounded-md px-[6px] text-meta before:rounded-md [&_svg:not([class*='size-'])]:size-3",
         compact:
           "h-7 gap-1 rounded-md px-[calc(--spacing(2)-1px)] text-meta before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
         default: "h-9 px-[calc(--spacing(3)-1px)] sm:h-8",
+        action: "h-8 gap-1.5 px-[calc(--spacing(2.5)-1px)]",
         standard: "h-7 gap-1.5 px-[calc(--spacing(3)-1px)] text-[0.8125rem]",
         notice: "h-6.5 gap-1.5 px-[calc(--spacing(3)-1px)] text-meta",
         icon: "size-9 sm:size-8",
@@ -38,6 +40,10 @@ const buttonVariants = cva(
         "sm-multiline":
           "min-h-8 gap-1.5 px-[calc(--spacing(2.5)-1px)] py-[calc(--spacing(1)-1px)] whitespace-normal sm:min-h-7",
         xs: "h-7 gap-1 px-[calc(--spacing(2)-1px)] text-meta sm:h-6 [&_svg:not([class*='size-'])]:size-4 sm:[&_svg:not([class*='size-'])]:size-3.5",
+        "xs-pill":
+          "h-5.5 gap-1 rounded-full px-[6px] text-meta before:rounded-full [&_svg:not([class*='size-'])]:size-3.5",
+        "icon-xs-pill":
+          "size-5.5 rounded-full p-0 before:rounded-full [&_svg:not([class*='size-'])]:size-3.5",
       },
       variant: {
         // Primary: the lit recipe.
@@ -72,6 +78,8 @@ const buttonVariants = cva(
         // Secondary: the raised recipe.
         secondary:
           "surface-raised focus-visible:[--surface-rim:var(--surface-fill)] text-foreground [:hover,[data-pressed]]:surface-raised-hover",
+        "success-outline":
+          "surface-tint [--surface-tint:var(--success-foreground)] text-success-foreground [:hover,[data-pressed]]:[--surface-tint:color-mix(in_srgb,var(--success-foreground),var(--foreground)_20%)]",
         "warning-outline":
           "surface-tint [--surface-tint:var(--warning-foreground)] text-warning-foreground [:hover,[data-pressed]]:[--surface-tint:color-mix(in_srgb,var(--warning-foreground),var(--foreground)_20%)]",
       },
@@ -95,6 +103,8 @@ const contentButtonVariants = cva("outline-none", {
         "flex min-h-6.5 w-full cursor-pointer items-center gap-2 rounded-row px-2 py-1 text-left hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
       transport:
         "flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-row text-white hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/70",
+      "panel-row":
+        "flex h-8.5 w-full cursor-pointer items-center gap-2 px-3 text-left text-meta hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
       "selection-card":
         "cursor-pointer overflow-hidden rounded-card border border-transparent text-left transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-pressed:bg-settings-effective-fill not-aria-pressed:surface-card-settings-rim not-aria-pressed:hover:surface-ghost-hover aria-pressed:shadow-[inset_0_0_0_1px_var(--settings-active-rim)]",
       "drag-chip":

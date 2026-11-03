@@ -3,7 +3,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
-import { TerminalIcon, ChevronRightIcon } from "lucide-react";
+import { TerminalIcon } from "lucide-react";
 import { ContextChip, ContextChipLabel } from "../ContextChip";
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
@@ -55,19 +55,6 @@ export function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
         <span className="live-activity-focus-aligned block text-foreground">{children}</span>
       </span>
     </span>
-  );
-}
-
-/** The fold toggle shared by the working bar and the finished turn's bar; it trails the label. */
-export function WorkFoldChevron({ expanded }: { expanded: boolean }) {
-  return (
-    <ChevronRightIcon
-      aria-hidden
-      className={cn(
-        "size-3 shrink-0 text-dim-foreground transition-transform",
-        expanded && "rotate-90",
-      )}
-    />
   );
 }
 

@@ -47,7 +47,7 @@ import {
 } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
-import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
+import { CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
 import { useThreadShell } from "../../state/entities";
@@ -505,15 +505,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           !toolIconAcceptsTint(entryToolIcon) ? (
             <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
           ) : null}
-          {canExpandProjectedItem ? (
-            <ChevronRightIcon
-              aria-hidden
-              className={cn(
-                "size-3 shrink-0 text-dim-foreground transition-transform duration-200",
-                expanded && "rotate-90",
-              )}
-            />
-          ) : null}
+          {canExpandProjectedItem ? <span aria-hidden className="size-3 shrink-0" /> : null}
         </>
       }
     >
