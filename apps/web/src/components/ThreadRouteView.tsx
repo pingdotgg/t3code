@@ -38,6 +38,33 @@ export function ThreadRouteView({
   target: ThreadRouteTarget;
   background?: boolean;
 }) {
+  return (
+    <SidebarInset
+      className="h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh"
+      inert={background}
+      data-background-thread-view={background || undefined}
+    >
+      <ThreadRouteContent target={target} background={background} />
+    </SidebarInset>
+  );
+}
+
+/**
+ * A `passive` view is an unfocused split pane: it stays interactive but never moves the route and
+ * leaves global shortcuts to the focused pane. `unavailable` replaces a thread it cannot show.
+ */
+export function ThreadRouteContent({
+  target,
+  background = false,
+  passive = false,
+  unavailable = null,
+}: {
+  target: ThreadRouteTarget;
+  background?: boolean;
+  passive?: boolean;
+  unavailable?: React.ReactNode;
+}) {
+  const ownsRoute = !background && !passive;
   const navigate = useNavigate();
   const draftId = target.kind === "draft" ? target.draftId : null;
   const draftSession = useComposerDraftStore((store) =>
@@ -127,11 +154,11 @@ export function ThreadRouteView({
     if (renderState === "missing") {
       const { clearPendingFileDropsForThread } = useSidebarPendingFileDropStore.getState();
       clearPendingFileDropsForThread(target.threadRef);
-      if (environmentHasAnyThreads && !background) {
+      if (environmentHasAnyThreads && ownsRoute) {
         void navigate({ to: "/", replace: true });
       }
     }
-  }, [background, bootstrapComplete, environmentHasAnyThreads, navigate, renderState, target]);
+  }, [ownsRoute, bootstrapComplete, environmentHasAnyThreads, navigate, renderState, target]);
 
   let view: React.ReactNode = null;
   let redirect: React.ReactNode = null;
@@ -203,13 +230,13 @@ export function ThreadRouteView({
     );
   }
 
+  const showUnavailable = view === null && (target.kind === "draft" || bootstrapComplete);
   return (
-    <SidebarInset
-      className="h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh"
-      inert={background}
-    >
-      <BackgroundThreadContext value={background}>{view}</BackgroundThreadContext>
-      {background ? null : redirect}
-    </SidebarInset>
+    <>
+      <BackgroundThreadContext value={!ownsRoute}>
+        {showUnavailable ? unavailable : view}
+      </BackgroundThreadContext>
+      {ownsRoute ? redirect : null}
+    </>
   );
 }
