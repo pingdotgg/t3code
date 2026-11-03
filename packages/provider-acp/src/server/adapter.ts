@@ -4988,9 +4988,35 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ),
             );
 
+        // A failed turn's surviving tools keep reporting; project them on the run that started them.
+        const projectSurvivingTaskTool = Effect.fnUntraced(function* (
+          notification: EffectAcpSchema.SessionNotification,
+        ) {
+          const update = notification.update;
+          if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
+            return false;
+          }
+          let owner: ActiveAcpTurn | undefined;
+          for (const [taskId, survivor] of yield* Ref.get(survivingTaskTurns)) {
+            if (
+              survivor.nativeThreadId === notification.sessionId &&
+              survivor.toolCallIdsByBackgroundTaskId.get(taskId) === update.toolCallId
+            ) {
+              owner = survivor;
+              break;
+            }
+          }
+          if (owner === undefined) return false;
+          for (const event of parseSessionUpdateEvent(notification).events) {
+            if (event._tag === "ToolCallUpdated") yield* emitTool(owner, event.toolCall);
+          }
+          return true;
+        });
+
         const handleSessionUpdate = Effect.fnUntraced(function* (
           notification: EffectAcpSchema.SessionNotification,
         ) {
+          if (yield* projectSurvivingTaskTool(notification)) return;
           const context = yield* Ref.get(activeTurn);
           const update = notification.update;
           if (

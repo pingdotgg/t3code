@@ -1360,7 +1360,7 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
         session
           .startTurn(turnInput(ordinal, false))
           .pipe(Effect.forkScoped, Effect.andThen(Queue.take(prompts)));
-      const runCommand = (toolCallId: string) =>
+      const runCommand = (toolCallId: string, commandLine = "npm run build") =>
         Effect.gen(function* () {
           yield* send({
             sessionUpdate: "tool_call",
@@ -1368,7 +1368,7 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
             title: "Terminal",
             kind: "execute",
             status: "in_progress",
-            rawInput: { CommandLine: "npm run build" },
+            rawInput: { CommandLine: commandLine },
           });
           assert.isTrue(yield* hasPendingBackgroundWork);
         });
@@ -1400,14 +1400,44 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
 
       // An idle error leaves the agent and its command running for the same run.
       const errored = yield* startPrompt(2);
+      const erroredRunId = turnInput(2, false).runId;
       yield* runCommand("surviving-build");
+      yield* runCommand("finished-lint", "npm run lint");
       yield* Deferred.succeed(errored, { stopReason: "error" });
       const erroredTerminal = yield* failedTerminal;
       assert.isTrue(erroredTerminal.childTurnsContinue);
       assert.isTrue(yield* hasPendingBackgroundWork, "the surviving command still counts");
 
+      // A surviving command that finishes while idle completes on its own run, not a continuation.
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "finished-lint",
+        status: "completed",
+      });
+      assert.lengthOf(continuationRequests, 0, "a surviving command's end is not a wake");
+      const finishedLint = yield* takeUntil(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "finished-lint" &&
+          event.turnItem.status === "completed",
+      );
+      assert.deepInclude(finishedLint.type === "turn_item.updated" ? finishedLint.turnItem : {}, {
+        runId: erroredRunId,
+        providerTurnId: erroredTerminal.providerTurnId,
+        type: "command_execution",
+        input: "npm run lint",
+      });
+      assert.isTrue(yield* hasPendingBackgroundWork, "the other surviving command still counts");
+
       // A hidden failure keeps its command until the next turn replaces the agent process.
       const refused = yield* startPrompt(3);
+      // A surviving command's progress during another prompt stays on its own run.
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "surviving-build",
+        status: "in_progress",
+        content: [{ type: "content", content: { type: "text", text: "linking" } }],
+      });
       yield* runCommand("replaced-build");
       yield* Deferred.succeed(refused, { stopReason: "refusal" });
       const refusedTerminal = yield* failedTerminal;
@@ -1452,7 +1482,7 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
       );
       // The replacement ends every killed command on the run that owns it.
       assert.deepInclude(lastItem("surviving-build"), {
-        runId: turnInput(2, false).runId,
+        runId: erroredRunId,
         providerTurnId: erroredTerminal.providerTurnId,
         status: "interrupted",
       });
@@ -1462,6 +1492,8 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
         status: "interrupted",
       });
       assert.deepEqual(toolStatuses(continuation.runId, "replaced-build"), []);
+      assert.deepEqual(toolStatuses(refusedRunId, "surviving-build"), []);
+      assert.deepEqual(toolStatuses(erroredRunId, "finished-lint"), ["running", "completed"]);
       // A command known only from the replayed wake ends on the continuation.
       yield* TestClock.adjust(yield* Queue.take(finalizeScheduled));
       const continuationTerminal = yield* takeUntil(
@@ -1472,6 +1504,7 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
         "completed",
       );
       assert.deepEqual(toolStatuses(continuation.runId, "wake-build").slice(-1), ["failed"]);
+      assert.deepEqual(toolStatuses(continuation.runId, "finished-lint"), []);
       assert.isFalse(yield* hasPendingBackgroundWork, "the replaced process's commands are gone");
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );

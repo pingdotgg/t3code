@@ -234,7 +234,7 @@ export function makeAntigravityAcpAdapterFlavor(
       ),
     // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
-    // Antigravity answers end_turn while commands it started keep running.
+    // Keep execute tools open if the prompt returns before they finish.
     // Their terminal updates can omit the kind, so any terminal id clears tracking.
     extractBackgroundTaskId: (toolCall) =>
       (toolCall.kind === "execute" && toolCall.status === "inProgress") ||
