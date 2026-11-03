@@ -33,7 +33,11 @@ import {
   type ThreadSearchSubject,
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
-import { indexedMessageCondition, nonPlaceholderMessageCondition } from "./messageSearchIndex.ts";
+import {
+  MESSAGE_SEARCH_REBUILD_PENDING,
+  indexedMessageCondition,
+  nonPlaceholderMessageCondition,
+} from "./messageSearchIndex.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
 
 // When the user last wrote in the thread aliased `threads`, as the clients
@@ -437,8 +441,13 @@ export const make = Effect.gen(function* () {
       newer(left, right);
     const rows = yield* read(
       Effect.gen(function* () {
+        // A pending rebuild means a VACUUM may have renumbered rowids; scan until it is repaired.
         const index = yield* sql`
           SELECT 1 FROM sqlite_master WHERE name = 'orchestration_v2_message_search'
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_metadata
+              WHERE projection_name = ${MESSAGE_SEARCH_REBUILD_PENDING}
+            )
         `;
         const messageSearch = buildMessageSearch(input.query, index.length > 0);
         return messageSearch === null

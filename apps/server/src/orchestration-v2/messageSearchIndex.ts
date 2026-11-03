@@ -95,6 +95,9 @@ export const createMessageSearchTriggers = Effect.fn("MessageSearchIndex.createT
   },
 );
 
+/** Projection-metadata row present while a VACUUM may have left the index keyed by stale rowids. */
+export const MESSAGE_SEARCH_REBUILD_PENDING = "message-search-rebuild-pending";
+
 /**
  * Refills the search index from the messages table. The index is keyed by
  * message rowid, so anything that may renumber or copy rows (VACUUM, a dev

@@ -5,7 +5,10 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-import { rebuildMessageSearch } from "../orchestration-v2/messageSearchIndex.ts";
+import {
+  MESSAGE_SEARCH_REBUILD_PENDING,
+  rebuildMessageSearch,
+} from "../orchestration-v2/messageSearchIndex.ts";
 import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
@@ -13,9 +16,6 @@ import * as ServerConfig from "../config.ts";
 const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 // VACUUM rewrites every live page while holding the write lock; ~2 s at this size on an SSD.
 const ONLINE_VACUUM_MAX_LIVE_BYTES = 128 * 1024 * 1024;
-
-// VACUUM may renumber message rowids, which the contentless search index is keyed by.
-const MESSAGE_SEARCH_REBUILD_PENDING = "message-search-rebuild-pending";
 
 const rebuildMessageSearchIfPending = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -30,7 +30,7 @@ const rebuildMessageSearchIfPending = Effect.gen(function* () {
     WHERE projection_name = ${MESSAGE_SEARCH_REBUILD_PENDING}
   `;
 }).pipe(
-  // Search must not block startup; the marker stays, so the next open retries.
+  // Search must not block startup; while the marker stays, search scans and the next open retries.
   Effect.catch((cause) => Effect.logWarning("Could not rebuild message search", { cause })),
 );
 

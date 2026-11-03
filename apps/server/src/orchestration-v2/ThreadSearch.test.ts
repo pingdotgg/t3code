@@ -24,6 +24,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadSearch from "./ThreadSearch.ts";
+import { MESSAGE_SEARCH_REBUILD_PENDING } from "./messageSearchIndex.ts";
 
 const layerTest = Layer.mergeAll(
   ThreadSearch.layer,
@@ -215,6 +216,33 @@ it.effect.each([true, false])(
         `;
       }
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("ThreadSearch scans instead of trusting the index while a rebuild is pending", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const search = yield* ThreadSearch.ThreadSearch;
+    const sql = yield* SqlClient.SqlClient;
+    const project = ProjectId.make("project:pending-rebuild");
+    const threadId = ThreadId.make("thread:pending-rebuild");
+    yield* createProject(project);
+    yield* Effect.forEach(
+      [thread(threadId, project), message(threadId, "kept", "user", "Review the vacuum notes")],
+      projections.apply,
+      { discard: true },
+    );
+    // A VACUUM renumbered rowids and the rebuild after it failed: the index is stale.
+    yield* sql`INSERT INTO orchestration_v2_message_search (orchestration_v2_message_search) VALUES ('delete-all')`;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_metadata (
+        projection_name, schema_version, last_sequence, updated_at
+      ) VALUES (${MESSAGE_SEARCH_REBUILD_PENDING}, 0, 0, '1970-01-01T00:00:00.000Z')
+    `;
+    assert.deepEqual(
+      (yield* search.search({ query: "vacuum notes" })).matches.map((match) => match.messageId),
+      [MessageId.make("kept")],
+    );
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("ThreadSearch excludes legacy placeholders still in the index", () =>
