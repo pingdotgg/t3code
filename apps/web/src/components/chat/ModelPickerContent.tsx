@@ -868,6 +868,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       >
         {showSidebar && (
           <ModelPickerSidebar
+            docked={props.docked ?? false}
             selectedInstanceId={selectedInstanceId}
             onSelectInstance={handleSelectInstance}
             onFocusSearch={focusSearchInput}
