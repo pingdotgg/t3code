@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
@@ -59,7 +60,7 @@ const layer = Layer.mergeAll(
     ProviderEventLoggers.NoOpProviderEventLoggers,
   ),
   Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, openCode2Runtime),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) =>
   OpenCodeDriver.create({
@@ -458,11 +459,11 @@ const resolveUpdate = (generation: "v1" | "v2", binaryPath: string) =>
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make(() => Effect.die("resolving an update must not spawn")),
     ),
-    Effect.provide(NodeServices.layer),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-  "updates an npm-global OpenCode 2 install as @opencode/cli and a 1.x one as opencode-ai",
+  "updates npm-global OpenCode by generation and runs upgrade only for its own installer's path",
   () =>
     Effect.gen(function* () {
       const root = NodeFS.realpathSync(
@@ -493,6 +494,21 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.isNull(
         (yield* resolveUpdate("v1", NodePath.join(v2Prefix, "bin", "opencode"))).update,
       );
+      const executable = (...segments: ReadonlyArray<string>) => {
+        const path = NodePath.join(root, ...segments);
+        NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+        NodeFS.writeFileSync(path, "#!/bin/sh\n");
+        NodeFS.chmodSync(path, 0o755);
+        return path;
+      };
+      const launcher = executable("launcher", "opencode");
+      const native = executable(".opencode", "bin", "opencode");
+      for (const generation of ["v1", "v2"] as const) {
+        assert.isNull((yield* resolveUpdate(generation, launcher)).update);
+        assert.deepStrictEqual((yield* resolveUpdate(generation, native)).update?.args, [
+          "upgrade",
+        ]);
+      }
     }),
 );
 
@@ -525,7 +541,7 @@ const layerUpdate = Layer.mergeAll(
     ProviderEventLoggers.NoOpProviderEventLoggers,
   ),
   Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, changingRuntime),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(

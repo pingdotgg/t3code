@@ -5,7 +5,7 @@ import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -552,7 +552,7 @@ const ignoreNotFound = <A>(
 
 const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const tunnels = yield* ManagedEndpointTunnelClient;
   const dns = yield* ManagedEndpointDnsClient;
   const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
@@ -1173,9 +1173,9 @@ const make = Effect.gen(function* () {
         });
       }
       const cf = yield* requireCloudflareSettings(config, input);
-      const environmentHash = yield* crypto
+      const environmentHash = yield* digest
         .digest(
-          "SHA-256",
+          Digest.sha256,
           new TextEncoder().encode(
             managedEndpointDigestInput(cf.namespace, input.userId, input.environmentId),
           ),

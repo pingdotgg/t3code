@@ -3,6 +3,7 @@ import * as NodeVM from "node:vm";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Playwright download mocks perform real file operations outside the Effect runtime.
 import * as NodeFSP from "node:fs/promises";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it } from "@effect/vitest";
@@ -384,7 +385,7 @@ const dependencies = Layer.mergeAll(
   PreviewAgentActivity.layer,
 ).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const layer = ServerBrowser.layer.pipe(Layer.provideMerge(dependencies));
 const ready = Effect.gen(function* () {
@@ -1016,6 +1017,49 @@ it.live(
         expect(status.loading).toBe(true);
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a navigation that fails while a load reads its title keeps its failure", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const page = contexts[0]!.page;
+      const heldTitle = Promise.withResolvers<string>();
+      page.title.mockImplementationOnce(() => heldTitle.promise);
+      yield* Effect.promise(() => page.goto("https://example.com/first"));
+      const failing = {
+        url: () => "https://example.com/missing",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_NAME_NOT_RESOLVED" }),
+      };
+      page.emit("request", failing);
+      page.emit("requestfailed", failing);
+      heldTitle.resolve("Held");
+      // A load at the same await depth reports after the held one, so its Success marks the end.
+      page.emit("load");
+
+      const statuses: Array<string> = [];
+      while (!statuses.at(-1)?.startsWith("Success")) {
+        const event = yield* PubSub.take(events);
+        if (event.type === "failed" && event.tabId === tabId) {
+          statuses.push(`LoadFailed ${event.url}`);
+        } else if (event.type === "navigated" && event.tabId === tabId) {
+          const status = event.snapshot.navStatus;
+          if (status._tag === "Success") statuses.push(`Success ${status.title}`);
+          else if (status._tag === "Loading") statuses.push(`Loading ${status.url}`);
+        }
+      }
+      expect(statuses).toEqual([
+        "Loading https://example.com/missing",
+        "LoadFailed https://example.com/missing",
+        "Success test page",
+      ]);
+    }),
+  ).pipe(Effect.provide(layer)),
 );
 
 it.effect.each([
