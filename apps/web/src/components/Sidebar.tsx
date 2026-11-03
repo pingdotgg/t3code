@@ -864,7 +864,7 @@ function ProjectScopeRowTrailing(props: {
   settings: ReactNode;
 }) {
   return (
-    <span className="flex shrink-0 items-center">
+    <span className="flex shrink-0 items-center pointer-coarse:gap-5">
       {props.pin ?? <span className="size-7 sm:size-6" />}
       <span className="flex pointer-fine:grid">
         <span className="flex size-7 items-center justify-center empty:pointer-coarse:hidden sm:size-6 pointer-fine:col-start-1 pointer-fine:row-start-1 pointer-fine:in-data-highlighted:invisible">
