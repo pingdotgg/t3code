@@ -25,12 +25,16 @@ const waitForAvailable = Effect.fn("ProjectEnrichmentServiceTest.waitForAvailabl
   workspaceRoot: string,
   predicate: (value: ProjectEnrichment.ProjectEnrichment) => boolean,
 ) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const available = yield* service.peek(workspaceRoot);
-    if (predicate(available)) return available;
-    yield* Effect.yieldNow;
-  }
-  return yield* Effect.die(`Project metadata for ${workspaceRoot} was not resolved in time.`);
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const changes = yield* service.subscribeChanges;
+      for (;;) {
+        const available = yield* service.peek(workspaceRoot);
+        if (predicate(available)) return available;
+        yield* PubSub.take(changes);
+      }
+    }),
+  );
 });
 
 const layer = (

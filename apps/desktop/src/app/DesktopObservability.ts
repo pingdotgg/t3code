@@ -2,11 +2,14 @@ import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import {
   makeLocalFileTracer,
   makeTraceSink,
+  nodeProcessRuntimeAttributes,
+  processServiceInstanceId,
   type SignalExport,
 } from "@t3tools/shared/observability";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SharedObservability from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
+import { releaseChannelOf, releaseResourceAttributes } from "@t3tools/shared/releaseResource";
 import {
   parsePersistedServerObservabilitySettings,
   type PersistedServerObservabilitySettings,
@@ -28,6 +31,8 @@ import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as Tracer from "effect/Tracer";
 import { OtlpExporter, OtlpLogger, OtlpTracer } from "effect/observability";
+
+import desktopPackageJson from "../../package.json" with { type: "json" };
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
@@ -366,19 +371,19 @@ const resolveOtlpEndpoints = Effect.gen(function* () {
       otel,
       "traces",
       { url: Option.getOrUndefined(environment.otlpTracesUrl), export: signalExport },
-      persisted.otlpTracesUrl,
+      { bootstrapUrl: undefined, settingsUrl: persisted.otlpTracesUrl },
     ),
     metrics: OtelEnvironment.resolveSignalEndpoint(
       otel,
       "metrics",
       { url: Option.getOrUndefined(environment.otlpMetricsUrl), export: signalExport },
-      persisted.otlpMetricsUrl,
+      { bootstrapUrl: undefined, settingsUrl: persisted.otlpMetricsUrl },
     ),
     logs: OtelEnvironment.resolveSignalEndpoint(
       otel,
       "logs",
       { url: Option.getOrUndefined(environment.otlpLogsUrl), export: signalExport },
-      persisted.otlpLogsUrl,
+      { bootstrapUrl: undefined, settingsUrl: persisted.otlpLogsUrl },
     ),
     warnings: otel.warnings,
     resourceAttributes: otel.resourceAttributes,
@@ -426,8 +431,7 @@ const backendLogFilePathForInstance = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
   id: string,
 ): string => {
-  // Primary keeps the historical "server-child.log" path so ops scripts
-  // and packaged-build log inspection still find it where it always lived.
+  // Keep the primary log path stable for ops scripts and packaged-build inspection.
   if (id === PRIMARY_BACKEND_LOG_INSTANCE_ID) {
     return environment.path.join(environment.logDir, "server-child.log");
   }
@@ -435,8 +439,7 @@ const backendLogFilePathForInstance = (
   return environment.path.join(environment.logDir, `server-child-${sanitized}.log`);
 };
 
-// Cacheable by resolved file path so two ids that sanitize to the same filename
-// share a single RotatingLogFileWriter (no race on currentSize tracking).
+// IDs sharing a sanitized filename must share a writer to avoid currentSize races.
 const makeBackendOutputSinkForInstance = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
   id: string,
@@ -456,90 +459,91 @@ const makeBackendOutputLogShape = (
 ): Effect.Effect<DesktopBackendOutputLogShape> =>
   Option.match(sink, {
     onNone: () => Effect.succeed(DesktopBackendOutputLogNoop),
-    onSome: (logFile) =>
-      Effect.gen(function* () {
-        const sessionRef = yield* Ref.make(Option.none<BackendOutputSession>());
-        const writeFailure = Effect.fn("desktop.observability.backendOutput.writeFailure")(
-          function* (session: BackendOutputSession, details: string) {
-            yield* writeBackendChildLogRecord(logFile, {
-              message: "backend child process failure output start",
-              level: "ERROR",
-              annotations: {
-                component: "desktop-backend-child",
-                runId: session.runId,
-                instanceId: id,
-                phase: "START",
-                details: session.startDetails,
-              },
-            });
-            for (const output of session.chunks) {
-              yield* writeBackendChildLogRecord(logFile, {
-                message: "backend child process output",
-                level: output.streamName === "stderr" ? "ERROR" : "INFO",
-                annotations: {
-                  component: "desktop-backend-child",
-                  runId: session.runId,
-                  instanceId: id,
-                  stream: output.streamName,
-                  text: textDecoder.decode(output.chunk.subarray(output.offset)),
-                },
-              });
-            }
-            yield* writeBackendChildLogRecord(logFile, {
-              message: "backend child process failure output end",
-              level: "ERROR",
-              annotations: {
-                component: "desktop-backend-child",
-                runId: session.runId,
-                instanceId: id,
-                phase: "END",
-                details: sanitizeLogValue(details),
-              },
-            });
+    // The enclosing operation owns the span for this inline handler.
+    onSome: Effect.fnUntraced(function* (logFile) {
+      const sessionRef = yield* Ref.make(Option.none<BackendOutputSession>());
+      const writeFailure = Effect.fn("desktop.observability.backendOutput.writeFailure")(function* (
+        session: BackendOutputSession,
+        details: string,
+      ) {
+        yield* writeBackendChildLogRecord(logFile, {
+          message: "backend child process failure output start",
+          level: "ERROR",
+          annotations: {
+            component: "desktop-backend-child",
+            runId: session.runId,
+            instanceId: id,
+            phase: "START",
+            details: session.startDetails,
           },
-        );
-        return {
-          beginSession: Effect.fn("desktop.observability.backendOutput.beginSession")(function* ({
-            details,
-          }) {
-            const runId = yield* currentDesktopRunId;
-            yield* Ref.set(
-              sessionRef,
-              Option.some({
-                runId,
-                startDetails: sanitizeLogValue(details),
-                chunks: [],
-                byteLength: 0,
-              }),
-            );
-          }),
-          writeOutputChunk: Effect.fnUntraced(function* (streamName, chunk) {
-            if (environment.isDevelopment) {
-              yield* writeDevelopmentConsoleOutput(streamName, chunk);
-            }
-            yield* Ref.update(
-              sessionRef,
-              Option.map((session) => appendBoundedOutputChunk(session, streamName, chunk)),
-            );
-          }),
-          persistFailureSnapshot: Effect.fn(
-            "desktop.observability.backendOutput.persistFailureSnapshot",
-          )(function* ({ details }) {
-            const session = yield* Ref.get(sessionRef);
-            if (Option.isSome(session)) {
-              yield* writeFailure(session.value, details);
-            }
-          }),
-          persistFailure: Effect.fn("desktop.observability.backendOutput.persistFailure")(
-            function* ({ details }) {
-              const session = yield* Ref.modify(sessionRef, (current) => [current, Option.none()]);
-              if (Option.isNone(session)) return;
-              yield* writeFailure(session.value, details);
+        });
+        for (const output of session.chunks) {
+          yield* writeBackendChildLogRecord(logFile, {
+            message: "backend child process output",
+            level: output.streamName === "stderr" ? "ERROR" : "INFO",
+            annotations: {
+              component: "desktop-backend-child",
+              runId: session.runId,
+              instanceId: id,
+              stream: output.streamName,
+              text: textDecoder.decode(output.chunk.subarray(output.offset)),
             },
-          ),
-          discardSession: Ref.set(sessionRef, Option.none()),
-        } satisfies DesktopBackendOutputLogShape;
-      }),
+          });
+        }
+        yield* writeBackendChildLogRecord(logFile, {
+          message: "backend child process failure output end",
+          level: "ERROR",
+          annotations: {
+            component: "desktop-backend-child",
+            runId: session.runId,
+            instanceId: id,
+            phase: "END",
+            details: sanitizeLogValue(details),
+          },
+        });
+      });
+      return {
+        beginSession: Effect.fn("desktop.observability.backendOutput.beginSession")(function* ({
+          details,
+        }) {
+          const runId = yield* currentDesktopRunId;
+          yield* Ref.set(
+            sessionRef,
+            Option.some({
+              runId,
+              startDetails: sanitizeLogValue(details),
+              chunks: [],
+              byteLength: 0,
+            }),
+          );
+        }),
+        writeOutputChunk: Effect.fnUntraced(function* (streamName, chunk) {
+          if (environment.isDevelopment) {
+            yield* writeDevelopmentConsoleOutput(streamName, chunk);
+          }
+          yield* Ref.update(
+            sessionRef,
+            Option.map((session) => appendBoundedOutputChunk(session, streamName, chunk)),
+          );
+        }),
+        persistFailureSnapshot: Effect.fn(
+          "desktop.observability.backendOutput.persistFailureSnapshot",
+        )(function* ({ details }) {
+          const session = yield* Ref.get(sessionRef);
+          if (Option.isSome(session)) {
+            yield* writeFailure(session.value, details);
+          }
+        }),
+        persistFailure: Effect.fn("desktop.observability.backendOutput.persistFailure")(function* ({
+          details,
+        }) {
+          const session = yield* Ref.modify(sessionRef, (current) => [current, Option.none()]);
+          if (Option.isNone(session)) return;
+          yield* writeFailure(session.value, details);
+        }),
+        discardSession: Ref.set(sessionRef, Option.none()),
+      } satisfies DesktopBackendOutputLogShape;
+    }),
   });
 
 const layerBackendOutputLogFactory = Layer.effect(
@@ -586,7 +590,9 @@ const layerBackendOutputLogFactory = Layer.effect(
       });
 
     return DesktopBackendOutputLogFactory.of({
-      forInstance: (id) => makeForId(id),
+      forInstance: Effect.fn("DesktopBackendOutputLogFactory.forInstance")(function (id) {
+        return makeForId(id);
+      }),
     });
   }),
 );
@@ -595,27 +601,28 @@ const layerTelemetry = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const endpoints = yield* resolveOtlpEndpoints;
+    // Unpackaged runs launch a script, so Electron reports its own version.
+    const serviceVersion = environment.isPackaged
+      ? environment.appVersion
+      : desktopPackageJson.version;
     const resource = {
       serviceName: "t3code-desktop",
-      serviceVersion: environment.appVersion,
+      serviceVersion,
       attributes: {
         "service.namespace": "t3code",
         "service.runtime": "desktop",
-        "service.mode": environment.isDevelopment ? "development" : "packaged",
+        "t3code.desktop.mode": environment.isDevelopment ? "development" : "packaged",
+        "service.instance.id": processServiceInstanceId(endpoints.resourceAttributes),
+        ...releaseResourceAttributes(
+          environment.isDevelopment ? "dev" : releaseChannelOf(serviceVersion),
+          endpoints.resourceAttributes,
+        ),
         "host.name": endpoints.resourceAttributes["host.name"] || (yield* HostProcess.Hostname),
+        ...nodeProcessRuntimeAttributes(),
       },
     };
 
-    // `Logger.layer` writes the whole logger set rather than adding to it, so
-    // every logger the main process wants has to be named in this one call.
-    // Splitting the OTLP logger back out into a layer of its own silently
-    // drops either it or the console output.
-    // Swapping `Logger.tracerLogger` out for the OTLP logger matches the
-    // server: both reach a collector, but the tracer logger covers only
-    // messages logged inside a recorded span and files them under traces,
-    // while the OTLP logger carries every message as a log record stamped
-    // with its trace and span ids. Keeping both would export every in-span
-    // message twice.
+    // Logger.layer replaces the logger set. tracerLogger would duplicate OTLP in-span messages.
     const layerLogger = Logger.layer(
       endpoints.logs === undefined
         ? [Logger.consolePretty(), Logger.tracerLogger]

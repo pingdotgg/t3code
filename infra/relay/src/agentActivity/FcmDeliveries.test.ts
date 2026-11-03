@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import type * as Cloudflare from "alchemy/Cloudflare";
+import type * as Cloudflare from "@alchemy.run/cloudflare";
 import * as FcmDeliveryQueueConsumer from "./FcmDeliveryQueueConsumer.ts";
 
 import * as RelayConfiguration from "../Config.ts";
@@ -126,8 +126,7 @@ function harness() {
           marked.push(input);
           current.target.last_aggregate_json = input.aggregate ? encodeJson(input.aggregate) : null;
         }),
-      markStartQueued: () => Effect.void,
-      clearStartQueued: () => Effect.void,
+
       invalidateDeliveryToken: () => Effect.void,
     }),
     Layer.succeed(AgentActivityRows.AgentActivityRows, {
@@ -673,8 +672,7 @@ describe("FCM queue message isolation", () => {
           ),
           Stream.runForEach(FcmDeliveryQueueConsumer.processMessage),
         );
-        // Alchemy acknowledges the batch after a successful stream. Cloudflare
-        // ignores those acknowledgements for messages explicitly retried earlier.
+        // Cloudflare ignores Alchemy's final batch acknowledgements for already-retried messages.
         for (const item of batch) item.ack();
         expect([...outcomes]).toEqual([
           ["failed", "retry"],

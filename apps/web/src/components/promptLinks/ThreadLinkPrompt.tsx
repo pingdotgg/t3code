@@ -20,6 +20,7 @@ export function ThreadLinkPrompt({ threadRef }: { readonly threadRef: ScopedThre
     structuralSharing: true,
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- places a ?prompt link into the composer once per location and strips it from the URL via the router
   useEffect(() => {
     // A pending navigation shows the next location while the params still name this thread.
     if (!isThreadRoutePathname(location.pathname, threadRef)) return;

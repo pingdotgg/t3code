@@ -68,8 +68,7 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
   const env = yield* HostProcess.Environment;
 
   if (platform === "win32") {
-    // The desktop already ran both PowerShell probes into the env this child
-    // extends. Repeating them here costs seconds of startup on Windows.
+    // Desktop already populated the child env; repeating PowerShell probes costs seconds.
     if (options?.shellEnvironmentPrepared === true) return;
     const repairedEnvironment = yield* resolveWindowsEnvironment(env).pipe(
       Effect.catchDefect((defect) =>

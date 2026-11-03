@@ -119,9 +119,6 @@ describe("isSourceRunning", () => {
           const context = yield* withSourceHome();
           assert.isFalse(yield* isSourceRunning(helium, context));
 
-          // Chromium points the lock at `<host>-<pid>`, a target that never
-          // exists on disk. A check that follows the link reports a running
-          // browser as closed, letting an import read a live, mid-write database.
           yield* fileSystem.symlink(
             "host-that-does-not-exist-1234",
             `${userDataDirectory(context)}/SingletonLock`,
@@ -209,9 +206,6 @@ describe("isSourceInstalled", () => {
         const context = yield* withSourceHome();
         const root = userDataDirectory(context);
 
-        // Installers for native messaging hosts create an empty user-data
-        // directory for every Chromium fork they know about, so treating the
-        // directory as evidence lists browsers the user does not have.
         yield* fileSystem.makeDirectory(`${root}/NativeMessagingHosts`, { recursive: true });
         assert.isFalse(yield* isSourceInstalled(helium, context));
 
@@ -307,8 +301,6 @@ describe("cookieDatabaseCandidatePaths", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const context = yield* withSourceHome();
         const root = userDataDirectory(context);
-        // Chromium 96+ keeps sessions in Network/; a root Cookies left behind
-        // by the move is stale and must not be the one imported.
         yield* fileSystem.makeDirectory(`${root}/Default/Network`, { recursive: true });
         yield* fileSystem.writeFileString(`${root}/Default/Network/Cookies`, "live");
         yield* fileSystem.writeFileString(`${root}/Default/Cookies`, "stale");
@@ -325,6 +317,237 @@ describe("cookieDatabaseCandidatePaths", () => {
 });
 
 const firefox = BROWSER_IMPORT_SOURCES.find((source) => source.id === "firefox")!;
+
+const zen = BROWSER_IMPORT_SOURCES.find((source) => source.id === "zen")!;
+
+describe("Zen", () => {
+  it.effect("resolves Zen's native user-data roots on every supported platform", () =>
+    run(
+      Effect.gen(function* () {
+        const darwinContext = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcess.Environment, { HOME: "/Users/zen-user" }),
+          Effect.provideService(HostProcess.Platform, "darwin"),
+        );
+        const windowsContext = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcess.Environment, {
+            HOME: "C:\\Users\\zen-user",
+            APPDATA: "C:\\Users\\zen-user\\AppData\\Roaming",
+          }),
+          Effect.provideService(HostProcess.Platform, "win32"),
+        );
+        const linuxContext = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcess.Environment, { HOME: "/home/zen-user" }),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        );
+
+        assert.equal(zen.name, "Zen");
+        assert.equal(zen.engine, "firefox");
+        assert.deepEqual([...zen.platforms], ["darwin", "win32", "linux"]);
+        assert.equal(
+          zen.userDataDirectory(darwinContext),
+          darwinContext.path.join("/Users/zen-user", "Library", "Application Support", "zen"),
+        );
+        assert.equal(
+          zen.userDataDirectory(windowsContext),
+          windowsContext.path.join("C:\\Users\\zen-user\\AppData\\Roaming", "zen"),
+        );
+        assert.equal(
+          zen.userDataDirectory(linuxContext),
+          linuxContext.path.join("/home/zen-user", ".config", "zen"),
+        );
+        assert.deepEqual(zen.alternateLinuxRoots?.(linuxContext), [
+          linuxContext.path.join("/home/zen-user", ".zen"),
+          linuxContext.path.join("/home/zen-user", ".var", "app", "app.zen_browser.zen", "zen"),
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("discovers Zen profiles through its Firefox-compatible metadata", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-zen-" });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcess.Environment, { HOME: home }),
+          Effect.provideService(HostProcess.Platform, "darwin"),
+        );
+        const root = zen.userDataDirectory(context)!;
+        yield* fileSystem.makeDirectory(root, { recursive: true });
+        const profile = context.path.join(root, "Profiles", "zen.default");
+        yield* fileSystem.makeDirectory(profile, { recursive: true });
+        yield* writeFirefoxCookieDatabase(context.path.join(profile, "cookies.sqlite"), 2, 1);
+        yield* fileSystem.makeDirectory(context.path.join(root, "Profiles", "empty.default"), {
+          recursive: true,
+        });
+        yield* fileSystem.writeFileString(
+          context.path.join(root, "profiles.ini"),
+          [
+            "[Profile0]",
+            "Name=Zen",
+            "IsRelative=1",
+            "Path=Profiles/zen.default",
+            "ZenAvatarPath=chrome://browser/content/zen-avatars/avatar-55.svg",
+            "Default=1",
+            "",
+            "[Profile1]",
+            "Name=Empty",
+            "IsRelative=1",
+            "Path=Profiles/empty.default",
+            "",
+          ].join("\n"),
+        );
+
+        assert.deepEqual(yield* listSourceProfiles(zen, context), [
+          {
+            directory: context.path.join("Profiles", "zen.default"),
+            name: "Zen",
+            cookieCount: 2,
+          },
+        ]);
+        assert.isTrue(yield* isSourceInstalled(zen, context));
+        assert.isFalse(yield* isSourceRunning(zen, context));
+        assert.equal(
+          yield* resolveCookieDatabase(zen, context, context.path.join("Profiles", "zen.default")),
+          context.path.join(profile, "cookies.sqlite"),
+        );
+      }),
+    ),
+  );
+
+  it.effect("discovers Zen profiles in both current and legacy Linux roots", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-zen-linux-" });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcess.Environment, { HOME: home }),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        );
+        const currentRoot = context.path.join(home, ".config", "zen");
+        const legacyRoot = context.path.join(home, ".zen");
+        const currentProfile = context.path.join(currentRoot, "current.default");
+        const legacyProfile = context.path.join(legacyRoot, "legacy.default");
+
+        for (const [root, profile, name] of [
+          [currentRoot, currentProfile, "Current"],
+          [legacyRoot, legacyProfile, "Legacy"],
+        ] as const) {
+          yield* fileSystem.makeDirectory(profile, { recursive: true });
+          yield* writeFirefoxCookieDatabase(context.path.join(profile, "cookies.sqlite"), 1, 0);
+          yield* fileSystem.writeFileString(
+            context.path.join(root, "profiles.ini"),
+            [
+              "[Profile0]",
+              `Name=${name}`,
+              "IsRelative=1",
+              `Path=${context.path.basename(profile)}`,
+            ].join("\n"),
+          );
+        }
+
+        assert.deepEqual(yield* listSourceProfiles(zen, context), [
+          { directory: "current.default", name: "Current", cookieCount: 1 },
+          { directory: legacyProfile, name: "Legacy", cookieCount: 1 },
+        ]);
+        assert.isTrue(yield* isSourceInstalled(zen, context));
+        assert.equal(
+          yield* resolveCookieDatabase(zen, context, legacyProfile),
+          context.path.join(legacyProfile, "cookies.sqlite"),
+        );
+
+        yield* fileSystem.writeFileString(
+          context.path.join(currentRoot, "profiles.ini"),
+          `[Profile0]\nName=Shared\nIsRelative=0\nPath=${legacyProfile}\n`,
+        );
+        assert.deepEqual(yield* listSourceProfiles(zen, context), [
+          { directory: legacyProfile, name: "Shared", cookieCount: 1 },
+        ]);
+
+        yield* fileSystem.remove(currentRoot, { recursive: true });
+        assert.isTrue(yield* isSourceInstalled(zen, context));
+        assert.deepEqual(yield* listSourceProfiles(zen, context), [
+          { directory: legacyProfile, name: "Legacy", cookieCount: 1 },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("discovers a Flatpak-only Zen installation and resolves its cookies", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-zen-flatpak-" });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcess.Environment, { HOME: home }),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        );
+        const root = context.path.join(home, ".var", "app", "app.zen_browser.zen", "zen");
+        const profile = context.path.join(root, "flatpak.default");
+        yield* fileSystem.makeDirectory(profile, { recursive: true });
+        yield* writeFirefoxCookieDatabase(context.path.join(profile, "cookies.sqlite"), 2, 1);
+        yield* fileSystem.writeFileString(
+          context.path.join(root, "profiles.ini"),
+          "[Profile0]\nName=Flatpak\nIsRelative=1\nPath=flatpak.default\n",
+        );
+
+        assert.deepEqual(yield* listSourceProfiles(zen, context), [
+          { directory: profile, name: "Flatpak", cookieCount: 2 },
+        ]);
+        assert.isTrue(yield* isSourceInstalled(zen, context));
+        assert.equal(
+          yield* resolveCookieDatabase(zen, context, profile),
+          context.path.join(profile, "cookies.sqlite"),
+        );
+      }),
+    ),
+  );
+
+  it.effect("does not mistake Firefox Snap installs for Zen profiles", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-zen-snap-" });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcess.Environment, { HOME: home }),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        );
+        const zenRoot = context.path.join(home, ".config", "zen");
+        const snapRoot = context.path.join(
+          home,
+          "snap",
+          "firefox",
+          "common",
+          ".mozilla",
+          "firefox",
+        );
+        const zenProfile = context.path.join(zenRoot, "zen.default");
+        const snapProfile = context.path.join(snapRoot, "snap.default");
+        for (const root of [zenRoot, snapRoot]) {
+          const profile = root === zenRoot ? zenProfile : snapProfile;
+          yield* fileSystem.makeDirectory(profile, { recursive: true });
+          yield* writeFirefoxCookieDatabase(context.path.join(profile, "cookies.sqlite"), 1, 0);
+          yield* fileSystem.writeFileString(
+            context.path.join(root, "profiles.ini"),
+            [
+              "[Profile0]",
+              "Name=Personal",
+              "IsRelative=1",
+              `Path=${profile === zenProfile ? "zen.default" : "snap.default"}`,
+            ].join("\n"),
+          );
+        }
+
+        const profiles = yield* listSourceProfiles(zen, context);
+        assert.deepEqual(
+          profiles.map((profile) => profile.directory),
+          ["zen.default"],
+        );
+        assert.isTrue(yield* isSourceInstalled(zen, context));
+      }),
+    ),
+  );
+});
 
 describe("Firefox Snap profiles", () => {
   it.effect.skipIf(!symlinksSupported)(
@@ -565,14 +788,9 @@ describe("isSourceRunning for Firefox", () => {
         yield* fileSystem.writeFileString(`${root}/lock`, "");
         assert.isFalse(yield* isSourceRunning(firefox, context));
 
-        // `.parentlock` is deliberately left on disk after a clean exit as a
-        // last-used marker, so an unlocked one is not evidence of a running
-        // browser — treating it as one blocked every import after first use.
         yield* fileSystem.writeFileString(`${profile}/.parentlock`, "");
         assert.isFalse(yield* isSourceRunning(firefox, context));
 
-        // The `lock` symlink is what Firefox removes on exit; a live pid in
-        // its target means the profile is held.
         yield* fileSystem.symlink(`127.0.0.1:+${process.pid}`, `${profile}/lock`);
         assert.isTrue(yield* isSourceRunning(firefox, context));
       }),
@@ -582,11 +800,7 @@ describe("isSourceRunning for Firefox", () => {
   it.effect("reads a Firefox lock symlink's pid to tell live from crashed", () =>
     Effect.gen(function* () {
       const alive = (pid: number) => Effect.succeed(pid === 4242);
-      // The resolver may hand Firefox any of the machine's addresses, not
-      // just 127.0.0.1 — 127.0.1.1 on Debian-style hosts, a LAN address
-      // elsewhere — so every local address counts as ours.
       const local = new Set(["127.0.0.1", "127.0.1.1", "192.168.1.20"]);
-      // Both the plain and the fcntl-marked (`+`) forms carry the pid.
       assert.isTrue(yield* firefoxSymlinkLockIsHeld("127.0.0.1:4242", local, alive));
       assert.isTrue(yield* firefoxSymlinkLockIsHeld("127.0.1.1:+4242", local, alive));
       assert.isTrue(yield* firefoxSymlinkLockIsHeld("192.168.1.20:+4242", local, alive));
@@ -603,8 +817,7 @@ describe("isSourceRunning for Firefox", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-firefox-" });
         const context = yield* sourcePathContext.pipe(
-          // Firefox's win32 root hangs off %APPDATA%; without it the root is
-          // undefined and the fixture would escape the sandbox into the repo.
+          // Without APPDATA, the Windows Firefox fixture would escape into the repo.
           Effect.provideService(HostProcess.Environment, {
             HOME: home,
             APPDATA: `${home}/AppData/Roaming`,
@@ -616,8 +829,6 @@ describe("isSourceRunning for Firefox", () => {
         yield* fileSystem.makeDirectory(profile, { recursive: true });
         yield* fileSystem.writeFileString(`${profile}/cookies.sqlite`, "db");
 
-        // On Windows, Firefox creates parent.lock as a regular file that
-        // persists after the process exits.
         yield* fileSystem.writeFileString(`${profile}/parent.lock`, "");
         assert.isFalse(yield* isSourceRunning(firefox, context));
       }),

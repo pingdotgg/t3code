@@ -28,7 +28,8 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { RegistryContext } from "@effect/atom-react";
+import { useContext, useRef, useState, type ReactNode } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -52,6 +53,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
+  processIdentityKey,
   resourceHistoryBarHeight,
   resourceHistoryCpuScaleMax,
   shouldShowResourceMonitorRetry,
@@ -72,16 +74,16 @@ function formatRate(value: number): string {
 
 function formatCpuTime(valueMs: number): string {
   const seconds = valueMs / 1_000;
-  if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 1 : 2)}s`;
+  if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 1 : 2).replace(/\.0+$/, "")}s`;
   const minutes = seconds / 60;
-  if (minutes < 60) return `${minutes.toFixed(minutes >= 10 ? 1 : 2)}m`;
-  return `${(minutes / 60).toFixed(2)}h`;
+  if (minutes < 60) return `${minutes.toFixed(minutes >= 10 ? 1 : 2).replace(/\.0+$/, "")}m`;
+  return `${(minutes / 60).toFixed(2).replace(/\.0+$/, "")}h`;
 }
 
 function formatDurationMicros(value: number): string {
   if (value < 1_000) return `${Math.round(value)} µs`;
-  if (value < 1_000_000) return `${(value / 1_000).toFixed(2)} ms`;
-  return `${(value / 1_000_000).toFixed(2)} s`;
+  if (value < 1_000_000) return `${(value / 1_000).toFixed(2).replace(/\.0+$/, "")} ms`;
+  return `${(value / 1_000_000).toFixed(2).replace(/\.0+$/, "")} s`;
 }
 
 function formatSampleInterval(valueMs: number): string {
@@ -90,14 +92,6 @@ function formatSampleInterval(valueMs: number): string {
   return `${seconds.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${
     seconds === 1 ? "second" : "seconds"
   }`;
-}
-
-function processIdentityKey(process: ResourceTelemetryProcess): string {
-  return `${process.identity.pid}:${process.identity.startTimeMs}`;
-}
-
-function processSummaryIdentityKey(process: ResourceTelemetryProcessSummary): string {
-  return `${process.identity.pid}:${process.identity.startTimeMs}`;
 }
 
 function formatProcessName(process: Pick<ResourceTelemetryProcess, "command" | "name">): string {
@@ -517,7 +511,7 @@ function ProcessActions({
   onSignal: (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => void;
 }) {
   if (!canSignalProcess(process)) {
-    return <span className="text-3xs text-muted-foreground/35">—</span>;
+    return <span className="text-3xs text-muted-foreground/35">-</span>;
   }
   const isSignaling = signalingKeys.has(processIdentityKey(process));
   return (
@@ -702,7 +696,7 @@ function HistoryProcessTable({
               </tr>
             ) : null}
             {processes.map((process) => (
-              <tr key={processSummaryIdentityKey(process)} className="hover:bg-muted/20">
+              <tr key={processIdentityKey(process)} className="hover:bg-muted/20">
                 <td className="px-4 py-2 sm:pl-5">
                   <Tooltip>
                     <TooltipTrigger
@@ -794,7 +788,7 @@ function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttribut
               </td>
               <td className="px-3 py-2 text-right font-mono tabular-nums">{entry.count}</td>
               <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground sm:pr-5">
-                {(entry.durationMs / 1_000).toFixed(2)}s
+                {(entry.durationMs / 1_000).toFixed(2).replace(/\.0+$/, "")}s
               </td>
             </tr>
           ))}
@@ -809,6 +803,18 @@ export function ResourceTelemetryDiagnostics({
 }: {
   environmentId: EnvironmentId | null;
 }) {
+  // Pending signals and retries belong to one environment, so a switch starts fresh.
+  return (
+    <ResourceTelemetryDiagnosticsBody key={environmentId ?? ""} environmentId={environmentId} />
+  );
+}
+
+function ResourceTelemetryDiagnosticsBody({
+  environmentId,
+}: {
+  environmentId: EnvironmentId | null;
+}) {
+  const registry = useContext(RegistryContext);
   const [windowMs, setWindowMs] = useState(15 * 60_000);
   const selectedWindow =
     HISTORY_WINDOWS.find((option) => option.windowMs === windowMs) ?? HISTORY_WINDOWS[1];
@@ -827,19 +833,12 @@ export function ResourceTelemetryDiagnostics({
   });
   const [signalingKeys, setSignalingKeys] = useState<ReadonlySet<string>>(() => new Set());
   const signalingKeysRef = useRef<ReadonlySet<string>>(new Set());
-  const environmentIdRef = useRef(environmentId);
-  useEffect(() => {
-    environmentIdRef.current = environmentId;
-    return () => {
-      environmentIdRef.current = null;
-    };
-  }, [environmentId]);
   const [isRetrying, setIsRetrying] = useState(false);
   const snapshot = telemetry.data;
   const allT3 = snapshot?.groups.allT3;
 
   const signalProcess = async (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => {
-    const targetEnvironmentId = environmentIdRef.current;
+    const targetEnvironmentId = environmentId;
     if (
       targetEnvironmentId === null ||
       !readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)
@@ -878,10 +877,7 @@ export function ResourceTelemetryDiagnostics({
         return;
       }
     }
-    if (
-      environmentIdRef.current !== targetEnvironmentId ||
-      !readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)
-    ) {
+    if (!readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)) {
       clearSignaling();
       return;
     }
@@ -921,7 +917,6 @@ export function ResourceTelemetryDiagnostics({
   };
 
   const retryCollector = () => {
-    const environmentId = environmentIdRef.current;
     if (
       environmentId === null ||
       !readEnvironmentScope(environmentId, AuthEnvironmentMaintainScope)
@@ -929,6 +924,18 @@ export function ResourceTelemetryDiagnostics({
       return;
     setIsRetrying(true);
     void retryTelemetry()
+      .then(() => {
+        // The user can pick another window while the retry runs; refreshing every window
+        // re-reads the one on screen and only invalidates the rest.
+        for (const option of HISTORY_WINDOWS) {
+          registry.refresh(
+            serverEnvironment.resourceTelemetryHistory({
+              environmentId,
+              input: { windowMs: option.windowMs, bucketMs: option.bucketMs },
+            }),
+          );
+        }
+      })
       .catch((error: unknown) => {
         toastManager.add({
           type: "error",
@@ -985,7 +992,7 @@ export function ResourceTelemetryDiagnostics({
           </div>
         }
       >
-        <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm/5">
+        <div className="overflow-hidden rounded-[inherit]">
           <div className="flex flex-col gap-3 border-b border-border/60 bg-linear-to-r from-muted/45 via-muted/20 to-transparent px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <div>
               <div className="text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70">
@@ -1093,7 +1100,7 @@ export function ResourceTelemetryDiagnostics({
           ) : null
         }
       >
-        <div className="grid overflow-hidden rounded-2xl border border-border/70 bg-card shadow-xs/5 md:grid-cols-2 md:divide-x md:divide-border/60">
+        <div className="grid overflow-hidden rounded-[inherit] md:grid-cols-2 md:divide-x md:divide-border/60">
           <div className="px-4 py-4 sm:px-5">
             <div className="mb-3 flex items-center gap-2 text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70">
               <span className="flex size-6 items-center justify-center rounded-md bg-muted/60">
@@ -1230,7 +1237,7 @@ export function ResourceTelemetryDiagnostics({
           </div>
         }
       >
-        <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-xs/5">
+        <div className="overflow-hidden rounded-[inherit]">
           {history.error ? (
             <div className="flex items-start gap-2 border-b border-destructive/20 bg-destructive/5 px-4 py-3 text-xs text-destructive sm:px-5">
               <AlertTriangleIcon className="size-3.5 h-lh shrink-0" />
@@ -1253,7 +1260,7 @@ export function ResourceTelemetryDiagnostics({
           ) : null
         }
       >
-        <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-xs/5">
+        <div className="overflow-hidden rounded-[inherit]">
           <ProcessTable
             processes={snapshot?.processes ?? []}
             canMaintainEnvironment={canMaintainEnvironment}
@@ -1270,7 +1277,7 @@ export function ResourceTelemetryDiagnostics({
           <span className="text-3xs text-muted-foreground/55">Logical bytes by operation</span>
         }
       >
-        <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-xs/5">
+        <div className="overflow-hidden rounded-[inherit]">
           <div className="bg-muted/15 px-4 py-3 text-2xs leading-relaxed text-muted-foreground sm:px-5">
             Native counters identify which process is reading or writing. These application-level
             counters identify known T3 operations so process spikes can be correlated with specific

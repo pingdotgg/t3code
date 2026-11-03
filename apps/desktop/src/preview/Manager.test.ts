@@ -80,16 +80,19 @@ describe("previewWindowOpenAction", () => {
   });
 
   it("opens a real window for scripted popups so the opener survives", () => {
-    // OAuth SDKs read a null `window.open()` as a blocked popup, and they need
-    // the opener alive to receive the credential back.
     expect(PreviewManager.previewWindowOpenAction(details({}))).toBe("popup");
     expect(
       PreviewManager.previewWindowOpenAction(details({ url: "http://localhost:5173/auth" })),
     ).toBe("popup");
   });
 
+  it("opens HTTP links in preview tabs", () => {
+    for (const disposition of ["foreground-tab", "background-tab"] as const) {
+      expect(PreviewManager.previewWindowOpenAction(details({ disposition }))).toBe("new-tab");
+    }
+  });
+
   it("keeps a form POST with a body on the in-place path", () => {
-    // A new tab can only reopen the URL as a GET, which would drop the body.
     const postBody = { data: [], contentType: "application/x-www-form-urlencoded" };
     expect(
       PreviewManager.previewWindowOpenAction({
@@ -100,22 +103,34 @@ describe("previewWindowOpenAction", () => {
   });
 
   it("does not hand a window to schemes that cannot be hardened", () => {
-    // A popup skips the `will-attach-webview` hardening, so it only gets a window
-    // when its preferences can be overridden. Chromium copies the guest's
-    // preferences for `about:blank` and forbids overriding them.
     for (const url of [
-      "javascript:alert(1)",
-      "file:///etc/passwd",
       "vscode://vscode-remote/ssh-remote+box/tmp",
-      "not a url",
+      "blob:https://example.com/0b6c6a5e-55d4-4b4c-9d47-8f1b0c1d2e3f",
     ]) {
       expect(PreviewManager.previewWindowOpenAction(details({ url }))).toBe("navigate");
     }
   });
 
+  it("denies local and inline schemes that no page could open in place itself", () => {
+    for (const url of [
+      "data:text/html,<h1>hi</h1>",
+      "DaTa:text/html,<h1>hi</h1>",
+      "file:///etc/passwd",
+      "javascript:alert(1)",
+      "view-source:https://example.com",
+      "chrome://gpu",
+      "about:srcdoc",
+      "devtools://devtools/bundled/inspector.html",
+      "filesystem:https://example.com/temporary/page.html",
+      "not a url",
+    ]) {
+      for (const disposition of ["new-window", "foreground-tab", "background-tab"] as const) {
+        expect(PreviewManager.previewWindowOpenAction(details({ url, disposition }))).toBe("deny");
+      }
+    }
+  });
+
   it("denies a blank window instead of blanking the opener", () => {
-    // MSAL opens `about:blank` first and falls back to a redirect on `null`;
-    // loading the blank page into the tab would destroy that fallback.
     for (const url of ["about:blank", ""]) {
       for (const disposition of ["new-window", "foreground-tab"] as const) {
         expect(PreviewManager.previewWindowOpenAction(details({ url, disposition }))).toBe("deny");
@@ -155,6 +170,7 @@ const {
 
 vi.mock("electron", () => ({
   BrowserWindow: browserWindowConstructor,
+  // oxlint-disable-next-line typescript/no-extraneous-class -- This constructor-only mock implements the browser ClipboardItem API.
   ClipboardItem: class {
     constructor(data: Record<string, unknown>) {
       clipboardItemConstructor(data);
@@ -249,7 +265,6 @@ const withManager = <A>(
 
 interface TestCapturedPreviewImage {
   readonly toJPEG: () => Buffer;
-  /** Only fixtures that deliver picture-in-picture frames need pixels to fingerprint. */
   readonly toBitmap?: () => Buffer;
   readonly getSize: () => { readonly width: number; readonly height: number };
 }
@@ -604,11 +619,11 @@ describe("PreviewManager", () => {
     withManager((manager) =>
       Effect.gen(function* () {
         const send = vi.fn();
-        const host = { isDestroyed: () => false, send };
+        const focus = vi.fn();
+        const host = { isDestroyed: () => false, send, focus };
         const older = makeFaviconWebContents({ id: 42 });
         const newer = makeFaviconWebContents({ id: 43 });
         for (const tab of [older, newer]) Object.assign(tab.webContents, { hostWebContents: host });
-        // Electron names one arbitrary guest here when several share a focused window.
         getFocusedWebContents.mockReturnValue(newer.webContents as never);
         fromId.mockReturnValue(older.webContents);
         yield* manager.createTab("tab_older");
@@ -634,7 +649,22 @@ describe("PreviewManager", () => {
         expect(preventDefault).toHaveBeenCalledOnce();
         expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", "view.reopenClosed");
 
-        // The person types in the older tab, so keys reaching the newer one are an agent's.
+        yield* manager.setForwardedShortcuts([
+          { command: "preview.focusUrl", shortcut: parseKeybindingShortcut("mod+l")! },
+        ]);
+        beforeInput({ preventDefault } as never, { ...key, key: "l", shift: false } as never);
+        expect(focus).toHaveBeenCalledOnce();
+        expect(send).toHaveBeenLastCalledWith("desktop:menu-action", "preview.focusUrl");
+        expect(focus.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[1]!);
+        beforeInput(
+          { preventDefault } as never,
+          { ...key, key: "l", shift: false, isAutoRepeat: true } as never,
+        );
+        expect(focus).toHaveBeenCalledOnce();
+        expect(send).toHaveBeenCalledTimes(2);
+        send.mockClear();
+        yield* manager.setForwardedShortcuts([{ command: "view.reopenClosed", shortcut }]);
+
         Object.assign(newer.webContents, { focusedFrame: null });
         const agentInput = newer.listeners.get("before-input-event")!;
         const agentPreventDefault = vi.fn();
@@ -650,7 +680,7 @@ describe("PreviewManager", () => {
           { ...key, key: "T", shift: true } as never,
         );
         expect(agentPreventDefault).not.toHaveBeenCalled();
-        expect(send).toHaveBeenCalledOnce();
+        expect(send).not.toHaveBeenCalled();
       }),
     ),
   );
@@ -770,9 +800,6 @@ describe("PreviewManager", () => {
   effectIt.effect("detaches through the pinned debugger after the webview is destroyed", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        // Real Electron throws on any `wc.debugger` access once the
-        // WebContents is destroyed, so cleanup must go through the debugger
-        // reference captured at attach time (electron/electron#53376).
         let destroyed = false;
         let attached = false;
         const debuggerOff = vi.fn();
@@ -1061,7 +1088,6 @@ describe("PreviewManager", () => {
       id,
       isDestroyed: () => destroyed,
       isDevToolsOpened: () => {
-        // Electron throws from native methods once a WebContents is destroyed.
         if (destroyed) throw new TypeError("Object has been destroyed");
         return false;
       },
@@ -1173,11 +1199,7 @@ describe("PreviewManager", () => {
         audible = next;
         listeners.get("audio-state-changed")?.({ audible: next } as never);
       },
-      /**
-       * Starts playing between the attach-time read and the post-attach
-       * reconcile, without a delivered event — the window in which
-       * audio-state-changed fires against a guest the tab does not own yet.
-       */
+      /** Simulate playback starting during attach before the tab owns the guest and can receive its events. */
       startPlayingAfterFirstRead: () => {
         audibleAfterFirstRead = true;
       },
@@ -1237,9 +1259,6 @@ describe("PreviewManager", () => {
         yield* manager.registerWebview("tab_audio_window", 42);
         yield* Effect.yieldNow;
 
-        // audio-state-changed for this transition was dropped: it fired before
-        // the tab owned the guest. Without a post-attach reconcile the icon
-        // stays wrong until the next real transition, which may never come.
         expect(states.at(-1)?.audible).toBe(true);
       }),
     ),
@@ -1369,7 +1388,6 @@ describe("PreviewManager", () => {
         fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
         yield* manager.createTab("tab_1");
         yield* manager.registerWebview("tab_1", 42);
-        // it.effect keeps TestClock fixed until explicitly advanced.
         const first = yield* manager.captureScreenshot("tab_1");
         const second = yield* manager.captureScreenshot("tab_1");
 
@@ -1733,6 +1751,65 @@ describe("PreviewManager", () => {
       yield* manager.closeTab("tab_1");
       expect(yield* nextType).toBe("detached");
     }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+  );
+
+  effectIt.effect(
+    "asks the client to paint a navigated server tab while the agent captures it",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+        const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+        const contents = Object.assign(
+          makeTestPreviewWebContents(async () => {
+            throw new Error("unused");
+          }, 42),
+          {
+            isDevToolsOpened: () => false,
+            getUserAgent: () => "Electron",
+            loadURL: vi.fn(async () => undefined),
+          },
+        );
+        const screenshot = Promise.withResolvers<unknown>();
+        contents.debugger.sendCommand = vi.fn((method: string) =>
+          method === "Page.captureScreenshot" ? screenshot.promise : Promise.resolve(undefined),
+        ) as unknown as typeof contents.debugger.sendCommand;
+        fromId.mockReturnValue(contents);
+        const manager = yield* PreviewManager.PreviewManager;
+        const capturing = yield* Queue.unbounded<boolean>();
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Queue.offer(capturing, state.capturing).pipe(Effect.asVoid),
+        );
+        const attached = yield* Deferred.make<void>();
+        yield* host.events.pipe(
+          Stream.runForEach((line) =>
+            new TextDecoder().decode(line).includes('"type":"attached"')
+              ? Deferred.succeed(attached, undefined)
+              : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        yield* manager.createTab("tab_1", { serverTab });
+        yield* manager.registerWebview("tab_1", 42);
+        yield* Deferred.await(attached);
+        // Navigating rebuilds the tab's state, which must keep the server tab it answers for.
+        yield* manager.navigate("tab_1", "https://example.com/next");
+        yield* Queue.clear(capturing);
+
+        yield* host.handleCommandLine(
+          JSON.stringify({
+            type: "cdp",
+            ...serverTab,
+            message: JSON.stringify({
+              id: 1,
+              method: "Page.captureScreenshot",
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+        expect(yield* Queue.take(capturing)).toBe(true);
+        screenshot.resolve({ data: "" });
+        expect(yield* Queue.take(capturing)).toBe(false);
+      }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );
 
   effectIt.effect("discards a screenshot that resolves after its guest is replaced", () =>
@@ -2160,6 +2237,48 @@ describe("PreviewManager", () => {
         const capturesAfterClose = capturePage.mock.calls.length;
         yield* TestClock.adjust(200);
         expect(capturePage).toHaveBeenCalledTimes(capturesAfterClose);
+      }),
+    ),
+  );
+
+  effectIt.effect("shows picture-in-picture and keeps capturing after stalled captures", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const image = {
+          toJPEG: () => Buffer.from("preview-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        };
+        const stalledInitial = Promise.withResolvers<typeof image>();
+        const stalledLoop = Promise.withResolvers<typeof image>();
+        const capturePage = vi
+          .fn<() => Promise<typeof image>>()
+          .mockImplementationOnce(() => stalledInitial.promise)
+          .mockImplementationOnce(() => stalledLoop.promise)
+          .mockResolvedValue(image);
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        const { pictureInPictureWindow, send } = makeTestPictureInPictureWindow();
+        browserWindowConstructor.mockImplementation(function () {
+          return pictureInPictureWindow;
+        });
+        yield* manager.createTab("tab_pip_stalled_capture");
+        yield* manager.registerWebview("tab_pip_stalled_capture", 42);
+
+        try {
+          const open = yield* manager
+            .openPictureInPicture("tab_pip_stalled_capture")
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* TestClock.adjust(1_000);
+          expect(pictureInPictureWindow.showInactive).toHaveBeenCalledOnce();
+          yield* Fiber.join(open);
+
+          expect(send).not.toHaveBeenCalled();
+          yield* TestClock.adjust(500);
+          expect(send).toHaveBeenCalled();
+        } finally {
+          // Release stalled native calls after a failing assertion against unchanged base.
+          stalledInitial.resolve(image);
+          stalledLoop.resolve(image);
+        }
       }),
     ),
   );

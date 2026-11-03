@@ -1,18 +1,9 @@
-import type {
-  RelayClientEnvironmentRecord,
-  RelayEnvironmentStatusResponse,
-} from "@t3tools/contracts/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
-import {
-  RelayEnvironmentConnectScope,
-  RelayEnvironmentStatusScope,
-} from "@t3tools/contracts/relay";
 import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -50,8 +41,8 @@ export interface ManagedRelaySnapshotState<A> {
 }
 
 export interface ManagedRelayQueryEvent {
-  readonly operation: "environments" | "devices" | "environment-status";
-  readonly stage: "clerk-token" | "relay-request" | "validation";
+  readonly operation: "environments" | "devices" | "t3chat-link";
+  readonly stage: "clerk-token" | "relay-request";
   readonly phase: "start" | "success" | "failure";
   readonly accountId: string;
   readonly environmentId?: string;
@@ -62,10 +53,6 @@ export interface ManagedRelayQueryEvent {
 export class ManagedRelaySessionError extends Data.TaggedError("ManagedRelaySessionError")<{
   readonly message: string;
   readonly cause?: unknown;
-}> {}
-
-export class ManagedRelaySnapshotError extends Data.TaggedError("ManagedRelaySnapshotError")<{
-  readonly message: string;
 }> {}
 
 export const managedRelaySessionAtom = Atom.make<ManagedRelaySession | null>(null).pipe(
@@ -190,22 +177,55 @@ function readSessionClerkToken(
   );
 }
 
+function requireSessionClerkToken(
+  registry: AtomRegistry.AtomRegistry,
+  accountId: string,
+  action: string,
+): Effect.Effect<string, ManagedRelaySessionError> {
+  const session = registry.get(managedRelaySessionAtom);
+  if (!session || session.accountId !== accountId) {
+    return Effect.fail(
+      new ManagedRelaySessionError({ message: `Sign in to T3 Connect before ${action}.` }),
+    );
+  }
+  return readSessionClerkToken(session);
+}
+
 export const deregisterManagedRelayEnvironment = Effect.fn(
   "clientRuntime.managedRelaySession.deregisterEnvironment",
 )(function* (
   registry: AtomRegistry.AtomRegistry,
   input: { readonly accountId: string; readonly environmentId: EnvironmentId },
 ) {
-  const session = registry.get(managedRelaySessionAtom);
-  if (!session || session.accountId !== input.accountId) {
-    return yield* new ManagedRelaySessionError({
-      message: "Sign in to T3 Connect before deregistering an environment.",
-    });
-  }
-  const clerkToken = yield* readSessionClerkToken(session);
+  const clerkToken = yield* requireSessionClerkToken(
+    registry,
+    input.accountId,
+    "deregistering an environment",
+  );
   const relay = yield* ManagedRelay.ManagedRelayClient;
   yield* relay.unlinkEnvironment({ clerkToken, environmentId: input.environmentId });
 });
+
+/** Returns the T3 Chat page URL where the signed-in user confirms the link. */
+export const createManagedRelayT3ChatLinkRequest = Effect.fn(
+  "clientRuntime.managedRelaySession.createT3ChatLinkRequest",
+)(function* (registry: AtomRegistry.AtomRegistry, input: { readonly accountId: string }) {
+  const clerkToken = yield* requireSessionClerkToken(registry, input.accountId, "linking T3 Chat");
+  const relay = yield* ManagedRelay.ManagedRelayClient;
+  return (yield* relay.createT3ChatLinkRequest({ clerkToken })).url;
+});
+
+export const unlinkManagedRelayT3Chat = Effect.fn("clientRuntime.managedRelaySession.unlinkT3Chat")(
+  function* (registry: AtomRegistry.AtomRegistry, input: { readonly accountId: string }) {
+    const clerkToken = yield* requireSessionClerkToken(
+      registry,
+      input.accountId,
+      "unlinking T3 Chat",
+    );
+    const relay = yield* ManagedRelay.ManagedRelayClient;
+    yield* relay.unlinkT3Chat({ clerkToken });
+  },
+);
 
 function requireClerkToken(
   get: Atom.AtomContext,
@@ -222,84 +242,48 @@ function requireClerkToken(
   return readSessionClerkToken(session);
 }
 
-function statusKey(input: {
-  readonly accountId: string;
-  readonly environment: RelayClientEnvironmentRecord;
-}): string {
-  return JSON.stringify(input);
-}
-
-function parseStatusKey(key: string): {
-  readonly accountId: string;
-  readonly environment: RelayClientEnvironmentRecord;
+function describeManagedRelayFailure(cause: Cause.Cause<unknown>): {
+  readonly message: string;
+  readonly traceId: string | null;
 } {
-  return JSON.parse(key) as {
-    readonly accountId: string;
-    readonly environment: RelayClientEnvironmentRecord;
+  const error = Cause.squash(cause);
+  return {
+    message:
+      isManagedRelayRequestFailedError(error) && error.relayError
+        ? relayProtectedErrorMessage(error.relayError)
+        : error instanceof Error
+          ? error.message
+          : "Could not load T3 Connect data.",
+    traceId: findErrorTraceId(error),
   };
-}
-
-function endpointMatches(
-  left: RelayClientEnvironmentRecord["endpoint"],
-  right: RelayClientEnvironmentRecord["endpoint"],
-): boolean {
-  return (
-    left.httpBaseUrl === right.httpBaseUrl &&
-    left.wsBaseUrl === right.wsBaseUrl &&
-    left.providerKind === right.providerKind
-  );
-}
-
-function validateEnvironmentStatus(
-  environment: RelayClientEnvironmentRecord,
-  status: RelayEnvironmentStatusResponse,
-): Effect.Effect<RelayEnvironmentStatusResponse, ManagedRelaySnapshotError> {
-  if (status.environmentId !== environment.environmentId) {
-    return Effect.fail(
-      new ManagedRelaySnapshotError({
-        message: "Relay returned status for a different environment.",
-      }),
-    );
-  }
-  if (!endpointMatches(status.endpoint, environment.endpoint)) {
-    return Effect.fail(
-      new ManagedRelaySnapshotError({
-        message: "Relay returned status for a different endpoint.",
-      }),
-    );
-  }
-  if (status.descriptor && status.descriptor.environmentId !== environment.environmentId) {
-    return Effect.fail(
-      new ManagedRelaySnapshotError({
-        message: "Relay returned status descriptor for a different environment.",
-      }),
-    );
-  }
-  return Effect.succeed(status);
 }
 
 export function readManagedRelaySnapshotState<A>(
   result: AsyncResult.AsyncResult<A, unknown>,
 ): ManagedRelaySnapshotState<A> {
-  let error: string | null = null;
-  let errorTraceId: string | null = null;
-  if (result._tag === "Failure") {
-    const cause = Cause.squash(result.cause);
-    error =
-      isManagedRelayRequestFailedError(cause) && cause.relayError
-        ? relayProtectedErrorMessage(cause.relayError)
-        : cause instanceof Error
-          ? cause.message
-          : "Could not load T3 Connect data.";
-    errorTraceId = findErrorTraceId(cause);
-  }
+  const failure = result._tag === "Failure" ? describeManagedRelayFailure(result.cause) : null;
   return {
-    data: Option.getOrNull(AsyncResult.value(result)),
-    error,
-    errorTraceId,
+    data: AsyncResult.getOrElse(result, () => null),
+    error: failure?.message ?? null,
+    errorTraceId: failure?.traceId ?? null,
     isPending: result.waiting,
   };
 }
+
+// Logged where the listing runs so each failed fetch reports once, however many
+// components read the atom.
+const logListingFailure =
+  (label: string) =>
+  <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    self.pipe(
+      Effect.tapCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) return Effect.void;
+        const { message, traceId } = describeManagedRelayFailure(cause);
+        return Effect.logError(`[t3-cloud] Relay ${label} listing failed`).pipe(
+          Effect.annotateLogs({ message, traceId }),
+        );
+      }),
+    );
 
 export function createManagedRelayQueryManager(
   runtime: Atom.AtomRuntime<ManagedRelay.ManagedRelayClient>,
@@ -349,7 +333,7 @@ export function createManagedRelayQueryManager(
             { ...base, stage: "relay-request" },
             relay.listEnvironments({ clerkToken }),
           );
-        }),
+        }).pipe(logListingFailure("environment")),
       )
       .pipe(
         Atom.swr({ staleTime, revalidateOnMount: true }),
@@ -372,7 +356,7 @@ export function createManagedRelayQueryManager(
             { ...base, stage: "relay-request" },
             relay.listDevices({ clerkToken }),
           );
-        }),
+        }).pipe(logListingFailure("device")),
       )
       .pipe(
         Atom.swr({ staleTime, revalidateOnMount: true }),
@@ -381,63 +365,41 @@ export function createManagedRelayQueryManager(
       ),
   );
 
-  const environmentStatusAtom = Atom.family((key: string) => {
-    const { accountId, environment } = parseStatusKey(key);
-    return runtime
+  const t3ChatLinkAtom = Atom.family((accountId: string) =>
+    runtime
       .atom((get) =>
         Effect.gen(function* () {
-          const base = {
-            operation: "environment-status" as const,
-            accountId,
-            environmentId: environment.environmentId,
-          };
+          const base = { operation: "t3chat-link" as const, accountId };
           const clerkToken = yield* observe(
             { ...base, stage: "clerk-token" },
             requireClerkToken(get, accountId),
           );
           const relay = yield* ManagedRelay.ManagedRelayClient;
-          const status = yield* observe(
-            { ...base, stage: "relay-request" },
-            relay.getEnvironmentStatus({
-              clerkToken,
-              scopes: [RelayEnvironmentStatusScope, RelayEnvironmentConnectScope],
-              environmentId: environment.environmentId,
-            }),
-          );
           return yield* observe(
-            { ...base, stage: "validation" },
-            validateEnvironmentStatus(environment, status),
+            { ...base, stage: "relay-request" },
+            relay.getT3ChatLink({ clerkToken }),
           );
         }),
       )
       .pipe(
         Atom.swr({ staleTime, revalidateOnMount: true }),
         Atom.setIdleTTL(idleTtl),
-        Atom.withLabel(`managed-relay:environment-status:${key}`),
-      );
-  });
+        Atom.withLabel(`managed-relay:t3chat-link:${accountId}`),
+      ),
+  );
 
   return {
     environmentsAtom,
     devicesAtom,
-    environmentStatusAtom: (input: {
-      readonly accountId: string;
-      readonly environment: RelayClientEnvironmentRecord;
-    }) => environmentStatusAtom(statusKey(input)),
+    t3ChatLinkAtom,
     refreshEnvironments(registry: AtomRegistry.AtomRegistry, accountId: string): void {
       registry.refresh(environmentsAtom(accountId));
     },
     refreshDevices(registry: AtomRegistry.AtomRegistry, accountId: string): void {
       registry.refresh(devicesAtom(accountId));
     },
-    refreshEnvironmentStatus(
-      registry: AtomRegistry.AtomRegistry,
-      input: {
-        readonly accountId: string;
-        readonly environment: RelayClientEnvironmentRecord;
-      },
-    ): void {
-      registry.refresh(environmentStatusAtom(statusKey(input)));
+    refreshT3ChatLink(registry: AtomRegistry.AtomRegistry, accountId: string): void {
+      registry.refresh(t3ChatLinkAtom(accountId));
     },
   };
 }

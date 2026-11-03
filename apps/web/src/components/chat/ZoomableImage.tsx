@@ -1,4 +1,5 @@
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
+import { useImperativeHandle, useRef, useState, useSyncExternalStore, type Ref } from "react";
+import { flushSync } from "react-dom";
 
 import {
   onWindowControlsOverlayGeometryChange,
@@ -9,11 +10,28 @@ import { AttachmentImage } from "../media/AttachmentImage";
 
 const MAX_ZOOM = 8;
 
-// The viewer lays out below the native caption strip so its controls never share a row with
-// the window buttons. ExpandedImageDialog and the media dialog viewport mirror this in CSS
-// through --native-titlebar-height.
+// Subtract the caption strip, matching dialog CSS's --native-titlebar-height.
 function readViewerSize() {
   return { width: window.innerWidth, height: window.innerHeight - windowControlsOverlayHeight() };
+}
+
+let viewerSize: ReturnType<typeof readViewerSize> | null = null;
+
+// Cached so an unchanged size keeps its identity: a new one resets the zoom.
+function getViewerSize() {
+  const next = readViewerSize();
+  if (next.width !== viewerSize?.width || next.height !== viewerSize.height) viewerSize = next;
+  return viewerSize;
+}
+
+function subscribeViewerSize(onChange: () => void) {
+  window.addEventListener("resize", onChange);
+  // Fullscreen caption-strip changes may not emit resize.
+  const stopOverlayListener = onWindowControlsOverlayGeometryChange(onChange);
+  return () => {
+    window.removeEventListener("resize", onChange);
+    stopOverlayListener();
+  };
 }
 
 export interface ZoomableImageHandle {
@@ -35,10 +53,14 @@ export function ZoomableImage({
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
-  const [viewerSize, setViewerSize] = useState(readViewerSize);
+  const viewerSize = useSyncExternalStore(subscribeViewerSize, getViewerSize);
   const [zoom, setZoom] = useState(1);
-  const zoomRef = useRef(1);
-  const anchorRef = useRef<{ x: number; y: number; clientX: number; clientY: number } | null>(null);
+  // A resized viewer refits the image.
+  const [zoomViewerSize, setZoomViewerSize] = useState(viewerSize);
+  if (zoomViewerSize !== viewerSize) {
+    setZoomViewerSize(viewerSize);
+    setZoom(1);
+  }
   const dragRef = useRef<{
     pointerId: number;
     x: number;
@@ -49,8 +71,9 @@ export function ZoomableImage({
   const suppressClickRef = useRef(false);
   const [dragging, setDragging] = useState(false);
   const maxHeight = Math.max(1, Math.min(viewerSize.height * 0.86, viewerSize.height - 160));
+  // A vector scales without loss, and an SVG without width and height reports a tiny default size.
   const fit = Math.min(
-    1,
+    mimeType === "image/svg+xml" ? Infinity : 1,
     (viewerSize.width * 0.92 - (viewerSize.width >= 640 ? 96 : 0)) / (naturalSize.width || 1),
     maxHeight / (naturalSize.height || 1),
   );
@@ -62,7 +85,7 @@ export function ZoomableImage({
     () => ({
       pan(key) {
         const viewport = viewportRef.current;
-        if (!viewport || zoomRef.current <= 1) return false;
+        if (!viewport || zoom <= 1) return false;
         // A vertical scrollbar alone must not swallow gallery navigation.
         if (
           (key === "ArrowLeft" || key === "ArrowRight") &&
@@ -88,73 +111,52 @@ export function ZoomableImage({
         return true;
       },
     }),
-    [],
+    [zoom],
   );
 
   const changeZoom = (next: number, point?: { x: number; y: number }) => {
     const viewport = viewportRef.current;
-    const previous = zoomRef.current;
     const clamped = Math.min(MAX_ZOOM, Math.max(1, next));
-    if (!viewport || previous === clamped) return;
+    if (!viewport || zoom === clamped) return;
     const bounds = viewport.getBoundingClientRect();
     const x = point ? point.x - bounds.left : viewport.clientWidth / 2;
     const y = point ? point.y - bounds.top : viewport.clientHeight / 2;
-    anchorRef.current = {
-      x: (viewport.scrollLeft + x) / previous,
-      y: (viewport.scrollTop + y) / previous,
-      clientX: bounds.left + x,
-      clientY: bounds.top + y,
-    };
-    zoomRef.current = clamped;
-    setZoom(clamped);
+    const anchorX = (viewport.scrollLeft + x) / zoom;
+    const anchorY = (viewport.scrollTop + y) / zoom;
+    const clientX = bounds.left + x;
+    const clientY = bounds.top + y;
+    // The new size must be laid out before the scroll position can keep the anchor in place.
+    flushSync(() => setZoom(clamped));
+    const resized = viewport.getBoundingClientRect();
+    viewport.scrollLeft = anchorX * clamped - (clientX - resized.left);
+    viewport.scrollTop = anchorY * clamped - (clientY - resized.top);
   };
 
-  useLayoutEffect(() => {
-    const viewport = viewportRef.current;
-    const anchor = anchorRef.current;
-    if (!viewport || !anchor) return;
-    const bounds = viewport.getBoundingClientRect();
-    viewport.scrollLeft = anchor.x * zoom - (anchor.clientX - bounds.left);
-    viewport.scrollTop = anchor.y * zoom - (anchor.clientY - bounds.top);
-    anchorRef.current = null;
-  }, [zoom]);
-
-  useEffect(() => {
-    const resize = () => {
-      setViewerSize(readViewerSize());
-      changeZoom(1);
-    };
-    window.addEventListener("resize", resize);
-    // The caption strip can come and go around fullscreen without a matching resize event.
-    const stopOverlayListener = onWindowControlsOverlayGeometryChange(resize);
-    return () => {
-      window.removeEventListener("resize", resize);
-      stopOverlayListener();
-    };
-  }, [changeZoom]);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
+  const attachViewport = (viewport: HTMLDivElement) => {
+    viewportRef.current = viewport;
+    // React's onWheel is passive and cannot stop the page from scrolling.
     const wheel = (event: WheelEvent) => {
       if (event.deltaY === 0) return;
       event.preventDefault();
       const delta =
         event.deltaY *
         (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientHeight : 1);
-      changeZoom(zoomRef.current * Math.exp(-delta * (event.ctrlKey ? 0.01 : 0.002)), {
+      changeZoom(zoom * Math.exp(-delta * (event.ctrlKey ? 0.01 : 0.002)), {
         x: event.clientX,
         y: event.clientY,
       });
     };
     viewport.addEventListener("wheel", wheel, { passive: false });
-    return () => viewport.removeEventListener("wheel", wheel);
-  }, [changeZoom]);
+    return () => {
+      viewport.removeEventListener("wheel", wheel);
+      viewportRef.current = null;
+    };
+  };
 
   return (
     <div className="min-w-0">
       <div
-        ref={viewportRef}
+        ref={attachViewport}
         role="region"
         aria-label={`${name}, zoomable image`}
         aria-description="Click to zoom in or return to fit. Scroll to zoom, drag to pan. Use Enter to toggle zoom, plus or minus to zoom, and 0 to fit."
@@ -167,21 +169,21 @@ export function ZoomableImage({
           cursor: zoom > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in",
         }}
         onClick={(event) => {
-          // Pointer capture also produces a click after dragging; leave the image zoomed.
+          // Pointer capture emits a click after dragging; preserve zoom.
           if (suppressClickRef.current || event.detail > 1) return;
-          changeZoom(zoomRef.current > 1 ? 1 : 2, { x: event.clientX, y: event.clientY });
+          changeZoom(zoom > 1 ? 1 : 2, { x: event.clientX, y: event.clientY });
         }}
         onKeyDown={(event) => {
           if (event.ctrlKey || event.metaKey || event.altKey) return;
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            if (!event.repeat) changeZoom(zoomRef.current > 1 ? 1 : 2);
+            if (!event.repeat) changeZoom(zoom > 1 ? 1 : 2);
           } else if (event.key === "+" || event.key === "=") {
             event.preventDefault();
-            changeZoom(zoomRef.current * 1.5);
+            changeZoom(zoom * 1.5);
           } else if (event.key === "-") {
             event.preventDefault();
-            changeZoom(zoomRef.current / 1.5);
+            changeZoom(zoom / 1.5);
           } else if (event.key === "0") {
             event.preventDefault();
             changeZoom(1);
@@ -190,7 +192,7 @@ export function ZoomableImage({
         onPointerDown={(event) => {
           if (dragRef.current) return;
           suppressClickRef.current = false;
-          if (event.pointerType !== "mouse" || event.button !== 0 || zoomRef.current <= 1) return;
+          if (event.pointerType !== "mouse" || event.button !== 0 || zoom <= 1) return;
           const viewport = event.currentTarget;
           const bounds = viewport.getBoundingClientRect();
           if (

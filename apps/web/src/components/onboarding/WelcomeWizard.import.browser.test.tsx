@@ -22,6 +22,7 @@ type CreateProjectInput = {
 };
 const state = vi.hoisted(() => ({
   selectedEnvironment: "primary",
+  addedEnvironments: [] as string[],
   sessions: new Map<string, unknown>(),
   projects: null as unknown,
   providers: null as unknown,
@@ -35,11 +36,9 @@ const state = vi.hoisted(() => ({
   onDone: vi.fn(),
   scan: vi.fn(),
   refreshScan: vi.fn(),
+  waitForProject: vi.fn(),
 }));
 
-// Session grants come from per-test atoms so a test can revoke or regrant mid-flow; the
-// real scope checks in ~/state/session read them through the app registry, which the
-// wizard is also rendered with.
 vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
   const actual = await original();
   return {
@@ -69,7 +68,9 @@ vi.mock(import("../../state/environments"), async (original) => {
   return {
     ...(await original()),
     usePrimaryEnvironment: (() => primary) as never,
-    useEnvironments: (() => ({ environments: [environment(state.selectedEnvironment)] })) as never,
+    useEnvironments: (() => ({
+      environments: [state.selectedEnvironment, ...state.addedEnvironments].map(environment),
+    })) as never,
   };
 });
 vi.mock(import("../../state/server"), async (original) => {
@@ -90,6 +91,7 @@ vi.mock(import("../../state/entities"), async (original) => {
     ...(await original()),
     useProjects: (() => useAtomValue(state.projects as Atom.Atom<Project[]>)) as never,
     readProjects: (() => appAtomRegistry.get(state.projects as Atom.Atom<Project[]>)) as never,
+    waitForProject: ((ref: unknown) => state.waitForProject(ref)) as never,
   };
 });
 vi.mock(import("../../state/projects"), async (original) => ({
@@ -186,6 +188,27 @@ function recordProject({ environmentId, input }: CreateProjectInput) {
   return AsyncResult.success(undefined);
 }
 
+// Resolves once the project reaches the mocked projects atom; the real helper's timeout is
+// replaced per test with a rejection.
+function waitForRecordedProject(ref: { environmentId: EnvironmentId; projectId: string }) {
+  const find = () =>
+    appAtomRegistry
+      .get(projectsAtom())
+      .find(
+        (project) => project.id === ref.projectId && project.environmentId === ref.environmentId,
+      );
+  return new Promise<Project>((resolve) => {
+    const current = find();
+    if (current) return resolve(current);
+    const unsubscribe = appAtomRegistry.subscribe(projectsAtom(), () => {
+      const project = find();
+      if (!project) return;
+      unsubscribe();
+      resolve(project);
+    });
+  });
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((complete) => {
@@ -212,6 +235,12 @@ async function click(label: string) {
   await act(async () => target.click());
 }
 
+async function clickStage(label: string) {
+  const stage = document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  expect(stage?.disabled).toBe(false);
+  await act(async () => stage?.click());
+}
+
 async function mountImport(remote = false) {
   state.selectedEnvironment = remote ? "remote" : "primary";
   await using stack = new AsyncDisposableStack();
@@ -233,6 +262,7 @@ async function mountImport(remote = false) {
 // Returns the clock spy so each test can `using` it; the spy would otherwise outlive the test.
 function setup() {
   const now = vi.spyOn(Date, "now").mockReturnValue(NOW);
+  state.addedEnvironments = [];
   state.sessions.clear();
   for (const id of [primaryId, remoteId]) {
     state.sessions.set(
@@ -258,8 +288,37 @@ function setup() {
   state.onDone.mockReset();
   state.scan.mockReset();
   state.refreshScan.mockReset();
+  state.waitForProject.mockReset().mockImplementation(waitForRecordedProject);
   return now;
 }
+
+it("keeps the project selection after going back a stage", async () => {
+  using _now = setup();
+  await using _screen = await mountImport();
+  await click("Select none");
+  expect(pageText()).toContain("0 of 2 selected");
+
+  await clickStage("Agents, step 2");
+  await click("Continue");
+  expect(pageText()).toContain("Import your projects");
+  expect(pageText()).toContain("0 of 2 selected");
+});
+
+it("ticks the recent projects of a computer added after the selection changed", async () => {
+  using _now = setup();
+  await using _screen = await mountImport();
+  await click("Select none");
+
+  state.addedEnvironments = ["remote"];
+  await clickStage("Connect, step 1");
+  await click("Continue");
+  await click("Continue");
+  expect(pageText()).toContain("2 of 4 selected");
+
+  await click("Import 2 projects");
+  const created = state.createProject.mock.calls as Array<[CreateProjectInput]>;
+  expect(created.map(([call]) => call.environmentId)).toEqual([remoteId, remoteId]);
+});
 
 it("rechecks after project creation and can retry its history without recreating the project", async () => {
   using _now = setup();
@@ -306,4 +365,24 @@ it("completes accepted imports when permission is revoked after the final server
   expect(state.importThreads).toHaveBeenCalledOnce();
   expect(state.completeOnboarding).toHaveBeenCalledOnce();
   expect(state.onDone).toHaveBeenCalledOnce();
+});
+
+it("finishes setup without landing when the imported project never reaches the client", async () => {
+  using _now = setup();
+  state.candidates = state.candidates.slice(0, 1);
+  // The server accepts the project, but it never shows up in the client's projects.
+  state.createProject.mockResolvedValue(AsyncResult.success(undefined));
+  state.waitForProject.mockRejectedValue(new Error("The project did not appear."));
+  state.completeOnboarding.mockRejectedValueOnce(new Error("offline"));
+  await using _screen = await mountImport();
+
+  await click("Import 1 project");
+  await vi.waitFor(() => expect(state.completeOnboarding).toHaveBeenCalledOnce());
+  // A failed completion hands the step back instead of leaving it importing.
+  await vi.waitFor(() => expect(button("Import 1 project").disabled).toBe(false));
+  expect(state.onDone).not.toHaveBeenCalled();
+
+  await click("Import 1 project");
+  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+  expect(state.onDone).toHaveBeenCalledWith(undefined);
 });

@@ -1,4 +1,4 @@
-import { AuthPreviewOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -6,7 +6,6 @@ import {
 import { recordVisitForThread } from "~/browserHistoryStore";
 import { readLocalApi } from "~/localApi";
 import { previewEnvironment } from "~/state/preview";
-import { readEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import {
@@ -18,10 +17,7 @@ import { BrowserSettingsReadError, openUrlInPreview } from "./openFileInPreview"
 
 const NO_MODIFIER = { metaKey: false, ctrlKey: false } as const;
 
-/**
- * Failed settings reads reject without opening a browser. The promise also
- * rejects if the system-browser fallback fails.
- */
+/** Rejects on settings read failure without opening a browser, or if the system-browser fallback fails. */
 export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
   url: string,
   options?: {
@@ -40,10 +36,7 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
       url,
       event: options.event ?? NO_MODIFIER,
       preference: await resolveBrowserLinkTargetPreference(),
-      canOpenInApp:
-        targetThreadRef != null &&
-        readEnvironmentScope(targetThreadRef.environmentId, AuthPreviewOperateScope) &&
-        canOpenLinksInApp(targetThreadRef),
+      canOpenInApp: canOpenLinksInApp(targetThreadRef),
     });
     if (target === "app" && targetThreadRef) {
       const result = await openUrlInPreview({ threadRef: targetThreadRef, url, openPreview });

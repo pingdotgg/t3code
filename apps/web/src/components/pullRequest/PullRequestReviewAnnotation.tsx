@@ -87,7 +87,7 @@ export function PendingReviewCommentCard({
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <MessageSquareIcon className="size-3.5" />
-        <span>Pending — sent when you submit the review</span>
+        <span>Pending. Sent when you submit the review</span>
         <Button
           size="icon-xs"
           variant="ghost"
@@ -182,8 +182,7 @@ export function ReviewThreadCard({
     sendingRef.current = false;
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     if (!result.value) return;
-    // The mutation returns no comment. Keep what the reader loaded and reopen its cursor so
-    // the new reply remains reachable without spending requests until they ask to load it.
+    // Replies return no comment; retain loaded data and reopen pagination for a later read.
     setLoadedPage((previous) =>
       previous?.threadId === thread.id
         ? {

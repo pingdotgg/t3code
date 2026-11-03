@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { Platform, View } from "react-native";
 
-/** Keeps the header surface visible behind rounded Android content corners. */
 export function ScreenContent({
   children,
   insetHorizontal = false,

@@ -10,10 +10,38 @@ const changeRequestWebUrl = (kind: string, host: string, repository: string, num
 const project = {
   host: "github.com",
   repository: "acme/web",
+  terminology: sourceControlClients.get("github").changeRequest,
   webUrl: (number: number) => changeRequestWebUrl("github", "github.com", "acme/web", number),
 };
 
 describe("resolveLinkPullRequestInput", () => {
+  it.each(["git.cafe", "staging.git.cafe"])("canonicalizes both GitCafe routes on %s", (host) => {
+    for (const [repository, route] of [
+      ["web", "pull"],
+      ["web", "pulls"],
+      ["pull", "pull"],
+      ["pull", "pulls"],
+      ["pulls", "pull"],
+      ["pulls", "pulls"],
+    ]) {
+      const url = `https://${host}/acme/${repository}/${route}/42`;
+      expect(
+        sourceControlClients.get("gitcafe").parseChangeRequestUrl(new URL(url)),
+      ).not.toBeNull();
+      expect(parsePullRequestReference(url)).toBe(url);
+      expect(
+        resolveLinkPullRequestInput({ reference: url, project: null, hasProject: () => true }),
+      ).toEqual({
+        link: {
+          host,
+          repository: `acme/${repository}`,
+          number: 42,
+          url: `https://${host}/acme/${repository}/pulls/42`,
+        },
+      });
+    }
+  });
+
   it.each([
     ["https://bitbucket.org/acme/web/pull-requests/42", "bitbucket.org"],
     ["https://github.acme.test/acme/web/pull/42", "github.acme.test"],
@@ -54,6 +82,7 @@ describe("resolveLinkPullRequestInput", () => {
         project: {
           host: "ssh.dev.azure.com",
           repository: "v3/org/project/web",
+          terminology: sourceControlClients.get("azure-devops").changeRequest,
           webUrl: (number) =>
             changeRequestWebUrl("azure-devops", "ssh.dev.azure.com", "v3/org/project/web", number),
         },
@@ -79,6 +108,22 @@ describe("resolveLinkPullRequestInput", () => {
         number: 42,
         url: "https://github.com/acme/web/pull/42",
       },
+    });
+  });
+
+  it("names the project host's change request when it has no URL for a number", () => {
+    expect(
+      resolveLinkPullRequestInput({
+        reference: "#42",
+        project: {
+          ...project,
+          terminology: sourceControlClients.get("gitlab").changeRequest,
+          webUrl: () => null,
+        },
+        hasProject: () => true,
+      }),
+    ).toEqual({
+      error: "Paste a full URL; this project's host has no known merge request URL.",
     });
   });
 
@@ -114,6 +159,13 @@ describe("parsePullRequestReference", () => {
     expect(
       parsePullRequestReference("https://acme.visualstudio.com/project/_git/t3code/pullrequest/42"),
     ).toBe("https://acme.visualstudio.com/project/_git/t3code/pullrequest/42");
+  });
+
+  it.each([
+    "https://code.example.com/group/project/-/merge_requests/42",
+    "http://git.internal/group/sub/project/-/merge_requests/7",
+  ])("accepts self-hosted GitLab merge request URL %s", (url) => {
+    expect(parsePullRequestReference(url)).toBe(url);
   });
 
   it("accepts gh pr checkout commands with raw numbers", () => {

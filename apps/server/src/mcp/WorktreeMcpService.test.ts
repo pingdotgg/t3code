@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -319,6 +320,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
           refreshStatus,
         } satisfies Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>),
         NodeServices.layer,
+        NodeCrypto.layer,
       ),
     ),
   );
@@ -348,13 +350,9 @@ const expectTypedFailure = (exit: Exit.Exit<unknown, unknown>, expected: object)
   expect(reason.error).toMatchObject(expected);
 };
 
-// Resolves the service once from the harness layer; used by tests that must
-// make several calls against the SAME instance (the in-flight guard lives in
-// the layer's closure, so a fresh layer per call would never see it).
+// Resolve once so calls share the in-flight guard.
 const resolveService = (harness: ReturnType<typeof makeHarness>) =>
-  Effect.gen(function* () {
-    return yield* WorktreeMcpService.WorktreeMcpService;
-  }).pipe(Effect.provide(harness.layer));
+  WorktreeMcpService.WorktreeMcpService.pipe(Effect.provide(harness.layer));
 
 const runHandoff = (
   harness: ReturnType<typeof makeHarness>,
@@ -371,7 +369,6 @@ const runStatus = (harness: ReturnType<typeof makeHarness>) =>
     return yield* service.status(harness.scope);
   }).pipe(Effect.provide(harness.layer));
 
-// Decodes tool arguments the way the MCP tool does before calling the service.
 const decodeHandoffInput = Schema.decodeUnknownEffect(WorktreeMcpHandoffInput);
 
 describe("t3_worktree_handoff", () => {
@@ -450,7 +447,7 @@ describe("t3_worktree_handoff", () => {
       Effect.provide(
         GitVcsDriver.layer.pipe(
           Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "handoff-remote-git-" })),
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
     ),

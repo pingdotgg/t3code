@@ -3,33 +3,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client/definition": {
-      "types": "./src/client/definition.ts",
-      "import": "./src/client/definition.ts"
-    },
-    "./server/BitbucketApi": {
-      "types": "./src/server/BitbucketApi.ts",
-      "import": "./src/server/BitbucketApi.ts"
-    },
-    "./server/BitbucketPullRequestApi": {
-      "types": "./src/server/BitbucketPullRequestApi.ts",
-      "import": "./src/server/BitbucketPullRequestApi.ts"
-    },
-    "./server/bitbucketPullRequestJson": {
-      "types": "./src/server/bitbucketPullRequestJson.ts",
-      "import": "./src/server/bitbucketPullRequestJson.ts"
-    },
-    "./server/BitbucketPullRequestProvider": {
-      "types": "./src/server/BitbucketPullRequestProvider.ts",
-      "import": "./src/server/BitbucketPullRequestProvider.ts"
-    },
-    "./server/bitbucketPullRequests": {
-      "types": "./src/server/bitbucketPullRequests.ts",
-      "import": "./src/server/bitbucketPullRequests.ts"
-    },
-    "./server/BitbucketSourceControlProvider": {
-      "types": "./src/server/BitbucketSourceControlProvider.ts",
-      "import": "./src/server/BitbucketSourceControlProvider.ts"
+    "./shared/definition": {
+      "types": "./src/shared/definition.ts",
+      "import": "./src/shared/definition.ts"
     },
     "./server/driver": {
       "types": "./src/server/driver.ts",
@@ -48,7 +24,9 @@
     "effect": "catalog:"
   },
   "devDependencies": {
+    "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@t3tools/source-control-testing": "workspace:*",
     "@types/node": "catalog:",
     "vite-plus": "catalog:"
   }

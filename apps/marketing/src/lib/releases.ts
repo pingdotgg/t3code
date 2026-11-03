@@ -4,9 +4,7 @@ export const RELEASES_URL = `https://github.com/${REPO}/releases`;
 export const NIGHTLY_RELEASES_URL = `${RELEASES_URL}?q=nightly&expanded=true`;
 
 const LATEST_API_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
-// The `latest` endpoint skips prereleases, so nightly needs the list. GitHub
-// returns it newest first and nightlies land several times a day, so the first
-// nightly tag in a small page is the current build.
+// GitHub's latest endpoint excludes prereleases; the newest nightly comes from the ordered release list.
 const LIST_API_URL = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
 
 export type ReleaseChannel = "stable" | "nightly";

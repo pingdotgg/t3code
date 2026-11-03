@@ -201,6 +201,27 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("asks Azure for the author's pull requests by creator", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(1, 1))));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "web",
+        state: "open",
+        involvement: "reviewing",
+        viewer: "bilal@acme.dev",
+        limit: 10,
+        author: "ana@acme.dev",
+      });
+
+      const args = argsOfCall(0);
+      assert.strictEqual(args[args.indexOf("--creator") + 1], "ana@acme.dev");
+      assert.strictEqual(args[args.indexOf("--reviewer") + 1], "bilal@acme.dev");
+    }),
+  );
+
   it.effect("advances by malformed raw rows and keeps reading until the page is full", () =>
     Effect.gen(function* () {
       mockedExecute

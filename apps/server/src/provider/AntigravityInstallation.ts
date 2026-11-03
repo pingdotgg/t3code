@@ -6,7 +6,7 @@ import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/s
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -151,7 +151,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const http = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serviceScope = yield* Effect.scope;
@@ -314,7 +314,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       return yield* installationError(
         "resolve",
         releaseAsset
-          ? "Antigravity is not installed. Install it in this environment or set a custom executable path."
+          ? "Antigravity ACP runtime is not installed. Install it in this environment's provider settings or set a custom ACP executable path. The Antigravity app, IDE, and CLI are separate installations."
           : `Google does not publish an Antigravity runtime for ${platform}-${arch}. Use a supported environment or a custom executable.`,
       );
     },
@@ -373,8 +373,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           profileDirectory,
           platform,
           baseEnv: environment,
-          // The profile is scoped, so it cleans up the unpack; a shallow
-          // root keeps it under Windows' path limit.
+          // A shallow scoped profile cleans up unpacked files within Windows' path limit.
           tempDirectory: profileDirectory,
         });
         const runtime = yield* makeAntigravityAcpRuntime({
@@ -390,9 +389,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
               ? ChildProcessSpawner.make(
                   Effect.fnUntraced(function* (command) {
                     const child = yield* spawner.spawn(command);
-                    // Stop PyInstaller's tree before ACP closes its pipes. Once
-                    // the launcher exits, taskkill cannot reach its children,
-                    // which keep the executable and unpacked DLLs locked.
+                    // Stop PyInstaller's tree before ACP closes pipes; after launcher exit, taskkill cannot reach children holding DLLs open.
                     yield* Scope.addFinalizer(
                       validationScope,
                       child.kill({ forceKillAfter: "1 second" }).pipe(Effect.orDie),
@@ -401,14 +398,12 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
                   }),
                 )
               : spawner,
-          clientInfo: { name: "t3-code", version: "0.0.0" },
         });
         const initialized = yield* runtime.initialize();
         if (
           initialized.agentInfo?.name !== "antigravity-acp" ||
           initialized.agentInfo.version !== expectedVersion ||
-          // Antigravity 1.1.1 can report 2 with the legacy ACP response shape.
-          // The ACP client chooses the session wire format from that shape.
+          // Antigravity 1.1.1 may report protocol 2 with legacy ACP; choose wire format from the response shape.
           (initialized.protocolVersion !== 1 && initialized.protocolVersion !== 2) ||
           initialized.agentCapabilities?.loadSession !== true ||
           !initialized.agentCapabilities.sessionCapabilities?.resume ||
@@ -424,7 +419,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(SecureRandom.SecureRandom, random),
       Effect.mapError((cause) => {
         if (isInstallationError(cause)) return cause;
         const detail =
@@ -464,7 +459,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             { flag: "wx", mode: 0o600 },
           );
           yield* fs.rename(pointerPath, activePath);
-          // The pointer commits the install. Later temp cleanup cannot undo it.
           yield* SubscriptionRef.update(
             state,
             (current) =>
@@ -531,9 +525,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         const response = yield* http
           .execute(HttpClientRequest.get(asset.url))
           .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
-        // dl.google.com gzips the zip when the client accepts it, so
-        // `content-length` is the encoded size. The decoded stream is still
-        // checked against the pinned byte count and hash below.
+        // dl.google.com may gzip the zip: content-length is encoded, while byte/hash checks use decoded data.
         const contentLength = response.headers["content-length"];
         const contentEncoding = response.headers["content-encoding"]?.trim().toLowerCase();
         const identityBody = contentEncoding === undefined || contentEncoding === "identity";
@@ -723,7 +715,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             `Google does not publish an Antigravity runtime for ${platform}-${arch}. Use a supported remote environment or a custom executable.`,
           );
         }
-        const operationId = yield* crypto.randomUUIDv4();
+        const operationId = yield* random.uuidV4();
         const next: ProviderInstallState = {
           driver: DRIVER,
           operationId,

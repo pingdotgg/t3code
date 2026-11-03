@@ -3,9 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   compressImageForStash,
   compressImageToByteLimit,
+  createComposerImageThumbnail,
+  inheritComposerImageThumbnail,
   MAX_COMPRESSIBLE_SOURCE_BYTES,
   MAX_STASH_IMAGE_DATA_URL_CHARS,
   prepareImageForAttachment,
+  readComposerImageThumbnail,
 } from "./imageCompression";
 
 import type { SnapShotSource } from "@t3tools/contracts";
@@ -240,6 +243,22 @@ describe("compressImageForStash", () => {
 
     expect(result).toEqual({ ok: false, reason: "too-large" });
     expect(bitmapSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("composer image thumbnails", () => {
+  it("gives the compressed file its source's thumbnail without decoding it again", async () => {
+    stubCanvasPipeline(() => 3);
+    const source = makeFile(3);
+    const compressed = makeFile(2, "image/webp");
+    const sourceThumbnail = await createComposerImageThumbnail(source);
+    expect(sourceThumbnail).toMatch(/^data:image\/png;base64,/);
+
+    inheritComposerImageThumbnail(source, compressed);
+
+    expect(readComposerImageThumbnail(compressed)).toBe(sourceThumbnail);
+    expect(await createComposerImageThumbnail(compressed)).toBe(sourceThumbnail);
+    expect(createImageBitmap).toHaveBeenCalledTimes(1);
   });
 });
 

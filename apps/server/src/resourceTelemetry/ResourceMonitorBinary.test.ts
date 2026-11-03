@@ -3,12 +3,12 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { afterEach, assert, describe, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
 import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
 
-// The override checks POSIX exec bits on a real file under a linux platform
-// mock; NTFS never reports those bits, so the check cannot be satisfied there.
+// NTFS lacks POSIX exec bits required by this Linux-mocked override check.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 describe("ResourceMonitorBinary", () => {
@@ -86,6 +86,51 @@ describe("ResourceMonitorBinary", () => {
       assert.instanceOf(error, ResourceMonitorBinary.ResourceMonitorBinaryNotExecutable);
       assert.equal(error.path, baseDir);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each(["release", "debug"])(
+    "resolves a cargo %s binary from the built server layout",
+    (profile) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-resource-monitor-binary-",
+        });
+        const projectDirectory = path.join(baseDir, "repo");
+        const distDirectory = path.join(projectDirectory, "apps", "server", "dist");
+        const binaryDirectory = path.join(
+          projectDirectory,
+          "native",
+          "resource-monitor",
+          "target",
+          profile,
+        );
+        const binaryPath = path.join(binaryDirectory, "t3-resource-monitor.exe");
+        yield* fileSystem.makeDirectory(distDirectory, { recursive: true });
+        yield* fileSystem.makeDirectory(binaryDirectory, { recursive: true });
+        yield* fileSystem.writeFileString(binaryPath, "binary");
+        yield* fileSystem.chmod(binaryPath, 0o755);
+
+        const service = yield* ResourceMonitorBinary.make().pipe(
+          // The bundled module lives in dist rather than src/resourceTelemetry.
+          Effect.provideService(Path.Path, {
+            ...path,
+            resolve: (...segments) =>
+              path.resolve(
+                ...segments.map((segment) =>
+                  segment === import.meta.dirname ? distDirectory : segment,
+                ),
+              ),
+          }),
+          Effect.provide(ServerConfig.layerTest(projectDirectory, baseDir)),
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(HostProcess.Architecture, "arm64"),
+          Effect.provideService(HostProcess.Environment, {}),
+        );
+
+        assert.equal(yield* service.resolve, binaryPath);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects bundled glibc binaries on musl Linux hosts", () =>

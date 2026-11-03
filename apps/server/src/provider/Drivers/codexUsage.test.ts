@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { totalTokens } from "@t3tools/provider-core/server/usage";
 
 import { codexUsageFormat, initialCodexScanState, parseCodexLine } from "./codexUsage.ts";
 
@@ -182,6 +183,123 @@ describe("parseCodexLine", () => {
     }
   });
 
+  it.each(["continuation", "fork", "subagent"])(
+    "bills only the latest request when a %s has no initial counter baseline",
+    (source) => {
+      const state = initialCodexScanState();
+      parseCodexLine(
+        JSON.stringify({
+          type: "session_meta",
+          timestamp: "2026-08-01T05:17:41.000Z",
+          payload: {
+            id: "child",
+            model_provider: "openai",
+            ...(source === "fork" ? { forked_from_id: "parent" } : {}),
+            ...(source === "subagent"
+              ? { source: { subagent: { thread_spawn: { parent_thread_id: "parent" } } } }
+              : { source: "vscode" }),
+          },
+        }),
+        state,
+      );
+      parseCodexLine(turnContext, state);
+      const request = {
+        ...counters(100, 20),
+        cached_input_tokens: 30,
+        cache_write_input_tokens: 10,
+        reasoning_output_tokens: 5,
+      };
+      const cumulative = {
+        ...counters(500, 60),
+        cached_input_tokens: 200,
+        cache_write_input_tokens: 20,
+        reasoning_output_tokens: 15,
+      };
+      const first = counted(request, cumulative);
+      expect(parseCodexLine(first, state)).toMatchObject({
+        sessionId: "child",
+        totals: {
+          uncachedInputTokens: 60,
+          cachedInputTokens: 30,
+          cacheCreationTokens: 10,
+          outputTokens: 20,
+          reasoningTokens: 5,
+        },
+      });
+      expect(parseCodexLine(first, state)).toBeNull();
+      expect(parseCodexLine(counted(counters(10, 2), cumulative), state)).toBeNull();
+      expect(
+        parseCodexLine(
+          counted(counters(10, 2), {
+            ...cumulative,
+            input_tokens: 510,
+            output_tokens: 62,
+            total_tokens: 572,
+          }),
+          state,
+        )?.totals.outputTokens,
+      ).toBe(2);
+      expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+    },
+  );
+
+  it.each([
+    {
+      ...counters(90, 40),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 10,
+    },
+    {
+      ...counters(200, 10),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 5,
+    },
+    {
+      ...counters(200, 40),
+      cached_input_tokens: 20,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 10,
+    },
+    {
+      ...counters(200, 40),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 5,
+      reasoning_output_tokens: 10,
+    },
+    {
+      ...counters(200, 40),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 3,
+    },
+    {
+      ...counters(110, 40),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 10,
+    },
+    {
+      ...counters(200, 30),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 20,
+    },
+  ])("rejects an initial snapshot with an impossible inherited baseline: %j", (cumulative) => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const request = {
+      ...counters(100, 20),
+      cached_input_tokens: 30,
+      cache_write_input_tokens: 10,
+      reasoning_output_tokens: 5,
+    };
+    expect(parseCodexLine(counted(request, cumulative), state)).toBeNull();
+    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(1);
+    expect(state.lastCumulativeUsage).toEqual(cumulative);
+  });
+
   it.each(["request", "cumulative"])("skips malformed %s counters and recovers", (malformed) => {
     const state = initialCodexScanState();
     parseCodexLine(turnContext, state);
@@ -256,6 +374,106 @@ describe("parseCodexLine", () => {
     expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
   });
 
+  it("ignores a replay of the current sequence's first request without rewinding the baseline", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const request = counters(100, 20);
+    const processed = [
+      counted(request, request),
+      counted(request, counters(200, 40)),
+      counted(request, request),
+      counted(request, counters(300, 60)),
+    ].map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({
+      processed,
+      skipped: codexUsageFormat.readMalformedRecords?.(state),
+    }).toEqual({ processed: [120, 120, 0, 120], skipped: 0 });
+  });
+
+  it("bills a genuine restart with the same counters at a new timestamp", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const request = counters(100, 20);
+    const lines = [
+      counted(request, request),
+      counted(request, counters(200, 40)),
+      counted(request, request).replace("05:17:49.919Z", "05:18:49.919Z"),
+      counted(counters(30, 5), counters(130, 25)),
+    ];
+    const processed = lines.map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+    expect({ processed, skipped: codexUsageFormat.readMalformedRecords?.(state) }).toEqual({
+      processed: [120, 120, 120, 35],
+      skipped: 0,
+    });
+  });
+
+  it.each([
+    {
+      reset: true,
+      markerTotal: counters(0, 0),
+      nextTotal: counters(130, 25),
+      processed: [120, 120, 0, 120, 35],
+    },
+    {
+      reset: false,
+      markerTotal: counters(200, 40),
+      nextTotal: counters(230, 45),
+      processed: [120, 120, 0, 0, 35],
+    },
+  ])(
+    "bills a request equal to the old sequence start only after a context marker reset the counters (reset: $reset)",
+    ({ markerTotal, nextTotal, processed }) => {
+      const state = initialCodexScanState();
+      parseCodexLine(turnContext, state);
+      const request = counters(100, 20);
+      const marker = counted({ ...counters(0, 0), total_tokens: 26387 }, markerTotal, {
+        model_context_window: 475000,
+      });
+      const billed = [
+        counted(request, request),
+        counted(request, counters(200, 40)),
+        marker,
+        counted(request, request),
+        counted(counters(30, 5), nextTotal),
+      ].map((line) => {
+        const record = parseCodexLine(line, state);
+        return record === null ? 0 : totalTokens(record.totals);
+      });
+
+      expect({
+        processed: billed,
+        skipped: codexUsageFormat.readMalformedRecords?.(state),
+      }).toEqual({ processed, skipped: 0 });
+    },
+  );
+
+  it("forgets the old sequence start when a malformed pair zeroes the cumulative baseline", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const request = counters(100, 20);
+    const processed = [
+      counted(request, request),
+      counted(counters(30, 5), counters(0, 0)),
+      counted(request, request),
+      counted(counters(30, 5), counters(130, 25)),
+    ].map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({
+      processed,
+      skipped: codexUsageFormat.readMalformedRecords?.(state),
+    }).toEqual({ processed: [120, 0, 120, 35], skipped: 1 });
+  });
+
   it("retains initial tier evidence only for the own OpenAI session and exact context until native settings arrive", () => {
     const meta = (id: string, model_provider?: string) =>
       JSON.stringify({ type: "session_meta", payload: { id, model_provider } });
@@ -327,7 +545,7 @@ describe("parseCodexLine", () => {
 
   // A forked/subagent rollout opens with the parent's history copied in and
   // every line re-stamped to the fork instant, then the ancestors' session
-  // metas. Counting those again multiplied usage ~1.85x on real data (#5758).
+  // metas. Counting those again multiplied usage ~1.85x on real data.
   describe("forked rollouts", () => {
     const meta = (overrides: {
       id: string;
@@ -417,6 +635,34 @@ describe("parseCodexLine", () => {
         state,
       );
       expect(record).not.toBeNull();
+    });
+
+    it("forgets the old sequence start when a copied zero baseline rebases the counters", () => {
+      const state = initialCodexScanState();
+      const forkInstant = "2026-08-01T05:00:00.000Z";
+      const request = counters(100, 20);
+      const billed = (line: string) => {
+        const record = parseCodexLine(line, state);
+        return record === null ? 0 : totalTokens(record.totals);
+      };
+      parseCodexLine(stamped("2026-08-01T04:59:00.000Z", turnContext), state);
+      const first = billed(stamped("2026-08-01T04:59:01.000Z", counted(request, request)));
+      parseCodexLine(meta({ id: "child", timestamp: forkInstant, forkedFromId: "parent" }), state);
+      const copied = billed(
+        stamped(
+          "2026-08-01T05:00:00.001Z",
+          counted({ ...counters(0, 0), total_tokens: 26387 }, counters(0, 0)),
+        ),
+      );
+      const afterBurst = billed(stamped("2026-08-01T05:00:06.000Z", counted(request, request)));
+      const next = billed(
+        stamped("2026-08-01T05:00:06.100Z", counted(counters(30, 5), counters(130, 25))),
+      );
+
+      expect({
+        processed: [first, copied, afterBurst, next],
+        skipped: codexUsageFormat.readMalformedRecords?.(state),
+      }).toEqual({ processed: [120, 0, 120, 35], skipped: 0 });
     });
   });
 });

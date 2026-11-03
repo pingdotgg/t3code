@@ -80,13 +80,7 @@ const codexModelSelection = {
   model: "gpt-5.4",
 };
 
-/**
- * Slot 41 carries a site-local `ThreadSummaryTimeline` migration, matching
- * production databases where local builds recorded extra names under the shared
- * id sequence. The V2 runner only applies migrations past the recorded maximum
- * id, so the cutover in this test applies 050, 051 and 052 on top of the
- * untouched copy — the same path the real upgrade takes.
- */
+/** Slot 41 models site-local migrations sharing production ids; the V2 runner applies only ids above the recorded maximum. */
 const seedV1Database = (fixturePath: string, workspace: string) =>
   Effect.scoped(
     Effect.gen(function* () {
