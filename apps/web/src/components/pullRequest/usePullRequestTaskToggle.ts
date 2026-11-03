@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { setMarkdownTaskChecked } from "../files/filePreviewMode";
 
@@ -13,6 +13,8 @@ export function usePullRequestTaskToggle(
   const [pending, setPending] = useState<{ readonly base: string; readonly body: string } | null>(
     null,
   );
+  // Each save sends the whole body, so saves run in click order or an older body could land last.
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
   const text = pending !== null && pending.base === body ? pending.body : body;
   if (save === null) return { text, onTaskListChange: undefined };
   return {
@@ -21,9 +23,11 @@ export function usePullRequestTaskToggle(
       const next = setMarkdownTaskChecked(text, markerOffset, checked);
       if (next === text) return;
       setPending({ base: body, body: next });
-      void save(next).then((saved) => {
-        if (!saved) setPending(null);
-      });
+      queue.current = queue.current.then(() =>
+        save(next).then((saved) => {
+          if (!saved) setPending(null);
+        }),
+      );
     },
   };
 }
