@@ -23,7 +23,8 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { cn } from "../../lib/cn";
 import { useQuietThreadStructure, useThreadVisibleTurnItems } from "../../state/use-thread-detail";
-import { useThreadCwd } from "../../state/use-selected-thread-worktree";
+import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useThreadSelection } from "../../state/use-thread-selection";
 
 export type ThreadActivityRouteParams = {
   readonly environmentId: string;
@@ -172,22 +173,21 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
   const isAndroid = Platform.OS === "android";
   const insets = useSafeAreaInsets();
   const params = props.route.params;
+  const { selectedThreadProject } = useThreadSelection();
+  const { selectedThreadCwd } = useSelectedThreadWorktree();
   // The route's own thread, so a deep link shows the thread in its URL, not the selected one.
-  const threadRef = scopeThreadRef(
-    EnvironmentId.make(params.environmentId),
-    ThreadId.make(params.threadId),
-  );
   const visibleItems = useThreadVisibleTurnItems({
-    environmentId: threadRef.environmentId,
-    threadId: threadRef.threadId,
+    environmentId: EnvironmentId.make(params.environmentId),
+    threadId: ThreadId.make(params.threadId),
   });
-  const structure = useQuietThreadStructure(threadRef);
-  const threadCwd = useThreadCwd(threadRef);
+  const structure = useQuietThreadStructure(
+    scopeThreadRef(EnvironmentId.make(params.environmentId), ThreadId.make(params.threadId)),
+  );
   const runActive =
     structure !== null && threadRuntimeIsActive(deriveThreadStructureRuntime(structure.projection));
   const summary = deriveActivitySummary(
     visibleItems.map((visible) => visible.item).filter(isActivityItem),
-    threadCwd,
+    selectedThreadCwd ?? selectedThreadProject?.workspaceRoot ?? null,
     runActive,
   );
 
