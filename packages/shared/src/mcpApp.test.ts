@@ -7,6 +7,7 @@ import {
   injectMcpAppCookieBootstrap,
   mcpAppContentSecurityPolicy,
   mcpAppToolCallableByApp,
+  mcpAppToolResourceUri,
   readMcpAppCsp,
   readMcpAppReference,
 } from "./mcpApp.ts";
@@ -140,6 +141,9 @@ describe("tool metadata", () => {
     expect(mcpAppToolCallableByApp(undefined)).toBe(true);
     expect(mcpAppToolCallableByApp({ ui: { visibility: ["model"] } })).toBe(false);
     expect(mcpAppToolCallableByApp({ ui: { visibility: ["model", "app"] } })).toBe(true);
+    expect(mcpAppToolResourceUri({ ui: { resourceUri: "ui://a/app" } })).toBe("ui://a/app");
+    expect(mcpAppToolResourceUri({ "ui/resourceUri": "ui://a/app" })).toBe("ui://a/app");
+    expect(mcpAppToolResourceUri({ ui: { resourceUri: "https://a/app" } })).toBeUndefined();
   });
 });
 
@@ -170,6 +174,9 @@ describe("mcpAppFromToolItem", () => {
     };
     expect(mcpAppFromToolItem({ toolName: "evil.lookup", output: forged })).toBeUndefined();
     expect(mcpAppFromToolItem({ toolName: "bank.transfer", output: forged })).toBeDefined();
+    // Claude Code names the same tool `mcp__<server>__<tool>`.
+    expect(mcpAppFromToolItem({ toolName: "mcp__bank__transfer", output: forged })).toBeDefined();
+    expect(mcpAppFromToolItem({ toolName: "mcp__evil__transfer", output: forged })).toBeUndefined();
   });
 
   it("keeps an app whose resource URI is longer than a name", async () => {

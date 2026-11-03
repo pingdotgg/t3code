@@ -41,6 +41,7 @@ import {
   getSessionMessages,
   getSubagentMessages,
   type HookCallback,
+  type McpServerStatus as ClaudeMcpServerStatus,
   query,
   resolveSettings as resolveClaudeSettings,
   type Options as ClaudeQueryOptions,
@@ -67,6 +68,11 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import {
+  claudeMcpToolName,
+  MCP_APP_OUTPUT_KEY,
+  mcpAppToolResourceUri,
+} from "@t3tools/shared/mcpApp";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
@@ -118,6 +124,7 @@ import {
 
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
+import * as Predicate from "effect/Predicate";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -140,6 +147,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import {
   planClaudeSkillDispatch,
@@ -540,6 +548,22 @@ export interface ClaudeAgentSdkQuerySession {
   readonly backgroundTasks: (
     toolUseId: string,
   ) => Effect.Effect<boolean, ClaudeAgentSdkQueryRunnerError>;
+  readonly mcpServerStatus: Effect.Effect<
+    ReadonlyArray<ClaudeMcpServerStatus>,
+    ClaudeAgentSdkQueryRunnerError
+  >;
+  readonly readMcpResource: (input: {
+    readonly server: string;
+    readonly uri: string;
+  }) => Effect.Effect<
+    { readonly contents: ReadonlyArray<unknown> },
+    ClaudeAgentSdkQueryRunnerError
+  >;
+  /** Runs an MCP tool without a model turn and returns the server's raw `CallToolResult`. */
+  readonly callMcpTool: (input: {
+    readonly tool: string;
+    readonly arguments: Record<string, unknown>;
+  }) => Effect.Effect<unknown, ClaudeAgentSdkQueryRunnerError>;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
@@ -667,6 +691,96 @@ function closeClaudeQuery(queryRuntime: ClaudeQuery) {
     try: () => queryRuntime.close(),
     catch: (cause) => queryRunnerError(cause, "close"),
   });
+}
+
+// SDK 0.3.316 types `mcp_call` but has no Query method for it; its own readMcpResource sends control requests this way.
+async function sendClaudeMcpCall(
+  queryRuntime: ClaudeQuery,
+  call: { readonly tool: string; readonly arguments: Record<string, unknown> },
+): Promise<unknown> {
+  const request: unknown = Reflect.get(queryRuntime, "request");
+  if (typeof request !== "function") {
+    throw new Error("This Claude Agent SDK cannot call MCP tools directly.");
+  }
+  const reply: unknown = await Reflect.apply(request, queryRuntime, [
+    {
+      subtype: "mcp_call",
+      tool: call.tool,
+      arguments: call.arguments,
+      result_not_for_model: true,
+    },
+  ]);
+  return Predicate.isObject(reply) ? reply.response : undefined;
+}
+
+// Without these, tools carry no `_meta.ui` and a model-shaped result would reach the app.
+const CLAUDE_MCP_APP_CAPABILITIES = [
+  "mcp_tool_ui_meta_v1",
+  "mcp_read_resource_v1",
+  "mcp_call_result_not_for_model_v1",
+] as const;
+// A hung MCP resource read must not stall the session's message stream.
+const CLAUDE_MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
+
+function claudeSupportsMcpApps(capabilities: ReadonlySet<string>): boolean {
+  return CLAUDE_MCP_APP_CAPABILITIES.every((capability) => capabilities.has(capability));
+}
+
+function findClaudeMcpTool(
+  statuses: ReadonlyArray<ClaudeMcpServerStatus>,
+  toolName: string,
+):
+  | { readonly server: string; readonly tool: NonNullable<ClaudeMcpServerStatus["tools"]>[number] }
+  | undefined {
+  for (const status of statuses) {
+    if (status.status !== "connected") continue;
+    const tool = status.tools?.find(
+      (candidate) => claudeMcpToolName(status.name, candidate.name) === toolName,
+    );
+    if (tool !== undefined) return { server: status.name, tool };
+  }
+  return undefined;
+}
+
+/** Claude reports `annotations` as `readOnly`/`destructive`/`openWorld`; apps expect MCP's `*Hint` names. */
+function claudeMcpToolForApps(
+  tool: NonNullable<ClaudeMcpServerStatus["tools"]>[number],
+): ProviderAdapter.ProviderAdapterV2McpTool {
+  const annotations = tool.annotations ?? {};
+  return {
+    name: tool.name,
+    ...(tool._meta === undefined ? {} : { _meta: tool._meta }),
+    annotations: {
+      ...(annotations.readOnly === undefined ? {} : { readOnlyHint: annotations.readOnly }),
+      ...(annotations.destructive === undefined
+        ? {}
+        : { destructiveHint: annotations.destructive }),
+      ...(annotations.openWorld === undefined ? {} : { openWorldHint: annotations.openWorld }),
+    },
+  };
+}
+
+/** A model-turn MCP `tool_use_result` is `{content, structuredContent?, _meta?}` with `content` flattened to text. */
+function claudeMcpCallToolResult(
+  output: ClaudeNativeToolOutput,
+  isError: boolean,
+): ProviderAdapter.ProviderAdapterV2McpCallToolResult {
+  const value = claudeNativeToolOutputValue(output);
+  const record = Predicate.isObject(value) && !Array.isArray(value) ? value : undefined;
+  const content = record === undefined ? value : record.content;
+  return {
+    content:
+      typeof content === "string"
+        ? [{ type: "text", text: content }]
+        : Array.isArray(content)
+          ? content
+          : [],
+    ...(record?.structuredContent === undefined
+      ? {}
+      : { structuredContent: record.structuredContent }),
+    ...(isError ? { isError: true } : {}),
+    ...(record?._meta === undefined ? {} : { _meta: record._meta }),
+  };
 }
 
 // Iterate Query itself: the raw generator's return() queues behind a pending CLI read and deadlocks interruption.
@@ -1237,6 +1351,20 @@ export const layerQueryRunner: Layer.Layer<
                   }),
                 ),
               ),
+            mcpServerStatus: Effect.tryPromise({
+              try: () => queryRuntime.mcpServerStatus(),
+              catch: (cause) => queryRunnerError(cause, "mcpServerStatus"),
+            }),
+            readMcpResource: ({ server, uri }) =>
+              Effect.tryPromise({
+                try: () => queryRuntime.readMcpResource(server, uri),
+                catch: (cause) => queryRunnerError(cause, "readMcpResource"),
+              }),
+            callMcpTool: (call) =>
+              Effect.tryPromise({
+                try: () => sendClaudeMcpCall(queryRuntime, call),
+                catch: (cause) => queryRunnerError(cause, "callMcpTool"),
+              }),
             interrupt: Effect.tryPromise({
               try: () => queryRuntime.interrupt(),
               catch: (cause) => queryRunnerError(cause, "interrupt"),
@@ -4132,6 +4260,8 @@ interface ClaudeLiveQueryContext {
   // The CLI may fall back from the requested mode on its first init frame.
   openedPermissionMode: PermissionMode;
   receivedInit: boolean;
+  // From system/init; feature-detects control requests such as MCP Apps.
+  capabilities: ReadonlySet<string>;
   permissionMode: PermissionMode;
   stopping: boolean;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
@@ -7034,6 +7164,85 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             registry: target.toolCalls,
           });
 
+        const mcpAppError = (detail: string) => (cause: unknown) =>
+          new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: CLAUDE_PROVIDER,
+            detail,
+            cause,
+          });
+
+        // App requests never start a CLI; they reuse the live process that ran the tool.
+        const mcpAppQuery = Effect.fn("ClaudeAdapterV2.mcpAppQuery")(function* (
+          providerThread: OrchestrationV2ProviderThread,
+        ) {
+          const liveQuery = yield* Ref.get(queryContext);
+          if (
+            liveQuery === null ||
+            liveQuery.stopping ||
+            liveQuery.nativeThreadId !== providerThread.nativeThreadRef?.nativeId ||
+            !claudeSupportsMcpApps(liveQuery.capabilities)
+          ) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: CLAUDE_PROVIDER,
+              detail: "No running Claude process with MCP Apps support owns this thread.",
+            });
+          }
+          return liveQuery;
+        });
+
+        /** Reads an app tool's `ui://` document into an attachment; a plain tool row is the fallback. */
+        const captureClaudeMcpApp = Effect.fn("ClaudeAdapterV2.captureMcpApp")(
+          function* (input: {
+            readonly liveQuery: ClaudeLiveQueryContext;
+            readonly toolCall: ActiveClaudeToolCall;
+            readonly output: ClaudeNativeToolOutput;
+          }) {
+            const { liveQuery, toolCall } = input;
+            if (
+              !toolCall.toolName.startsWith("mcp__") ||
+              toolCall.toolName.startsWith("mcp__t3-code__") ||
+              !claudeSupportsMcpApps(liveQuery.capabilities)
+            ) {
+              return undefined;
+            }
+            const match = findClaudeMcpTool(
+              yield* liveQuery.query.mcpServerStatus,
+              toolCall.toolName,
+            );
+            const resourceUri = mcpAppToolResourceUri(match?.tool._meta);
+            if (match === undefined || resourceUri === undefined) return undefined;
+            const { contents } = yield* liveQuery.query.readMcpResource({
+              server: match.server,
+              uri: resourceUri,
+            });
+            const reference = yield* snapshotMcpApp({
+              attachmentsDir,
+              threadId: toolCall.threadId,
+              server: match.server,
+              tool: match.tool.name,
+              resourceUri,
+              contents,
+            }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
+            if (reference === undefined) return undefined;
+            return {
+              type: "structured_tool_use_result",
+              value: {
+                [MCP_APP_OUTPUT_KEY]: reference,
+                result: claudeMcpCallToolResult(input.output, false),
+              },
+            } satisfies ClaudeNativeToolOutput;
+          },
+          Effect.timeout(CLAUDE_MCP_APP_CAPTURE_TIMEOUT),
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning("Failed to capture an MCP app; showing a plain tool row.", {
+                cause,
+              }).pipe(Effect.as(undefined)),
+          ),
+          Effect.orDie,
+        );
+
         const settleToolCall = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext | null;
           readonly toolCall: ActiveClaudeToolCall;
@@ -9241,13 +9450,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 toolInput: EMPTY_CLAUDE_NATIVE_TOOL_INPUT,
                 parentToolUseId,
               }));
+            const appOutput =
+              parentToolUseId === null &&
+              toolCall.runId !== null &&
+              !isClaudeToolResultError(toolResult)
+                ? yield* captureClaudeMcpApp({ liveQuery, toolCall, output })
+                : undefined;
             yield* settleToolCall({
               context,
               toolCall,
               registry: toolCallsFor(context, toolCall),
               message,
               toolResult,
-              output,
+              output: appOutput ?? output,
               completedAt: yield* DateTime.now,
             });
             // Subagents write to the session's shared task store, so their
@@ -10434,6 +10649,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
             receivedInit: false,
+            capabilities: new Set(),
             permissionMode: queryOptions.permissionMode,
             stopping: false,
             subagentsFromEarlierProcesses: new Set(
@@ -10462,6 +10678,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.openedPermissionMode =
                       message.permissionMode ?? context.openedPermissionMode;
                     context.receivedInit = true;
+                    context.capabilities = new Set(message.capabilities ?? []);
                   }
                   if (
                     message.type === "system" &&
@@ -11293,6 +11510,44 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message: { ...turnInput.message, text: "/compact" },
             }),
           steerTurn,
+          mcpApps: {
+            listTools: Effect.fn("ClaudeAdapterV2.listMcpTools")(function* ({
+              providerThread,
+              server,
+            }) {
+              const liveQuery = yield* mcpAppQuery(providerThread);
+              const status = (yield* liveQuery.query.mcpServerStatus.pipe(
+                Effect.mapError(mcpAppError("Failed to list Claude MCP tools.")),
+              )).find((candidate) => candidate.name === server);
+              return (status?.tools ?? []).map(claudeMcpToolForApps);
+            }),
+            callTool: Effect.fn("ClaudeAdapterV2.callMcpTool")(function* (call) {
+              const liveQuery = yield* mcpAppQuery(call.providerThread);
+              const result = yield* liveQuery.query
+                .callMcpTool({
+                  tool: claudeMcpToolName(call.server, call.tool),
+                  arguments: call.arguments,
+                })
+                .pipe(Effect.mapError(mcpAppError("Claude MCP tool call failed.")));
+              return {
+                content:
+                  Predicate.isObject(result) && Array.isArray(result.content) ? result.content : [],
+                ...(Predicate.isObject(result) && result.structuredContent !== undefined
+                  ? { structuredContent: result.structuredContent }
+                  : {}),
+                ...(Predicate.isObject(result) && result.isError === true ? { isError: true } : {}),
+                ...(Predicate.isObject(result) && result._meta !== undefined
+                  ? { _meta: result._meta }
+                  : {}),
+              };
+            }),
+            readResource: Effect.fn("ClaudeAdapterV2.readMcpResource")(function* (read) {
+              const liveQuery = yield* mcpAppQuery(read.providerThread);
+              return yield* liveQuery.query
+                .readMcpResource({ server: read.server, uri: read.uri })
+                .pipe(Effect.mapError(mcpAppError("Claude MCP resource read failed.")));
+            }),
+          },
           stopTask: Effect.fn("ClaudeAdapterV2.stopTask")(function* ({ providerThread, taskId }) {
             const liveQuery = yield* Ref.get(queryContext);
             const task = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);

@@ -131,6 +131,24 @@ export function mcpAppReferencesEqual(left: McpAppReference, right: McpAppRefere
   );
 }
 
+/** Reads a tool's `_meta.ui.resourceUri`, or the deprecated flat `ui/resourceUri`. */
+export function mcpAppToolResourceUri(meta: unknown): string | undefined {
+  if (!Predicate.isObject(meta)) return undefined;
+  const uri = Predicate.isObject(meta.ui) ? meta.ui.resourceUri : meta["ui/resourceUri"];
+  return typeof uri === "string" &&
+    uri.length <= MAX_RESOURCE_URI_LENGTH &&
+    uri.startsWith(MCP_APP_RESOURCE_SCHEME)
+    ? uri
+    : undefined;
+}
+
+const claudeMcpNamePart = (name: string) => name.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+/** Claude Code names MCP tools `mcp__<server>__<tool>`, replacing characters outside `[a-zA-Z0-9_-]`. */
+export function claudeMcpToolName(server: string, tool: string): string {
+  return `mcp__${claudeMcpNamePart(server)}__${claudeMcpNamePart(tool)}`;
+}
+
 export function mcpAppToolCallableByApp(meta: unknown): boolean {
   const visibility =
     Predicate.isObject(meta) && Predicate.isObject(meta.ui) ? meta.ui.visibility : undefined;
