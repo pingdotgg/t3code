@@ -5,9 +5,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
-const { refresh, assetUrlState } = vi.hoisted(() => ({
+const { refresh, assetUrlState, pdfOpens } = vi.hoisted(() => ({
   refresh: vi.fn<() => Promise<string | null>>(),
   assetUrlState: vi.fn<() => import("~/assets/assetUrls").AssetUrlState>(),
+  pdfOpens: [] as Array<(task: import("pdfjs-dist").PDFDocumentLoadingTask) => void>,
 }));
 
 vi.mock(import("~/assets/assetUrls"), async (original) => ({
@@ -15,6 +16,18 @@ vi.mock(import("~/assets/assetUrls"), async (original) => ({
   useAssetUrlRefresh: () => refresh,
   useAssetUrlState: assetUrlState,
 }));
+// Lets PDF tests await the document pdf.js opens next; see workspacePdfPreview.
+vi.mock(import("./pdfDocument"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    openPdf: (bytes) => {
+      const task = actual.openPdf(bytes);
+      pdfOpens.shift()?.(task);
+      return task;
+    },
+  };
+});
 // The real source view highlights through a worker pool; the text it receives is what matters here.
 // Never load the original: its highlighter graph can outlast waitFor on a cold CI browser.
 vi.mock(import("./ReadOnlySourcePreview"), () => ({
@@ -55,6 +68,8 @@ import BinaryViewer from "./BinaryViewer";
 import { decodeImagePreview } from "./decodeImagePreview";
 import type { BinaryWorkerResult } from "./binaryPreviewProtocol";
 import type { TextPreviewResult } from "./largeTextProtocol";
+import type { PDFDocumentLoadingTask } from "pdfjs-dist";
+import type { ReactElement } from "react";
 
 // Real worker imports and WASM initialization can exceed waitFor's default second
 // when the full browser project runs concurrently on CI.
@@ -2446,6 +2461,7 @@ function planningPdf(
 
 async function workspacePdfPreview() {
   assetUrlState.mockReset();
+  pdfOpens.length = 0;
   const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
   const native = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(false);
   const urls = (() => {
@@ -2489,9 +2505,25 @@ async function workspacePdfPreview() {
       </div>
     );
   };
+  // A load can outlast expect.element's 1 s poll on a busy runner, so wait for pdf.js itself:
+  // the document and the page sizes the viewer reads before it shows the page count.
+  const nextDocument = () =>
+    new Promise<PDFDocumentLoadingTask>((resolve) => pdfOpens.push(resolve)).then(async (task) => {
+      const document = await task.promise;
+      await Promise.all(
+        Array.from({ length: document.numPages }, (_, index) => document.getPage(index + 1)),
+      );
+    });
+  const reload = async (screen: Screen, element: ReactElement) => {
+    const opened = nextDocument();
+    await screen.rerender(element);
+    await opened;
+  };
   return {
     preview,
     urls,
+    nextDocument,
+    reload,
     [Symbol.dispose]() {
       native.mockRestore();
       urls[Symbol.dispose]();
@@ -2519,8 +2551,10 @@ function pdfScroll(screen: Screen) {
 
 it("keeps workspace PDF scroll and zoom after reloads", async () => {
   using fixture = await workspacePdfPreview();
-  const { preview, urls } = fixture;
+  const { preview, urls, nextDocument, reload } = fixture;
+  const opened = nextDocument();
   await using screen = await render(preview(urls.original, "one"));
+  await opened;
   await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
   using workers = vi.spyOn(window, "Worker");
   await screen.getByRole("button", { name: "Next page", exact: true }).click();
@@ -2539,7 +2573,7 @@ it("keeps workspace PDF scroll and zoom after reloads", async () => {
     expect(region().scrollLeft).toBe(80);
   });
   const savedOffset = offset(3);
-  await screen.rerender(preview(urls.updated, "two"));
+  await reload(screen, preview(urls.updated, "two"));
   await expect.element(screen.getByText("3 / 3 pages", { exact: true })).toBeVisible();
   await vi.waitFor(() => {
     expect(screen.container.querySelector('[role="region"]')?.textContent).toContain(
@@ -2554,7 +2588,7 @@ it("keeps workspace PDF scroll and zoom after reloads", async () => {
   await screen.getByRole("button", { name: "Fit width", exact: true }).click();
   await scrollTo({ top: region().scrollTop + 30 });
   const fitOffset = offset(2);
-  await screen.rerender(preview(urls.original, "fit-width"));
+  await reload(screen, preview(urls.original, "fit-width"));
   await expect.element(screen.getByText("2 / 3 pages", { exact: true })).toBeVisible();
   await vi.waitFor(() => {
     expect(screen.container.textContent).toContain("Fit width");
@@ -2565,12 +2599,12 @@ it("keeps workspace PDF scroll and zoom after reloads", async () => {
   await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"));
   await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
   const firstPageZoom = screen.container.textContent!.match(/\d+%/)![0];
-  await screen.rerender(preview(urls.original, "first-page"));
+  await reload(screen, preview(urls.original, "first-page"));
   await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
   await vi.waitFor(() => expect(screen.container.textContent).toContain(firstPageZoom));
   await screen.getByRole("button", { name: "Next page", exact: true }).click();
   await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
-  await screen.rerender(preview(urls.original, "one", "/repo/another.pdf"));
+  await reload(screen, preview(urls.original, "one", "/repo/another.pdf"));
   await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
   await vi.waitFor(() => {
     expect(screen.container.textContent).toContain("Fit width");
@@ -2582,8 +2616,10 @@ it("keeps workspace PDF scroll and zoom after reloads", async () => {
 
 it("clamps workspace PDF scroll when pages shrink or disappear", async () => {
   using fixture = await workspacePdfPreview();
-  const { preview, urls } = fixture;
+  const { preview, urls, nextDocument, reload } = fixture;
+  const opened = nextDocument();
   await using screen = await render(preview(urls.original, "one"));
+  await opened;
   await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
   await screen.getByRole("button", { name: "Next page", exact: true }).click();
   await expect.element(screen.getByText("2 / 3 pages", { exact: true })).toBeVisible();
@@ -2595,7 +2631,7 @@ it("clamps workspace PDF scroll when pages shrink or disappear", async () => {
   const secondPageTop = region().scrollTop;
   await scrollTo({ top: secondPageTop + 600, left: 80 });
   await vi.waitFor(() => expect(region().scrollTop).toBeCloseTo(secondPageTop + 600, 0));
-  await screen.rerender(preview(urls.shrunk, "smaller-page"));
+  await reload(screen, preview(urls.shrunk, "smaller-page"));
   await expect.element(screen.getByText("2 / 3 pages", { exact: true })).toBeVisible();
   await vi.waitFor(() => {
     expect(screen.container.textContent).toContain(zoom);
@@ -2603,16 +2639,16 @@ it("clamps workspace PDF scroll when pages shrink or disappear", async () => {
     expect(offset(2)).toBeGreaterThan(0);
     expect(offset(2)).toBeLessThan(canvas(2).getBoundingClientRect().height);
   });
-  await screen.rerender(preview(urls.shorter, "three"));
+  await reload(screen, preview(urls.shorter, "three"));
   await expect.element(screen.getByText("2 / 2 pages", { exact: true })).toBeVisible();
   await vi.waitFor(() => {
     expect(screen.container.querySelector('[role="region"]')?.textContent).toContain(
       "Updated milestones",
     );
   });
-  await screen.rerender(preview(urls.single, "four"));
+  await reload(screen, preview(urls.single, "four"));
   await expect.element(screen.getByText("1 / 1 pages", { exact: true })).toBeVisible();
-  await screen.rerender(preview(urls.original, "five"));
+  await reload(screen, preview(urls.original, "five"));
   await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
 });
 
