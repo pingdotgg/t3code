@@ -23,6 +23,7 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { cn } from "../../lib/cn";
+import { useEnvironmentThread } from "../../state/threads";
 import { useQuietThreadStructure, useThreadVisibleTurnItems } from "../../state/use-thread-detail";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -195,6 +196,9 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
   const structure = useQuietThreadStructure(
     scopeThreadRef(EnvironmentId.make(params.environmentId), ThreadId.make(params.threadId)),
   );
+  const threadDeleted =
+    useEnvironmentThread(EnvironmentId.make(params.environmentId), ThreadId.make(params.threadId))
+      .status === "deleted";
   const runActive =
     structure !== null && threadRuntimeIsActive(deriveThreadStructureRuntime(structure.projection));
   const summary = deriveActivitySummary(
@@ -245,8 +249,16 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
       {isAndroid ? <AndroidScreenHeader title="Activity" onBack={handleBack} /> : null}
       {structure === null ? (
         // Before the thread loads there are no items and no run, which would read as "Stopped".
-        <View className="flex-1 items-center justify-center">
-          <AppActivityIndicator colorClassName="accent-icon-muted" />
+        <View className="flex-1 items-center justify-center px-4">
+          {threadDeleted ? (
+            <EmptyState
+              variant="plain"
+              title="This thread was deleted"
+              detail="There is no activity to show."
+            />
+          ) : (
+            <AppActivityIndicator colorClassName="accent-icon-muted" />
+          )}
         </View>
       ) : isEmpty ? (
         <View className="flex-1 justify-center px-4">
