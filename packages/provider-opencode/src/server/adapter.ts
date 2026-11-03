@@ -745,7 +745,8 @@ function toolStatus(part: ToolPart): {
     case "error":
       // Stop marks in-flight tools this way; OpenCode's own UI shows them as cancelled.
       return part.state.metadata?.["interrupted"] === true ||
-        part.state.error === "Tool execution aborted"
+        part.state.error === "Tool execution aborted" ||
+        (part.tool === "task" && part.state.error === "Task cancelled")
         ? { node: "interrupted", item: "interrupted" }
         : { node: "failed", item: "failed" };
   }
