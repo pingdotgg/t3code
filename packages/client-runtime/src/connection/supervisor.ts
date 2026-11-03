@@ -575,6 +575,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   });
 
   const waitForEstablishmentInterrupt = Effect.fnUntraced(function* () {
+    // A primary attempt keeps running through an offline report, so the
+    // network returning restarts it in case it stalled meanwhile.
+    let deviceOffline = (yield* connectivity.status) === "offline";
     for (;;) {
       const next = yield* Queue.take(signals);
       switch (next._tag) {
@@ -582,8 +585,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         case "RetryRequested":
           return false;
         case "NetworkChanged":
-          if (next.network === "offline") {
-            return false;
+          if (target._tag !== "PrimaryConnectionTarget") {
+            if (next.network === "offline") {
+              return false;
+            }
+          } else if (next.network === "offline") {
+            deviceOffline = true;
+          } else if (deviceOffline) {
+            return true;
           }
           break;
         case "ConnectRequested":
