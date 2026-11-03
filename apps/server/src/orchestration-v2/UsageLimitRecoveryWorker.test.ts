@@ -116,3 +116,49 @@ describe("limitRecoveryCommand arming", () => {
     assert.isNull(limitRecoveryCommand(thread, true, nowMs));
   });
 });
+
+it.effect("disarms an armed subagent of a settled parent through a plain dispatch", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(nowMs);
+    const failed = failedThread(2 * HOUR_MS, HOUR_MS);
+    const thread: ProjectionStore.ProjectionLimitRecoveryCandidate = {
+      ...failed,
+      limitRecovery: {
+        runId: failed.latestRunId!,
+        resetAt: failed.usageLimitResetAt!,
+        autoResume: true,
+        snooze: false,
+      },
+      parentSettled: true,
+    };
+    const sent = yield* Queue.unbounded<string>();
+    const layer = UsageLimitRecoveryWorker.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Scheduler.layer,
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getLimitRecoveryCandidates: () => Effect.succeed([thread]),
+          }),
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            dispatch: (command) =>
+              Queue.offer(sent, `dispatch ${command.commandId}`).pipe(Effect.as({} as never)),
+          }),
+          // Arming skips a recovery the thread already holds, so a disarm sent here is lost.
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            streamDomainEvents: Stream.never,
+            autoArmLimitRecovery: (input) => Queue.offer(sent, `arm ${input.commandId}`),
+          }),
+          Layer.mock(ServerSettings.ServerSettingsService)({
+            getSettings: Effect.succeed({
+              autoResumeLimitedThreads: true,
+              snoozeLimitedThreads: false,
+            } as never),
+            streamChanges: Stream.never,
+          }),
+        ),
+      ),
+    );
+    const first = yield* Queue.take(sent).pipe(Effect.provide(layer));
+    assert.isTrue(first.startsWith(`dispatch limit-disarm:${thread.id}:`), first);
+  }),
+);

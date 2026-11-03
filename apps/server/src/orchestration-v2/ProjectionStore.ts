@@ -184,7 +184,7 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "updatedAt"
   | "limitRecovery"
   | "snoozedUntil"
->;
+> & { readonly parentSettled?: boolean };
 
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
@@ -3906,10 +3906,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           readonly run_id: string;
           readonly completed_at: string | null;
           readonly failure_payload_json: string;
+          readonly parent_settled: number;
           readonly last_error: string | null;
         }>`
           SELECT t.payload_json, r.run_id, r.completed_at,
             item.payload_json AS failure_payload_json,
+            settled_parent.thread_id IS NOT NULL AS parent_settled,
             (
               SELECT json_extract(session.payload_json, '$.lastError')
               -- Keep bindings outermost: one provider instance can hold every session.
@@ -3943,6 +3945,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY error.updated_at DESC, error.ordinal DESC, error.turn_item_id DESC
             LIMIT 1
           )
+          LEFT JOIN orchestration_v2_projection_threads settled_parent
+            ON json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+            AND settled_parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
+            AND json_extract(settled_parent.payload_json, '$.settledOverride') = 'settled'
           WHERE t.deleted_at IS NULL
             -- The sweep runs every scheduler tick. Without this list the latest-run
             -- lookup above sorts every run of every thread, tens of milliseconds
@@ -3954,13 +3960,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             )
             AND json_extract(t.payload_json, '$.archivedAt') IS NULL
             AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
-            -- A subagent of a settled parent is abandoned work; arming or resuming it would wake the parent.
-            AND NOT EXISTS (
-              SELECT 1 FROM orchestration_v2_projection_threads parent
-              WHERE json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
-                AND parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
-                AND json_extract(parent.payload_json, '$.settledOverride') = 'settled'
-            )
             AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
             AND json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
             AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
@@ -3984,6 +3983,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ${booleanInt(options.autoResume)}
                   OR (${booleanInt(options.snooze)} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
                 )
+                -- A subagent of a settled parent is abandoned work; arming it would wake the parent.
+                AND settled_parent.thread_id IS NULL
               )
             )
             AND NOT EXISTS (
@@ -4015,6 +4016,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             pendingRuntimeRequest: null,
             limitRecovery: thread.limitRecovery ?? null,
             snoozedUntil: thread.snoozedUntil ?? null,
+            parentSettled: row.parent_settled === 1,
           });
         }
         return candidates;

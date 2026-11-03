@@ -5253,6 +5253,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             pendingRuntimeRequest: null,
             limitRecovery: sqlShell.limitRecovery,
             snoozedUntil: sqlShell.snoozedUntil,
+            parentSettled: false,
           });
         } else assert.isUndefined(candidate);
         assert.isUndefined(candidates.find((row) => row.id === otherThreadId));
@@ -5700,7 +5701,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         },
       });
       const afterReset = DateTime.add(now, { hours: 2 });
-      const resumeCommandIds = Effect.fnUntraced(function* () {
+      const sweepCommands = Effect.fnUntraced(function* () {
         const candidates = yield* store.getLimitRecoveryCandidates({
           now: afterReset,
           autoResume: true,
@@ -5708,11 +5709,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         });
         return candidates
           .filter((row) => row.id === activeParentChild)
-          .map(
+          .flatMap(
             (row) =>
-              limitRecoveryCommand(row, true, DateTime.toEpochMillis(afterReset), false)?.commandId,
-          )
-          .filter((commandId) => commandId?.startsWith("limit-resume:"));
+              limitRecoveryCommand(row, true, DateTime.toEpochMillis(afterReset), false) ?? [],
+          );
       });
       yield* store.apply({
         id: EventId.make("event:settled-parent-limit:active:parent-settled"),
@@ -5721,22 +5721,44 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         occurredAt: now,
         payload: threadPayload(activeParentId, null, "settled"),
       });
-      assert.deepEqual(
-        yield* resumeCommandIds(),
-        [],
-        "a subagent armed while its parent was open does not resume after the parent settles",
+      const [disarm, ...extraCommands] = yield* sweepCommands();
+      assert.deepEqual(extraCommands, []);
+      assert(
+        disarm?.type === "thread.metadata.update" && disarm.commandId.startsWith("limit-disarm:"),
+        "a subagent armed while its parent was open is disarmed after the parent settles",
       );
+      assert.deepEqual(disarm.limitRecovery, {
+        runId: activeRunId,
+        resetAt,
+        autoResume: false,
+      });
+      yield* store.apply({
+        id: EventId.make("event:settled-parent-limit:active:disarmed"),
+        type: "thread.metadata-updated",
+        threadId: activeParentChild,
+        occurredAt: afterReset,
+        payload: {
+          ...threadPayload(activeParentChild, activeParentId, null),
+          limitRecovery: {
+            runId: activeRunId,
+            resetAt,
+            autoResume: false,
+            snooze: false,
+            requestId: disarm.commandId,
+          },
+        },
+      });
       yield* store.apply({
         id: EventId.make("event:settled-parent-limit:active:parent-unsettled"),
         type: "thread.unsettled",
         threadId: activeParentId,
-        occurredAt: now,
+        occurredAt: afterReset,
         payload: threadPayload(activeParentId, null, "active"),
       });
-      assert.lengthOf(
-        yield* resumeCommandIds(),
-        1,
-        "the armed subagent resumes once its parent is unsettled",
+      assert.deepEqual(
+        yield* sweepCommands(),
+        [],
+        "unsettling the parent neither resumes nor re-arms the disarmed subagent",
       );
     }),
   );
