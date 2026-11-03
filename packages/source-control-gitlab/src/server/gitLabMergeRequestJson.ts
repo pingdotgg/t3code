@@ -201,6 +201,8 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly checks: ReadonlyArray<PullRequestCheck>;
   readonly viewerCanMerge: boolean;
+  /** Read only for a closed or merged merge request; absent on an open one. */
+  readonly viewerCanDeleteBranch?: boolean;
   readonly reviewerIds: ReadonlyArray<number>;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
@@ -995,6 +997,86 @@ export function decodeRepositoryBlobsJson(
     blobs.set(path, oid);
   }
   return Result.succeed(blobs);
+}
+
+export const SOURCE_BRANCH_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
+  project(fullPath: $fullPath) {
+    mergeRequest(iid: $iid) {
+      state sourceBranch diffHeadSha
+      sourceProject { fullPath }
+      userPermissions { removeSourceBranch }
+    }
+  }
+}`;
+
+const RawSourceBranchSchema = Schema.Struct({
+  data: Schema.Struct({
+    project: Schema.NullOr(
+      Schema.Struct({
+        mergeRequest: Schema.NullOr(
+          Schema.Struct({
+            state: Schema.String,
+            sourceBranch: Schema.String,
+            diffHeadSha: Schema.optional(Schema.NullOr(Schema.String)),
+            sourceProject: Schema.optional(
+              Schema.NullOr(Schema.Struct({ fullPath: Schema.String })),
+            ),
+            userPermissions: Schema.optional(
+              Schema.NullOr(
+                Schema.Struct({
+                  removeSourceBranch: Schema.optional(Schema.NullOr(Schema.Boolean)),
+                }),
+              ),
+            ),
+          }),
+        ),
+      }),
+    ),
+  }),
+});
+
+const decodeSourceBranch = decodeJsonResult(RawSourceBranchSchema);
+
+export interface GitLabSourceBranch {
+  readonly open: boolean;
+  readonly branch: string;
+  readonly headSha: string | null;
+  /** Null when the source project is gone or hidden from the viewer, as a deleted fork is. */
+  readonly sourceProject: string | null;
+  /** GitLab's own answer: false once the branch is gone, protected, or out of the viewer's reach. */
+  readonly canDelete: boolean;
+}
+
+export function decodeSourceBranchJson(
+  raw: string,
+): Result.Result<GitLabSourceBranch | null, DecodeFailure> {
+  return Result.map(decodeSourceBranch(raw), (decoded) => {
+    const mergeRequest = decoded.data.project?.mergeRequest;
+    if (mergeRequest == null) return null;
+    return {
+      open: mergeRequest.state === "opened",
+      branch: mergeRequest.sourceBranch,
+      headSha: trimmed(mergeRequest.diffHeadSha),
+      sourceProject: mergeRequest.sourceProject?.fullPath ?? null,
+      canDelete: mergeRequest.userPermissions?.removeSourceBranch === true,
+    };
+  });
+}
+
+const decodeBranch = decodeJsonResult(
+  Schema.Struct({
+    default: Schema.optional(Schema.NullOr(Schema.Boolean)),
+    commit: Schema.optional(Schema.NullOr(Schema.Struct({ id: Schema.String }))),
+  }),
+);
+
+export function decodeBranchJson(
+  raw: string,
+): Result.Result<{ readonly isDefault: boolean; readonly headSha: string | null }, DecodeFailure> {
+  return Result.map(decodeBranch(raw), (branch) => ({
+    isDefault: branch.default === true,
+    headSha: trimmed(branch.commit?.id),
+  }));
 }
 
 export const REVIEW_DECISIONS_GRAPHQL_QUERY = `query($fullPath: ID!, $iids: [String!]) {
