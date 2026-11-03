@@ -11,6 +11,7 @@ import { StackActions, useNavigation, type StaticScreenProps } from "@react-navi
 import { Platform, View } from "react-native";
 
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ListSection } from "../../components/ui/ListSection";
@@ -212,7 +213,12 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
         }}
       />
       {isAndroid ? <AndroidScreenHeader title="Activity" onBack={handleBack} /> : null}
-      {isEmpty ? (
+      {structure === null ? (
+        // Before the thread loads there are no items and no run, which would read as "Stopped".
+        <View className="flex-1 items-center justify-center">
+          <AppActivityIndicator colorClassName="accent-icon-muted" />
+        </View>
+      ) : isEmpty ? (
         <View className="flex-1 justify-center px-4">
           <EmptyState
             variant="plain"
