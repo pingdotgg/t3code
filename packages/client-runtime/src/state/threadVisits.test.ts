@@ -122,6 +122,12 @@ it("keeps a mark-unread on a read thread reopened within the open dedupe window"
   t.update({ lastVisitedAt: at(8) });
   vi.advanceTimersByTime(VISIT_DISPATCH_THROTTLE_MS);
   expect(t.visits).toEqual([]);
+
+  // An authoritative snapshot can briefly replace the row with an older one.
+  t.update({ updatedAt: at(5), lastVisitedAt: at(5), latestRun: { completedAt: at(4) } });
+  t.update({ updatedAt: at(10), lastVisitedAt: at(8), latestRun: { completedAt: at(9) } });
+  vi.advanceTimersByTime(VISIT_DISPATCH_THROTTLE_MS);
+  expect(t.visits).toEqual([]);
 });
 
 it("keeps mark unread sticky after an expired wake is retired", () => {

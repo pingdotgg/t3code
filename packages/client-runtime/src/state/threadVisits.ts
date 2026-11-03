@@ -116,7 +116,8 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
         const lastVisitedAtMs = shell.lastVisitedAt ? Date.parse(shell.lastVisitedAt) : NaN;
         if (!Number.isNaN(lastVisitedAtMs) && lastVisitedAtMs >= updatedAtMs) {
           // Already seen, so a later mark-unread stays sticky even when no open was sent.
-          lastDispatchedUpdatedAt = visitedAt;
+          if (lastDispatchedUpdatedAt === null || Date.parse(lastDispatchedUpdatedAt) < updatedAtMs)
+            lastDispatchedUpdatedAt = visitedAt;
           return;
         }
         if (lastDispatchedUpdatedAt !== null && Date.parse(lastDispatchedUpdatedAt) >= updatedAtMs)
