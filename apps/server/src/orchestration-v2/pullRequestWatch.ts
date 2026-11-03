@@ -160,7 +160,11 @@ function snippet(body: string): string {
     .replaceAll(/<!--[\s\S]*?-->/g, " ")
     .replaceAll(/\s+/g, " ")
     .trim();
-  return text.length <= SNIPPET_LENGTH ? text : `${text.slice(0, SNIPPET_LENGTH - 3)}...`;
+  if (text.length <= SNIPPET_LENGTH) return text;
+  // Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
+  const last = text.charCodeAt(SNIPPET_LENGTH - 4);
+  const end = last >= 0xd800 && last <= 0xdbff ? SNIPPET_LENGTH - 4 : SNIPPET_LENGTH - 3;
+  return `${text.slice(0, end)}...`;
 }
 
 function listed<T>(items: ReadonlyArray<T>, line: (item: T) => string): Array<string> {
