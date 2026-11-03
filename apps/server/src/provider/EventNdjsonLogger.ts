@@ -19,7 +19,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
-import { toSafeThreadAttachmentSegment } from "../attachmentStore.ts";
+import { toSafeThreadAttachmentSegment, toUncutThreadSegment } from "../attachmentStore.ts";
 import type * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
 
 const MEBIBYTE = 1024 * 1024;
@@ -147,35 +147,20 @@ function logWarning(message: string, context: Record<string, unknown>): Effect.E
   return Effect.logWarning(message, context).pipe(Effect.annotateLogs({ scope: LOG_SCOPE }));
 }
 
-function isSegmentEdge(character: string | undefined): boolean {
-  return character === "-" || character === "_";
-}
-
-/** Length of the attachment segment before `toSafeThreadAttachmentSegment` cuts it. */
-function uncutThreadSegmentLength(raw: string): number {
-  const sanitized = raw
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_]+/g, "-");
-  let start = 0;
-  let end = sanitized.length;
-  while (start < end && isSegmentEdge(sanitized[start])) start += 1;
-  while (end > start && isSegmentEdge(sanitized[end - 1])) end -= 1;
-  return end - start;
-}
-
 function resolveThreadSegment(raw: string | null | undefined): string {
-  const segment = typeof raw === "string" ? toSafeThreadAttachmentSegment(raw) : null;
-  if (typeof raw !== "string" || segment === null) return GLOBAL_THREAD_SEGMENT;
-  if (uncutThreadSegmentLength(raw) <= THREAD_SEGMENT_MAX_CHARS) return segment;
+  if (typeof raw !== "string") return GLOBAL_THREAD_SEGMENT;
+  const segment = toSafeThreadAttachmentSegment(raw);
+  if (segment === null) return GLOBAL_THREAD_SEGMENT;
+  if (toUncutThreadSegment(raw).length <= segment.length) return segment;
   // Sibling delegated threads share their first 80 characters, so cut ids need a hash.
-  let prefixEnd = THREAD_SEGMENT_MAX_CHARS - THREAD_SEGMENT_HASH_CHARS - 1;
-  while (prefixEnd > 0 && isSegmentEdge(segment[prefixEnd - 1])) prefixEnd -= 1;
+  const prefix = segment
+    .slice(0, THREAD_SEGMENT_MAX_CHARS - THREAD_SEGMENT_HASH_CHARS - 1)
+    .replace(/[-_]+$/, "");
   const hash = NodeCrypto.createHash("sha256")
     .update(raw)
     .digest("hex")
     .slice(0, THREAD_SEGMENT_HASH_CHARS);
-  return `${segment.slice(0, prefixEnd)}-${hash}`;
+  return `${prefix}-${hash}`;
 }
 
 function resolveStreamLabel(stream: EventNdjsonStream): string {

@@ -26,13 +26,18 @@ export const PENDING_ATTACHMENT_THREAD_SEGMENT = "pending";
 const PENDING_ATTACHMENT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const PARTIAL_UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
 
-export function toSafeThreadAttachmentSegment(threadId: string): string | null {
-  const segment = threadId
+/** The sanitized thread id before `toSafeThreadAttachmentSegment` cuts it to length. */
+export function toUncutThreadSegment(threadId: string): string {
+  return threadId
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/gi, "-")
     .replace(/-+/g, "-")
-    .replace(/^[-_]+|[-_]+$/g, "")
+    .replace(/^[-_]+|[-_]+$/g, "");
+}
+
+export function toSafeThreadAttachmentSegment(threadId: string): string | null {
+  const segment = toUncutThreadSegment(threadId)
     .slice(0, ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS)
     .replace(/[-_]+$/g, "");
   if (segment.length === 0) {
