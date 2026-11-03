@@ -352,6 +352,7 @@ fs.readFileSync = (file, ...rest) => {
           "#!/t3-test-missing-loader\n",
           '#!/bin/sh\necho "runtime loader failed" >&2\nexit 42\n',
           "#!/bin/sh\nkill -TERM $$\n",
+          '#!/bin/sh\ntrap \'echo caught > "$T3CODE_TEST_TERM"; exit 42\' TERM\necho ready > "$T3CODE_TEST_READY"\nwhile :; do :; done\n',
         ]) {
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-validation-test-" });
           const output = yield* buildNpmLauncher({
@@ -361,18 +362,39 @@ fs.readFileSync = (file, ...rest) => {
           const release = yield* serveFakeRelease(root, executable);
           const home = path.join(root, "home");
           const dir = path.join(home, "runtime/versions", VERSION);
+          const probeTimeoutHook = path.join(root, "probe-timeout.mjs");
+          yield* fs.writeFileString(
+            probeTimeoutHook,
+            `import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+const { spawnSync } = childProcess;
+childProcess.spawnSync = (command, args, options) => spawnSync(command, args,
+  options?.timeout === undefined ? options : { ...options, timeout: 500 });
+syncBuiltinESMExports();
+`,
+          );
           const env = {
             PATH: process.env.PATH,
             T3CODE_HOME: home,
             T3CODE_RELEASE_BASE_URL: release.baseUrl,
+            T3CODE_TEST_READY: path.join(root, "probe-ready"),
+            T3CODE_TEST_TERM: path.join(root, "probe-term"),
           };
           const launcher = path.join(output.packageDir, "bin/t3.mjs");
-          const failed = yield* run(process.execPath, [launcher, "serve"], { cwd: root, env });
+          const failed = yield* run(
+            process.execPath,
+            ["--import", probeTimeoutHook, launcher, "serve"],
+            { cwd: root, env },
+          );
           assert.equal(failed.exitCode, 1, failed.stderr);
           assert.deepStrictEqual(yield* fs.readDirectory(path.dirname(dir)), [], failed.stderr);
           assert.include(failed.stderr, "could not run");
-          if (executable.includes("exit 42")) {
+          if (executable.includes("runtime loader failed")) {
             assert.include(failed.stderr, "runtime loader failed");
+          }
+          if (executable.includes("trap")) {
+            assert.isTrue(yield* fs.exists(env.T3CODE_TEST_READY));
+            assert.isFalse(yield* fs.exists(env.T3CODE_TEST_TERM));
           }
           if ((yield* HostProcess.Platform) === "linux") {
             assert.include(failed.stderr, "glibc");

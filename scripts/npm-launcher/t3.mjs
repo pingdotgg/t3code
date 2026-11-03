@@ -93,7 +93,12 @@ async function install(dir, key) {
     const validate = spawnSync(
       path.join(staging, process.platform === "win32" ? "t3.exe" : "t3"),
       ["--version"],
-      { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8", timeout: 30_000 },
+      {
+        stdio: ["ignore", "ignore", "pipe"],
+        encoding: "utf8",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+      },
     );
     if (validate.status !== 0) {
       throw executableError(
