@@ -6,7 +6,6 @@ import { useState } from "react";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
-  type ProjectId,
   type ScheduledTask,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -236,12 +235,4 @@ export function ThreadAutomationsPanel(props: {
       ) : null}
     </ThreadDetailsSection>
   );
-}
-
-export function ProjectAutomationsHeaderControl(_props: {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly projectName: string;
-}) {
-  return null;
 }
