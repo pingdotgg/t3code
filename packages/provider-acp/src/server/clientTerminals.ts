@@ -301,6 +301,11 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
                   discard: true,
                 }).pipe(
                   Effect.timeoutOption(TERMINAL_OUTPUT_DRAIN_GRACE),
+                  Effect.ensuring(
+                    Effect.all([Fiber.interrupt(stdoutPump), Fiber.interrupt(stderrPump)], {
+                      discard: true,
+                    }),
+                  ),
                   Effect.andThen(
                     Effect.sync(() => {
                       record.exitStatus = status;
