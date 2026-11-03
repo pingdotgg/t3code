@@ -145,6 +145,14 @@ choice.
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
 
+### Show sections as tabs
+
+Turn on **Settings → General → Section tabs** on web and desktop to show one section at a time.
+A tab bar under the search field switches between Active, Working, Snoozed, and Settled, and each
+tab shows its thread count. Pinned threads stay above every tab. On a trackpad, swipe sideways
+with two fingers over the list to move to the next or previous tab. To settle a thread from the
+Active tab, drag it below the list. Each device keeps its own choice.
+
 ### Group threads by project (beta)
 
 Turn on **Settings → Labs → Boring sidebar (group by project)** on web and desktop to put active
