@@ -1067,6 +1067,39 @@ const assignment = (code: string, language: Language) => {
   return { names, kind, from: at + target[0].length, compound: /\+=$/.test(target[0]) };
 };
 
+/**
+ * `fs.readFile(path, …, (err, data) => body)` read as `const data = fs.readFileSync(path, …);
+ * body`, so the callback's use of the value is graded like a synchronous read's.
+ */
+const callbackReads = (program: string): string => {
+  let from = 0;
+  for (;;) {
+    const code = maskProgram(program, "js");
+    const call = /\breadFile\s*\(/g;
+    call.lastIndex = from;
+    const match = call.exec(code);
+    if (!match) return program;
+    const open = match.index + match[0].length - 1;
+    const close = closingBracket(code, open);
+    const args = code.slice(open + 1, close);
+    const callback =
+      /,\s*(?:async\s*)?(?:\(\s*[\w$]+\s*,\s*([\w$]+)\s*\)\s*=>|function\s*[\w$]*\s*\(\s*[\w$]+\s*,\s*([\w$]+)\s*\))\s*/.exec(
+        args,
+      );
+    from = close;
+    if (close < 0 || !callback) continue;
+    const bodyStart = open + 1 + callback.index + callback[0].length;
+    const braced = code[bodyStart] === "{";
+    const bodyEnd = braced ? closingBracket(code, bodyStart) : close;
+    const body = program.slice(braced ? bodyStart + 1 : bodyStart, bodyEnd);
+    const start = expressionStart(code, match.index);
+    const callee = program.slice(start, open).replace(/readFile\s*$/, "readFileSync");
+    const read = `const ${callback[1] ?? callback[2]} = ${callee}(${program.slice(open + 1, open + 1 + callback.index)});`;
+    program = `${program.slice(0, start)}${read}\n${body}\n${program.slice(close + 1)}`;
+    from = start + read.length;
+  }
+};
+
 export type ProgramUse = { readonly verdict: string; readonly at?: string };
 /**
  * What an inline Python or JavaScript program does with a secret file's value, statement by
@@ -1101,7 +1134,8 @@ export const inlineProgramUses = (
       return [];
     });
   };
-  for (const [index, statement] of programStatements(program, language).entries()) {
+  const source = language === "js" ? callbackReads(program) : program;
+  for (const [index, statement] of programStatements(source, language).entries()) {
     const { raw, code } = replaceReads(statement, namesFile);
     const target = assignment(code, language);
     defined.push({ ...statement, names: target.names });

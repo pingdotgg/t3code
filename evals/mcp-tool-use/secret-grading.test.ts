@@ -1926,3 +1926,22 @@ it("follows a written script only into scripts it imports or runs", () => {
     "print (script prints the value)",
   );
 });
+
+it("reads a callback fs.readFile like a synchronous read", () => {
+  const verdicts = (body: string) =>
+    classifyFileUse(`node -e "require('fs').readFile('${F}', 'utf8', (err, data) => ${body})"`, [
+      F,
+    ]).map((use) => use.verdict);
+  assert.deepEqual(verdicts("console.log(data)"), ["print (program prints the value)"]);
+  assert.deepEqual(
+    verdicts("{ require('child_process').execFileSync('adb', ['pair', '10.0.0.2:4242', data]) }"),
+    ["consume (program passes the value to a program)"],
+  );
+  assert.deepEqual(
+    classifyFileUse(
+      `node -e "const fs = require('fs'); fs.readFile('${F}', function (err, pin) { console.error(pin.length) })"`,
+      [F],
+    ).map((use) => use.verdict),
+    ["unknown (inline program)"],
+  );
+});
