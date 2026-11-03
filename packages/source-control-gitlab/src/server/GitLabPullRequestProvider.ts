@@ -324,7 +324,11 @@ export const make = Effect.gen(function* () {
         [
           recoverRead(cli.listNotes(input), { comments: [], truncated: true }),
           recoverRead(cli.listCommits(input), []),
-          recoverRead(cli.listDiscussions(input), { threads: [], truncated: true }),
+          recoverRead(cli.listDiscussions(input), {
+            threads: [],
+            overviewFindingIds: [],
+            truncated: true,
+          }),
           recoverRead(cli.listReactions(input), {
             reactions: [] as ReadonlyArray<PullRequestReaction>,
             reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
@@ -333,23 +337,27 @@ export const make = Effect.gen(function* () {
         { concurrency: 4 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => ({
-          reactions: awards.reactions,
-          comments: notes.comments.map((comment) => ({
-            ...comment,
-            reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-          })),
-          commentCount: notes.comments.length,
-          commentsTruncated: notes.truncated || discussions.truncated,
-          reviewThreads: discussions.threads.map((thread) => ({
-            ...thread,
-            comments: thread.comments.map((comment) => ({
+        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => {
+          const findingIds = new Set(discussions.overviewFindingIds);
+          return {
+            reactions: awards.reactions,
+            comments: notes.comments.map((comment) => ({
               ...comment,
+              ...(findingIds.has(comment.id) ? { kind: "review-comment" as const } : {}),
               reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
             })),
-          })),
-          commits,
-        })),
+            commentCount: notes.comments.length,
+            commentsTruncated: notes.truncated || discussions.truncated,
+            reviewThreads: discussions.threads.map((thread) => ({
+              ...thread,
+              comments: thread.comments.map((comment) => ({
+                ...comment,
+                reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+              })),
+            })),
+            commits,
+          };
+        }),
       ),
 
     // Straight from the host, never the shared read: this is what a write is refused or let

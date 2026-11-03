@@ -530,6 +530,8 @@ export interface GitLabDiffRefs {
 
 export interface GitLabDiscussions {
   readonly threads: ReadonlyArray<PullRequestReviewThread>;
+  /** First notes of unresolved discussions on the MR itself rather than a diff line. */
+  readonly overviewFindingIds: ReadonlyArray<string>;
   readonly rawCount: number;
 }
 
@@ -541,12 +543,16 @@ export function decodeDiscussionsJson(
     return Result.fail(decoded.failure);
   }
   const threads: PullRequestReviewThread[] = [];
+  const overviewFindingIds: string[] = [];
   for (const entry of decoded.success) {
     const discussion = decodeDiscussionEntry(entry);
     if (!Exit.isSuccess(discussion)) continue;
     const notes = (discussion.value.notes ?? []).filter((note) => note.system !== true);
     const root = notes[0];
     const position = root?.position;
+    if (root !== undefined && !position && root.resolvable === true && root.resolved !== true) {
+      overviewFindingIds.push(String(root.id));
+    }
     if (root === undefined || !position || position.position_type !== "text") continue;
     const side = position.new_line === null || position.new_line === undefined ? "left" : "right";
     const path = trimmed(side === "left" ? position.old_path : position.new_path);
@@ -568,7 +574,7 @@ export function decodeDiscussionsJson(
       })),
     });
   }
-  return Result.succeed({ threads, rawCount: decoded.success.length });
+  return Result.succeed({ threads, overviewFindingIds, rawCount: decoded.success.length });
 }
 
 export function decodeDiffRefsJson(
