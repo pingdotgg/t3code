@@ -7424,6 +7424,107 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  const runFastClaudeTurn = (frames: ReadonlyArray<unknown>) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("claude-fast-mode-frames-attempt"),
+          text: "Request",
+          attachments: [],
+          modelSelection: {
+            instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+            model: "claude-opus-5-5",
+            options: [{ id: "fastMode", value: true }],
+          },
+        }),
+      );
+      for (const frame of frames) {
+        yield* Queue.offer(harness.sdkMessages, claudeSdkFrame(frame));
+      }
+      yield* Queue.take(harness.terminalReceipts);
+      return harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+          ? [event.turnItem.message]
+          : [],
+      );
+    });
+
+  it.effect(
+    "shows Claude Code's notice when the API rejects Fast while the CLI reports it on",
+    () =>
+      Effect.gen(function* () {
+        const notices = yield* runFastClaudeTurn([
+          {
+            type: "system",
+            subtype: "init",
+            fast_mode_state: "on",
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "00000000-0000-4000-8000-000000000451",
+          },
+          {
+            type: "system",
+            subtype: "notification",
+            key: "fast-mode-overage-rejected",
+            text: "Fast mode disabled · Out of usage credits",
+            priority: "immediate",
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "00000000-0000-4000-8000-000000000452",
+          },
+          {
+            ...makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000453", result: "Done" }),
+            fast_mode_state: "on",
+          },
+        ]);
+        assert.deepEqual(notices, ["Fast mode disabled · Out of usage credits"]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect("waits past a pending Fast decision and reads the state from the result", () =>
+    Effect.gen(function* () {
+      const notices = yield* runFastClaudeTurn([
+        {
+          type: "system",
+          subtype: "init",
+          fast_mode_state: "off",
+          fast_mode_disabled_reason: "pending",
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "00000000-0000-4000-8000-000000000461",
+        },
+        {
+          ...makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000462", result: "Done" }),
+          fast_mode_state: "off",
+          fast_mode_disabled_reason: "extra_usage_disabled",
+        },
+      ]);
+      assert.deepEqual(notices, ["Fast mode is off (extra usage disabled), using standard speed"]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect(
     "runs native compaction and keeps its context watermark separate from billed usage",
     () =>
