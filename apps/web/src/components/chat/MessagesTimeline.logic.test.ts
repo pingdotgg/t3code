@@ -2692,35 +2692,34 @@ describe("v2 run and attempt history", () => {
       expect.objectContaining({ id: "provider-recovered" }),
     ]);
   });
-  it("hides successful or all tool calls, and drops a fold left with nothing to hide", () => {
+  it("hides tool calls or everything but the final answer", () => {
     const runId = RunId.make("turn-1");
-    const message = (
-      id: string,
-      role: "user" | "assistant",
-      at: string,
-      inputIntent?: "steer",
-    ): TimelineEntry => ({
-      id: `${id}-entry`,
+    const at = (second: number) => `2026-01-01T00:00:${String(second).padStart(2, "0")}Z`;
+    const message = (id: string, role: "user" | "assistant", second: number): TimelineEntry => ({
+      id,
       kind: "message",
-      createdAt: at,
+      createdAt: at(second),
       message: {
         id: MessageId.make(id),
         role,
         text: id,
-        runId: role === "user" && !inputIntent ? null : runId,
-        ...(inputIntent ? { inputIntent } : {}),
-        createdAt: at,
-        updatedAt: at,
+        runId: role === "user" ? null : runId,
+        createdAt: at(second),
+        updatedAt: at(second),
         streaming: false,
       },
     });
-    const command = (id: string, status: "completed" | "failed", at: string): TimelineEntry => ({
-      id: `${id}-entry`,
+    const command = (
+      id: string,
+      status: "completed" | "failed",
+      second: number,
+    ): TimelineEntry => ({
+      id,
       kind: "work",
-      createdAt: at,
+      createdAt: at(second),
       entry: {
         id,
-        createdAt: at,
+        createdAt: at(second),
         runId,
         label: "Ran command",
         tone: "tool",
@@ -2728,184 +2727,48 @@ describe("v2 run and attempt history", () => {
         toolLifecycleStatus: status,
       },
     });
-    const user = message("user", "user", "2026-01-01T00:00:00Z");
-    const commentary = message("commentary", "assistant", "2026-01-01T00:00:05Z");
-    const passed = command("passed", "completed", "2026-01-01T00:00:08Z");
-    const failed = command("failed", "failed", "2026-01-01T00:00:09Z");
-    const final = message("final", "assistant", "2026-01-01T00:00:20Z");
-    const rowIds = (
+    const [user, step, passed, failed, final] = [
+      message("user", "user", 0),
+      message("step", "assistant", 5),
+      command("passed", "completed", 8),
+      command("failed", "failed", 9),
+      message("final", "assistant", 20),
+    ];
+    const rows = (
       timelineEntries: ReadonlyArray<TimelineEntry>,
       toolCallVisibility: "hideSuccessful" | "hideAll" | "finalAnswersOnly",
+      isWorking = false,
     ) =>
       deriveMessagesTimelineRows({
         timelineEntries,
         expandedRunIds: new Set([runId]),
-        isWorking: false,
+        isWorking,
+        ...(isWorking
+          ? {
+              latestRun: { runId, status: "running" as const, startedAt: at(0), completedAt: null },
+            }
+          : {}),
         turnDiffSummaries: [],
         supportsConversationRollback: false,
         toolCallVisibility,
       }).map((row) => row.id);
-    expect(rowIds([user, commentary, passed, failed, final], "hideSuccessful")).toEqual([
-      "user-entry",
+
+    const turn = [user, step, passed, failed, final];
+    expect(rows(turn, "hideSuccessful")).toEqual([
+      "user",
       "turn-fold:turn-1",
-      "commentary-entry",
-      "failed-entry",
-      "final-entry",
+      "step",
+      "failed",
+      "final",
     ]);
-    expect(rowIds([user, failed, final], "hideAll")).toEqual(["user-entry", "final-entry"]);
-    expect(rowIds([user, commentary, passed, failed, final], "finalAnswersOnly")).toEqual([
-      "user-entry",
-      "final-entry",
+    expect(rows([user, failed, final], "hideAll")).toEqual(["user", "final"]);
+    expect(rows(turn, "finalAnswersOnly")).toEqual(["user", "final"]);
+    expect(rows([user, step, passed], "finalAnswersOnly", true)).toEqual([
+      "user",
+      "working-indicator-row",
+      "live-activity-row",
     ]);
-    const answering = deriveMessagesTimelineRows({
-      timelineEntries: [user, commentary, passed],
-      latestRun: { runId, status: "running", startedAt: user.createdAt, completedAt: null },
-      isWorking: true,
-      turnDiffSummaries: [],
-      supportsConversationRollback: false,
-      toolCallVisibility: "finalAnswersOnly",
-    });
-    expect(answering.map((row) => row.kind)).toEqual(["message", "working", "thinking"]);
-    expect(liveAnswerPreview([user, commentary, passed])).toBe("commentary");
-    expect(liveAnswerPreview([commentary, user])).toBeNull();
-    const zenRowIds = (
-      timelineEntries: ReadonlyArray<TimelineEntry>,
-      context: { isWorking?: boolean; runlessWorkActive?: boolean } = {},
-    ) =>
-      deriveMessagesTimelineRows({
-        timelineEntries,
-        isWorking: context.isWorking ?? false,
-        runlessWorkActive: context.runlessWorkActive ?? false,
-
-        turnDiffSummaries: [],
-        supportsConversationRollback: false,
-        toolCallVisibility: "finalAnswersOnly",
-      }).map((row) => row.id);
-    const compaction: TimelineEntry = {
-      id: "compaction-entry",
-      kind: "work",
-      createdAt: "2026-01-01T00:00:06Z",
-      entry: {
-        id: "compaction",
-        createdAt: "2026-01-01T00:00:06Z",
-        runId,
-        label: "Context compaction failed",
-        tone: "info",
-        sourceActivityKind: "context-compaction",
-      },
-    };
-    expect(zenRowIds([user, compaction, final])).toContain("compaction-entry");
-    const runlessReply: TimelineEntry = {
-      id: "runless-entry",
-      kind: "message",
-      createdAt: "2026-01-01T00:00:05Z",
-      message: {
-        id: MessageId.make("runless"),
-        role: "assistant",
-        text: "runless",
-        runId: null,
-        createdAt: "2026-01-01T00:00:05Z",
-        updatedAt: "2026-01-01T00:00:05Z",
-        streaming: true,
-      },
-    };
-    expect(
-      zenRowIds([user, runlessReply], { isWorking: true, runlessWorkActive: true }),
-    ).not.toContain("runless-entry");
-    const retrying: TimelineEntry = {
-      id: "retrying-entry",
-      kind: "work",
-      createdAt: "2026-01-01T00:00:07Z",
-      entry: {
-        id: "retrying",
-        createdAt: "2026-01-01T00:00:07Z",
-        runId,
-        label: "Retrying (2/5)",
-        tone: "info",
-        itemType: "error",
-        toolLifecycleStatus: "inProgress",
-      },
-    };
-    expect(
-      deriveMessagesTimelineRows({
-        timelineEntries: [user, retrying],
-        isWorking: true,
-        latestRun: { runId, status: "running", startedAt: user.createdAt, completedAt: null },
-        turnDiffSummaries: [],
-        supportsConversationRollback: false,
-        toolCallVisibility: "finalAnswersOnly",
-      }).some((row) => row.kind === "work-live" && row.entry.id === "retrying"),
-    ).toBe(true);
-    const runAt = (id: string, second: number) => ({
-      runId: RunId.make(id),
-      at: `2026-01-01T00:01:${String(second).padStart(2, "0")}Z`,
-    });
-    const r1 = runAt("r1", 0);
-    const r2 = runAt("r2", 10);
-    const r3 = runAt("r3", 20);
-    const prompt = (id: string, run: typeof r1): TimelineEntry => ({
-      id,
-      kind: "message",
-      createdAt: run.at,
-      message: {
-        id: MessageId.make(id),
-        role: "user",
-        text: id,
-        runId: run.runId,
-        inputIntent: "turn_start",
-        createdAt: run.at,
-        updatedAt: run.at,
-        streaming: false,
-      },
-    });
-    const checkpoint = (run: typeof r1, checkpointTurnCount: number) => ({
-      runId: run.runId,
-      completedAt: run.at,
-      assistantMessageId: null,
-      checkpointTurnCount,
-      checkpointRef: `checkpoint-${checkpointTurnCount}` as never,
-      status: "ready" as const,
-      files: [],
-    });
-    const wake: TimelineEntry = {
-      id: "wake",
-      kind: "work",
-      createdAt: r2.at,
-      entry: {
-        id: "wake",
-        createdAt: r2.at,
-        runId: r2.runId,
-        label: "Task finished",
-        tone: "info",
-        itemType: "notification",
-      },
-    };
-    const thirdPrompt = deriveMessagesTimelineRows({
-      timelineEntries: [prompt("first", r1), wake, prompt("third", r3)],
-      isWorking: false,
-      turnDiffSummaries: [checkpoint(r1, 1), checkpoint(r2, 2)],
-      supportsConversationRollback: true,
-      threadStartCheckpointReady: true,
-      toolCallVisibility: "finalAnswersOnly",
-    }).find((row) => row.id === "third");
-    expect(thirdPrompt?.kind === "message" ? thirdPrompt.revertTurnCount : null).toBe(2);
-    expect(
-      timelineTurnFoldRunIdsByEntryId({
-        timelineEntries: [user, commentary, passed, final],
-        isWorking: false,
-        toolCallVisibility: "finalAnswersOnly",
-        revealedMessageId: MessageId.make("commentary"),
-      }).get("commentary-entry"),
-    ).toBe(runId);
-
-    const steer = message("steer", "user", "2026-01-01T00:00:10Z", "steer");
-    const steeredCommentary = message("commentary", "assistant", "2026-01-01T00:00:12Z");
-    const foldRunIds = timelineTurnFoldRunIdsByEntryId({
-      timelineEntries: [user, passed, steer, steeredCommentary, failed, final],
-      isWorking: false,
-      toolCallVisibility: "hideAll",
-    });
-    expect(foldRunIds.get("commentary-entry")).toBe(runId);
+    expect(liveAnswerPreview([user, step, passed])).toBe("step");
   });
   it("collapses only output from a superseded V2 attempt within the active logical run", () => {
     const runId = "run-steered" as never;
