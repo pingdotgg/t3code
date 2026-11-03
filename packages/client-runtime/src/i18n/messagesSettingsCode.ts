@@ -131,6 +131,8 @@ export const enMessages = {
   "settings.code.projectPanel.archive.failed": "Failed to archive project",
   "settings.code.projectPanel.archive.unarchive": "Unarchive",
   "settings.code.projectPanel.archive.archive": "Archive",
+  "settings.code.projectPanel.checkoutGroupingHint":
+    "Grouping rule decides how each checkout joins project groups in the sidebar. Changing it can move a checkout to a different project.",
   "settings.code.projectPanel.danger": "Danger",
   "settings.code.projectPanel.removeCheckout": "Remove checkout",
   "settings.code.projectPanel.removeEverywhere": "Remove this project everywhere",
@@ -1028,6 +1030,8 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.code.projectPanel.archive.failed": "归档项目失败",
   "settings.code.projectPanel.archive.unarchive": "取消归档",
   "settings.code.projectPanel.archive.archive": "归档",
+  "settings.code.projectPanel.checkoutGroupingHint":
+    "分组规则决定每个检出如何加入侧边栏的项目分组。修改后，检出可能会移动到其他项目。",
   "settings.code.projectPanel.danger": "危险操作",
   "settings.code.projectPanel.removeCheckout": "移除检出",
   "settings.code.projectPanel.removeEverywhere": "在所有位置移除此项目",
