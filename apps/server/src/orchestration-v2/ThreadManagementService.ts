@@ -822,26 +822,31 @@ const make = Effect.gen(function* () {
       });
     }
     const steerableRun = latestSteerableRun(target);
+    // A fresh send never joins a running turn, so it needs none to steer or restart.
+    const mode =
+      input.freshContext && (input.mode === "steer" || input.mode === "restart")
+        ? "queue"
+        : input.mode;
     let dispatchMode: Extract<
       OrchestrationV2Command,
       { readonly type: "message.dispatch" }
     >["dispatchMode"];
-    if (input.mode === "steer" || input.mode === "restart") {
+    if (mode === "steer" || mode === "restart") {
       if (steerableRun === undefined) {
         return yield* new ThreadManagementNoSteerableRunError({
           threadId: input.threadId,
-          mode: input.mode,
+          mode,
         });
       }
       dispatchMode = {
-        type: input.mode === "steer" ? "steer_active" : "restart_active",
+        type: mode === "steer" ? "steer_active" : "restart_active",
         targetRunId: steerableRun.id,
       };
-    } else if (input.mode === "auto" && steerableRun !== undefined) {
+    } else if (mode === "auto" && steerableRun !== undefined) {
       dispatchMode = { type: "steer_active", targetRunId: steerableRun.id };
     } else {
       dispatchMode = {
-        type: input.mode === "queue" ? "queue_after_active" : "start_immediately",
+        type: mode === "queue" ? "queue_after_active" : "start_immediately",
       };
     }
 
@@ -891,7 +896,7 @@ const make = Effect.gen(function* () {
         ? "queued"
         : turnItem.inputIntent === "turn_start"
           ? "started"
-          : input.mode === "restart"
+          : mode === "restart"
             ? "restarted"
             : "steered";
     return { dispatch: dispatched, projection, message, run, turnItem, delivery };

@@ -46,6 +46,7 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { freshSessionBannerItem } from "./chat/ComposerFreshSession";
+import { armFreshSession, disarmFreshSession, useFreshSessionArmed } from "./chat/freshSessionArms";
 import { useUsageLimitsPanel } from "./chat/useUsageLimitsPanel";
 import { useWorktreeSetup } from "./chat/useWorktreeSetup";
 import { useChatShortcuts } from "./chat/useChatShortcuts";
@@ -2511,26 +2512,12 @@ export default function ChatView(props: ChatViewProps) {
       return next;
     });
   };
-  const [freshSessionThreadKeys, setFreshSessionThreadKeys] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
   const freshSessionAvailable =
     activeMessageCount > 0 && serverConfig?.environment.capabilities.freshContext === true;
-  const freshSessionPending = freshSessionAvailable && freshSessionThreadKeys.has(routeThreadKey);
-  const setFreshSessionPending = (threadKey: string, pending: boolean) => {
-    setFreshSessionThreadKeys((current) => {
-      if (current.has(threadKey) === pending) return current;
-      const next = new Set(current);
-      if (pending) next.add(threadKey);
-      else next.delete(threadKey);
-      return next;
-    });
-  };
+  const freshSessionArmed = useFreshSessionArmed(routeThreadKey);
   const toggleKeepFullHistory = () => setKeepFullHistory(routeThreadKey, !keepFullHistory);
   const toggleKeepFullHistoryStable = useStableCallback(toggleKeepFullHistory);
-  const armFreshSessionStable = useStableCallback(() =>
-    setFreshSessionPending(routeThreadKey, true),
-  );
+  const armFreshSessionStable = useStableCallback(() => armFreshSession(routeThreadKey));
   const handleRestoreThreadBranch = () => {
     if (!canWriteSourceControl) return;
     if (gitStatusQuery.data?.hasWorkingTreeChanges) {
@@ -2621,9 +2608,11 @@ export default function ChatView(props: ChatViewProps) {
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
-    const freshSessionItems = freshSessionPending
-      ? [freshSessionBannerItem(() => setFreshSessionPending(routeThreadKey, false))]
-      : [];
+    // An approval's feedback goes to that approval; the armed session waits for the next message.
+    const freshSessionItems =
+      freshSessionAvailable && freshSessionArmed && activePendingApproval === null
+        ? [freshSessionBannerItem(() => disarmFreshSession(routeThreadKey))]
+        : [];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
@@ -2947,8 +2936,6 @@ export default function ChatView(props: ChatViewProps) {
     panelAnimationDurationMs,
     keepFullHistory,
     freshSessionAvailable,
-    freshSessionPending,
-    setFreshSessionPending,
     resumeCompactionTokens,
     showPlanFollowUpPrompt,
     usageLimitsKey,
@@ -3668,7 +3655,11 @@ export default function ChatView(props: ChatViewProps) {
                               sideChatAvailable={sideChat.available}
                               sideChatDisabledReason={sideChatDisabledReason}
                               onFreshSession={
-                                freshSessionAvailable ? armFreshSessionStable : undefined
+                                freshSessionAvailable &&
+                                activePendingApproval === null &&
+                                pendingUserInputs.length === 0
+                                  ? armFreshSessionStable
+                                  : undefined
                               }
                               onUsageLimitsCommand={
                                 usageLimitsOffered &&

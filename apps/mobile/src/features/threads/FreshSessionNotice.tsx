@@ -1,11 +1,11 @@
 import { View } from "react-native";
 
 import { Notice } from "../../components/ui/Notice";
-import { setFreshSessionPending, useFreshSessionPending } from "../../state/use-composer-drafts";
+import { setFreshSessionPending, useComposerDraftSettings } from "../../state/use-composer-drafts";
 
 /** Shown while `/clear` is armed; dismissing it keeps the current session. */
 export function FreshSessionNotice(props: { readonly threadKey: string }) {
-  if (!useFreshSessionPending(props.threadKey)) return null;
+  if (useComposerDraftSettings(props.threadKey).freshContext !== true) return null;
   return (
     <View className="px-4 pb-3">
       <Notice

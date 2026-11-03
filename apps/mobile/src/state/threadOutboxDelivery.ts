@@ -81,7 +81,6 @@ import {
   replaceComposerDraftAttachments,
   removeDeliveredCloudQueuedMessage,
   undoComposerDraftMerge,
-  setFreshSessionPending,
   updateComposerDraftSettings,
   waitForComposerDraftsLoaded,
 } from "./use-composer-drafts";
@@ -450,6 +449,7 @@ export async function restoreRejectedQueuedMessage(
       ...(queuedMessage.modelSelection ? { modelSelection: queuedMessage.modelSelection } : {}),
       ...(queuedMessage.runtimeMode ? { runtimeMode: queuedMessage.runtimeMode } : {}),
       ...(queuedMessage.interactionMode ? { interactionMode: queuedMessage.interactionMode } : {}),
+      ...(queuedMessage.freshContext ? { freshContext: true } : {}),
       ...(queuedMessage.creation
         ? {
             workspaceSelection: {
@@ -464,7 +464,6 @@ export async function restoreRejectedQueuedMessage(
           }
         : {}),
     });
-    if (queuedMessage.freshContext) setFreshSessionPending(draftKey, true);
     const restoredDraft = getComposerDraftSnapshot(draftKey);
     rollback = { snapshot: originalDraft, merged: restoredDraft };
     await flushComposerDrafts();

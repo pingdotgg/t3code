@@ -891,9 +891,13 @@ function ThreadDetailBody(
     jumpMessageLoaded,
     selectedThreadKey,
   ]);
+  // A queued-run edit, question or approval owns the composer, and its send carries no fresh session.
   const freshSessionAvailable =
     !props.draftMode &&
     props.canOperateThread &&
+    props.queuedRunEdit === null &&
+    props.activePendingApproval === null &&
+    props.activePendingUserInput === null &&
     props.selectedThread.latestRun != null &&
     props.serverConfig?.environment.capabilities.freshContext === true;
   const hasCompactableConversation =
