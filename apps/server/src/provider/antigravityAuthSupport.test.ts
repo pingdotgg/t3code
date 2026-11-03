@@ -142,6 +142,34 @@ describe("Antigravity process environment", () => {
     expect(business.GOOGLE_API_KEY).toBeUndefined();
   });
 
+  it("keeps Application Default Credentials only for Agent Platform without an API key", () => {
+    const baseEnv = { PATH: "/usr/bin", GOOGLE_APPLICATION_CREDENTIALS: "/secrets/key.json" };
+    const spawnFor = (auth: AntigravityAuthConfig) =>
+      buildAntigravityAcpSpawnInput({
+        installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+        profile,
+        cwd: "/project",
+        baseEnv,
+        auth,
+      }).env ?? {};
+
+    const adc = spawnFor({
+      authMethod: "agent-platform",
+      apiKey: "",
+      gcpProject: "synthetic-project",
+      gcpLocation: "us-central1",
+    });
+    expect(adc.GOOGLE_APPLICATION_CREDENTIALS).toBe("/secrets/key.json");
+
+    const apiKey = spawnFor({
+      authMethod: "agent-platform",
+      apiKey: "vertex-secret",
+      gcpProject: "synthetic-project",
+      gcpLocation: "us-central1",
+    });
+    expect(apiKey.GOOGLE_APPLICATION_CREDENTIALS).toBeUndefined();
+  });
+
   it("isolates TEMP and TMP to the profile directory on Windows", () => {
     const windowsProfile: AntigravityProfile = {
       platform: "win32",
