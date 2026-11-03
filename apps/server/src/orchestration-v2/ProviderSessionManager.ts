@@ -529,6 +529,11 @@ export const layerWithOptions = (
               ),
             );
 
+      const subscriberReleaseCleanup = new WeakMap<
+        Queue.Queue<ProviderSessionEventSignal, Cause.Done>,
+        Effect.Effect<void>
+      >();
+
       const publishToSubscribers = (
         subscribers: Ref.Ref<
           ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
@@ -546,6 +551,8 @@ export const layerWithOptions = (
       const failSubscribers = Effect.fn("ProviderSessionManager.failSubscribers")(function* (
         entry: LiveSessionEntry,
         detail: string,
+        afterDrain: Effect.Effect<void>,
+        cause?: Cause.Cause<ProviderAdapter.ProviderAdapterV2Error>,
       ) {
         const error = new ProviderAdapter.ProviderAdapterEventStreamError({
           driver: entry.runtime.driver,
@@ -555,11 +562,13 @@ export const layerWithOptions = (
         const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
         yield* Effect.forEach(
           subscribers.values(),
-          (queue) =>
-            Queue.offer(queue, {
+          (queue) => {
+            subscriberReleaseCleanup.set(queue, afterDrain);
+            return Queue.offer(queue, {
               type: "failure",
-              cause: Cause.fail(error),
-            }),
+              cause: cause ?? Cause.fail(error),
+            });
+          },
           { discard: true },
         );
       });
@@ -582,11 +591,17 @@ export const layerWithOptions = (
       // must let consumers drain them before the stream completes.
       const endSubscribers = Effect.fn("ProviderSessionManager.endSubscribers")(function* (
         entry: LiveSessionEntry,
+        afterDrain: Effect.Effect<void>,
       ) {
         const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
-        yield* Effect.forEach(subscribers.values(), (queue) => Queue.end(queue), {
-          discard: true,
-        });
+        yield* Effect.forEach(
+          subscribers.values(),
+          (queue) => {
+            subscriberReleaseCleanup.set(queue, afterDrain);
+            return Queue.end(queue);
+          },
+          { discard: true },
+        );
       });
 
       const cancelIdleFiber = (fiber: Fiber.Fiber<void, never> | null) =>
@@ -1088,6 +1103,7 @@ export const layerWithOptions = (
         readonly onlyIfIdleGeneration?: number;
         readonly keepIfBusyOtherThan?: ReadonlyArray<ProviderThreadId>;
         readonly gracefulSubscribers?: boolean;
+        readonly eventStreamCause?: Cause.Cause<ProviderAdapter.ProviderAdapterV2Error>;
       }) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1106,14 +1122,22 @@ export const layerWithOptions = (
                   if (input.cancelIdleFiber !== false) {
                     yield* cancelIdleFiber(entry.idleFiber);
                   }
+                  // Queued events can persist tool calls after the release-time scan.
+                  const afterDrain = Effect.forEach(
+                    releasedProviderThreads,
+                    (thread) => writeReleasedToolCallEvents(thread, releasedAt),
+                    { discard: true },
+                  ).pipe(logReleaseFailure(input.providerSessionId));
                   if (input.gracefulSubscribers === true) {
-                    yield* endSubscribers(entry);
+                    yield* endSubscribers(entry, afterDrain);
                   } else if (input.reason === "server_shutdown") {
                     yield* interruptSubscribers(entry);
                   } else {
                     yield* failSubscribers(
                       entry,
                       input.detail ?? `Provider session released: ${input.reason}.`,
+                      afterDrain,
+                      input.eventStreamCause,
                     );
                   }
                   const closeExit = yield* closeScopeWithin(entry.scope, {
@@ -1754,6 +1778,13 @@ export const layerWithOptions = (
                 ? Queue.clear(queue).pipe(Effect.andThen(Queue.end(queue)), Effect.asVoid)
                 : Effect.void,
             ),
+            Effect.andThen(
+              Effect.suspend(() => {
+                const cleanup = subscriberReleaseCleanup.get(queue);
+                subscriberReleaseCleanup.delete(queue);
+                return cleanup ?? Effect.void;
+              }),
+            ),
           );
           const events = Stream.fromQueue(queue).pipe(
             Stream.mapEffect((signal) =>
@@ -2143,11 +2174,6 @@ export const layerWithOptions = (
                         cause: "Provider event stream ended unexpectedly.",
                       }),
                     );
-              yield* publishToSubscribers(entry.eventSubscribers, {
-                type: "failure",
-                cause,
-              });
-              yield* Ref.set(entry.eventSubscribers, new Map());
               // lastError is the thread banner, so it gets the same bounded
               // message as a failed turn; the raw cause survives only in the log.
               yield* Effect.logWarning("orchestration-v2.provider-session-runtime-failed", {
@@ -2158,6 +2184,7 @@ export const layerWithOptions = (
                 providerSessionId: entry.runtime.providerSessionId,
                 reason: "runtime_error",
                 detail: makeProviderFailure({ cause }).message,
+                eventStreamCause: cause,
               }).pipe(logReleaseFailure(entry.runtime.providerSessionId));
             }),
           ),

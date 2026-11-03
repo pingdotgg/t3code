@@ -2657,18 +2657,69 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
   });
 
 // regression: #15993 a worktree handoff left its tool call running, so the thread stayed Waiting
-it.effect(
-  "ProviderSessionManagerV2 clears the background work of a session a detach releases",
-  () =>
+it.effect.each(["detach", "stream failure", "provider stop", "early close"] as const)(
+  "ProviderSessionManagerV2 clears background work after queued events drain on %s",
+  (release) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const effect = Effect.gen(function* () {
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-        const { threadId, providerSessionId, rosters, toolCalls } =
+        const { threadId, providerSessionId, rosters, toolCalls, seededToolCalls, writeToolCall } =
           yield* openSessionWithBackgroundCommand("provider-session-manager-detach-roster");
+        const runtime = Option.getOrThrow(yield* manager.get(providerSessionId));
+        const subscription = yield* runtime.subscribeEvents!;
+        const consuming = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        const consumer = yield* subscription.events.pipe(
+          Stream.tap(() =>
+            Deferred.succeed(consuming, undefined).pipe(
+              Effect.andThen(Deferred.await(resume)),
+              Effect.andThen(writeToolCall(seededToolCalls.cutOff)),
+            ),
+          ),
+          (events) => (release === "early close" ? events.pipe(Stream.take(1)) : events),
+          Stream.runDrain,
+          Effect.exit,
+          Effect.forkScoped,
+        );
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+        yield* Queue.offer(queue, {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: runtime.providerSession,
+        });
+        yield* Deferred.await(consuming);
         assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
 
-        yield* manager.detach({ providerSessionId, threadId, detail: "Workspace changed." });
+        const eventSink = yield* EventSink.EventSinkV2;
+        const afterSequence = yield* eventSink.latestSequence({ threadId });
+        if (release === "detach" || release === "early close") {
+          yield* manager.detach({ providerSessionId, threadId, detail: "Workspace changed." });
+        } else {
+          if (release === "provider stop") {
+            yield* Queue.offer(queue, {
+              type: "provider_session.updated",
+              driver: CODEX_DRIVER,
+              providerSession: { ...runtime.providerSession, status: "stopped" },
+            });
+          }
+          yield* Queue.end(queue);
+        }
+        yield* eventSink.stream({ threadId, afterSequence }).pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "turn-item.updated" &&
+              event.payload.id === seededToolCalls.cutOff.id &&
+              event.payload.status === "interrupted",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        yield* Deferred.succeed(resume, undefined);
+        assert.equal(
+          Exit.isFailure(yield* Fiber.join(consumer)),
+          release !== "provider stop" && release !== "early close",
+        );
 
         assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
         assert.deepStrictEqual(yield* rosters, [[], ["dev-server"]]);
