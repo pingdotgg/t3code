@@ -2,7 +2,26 @@ import { describe, expect, it } from "vite-plus/test";
 import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { turnItemOutputImages, turnItemOutputText } from "./itemDetail.ts";
+import { isJsonToolText, turnItemOutputImages, turnItemOutputText } from "./itemDetail.ts";
+
+describe("isJsonToolText", () => {
+  it.each([
+    ['{"screenshot":{"mimeType":"image/png"}}', true],
+    ['[{"threadId":"thread-1"}]', true],
+    ['{\n\n  "status": "completed"\n}', true],
+    ['{\n  "count": 1\n}\n\n{\n  "count": 2\n}', true],
+    ["false", true],
+    ["null", true],
+    ["42", true],
+    ['"completed"', true],
+    ['{"partial":', false],
+    ['{"count":1}\n\nFinished.', false],
+    ["No output.", false],
+    ["", false],
+  ] as const)("classifies %j as JSON: %s", (text, expected) => {
+    expect(isJsonToolText(text)).toBe(expected);
+  });
+});
 
 function toolItem(output: unknown): OrchestrationV2TurnItem {
   return {

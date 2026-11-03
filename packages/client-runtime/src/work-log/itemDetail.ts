@@ -52,6 +52,12 @@ function parseJson(text: string): unknown {
   }
 }
 
+export function isJsonToolText(text: string): boolean {
+  if (parseJson(text) !== undefined) return true;
+  const documents = text.trim().split(/\n\s*\n/);
+  return documents.length > 1 && documents.every((document) => parseJson(document) !== undefined);
+}
+
 function prettyJsonText(text: string): string {
   const trimmed = text.trim();
   if (!/^[[{]/.test(trimmed)) return text;
