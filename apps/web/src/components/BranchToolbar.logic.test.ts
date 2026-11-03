@@ -190,15 +190,18 @@ describe("resolveBranchSelectionTarget", () => {
 
   it("switches back to the main repo when the ref already lives there", () => {
     // A subdirectory project's own checkout is reported at the repository root.
-    for (const [activeProjectCwd, activeWorktreePath] of [
-      ["/repo", "/repo/.t3/worktrees/feature-a"],
-      ["/repo/packages/app", "/repo/.t3/worktrees/feature-a"],
-      ["/repo/packages/app", null],
+    // The checkout root is undefined until the project's status loads.
+    for (const [activeProjectCwd, activeWorktreePath, activeProjectCheckoutRoot] of [
+      ["/repo", "/repo/.t3/worktrees/feature-a", "/repo"],
+      ["/repo/packages/app", "/repo/.t3/worktrees/feature-a", "/repo"],
+      ["/repo/packages/app", null, "/repo"],
+      ["/repo/packages/app", "/repo/.t3/worktrees/feature-a", undefined],
+      ["/repo/packages/app", null, undefined],
     ] as const) {
       expect(
         resolveBranchSelectionTarget({
           activeProjectCwd,
-          activeProjectCheckoutRoot: "/repo",
+          activeProjectCheckoutRoot,
           activeWorktreePath,
           refName: {
             isDefault: true,

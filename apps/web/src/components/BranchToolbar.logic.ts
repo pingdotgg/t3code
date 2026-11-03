@@ -259,11 +259,11 @@ export function resolveBranchSelectionTarget(input: {
   const { activeProjectCwd, activeWorktreePath, refName } = input;
 
   if (refName.worktreePath) {
+    // Until the project's checkout root loads, a checkout containing the project counts as its own.
     const isProjectCheckout =
-      workspaceRelativeFilePath(
-        input.activeProjectCheckoutRoot ?? activeProjectCwd,
-        refName.worktreePath,
-      ) === ".";
+      input.activeProjectCheckoutRoot === undefined
+        ? workspaceRelativeFilePath(activeProjectCwd, refName.worktreePath) !== null
+        : workspaceRelativeFilePath(input.activeProjectCheckoutRoot, refName.worktreePath) === ".";
     return {
       checkoutCwd: refName.worktreePath,
       nextWorktreePath: isProjectCheckout ? null : refName.worktreePath,
