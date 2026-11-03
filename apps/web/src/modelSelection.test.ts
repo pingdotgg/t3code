@@ -26,6 +26,7 @@ import {
   defaultModelSelectionsAreMixed,
   getAppModelOptionsForInstance,
   getCustomModelOptionsByInstance,
+  resolveAppModelSelection,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
   resolveEffectiveDefaultModelSelection,
@@ -399,6 +400,47 @@ describe("instance-scoped model selection", () => {
         deriveProviderInstanceEntries(providers)[0]!,
       ).map((option) => option.slug),
     ).toContain(hiddenModel);
+
+    const allHidden = {
+      ...settings,
+      providerModelPreferences: {
+        [ProviderInstanceId.make("claude_openrouter")]: {
+          hiddenModels: ["claude-opus-4-6", "claude-sonnet-4-6", "openai/gpt-5.5"],
+          modelOrder: [],
+        },
+      },
+    };
+    expect(
+      resolveAppModelSelectionForInstance(
+        ProviderInstanceId.make("claude_openrouter"),
+        allHidden,
+        providers,
+        null,
+      ),
+    ).toBeNull();
+    const stockProviders = [
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claudeAgent",
+        models: ["claude-opus-4-6"],
+      }),
+    ];
+    expect(
+      resolveAppModelSelection(
+        ProviderDriverKind.make("claudeAgent"),
+        {
+          ...settings,
+          providerModelPreferences: {
+            [ProviderInstanceId.make("claudeAgent")]: {
+              hiddenModels: ["claude-opus-4-6"],
+              modelOrder: [],
+            },
+          },
+        },
+        stockProviders,
+        null,
+      ),
+    ).toBe("");
   });
 
   it("falls back instead of resolving a custom slug against the wrong instance", () => {
@@ -539,6 +581,25 @@ describe("instance-scoped model selection", () => {
 
     expect(state.selectedModel).toBe("gpt-5.6-sol");
     expect(dispatch.modelOptionsForDispatch).toBeUndefined();
+  });
+
+  it("keeps the thread model while its instance snapshot is missing and has hidden models", () => {
+    const instanceId = ProviderInstanceId.make("codex_work");
+    const driver = ProviderDriverKind.make("codex");
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers: [provider({ provider: driver, instanceId: "codex", models: ["gpt-5.6-sol"] })],
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: createModelSelection(instanceId, "gpt-5.6-sol"),
+      projectModelSelection: null,
+      settings: {
+        ...settingsWithProviderInstances(),
+        providerModelPreferences: { [instanceId]: { hiddenModels: ["other"], modelOrder: [] } },
+      },
+    });
+
+    expect(state.selectedModel).toBe("gpt-5.6-sol");
   });
 
   it("preserves an explicit draft OpenCode selection while the catalog is empty", () => {

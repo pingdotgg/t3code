@@ -1111,13 +1111,17 @@ export function deriveEffectiveComposerModelState(input: {
     input.threadModelSelection?.instanceId === input.selectedInstanceId;
   const baseModel =
     (input.selectedInstanceId
-      ? resolveAppModelSelectionForInstance(
+      ? (resolveAppModelSelectionForInstance(
           input.selectedInstanceId,
           input.settings,
           input.providers,
           baseModelCandidate,
           { preserveUnavailableSelection: preserveThreadModel },
-        )
+        ) ??
+        (input.providers.some((provider) => provider.instanceId === input.selectedInstanceId) &&
+        input.settings.providerModelPreferences[input.selectedInstanceId]?.hiddenModels.length
+          ? ""
+          : null))
       : null) ??
     // Antigravity has no static model or cross-account catalog fallback.
     (input.selectedProvider === "antigravity" && input.selectedInstanceId ? "" : null) ??

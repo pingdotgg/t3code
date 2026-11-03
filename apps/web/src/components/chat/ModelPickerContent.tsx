@@ -1076,7 +1076,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               emptyLabel={
                 selectedInstanceId === "favorites" && !isSearching
                   ? "No favorites yet"
-                  : "No models found"
+                  : !isSearching && flatModels.length === 0
+                    ? "No visible models. Show one in Settings → Providers."
+                    : "No models found"
               }
               onRequestClose={onRequestClose}
               onOpenProviderSetup={onOpenProviderSetup}

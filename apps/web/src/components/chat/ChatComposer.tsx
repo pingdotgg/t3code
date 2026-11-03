@@ -933,10 +933,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? undefined
       : clampManagedRuntimeMode(managedPolicy, compatibleRuntimeMode, compatibleRuntimeModes);
 
-  const providerSendBlockReason = getAntigravitySendBlockReason(
-    selectedProviderEntry?.snapshot,
-    selectedModel,
-  );
+  const providerSendBlockReason = !selectedModel
+    ? "Show a model in Settings → Providers, or choose another model."
+    : getAntigravitySendBlockReason(selectedProviderEntry?.snapshot, selectedModel);
   const sendDisabledReason =
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??

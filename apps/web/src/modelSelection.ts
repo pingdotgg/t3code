@@ -254,7 +254,11 @@ export function resolveAppModelSelection(
   return (
     resolveConfiguredAppModelSelection(settings, entry, selectedModel) ??
     resolveSelectableModel(resolvedProvider, selectedModel, options) ??
-    getDefaultServerModel(providers, resolvedProvider)
+    options.find((option) => option.isDefault)?.slug ??
+    options[0]?.slug ??
+    (readInstanceModelPreferences(settings, entry.instanceId).hiddenModels.length > 0
+      ? ""
+      : getDefaultServerModel(providers, resolvedProvider))
   );
 }
 
@@ -402,8 +406,9 @@ export function resolveAppModelSelectionState(
         supportedProviders,
         selectedModel,
       ) ??
-      entry.models[0]?.slug ??
-      DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind];
+      (readInstanceModelPreferences(settings, entry.instanceId).hiddenModels.length > 0
+        ? ""
+        : DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind]);
     if (!model) {
       return createModelSelection(entry.instanceId, "", []);
     }
