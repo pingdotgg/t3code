@@ -159,6 +159,11 @@ describe("parsePullRequestReference", () => {
     expect(
       parsePullRequestReference("https://acme.visualstudio.com/project/_git/t3code/pullrequest/42"),
     ).toBe("https://acme.visualstudio.com/project/_git/t3code/pullrequest/42");
+    expect(
+      parsePullRequestReference(
+        "https://acme.visualstudio.com/DefaultCollection/project/_git/t3code/pullrequest/42",
+      ),
+    ).toBe("https://acme.visualstudio.com/DefaultCollection/project/_git/t3code/pullrequest/42");
   });
 
   it.each([
