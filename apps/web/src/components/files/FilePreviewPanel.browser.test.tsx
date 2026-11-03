@@ -1,6 +1,7 @@
 import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
@@ -96,10 +97,14 @@ function setup() {
 }
 
 function markdownPreview(truncated: boolean) {
+  return filePreview("tasks.md", "- [ ] Keep the rest of this file\n", truncated);
+}
+
+function filePreview(relativePath: string, contents: string, truncated = false) {
   state.file = {
-    relativePath: "tasks.md",
-    contents: "- [ ] Keep the rest of this file\n",
-    byteLength: truncated ? 1_200_000 : 32,
+    relativePath,
+    contents,
+    byteLength: truncated ? 1_200_000 : contents.length,
     truncated,
   };
   return (
@@ -107,7 +112,7 @@ function markdownPreview(truncated: boolean) {
       environmentId={environmentId}
       cwd="/workspace"
       projectName="Project"
-      relativePath="tasks.md"
+      relativePath={relativePath}
       threadRef={threadRef}
       composerDraftTarget={threadRef}
       keybindings={[]}
@@ -158,5 +163,22 @@ describe("rendered Markdown task saves", () => {
         contents: "- [x] Keep the rest of this file\n",
       },
     });
+  });
+});
+
+describe("source editor saves", () => {
+  it("keeps a leading BOM first when typing at the start of the file", async () => {
+    using _settings = setup();
+    await using screen = await render(filePreview("notes.txt", "\uFEFFa,b\n1,2\n"));
+    const editor = screen.getByRole("textbox", { name: "notes.txt" });
+    await expect.element(editor).toBeVisible();
+    await userEvent.click(editor);
+    await userEvent.keyboard("{ControlOrMeta>}{Home}{/ControlOrMeta}x");
+    await vi.waitFor(() =>
+      expect(state.writeFile).toHaveBeenCalledWith({
+        environmentId,
+        input: { cwd: "/workspace", relativePath: "notes.txt", contents: "\uFEFFxa,b\n1,2\n" },
+      }),
+    );
   });
 });

@@ -691,13 +691,17 @@ function EditableFileSurface({
   const selectionFrameRef = useRef<number | null>(null);
   const saveTarget = { environmentId, cwd, relativePath };
   useFileSaveSession(saveTarget, onPendingChange);
+  // The editor treats U+FEFF as text that typing at offset 0 can land before, so keep it out and
+  // restore it on change.
+  const bom = contents.startsWith("\uFEFF") ? "\uFEFF" : "";
+  const editorContents = contents.slice(bom.length);
   // Retain file identity for echoed editor changes; only external changes replace the editor's draft.
   const [externalFile, setExternalFile] = useState(() =>
-    editableFileContents(environmentId, cwd, relativePath, contents),
+    editableFileContents(environmentId, cwd, relativePath, editorContents),
   );
   const [editedContents, setEditedContents] = useState<string | null>(null);
-  if (contents !== (editedContents ?? externalFile.contents)) {
-    setExternalFile(editableFileContents(environmentId, cwd, relativePath, contents));
+  if (editorContents !== (editedContents ?? externalFile.contents)) {
+    setExternalFile(editableFileContents(environmentId, cwd, relativePath, editorContents));
     setEditedContents(null);
   }
   const { ready: editable, onPostRender: onEditablePostRender } =
@@ -716,10 +720,11 @@ function EditableFileSurface({
     file,
     lineAnnotations: nextLineAnnotations,
   }: EditorChangeEvent<"file", FileCommentAnnotationGroup, undefined>) => {
-    if (file.contents === getProjectFileContents(environmentId, cwd, relativePath)) return;
+    const nextContents = bom + file.contents;
+    if (nextContents === getProjectFileContents(environmentId, cwd, relativePath)) return;
     setEditedContents(file.contents);
-    setProjectFileQueryData(environmentId, cwd, relativePath, file.contents);
-    changeFileSaveSession(saveTarget, file.contents);
+    setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
+    changeFileSaveSession(saveTarget, nextContents);
     if (!nextLineAnnotations) return;
     const remapped = remapFileCommentAnnotations(nextLineAnnotations);
     // The editor hands back the array it was given until an edit moves an annotation.
@@ -767,7 +772,7 @@ function EditableFileSurface({
           startLine: entry.startLine,
           endLine: entry.endLine,
           text,
-          contents,
+          contents: editorContents,
         }),
       );
     }
