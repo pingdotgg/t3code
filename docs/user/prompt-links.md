@@ -58,6 +58,7 @@ malicious.
 ## Share a thread
 
 **Copy thread** copies a link such as `https://app.t3.codes/threads/<environment>/<thread>`. Paste
-it anywhere, such as Slack, a GitHub comment, or your notes. Opening it asks where to open it, like
-a prompt link, then opens the thread. Only someone connected to the machine that runs the thread
-can see it. In T3 Code, a thread link in a message opens the thread in the app.
+it anywhere, such as Slack, a GitHub comment, or your notes. On a phone with T3 Code installed, it
+opens the thread in the app. Elsewhere, opening it asks where to open it, like a prompt link, then
+opens the thread. Only someone connected to the machine that runs the thread can see it. In T3 Code,
+a thread link in a message opens the thread in the app.
