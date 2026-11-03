@@ -1,15 +1,21 @@
 import {
   type EnvironmentId,
   resolveEnvironmentMachineKind,
+  type ServerProvider,
   type SkillFolderInfo,
 } from "@t3tools/contracts";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import {
+  isProviderWorkspaceSnapshotScanning,
+  type ProviderWorkspaceSnapshotRefreshTarget,
+} from "@t3tools/client-runtime/providerSkills";
 import { NetworkIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useContext } from "react";
 
 import { serverEnvironment } from "../../state/server";
+import { providerWorkspaceSnapshotRefresh } from "../chat/useProviderWorkspaceSnapshotRefresh";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -43,6 +49,42 @@ export function useEnvironmentProviders(environments: ReadonlyArray<SkillEnviron
   return useAtomValue(
     providersByEnvironment(environments.map((environment) => environment.environmentId).join(",")),
   );
+}
+
+const checkoutScans = Atom.family((key: string) =>
+  Atom.make((get) =>
+    (JSON.parse(key) as ProviderWorkspaceSnapshotRefreshTarget[])
+      .map((scan) =>
+        isProviderWorkspaceSnapshotScanning(get(providerWorkspaceSnapshotRefresh(scan))),
+      )
+      .some(Boolean),
+  ).pipe(Atom.withLabel(`web:skill-checkout-scans:${key}`)),
+);
+
+/**
+ * Keeps every enabled agent's scan of the checkouts in scope loaded, as the
+ * composer does: servers send a checkout's skills only when asked, and drop
+ * them when the agent's own list changes. True while a first scan runs.
+ */
+export function useCheckoutScans(
+  environments: ReadonlyArray<SkillEnvironment>,
+  environmentProviders: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly providers: ReadonlyArray<ServerProvider>;
+  }>,
+) {
+  const scans: ProviderWorkspaceSnapshotRefreshTarget[] = environments.flatMap(
+    ({ environmentId, cwd }) =>
+      cwd === null
+        ? []
+        : (
+            environmentProviders.find((entry) => entry.environmentId === environmentId)
+              ?.providers ?? EMPTY
+          )
+            .filter((provider) => provider.enabled)
+            .map((provider) => ({ environmentId, instanceId: provider.instanceId, cwd })),
+  );
+  return useAtomValue(checkoutScans(JSON.stringify(scans)));
 }
 
 /** An environment and the checkout to inspect there, as a family key. */

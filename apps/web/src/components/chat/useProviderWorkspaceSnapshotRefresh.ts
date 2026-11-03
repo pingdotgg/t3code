@@ -9,7 +9,7 @@ import { Atom } from "effect/reactivity";
 
 import { serverEnvironment } from "../../state/server";
 
-const providerWorkspaceSnapshotRefresh = createProviderWorkspaceSnapshotRefreshAtomFamily({
+export const providerWorkspaceSnapshotRefresh = createProviderWorkspaceSnapshotRefreshAtomFamily({
   providers: serverEnvironment.providersValueAtom,
   refreshProviders: serverEnvironment.refreshProviders,
 });

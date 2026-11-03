@@ -27,7 +27,7 @@ import {
   PlusIcon,
   SearchIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import { useAfterDelay } from "../../hooks/useAfterDelay";
 import { cn } from "../../lib/utils";
@@ -60,6 +60,7 @@ import { SettingsGroup } from "./SettingsGroup";
 import { SkillDetail } from "./SkillDetail";
 import {
   type SkillEnvironment,
+  useCheckoutScans,
   useEnvironmentProviders,
   useEnvironmentSkillFolders,
 } from "./SkillEnvironments";
@@ -270,7 +271,8 @@ function SkillsPanel({
   });
   const [query, setQuery] = useState("");
   const [onlyAttention, setOnlyAttention] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  const [rescanning, setRescanning] = useState(false);
+  const refreshing = useCheckoutScans(environments, environmentProviders) || rescanning;
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   // Installs go to the checkout shown, or to the environment's home folders.
   const installTarget: SkillInstallTarget | null =
@@ -311,36 +313,44 @@ function SkillsPanel({
       ? scope.label
       : "this environment";
 
-  // Rescans every environment in scope; a project's checkout is only scanned
-  // when asked, as the composer does before showing its skill menu.
+  // Rescans every environment in scope, or with `fresh` false fetches each
+  // checkout's current scan.
   const refresh = async (fresh: boolean) => {
     if (environments.length === 0) return;
-    setRefreshing(true);
+    setRescanning(true);
     await Promise.all(
-      environments.flatMap((environment) =>
-        (
-          environmentProviders.find((entry) => entry.environmentId === environment.environmentId)
-            ?.providers ?? EMPTY_PROVIDERS
-        )
-          .filter((provider) => provider.enabled)
-          .map((provider) =>
-            refreshProviders({
-              environmentId: environment.environmentId,
-              input: {
-                instanceId: provider.instanceId,
-                ...(environment.cwd === null ? {} : { cwd: environment.cwd }),
-                ...(fresh ? { fresh: true } : {}),
-              },
-            }),
-          ),
-      ),
+      environments.map(async ({ environmentId: id, cwd: checkout }) => {
+        const enabled = (
+          environmentProviders.find((entry) => entry.environmentId === id)?.providers ??
+          EMPTY_PROVIDERS
+        ).filter((provider) => provider.enabled);
+        const scan = (provider: ServerProvider, freshScan: boolean) =>
+          refreshProviders({
+            environmentId: id,
+            input: {
+              instanceId: provider.instanceId,
+              ...(checkout === null ? {} : { cwd: checkout }),
+              ...(freshScan ? { fresh: true } : {}),
+            },
+          });
+        if (checkout === null || !fresh) {
+          await Promise.all(enabled.map((provider) => scan(provider, fresh)));
+          return;
+        }
+        // A fresh scan of a folder drops every other agent's scan of it.
+        const [first, ...rest] = enabled;
+        if (first !== undefined) await scan(first, true);
+        await Promise.all(rest.map((provider) => scan(provider, false)));
+      }),
     );
-    setRefreshing(false);
+    setRescanning(false);
     inspected.refresh();
   };
 
+  // The server rescans a changed checkout, but sends its skills only when asked.
   const afterSkillChange = () => {
-    inspected.refresh();
+    if (environments.some((environment) => environment.cwd !== null)) void refresh(false);
+    else inspected.refresh();
   };
 
   /** A skill's level on one environment: where it lives there, to update or remove it. */
@@ -380,19 +390,6 @@ function SkillsPanel({
       );
     }
   };
-
-  const scanKey = `${environments.map((environment) => `${environment.environmentId}:${environment.cwd ?? ""}`).join(",")}:${environmentProviders
-    .flatMap((entry) => entry.providers.filter((provider) => provider.enabled))
-    .map((provider) => provider.instanceId)
-    .join(",")}`;
-  const scannedKeyRef = useRef<string | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks each environment's agents to scan the checkout.
-  useEffect(() => {
-    if (!environments.some((environment) => environment.cwd !== null)) return;
-    if (scannedKeyRef.current === scanKey) return;
-    scannedKeyRef.current = scanKey;
-    void refresh(false);
-  }, [environments, refresh, scanKey]);
 
   const environmentLabel = (id: EnvironmentId) =>
     environments.find((environment) => environment.environmentId === id)?.label ?? "Environment";
