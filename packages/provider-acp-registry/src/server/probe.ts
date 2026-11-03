@@ -11,7 +11,7 @@ import {
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -320,11 +320,13 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
   ): Effect.fn.Return<
     AcpRegistryConfigurationProbeResult,
     AcpRegistryOperationError,
-    AcpRegistrySupport.AcpRegistryCatalog | ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+    | AcpRegistrySupport.AcpRegistryCatalog
+    | ChildProcessSpawner.ChildProcessSpawner
+    | SecureRandom.SecureRandom
   > {
     const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
 
     const result = yield* Effect.gen(function* () {
@@ -362,7 +364,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-              Layer.succeed(Crypto.Crypto, crypto),
+              Layer.succeed(SecureRandom.SecureRandom, random),
             ),
           ),
         ),
@@ -463,7 +465,7 @@ const makeAcpRegistryManagementRuntime = Effect.fn("AcpRegistryProbe.makeManagem
   function* (input: AcpRegistryManagementInput) {
     const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const runtimeCoordinator = yield* Effect.serviceOption(
       AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
     );
@@ -487,7 +489,7 @@ const makeAcpRegistryManagementRuntime = Effect.fn("AcpRegistryProbe.makeManagem
         Layer.provide(
           Layer.mergeAll(
             Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-            Layer.succeed(Crypto.Crypto, crypto),
+            Layer.succeed(SecureRandom.SecureRandom, random),
           ),
         ),
       ),

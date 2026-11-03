@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { isSvgAttachment } from "@t3tools/shared/image";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -178,8 +178,8 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
     attachmentsDir: config.attachmentsDir,
     relativePath,
   });
-  const crypto = yield* Crypto.Crypto;
-  const partId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+  const random = yield* SecureRandom.SecureRandom;
+  const partId = yield* random.uuidV4();
   const partPath = resolveAttachmentRelativePath({
     attachmentsDir: config.attachmentsDir,
     relativePath: `${relativePath}.${partId}.part`,

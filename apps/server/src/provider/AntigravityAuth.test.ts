@@ -1,4 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId, ProviderSetupError, type ProviderAuthState } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -145,7 +147,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   };
 });
 
-it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth", (it) => {
   it.effect("accepts a delayed duplicate after callback completion starts", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

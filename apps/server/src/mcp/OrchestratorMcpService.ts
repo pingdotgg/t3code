@@ -72,7 +72,7 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -1003,7 +1003,7 @@ function timelineItem(input: {
 }
 
 const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
@@ -1462,9 +1462,7 @@ const make = Effect.gen(function* () {
   });
 
   const requestKey = (clientRequestId: string | undefined): Effect.Effect<string> =>
-    clientRequestId === undefined
-      ? crypto.randomUUIDv4().pipe(Effect.orDie)
-      : Effect.succeed(clientRequestId);
+    clientRequestId === undefined ? random.uuidV4() : Effect.succeed(clientRequestId);
 
   const readTask = Effect.fn("OrchestratorMcpService.readTask")(function* (
     scope: McpThreadInvocationScope,
@@ -3265,7 +3263,7 @@ const make = Effect.gen(function* () {
 export const layer: Layer.Layer<
   OrchestratorMcpService,
   never,
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | ThreadManagementService.ThreadManagementService
   | ThreadLaunchService.ThreadLaunchService
   | GitVcsDriver.GitVcsDriver

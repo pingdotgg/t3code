@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -111,7 +112,7 @@ describe("OpenCode2Server error details", () => {
         Layer.mergeAll(
           OpenCode2Client.layer.pipe(Layer.provide(httpClient)),
           OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
-        ).pipe(Layer.provideMerge(NodeServices.layer)),
+        ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
       ),
     );
 
@@ -213,7 +214,11 @@ describe("OpenCode2Server spawned server", () => {
         Layer.mergeAll(
           OpenCode2Client.layer,
           OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
-        ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
+        ).pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer),
+          ),
+        ),
       ),
     ),
   );

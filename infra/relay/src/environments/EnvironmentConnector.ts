@@ -30,7 +30,7 @@ import {
 } from "@t3tools/shared/relayJwt";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -386,7 +386,7 @@ const make = Effect.gen(function* () {
   const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
   const settings = yield* RelayConfiguration.RelayConfiguration;
   const httpClient = yield* HttpClient.HttpClient;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const relayIssuer = normalizeRelayIssuer(settings.relayIssuer);
   const makeEnvironmentClient = (httpBaseUrl: string) =>
     makeEnvironmentHttpApiClient(httpBaseUrl).pipe(
@@ -444,7 +444,7 @@ const make = Effect.gen(function* () {
       });
       const now = yield* DateTime.now;
       const expiresAt = DateTime.add(now, { minutes: 2 });
-      const nonce = yield* crypto.randomUUIDv4().pipe(
+      const nonce = yield* random.uuidV4().pipe(
         Effect.mapError(
           (cause) =>
             new EnvironmentMintRequestFailed({
@@ -458,7 +458,7 @@ const make = Effect.gen(function* () {
         iss: relayIssuer,
         aud: `t3-env:${link.environmentId}`,
         sub: input.userId,
-        jti: yield* crypto.randomUUIDv4().pipe(
+        jti: yield* random.uuidV4().pipe(
           Effect.mapError(
             (cause) =>
               new EnvironmentMintRequestFailed({
@@ -606,7 +606,7 @@ const make = Effect.gen(function* () {
       });
       const now = yield* DateTime.now;
       const expiresAt = DateTime.add(now, { minutes: 2 });
-      const nonce = yield* crypto.randomUUIDv4().pipe(
+      const nonce = yield* random.uuidV4().pipe(
         Effect.mapError(
           (cause) =>
             new EnvironmentMintRequestFailed({
@@ -620,7 +620,7 @@ const make = Effect.gen(function* () {
         iss: relayIssuer,
         aud: `t3-env:${link.environmentId}`,
         sub: input.userId,
-        jti: yield* crypto.randomUUIDv4().pipe(
+        jti: yield* random.uuidV4().pipe(
           Effect.mapError(
             (cause) =>
               new EnvironmentMintRequestFailed({

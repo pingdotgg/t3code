@@ -1,5 +1,5 @@
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index 845cb4c..24ede42 100644
+index 0db951b..d6b6a6b 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
 @@ -10,14 +10,14 @@ import type * as Effect from "effect/Effect";
@@ -20,7 +20,7 @@ index 845cb4c..24ede42 100644
   * Vitest test API without additional fixtures.
   *
 diff --git a/dist/index.js b/dist/index.js
-index 178cc74..9289296 100644
+index d10d1e7..6839558 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -5,7 +5,7 @@ import * as internal from "./internal/internal.js";
@@ -33,18 +33,18 @@ index 178cc74..9289296 100644
   * Invokes the Effect Vitest equality-tester registration hook.
   *
 diff --git a/dist/internal/internal.js b/dist/internal/internal.js
-index 7138319..4092c67 100644
+index 6c1b1c1..cdc3b26 100644
 --- a/dist/internal/internal.js
 +++ b/dist/internal/internal.js
-@@ -12,7 +12,7 @@ import * as Schedule from "effect/Schedule";
+@@ -13,7 +13,7 @@ import * as Schedule from "effect/Schedule";
  import * as Scope from "effect/Scope";
  import * as TestClock from "effect/testing/TestClock";
  import * as TestConsole from "effect/testing/TestConsole";
 -import * as V from "vitest";
 +import * as V from "vite-plus/test";
  const getCurrentSuite = V.TestRunner.getCurrentSuite;
- const runPromise = /*#__PURE__*/Effect.fnUntraced(function* (effect, _ctx) {
-   const exit = yield* Effect.exit(effect);
+ const runPromise = (effect, ctx) => Effect.runPromise(
+ // Only the test is interruptible: once the signal aborts, the fiber stops
 diff --git a/dist/utils.js b/dist/utils.js
 index b97edbe..7dfd64a 100644
 --- a/dist/utils.js
@@ -59,7 +59,7 @@ index b97edbe..7dfd64a 100644
  // Primitives
  // ----------------------------
 diff --git a/package.json b/package.json
-index b78f4d6..8c43672 100644
+index 068e75e..d14a80e 100644
 --- a/package.json
 +++ b/package.json
 @@ -37,7 +37,6 @@
@@ -67,11 +67,11 @@ index b78f4d6..8c43672 100644
    },
    "peerDependencies": {
 -    "vitest": ">=5.0.0 <6.0.0",
-     "effect": "^4.0.5"
+     "effect": "^4.1.2"
    },
    "devDependencies": {
 diff --git a/src/index.ts b/src/index.ts
-index 9d65132..4aadda8 100644
+index cb3bf6f..8024206 100644
 --- a/src/index.ts
 +++ b/src/index.ts
 @@ -10,7 +10,7 @@ import type * as Effect from "effect/Effect"
@@ -93,10 +93,10 @@ index 9d65132..4aadda8 100644
  /**
   * Vitest test API without additional fixtures.
 diff --git a/src/internal/internal.ts b/src/internal/internal.ts
-index b43385b..4da79fd 100644
+index e6ab75a..3b938a4 100644
 --- a/src/internal/internal.ts
 +++ b/src/internal/internal.ts
-@@ -14,7 +14,7 @@ import type * as Schema from "effect/Schema"
+@@ -15,7 +15,7 @@ import type * as Schema from "effect/Schema"
  import * as Scope from "effect/Scope"
  import * as TestClock from "effect/testing/TestClock"
  import * as TestConsole from "effect/testing/TestConsole"

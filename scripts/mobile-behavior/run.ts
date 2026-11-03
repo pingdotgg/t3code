@@ -9,6 +9,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
@@ -293,6 +294,6 @@ const command = Command.make(
 );
 
 Command.run(command, { version: "0.0.0" }).pipe(
-  Effect.provide(NodeServices.layer),
+  Effect.provide([NodeServices.layer, NodeCrypto.layer]),
   NodeRuntime.runMain,
 );

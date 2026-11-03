@@ -1,7 +1,7 @@
 import type * as EffectAcpSchema from "effect-acp/compat";
 import type { ProviderApprovalOption, RuntimeMode } from "@t3tools/contracts";
 import type { KiroSettings } from "../settings.ts";
-import type * as Crypto from "effect/Crypto";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
@@ -138,7 +138,7 @@ export const makeKiroAcpRuntime = Effect.fn("KiroAcpSupport.makeKiroAcpRuntime")
 ): Effect.fn.Return<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope
 > {
   const { settings, environment, ...runtimeOptions } = input;
   const context = yield* Layer.build(

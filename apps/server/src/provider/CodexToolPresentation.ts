@@ -3,7 +3,7 @@ import type {
   ToolActivityNativeAppReference,
   ToolActivitySource,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import type * as EffectCodexSchema from "effect-codex-app-server/schema";
@@ -49,9 +49,9 @@ const nativeAppSourceKey = Effect.fn("CodexToolPresentation.nativeAppSourceKey")
 ) {
   const key = `native-app:${appId.toLowerCase()}`;
   if (key.length <= 512) return key;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const digest = Hex.encode(
-    yield* crypto.digest("SHA-256", new TextEncoder().encode(key)).pipe(Effect.orDie),
+    yield* crypto.digest(Digest.sha256, new TextEncoder().encode(key)).pipe(Effect.orDie),
   );
   return `${key.slice(0, 512 - digest.length - 1)}:${digest}`;
 });
@@ -133,7 +133,7 @@ export interface McpToolPresentation {
 export const mcpToolPresentation = Effect.fn("CodexToolPresentation.mcpToolPresentation")(
   function* (
     item: Extract<CodexLifecycleItem, { readonly type: "mcpToolCall" }>,
-  ): Effect.fn.Return<McpToolPresentation, never, Crypto.Crypto> {
+  ): Effect.fn.Return<McpToolPresentation, never, Digest.Digest> {
     const result = asUnknownRecord(item.result);
     const metadata = asUnknownRecord(result?._meta);
     const surface = asUnknownRecord(metadata?.["codex/toolSurface"]);

@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { and, eq, inArray, isNull, lt } from "drizzle-orm";
 import { QueryBuilder } from "drizzle-orm/pg-core";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
 
 import * as RelayDb from "../db.ts";
@@ -97,7 +97,7 @@ function insertValues(
 
 const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
 
   const isExpiredClaim = (claimedAt: string | null, now: DateTime.DateTime) => {
     if (claimedAt === null) {
@@ -121,7 +121,7 @@ const make = Effect.gen(function* () {
         ...(input.threadId ? { "relay.thread_id": input.threadId } : {}),
       });
       return yield* Effect.gen(function* () {
-        const id = yield* crypto.randomUUIDv4();
+        const id = yield* random.uuidV4();
         const now = yield* DateTime.now;
         const createdAt = DateTime.formatIso(now);
         const inserted = yield* db

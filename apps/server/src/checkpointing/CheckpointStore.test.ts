@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { CheckpointRef, ThreadId, type VcsError } from "@t3tools/contracts";
@@ -26,17 +27,19 @@ function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): Chec
 const layerServerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-checkpoint-store-test-",
 });
-const layerVcsProcessTest = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
+const layerVcsProcessTest = VcsProcess.layer.pipe(
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
 const layerVcsDriverTest = VcsDriverRegistry.layer.pipe(Layer.provide(layerVcsProcessTest));
 const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
   Layer.provideMerge(layerVcsDriverTest),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const layerTest = layerCheckpointStoreTest.pipe(
   Layer.provideMerge(layerVcsProcessTest),
   Layer.provideMerge(layerVcsDriverTest),
   Layer.provideMerge(layerServerConfig),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 function makeTmpDir(

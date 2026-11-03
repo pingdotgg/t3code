@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
@@ -1188,7 +1189,7 @@ effectIt.effect(
         },
       ]);
       expect(JSON.stringify(harness.events)).not.toContain("private git diagnostic");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 effectIt.effect("recovers an abandoned failed turn before continuing its native conversation", () =>
@@ -1442,7 +1443,7 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
           runtimePolicy: expect.objectContaining({ cwd: worktreePath }),
         }),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 effectIt.effect("reads current startup state after waiting for the workspace lease", () =>

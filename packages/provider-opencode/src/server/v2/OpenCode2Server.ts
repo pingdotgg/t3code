@@ -1,7 +1,7 @@
 // One OpenCode 2 process serves all directories; share it across instance threads.
 import type { OpenCodeClient } from "@opencode/client/effect";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as P from "effect/Predicate";
@@ -34,8 +34,8 @@ export class OpenCode2Server extends Context.Service<
  * otherwise, so T3 supplies its own and keeps it in memory.
  */
 const generatePassword = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
-  const bytes = yield* crypto.randomBytes(32).pipe(Effect.orDie);
+  const random = yield* SecureRandom.SecureRandom;
+  const bytes = yield* random.randomBytes(32);
   return Redacted.make(Base64Url.encode(bytes), { label: "OPENCODE_PASSWORD" });
 });
 

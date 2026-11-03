@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -139,6 +140,7 @@ const answering = (text: string) =>
   Terminal.make({
     columns: Effect.succeed(80),
     rows: Effect.succeed(24),
+    size: Queue.unbounded<Terminal.Size, Cause.Done>(),
     readInput: Effect.gen(function* () {
       const input = yield* Queue.unbounded<Terminal.UserInput, Cause.Done>();
       yield* Queue.offer(input, {
@@ -151,7 +153,7 @@ const answering = (text: string) =>
     display: () => Effect.void,
   });
 
-it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))("t3 up", (it) => {
   afterEach(() => vi.restoreAllMocks());
 
   it.effect.each<{

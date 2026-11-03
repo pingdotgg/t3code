@@ -21,7 +21,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -695,7 +695,7 @@ export const makeDeviceTools = Effect.fn("evaluateMcpToolUse.makeDeviceTools")(f
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const digest = yield* Digest.Digest;
       const { stateDir } = yield* ServerConfig.ServerConfig;
       const agentEntry = path.join(home, ".t3", "tools", "agent-device", "bin", "agent-device.mjs");
       const hosts = new Map<DeviceHostId, DeviceHost.DeviceHost["Service"]>([
@@ -720,7 +720,7 @@ export const makeDeviceTools = Effect.fn("evaluateMcpToolUse.makeDeviceTools")(f
       // As DeviceService.make, minus writing the config file the path names.
       const configureAgent = (hostId: DeviceHostId, _endpoint: unknown, deviceId?: string) =>
         agentDeviceConfigPath(stateDir, hostId, path, deviceId).pipe(
-          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(Digest.Digest, digest),
           Effect.mapError(
             (cause) =>
               new DeviceOperationError({
@@ -775,7 +775,7 @@ export const makeDeviceTools = Effect.fn("evaluateMcpToolUse.makeDeviceTools")(f
   );
   const context = yield* Layer.build(
     McpHttpServer.layerDeviceToolkit.pipe(
-      Layer.provideMerge(McpServer.McpServer.layer),
+      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
       Layer.provideMerge(devices),
       Layer.provideMerge(
         Layer.mergeAll(

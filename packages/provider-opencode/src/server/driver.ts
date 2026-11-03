@@ -1,6 +1,7 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -159,7 +160,8 @@ export type OpenCodeDriverEnv =
   | OpenCodeAdapterV2.OpenCodeAdapterV2DriverEnv
   | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | Digest.Digest
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | ProviderLatestVersions.ProviderLatestVersions
@@ -193,7 +195,7 @@ export const OpenCodeDriver: ProviderDriver<
     const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
     const httpClient = yield* HttpClient.HttpClient;
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
-    const crypto = yield* Crypto.Crypto;
+    const digest = yield* Digest.Digest;
     const host = yield* ProviderHost.ProviderHost;
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
     const continuationIdentity = defaultProviderContinuationIdentity({
@@ -344,7 +346,7 @@ export const OpenCodeDriver: ProviderDriver<
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),
       Effect.provideService(HttpClient.HttpClient, httpClient),
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(Digest.Digest, digest),
     );
     const checkProvider = Effect.all(
       {

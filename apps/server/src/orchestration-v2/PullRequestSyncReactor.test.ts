@@ -25,7 +25,7 @@ import {
 import { assert, describe, it } from "@effect/vitest";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -52,10 +52,7 @@ type SyncCommand = Extract<
 >;
 type LinkCommand = Extract<OrchestrationCommand, { readonly type: "thread.pull-request.link" }>;
 
-const testCrypto = Crypto.make({
-  randomBytes: (size) => new Uint8Array(size).fill(1),
-  digest: (_algorithm, data) => Effect.succeed(data),
-});
+const testCrypto = SecureRandom.make((size) => new Uint8Array(size).fill(1));
 
 function makeProject(id: ProjectId = PROJECT_ID): OrchestrationProjectShell {
   return {
@@ -267,7 +264,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
       streamDomainEvents: Stream.fromQueue(domainEvents),
     }),
     Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
-    Layer.succeed(Crypto.Crypto, testCrypto),
+    Layer.succeed(SecureRandom.SecureRandom, testCrypto),
   );
 
   return {

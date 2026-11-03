@@ -3,6 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 
 import * as NodePath from "@effect/platform-node/NodePath";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -66,7 +67,7 @@ const layerTest = Layer.empty.pipe(
       prefix: "t3-workspace-files-test-",
     }),
   ),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const makeTempDir = Effect.gen(function* () {

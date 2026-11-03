@@ -2,7 +2,7 @@ import type { DesktopSshPasswordPromptRequest } from "@t3tools/contracts";
 import { DesktopSshPasswordPromptResolutionInputSchema } from "@t3tools/contracts";
 import type { SshPasswordRequest } from "@t3tools/ssh/auth";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -223,7 +223,7 @@ export const make = Effect.fn("desktop.sshPasswordPrompts.make")(function* (
   options: DesktopSshPasswordPromptsOptions = {},
 ) {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const pendingRef = yield* Ref.make(new Map<string, PendingSshPasswordPrompt>());
   const passwordPromptTimeoutMs =
     options.passwordPromptTimeoutMs ?? DEFAULT_SSH_PASSWORD_PROMPT_TIMEOUT_MS;
@@ -307,7 +307,7 @@ export const make = Effect.fn("desktop.sshPasswordPrompts.make")(function* (
       });
     }
 
-    const requestId = yield* crypto.randomUUIDv4().pipe(
+    const requestId = yield* random.uuidV4().pipe(
       Effect.mapError(
         (cause) =>
           new DesktopSshPromptRequestIdGenerationError({

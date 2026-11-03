@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -236,7 +237,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
 
         Effect.provide(
           ServerConfigModule.layerTest("/", { prefix: "t3-http-release-test-" }).pipe(
-            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         ),
         Effect.scoped,
