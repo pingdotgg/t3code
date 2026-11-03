@@ -1221,7 +1221,7 @@ export function getFallbackThreadIdAfterDelete<
   now: string;
   deletedThreadIds?: ReadonlySet<T["id"]>;
 }): T["id"] | null {
-  const { deletedThreadId, deletedThreadIds, sortOrder, threads } = input;
+  const { deletedThreadId, deletedThreadIds, sortOrder, now, threads } = input;
   const deletedThread = threads.find((thread) => thread.id === deletedThreadId);
   if (!deletedThread) {
     return null;
@@ -1235,7 +1235,7 @@ export function getFallbackThreadIdAfterDelete<
           thread.id !== deletedThreadId &&
           !deletedThreadIds?.has(thread.id) &&
           thread.settledOverride !== "settled" &&
-          !effectiveSnoozed(thread, { now: input.now }),
+          !effectiveSnoozed(thread, { now }),
       ),
       sortOrder,
     )[0]?.id ?? null

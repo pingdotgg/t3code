@@ -1,5 +1,5 @@
 import type { VoiceTranscriber } from "@t3tools/client-runtime/voice-input";
 
-export function getLocalVoiceTranscriber(): VoiceTranscriber | null {
+export async function getLocalVoiceTranscriber(): Promise<VoiceTranscriber | null> {
   return null;
 }
