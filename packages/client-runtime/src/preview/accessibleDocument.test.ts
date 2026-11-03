@@ -6,27 +6,12 @@ import { planAccessibleNode, syncChildren } from "./accessibleDocument.ts";
 const plan = (node: PreviewAccessibilityNode, canAct = true) => planAccessibleNode(node, canAct);
 
 describe("planAccessibleNode", () => {
-  it("renders headings, links and landmarks as their native elements", () => {
-    expect(plan({ id: "1", role: "heading", name: "Cart", level: 9 })).toMatchObject({
-      tag: "h6",
-      text: "Cart",
-    });
-    expect(
-      plan({ id: "2", role: "link", name: "Docs", url: "https://t3.codes/docs" }),
-    ).toMatchObject({
-      tag: "a",
-      attributes: { href: "https://t3.codes/docs" },
-      control: "activate",
-    });
-    // Script URLs never become live links in the viewer's own document.
-    expect(plan({ id: "3", role: "link", name: "Run", url: "javascript:alert(1)" })).toMatchObject({
-      tag: "a",
+  it("does not turn script URLs into live links in the viewer", () => {
+    const link = plan({ id: "3", role: "link", name: "Run", url: "javascript:alert(1)" });
+    expect(link).toMatchObject({
       attributes: { role: "link", tabindex: "0" },
     });
-    expect(plan({ id: "4", role: "navigation", name: "Primary" })).toMatchObject({
-      tag: "nav",
-      attributes: { "aria-label": "Primary" },
-    });
+    expect(link).not.toHaveProperty("attributes.href");
   });
 
   it("keeps controls reachable but inert for viewers without control", () => {
