@@ -148,6 +148,7 @@ describe("searchSettings", () => {
       "auto-settle-merged-threads",
       "days-before-auto-settle",
       "linked-environments",
+      "product-usage-data",
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
@@ -194,6 +195,23 @@ describe("searchSettings", () => {
     // Hosted web reaches remote computers but has no primary one to set up.
     expect(ids(false)).not.toContain("welcome-page");
     expect(ids(true)).toContain("welcome-page");
+  });
+
+  it("finds product usage data only where a server supports the setting", () => {
+    const availability = {
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+    const ids = (hasTelemetrySetting: boolean) =>
+      filterAvailableSettingsSearchItems({ ...availability, hasTelemetrySetting }).map(
+        (item) => item.id,
+      );
+    expect(ids(false)).not.toContain("product-usage-data");
+    expect(ids(true)).toContain("product-usage-data");
   });
 
   it("finds keybinding commands by label, command id, and default key", () => {
