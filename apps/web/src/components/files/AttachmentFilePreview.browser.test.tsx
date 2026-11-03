@@ -2522,6 +2522,7 @@ it("keeps workspace PDF scroll and zoom after reloads", async () => {
   const { preview, urls } = fixture;
   await using screen = await render(preview(urls.original, "one"));
   await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
+  using workers = vi.spyOn(window, "Worker");
   await screen.getByRole("button", { name: "Next page", exact: true }).click();
   await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
   await screen.getByRole("button", { name: "Next page", exact: true }).click();
@@ -2576,6 +2577,7 @@ it("keeps workspace PDF scroll and zoom after reloads", async () => {
     expect(region().scrollTop).toBe(0);
     expect(region().scrollLeft).toBe(0);
   });
+  expect(workers).not.toHaveBeenCalled();
 });
 
 it("clamps workspace PDF scroll when pages shrink or disappear", async () => {
