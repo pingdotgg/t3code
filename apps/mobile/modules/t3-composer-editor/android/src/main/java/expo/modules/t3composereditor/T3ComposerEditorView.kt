@@ -738,9 +738,16 @@ internal class SelectionAwareEditText(
     return when {
       payload["html"]?.contains("data-t3-context-fragment=") == true -> pasteContext(payload)
       pasteImagesOrInterceptedText() -> true
-      T3ComposerClipboard.hasThreadLink(payload["text"].orEmpty()) -> pasteContext(payload)
+      isSingleItemClip() && T3ComposerClipboard.hasThreadLink(payload["text"].orEmpty()) ->
+        pasteContext(payload)
       else -> false
     }
+  }
+
+  // read() sees only the first item; native paste keeps every item of a longer clip.
+  private fun isSingleItemClip(): Boolean {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+    return clipboard?.primaryClip?.itemCount == 1
   }
 
   private fun pasteContext(payload: Map<String, String>): Boolean {
