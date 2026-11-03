@@ -127,7 +127,7 @@ export function threadHasQueuedTurnStart(
 function awaitsHeldWorkReport(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
-    "heldWorkEndedAt" | "latestUserMessageAt" | "latestRunRequestedAt"
+    "heldWorkEndedAt" | "latestUserMessageAt" | "latestRunRequestedAt" | "status"
   >,
   nowMs: number,
 ): boolean {
@@ -139,6 +139,8 @@ function awaitsHeldWorkReport(
   ) {
     return false;
   }
+  // A report requested behind another run stays queued until that run ends.
+  if (thread.status === "queued") return true;
   const turnRequestedAtMs = latestMillis([
     toMillis(thread.latestUserMessageAt),
     toMillis(thread.latestRunRequestedAt),

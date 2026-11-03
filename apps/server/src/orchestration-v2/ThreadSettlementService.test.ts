@@ -1286,6 +1286,18 @@ describe("ThreadSettlementServiceV2 worker", () => {
           yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
           assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
 
+          // The report turn was requested but waits behind another run.
+          const reportAt = DateTime.makeUnsafe(Date.parse(NOW) + 1_000);
+          const report = {
+            ...held,
+            latestRunId: RunId.make("run:report"),
+            latestUserMessageAt: reportAt,
+            latestRunRequestedAt: reportAt,
+          };
+          yield* Ref.set(
+            fixture.snapshots,
+            makeSnapshot([{ ...report, status: "queued" }, mergedInApp]),
+          );
           yield* fixture.publishMerge;
           assert.strictEqual(yield* Queue.take(dispatched), mergedInApp.id);
           assert.deepStrictEqual(
@@ -1293,15 +1305,12 @@ describe("ThreadSettlementServiceV2 worker", () => {
             [mergedInApp.id],
           );
 
-          const reportAt = DateTime.makeUnsafe(Date.parse(NOW) + 1_000);
           yield* Ref.set(
             fixture.snapshots,
             makeSnapshot([
               {
-                ...held,
-                latestRunId: RunId.make("run:report"),
-                latestUserMessageAt: reportAt,
-                latestRunRequestedAt: reportAt,
+                ...report,
+                status: "completed",
                 latestRunStartedAt: reportAt,
                 latestRunCompletedAt: DateTime.makeUnsafe(Date.parse(NOW) + 20_000),
               },
