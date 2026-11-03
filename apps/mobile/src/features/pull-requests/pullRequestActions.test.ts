@@ -68,6 +68,12 @@ describe("mobile pull request actions", () => {
     expect(mergeUnavailableReason(pr, true, GITHUB)).toContain(reason);
   });
 
+  it("offers no auto-merge for a pull request the merge queue already holds", () => {
+    expect(canPerformPullRequestAction(detail({ isInMergeQueue: true }), "enable-auto-merge")).toBe(
+      false,
+    );
+  });
+
   it("names the change request with its host's term", () => {
     expect(pullRequestActionLabel("close", GITHUB)).toBe("Close pull request");
     expect(pullRequestActionLabel("close", GITLAB)).toBe("Close merge request");

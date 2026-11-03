@@ -1182,6 +1182,7 @@ export function PullRequestDetailPanel({
     detail?.state === "open" &&
     can("merge") &&
     !detail.isDraft &&
+    detail.isInMergeQueue !== true &&
     !conflicting &&
     allowedMergeMethods.length > 1;
   const statePresentation = detail

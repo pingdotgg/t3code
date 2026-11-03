@@ -119,7 +119,12 @@ export function canPerformPullRequestAction(pr: ActionDetail, action: PullReques
         allowedMergeMethods(pr).length > 0
       );
     case "enable-auto-merge":
-      return !pr.isDraft && pr.autoMergeEnabled === false && allowedMergeMethods(pr).length > 0;
+      return (
+        !pr.isDraft &&
+        pr.isInMergeQueue !== true &&
+        pr.autoMergeEnabled === false &&
+        allowedMergeMethods(pr).length > 0
+      );
     case "disable-auto-merge":
       return pr.autoMergeEnabled === true;
     default:
