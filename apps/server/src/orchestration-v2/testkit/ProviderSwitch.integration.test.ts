@@ -2869,6 +2869,18 @@ describe("orchestration v2 provider switching", () => {
                 waiting.runs.map((run) => run.status),
                 ["completed", "running", "queued", "queued"],
               );
+              // Steering would send it into the conversation it is meant to leave.
+              const promoted = yield* orchestrator
+                .dispatch({
+                  type: "queued-message.promote-to-steer",
+                  commandId: CommandId.make(`command:fresh-context:${key}:promote`),
+                  threadId: freshThreadId,
+                  queuedRunId: waiting.runs.find((run) => run.freshContext === true)!.id,
+                  targetRunId: waiting.runs.find((run) => run.status === "running")!.id,
+                })
+                .pipe(Effect.flip);
+              assert.instanceOf(promoted, Orchestrator.OrchestratorDispatchError);
+              assert.include(String(promoted.cause), "fresh session");
               yield* Deferred.succeed(release, undefined);
             }
             yield* worker.drain();
