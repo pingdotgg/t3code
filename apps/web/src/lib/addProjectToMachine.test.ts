@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   runAtomCommand: vi.fn(),
   readProjectFilesToCopy: vi.fn(),
   getClones: vi.fn(),
+  getConfig: vi.fn(),
   onStoreChange: vi.fn(),
   resetStore: vi.fn(),
 }));
@@ -26,7 +27,14 @@ vi.mock("zustand", async () => {
   };
 });
 vi.mock("../rpc/atomRegistry", () => ({
-  appAtomRegistry: { subscribe: () => () => {}, get: mocks.getClones },
+  appAtomRegistry: {
+    subscribe: () => () => {},
+    get: (atom: { environmentId?: string }) =>
+      atom.environmentId === undefined ? mocks.getClones() : mocks.getConfig(atom.environmentId),
+  },
+}));
+vi.mock("../state/server", () => ({
+  serverEnvironment: { configValueAtom: (environmentId: string) => ({ environmentId }) },
 }));
 vi.mock("../components/sourceControlAppAccessToast", () => ({
   suggestAppAccessForRemote: async () => {},
@@ -45,23 +53,40 @@ vi.mock("./readProjectFilesToCopy", () => ({
 
 import { addProjectToMachine, useProjectFileCopy } from "./addProjectToMachine";
 
-function setup(sourceMode: number | undefined, destinationMode: number | undefined) {
+function setup(
+  sourceMode: number | undefined,
+  destinationMode: number | undefined,
+  privateFileWrites: boolean | undefined,
+) {
   mocks.onStoreChange.mockReset();
   mocks.resetStore();
   mocks.runAtomCommand.mockReset();
   mocks.readProjectFilesToCopy.mockReset();
   mocks.getClones.mockReset();
+  mocks.getConfig.mockReset();
   const projectId = ProjectId.make("copied-project");
   const target = { environmentId: EnvironmentId.make("target"), label: "Other machine" };
   mocks.getClones.mockReturnValue([{ projectId, phase: "done" }]);
+  mocks.getConfig.mockImplementation((environmentId) => ({
+    environment: {
+      capabilities: { privateFileWrites: environmentId === "source" ? true : privateFileWrites },
+    },
+  }));
   mocks.readProjectFilesToCopy.mockResolvedValue([
     { relativePath: ".env", contents: "TOKEN=example\n", mode: sourceMode },
   ]);
+  const writtenFiles = new Map<string, string>();
   mocks.runAtomCommand
     .mockResolvedValueOnce({ _tag: "Success", value: { cwd: "/destination" } })
-    .mockResolvedValueOnce({
-      _tag: "Success",
-      value: { relativePath: ".env", mode: destinationMode },
+    .mockImplementationOnce(async (_registry, _command, request) => {
+      writtenFiles.set(request.input.relativePath, request.input.contents);
+      return {
+        _tag: "Success",
+        value: {
+          relativePath: ".env",
+          ...(request.input.mode !== undefined ? { mode: destinationMode } : {}),
+        },
+      };
     });
   let markSettled = () => {};
   const settled = new Promise<void>((resolve) => {
@@ -70,26 +95,90 @@ function setup(sourceMode: number | undefined, destinationMode: number | undefin
   mocks.onStoreChange.mockImplementation((state: { copies: Record<string, { phase: string }> }) => {
     if (!Object.values(state.copies).some((copy) => copy.phase === "copying")) markSettled();
   });
-  return { projectId, target, settled };
+  return { projectId, target, settled, writtenFiles };
 }
 
 it.each([
-  { name: "preserved", sourceMode: 0o600, destinationMode: 0o600, failed: false },
-  { name: "broadened", sourceMode: 0o600, destinationMode: 0o644, failed: true },
-  { name: "unsupported", sourceMode: 0o600, destinationMode: undefined, failed: true },
-  { name: "restricted", sourceMode: 0o644, destinationMode: 0o600, failed: false },
-  { name: "restricted executable", sourceMode: 0o755, destinationMode: 0o700, failed: false },
-  { name: "missing owner execute", sourceMode: 0o755, destinationMode: 0o600, failed: true },
+  {
+    name: "preserved",
+    sourceMode: 0o600,
+    destinationMode: 0o600,
+    failed: false,
+    privateFileWrites: true,
+    blocked: false,
+  },
+  {
+    name: "broadened",
+    sourceMode: 0o600,
+    destinationMode: 0o644,
+    failed: true,
+    privateFileWrites: true,
+    blocked: false,
+  },
+  {
+    name: "unsupported",
+    sourceMode: 0o600,
+    destinationMode: undefined,
+    failed: true,
+    privateFileWrites: true,
+    blocked: false,
+  },
+  {
+    name: "restricted",
+    sourceMode: 0o644,
+    destinationMode: 0o600,
+    failed: false,
+    privateFileWrites: true,
+    blocked: false,
+  },
+  {
+    name: "restricted executable",
+    sourceMode: 0o755,
+    destinationMode: 0o700,
+    failed: false,
+    privateFileWrites: true,
+    blocked: false,
+  },
+  {
+    name: "missing owner execute",
+    sourceMode: 0o755,
+    destinationMode: 0o600,
+    failed: true,
+    privateFileWrites: true,
+    blocked: false,
+  },
   {
     name: "unavailable from the source",
     sourceMode: undefined,
     destinationMode: undefined,
     failed: false,
+    privateFileWrites: undefined,
+    blocked: false,
+  },
+  {
+    name: "missing destination capability",
+    sourceMode: 0o600,
+    destinationMode: 0o600,
+    failed: true,
+    privateFileWrites: undefined,
+    blocked: true,
+  },
+  {
+    name: "disabled destination capability",
+    sourceMode: 0o600,
+    destinationMode: 0o600,
+    failed: true,
+    privateFileWrites: false,
+    blocked: true,
   },
 ])(
   "finishes config-file copying with permissions $name",
-  async ({ sourceMode, destinationMode, failed }) => {
-    const { projectId, target, settled } = setup(sourceMode, destinationMode);
+  async ({ sourceMode, destinationMode, failed, privateFileWrites, blocked }) => {
+    const { projectId, target, settled, writtenFiles } = setup(
+      sourceMode,
+      destinationMode,
+      privateFileWrites,
+    );
     await addProjectToMachine({
       source: { environmentId: EnvironmentId.make("source"), cwd: "/source" },
       subdirectory: "",
@@ -101,12 +190,17 @@ it.each([
       files: [".env"],
     });
     await settled;
+    expect(writtenFiles.get(".env")).toBe(blocked ? undefined : "TOKEN=example\n");
     expect(useProjectFileCopy({ environmentId: target.environmentId, projectId })).toEqual(
       failed
         ? {
             phase: "failed",
             title: "Could not copy 1 file to Other machine",
-            failures: [".env: The destination could not preserve file permissions."],
+            failures: [
+              blocked
+                ? ".env: The destination cannot safely copy files with POSIX permissions."
+                : ".env: The destination could not preserve file permissions.",
+            ],
           }
         : null,
     );

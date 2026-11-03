@@ -656,8 +656,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             })
             .pipe(Effect.flip);
           expect(unsupported).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
-          expect(yield* fileSystem.readFileString(path.join(cwd, "src/main.ts"))).not.toContain(
-            "SECRET",
+          expect(yield* fileSystem.readFileString(path.join(cwd, "src/main.ts"))).toBe(
+            "export const edited = true;\n",
           );
         }
       }).pipe(
