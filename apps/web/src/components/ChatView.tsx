@@ -304,7 +304,6 @@ import {
   ChatPaneHeaderControls,
   useHeaderControlsInset,
 } from "./chat/ChatPaneHeader";
-import { PaneHeaderActions } from "./chat/PaneHeaderActions";
 import GitActionsControl from "./GitActionsControl";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
 import { PanelLayoutControls, type PanelLayoutControlsProps } from "./chat/PanelLayoutControls";
@@ -3432,13 +3431,6 @@ export default function ChatView(props: ChatViewProps) {
   );
   const panelLayoutControls = (
     <ChatPaneHeaderControls measureRef={measureHeaderControls}>
-      <PaneHeaderActions
-        environmentId={activeThread.environmentId}
-        threadId={activeThread.id}
-        {...(draftId ? { draftId } : {})}
-        activeProjectName={activeProject?.title}
-        projectId={activeProject?.id ?? null}
-      />
       {panelToggleControls}
     </ChatPaneHeaderControls>
   );
