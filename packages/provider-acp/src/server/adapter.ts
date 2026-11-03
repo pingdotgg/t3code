@@ -3842,10 +3842,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               if (backgroundCompletion.status !== "running") {
                 context.backgroundCommands.set(backgroundCompletion.taskId, {
                   status: cached?.status === "failed" ? "failed" : backgroundCompletion.status,
-                  output:
-                    backgroundCompletion.appendOutput.length === 0 && cached?.output !== undefined
-                      ? cached.output
-                      : toolOutputText(hydrated),
+                  output: !cached
+                    ? toolOutputText(hydrated)
+                    : backgroundCompletion.appendOutput.length > 0
+                      ? backgroundCompletion.appendOutput
+                      : (cached.output ?? toolOutputText(hydrated)),
                 });
               }
               yield* emitTool(context, hydrated);

@@ -614,6 +614,7 @@ function assertReinjectedInstructions(
 const runGrokMonitorEndingMidTurn = Effect.fnUntraced(function* (input: {
   readonly hydration?: "completed" | "failed";
   readonly order?: "hydration-last" | "hydration-first";
+  readonly hydrations?: number;
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -787,20 +788,26 @@ const runGrokMonitorEndingMidTurn = Effect.fnUntraced(function* (input: {
       ...(input.hydration === undefined ? { output: "job1 finished\n" } : {}),
     },
   });
+  const hydration = input.hydration;
   const hydrate =
-    input.hydration === undefined
+    hydration === undefined
       ? Effect.void
-      : update({
-          sessionUpdate: "tool_call",
-          toolCallId: "call-fetch-job1",
-          title: "get_command_or_subagent_output",
-          status: "completed",
-          rawInput: { task_id: taskId },
-          rawOutput: {
-            type: "TaskOutput",
-            Result: { task_id: taskId, status: input.hydration, output: "HYDRATED_RESULT\n" },
-          },
-        });
+      : Effect.forEach(
+          Array.from({ length: input.hydrations ?? 1 }, (_, index) => index),
+          (index) =>
+            update({
+              sessionUpdate: "tool_call",
+              toolCallId: `call-fetch-job1-${index}`,
+              title: "get_command_or_subagent_output",
+              status: "completed",
+              rawInput: { task_id: taskId },
+              rawOutput: {
+                type: "TaskOutput",
+                Result: { task_id: taskId, status: hydration, output: "HYDRATED_RESULT\n" },
+              },
+            }),
+          { discard: true },
+        );
   if (input.order === "hydration-first") {
     yield* hydrate;
     yield* taskCompleted;
@@ -8800,16 +8807,18 @@ describe("AcpAdapterV2", () => {
   );
 
   it.effect.each([
-    { hydration: "completed", order: "hydration-last" },
-    { hydration: "failed", order: "hydration-last" },
-    { hydration: "completed", order: "hydration-first" },
-    { hydration: "failed", order: "hydration-first" },
+    { hydration: "completed", order: "hydration-last", hydrations: 1 },
+    { hydration: "failed", order: "hydration-last", hydrations: 1 },
+    { hydration: "completed", order: "hydration-first", hydrations: 1 },
+    { hydration: "failed", order: "hydration-first", hydrations: 1 },
+    { hydration: "completed", order: "hydration-last", hydrations: 2 },
   ] as const)(
-    "keeps a mid-turn $hydration TaskOutput hydration ($order) over an outputless monitor end",
-    ({ hydration, order }) =>
+    "keeps $hydrations mid-turn $hydration TaskOutput hydration ($order) over an outputless monitor end",
+    (input) =>
       Effect.gen(function* () {
+        const { hydration } = input;
         const { monitorStatuses, monitorOutputs, terminalStatus } =
-          yield* runGrokMonitorEndingMidTurn({ hydration, order });
+          yield* runGrokMonitorEndingMidTurn(input);
         assert.equal(monitorStatuses.at(-1), hydration);
         assert.equal(monitorOutputs.at(-1), "HYDRATED_RESULT");
         assert.deepEqual(terminalStatus, Option.some("completed"));
