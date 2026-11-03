@@ -1,5 +1,6 @@
 import * as NodeModule from "node:module";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fileBasename } from "@t3tools/shared/path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -125,10 +126,17 @@ const loadApi = () => {
 };
 
 const make = Effect.gen(function* () {
+  const architecture = yield* HostProcess.Architecture;
   // Keep native loading out of non-Windows imports and idle preview scans.
   const api = yield* Effect.cached(
     Effect.try({
-      try: loadApi,
+      try: () => {
+        // HANDLE arguments below require a 64-bit process.
+        if (architecture !== "x64" && architecture !== "arm64") {
+          throw new Error(`No native TCP discovery on ${architecture}`);
+        }
+        return loadApi();
+      },
       catch: (cause) => new WindowsTcpProbeError({ operation: "load", cause }),
     }),
   );
