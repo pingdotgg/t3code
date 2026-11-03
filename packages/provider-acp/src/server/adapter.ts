@@ -3839,7 +3839,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               // BackgroundTaskStarted normalization can reopen this row, so settlement
               // replays the newest completion; a hydration never undoes a known failure.
               const cached = context.backgroundCommands.get(backgroundCompletion.taskId);
-              if (backgroundCompletion.status !== "running" && cached !== undefined) {
+              if (backgroundCompletion.status !== "running") {
                 context.backgroundCommands.set(backgroundCompletion.taskId, {
                   status: cached?.status === "failed" ? "failed" : backgroundCompletion.status,
                   output:
