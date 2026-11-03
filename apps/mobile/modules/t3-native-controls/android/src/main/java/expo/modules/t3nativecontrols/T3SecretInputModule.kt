@@ -94,8 +94,8 @@ class T3SecretInputView(context: Context, appContext: AppContext) : ExpoView(con
       }
     )
     input.setOnEditorActionListener { _, actionId, event ->
-      if (actionId == EditorInfo.IME_ACTION_DONE) {
-        // A hardware Enter reports both key down and key up.
+      if (actionId == EditorInfo.IME_ACTION_DONE || event?.keyCode == KeyEvent.KEYCODE_ENTER) {
+        // Hardware Enter reports IME_NULL on Android 13 and earlier, and both key down and key up.
         if (event == null || event.action == KeyEvent.ACTION_DOWN) onSubmit(emptyMap())
         true
       } else {
