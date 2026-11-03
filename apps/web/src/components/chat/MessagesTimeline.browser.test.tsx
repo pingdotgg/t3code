@@ -1,3 +1,4 @@
+import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
 import { page } from "vite-plus/test/browser";
 import {
@@ -15,8 +16,15 @@ import {
   ThreadId,
   type OrchestrationV2Subagent,
 } from "@t3tools/contracts";
-import type { LegendListRef } from "@legendapp/list/react";
-import { createRef, Profiler, StrictMode, type ComponentProps, type ReactElement } from "react";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import {
+  createRef,
+  Profiler,
+  StrictMode,
+  useState,
+  type ComponentProps,
+  type ReactElement,
+} from "react";
 import * as DateTime from "effect/DateTime";
 import { Atom } from "effect/reactivity";
 import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
@@ -25,6 +33,7 @@ import "~/index.css";
 
 import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
+import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import {
@@ -208,6 +217,45 @@ const TASK_ID = ScheduledTaskId.make("task-1");
 const AUTOMATION_PROMPT = "Triage the inbox\n\nLabel every new issue and close duplicates.";
 
 describe("MessagesTimeline work rows", () => {
+  it("keeps the worked-for heading in place when expanded at the bottom", async () => {
+    const props = baseProps();
+    const runId = RunId.make("completed-run");
+    const container = document.createElement("div");
+    container.style.cssText = "height: 600px; width: 900px; display: flex; flex-direction: column;";
+    await using screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          ...Array.from({ length: 12 }, (_, index) =>
+            message(`Earlier context ${index}`, {}, `context-${index}`),
+          ),
+          message("Progress details\n\n".repeat(50), { role: "assistant", runId }, "progress"),
+          message("Done", { role: "assistant", runId }, "final"),
+        ]}
+      />,
+      { container },
+    );
+    const heading = screen.getByRole("button", { name: /^Worked for/ });
+    await expect.element(heading).toBeVisible();
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    await vi.waitFor(() =>
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2),
+    );
+    expect(viewport.scrollTop).toBeGreaterThan(0);
+    const top = heading.element().getBoundingClientRect().top;
+    const height = viewport.scrollHeight;
+    using _timers = fakeTimers();
+    await heading.click();
+    await act(() => vi.advanceTimersByTime(1000));
+    await vi.waitFor(() => {
+      expect(viewport.scrollHeight).toBeGreaterThan(height + 500);
+      expect(heading.element().getBoundingClientRect().top).toBeCloseTo(top, 0);
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeGreaterThan(
+        500,
+      );
+    });
+  });
+
   it.each(["delegated", "legacy", "missing"] as const)(
     "uses the reported task for %s completion notifications",
     async (source) => {
@@ -850,7 +898,7 @@ describe("MessagesTimeline attachments", () => {
           onOpen={onOpen}
         />
       );
-      await using screen = await renderElement(preview());
+      await using screen = await renderElement(<div dir="rtl">{preview()}</div>);
       const audio = screen.container.querySelector("audio")!;
       const duration = vi.spyOn(audio, "duration", "get").mockReturnValue(Infinity);
       const play = vi.spyOn(audio, "play").mockResolvedValue();
@@ -875,6 +923,10 @@ describe("MessagesTimeline attachments", () => {
         audio.dispatchEvent(new Event("durationchange"));
       });
       expect(screen.text()).toContain("0:03 / 0:10");
+      expect(
+        getComputedStyle(screen.container.querySelector("audio")!.previousElementSibling!)
+          .direction,
+      ).toBe("ltr");
       expect(progress.style.width).toBe("30%");
       await act(() => {
         duration.mockReturnValue(NaN);
@@ -1190,6 +1242,73 @@ it("renders automatic compaction as one live divider that finishes with its reas
     .toBeVisible();
   expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1);
   expect(container.textContent).not.toContain("Compacting before");
+});
+
+function TimelineChangedFilesCard() {
+  const [expanded, setExpanded] = useState(true);
+  return (
+    <ChangedFilesCard
+      runId={RunId.make("run-1")}
+      files={["src/a.ts", "src/b.ts", "src/c.ts"].map((path) => ({
+        path,
+        kind: "modified",
+        additions: 1,
+        deletions: 0,
+      }))}
+      totals={{ count: 3, additions: 3, deletions: 0 }}
+      allDirectoriesExpanded={expanded}
+      resolvedTheme="light"
+      onToggleAllDirectories={() => setExpanded((value) => !value)}
+      onOpenTurnDiff={() => {}}
+    />
+  );
+}
+
+function ChangedFilesTimeline() {
+  return (
+    <LegendList
+      data={["files", "after"]}
+      keyExtractor={(item) => item}
+      estimatedItemSize={100}
+      recycleItems={false}
+      className="h-[600px]"
+      renderItem={({ item }) =>
+        item === "files" ? <TimelineChangedFilesCard /> : <div data-testid="after">After</div>
+      }
+    />
+  );
+}
+
+describe("ChangedFilesCard", () => {
+  it.each(["folder", "all folders"])(
+    "measures %s collapse and expansion in the same commit",
+    async (toggle) => {
+      await using screen = await render(<ChangedFilesTimeline />);
+      const after = () =>
+        screen.container.querySelector('[data-testid="after"]')!.getBoundingClientRect().top;
+      const cardBottom = () =>
+        screen.container.querySelector("[data-changed-files-state]")!.getBoundingClientRect()
+          .bottom;
+      await vi.waitFor(() => expect(after()).toBe(cardBottom()));
+      const topBefore = after();
+      const button = () =>
+        screen.container.querySelector<HTMLButtonElement>(
+          toggle === "folder"
+            ? '[data-changed-file-row="src"] button'
+            : 'button[aria-label$="all folders"]',
+        )!;
+      await act(() => {
+        flushSync(() => button().click());
+        expect(screen.container.textContent).not.toContain("a.ts");
+        expect(after()).toBe(topBefore - 3 * 28);
+      });
+      await act(() => {
+        flushSync(() => button().click());
+        expect(screen.container.textContent).toContain("a.ts");
+        expect(after()).toBe(topBefore);
+      });
+    },
+  );
 });
 
 it("keeps concurrent approvals actionable outside collapsed work and restores settled rows", async () => {
