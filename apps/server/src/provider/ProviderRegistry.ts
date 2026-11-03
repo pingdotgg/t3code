@@ -597,16 +597,23 @@ export const layer = Layer.effect(
       },
     );
 
+    const isCurrentInstance = (instance: ProviderInstance) =>
+      instanceRegistry
+        .getInstance(instance.instanceId)
+        .pipe(Effect.map((current) => current === instance));
+
     const refreshOneSource = Effect.fn("refreshOneSource")(function* (instance: ProviderInstance) {
       const providerSource = buildSnapshotSource(instance);
       // Enrichment can publish a newer snapshot before refresh returns its pre-enrichment probe.
-      const nextProvider = yield* providerSource.refresh.pipe(
+      const probe = yield* providerSource.refresh.pipe(
         Effect.andThen(providerSource.getSnapshot),
+        Effect.exit,
       );
-      // Settings can replace or remove the instance mid-probe; its late result is stale.
-      if ((yield* instanceRegistry.getInstance(instance.instanceId)) !== instance) {
+      // Settings can replace or remove the instance mid-probe; its late result or failure is stale.
+      if (!(yield* isCurrentInstance(instance))) {
         return yield* Ref.get(providersRef);
       }
+      const nextProvider = yield* probe;
       return yield* correlateSnapshotWithSource(providerSource, nextProvider).pipe(
         Effect.flatMap(syncProvider),
       );
@@ -741,10 +748,13 @@ export const layer = Layer.effect(
           ),
         { concurrency: "unbounded", discard: true },
       );
+      // A replaced instance's cached row did not come from this pass's probe.
+      const refreshedInstances = yield* Effect.filter(
+        instances.filter((instance) => !failedInstances.has(instance.instanceId)),
+        isCurrentInstance,
+      );
       const refreshedInstanceIds = new Set(
-        instances
-          .filter((instance) => !failedInstances.has(instance.instanceId))
-          .map((instance) => instance.instanceId),
+        refreshedInstances.map((instance) => instance.instanceId),
       );
       return (yield* Ref.get(providersRef)).filter((candidate) =>
         refreshedInstanceIds.has(candidate.instanceId),
