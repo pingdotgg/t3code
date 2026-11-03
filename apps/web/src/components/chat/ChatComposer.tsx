@@ -3269,7 +3269,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 {canInterrupt &&
                 !composerSendState.hasSendableContent &&
                 !isEditingQueuedMessage ? (
-                  <span data-chat-composer-transition-actions="true" className="flex shrink-0">
+                  <span
+                    data-chat-composer-transition-actions="true"
+                    data-chat-composer-collapsed-controls="true"
+                    className="flex shrink-0"
+                  >
                     <StopGenerationButton
                       canOperateThread={canOperateThread}
                       preserveComposerFocusOnPointerDown
