@@ -766,12 +766,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
   const requireSystemdPrerequisites = Effect.gen(function* () {
     const problems = yield* readSystemdProblems(false);
-    // Logind reports an unknown user, one without a session yet, as linger-unavailable.
-    const notLingering = problems.find(
-      (problem) => problem === "linger-disabled" || problem === "linger-unavailable",
-    );
     if (problems[0] === undefined) return;
-    if (notLingering === undefined) {
+    // Logind reports an unknown user, one without a session yet, as linger-unavailable.
+    if (!problems.includes("linger-disabled") && !problems.includes("linger-unavailable")) {
       return yield* new BootServicePrerequisiteError({ problem: problems[0] });
     }
     yield* runStep("enabling lingering for this user", "loginctl", [
@@ -780,7 +777,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ...(uid === undefined ? [] : [String(uid)]),
     ]).pipe(
       Effect.mapError(
-        (cause) => new BootServicePrerequisiteError({ problem: notLingering, cause }),
+        (cause) => new BootServicePrerequisiteError({ problem: "linger-disabled", cause }),
       ),
     );
     // Lingering starts the user manager asynchronously.
