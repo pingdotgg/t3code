@@ -719,7 +719,7 @@ const CLAUDE_MCP_APP_CAPABILITIES = [
   "mcp_read_resource_v1",
   "mcp_call_result_not_for_model_v1",
 ] as const;
-// A hung MCP resource read must not stall the session's message stream.
+// Captured inline, unlike Codex's shared app-server: a slow read delays only this session's stream, and only this long.
 const CLAUDE_MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
 
 function claudeSupportsMcpApps(capabilities: ReadonlySet<string>): boolean {
@@ -760,12 +760,10 @@ function claudeMcpToolForApps(
   };
 }
 
-/** A model-turn MCP `tool_use_result` is `{content, structuredContent?, _meta?}` with `content` flattened to text. */
+/** A model-turn MCP `tool_use_result` flattens text `content` to a string; app calls return MCP's raw `CallToolResult`. */
 function claudeMcpCallToolResult(
-  output: ClaudeNativeToolOutput,
-  isError: boolean,
+  value: unknown,
 ): ProviderAdapter.ProviderAdapterV2McpCallToolResult {
-  const value = claudeNativeToolOutputValue(output);
   const record = Predicate.isObject(value) && !Array.isArray(value) ? value : undefined;
   const content = record === undefined ? value : record.content;
   return {
@@ -778,7 +776,7 @@ function claudeMcpCallToolResult(
     ...(record?.structuredContent === undefined
       ? {}
       : { structuredContent: record.structuredContent }),
-    ...(isError ? { isError: true } : {}),
+    ...(record?.isError === true ? { isError: true } : {}),
     ...(record?._meta === undefined ? {} : { _meta: record._meta }),
   };
 }
@@ -7226,7 +7224,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               type: "structured_tool_use_result",
               value: {
                 [MCP_APP_OUTPUT_KEY]: reference,
-                result: claudeMcpCallToolResult(input.output, false),
+                result: claudeMcpCallToolResult(claudeNativeToolOutputValue(input.output)),
               },
             } satisfies ClaudeNativeToolOutput;
           },
@@ -11521,23 +11519,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }),
             callTool: Effect.fn("ClaudeAdapterV2.callMcpTool")(function* (call) {
               const liveQuery = yield* mcpAppQuery(call.providerThread);
-              const result = yield* liveQuery.query
-                .callMcpTool({
-                  tool: claudeMcpToolName(call.server, call.tool),
-                  arguments: call.arguments,
-                })
-                .pipe(Effect.mapError(mcpAppError("Claude MCP tool call failed.")));
-              return {
-                content:
-                  Predicate.isObject(result) && Array.isArray(result.content) ? result.content : [],
-                ...(Predicate.isObject(result) && result.structuredContent !== undefined
-                  ? { structuredContent: result.structuredContent }
-                  : {}),
-                ...(Predicate.isObject(result) && result.isError === true ? { isError: true } : {}),
-                ...(Predicate.isObject(result) && result._meta !== undefined
-                  ? { _meta: result._meta }
-                  : {}),
-              };
+              return claudeMcpCallToolResult(
+                yield* liveQuery.query
+                  .callMcpTool({
+                    tool: claudeMcpToolName(call.server, call.tool),
+                    arguments: call.arguments,
+                  })
+                  .pipe(Effect.mapError(mcpAppError("Claude MCP tool call failed."))),
+              );
             }),
             readResource: Effect.fn("ClaudeAdapterV2.readMcpResource")(function* (read) {
               const liveQuery = yield* mcpAppQuery(read.providerThread);
