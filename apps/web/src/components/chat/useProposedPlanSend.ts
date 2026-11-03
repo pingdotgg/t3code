@@ -75,6 +75,7 @@ interface PlanSendBase {
 }
 
 interface PlanFollowUpSendInput extends PlanSendBase {
+  readonly activeLatestRun: EnvironmentThreadShell["latestRun"] | null;
   readonly runtimeMode: RuntimeMode;
   readonly localCheckoutBranchMismatch: { readonly currentBranch: string } | null;
   readonly setOptimisticUserMessages: Dispatch<SetStateAction<ChatMessage[]>>;
@@ -99,6 +100,7 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
     routeThreadKey,
     activeThread,
     activeProposedPlan,
+    activeLatestRun,
     isServerThread,
     isSendBusy,
     composerRef,
@@ -145,6 +147,13 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
 
     const sendCtx = composerRef.current?.getSendContext();
     if (!sendCtx?.providerAvailable || !sendCtx.interactionModeEnabled) {
+      return false;
+    }
+
+    if (
+      nextInteractionMode === "default" &&
+      activeThread.latestRun?.runId !== activeLatestRun?.runId
+    ) {
       return false;
     }
 

@@ -8,6 +8,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -17,6 +18,7 @@ import { expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   startTurnError: null as unknown,
   otherCommands: [] as string[],
+  settingsModes: [] as string[],
 }));
 
 vi.mock(import("../../state/session"), async (importOriginal) => ({
@@ -47,27 +49,37 @@ const threadRef = scopeThreadRef(environmentId, threadId);
 function setup(startTurnError: unknown) {
   state.startTurnError = startTurnError;
   state.otherCommands = [];
+  state.settingsModes = [];
   useComposerDraftStore.getState().setInteractionMode(threadRef, null);
 }
 
-function serverThread(interactionMode: ProviderInteractionMode, runId: RunId) {
+function serverThread(
+  interactionMode: ProviderInteractionMode,
+  runId: RunId | null,
+): EnvironmentThreadShell {
   return {
     id: threadId,
     environmentId,
     interactionMode,
     title: "Plan",
-    latestRun: { runId },
+    latestRun: runId === null ? null : { runId },
   } as never;
 }
 
 function PlanThread(props: {
   readonly thread: ReturnType<typeof serverThread>;
   readonly onSettled: (sent: boolean) => void;
+  readonly detailRunId?: RunId | null;
+  readonly interactionMode?: "default" | "plan";
 }) {
   const submitPlanFollowUp = usePlanFollowUpSend({
     environmentId,
     routeThreadKey: `${threadRef.environmentId}:${threadRef.threadId}`,
     activeThread: props.thread,
+    activeLatestRun:
+      props.detailRunId === null
+        ? null
+        : ({ runId: props.detailRunId ?? props.thread.latestRun?.runId } as never),
     activeThreadBranch: null,
     activeProposedPlan: { id: "plan:1", planMarkdown: "# Plan" } as never,
     isServerThread: true,
@@ -95,8 +107,12 @@ function PlanThread(props: {
     setOptimisticUserMessages: () => undefined,
     setThreadError: () => undefined,
     anchorNewTurn: () => undefined,
-    persistThreadSettingsForNextTurn: async (): Promise<AtomCommandResult<void, unknown>> =>
-      AsyncResult.success(undefined),
+    persistThreadSettingsForNextTurn: async ({
+      interactionMode,
+    }): Promise<AtomCommandResult<void, unknown>> => {
+      state.settingsModes.push(interactionMode);
+      return AsyncResult.success(undefined);
+    },
   });
   const threadMode = useThreadInteractionMode(props.thread);
   const draftMode = useComposerDraftStore(
@@ -114,9 +130,10 @@ function PlanThread(props: {
       <button
         type="button"
         onClick={() =>
-          void submitPlanFollowUp({ text: "Implement the plan", interactionMode: "default" }).then(
-            props.onSettled,
-          )
+          void submitPlanFollowUp({
+            text: "Implement the plan",
+            interactionMode: props.interactionMode ?? "default",
+          }).then(props.onSettled)
         }
       >
         Implement
@@ -189,3 +206,49 @@ it.each([
     await expect.element(composerMode).toHaveTextContent("controls hidden");
   },
 );
+
+const detailPlanRunId = RunId.make("run:detail-plan");
+it.each([
+  { name: "missing shell run", shellRunId: null, detailRunId: detailPlanRunId },
+  {
+    name: "different shell run",
+    shellRunId: RunId.make("run:stale-shell"),
+    detailRunId: detailPlanRunId,
+  },
+  { name: "missing detail run", shellRunId: detailPlanRunId, detailRunId: null },
+])("does not save Implement mode with a $name", async ({ shellRunId, detailRunId }) => {
+  setup(new Error("Refused"));
+  let onSettled!: (sent: boolean) => void;
+  const settled = new Promise<boolean>((resolve) => {
+    onSettled = resolve;
+  });
+  await using screen = await render(
+    <PlanThread
+      thread={serverThread("plan", shellRunId)}
+      detailRunId={detailRunId}
+      onSettled={onSettled}
+    />,
+  );
+  await screen.getByRole("button", { name: "Implement" }).click();
+  expect(await settled).toBe(false);
+  expect(state.settingsModes).toEqual([]);
+});
+
+it("allows refinement while the shell run catches up", async () => {
+  setup(new Error("Refused"));
+  let onSettled!: (sent: boolean) => void;
+  const settled = new Promise<boolean>((resolve) => {
+    onSettled = resolve;
+  });
+  await using screen = await render(
+    <PlanThread
+      thread={serverThread("plan", null)}
+      detailRunId={detailPlanRunId}
+      interactionMode="plan"
+      onSettled={onSettled}
+    />,
+  );
+  await screen.getByRole("button", { name: "Implement" }).click();
+  expect(await settled).toBe(false);
+  expect(state.settingsModes).toEqual(["plan"]);
+});

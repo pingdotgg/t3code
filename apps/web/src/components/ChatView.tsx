@@ -2920,6 +2920,7 @@ export default function ChatView(props: ChatViewProps) {
     draftId,
     draftThread,
     activeThread,
+    activeLatestRun,
     activeThreadKey,
     activeThreadBranch,
     activeProject,
