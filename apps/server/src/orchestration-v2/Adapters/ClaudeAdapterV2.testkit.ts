@@ -1,3 +1,4 @@
+import * as ProjectStore from "../ProjectStore.ts";
 import { ClaudeSettings } from "@t3tools/contracts";
 import {
   forkSession,
@@ -1052,6 +1053,7 @@ function layerClaudeProviderAdapterRegistryReplay(
         NodeServices.layer,
         NodeCrypto.layer,
         layerServerConfig,
+        Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeedNone }),
       ),
     ),
   );

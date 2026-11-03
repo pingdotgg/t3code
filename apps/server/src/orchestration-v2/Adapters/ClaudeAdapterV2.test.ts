@@ -1,3 +1,4 @@
+import * as ProjectStore from "../ProjectStore.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- workflow fixtures use files and the fake Claude CLI uses Node streams
 import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
@@ -1050,6 +1051,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
     launchArgs: string,
     cwd: string,
     scratchRoot?: string,
+    scratchProject = true,
   ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const opened: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOptions> = [];
@@ -1059,6 +1061,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
       environment: {},
       attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-append-" }),
       ...(scratchRoot === undefined ? {} : { scratchRoot }),
+      isScratchProject: () => Effect.succeed(scratchProject),
       fileSystem,
       path: yield* Path.Path,
       random: yield* SecureRandom.SecureRandom,
@@ -1165,6 +1168,8 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
         const instruction = "This thread has no project.";
         const scratch = yield* startTurnWithLaunchArgs("", threadFolder, scratchRoot);
         assert.include(appendSystemPrompt(scratch.opened[0]) ?? "", instruction);
+        const registered = yield* startTurnWithLaunchArgs("", threadFolder, scratchRoot, false);
+        assert.notInclude(appendSystemPrompt(registered.opened[0]) ?? "", instruction);
         const real = yield* startTurnWithLaunchArgs("", project, scratchRoot);
         assert.notInclude(appendSystemPrompt(real.opened[0]) ?? "", instruction);
       }).pipe(
@@ -1393,9 +1398,10 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
     {},
   ).pipe(
     Effect.provide(
-      ServerConfig.layerTest(process.cwd(), {
-        prefix: "t3-claude-binary-path-",
-      }),
+      Layer.mergeAll(
+        Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeedNone }),
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-claude-binary-path-" }),
+      ),
     ),
     Effect.provideService(ClaudeAdapterV2.ClaudeAgentSdkQueryRunner, {
       allocateSessionId: Effect.succeed("native-thread-claude-binary-path"),

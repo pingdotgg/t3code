@@ -155,7 +155,7 @@ import {
   type CompiledClaudeModelSelection,
 } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
-import { scratchRootPath } from "../../project/ManagedProjectFolders.ts";
+import * as ProjectStore from "../ProjectStore.ts";
 import { isWithinRoot } from "../../workspace/KnownWorkspaces.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -4616,6 +4616,9 @@ export interface ClaudeAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly attachmentsDir: string;
   readonly scratchRoot?: string;
+  readonly isScratchProject?: (
+    projectId: OrchestrationV2AppThread["projectId"],
+  ) => Effect.Effect<boolean>;
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly random: SecureRandom.SecureRandom["Service"];
@@ -10415,7 +10418,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const scratchThread =
             adapterOptions.scratchRoot !== undefined &&
             turnInput.runtimePolicy.cwd !== null &&
-            isWithinRoot(path, turnInput.runtimePolicy.cwd, adapterOptions.scratchRoot);
+            isWithinRoot(path, turnInput.runtimePolicy.cwd, adapterOptions.scratchRoot) &&
+            (yield* (
+              adapterOptions.isScratchProject?.(turnInput.appThread.projectId) ??
+                Effect.succeed(false)
+            ));
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(
             queryPolicy,
             mcpOverrides,
@@ -11869,7 +11876,8 @@ export type ClaudeAdapterV2DriverEnv =
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | Path.Path
-  | ServerConfig.ServerConfig;
+  | ServerConfig.ServerConfig
+  | ProjectStore.ProjectStoreV2;
 
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
@@ -11883,6 +11891,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const queryRunner = yield* ClaudeAgentSdkQueryRunner;
     const serverConfig = yield* ServerConfig.ServerConfig;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+    const projects = yield* ProjectStore.ProjectStoreV2;
     const baseEnvironment = yield* mergeClaudeProcessEnvironment(
       config,
       environment,
@@ -11900,7 +11909,18 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       settings: { ...config, enabled, binaryPath },
       environment: claudeEnvironment,
       attachmentsDir: serverConfig.attachmentsDir,
-      scratchRoot: scratchRootPath(path, serverConfig),
+      scratchRoot: path.resolve(serverConfig.baseDir, "scratch"),
+      isScratchProject: (projectId) =>
+        projects.get(projectId).pipe(
+          Effect.map(
+            Option.exists(
+              (project) =>
+                path.resolve(project.workspaceRoot) ===
+                path.resolve(serverConfig.baseDir, "scratch"),
+            ),
+          ),
+          Effect.orElseSucceed(() => false),
+        ),
       fileSystem,
       path,
       random,
