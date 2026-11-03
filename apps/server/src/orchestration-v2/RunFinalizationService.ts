@@ -103,6 +103,7 @@ export const layerObserver = Layer.effect(
     const projects = yield* ProjectService.ProjectService;
     const enrichment = yield* ProjectEnrichment.ProjectEnrichmentService;
     const pullRequestLookups = yield* FiberMap.make<string>();
+    const identityRefreshes = yield* FiberMap.make<ProjectId>();
     // A turn can add the first remote (`git remote add`, `gh repo create --push`), which the
     // enrichment and resolver caches would otherwise keep reporting as missing for a minute.
     const refreshMissingRepositoryIdentity = Effect.fn(
@@ -112,7 +113,7 @@ export const layerObserver = Layer.effect(
         const project = yield* projects.getById(projectId);
         if (Option.isNone(project)) return;
         const { workspaceRoot } = project.value;
-        if ((yield* enrichment.peek(workspaceRoot)).repositoryIdentity !== null) return;
+        if ((yield* enrichment.readRepositoryIdentity(workspaceRoot)) !== null) return;
         yield* enrichment.refreshRepositoryIdentity(workspaceRoot);
       },
       (effect, projectId) =>
@@ -129,22 +130,18 @@ export const layerObserver = Layer.effect(
       refreshAfterTurn: pullRequests.refreshAfterTurn,
       refresh: Effect.fn("RunFinalizationService.refresh")(
         function* ({ cwd, threadId, runId }) {
-          const [, local, thread] = yield* Effect.all(
-            [
-              workspaceEntries.refresh(cwd),
-              vcsStatus.refreshLocalStatus(cwd),
-              projections
-                .getThreadShell(threadId)
-                .pipe(
-                  Effect.tap((thread) =>
-                    thread ? refreshMissingRepositoryIdentity(thread.projectId) : Effect.void,
-                  ),
-                ),
-            ],
+          const [, local] = yield* Effect.all(
+            [workspaceEntries.refresh(cwd), vcsStatus.refreshLocalStatus(cwd)],
             { concurrency: "unbounded" },
           );
+          const thread = yield* projections.getThreadShell(threadId);
+          if (!thread) return;
+          // Forge discovery probes can take seconds; like the PR lookup, the next turn must not wait.
+          yield* refreshMissingRepositoryIdentity(thread.projectId).pipe(
+            FiberMap.run(identityRefreshes, thread.projectId),
+          );
           if (local.refName === null || local.isDefaultRef) return;
-          if (!thread || thread.branch !== local.refName) return;
+          if (thread.branch !== local.refName) return;
           if (thread.activeRunId !== null && thread.activeRunId !== runId) return;
           // The forge CLI can take minutes, so the next turn must not wait for it. A newer
           // turn's lookup replaces a running one instead of queueing behind the cwd's lock.

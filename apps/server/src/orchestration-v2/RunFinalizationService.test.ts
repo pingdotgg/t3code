@@ -7,6 +7,7 @@ import {
   ThreadId,
   type OrchestrationV2ThreadShell,
   type Project,
+  type RepositoryIdentity,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -335,16 +336,156 @@ it.effect("resolves the identity of a project whose remote was added during the 
       const observer = yield* RunFinalization.RunFinalizationObserver;
       yield* observer.refresh({ cwd: workspaceRoot, threadId, runId });
 
-      let available = yield* enrichment.getAvailable(workspaceRoot);
-      while (!available.repositoryIdentityResolved) {
-        yield* PubSub.take(changes);
-        available = yield* enrichment.getAvailable(workspaceRoot);
-      }
+      // The refresh runs in the background; until it publishes, the cached null still reads as resolved.
+      const change = yield* PubSub.take(changes);
       assert.strictEqual(
-        available.repositoryIdentity?.locator.remoteUrl,
+        change.enrichment.repositoryIdentity?.locator.remoteUrl,
         "https://github.com/t3-triage/example-29929.git",
         "the project's repository identity is still null after the turn added a remote",
       );
     }).pipe(Effect.scoped, Effect.provide(layer));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+const stubbedIdentityProject = {
+  projectId: ProjectId.make("project-stubbed-identity"),
+  threadId: ThreadId.make("thread-stubbed-identity"),
+  runId: RunId.make("completed-run"),
+  workspaceRoot: "/repo-stubbed-identity",
+};
+const stubbedIdentity: RepositoryIdentity = {
+  canonicalKey: "example.test/stubbed-identity",
+  locator: {
+    source: "git-remote",
+    remoteName: "origin",
+    remoteUrl: "https://example.test/stubbed-identity.git",
+  },
+};
+
+const layerStubbedIdentityResolver = (
+  resolve: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]["resolve"],
+) =>
+  RunFinalization.layerObserver.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        Layer.effect(ProjectEnrichment.ProjectEnrichmentService, ProjectEnrichment.make()).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, { resolve }),
+              Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+                invalidate: () => Effect.void,
+                resolvePath: () => Effect.succeed(null),
+              }),
+            ),
+          ),
+        ),
+        Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+        Layer.mock(PullRequestService.PullRequestService)({ refreshAfterTurn: () => Effect.void }),
+        Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+          refreshLocalStatus: () =>
+            Effect.succeed({
+              isRepo: true,
+              hasPrimaryRemote: true,
+              isDefaultRef: true,
+              refName: "main",
+              hasWorkingTreeChanges: false,
+              workingTree: { files: [], insertions: 0, deletions: 0 },
+            }),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadShell: () =>
+            Effect.succeed({
+              id: stubbedIdentityProject.threadId,
+              projectId: stubbedIdentityProject.projectId,
+              branch: "main",
+              activeRunId: null,
+            } as OrchestrationV2ThreadShell),
+        }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeedSome({
+              id: stubbedIdentityProject.projectId,
+              workspaceRoot: stubbedIdentityProject.workspaceRoot,
+            } as Project),
+        }),
+      ),
+    ),
+  );
+
+it.effect(
+  "keeps a known identity's resolver caches when a turn outlasts the enrichment TTL",
+  () => {
+    const { workspaceRoot, threadId, runId } = stubbedIdentityProject;
+    const refreshFlags: boolean[] = [];
+    const resolvedAfterTurn = Deferred.makeUnsafe<void>();
+    return Effect.gen(function* () {
+      const enrichment = yield* ProjectEnrichment.ProjectEnrichmentService;
+      assert.isNotNull(yield* enrichment.readRepositoryIdentity(workspaceRoot));
+      yield* TestClock.adjust("61 seconds");
+      const observer = yield* RunFinalization.RunFinalizationObserver;
+      yield* observer.refresh({ cwd: workspaceRoot, threadId, runId });
+      yield* Deferred.await(resolvedAfterTurn);
+      assert.deepEqual(
+        refreshFlags,
+        [false, false],
+        "a project with a known identity had its resolver caches forced after the turn",
+      );
+    }).pipe(
+      Effect.provide(
+        layerStubbedIdentityResolver((_cwd, options) =>
+          Effect.sync(() => {
+            refreshFlags.push(options?.refresh === true);
+            return stubbedIdentity;
+          }).pipe(
+            Effect.tap(() =>
+              refreshFlags.length > 1
+                ? Deferred.succeed(resolvedAfterTurn, undefined)
+                : Effect.void,
+            ),
+          ),
+        ),
+      ),
+    );
+  },
+);
+
+it.effect("returns from the post-turn refresh while the identity resolver is still running", () => {
+  const { workspaceRoot, threadId, runId } = stubbedIdentityProject;
+  const releaseResolver = Deferred.makeUnsafe<void>();
+  let remoteAdded = false;
+  return Effect.gen(function* () {
+    const enrichment = yield* ProjectEnrichment.ProjectEnrichmentService;
+    assert.isNull(yield* enrichment.readRepositoryIdentity(workspaceRoot));
+    const changes = yield* enrichment.subscribeChanges;
+    const observer = yield* RunFinalization.RunFinalizationObserver;
+    const refresh = yield* observer
+      .refresh({ cwd: workspaceRoot, threadId, runId })
+      .pipe(Effect.timeoutOption("1 minute"), Effect.forkChild({ startImmediately: true }));
+    yield* TestClock.adjust("1 minute");
+    assert.isTrue(
+      Option.isSome(yield* Fiber.join(refresh)),
+      "turn finalization waited on the identity resolver, blocking the thread's next turn",
+    );
+
+    yield* Deferred.succeed(releaseResolver, undefined);
+    const change = yield* PubSub.take(changes);
+    assert.strictEqual(
+      change.enrichment.repositoryIdentity?.canonicalKey,
+      stubbedIdentity.canonicalKey,
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      layerStubbedIdentityResolver((_cwd, options) =>
+        options?.refresh
+          ? Deferred.await(releaseResolver).pipe(
+              Effect.map(() => {
+                remoteAdded = true;
+                return stubbedIdentity;
+              }),
+            )
+          : Effect.sync(() => (remoteAdded ? stubbedIdentity : null)),
+      ),
+    ),
+  );
+});
