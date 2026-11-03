@@ -7,6 +7,7 @@ import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -63,6 +64,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     const runUnlink = (recordedPid: number, options?: { readonly portFreed?: boolean }) =>
       Effect.gen(function* () {
         const requests: Array<string> = [];
+        const warnings: Array<string> = [];
         const server = yield* Effect.acquireRelease(
           Effect.callback<NodeHttp.Server>((resume) => {
             const listening = NodeHttp.createServer((request, response) => {
@@ -100,9 +102,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
           "unlink",
           "--base-dir",
           baseDir,
-        ]);
+        ]).pipe(
+          // TestConsole has no reader for Console.warn.
+          Effect.updateService(Console.Console, (console) => ({
+            ...console,
+            warn: (...args: ReadonlyArray<unknown>) => {
+              warnings.push(args.join(" "));
+            },
+          })),
+        );
 
-        return { requests, printed: (yield* TestConsole.logLines).join("\n") };
+        return { requests, warnings, printed: (yield* TestConsole.logLines).join("\n") };
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -116,12 +126,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     // Above Linux's PID ceiling, as in pair.test.ts: no process can hold it.
     const deadPid = 4_194_305;
 
-    it.effect("does not warn about the tunnel of a server that is gone", () =>
+    it.effect("does not tell the user to restart a server that is gone", () =>
       Effect.gen(function* () {
-        const { printed } = yield* runUnlink(deadPid, { portFreed: true });
+        const { printed, warnings } = yield* runUnlink(deadPid, { portFreed: true });
 
-        // Printed instead of the warning, which goes to Console.warn where TestConsole can't read it.
         assert.include(printed, "T3 Connect is disabled locally.");
+        assert.notInclude(warnings.join("\n"), "Restart that server");
+      }),
+    );
+
+    it.effect("warns that a server that is gone may have left its connector running", () =>
+      Effect.gen(function* () {
+        const { warnings } = yield* runUnlink(deadPid, { portFreed: true });
+
+        assert.include(warnings.join("\n"), "its cloudflared process may still be running");
       }),
     );
 
@@ -135,10 +153,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
 
     it.effect("asks a running server to stop its tunnel", () =>
       Effect.gen(function* () {
-        const { requests, printed } = yield* runUnlink(process.pid);
+        const { requests, printed, warnings } = yield* runUnlink(process.pid);
 
         assert.deepEqual(requests, ["POST /api/connect/unlink"]);
         assert.include(printed, "T3 Connect is disabled locally.");
+        assert.notInclude(warnings.join("\n"), "cloudflared process");
       }),
     );
   },

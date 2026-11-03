@@ -298,15 +298,19 @@ const withCloudCliSessionToken = <A, E, R>(
 
 type LiveCloudActionResult =
   | { readonly status: "not-running" }
+  | { readonly status: "server-gone" }
   | { readonly status: "succeeded" }
   | { readonly status: "failed"; readonly cause: Cause.Cause<unknown> };
 
 const runLiveCloudUnlink = Effect.fn("cloud.cli.run_live_unlink")(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
-  // A killed server leaves its record behind, and another process may own its port by now.
-  if (Option.isNone(runtimeState) || !isProcessAlive(runtimeState.value.pid)) {
+  if (Option.isNone(runtimeState)) {
     return { status: "not-running" } satisfies LiveCloudActionResult;
+  }
+  // A killed server leaves its record behind, and another process may own its port by now.
+  if (!isProcessAlive(runtimeState.value.pid)) {
+    return { status: "server-gone" } satisfies LiveCloudActionResult;
   }
 
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -459,6 +463,12 @@ const reportCloudDisconnectResults = Effect.fn("cloud.cli.report_disconnect_resu
       );
     } else {
       yield* Console.log("T3 Connect is disabled locally.");
+      // A killed server cannot stop the connector it started, and nothing adopts it on restart.
+      if (input.liveResult.status === "server-gone") {
+        yield* Console.warn(
+          "The server that ran T3 Connect is gone, but its cloudflared process may still be running.\nStop that process if it is.",
+        );
+      }
     }
 
     if (Exit.isFailure(input.relayResult)) {
