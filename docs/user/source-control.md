@@ -241,7 +241,7 @@ suggested question, or **Ask about this stop**, to open a thread that already kn
 are on. **Finish review** on the last stop opens the review with everything you collected.
 
 Agents can write guides too: ask one to prepare guides for a set of pull requests, and it starts
-them for you. Each is read through the project whose checkout has that repository.
+them for you. Linked pull requests can be read even when the thread has no repository checkout.
 
 To shape guides to your taste, write **Review guide instructions** in Settings → Source control,
 such as what to show first or what to skip; projects can override them. They change emphasis and
