@@ -663,7 +663,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       nativeEventCount = document.mostRecentEventCount
       endComposition()
     }
-    if document.isNativeEcho && textView.serializedText() != document.value {
+    if document.isNativeEcho && !isReset && textView.serializedText() != document.value {
       return
     }
     if tokensJson != document.tokensJson {

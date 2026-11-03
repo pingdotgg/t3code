@@ -12,13 +12,13 @@ extension T3ComposerEditorView {
   var text: String { textView.serializedText() }
 }
 
-func document(_ value: String, revision: Int, resetGeneration: Int = 0) -> String {
+func document(_ value: String, revision: Int, resetGeneration: Int = 0, isNativeEcho: Bool = false) -> String {
   let payload: [String: Any] = [
     "value": value,
     "selection": NSNull(),
     "tokensJson": "[]",
     "mostRecentEventCount": revision,
-    "isNativeEcho": false,
+    "isNativeEcho": isNativeEcho,
     "resetGeneration": resetGeneration,
   ]
   return String(data: try! JSONSerialization.data(withJSONObject: payload), encoding: .utf8)!
@@ -55,6 +55,18 @@ do {
   check(typed?["value"] as? String == "n", "Typing after the clear did not start from empty")
   check(typed?["resetGeneration"] as? Int == 1, "Typing after the clear must carry the new reset generation")
   check(typed?["eventCount"] as? Int == 1, "Typing after the clear must follow the parent's revision")
+}
+
+// An attachment-only send can reset an empty JS draft before a native keystroke is delivered.
+do {
+  let view = makeEditor("")
+  view.editor.insertText("x")
+  view.setControlledDocumentJson(document("", revision: 0, resetGeneration: 1, isNativeEcho: true))
+  check(view.text == "", "An echo-marked reset retained an undelivered keystroke: \(view.text)")
+  view.editor.insertText("n")
+  check(view.text == "n", "Typing after an echo-marked reset restored the previous keystroke")
+  view.setControlledDocumentJson(document("", revision: 1, resetGeneration: 1, isNativeEcho: true))
+  check(view.text == "n", "An ordinary mismatched echo overwrote newer native typing")
 }
 
 // Moving the editor to another draft can lower the parent's reset generation; that payload stays ordinary.
