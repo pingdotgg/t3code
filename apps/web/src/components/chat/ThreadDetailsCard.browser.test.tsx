@@ -44,6 +44,7 @@ function Card({
   fixture,
   rows = 1,
   automationRows = 0,
+  serverRows = 0,
 }: {
   threadRef: ScopedThreadRef;
   inline: boolean;
@@ -52,6 +53,8 @@ function Card({
   rows?: number;
   /** Rows of 100px in an automations list shown at full density. */
   automationRows?: number;
+  /** Rows of 100px in a servers list shown at full density. */
+  serverRows?: number;
 }) {
   return (
     // The web root renders in StrictMode, which re-runs ref callbacks on every mount.
@@ -82,6 +85,9 @@ function Card({
               </p>
               {density === "full" && automationRows > 0 ? (
                 <section data-thread-automations-panel style={{ height: automationRows * 100 }} />
+              ) : null}
+              {density === "full" && serverRows > 0 ? (
+                <section data-thread-servers-panel style={{ height: serverRows * 100 }} />
               ) : null}
             </>
           )}
@@ -171,6 +177,17 @@ it("keeps full density when many automations make the content tall", async () =>
   using fixture = setup();
   await using _screen = await render(
     <Card threadRef={threadB} inline fixture={fixture} rows={2} automationRows={6} />,
+  );
+  await expect.element(page.getByText("Details for thread-b")).toBeVisible();
+  await expect
+    .element(page.getByRole("region", { name: "Thread details" }))
+    .toHaveAttribute("data-density", "full");
+});
+
+it("keeps full density when many servers make the content tall", async () => {
+  using fixture = setup();
+  await using _screen = await render(
+    <Card threadRef={threadB} inline fixture={fixture} rows={2} serverRows={6} />,
   );
   await expect.element(page.getByText("Details for thread-b")).toBeVisible();
   await expect
