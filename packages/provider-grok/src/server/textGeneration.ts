@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import type * as EffectAcpErrors from "effect-acp/errors";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import { TextGenerationError } from "@t3tools/contracts";
 import type { GrokSettings } from "../settings.ts";
@@ -22,6 +22,7 @@ import {
 const GROK_TIMEOUT_MS = 180_000;
 
 const isTextGenerationError = Schema.is(TextGenerationError);
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
 export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(function* (
   grokSettings: GrokSettings,
@@ -98,7 +99,9 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
             ? cause
             : new TextGenerationError({
                 operation,
-                detail: "Grok ACP request failed.",
+                detail: isAcpRequestError(cause)
+                  ? `Grok ACP request failed: ${cause.errorMessage}`
+                  : "Grok ACP request failed.",
                 cause,
               }),
         ),

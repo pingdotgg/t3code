@@ -133,4 +133,26 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
         }),
     ),
   );
+
+  it.effect("keeps Grok's error message when the prompt request fails", () =>
+    withFakeAcpGrok(
+      { T3_ACP_PROMPT_ERROR_MESSAGE: "Grok usage limit reached. Try again later." },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* textGeneration
+            .generateThreadTitle({
+              cwd: process.cwd(),
+              message: "the lint job is red",
+              modelSelection: createModelSelection(
+                ProviderInstanceId.make("grok"),
+                "grok-mock-alt",
+              ),
+            })
+            .pipe(Effect.flip);
+          expect(error.detail).toBe(
+            "Grok ACP request failed: Grok usage limit reached. Try again later.",
+          );
+        }),
+    ),
+  );
 });
