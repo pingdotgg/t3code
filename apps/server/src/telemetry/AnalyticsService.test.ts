@@ -4,9 +4,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
@@ -110,6 +114,31 @@ const recordTwentyEvents = Effect.gen(function* () {
   }
 });
 
+const layerServerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+  prefix: "t3-telemetry-retry-",
+});
+
+const layerWithClient = (client: HttpClient.HttpClient, policy?: ManagedPolicyDocument) =>
+  AnalyticsService.layer.pipe(
+    Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromUnknown({
+          T3CODE_TELEMETRY_ENABLED: true,
+          T3CODE_POSTHOG_KEY: "phc_test_key",
+          T3CODE_POSTHOG_HOST: "http://localhost",
+        }),
+      ),
+    ),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(HostProcess.Platform, "win32"),
+        Layer.succeed(HostProcess.Architecture, "x64"),
+        Layer.succeed(HttpClient.HttpClient, client),
+        ManagedPolicy.layerTest(policy),
+      ),
+    ),
+  );
+
 /**
  * Runs `record` (20 events by default), then lets `minutes` of background
  * flushes run against a client that answers every send with `respond`.
@@ -138,27 +167,8 @@ const sendFor = (
         return yield* respond(request);
       }),
     );
-    const runtimeLayer = AnalyticsService.layer.pipe(
-      Layer.provideMerge(
-        ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-retry-" }),
-      ),
-      Layer.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromUnknown({
-            T3CODE_TELEMETRY_ENABLED: true,
-            T3CODE_POSTHOG_KEY: "phc_test_key",
-            T3CODE_POSTHOG_HOST: "http://localhost",
-          }),
-        ),
-      ),
-      Layer.provide(
-        Layer.mergeAll(
-          Layer.succeed(HostProcess.Platform, "win32"),
-          Layer.succeed(HostProcess.Architecture, "x64"),
-          Layer.succeed(HttpClient.HttpClient, client),
-          ManagedPolicy.layerTest(policy),
-        ),
-      ),
+    const runtimeLayer = layerWithClient(client, policy).pipe(
+      Layer.provideMerge(layerServerConfig),
     );
 
     yield* Effect.gen(function* () {
@@ -262,6 +272,37 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
         });
         assert.deepEqual(denied, []);
       }),
+  );
+
+  it.effect("shutdown does not wait on a telemetry send that never answers", () =>
+    Effect.gen(function* () {
+      const sending = yield* Deferred.make<void>();
+      const client = HttpClient.make(() =>
+        Deferred.succeed(sending, undefined).pipe(Effect.andThen(Effect.never)),
+      );
+      // Removing the config's temp directory is real I/O, so the closed scope must not own it.
+      const serverConfig = yield* Layer.build(layerServerConfig);
+      const scope = yield* Scope.make();
+      const context = yield* Layer.buildWithScope(
+        layerWithClient(client).pipe(Layer.provideMerge(Layer.succeedContext(serverConfig))),
+        scope,
+      );
+      yield* recordTwentyEvents.pipe(Effect.provideContext(context));
+      // The background flush starts a send that holds the flush lock.
+      yield* TestClock.adjust("10 seconds");
+      yield* Deferred.await(sending);
+
+      const shutdown = yield* Scope.close(scope, Exit.void).pipe(Effect.forkChild);
+      yield* TestClock.adjust("5 seconds");
+      const closedWithinFiveSeconds = shutdown.pollUnsafe() !== undefined;
+      // Let a still-waiting close finish so the test can end either way.
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.await(shutdown);
+      assert.isTrue(
+        closedWithinFiveSeconds,
+        "closing the analytics service is still waiting on telemetry 5 seconds later",
+      );
+    }),
   );
 
   it.effect("drops a batch the endpoint rejects without sending it again", () =>
