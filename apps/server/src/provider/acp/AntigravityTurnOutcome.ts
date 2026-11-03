@@ -19,6 +19,12 @@ const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // The Go harness's rendering of a Google API error, as the agent's api_errors.py reads it.
 const API_ERROR = /Error (\d{3}), Message: (.+?), Status: ([A-Z_]+)/s;
 const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
+const CHECKPOINT_CORRUPTED = /could not find doneCh for checkpoint/i;
+
+function isAntigravityCheckpointCorrupted(text: string): boolean {
+  return CHECKPOINT_CORRUPTED.test(text);
+}
+
 const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
 const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
 const GO_DURATION_PART = /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|h|m|s)/g;
@@ -107,6 +113,15 @@ function turnFailure(
       resetAt: resetAtFrom(text, now) ?? null,
     });
   }
+  if (isAntigravityCheckpointCorrupted(text)) {
+    return makeProviderFailure({
+      class: "provider_error",
+      message:
+        "Antigravity session checkpoint was corrupted and has been quarantined. The session will restart.",
+      code: "SESSION_CORRUPTED",
+      retryable: true,
+    });
+  }
   if (apiError === null) {
     return makeProviderFailure({
       class: "provider_error",
@@ -121,6 +136,17 @@ function turnFailure(
     code: status ?? null,
     retryable: rateLimited || Number(httpStatus) >= 500,
   });
+}
+
+async function quarantineAntigravitySessionDatabase(
+  databasePath: string,
+  timestamp: number,
+): Promise<string> {
+  const quarantinePath = `${databasePath}.corrupt-${timestamp}`;
+  await NodeFSP.rename(databasePath, quarantinePath).catch(() => {});
+  await NodeFSP.rename(`${databasePath}-wal`, `${quarantinePath}-wal`).catch(() => {});
+  await NodeFSP.rename(`${databasePath}-shm`, `${quarantinePath}-shm`).catch(() => {});
+  return quarantinePath;
 }
 
 const conversationSegments = ["antigravity-acp", "conversations"];
@@ -189,6 +215,21 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
           Effect.orElseSucceed(() => undefined),
         )
       : undefined;
-    return turnFailure(result.stopReason, step, yield* DateTime.now);
+    const now = yield* DateTime.now;
+    const failure = turnFailure(result.stopReason, step, now);
+    if (failure?.code === "SESSION_CORRUPTED" && after !== undefined) {
+      const timestamp = DateTime.toEpochMillis(now);
+      yield* Effect.tryPromise(() =>
+        quarantineAntigravitySessionDatabase(after.path, timestamp),
+      ).pipe(
+        Effect.tap(() =>
+          Effect.logWarning("Quarantined corrupted Antigravity session database", {
+            path: after.path,
+          }),
+        ),
+        Effect.orElseSucceed(() => undefined),
+      );
+    }
+    return failure;
   });
 });
