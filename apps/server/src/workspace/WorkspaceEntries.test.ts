@@ -440,21 +440,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("keeps directory entries out of legacy file-only requests", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ git: true });
-        yield* writeTextFile(cwd, ".gitignore", ".agents/\n.env\n");
-        yield* writeTextFile(cwd, ".env", "A=1");
-        yield* writeTextFile(cwd, ".agents/skills/example/SKILL.md", "# Example skill\n");
-
-        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        expect(yield* workspaceEntries.listIgnoredFiles({ cwd })).toEqual({
-          files: [{ path: ".env", byteLength: 3 }],
-          truncated: false,
-        });
-      }),
-    );
-
     it.effect("lists ignored files with sizes and selectable folders without scanning them", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ git: true });
@@ -467,6 +452,13 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* writeTextFile(cwd, ".agents/skills/example/SKILL.md", "# Example skill\n");
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        expect(yield* workspaceEntries.listIgnoredFiles({ cwd })).toEqual({
+          files: [
+            { path: ".env", byteLength: 3 },
+            { path: "apps/web/.env.local", byteLength: 4 },
+          ],
+          truncated: false,
+        });
         expect(yield* workspaceEntries.listIgnoredFiles({ cwd, includeDirectories: true })).toEqual(
           {
             files: [

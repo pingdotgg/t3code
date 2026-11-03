@@ -57,18 +57,35 @@ describe("readProjectFilesToCopy", () => {
     const directories = new Map([
       [".agents", [{ path: ".agents/skills", kind: "directory" }]],
       [".agents/skills", [{ path: ".agents/skills/example", kind: "directory" }]],
-      [".agents/skills/example", [{ path: ".agents/skills/example/SKILL.md", kind: "file" }]],
+      [
+        ".agents/skills/example",
+        [
+          { path: ".agents/skills/example/SKILL.md", kind: "file" },
+          { path: ".agents/skills/example/helper.sh", kind: "file" },
+        ],
+      ],
     ]);
     mocks.executeAtomQuery.mockImplementation(async (_registry, query) => ({
       _tag: "Success",
       value:
         query.method === "list"
           ? { entries: directories.get(query.input.directoryPath) ?? [], truncated: false }
-          : { contents: "# Example skill\n", truncated: false },
+          : query.input.relativePath.endsWith("helper.sh")
+            ? {
+                contents: "#!/bin/sh\necho skill\n",
+                truncated: false,
+                ...(query.input.includeMode ? { mode: 0o755 } : {}),
+              }
+            : { contents: "# Example skill\n", truncated: false },
     }));
 
     expect(await readProjectFilesToCopy(source, [".agents/"])).toEqual([
       { relativePath: ".agents/skills/example/SKILL.md", contents: "# Example skill\n" },
+      {
+        relativePath: ".agents/skills/example/helper.sh",
+        contents: "#!/bin/sh\necho skill\n",
+        mode: 0o755,
+      },
     ]);
   });
 
