@@ -411,6 +411,52 @@ export const PreviewAutomationScrollInput = Schema.Struct({
 );
 export type PreviewAutomationScrollInput = typeof PreviewAutomationScrollInput.Type;
 
+/** Strict input for each `preview_act` action. */
+export const PreviewAutomationActInputs = {
+  click: PreviewAutomationClickInput,
+  type: PreviewAutomationTypeInput,
+  hover: PreviewAutomationHoverInput,
+  select: PreviewAutomationSelectInput,
+  drag: PreviewAutomationDragInput,
+  upload: PreviewAutomationUploadInput,
+  press: PreviewAutomationPressInput,
+  scroll: PreviewAutomationScrollInput,
+} as const;
+export type PreviewAutomationAction = keyof typeof PreviewAutomationActInputs;
+
+/** One flat shape for every page action. The server decodes it with the action's strict input. */
+export const PreviewAutomationActInput = Schema.Struct({
+  action: Schema.Literals([
+    "click",
+    "type",
+    "hover",
+    "select",
+    "drag",
+    "upload",
+    "press",
+    "scroll",
+  ]),
+  ...PreviewAutomationTabTargetFields,
+  locator: Schema.optional(Locator),
+  selector: Schema.optional(LegacySelector),
+  x: Schema.optional(Schema.Finite),
+  y: Schema.optional(Schema.Finite),
+  button: Schema.optional(Schema.Literals(["left", "right", "middle"])),
+  clickCount: Schema.optional(Schema.Int),
+  text: Schema.optional(Schema.String),
+  clear: Schema.optional(Schema.Boolean),
+  values: Schema.optional(Schema.Array(Schema.String)),
+  source: Schema.optional(Locator),
+  target: Schema.optional(Locator),
+  paths: Schema.optional(Schema.Array(Schema.String)),
+  key: Schema.optional(Schema.String),
+  modifiers: PreviewAutomationPressInput.fields.modifiers,
+  deltaX: Schema.optional(Schema.Finite),
+  deltaY: Schema.optional(Schema.Finite),
+  timeoutMs: Schema.optional(Schema.Int),
+});
+export type PreviewAutomationActInput = typeof PreviewAutomationActInput.Type;
+
 export const PreviewAutomationEvaluateInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   expression: Schema.String.check(Schema.isTrimmed())

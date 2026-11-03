@@ -8,7 +8,6 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { HttpClient } from "effect/http";
 
@@ -90,7 +89,7 @@ export function usePrimaryCloudLinkState() {
   }
 
   return {
-    data: result._tag === "Failure" ? null : Option.getOrNull(AsyncResult.value(result)),
+    data: result._tag === "Failure" ? null : AsyncResult.getOrElse(result, () => null),
     error,
     isPending: result.waiting,
     refresh,

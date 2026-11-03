@@ -6,6 +6,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
@@ -24,6 +25,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
+import * as PortScanner from "../../preview/PortScanner.ts";
 import {
   ClaudeAgentSdkQueryRunner,
   type ClaudeAgentSdkQueryOpenInput,
@@ -66,6 +68,7 @@ const writeClaudeSession = Effect.fnUntraced(function* (configDir: string) {
 });
 
 const forkRunnerLayer = layerQueryRunner.pipe(
+  Layer.provide(PortScanner.layerTest),
   Layer.provide(Layer.succeed(ProviderEventLoggers, { native: undefined, canonical: undefined })),
 );
 
@@ -107,16 +110,17 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
       assert.equal(process.env.CLAUDE_CONFIG_DIR, hostConfigDir);
       assert.equal(inProcessFork.mock.calls.length, 0);
     }).pipe(Effect.provide(forkRunnerLayer)),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 const realQueryRunner = layerQueryRunner.pipe(
+  Layer.provide(PortScanner.layerTest),
   Layer.provide(
     Layer.succeed(ProviderEventLoggers, {
       native: undefined,
       canonical: undefined,
     }),
   ),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const resumedMcpQueryInput = {
@@ -487,4 +491,54 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       yield* Effect.promise(() => turnStopped);
     }),
   );
+
+  it.effect("marks the CLI's jobs with its thread and counts it as an agent until it exits", () => {
+    let runningAgents = 0;
+    let releaseAgent!: () => void;
+    const agentReleased = new Promise<void>((resolve) => (releaseAgent = resolve));
+    const runner = layerQueryRunner.pipe(
+      Layer.provide(
+        Layer.mock(PortScanner.PortDiscovery)({
+          trackAgent: () => {
+            runningAgents += 1;
+            return () => {
+              runningAgents -= 1;
+              releaseAgent();
+            };
+          },
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(ProviderEventLoggers, { native: undefined, canonical: undefined }),
+      ),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    );
+    return Effect.gen(function* () {
+      const cli = fakeClaudeCli(
+        [
+          'dir=$(dirname "$0")',
+          `printf '%s' "$${PortScanner.AGENT_THREAD_ENV}" > "$dir/thread"`,
+          "cat > /dev/null",
+        ].join("\n"),
+      );
+      const dir = NodePath.dirname(cli);
+      NodeChildProcess.execFileSync("mkfifo", [NodePath.join(dir, "thread")]);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
+      );
+      const threadRead = new Promise<string>((resolve) => {
+        let thread = "";
+        NodeFS.createReadStream(NodePath.join(dir, "thread"), "utf8")
+          .on("data", (chunk) => (thread += chunk))
+          .once("end", () => resolve(thread));
+      });
+
+      const session = yield* openFakeCli(cli);
+      assert.equal(yield* Effect.promise(() => threadRead), "thread-fake-cli");
+      assert.equal(runningAgents, 1);
+      yield* session.close;
+      yield* Effect.promise(() => agentReleased);
+      assert.equal(runningAgents, 0);
+    }).pipe(Effect.provide(runner));
+  });
 });

@@ -6,6 +6,8 @@ import { CursorSettings } from "./settings.ts";
 export const cursorClient = defineProviderClient({
   driverKind: ProviderDriverKind.make("cursor"),
   label: "Cursor",
+  modelFamilies: ["Grok "],
+  acpRegistryAgentIds: ["cursor"],
   settingsSchema: CursorSettings,
   environmentFields: [
     {

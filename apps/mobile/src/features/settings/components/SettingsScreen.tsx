@@ -2,6 +2,7 @@ import { useNavigation, useRoute } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { Platform, View } from "react-native";
 
+import { AndroidSheetHeader } from "../../../components/ui/AndroidScreenHeader";
 import type { AppBarProps } from "../../../components/ui/AppBar.types";
 import { AppBar } from "../../../components/ui/AppBar";
 import { ScreenContent as SettingsScreenContent } from "../../../components/ui/ScreenContent";
@@ -9,6 +10,7 @@ import { useWorkspaceTabs } from "../../workspace/WorkspaceTabsContext";
 import { useWorkspaceSurface } from "../../workspace/useWorkspaceSurface";
 import { useDeviceType } from "../../../native/native-layout-metrics";
 import { useCompactWorkspaceTabs } from "../../workspace/useSystemWorkspaceTabBar";
+import { useAdaptiveWorkspaceLayout } from "../../layout/adaptive-workspace-context";
 import {
   ScreenScrollViewBottomInset,
   ScreenScrollViewSurface,
@@ -29,6 +31,7 @@ export function SettingsScreen(
   const surface = useWorkspaceSurface();
   const deviceType = useDeviceType();
   const compactTabs = useCompactWorkspaceTabs();
+  const { layout } = useAdaptiveWorkspaceLayout();
   const cover = deviceType === "duo-folded";
   // Android opens Settings as a workspace tab; its root page has nothing to go back to.
   const workspaceRoot =
@@ -41,21 +44,35 @@ export function SettingsScreen(
 
   return (
     <View collapsable={false} className={`flex-1 ${surfaceClassName}`}>
-      <AppBar
-        title={props.title}
-        actions={props.actions}
-        search={props.search}
-        trailing={Platform.OS === "android" ? props.trailing : undefined}
-        sidebar={false}
-        onBack={workspaceRoot ? undefined : () => navigation.goBack()}
-        hideBottomBorder={!props.formSheet}
-      />
+      {Platform.OS === "android" && props.formSheet ? (
+        <AndroidSheetHeader
+          title={props.title}
+          actions={props.actions}
+          trailing={props.trailing}
+          onBack={() => navigation.goBack()}
+          hideBottomBorder
+        />
+      ) : (
+        <AppBar
+          title={props.title}
+          actions={props.actions}
+          search={props.search}
+          trailing={Platform.OS === "android" ? props.trailing : undefined}
+          sidebar={false}
+          onBack={workspaceRoot ? undefined : () => navigation.goBack()}
+          hideBottomBorder={!props.formSheet}
+        />
+      )}
       <ScreenScrollViewBottomInset value={deviceType === "pad" || compactTabs ? 80 : 0}>
         <ScreenScrollViewSurface value={surfaceClassName}>
-          {props.formSheet ? (
+          {props.formSheet && Platform.OS !== "android" ? (
             props.children
           ) : (
-            <SettingsScreenContent>{props.children}</SettingsScreenContent>
+            <SettingsScreenContent
+              insetHorizontal={Platform.OS === "android" && layout.usesSplitView}
+            >
+              {props.children}
+            </SettingsScreenContent>
           )}
         </ScreenScrollViewSurface>
       </ScreenScrollViewBottomInset>

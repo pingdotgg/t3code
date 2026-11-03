@@ -24,7 +24,7 @@ import * as Predicate from "effect/Predicate";
 import { AsyncResult } from "effect/reactivity";
 import Constants from "expo-constants";
 import { useNavigation } from "@react-navigation/native";
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
@@ -141,28 +141,21 @@ export function ThreadMcpApp(props: {
 
   const { themeId, themeAppearance, themeVariables, systemColorsActive } =
     useAppearancePreferences();
-  const theme = useMemo(
-    () =>
-      mobileHtmlRenderTheme({
-        themeId,
-        appearance: themeAppearance,
-        variables: themeVariables,
-        systemColors: systemColorsActive,
-        platform: Platform.OS,
-      }),
-    [themeId, themeAppearance, themeVariables, systemColorsActive],
-  );
-  const resource = useMemo(
-    () => ({
-      _tag: "attachment" as const,
-      attachmentId: app.attachmentId,
-      fileName: mcpAppFileName(app),
-      mimeType: "text/html",
-      disposition: "inline" as const,
-      renderIntent: "mcp-app" as const,
-    }),
-    [app],
-  );
+  const theme = mobileHtmlRenderTheme({
+    themeId,
+    appearance: themeAppearance,
+    variables: themeVariables,
+    systemColors: systemColorsActive,
+    platform: Platform.OS,
+  });
+  const resource = {
+    _tag: "attachment" as const,
+    attachmentId: app.attachmentId,
+    fileName: mcpAppFileName(app),
+    mimeType: "text/html",
+    disposition: "inline" as const,
+    renderIntent: "mcp-app" as const,
+  };
   const asset = useAssetUrlState(props.environmentId, resource);
   if (uri === null && asset._tag === "Success") setUri(asset.url);
   const [generation, setGeneration] = useState(0);
@@ -190,7 +183,7 @@ export function ThreadMcpApp(props: {
     reopenDocument();
     setPresentedFullscreen(false);
   });
-  // oxlint-disable-next-line t3code/react-effect-budget -- Navigation focus is outside React; listen only while the app is presented full screen, and stop on unmount.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Navigation focus is outside React; listen only while the app is presented full screen, and stop on unmount.
   useEffect(() => {
     if (!presentedFullscreen) return;
     return navigation.addListener("focus", () => returnedFromFullscreen());
@@ -237,6 +230,7 @@ export function ThreadMcpApp(props: {
   // The attached WebView owns its host; state lets the tool-call effect pair
   // a host only with an atom from a render after that host existed.
   const [host, setHost] = useState<McpAppHost | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resends host context to the MCP app host after commits that change theme, insets, tool or size
   useEffect(() => {
     const previous = latest.current;
     latest.current = live;
@@ -255,7 +249,7 @@ export function ThreadMcpApp(props: {
   // The host sends the call once the app initializes, so a stored item that
   // lands late still reaches it. A completed call can arrive under a new
   // revision, which is a new atom, so the host follows the current one.
-  // oxlint-disable-next-line t3code/react-effect-budget -- subscribes the MCP host to the current tool call
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes the MCP host to the current tool call
   useEffect(() => {
     if (host === null) return;
     return appAtomRegistry.subscribe(
@@ -273,224 +267,218 @@ export function ThreadMcpApp(props: {
   // restart generation and URL, and a changed app re-attaches this callback.
   // Any other identity change would tear the host down, so per-render values
   // are read through `latest`, never captured.
-  const attachWebView = useCallback(
-    (view: WebView<object> | null) => {
-      if (view === null) return;
-      const reloadInline = () => {
-        setLoaded(false);
-        setHeight(MCP_APP_INLINE_MAX_HEIGHT);
-        setNavigatedAway(false);
-        const current = latest.current.asset;
-        if (current._tag === "Success") setUri(current.url);
-        setDocumentKeyState((value) => value + 1);
-      };
-      const scope = () => {
-        const { environmentId, threadId, itemId } = latest.current.props;
-        return { environmentId, input: { threadId, itemId } };
-      };
-      const hostContext = (): McpAppHostContext => {
-        const current = latest.current;
-        const isFullscreen = current.props.displayMode === "fullscreen";
-        return {
-          theme: current.theme.appearance,
-          styles: { variables: mcpAppStyleVariables(current.theme.variables) },
-          displayMode: isFullscreen ? "fullscreen" : "inline",
-          availableDisplayModes: ["inline", "fullscreen"],
-          containerDimensions: isFullscreen
-            ? {
-                width: current.props.width,
-                height: current.props.height ?? MCP_APP_INLINE_MAX_HEIGHT,
-              }
-            : { width: current.props.width, maxHeight: MCP_APP_INLINE_MAX_HEIGHT },
-          platform: "mobile",
-          locale: Intl.DateTimeFormat().resolvedOptions().locale,
-          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          userAgent: `t3-code/${Constants.expoConfig?.version ?? "0.0.0"}`,
-          deviceCapabilities: { touch: true, hover: false },
-          safeAreaInsets: isFullscreen
-            ? { top: 0, right: current.insets.right, bottom: 0, left: current.insets.left }
-            : { top: 0, right: 0, bottom: 0, left: 0 },
-          ...(current.toolDefinition === undefined
-            ? {}
-            : { toolInfo: { tool: current.toolDefinition } }),
-        };
-      };
-      const documentHost: McpAppHost = makeMcpAppHost({
-        app,
-        hostVersion: Constants.expoConfig?.version ?? "0.0.0",
-        post: (message) =>
-          view.injectJavaScript(
-            `window.__t3McpAppReceive&&window.__t3McpAppReceive(${JSON.stringify(message)});true;`,
-          ),
-        hostContext,
-        callTool: async ({ name, arguments: args }) => {
-          const { environmentId, input } = scope();
-          const info = await latest.current.toolInfo({ environmentId, input: { ...input, name } });
-          if (info._tag !== "Success") throw commandFailure(info);
-          if (!info.value.callable) throw new McpAppHostRefusal("This app cannot call that tool.");
-          if (
-            !info.value.readOnly &&
-            !(await confirm(
-              `Allow ${app.server} to run ${info.value.title ?? name}?`,
-              JSON.stringify(args, null, 2),
-              "Allow",
-            ))
-          ) {
-            throw new McpAppHostRefusal("Declined by the user.");
-          }
-          const result = await latest.current.callTool({
-            environmentId,
-            input: { ...input, name, arguments: args },
-          });
-          if (result._tag !== "Success") throw commandFailure(result);
-          return result.value;
-        },
-        readResource: async ({ uri: resourceUri }) => {
-          const { environmentId, input } = scope();
-          const result = await latest.current.readResource({
-            environmentId,
-            input: { ...input, uri: resourceUri },
-          });
-          if (result._tag !== "Success") throw commandFailure(result);
-          return result.value;
-        },
-        openLink: async (url) => {
-          // WebViews cannot prove user activation; confirm links to prevent timer-driven navigation out of T3.
-          if (!(await confirm(`Open a link from ${app.server}?`, url, "Open"))) {
-            throw new McpAppHostRefusal("Declined by the user.");
-          }
-          if (!(await tryOpenExternalUrl(url, "mcp-app"))) {
-            throw new McpAppHostRefusal("The link could not be opened.");
-          }
-        },
-        sendMessage: async (text) => {
-          if (!(await confirm(`Send this message from ${app.server}?`, text, "Send"))) {
-            throw new McpAppHostRefusal("Declined by the user.");
-          }
-          await enqueueThreadOutboxMessage({
-            environmentId: latest.current.props.environmentId,
-            threadId: latest.current.props.conversationThreadId,
-            messageId: MessageId.make(uuidv4()),
-            commandId: CommandId.make(uuidv4()),
-            text,
-            attachments: [],
-            dispatchMode: "queue",
-            createdAt: new Date().toISOString(),
-          });
-        },
-        updateModelContext: async (context) => {
-          const { environmentId, input } = scope();
-          const result = await latest.current.updateModelContext({
-            environmentId,
-            input: {
-              ...input,
-              ...context,
-              conversationThreadId: latest.current.props.conversationThreadId,
-            },
-          });
-          if (result._tag !== "Success") throw commandFailure(result);
-        },
-        requestDisplayMode: async (mode) => {
-          const current = latest.current.props;
-          // receive dispatches synchronously; read activation before awaiting teardown.
-          if (
-            mode === "fullscreen" &&
-            (!userActive.current ||
-              latest.current.awaitingUser ||
-              !latest.current.navigation.isFocused())
-          ) {
-            return current.displayMode ?? "inline";
-          }
-          if (mode === "fullscreen" && current.displayMode !== "fullscreen") {
-            await documentHost.teardown();
-            // Approval arrival or navigation during the wait requires reloading inline.
-            const navigation = latest.current.navigation;
-            if (latest.current.awaitingUser || !navigation.isFocused()) {
-              reloadInline();
-              return "inline";
+  const attachWebView = (view: WebView<object> | null) => {
+    if (view === null) return;
+    const reloadInline = () => {
+      setLoaded(false);
+      setHeight(MCP_APP_INLINE_MAX_HEIGHT);
+      setNavigatedAway(false);
+      const current = latest.current.asset;
+      if (current._tag === "Success") setUri(current.url);
+      setDocumentKeyState((value) => value + 1);
+    };
+    const scope = () => {
+      const { environmentId, threadId, itemId } = latest.current.props;
+      return { environmentId, input: { threadId, itemId } };
+    };
+    const hostContext = (): McpAppHostContext => {
+      const current = latest.current;
+      const isFullscreen = current.props.displayMode === "fullscreen";
+      return {
+        theme: current.theme.appearance,
+        styles: { variables: mcpAppStyleVariables(current.theme.variables) },
+        displayMode: isFullscreen ? "fullscreen" : "inline",
+        availableDisplayModes: ["inline", "fullscreen"],
+        containerDimensions: isFullscreen
+          ? {
+              width: current.props.width,
+              height: current.props.height ?? MCP_APP_INLINE_MAX_HEIGHT,
             }
-            setPresentedFullscreen(true);
-            navigation.navigate("ThreadMcpApp", {
-              environmentId: String(current.environmentId),
-              threadId: String(current.threadId),
-              conversationThreadId: String(current.conversationThreadId),
-              itemId: String(current.itemId),
-              revision: current.revision,
-            });
-            return "fullscreen";
-          }
-          if (mode === "inline" && current.displayMode === "fullscreen") {
-            await documentHost.teardown();
-            current.onExitFullscreen?.();
+          : { width: current.props.width, maxHeight: MCP_APP_INLINE_MAX_HEIGHT },
+        platform: "mobile",
+        locale: Intl.DateTimeFormat().resolvedOptions().locale,
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        userAgent: `t3-code/${Constants.expoConfig?.version ?? "0.0.0"}`,
+        deviceCapabilities: { touch: true, hover: false },
+        safeAreaInsets: isFullscreen
+          ? { top: 0, right: current.insets.right, bottom: 0, left: current.insets.left }
+          : { top: 0, right: 0, bottom: 0, left: 0 },
+        ...(current.toolDefinition === undefined
+          ? {}
+          : { toolInfo: { tool: current.toolDefinition } }),
+      };
+    };
+    const documentHost: McpAppHost = makeMcpAppHost({
+      app,
+      hostVersion: Constants.expoConfig?.version ?? "0.0.0",
+      post: (message) =>
+        view.injectJavaScript(
+          `window.__t3McpAppReceive&&window.__t3McpAppReceive(${JSON.stringify(message)});true;`,
+        ),
+      hostContext,
+      callTool: async ({ name, arguments: args }) => {
+        const { environmentId, input } = scope();
+        const info = await latest.current.toolInfo({ environmentId, input: { ...input, name } });
+        if (info._tag !== "Success") throw commandFailure(info);
+        if (!info.value.callable) throw new McpAppHostRefusal("This app cannot call that tool.");
+        if (
+          !info.value.readOnly &&
+          !(await confirm(
+            `Allow ${app.server} to run ${info.value.title ?? name}?`,
+            JSON.stringify(args, null, 2),
+            "Allow",
+          ))
+        ) {
+          throw new McpAppHostRefusal("Declined by the user.");
+        }
+        const result = await latest.current.callTool({
+          environmentId,
+          input: { ...input, name, arguments: args },
+        });
+        if (result._tag !== "Success") throw commandFailure(result);
+        return result.value;
+      },
+      readResource: async ({ uri: resourceUri }) => {
+        const { environmentId, input } = scope();
+        const result = await latest.current.readResource({
+          environmentId,
+          input: { ...input, uri: resourceUri },
+        });
+        if (result._tag !== "Success") throw commandFailure(result);
+        return result.value;
+      },
+      openLink: async (url) => {
+        // WebViews cannot prove user activation; confirm links to prevent timer-driven navigation out of T3.
+        if (!(await confirm(`Open a link from ${app.server}?`, url, "Open"))) {
+          throw new McpAppHostRefusal("Declined by the user.");
+        }
+        if (!(await tryOpenExternalUrl(url, "mcp-app"))) {
+          throw new McpAppHostRefusal("The link could not be opened.");
+        }
+      },
+      sendMessage: async (text) => {
+        if (!(await confirm(`Send this message from ${app.server}?`, text, "Send"))) {
+          throw new McpAppHostRefusal("Declined by the user.");
+        }
+        await enqueueThreadOutboxMessage({
+          environmentId: latest.current.props.environmentId,
+          threadId: latest.current.props.conversationThreadId,
+          messageId: MessageId.make(uuidv4()),
+          commandId: CommandId.make(uuidv4()),
+          text,
+          attachments: [],
+          dispatchMode: "queue",
+          createdAt: new Date().toISOString(),
+        });
+      },
+      updateModelContext: async (context) => {
+        const { environmentId, input } = scope();
+        const result = await latest.current.updateModelContext({
+          environmentId,
+          input: {
+            ...input,
+            ...context,
+            conversationThreadId: latest.current.props.conversationThreadId,
+          },
+        });
+        if (result._tag !== "Success") throw commandFailure(result);
+      },
+      requestDisplayMode: async (mode) => {
+        const current = latest.current.props;
+        // receive dispatches synchronously; read activation before awaiting teardown.
+        if (
+          mode === "fullscreen" &&
+          (!userActive.current ||
+            latest.current.awaitingUser ||
+            !latest.current.navigation.isFocused())
+        ) {
+          return current.displayMode ?? "inline";
+        }
+        if (mode === "fullscreen" && current.displayMode !== "fullscreen") {
+          await documentHost.teardown();
+          // Approval arrival or navigation during the wait requires reloading inline.
+          const navigation = latest.current.navigation;
+          if (latest.current.awaitingUser || !navigation.isFocused()) {
+            reloadInline();
             return "inline";
           }
-          return current.displayMode ?? "inline";
-        },
-        downloadFile: async (files) => {
-          const names = files.map((file) => file.name).join(", ");
-          if (!(await confirm(`Save a file from ${app.server}?`, names, "Save"))) {
-            throw new McpAppHostRefusal("Declined by the user.");
-          }
-          for (const file of files) {
-            let bytes: Uint8Array | undefined;
-            let mimeType = file.mimeType ?? "application/octet-stream";
-            if (file._tag === "embedded") {
-              bytes = file.bytes;
-            } else {
-              const { environmentId, input } = scope();
-              const read = await latest.current.readResource({
-                environmentId,
-                input: { ...input, uri: file.uri },
-              });
-              if (read._tag !== "Success") throw commandFailure(read);
-              const content = read.value.contents[0];
-              bytes = mcpResourceBytes(content);
-              const declared = (content as { readonly mimeType?: unknown } | undefined)?.mimeType;
-              if (typeof declared === "string") mimeType = declared;
-            }
-            if (bytes === undefined) throw new McpAppHostRefusal(`${file.name} has no contents.`);
-            if (bytes.byteLength > MAX_DOWNLOAD_BYTES) {
-              throw new McpAppHostRefusal(`${file.name} is too large to save.`);
-            }
-            const shared = await shareGeneratedAttachment({
-              bytes,
-              attachment: { name: file.name, mimeType },
-              signal: new AbortController().signal,
-            });
-            if (!shared) throw new McpAppHostRefusal("Sharing is not available on this device.");
-          }
-        },
-        onRequestTeardown: () => {
-          const current = latest.current.props;
-          if (current.displayMode === "fullscreen") {
-            void documentHost.teardown().then(() => current.onExitFullscreen?.());
+          setPresentedFullscreen(true);
+          navigation.navigate("ThreadMcpApp", {
+            environmentId: String(current.environmentId),
+            threadId: String(current.threadId),
+            conversationThreadId: String(current.conversationThreadId),
+            itemId: String(current.itemId),
+            revision: current.revision,
+          });
+          return "fullscreen";
+        }
+        if (mode === "inline" && current.displayMode === "fullscreen") {
+          await documentHost.teardown();
+          current.onExitFullscreen?.();
+          return "inline";
+        }
+        return current.displayMode ?? "inline";
+      },
+      downloadFile: async (files) => {
+        const names = files.map((file) => file.name).join(", ");
+        if (!(await confirm(`Save a file from ${app.server}?`, names, "Save"))) {
+          throw new McpAppHostRefusal("Declined by the user.");
+        }
+        for (const file of files) {
+          let bytes: Uint8Array | undefined;
+          let mimeType = file.mimeType ?? "application/octet-stream";
+          if (file._tag === "embedded") {
+            bytes = file.bytes;
           } else {
-            void documentHost.teardown().then(() => setClosed(true));
+            const { environmentId, input } = scope();
+            const read = await latest.current.readResource({
+              environmentId,
+              input: { ...input, uri: file.uri },
+            });
+            if (read._tag !== "Success") throw commandFailure(read);
+            const content = read.value.contents[0];
+            bytes = mcpResourceBytes(content);
+            const declared = (content as { readonly mimeType?: unknown } | undefined)?.mimeType;
+            if (typeof declared === "string") mimeType = declared;
           }
-        },
-        onSizeChanged: (size) => {
-          if (latest.current.props.displayMode === "fullscreen") return;
-          const nextHeight = mcpAppInlineHeight(size.height);
-          if (nextHeight !== undefined) setHeight(nextHeight);
-        },
-      });
-      setHost(documentHost);
-      return () => {
-        // An unmount cannot wait: the request goes out before the view does.
-        void documentHost.teardown();
-        setHost((current) => (current === documentHost ? null : current));
-      };
-    },
-    [app],
-  );
+          if (bytes === undefined) throw new McpAppHostRefusal(`${file.name} has no contents.`);
+          if (bytes.byteLength > MAX_DOWNLOAD_BYTES) {
+            throw new McpAppHostRefusal(`${file.name} is too large to save.`);
+          }
+          const shared = await shareGeneratedAttachment({
+            bytes,
+            attachment: { name: file.name, mimeType },
+            signal: new AbortController().signal,
+          });
+          if (!shared) throw new McpAppHostRefusal("Sharing is not available on this device.");
+        }
+      },
+      onRequestTeardown: () => {
+        const current = latest.current.props;
+        if (current.displayMode === "fullscreen") {
+          void documentHost.teardown().then(() => current.onExitFullscreen?.());
+        } else {
+          void documentHost.teardown().then(() => setClosed(true));
+        }
+      },
+      onSizeChanged: (size) => {
+        if (latest.current.props.displayMode === "fullscreen") return;
+        const nextHeight = mcpAppInlineHeight(size.height);
+        if (nextHeight !== undefined) setHeight(nextHeight);
+      },
+    });
+    setHost(documentHost);
+    return () => {
+      // An unmount cannot wait: the request goes out before the view does.
+      void documentHost.teardown();
+      setHost((current) => (current === documentHost ? null : current));
+    };
+  };
 
-  const source = useMemo(
-    () =>
-      uri === null
-        ? null
-        : { html: outerDocument(uri, mcpAppAllowAttribute(app.permissions), secret) },
-    [uri, app.permissions, secret],
-  );
+  const source =
+    uri === null
+      ? null
+      : { html: outerDocument(uri, mcpAppAllowAttribute(app.permissions), secret) };
 
   if (presentedFullscreen) {
     return (

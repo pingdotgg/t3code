@@ -38,7 +38,7 @@ export const POSES: ReadonlyArray<Pose> = [
     appearance: "light",
     fold: "closed",
     pending:
-      "agent-device fold refuses simulators outside the default device set, which Simlock uses",
+      "agent-device alert accept cannot see the iOS open-link prompt on the iPhone Duo, so the app never launches",
   }),
   pose({
     id: "iphone-duo-unfolded",
@@ -48,7 +48,7 @@ export const POSES: ReadonlyArray<Pose> = [
     appearance: "dark",
     fold: "open",
     pending:
-      "agent-device fold refuses simulators outside the default device set, which Simlock uses",
+      "agent-device alert accept cannot see the iOS open-link prompt on the iPhone Duo, so the app never launches",
   }),
   pose({
     id: "ipad-13-portrait",

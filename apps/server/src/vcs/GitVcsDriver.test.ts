@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -35,11 +36,11 @@ const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
 const layerGitContract = Layer.mergeAll(GitVcsDriver.layerVcs, GitVcsDriver.layer).pipe(
   Layer.provide(layerServerConfig),
   Layer.provideMerge(VcsProcess.layer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const layerGitCaptureContract = Layer.merge(
   layerGitContract,
-  ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)),
+  ProcessRunner.layer.pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 const runGit = (cwd: string, args: ReadonlyArray<string>) =>
@@ -682,9 +683,13 @@ it.effect.each(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
-it.effect.each(["normal", "flags", "sparse"] as const)(
-  "checkpoint index inspection handles entries beyond the output cap (index=%s)",
-  (indexMode) =>
+it.effect.each(
+  (["normal", "flags", "sparse"] as const).flatMap((indexMode) =>
+    [1, 3, 4096].map((chunkSize) => ({ indexMode, chunkSize })),
+  ),
+)(
+  "checkpoint index inspection handles entries beyond the output cap (index=$indexMode, chunk=$chunkSize)",
+  ({ indexMode, chunkSize }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -720,8 +725,8 @@ it.effect.each(["normal", "flags", "sparse"] as const)(
                     ...input,
                     maxOutputBytes: 8,
                     onStdoutChunk: (chunk) => {
-                      for (let i = 0; i < chunk.length; i++)
-                        input.onStdoutChunk?.(chunk.subarray(i, i + 1));
+                      for (let i = 0; i < chunk.length; i += chunkSize)
+                        input.onStdoutChunk?.(chunk.subarray(i, i + chunkSize));
                     },
                   }
                 : input,
@@ -914,6 +919,126 @@ it.effect.each(["missing", "invalid"] as const)(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+const captureRecordingGitCommands = Effect.fn("test.captureRecordingGitCommands")(function* (
+  cwd: string,
+  checkpointRef: CheckpointRef,
+) {
+  const liveProcess = yield* VcsProcess.VcsProcess;
+  const commands: Array<string | undefined> = [];
+  const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+    Effect.provideService(VcsProcess.VcsProcess, {
+      run: (input) => {
+        let index = 0;
+        while (input.args[index] === "-C" || input.args[index] === "-c") index += 2;
+        commands.push(input.args[index]);
+        return liveProcess.run(input);
+      },
+    }),
+  );
+  yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+  return commands;
+});
+
+it.effect.each(["committed", "unborn"] as const)(
+  "checkpoint capture reads the repository with one rev-parse (HEAD=%s)",
+  (head) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-processes-" });
+      const git = (args: ReadonlyArray<string>) =>
+        driver.execute({ operation: "checkpoint-test", cwd, args });
+      const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/test");
+      if (head === "committed") {
+        yield* makeCheckpointFixture(driver, cwd);
+      } else {
+        yield* git(["init"]);
+        yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "unstaged\n");
+      }
+
+      const commands = yield* captureRecordingGitCommands(cwd, checkpointRef);
+
+      assert.deepStrictEqual(commands, [
+        "rev-parse",
+        "config",
+        ...(head === "committed" ? ["read-tree", "ls-files"] : []),
+        "check-ignore",
+        "add",
+        "write-tree",
+        "commit-tree",
+        "update-ref",
+      ]);
+      assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
+      const [, ...parents] = (yield* git([
+        "rev-list",
+        "--parents",
+        "-n",
+        "1",
+        checkpointRef,
+      ])).stdout
+        .trim()
+        .split(" ");
+      assert.deepStrictEqual(
+        parents,
+        head === "committed" ? [(yield* git(["rev-parse", "HEAD"])).stdout.trim()] : [],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("checkpoint capture outside a repository fails with the common dir lookup error", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-no-repo-" });
+
+    const error = yield* captureRecordingGitCommands(
+      cwd,
+      CheckpointRef.make("refs/t3/checkpoints/test"),
+    ).pipe(Effect.flip);
+
+    assert.instanceOf(error, VcsProcessExitError);
+    assert.strictEqual(error.operation, "GitVcsDriver.checkpoints.resolveGitCommonDir");
+    assert.strictEqual(error.exitCode, 128);
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "checkpoint capture handles a repository path containing a newline",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-new\nline-" });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      const originalIndex = yield* fileSystem.readFile(path.join(cwd, ".git", "index"));
+
+      const commands = yield* captureRecordingGitCommands(cwd, checkpointRef);
+
+      assert.deepStrictEqual(commands, [
+        "rev-parse",
+        "rev-parse",
+        "config",
+        "rev-parse",
+        "read-tree",
+        "ls-files",
+        "check-ignore",
+        "add",
+        "write-tree",
+        "commit-tree",
+        "update-ref",
+      ]);
+      assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
+      assert.deepEqual(yield* fileSystem.readFile(path.join(cwd, ".git", "index")), originalIndex);
+      assert.deepStrictEqual(
+        (yield* fileSystem.readDirectory(path.join(cwd, ".git"))).filter((name) =>
+          name.startsWith("t3-checkpoint-index-"),
+        ),
+        [],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect("restores empty checkpoints without changing paths outside the workspace", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -986,7 +1111,10 @@ const vcsProcessSpawning = (command: string) =>
     Effect.map(VcsProcess.make, (vcsProcess) =>
       VcsProcess.VcsProcess.of({ run: (input) => vcsProcess.run({ ...input, command }) }),
     ),
-  ).pipe(Layer.provide(ProcessRunner.layer), Layer.provideMerge(NodeServices.layer));
+  ).pipe(
+    Layer.provide(ProcessRunner.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
 
 it.effect("GitVcsDriver treats a missing git executable as outside any repository", () =>
   Effect.gen(function* () {
@@ -999,7 +1127,25 @@ it.effect("GitVcsDriver treats a missing git executable as outside any repositor
 
     assert.strictEqual(yield* driver.isInsideWorkTree(cwd), false);
     assert.strictEqual(yield* driver.detectRepository(cwd), null);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "GitVcsDriver detects a repository whose path contains a newline",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-newline-repo-" });
+      const cwd = path.join(parent, "multi\nline");
+      yield* fileSystem.makeDirectory(cwd);
+      yield* runGit(cwd, ["init"]);
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+
+      const repository = yield* driver.detectRepository(cwd);
+      assert.strictEqual(repository?.rootPath, yield* fileSystem.realPath(cwd));
+      assert.strictEqual(repository?.metadataPath, ".git");
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
@@ -1017,7 +1163,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.strictEqual(error._tag, "VcsProcessSpawnError");
       const detectionError = yield* driver.detectRepository(process.cwd()).pipe(Effect.flip);
       assert.strictEqual(detectionError._tag, "VcsProcessSpawnError");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 const gitCommandCount = (operation: string, outcome: string) =>
@@ -1070,7 +1216,7 @@ it.effect("GitVcsDriver meters each git command once under its operation", () =>
     assert.strictEqual(timing.count, 2);
     assert.strictEqual(timing.sum, 500);
   }).pipe(
-    Effect.provide(NodeServices.layer),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Effect.provideService(Metric.MetricRegistry, new Map()),
   ),
 );
@@ -1094,7 +1240,7 @@ it.effect("GitVcsDriver counts an allowed non-zero exit as a success", () =>
     assert.strictEqual(timing.count, 1);
     assert.strictEqual(timing.sum, 250);
   }).pipe(
-    Effect.provide(NodeServices.layer),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Effect.provideService(Metric.MetricRegistry, new Map()),
   ),
 );
@@ -1115,7 +1261,7 @@ it.effect("GitVcsDriver counts a failed git command as a failure", () =>
     assert.strictEqual(timing.count, 1);
     assert.strictEqual(timing.sum, 250);
   }).pipe(
-    Effect.provide(NodeServices.layer),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Effect.provideService(Metric.MetricRegistry, new Map()),
   ),
 );
@@ -1180,7 +1326,7 @@ it.effect("git metrics finalize cancellation without exposing arbitrary operatio
     assert.strictEqual(timing.count, 1);
     assert.strictEqual(timing.sum, 250);
   }).pipe(
-    Effect.provide(NodeServices.layer),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Effect.provideService(Metric.MetricRegistry, new Map()),
   ),
 );
@@ -1236,7 +1382,7 @@ it.effect("git metrics count fsync fallback and transient retry subprocesses sep
     assert.strictEqual(timing.count, 3);
     assert.strictEqual(timing.sum, 750);
   }).pipe(
-    Effect.provide(NodeServices.layer),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Effect.provideService(Metric.MetricRegistry, new Map()),
   ),
 );
