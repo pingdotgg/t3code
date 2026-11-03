@@ -263,7 +263,7 @@ describe("resolveChangesTotals", () => {
           },
         }),
       ),
-      { insertions: 5, deletions: 1 },
+      { baseRef: null, insertions: 5, deletions: 1 },
     );
   });
 
@@ -271,7 +271,7 @@ describe("resolveChangesTotals", () => {
     assert.deepEqual(
       resolveChangesTotals(
         status({
-          branchChanges: { baseRef: "main", insertions: 20, deletions: 3 },
+          branchChanges: { baseRef: "origin/master", insertions: 20, deletions: 3 },
           workingTree: {
             files: [{ path: "a.ts", insertions: 1, deletions: 0 }],
             insertions: 1,
@@ -279,7 +279,7 @@ describe("resolveChangesTotals", () => {
           },
         }),
       ),
-      { insertions: 20, deletions: 3 },
+      { baseRef: "origin/master", insertions: 20, deletions: 3 },
     );
   });
 
@@ -294,7 +294,7 @@ describe("resolveChangesTotals", () => {
           },
         }),
       ),
-      { insertions: 2, deletions: 0 },
+      { baseRef: null, insertions: 2, deletions: 0 },
     );
   });
 });

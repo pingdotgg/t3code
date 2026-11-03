@@ -1050,6 +1050,7 @@ export default function GitActionsControl({
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
   const changesTotals = resolveChangesTotals(gitStatusForActions) ?? {
+    baseRef: null,
     insertions: 0,
     deletions: 0,
   };
@@ -1632,12 +1633,27 @@ export default function GitActionsControl({
           variant="ghost"
           size="sm"
           part="row"
+          multiline
           disabled={!onOpenChanges}
           onClick={onOpenChanges}
         >
           <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-          <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
-          <span className="flex items-center gap-1.5 font-mono text-xs tabular-nums">
+          <span className="min-w-0 flex-1 text-left">
+            <span className={cn("block", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
+            <Tooltip>
+              <TooltipTrigger
+                render={<span className="block truncate text-xs text-muted-foreground" />}
+              >
+                {changesTotals.baseRef ? `vs ${changesTotals.baseRef}` : "Uncommitted"}
+              </TooltipTrigger>
+              <TooltipPopup side="left">
+                {changesTotals.baseRef
+                  ? `Changes compared with ${changesTotals.baseRef}`
+                  : "Uncommitted changes"}
+              </TooltipPopup>
+            </Tooltip>
+          </span>
+          <span className="flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums">
             <span
               className={
                 changesTotals.insertions ? "text-diff-addition-foreground" : "text-muted-foreground"

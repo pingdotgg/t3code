@@ -427,6 +427,7 @@ export function resolveLiveThreadBranchUpdate(input: {
 }
 
 export type ChangesLineTotals = {
+  readonly baseRef: string | null;
   readonly insertions: number;
   readonly deletions: number;
 };
@@ -440,13 +441,13 @@ export function resolveChangesTotals(
   const branch = status.branchChanges;
   const tree = status.workingTree;
   if (branch && (branch.insertions > 0 || branch.deletions > 0)) {
-    return { insertions: branch.insertions, deletions: branch.deletions };
+    return branch;
   }
   if (tree.insertions > 0 || tree.deletions > 0) {
-    return { insertions: tree.insertions, deletions: tree.deletions };
+    return { baseRef: null, insertions: tree.insertions, deletions: tree.deletions };
   }
   if (branch) {
-    return { insertions: branch.insertions, deletions: branch.deletions };
+    return branch;
   }
-  return { insertions: tree.insertions, deletions: tree.deletions };
+  return { baseRef: null, insertions: tree.insertions, deletions: tree.deletions };
 }
