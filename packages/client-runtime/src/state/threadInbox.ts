@@ -40,8 +40,7 @@ type PendingWakeThreadInput = Pick<
   | "pendingGuestMessageCount"
   | "pendingBackgroundTasks"
   | "runtime"
-  | "latestRun"
-  | "latestUserMessageAt"
+  | "hasHeldQueue"
 >;
 
 const ENDED_RUNTIME_STATUSES = new Set<NonNullable<EnvironmentThreadShell["runtime"]>["status"]>([
@@ -64,18 +63,9 @@ export function threadHasNoPendingWake(
   if (thread.pendingSubagentRequest != null || (thread.pendingGuestMessageCount ?? 0) > 0) {
     return false;
   }
-  if (hasMessageQueuedAfterTurn(thread)) return false;
+  // A held queue keeps its messages out of the latest run, so the earlier turn still reads ended.
+  if (thread.hasHeldQueue === true) return false;
   return thread.pendingBackgroundTasks.length === 0 && hasScheduledWake === false;
-}
-
-// A message sent after the turn ended waits in the queue, held after a failure or a stop until
-// released. Messages sent during the turn were folded into it and predate its end.
-function hasMessageQueuedAfterTurn(
-  thread: Pick<EnvironmentThreadShell, "latestRun" | "latestUserMessageAt">,
-): boolean {
-  const endedAt = Date.parse(thread.latestRun?.completedAt ?? "");
-  const messageAt = Date.parse(thread.latestUserMessageAt ?? "");
-  return !Number.isNaN(endedAt) && !Number.isNaN(messageAt) && messageAt > endedAt;
 }
 
 export function scheduledTasksWakeThread(
