@@ -57,7 +57,7 @@ const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<Pull
 
 /** Describes thread matches during render without retaining the composer's render scope. */
 function makeComposerThreadDescription(projects: ReturnType<typeof useProjects>, nowMs: number) {
-  return (shell: ReturnType<typeof useThreadShells>[number]) => {
+  return (shell: ReturnType<typeof useVisibleThreadShells>[number]) => {
     const project = projects.find(
       (candidate) =>
         candidate.environmentId === shell.environmentId && candidate.id === shell.projectId,

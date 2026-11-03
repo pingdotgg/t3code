@@ -76,7 +76,7 @@ function NativeChildWorkContent(props: {
         )}
       </DialogPanel>
       <DialogFooter variant="bare">
-        <Button size="sm" variant="outline" disabled={query.isPending} onClick={query.refresh}>
+        <Button size="sm" variant="secondary" disabled={query.isPending} onClick={query.refresh}>
           Refresh
         </Button>
       </DialogFooter>
