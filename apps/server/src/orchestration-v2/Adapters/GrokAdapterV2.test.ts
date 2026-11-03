@@ -602,20 +602,32 @@ describe("Grok native questions", () => {
 });
 
 describe("Grok goal subagents", () => {
-  it.live("projects a subagent Grok spawns without a spawn tool call", () =>
+  const sessionId = "01a1a0a3-a776-7ce1-a040-f88774cac1fd";
+  const parentNotification = (update: Record<string, unknown>) => ({
+    type: "emit_inbound" as const,
+    label: String(update.sessionUpdate),
+    frame: {
+      kind: "notification" as const,
+      method: "_x.ai/session_notification",
+      params: { sessionId, update },
+    },
+  });
+  const parentSessionUpdate = (update: Record<string, unknown>) => ({
+    type: "emit_inbound" as const,
+    label: String(update.sessionUpdate),
+    frame: {
+      kind: "notification" as const,
+      method: "session/update",
+      params: { sessionId, update },
+    },
+  });
+
+  const replaySubagentTurn = (turnEntries: AcpReplayTranscript["entries"]) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "grok-goal-subagent-" });
-      const sessionId = "01a1a0a3-a776-7ce1-a040-f88774cac1fd";
-      const childSessionId = "01a1a0a3-a926-72e3-9994-8862c234df05";
-      const parentNotification = (update: Record<string, unknown>) => ({
-        kind: "notification" as const,
-        method: "_x.ai/session_notification",
-        params: { sessionId, update },
-      });
-      // Grok's /goal runtime announces its planner only through subagent_spawned, never a tool call.
       const transcript: AcpReplayTranscript = {
         provider: GROK_PROVIDER,
         protocol: "acp.ndjson-jsonrpc",
@@ -665,36 +677,7 @@ describe("Grok goal subagents", () => {
             label: "prompt",
             frame: { kind: "request", method: "session/prompt", params: "<any>" },
           },
-          {
-            type: "emit_inbound",
-            label: "subagent_spawned",
-            frame: parentNotification({
-              sessionUpdate: "subagent_spawned",
-              subagent_id: childSessionId,
-              attempt_id: "at1.5c4b78cc9a594308b98677f957aeddeb",
-              parent_session_id: sessionId,
-              parent_prompt_id: "041a596c-64e1-4a12-b1c3-41893282e50b",
-              child_session_id: childSessionId,
-              subagent_type: "general-purpose",
-              description: "goal plan writer",
-              effective_context_source: "new",
-              model: "grok-4.7",
-            }),
-          },
-          {
-            type: "emit_inbound",
-            label: "subagent_finished",
-            frame: parentNotification({
-              sessionUpdate: "subagent_finished",
-              subagent_id: childSessionId,
-              attempt_id: "at1.5c4b78cc9a594308b98677f957aeddeb",
-              child_session_id: childSessionId,
-              status: "completed",
-              tool_calls: 4,
-              turns: 1,
-              duration_ms: 15243,
-            }),
-          },
+          ...turnEntries,
           {
             type: "emit_inbound",
             label: "complete",
@@ -800,11 +783,104 @@ describe("Grok goal subagents", () => {
         runtimePolicy: policy,
       });
       yield* Deferred.await(terminal);
+      return { childThreadTitles, subagentStates };
+    });
+
+  it.live("projects a subagent Grok spawns without a spawn tool call", () =>
+    Effect.gen(function* () {
+      const childSessionId = "01a1a0a3-a926-72e3-9994-8862c234df05";
+      // Grok's /goal runtime announces its planner only through subagent_spawned, never a tool call.
+      const { childThreadTitles, subagentStates } = yield* replaySubagentTurn([
+        parentNotification({
+          sessionUpdate: "subagent_spawned",
+          subagent_id: childSessionId,
+          attempt_id: "at1.5c4b78cc9a594308b98677f957aeddeb",
+          parent_session_id: sessionId,
+          parent_prompt_id: "041a596c-64e1-4a12-b1c3-41893282e50b",
+          child_session_id: childSessionId,
+          subagent_type: "general-purpose",
+          description: "goal plan writer",
+          effective_context_source: "new",
+          model: "grok-4.7",
+        }),
+        parentNotification({
+          sessionUpdate: "subagent_finished",
+          subagent_id: childSessionId,
+          attempt_id: "at1.5c4b78cc9a594308b98677f957aeddeb",
+          child_session_id: childSessionId,
+          status: "completed",
+          tool_calls: 4,
+          turns: 1,
+          duration_ms: 15243,
+        }),
+      ]);
       assert.deepEqual(childThreadTitles, ["goal plan writer"]);
       assert.deepEqual(subagentStates, [
         { title: "goal plan writer", status: "running" },
         { title: "goal plan writer", status: "completed" },
       ]);
+    }).pipe(Effect.scoped, Effect.provide(replayLayerTest)),
+  );
+
+  it.live("keeps one subagent when a spawn tool call precedes subagent_spawned", () =>
+    Effect.gen(function* () {
+      const childSessionId = "01a1a0a6-c174-7d71-9b21-e32e6e069feb";
+      const toolCallId = "call-4149c7b9-9bc9-458e-96f0-70878f609cb7-0";
+      const description = "List calc.py functions";
+      const prompt = "List every function defined in calc.py.";
+      // Captured order: the spawn tool call lands ~30ms before its subagent_spawned.
+      const { childThreadTitles, subagentStates } = yield* replaySubagentTurn([
+        parentSessionUpdate({
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "spawn_subagent",
+          rawInput: { description, prompt, background: false },
+        }),
+        parentSessionUpdate({
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          kind: "other",
+          title: description,
+          rawInput: { variant: "Task", prompt, description, run_in_background: false },
+        }),
+        parentNotification({
+          sessionUpdate: "subagent_spawned",
+          subagent_id: childSessionId,
+          parent_session_id: sessionId,
+          child_session_id: childSessionId,
+          subagent_type: "general-purpose",
+          description,
+          model: "grok-4.7",
+        }),
+        parentNotification({
+          sessionUpdate: "subagent_finished",
+          subagent_id: childSessionId,
+          child_session_id: childSessionId,
+          status: "completed",
+          output: "add\nsubtract\nmultiply",
+        }),
+        parentSessionUpdate({
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: "completed",
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: `add\nsubtract\nmultiply\n\n<subagent_result>\nsubagent_id: ${childSessionId}\n</subagent_result>`,
+              },
+            },
+          ],
+          rawOutput: {
+            type: "SubagentCompleted",
+            output: "add\nsubtract\nmultiply",
+            subagent_id: childSessionId,
+          },
+        }),
+      ]);
+      assert.deepEqual(childThreadTitles, [description]);
+      assert.deepEqual(subagentStates.at(-1), { title: description, status: "completed" });
     }).pipe(Effect.scoped, Effect.provide(replayLayerTest)),
   );
 });
