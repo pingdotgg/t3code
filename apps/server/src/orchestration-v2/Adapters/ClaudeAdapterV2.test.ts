@@ -7420,6 +7420,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             providerThread: harness.providerThread,
             now,
             attemptId: RunAttemptId.make("claude-native-compact-attempt"),
+            modelSelection: {
+              instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+              model: "gateway-model",
+            },
             text: " /COMPACT ",
             attachments: [],
           }),
@@ -7439,6 +7443,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000202",
             result: "Compacted conversation.",
+            modelUsage: {
+              "gateway-model": {
+                inputTokens: 1,
+                outputTokens: 1,
+                cacheReadInputTokens: 0,
+                cacheCreationInputTokens: 0,
+                webSearchRequests: 0,
+                costUSD: 0,
+                contextWindow: 200_000,
+                maxOutputTokens: 32_000,
+              },
+            },
           }),
         );
         yield* Queue.take(harness.terminalReceipts);
@@ -7459,6 +7475,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             event.providerTurn.tokenUsage?.usedTokens === 400,
         );
         assert.isDefined(watermark);
+        const windows = harness.events.flatMap((event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+            ? [event.providerTurn.tokenUsage.maxTokens]
+            : [],
+        );
+        assert.deepEqual(windows, [null, 200_000]);
         const completed = harness.events.findLast(
           (event) => event.type === "provider_turn.updated",
         );
@@ -7472,6 +7494,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             outputTokens: 1,
             cachedInputTokens: 0,
             cacheCreationTokens: 0,
+            otherUsage: { inputTokens: 0, outputTokens: 0 },
           });
         }
       }).pipe(
