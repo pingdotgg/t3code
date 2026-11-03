@@ -1335,6 +1335,41 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("ends the run once the foreground completes while reminder checks hold the turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId } = yield* startConversation(harness, fake);
+      const terminals = () => harness.allEvents.filter((event) => event.type === "turn.terminal");
+      const settle = Effect.fnUntraced(function* (usedTokens: number) {
+        yield* fake.emit("session/contextUsage", { usedTokens });
+        yield* harness.takeEvent(
+          "provider_turn.updated",
+          (event) => event.providerTurn.tokenUsage?.usedTokens === usedTokens,
+        );
+      });
+      yield* fake.emit("turn/foregroundCompleted", {
+        turnId: nativeId,
+        blockingAgents: ["reminder-agent-1"],
+        sourceRange: {
+          first: { id: "record-1", sequence: 1 },
+          last: { id: "record-1", sequence: 1 },
+          stream: { id: "run-stream-1", kind: "run" },
+        },
+        viewCursor: "cursor-1",
+      });
+      yield* settle(1);
+      assert.deepStrictEqual(
+        terminals().map((event) => event.status),
+        ["completed"],
+        "the run should end when Muse reports its foreground answer is done",
+      );
+      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
+      yield* settle(2);
+      assert.strictEqual(terminals().length, 1);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("validates structured answers and preserves selected labels with a custom note", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
