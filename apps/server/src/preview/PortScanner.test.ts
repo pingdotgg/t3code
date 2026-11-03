@@ -22,6 +22,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { expect, vi } from "vite-plus/test";
 import { FetchHttpClient } from "effect/http";
 
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
 
@@ -284,6 +285,44 @@ effectIt.effect("stops probing a subscriber's configured paths after its scope c
     yield* TestClock.adjust(Duration.seconds(15));
     expect(requests).toContain(adminUrl);
     expect(requests).not.toContain(docsUrl);
+  }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+effectIt.effect("skips scheduled scans while no client is in the foreground", () => {
+  let lsofRuns = 0;
+  let foreground = true;
+  const layer = layerLsofScanner({
+    pid: () => 1234,
+    fetch: (() => Promise.resolve(new Response("not found", { status: 404 }))) as typeof fetch,
+    stdout: () => {
+      lsofRuns += 1;
+      return `p1234\ncnode\nn*:${LSOF_TEST_PORT}\n`;
+    },
+  }).pipe(
+    Layer.provide(
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunOpportunisticWork: Effect.sync(() => foreground),
+      }),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.subscribe(
+      { configuredUrls: [`http://localhost:${LSOF_TEST_PORT}/`], initialSnapshot: [] },
+      () => Effect.void,
+    );
+    yield* scanner.retain;
+    const afterInitialScan = lsofRuns;
+    expect(afterInitialScan).toBeGreaterThan(0);
+
+    foreground = false;
+    yield* TestClock.adjust(Duration.seconds(15));
+    expect(lsofRuns).toBe(afterInitialScan);
+
+    foreground = true;
+    yield* TestClock.adjust(Duration.seconds(3));
+    expect(lsofRuns).toBeGreaterThan(afterInitialScan);
   }).pipe(Effect.scoped, Effect.provide(layer));
 });
 
