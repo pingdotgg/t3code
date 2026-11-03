@@ -60,6 +60,8 @@ export function EasDeviceHostEditor(props: {
   const [draft, setDraft] = useState(props.host);
   const tokenId = useId();
   const secretSources = useSecretSources(props.environmentId);
+  const [tokenValid, setTokenValid] = useState(true);
+  const [tokenInputKey, setTokenInputKey] = useState(0);
   // A saved token arrives redacted; only a replacement or a clear changes it.
   const [token, setToken] = useState<
     { kind: "saved" } | { kind: "new"; value: SettingsSecretValue } | { kind: "cleared" }
@@ -90,13 +92,15 @@ export function EasDeviceHostEditor(props: {
     accessToken:
       token.kind === "saved" ? props.host.accessToken : token.kind === "new" ? token.value : "",
   };
-  const valid = Option.isSome(parseEasDeviceHostDraft(next));
+  const valid = tokenValid && Option.isSome(parseEasDeviceHostDraft(next));
   // Why Save is off, for the limits the fields' ranges do not show.
   const problem = valid
     ? null
-    : draft.maxSessionMinutes > 0 && draft.idleMinutes >= draft.maxSessionMinutes
-      ? "Idle minutes must be smaller than session minutes."
-      : "Give the host a label and limits within the ranges shown.";
+    : !tokenValid
+      ? "Enter a valid secret reference."
+      : draft.maxSessionMinutes > 0 && draft.idleMinutes >= draft.maxSessionMinutes
+        ? "Idle minutes must be smaller than session minutes."
+        : "Give the host a label and limits within the ranges shown.";
   const apps = account.status === "signed-in" ? account.account.apps : [];
 
   // A check answers for the credential it was asked about: a later check or a
@@ -196,6 +200,7 @@ export function EasDeviceHostEditor(props: {
               </label>
               <div className="flex items-center gap-2">
                 <SecretSourceInput
+                  key={tokenInputKey}
                   id={tokenId}
                   aria-label="Expo access token"
                   className="min-w-0 flex-1"
@@ -208,6 +213,10 @@ export function EasDeviceHostEditor(props: {
                         : ""
                   }
                   sources={secretSources}
+                  onValidityChange={(valid) => {
+                    setTokenValid(valid);
+                    resetAccount();
+                  }}
                   onSecretChange={(secret) => {
                     setToken(secret ? { kind: "new", value: secret } : { kind: "cleared" });
                     resetAccount();
@@ -236,6 +245,8 @@ export function EasDeviceHostEditor(props: {
                     aria-label="Clear access token"
                     onClick={() => {
                       setToken({ kind: "cleared" });
+                      setTokenValid(true);
+                      setTokenInputKey((key) => key + 1);
                       resetAccount();
                     }}
                   >
@@ -258,7 +269,7 @@ export function EasDeviceHostEditor(props: {
                 type="button"
                 size="sm"
                 variant="outline"
-                disabled={props.busy || account.status === "checking"}
+                disabled={props.busy || !tokenValid || account.status === "checking"}
                 onClick={() => void checkAccount()}
               >
                 {account.status === "checking" ? <Spinner size="xs" /> : null} Check account
