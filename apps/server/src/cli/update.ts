@@ -108,16 +108,15 @@ export const resolveMirrorVersion = Effect.fn("cli.update.resolve_mirror")(funct
     });
   }
   const httpClient = yield* HttpClient.HttpClient;
-  const url = releaseAssetUrl(
-    mirror.feedUrl,
-    updateFeedFileName(
-      channel === "nightly" ? "nightly" : "latest",
-      yield* HostProcess.Platform,
-      yield* HostProcess.Architecture,
-    ),
+  const fileName = updateFeedFileName(
+    channel === "nightly" ? "nightly" : "latest",
+    yield* HostProcess.Platform,
+    yield* HostProcess.Architecture,
   );
+  const url = releaseAssetUrl(mirror.feedUrl, fileName);
+  // Not the URL, whose query can hold the mirror's access token.
   const unreadable = new CliUpdateError({
-    reason: `Could not read ${url} from ${mirror.organization}'s update mirror.`,
+    reason: `Could not read ${fileName} from ${mirror.organization}'s update mirror.`,
   });
   const body = yield* httpClient.get(url).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),

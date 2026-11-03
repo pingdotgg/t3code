@@ -108,7 +108,7 @@ it.effect("reads the newest version from the update feed file a mirror publishes
     // A feed for the wrong track is not trusted to mean the requested one.
     assert.include(
       yield* resolve("stable", "win32", "x64", "version: 1.5.0-nightly.20261101.2\n"),
-      "Could not read https://updates.example.com/t3code/latest.yml",
+      "Could not read latest.yml from Example Corp's update mirror.",
     );
     assert.include(yield* resolve("preview", "win32", "x64", ""), "has no preview builds");
   }),
