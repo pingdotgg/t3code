@@ -32,7 +32,6 @@
         "mobile-behavior/run.ts",
         "mobile-native-client.ts",
         "setup-worktree.ts",
-        "update-lab.ts",
         "sign-macos.ts",
         "prepare-server-compile-cache.cjs",
         "smoke-desktop-app.ts",
