@@ -38,12 +38,15 @@ function showStarPrompt(environmentId: EnvironmentId) {
   const starInPlace = async () => {
     toastManager.update(id, { actionProps: { children: "Starring…", disabled: true } });
     if (await starRepository(environmentId)) {
-      close();
-      toastManager.add({
+      // Thank them in place: a closing and opening toast would slide under the confetti.
+      dismiss();
+      toastManager.update(id, {
         type: "success",
         title: "Thanks for the star!",
         description: "It really helps T3 Code grow.",
         timeout: 5_000,
+        actionProps: undefined,
+        data: {},
       });
       celebrate();
       return;
