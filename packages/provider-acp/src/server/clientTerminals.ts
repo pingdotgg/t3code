@@ -288,8 +288,8 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
               ),
               Effect.ignore,
             );
-          const stdoutPump = yield* Effect.forkDetach(pump(child.stdout));
-          const stderrPump = yield* Effect.forkDetach(pump(child.stderr));
+          const stdoutPump = yield* pump(child.stdout).pipe(Effect.forkIn(terminalScope));
+          const stderrPump = yield* pump(child.stderr).pipe(Effect.forkIn(terminalScope));
           yield* Effect.forkDetach(
             child.exitCode.pipe(
               Effect.match({
@@ -297,15 +297,10 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
                 onSuccess: (code) => ({ exitCode: Number(code), signal: null }),
               }),
               Effect.flatMap((status) =>
-                Effect.all([Fiber.join(stdoutPump), Fiber.join(stderrPump)], {
+                Effect.all([Fiber.await(stdoutPump), Fiber.await(stderrPump)], {
                   discard: true,
                 }).pipe(
                   Effect.timeoutOption(TERMINAL_OUTPUT_DRAIN_GRACE),
-                  Effect.ensuring(
-                    Effect.all([Fiber.interrupt(stdoutPump), Fiber.interrupt(stderrPump)], {
-                      discard: true,
-                    }),
-                  ),
                   Effect.andThen(
                     Effect.sync(() => {
                       record.exitStatus = status;
