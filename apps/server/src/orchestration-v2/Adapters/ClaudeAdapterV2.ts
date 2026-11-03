@@ -7948,6 +7948,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // Finalization can yield to a replacement process; capture ownership and outcomes first.
           const subagents = yield* Ref.get(sessionSubagentsByTaskId);
           const buffered = (yield* Ref.get(wakeBuffers)).get(closedQuery.nativeThreadId)?.messages;
+          const lostTasks =
+            current === null && !interrupted
+              ? claudePendingBackgroundTasksFromRoster(
+                  rosterForNativeThread(
+                    yield* Ref.get(pendingBackgroundTasksByNativeThread),
+                    closedQuery.nativeThreadId,
+                  ),
+                  taskIdSetForNativeThread(
+                    yield* Ref.get(awaitedBackgroundTasksByNativeThread),
+                    closedQuery.nativeThreadId,
+                  ),
+                ).filter((task) => task.awaited === true)
+              : [];
           if (current === context) {
             yield* finalizeActiveTurn({
               context,
@@ -7978,6 +7991,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             next.delete(context.providerTurnId);
             return next;
           });
+          if (lostTasks.length > 0) {
+            const detail = `${lostTasks.length} awaited background ${lostTasks.length === 1 ? "task was" : "tasks were"} lost when the Claude provider process exited:\n${lostTasks
+              .map((task) => `- ${task.taskId}${task.description ? `: ${task.description}` : ""}`)
+              .join("\n")}`;
+            yield* continuationRequests.offer({
+              threadId: context.input.threadId,
+              providerThreadId: context.input.providerThread.id,
+              driver: CLAUDE_PROVIDER,
+              delivery: "message_text",
+              detail,
+              notification: {
+                source: { kind: "background_task" },
+                outcome: "cancelled",
+                summary: "Claude exited and stopped background work",
+                detail,
+              },
+            });
+          }
           if (cause !== undefined) {
             yield* Effect.logWarning("orchestration-v2.claude-query-stream-failed", {
               providerSessionId: input.providerSessionId,

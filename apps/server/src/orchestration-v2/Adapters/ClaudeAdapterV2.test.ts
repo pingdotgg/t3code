@@ -9137,6 +9137,107 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect.each(["query_exit", "stop"] as const)(
+    "reports awaited background work lost on %s without waking an intentional Stop",
+    (outcome) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarnessWithOptions({
+            freshQueueOnReopen: true,
+            close: Queue.shutdown,
+          });
+          const now = yield* DateTime.now;
+          const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks!;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-lost-background"),
+              text: "Run the tests in the background and wait for them.",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "background_tasks_changed",
+              tasks: [
+                { task_id: WAKE_TASK_ID, task_type: "local_bash", description: "Run tests" },
+                { task_id: "dev-server", task_type: "local_bash", description: "Dev server" },
+              ],
+              uuid: "00000000-0000-4000-8000-000000000305",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* awaitBackgroundTasks({
+            providerThread: harness.providerThread,
+            taskIds: [WAKE_TASK_ID],
+            awaited: true,
+          });
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+          if (outcome === "stop") {
+            yield* harness.runtime.interruptTurn({
+              providerThread: harness.providerThread,
+              providerTurnId: harness.terminalEvents()[0]!.providerTurnId,
+              requestRuntimeRestart: true,
+            });
+            assert.lengthOf(harness.continuationRequests, 0);
+          } else {
+            yield* Queue.shutdown(harness.sdkMessages);
+            yield* harness.until(
+              () =>
+                providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+                  .pendingBackgroundTasks?.length === 0,
+            );
+            const request = yield* Queue.take(harness.continuationReceipts);
+            assert.lengthOf(harness.continuationRequests, 1);
+            assert.equal(request.threadId, harness.threadId);
+            assert.equal(request.providerThreadId, harness.providerThread.id);
+            assert.equal(request.delivery, "message_text");
+            assert.include(request.detail, "provider process exited");
+            assert.include(request.detail, WAKE_TASK_ID);
+            assert.include(request.detail, "Run tests");
+            assert.notInclude(request.detail, "dev-server");
+            assert.equal(request.notification?.outcome, "cancelled");
+
+            yield* harness.runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: providerThreadRosterEvents(harness.events).at(-1)!.providerThread,
+                now,
+                attemptId: RunAttemptId.make("attempt-claude-lost-background-wake"),
+                text: request.detail!,
+                attachments: [],
+                providerTurnOrdinal: 2,
+                messageCreatedBy: "agent",
+                messageCreationSource: "server",
+              }),
+            );
+            assert.lengthOf(harness.processQueues, 2);
+            assert.include(harness.offeredMessages[1]?.message.content, request.detail!);
+            yield* harness.offerAndWait(wakeResult);
+            yield* Queue.take(harness.terminalReceipts);
+            assert.equal(harness.terminalEvents()[1]?.status, "completed");
+            assert.lengthOf(harness.continuationRequests, 1);
+          }
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
   it.effect("keeps a running Claude monitor typed after many newer monitors end", () =>
     Effect.scoped(
       Effect.gen(function* () {
