@@ -577,7 +577,11 @@ it.effect("brings a repository to a linked environment, only through full access
           environmentId: box.environmentId,
           ...args,
         });
-        expect(failureOf(refused), name).toMatchObject({ code: "capability_denied" });
+        const failure = failureOf(refused);
+        expect(failure, name).toMatchObject({ code: "capability_denied" });
+        // The agent's thread is full access; what holds it is the link's access.
+        expect(failure.message, name).toContain("linked environment");
+        expect(failure.message, name).not.toContain("calling thread");
       }
       expect((yield* Ref.get(seen)).clones).toHaveLength(1);
       expect((yield* Ref.get(seen)).projects).toHaveLength(1);
