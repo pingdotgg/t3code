@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/ai";
 import { McpInvocationContext, requireMcpCapability } from "./McpInvocationContext.ts";
-import { MonitorToolkitRegistrationLive } from "./McpHttpServer.ts";
+import { layerInProcessMcpServer, MonitorToolkitRegistrationLive } from "./McpHttpServer.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 import * as MonitorSession from "./MonitorSession.ts";
 import { CodexBackgroundTasks } from "../provider/CodexBackgroundTasks.ts";
@@ -35,7 +35,7 @@ const client = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 const TestLayer = MonitorToolkitRegistrationLive.pipe(
-  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(layerInProcessMcpServer),
   Layer.provideMerge(MonitorSession.layer),
   // The monitor tools act as the calling thread, which must be mid-run.
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
@@ -115,8 +115,8 @@ it.effect("MCP tools reject other sessions, missing capability, and a closed run
             capabilities: new Set(["preview"] as const),
           }),
           Effect.flip,
-        ))._tag,
-      ).toBe("InvalidParams");
+        )).code,
+      ).toBe(-32602);
       expect(subscribed).toBe(false);
     }).pipe(Effect.scoped);
     expect((yield* call).isError).toBe(true);

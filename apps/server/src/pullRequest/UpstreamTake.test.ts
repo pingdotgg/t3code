@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -22,7 +23,7 @@ const TestLayer = GitVcsDriver.layer.pipe(
   Layer.provide(Layer.orDie(ServerSettings.layerTest())),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-cherry-pick-test-" })),
   Layer.provideMerge(VcsProcess.layer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 function makeTempDir(

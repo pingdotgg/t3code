@@ -164,8 +164,8 @@ export function DraftHeroHeadline({
     activeEnvironment?.serverConfig?.environment.homeDirectory,
   );
   const activeProjectDisplayName = isComputerHome
-    ? (activeEnvironment?.label ?? activeProjectGroup?.displayName ?? activeProjectTitle)
-    : (activeProjectGroup?.displayName ?? activeProjectTitle);
+    ? (activeEnvironment?.label ?? activeProjectTitle)
+    : activeProjectTitle;
   const hasResolvedProject = activeProjectTitle !== null;
   const canChooseProject = projectPickerEntries.length > 0;
   const shouldShowProjectMenu = canChooseProject;
@@ -386,19 +386,19 @@ export function DraftHeroHeadline({
                   </TooltipTrigger>
                   <TooltipPopup side="top">{item.label}</TooltipPopup>
                 </Tooltip>
-                {entry && showProjectEnvironments ? (
-                  <ProjectEnvironmentBadge
-                    group={entry.group}
-                    primaryEnvironmentId={primaryEnvironmentId}
-                    machineByEnvironmentId={environmentMachineById}
-                  />
-                ) : null}
                 {entry && canPinProjectGroup(entry.group) ? (
                   <ProjectPinButton
                     name={entry.group.displayName}
                     pinned={entry.group.pinned}
                     shortcutLabel={shortcutLabelForCommand(keybindings, "thread.pin")}
                     onToggle={() => toggleProjectGroupPin(entry.group)}
+                  />
+                ) : null}
+                {entry && showProjectEnvironments ? (
+                  <ProjectEnvironmentBadge
+                    group={entry.group}
+                    primaryEnvironmentId={primaryEnvironmentId}
+                    machineByEnvironmentId={environmentMachineById}
                   />
                 ) : null}
               </ComboboxItem>

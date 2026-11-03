@@ -5,6 +5,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
@@ -178,7 +179,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         endpoint: Effect.succeed("unused-private-pipe"),
       }),
     ),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(testPtyAdapterLayer),
     Layer.provideMerge(
       Layer.mock(CodexInstallation.CodexInstallation)({
@@ -488,7 +489,10 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       );
       const claudeId = ProviderInstanceId.make("claude_probe_recovery");
       let probeCount = 0;
-      let successfulProbeCount = 0;
+      // MT Code: every refresh re-probes (ClaudeDriver `beforeRefresh`), and the
+      // initial background check may land first, so the account follows the
+      // test's phase rather than the probe count.
+      let signedInAs: "a" | "b" = "a";
       let failProbe = false;
       const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
         () =>
@@ -496,18 +500,16 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
             initializationResult: () => {
               probeCount++;
               if (failProbe) return Promise.reject(new Error("initialization failed"));
-              successfulProbeCount++;
               return Promise.resolve({
                 commands: [
                   {
-                    name: successfulProbeCount === 1 ? "last-good" : "recovered",
+                    name: signedInAs === "a" ? "last-good" : "recovered",
                     description: "",
                     argumentHint: "",
                   },
                 ],
                 account: {
-                  email:
-                    successfulProbeCount === 1 ? "account-a@example.com" : "account-b@example.com",
+                  email: signedInAs === "a" ? "account-a@example.com" : "account-b@example.com",
                   subscriptionType: "pro",
                   tokenSource: "oauth",
                 },
@@ -547,13 +549,14 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         slashCommands: expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
       });
       expect(first.usageLimits?.unavailable).toBeUndefined();
-      expect(probeCount).toBe(1);
+      expect(probeCount).toBeGreaterThanOrEqual(1);
 
       yield* TestClock.adjust("1 second");
       yield* fs.writeFileString(
         accountConfigPath,
         JSON.stringify({ oauthAccount: { organizationUuid: "org-b" } }),
       );
+      signedInAs = "b";
       yield* claude!.invalidateCaches ?? Effect.void;
       failProbe = true;
       const accountChangedFailure = yield* claude!.snapshot.refresh;

@@ -48,7 +48,7 @@
 
 ## Introduction
 
-MT Code is a free, open-source desktop app for running and controlling coding agents — Claude Code, Codex, Cursor, Grok Build, OpenCode, Vercel fx, and Google Antigravity — from one place. It is [Munim Technologies](https://munimtech.com)' fork of [T3 Code](https://github.com/pingdotgg/t3code) with extra features and fixes, and anyone can download and use it.
+MT Code is a free, open-source desktop app for running and controlling coding agents — Claude Code, Codex, Cursor, Grok Build, OpenCode, Kiro, Vercel fx, and Google Antigravity — from one place. It is [Munim Technologies](https://munimtech.com)' fork of [T3 Code](https://github.com/pingdotgg/t3code) with extra features and fixes, and anyone can download and use it.
 
 ## Download
 
@@ -77,12 +77,13 @@ MT Code drives agents you already have. Install and sign in to at least one prov
 - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `agent login`
 - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
 - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
+- Kiro: install [Kiro CLI](https://kiro.dev/docs/cli/) and run `kiro-cli login` ([setup](./docs/user/providers-kiro.md))
 - fx: install [fx](https://fx.sh) and run `fx login`, then enable it in Settings → Providers ([setup](./docs/user/providers-fx.md))
 - Antigravity: enable it in Settings, then use **Install Antigravity** and **Sign in with Google**. No CLI is required.
 
 Your existing subscriptions are used directly — MT Code sells nothing and adds no accounts of its own.
 
-Same cost model as T3 Code: the app and its server run on your computer, and model tokens come from Claude / Codex / Cursor / Grok / OpenCode / fx. Munim hosts nothing on your behalf — pairing and Computer Use reach your machine directly. There is no Munim-hosted web app, no model proxy, no Workers AI classifier, and no PlanetScale relay unless you explicitly opt into that paid stack.
+Same cost model as T3 Code: the app and its server run on your computer, and model tokens come from Claude / Codex / Cursor / Grok / OpenCode / Kiro / fx. Munim hosts nothing on your behalf — pairing and Computer Use reach your machine directly. There is no Munim-hosted web app, no model proxy, no Workers AI classifier, and no PlanetScale relay unless you explicitly opt into that paid stack.
 
 ## MT Code vs T3 Code
 
@@ -98,7 +99,7 @@ This table lists only the differences, roughly in the order of how much they cha
 | **Realtime voice** — a call panel where you speak to the selected agent and it answers out loud; runs through your ChatGPT account (GPT-Live via Codex) or an OpenAI API key                                                                                                                  |   ✅    |                                                                              ❌                                                                               |
 | **Local sky artwork** — the sidebar header paints your own daylight and weather, and the app icon follows it; ships on by default                                                                                                                                                             |   ✅    |                                                                              ❌                                                                               |
 | **Voice dictation** — Codex-style mic in the web and desktop composer (OpenAI or Groq); T3 Code's voice input is only in its mobile app                                                                                                                                                       |   ✅    |                                                                              ❌                                                                               |
-| **Monitor toolkit** — `monitor_start` lets any agent end its turn and be woken by background command output (T3 Code relies on the built-in monitors of Claude Code and Grok)                                                                                                                 |   ✅    |                                                                              ❌                                                                               |
+| **Monitor toolkit** — `monitor_start` lets Codex end its turn and be woken by each line a background command prints (T3 Code wakes Codex only when a background command exits; Claude Code and Grok bring their own monitors)                                                                 |   ✅    |                                                                              ❌                                                                               |
 | **Plugin marketplace** — ChatGPT-style Plugins / Apps / MCPs / Skills tabs across Codex, Claude Code, and Cursor, with one-click install and a harness filter                                                                                                                                 |   ✅    |                                                                              ❌                                                                               |
 | **Edit your last message in place** — rewrite the latest prompt where it sits; the thread rolls back and resends (T3 Code's _Edit from here_ moves it back to the composer)                                                                                                                   |   ✅    |                                                                              ❌                                                                               |
 | **Codex's own visualizations** rendered inline (T3 Code shows only pages agents make with its `html_render` tool)                                                                                                                                                                             |   ✅    |                                                                              ❌                                                                               |

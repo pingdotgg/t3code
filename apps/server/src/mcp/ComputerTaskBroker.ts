@@ -11,7 +11,7 @@ import {
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -136,7 +136,7 @@ const pickClientForComputer = (
 };
 
 export const make = Effect.gen(function* ComputerTaskBrokerMake() {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const state = yield* SynchronizedRef.make<BrokerState>({
     clients: new Map(),
     pending: new Map(),
@@ -176,7 +176,7 @@ export const make = Effect.gen(function* ComputerTaskBrokerMake() {
     host: ComputerTaskHost,
   ) {
     const queue = yield* Queue.unbounded<ComputerTaskStreamEvent>();
-    const connectionId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const connectionId = yield* random.uuidV4();
     yield* Queue.offer(queue, { type: "connected", connectionId });
     const connection: ClientConnection = {
       clientId: host.clientId,
@@ -275,7 +275,7 @@ export const make = Effect.gen(function* ComputerTaskBrokerMake() {
 
   const send: ComputerTaskBroker["Service"]["send"] = Effect.fn("ComputerTaskBroker.send")(
     function* (request) {
-      const requestId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      const requestId = yield* random.uuidV4();
       const deferred = yield* Deferred.make<ComputerTaskSendResult, ComputerTaskError>();
       const route = yield* SynchronizedRef.modify(state, (current) => {
         const client = pickClientForComputer(current.clients, request.computer.environmentId);

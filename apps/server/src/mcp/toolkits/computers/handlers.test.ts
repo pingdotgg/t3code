@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
@@ -19,7 +20,7 @@ import * as ComputerTaskBroker from "../../ComputerTaskBroker.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as ProjectStore from "../../../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
-import { toolkitRegistration } from "../../McpHttpServer.ts";
+import { layerInProcessMcpServer, toolkitRegistration } from "../../McpHttpServer.ts";
 import { ComputerToolkitHandlersLive } from "./handlers.ts";
 import { ComputerToolkit } from "./tools.ts";
 
@@ -115,12 +116,12 @@ function makeTestLayer(dispatched: Array<OrchestrationV2ServerCommand>) {
   } satisfies ServerEnvironment.ServerEnvironment["Service"];
 
   return toolkitRegistration(ComputerToolkit, ComputerToolkitHandlersLive).pipe(
-    Layer.provideMerge(McpServer.McpServer.layer),
+    Layer.provideMerge(layerInProcessMcpServer),
     Layer.provideMerge(ComputerTaskBroker.layer),
     Layer.provideMerge(Layer.succeed(ThreadManagementService.ThreadManagementService, threads)),
     Layer.provideMerge(Layer.succeed(ProjectStore.ProjectStoreV2, projects)),
     Layer.provideMerge(Layer.succeed(ServerEnvironment.ServerEnvironment, environment)),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 }
 

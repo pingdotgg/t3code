@@ -5,7 +5,7 @@ import { AntigravityIcon, ClaudeAI, DevinIcon, Icon, OpenAI } from "../Icons";
 import { providerClients } from "../settings/providerDriverMeta";
 import { ProviderPackageIcon } from "./ProviderPackageIcon";
 
-// Cursor, Grok, OpenCode and Pi glyphs ship with their provider packages.
+// Cursor, Grok, Kiro, OpenCode and Pi glyphs ship with their provider packages.
 const packageIcon = (driver: string): Icon | undefined => {
   const icon = providerClients.get(ProviderDriverKind.make(driver))?.icon;
   return icon
@@ -14,7 +14,7 @@ const packageIcon = (driver: string): Icon | undefined => {
 };
 
 const packageIcons = Object.fromEntries(
-  ["opencode", "cursor", "grok", "pi"].flatMap((driver) => {
+  ["opencode", "cursor", "grok", "kiro", "pi"].flatMap((driver) => {
     const icon = packageIcon(driver);
     return icon ? [[ProviderDriverKind.make(driver), icon] as const] : [];
   }),

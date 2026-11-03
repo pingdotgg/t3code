@@ -563,6 +563,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         status: 429,
       },
     },
+    {
+      name: "a Claude limit without a reset timestamp",
+      failureClass: "usage_limit",
+      error: {
+        type: "provider.unknown",
+        message: "You've hit your session limit · resets 5:20pm (Europe/Berlin)",
+      },
+    },
+    {
+      name: "an unrelated provider.unknown failure",
+      failureClass: "provider_error",
+      error: {
+        type: "provider.unknown",
+        message: "Request failed. Resets at 2026-11-02T20:00:00Z.",
+      },
+    },
   ] as const)("classifies $name as $failureClass", ({ error, failureClass }) =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -581,6 +597,35 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         retryable: null,
       });
     }).pipe(Effect.scoped),
+  );
+
+  // regression: #29289 Claude weekly limits through claude-agent lost their usage-limit reset
+  it.effect(
+    "classifies a Claude weekly limit as a usage limit that resets at its reported time",
+    () =>
+      Effect.gen(function* () {
+        const message =
+          "You've hit your weekly limit · resets 9pm (Europe/Paris) Resets at 2026-11-02T20:00:00.000Z.";
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.failed", {
+            sessionID: SESSION,
+            error: { type: "provider.unknown", message },
+          }),
+        ]);
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        const ended = yield* Fiber.join(terminal);
+        assert.equal(ended?.status, "failed");
+        assert.deepEqual(ended?.failure, {
+          class: "usage_limit",
+          code: "provider.unknown",
+          message,
+          retryable: null,
+          resetAt: "2026-11-02T20:00:00.000Z",
+        });
+      }).pipe(Effect.scoped),
   );
 
   it.effect("ends the turn when its terminal event is one this build cannot decode", () =>
@@ -3288,6 +3333,55 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("rejects unreadable rollback history before cutting the native session", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("message.list", { sessionID: SESSION, limit: "100", type: undefined }),
+        reply("message.list", {
+          data: [
+            { id: "msg_kept", time: { created: 1 }, text: "first", type: "user" },
+            {
+              id: "msg_compaction",
+              time: { created: 2 },
+              type: "compaction",
+              status: "completed",
+              reason: "auto",
+              summary: "First turn summary",
+            },
+            { id: "msg_dropped", time: { created: 3 }, text: "second", type: "user" },
+          ],
+          cursor: {},
+        }),
+      ]);
+      const now = yield* DateTime.now;
+      const turns = ["msg_kept", "msg_dropped"].map((nativeId, index) => ({
+        id: ProviderTurnId.make(`provider-turn:rollback-history:${index}`),
+        providerThreadId: thread.id,
+        nodeId: NodeId.make(`node:rollback-history:${index}`),
+        runAttemptId: RunAttemptId.make(`attempt:rollback-history:${index}`),
+        nativeTurnRef: { driver: OPENCODE_PROVIDER, nativeId, strength: "weak" as const },
+        ordinal: index + 1,
+        status: "completed" as const,
+        startedAt: now,
+        completedAt: now,
+      }));
+      const failure = yield* runtime
+        .rollbackThread({
+          providerThread: thread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint:rollback-history"),
+            appRunOrdinal: 1,
+            providerTurn: turns[0]!,
+          },
+          providerThreadTurns: turns,
+        })
+        .pipe(Effect.flip);
+      assert.equal(failure._tag, "ProviderAdapterRollbackThreadError");
+      assert.include(Cause.pretty(Cause.fail(failure)), '["recent"]');
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("clears a staged revert whose commit failed, before the next prompt too", () =>
     Effect.gen(function* () {
       const kept = "msg_t3_turn_run-attempt:kept:1";
@@ -4075,8 +4169,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     Effect.gen(function* () {
       const FORK = "ses_f1484db83ffeLGtrRCFimo1H0e";
       const { runtime, thread, first, second } = yield* continued([
-        out("message.list", "<any>"),
-        reply("message.list", continuedHistory),
+        out("message.list", { sessionID: SESSION, limit: "100", type: "user" }),
+        reply("message.list", { data: [continuedHistory.data[1]], cursor: {} }),
+        out("message.list", { sessionID: SESSION, limit: "100", type: "synthetic" }),
+        reply("message.list", {
+          data: [
+            { id: "msg_later_report", time: { created: 3 }, text: "later", type: "synthetic" },
+          ],
+          cursor: { next: "synthetic-page-2" },
+        }),
+        out("message.list", {
+          sessionID: SESSION,
+          limit: "100",
+          type: "synthetic",
+          cursor: "synthetic-page-2",
+        }),
+        reply("message.list", { data: [continuedHistory.data[0]], cursor: {} }),
         out("session.fork", { sessionID: SESSION, before: "msg_report" }),
         replyData("session.fork", sessionInfo({ id: FORK })),
         out("session.update", { sessionID: FORK, permissions: "<any>" }),

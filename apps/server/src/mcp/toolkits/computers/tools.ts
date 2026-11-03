@@ -6,7 +6,7 @@ import {
   OrchestratorMcpFailure,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
@@ -24,7 +24,7 @@ const dependencies = [
   ServerEnvironment.ServerEnvironment,
   ThreadManagementService.ThreadManagementService,
   ProjectStore.ProjectStoreV2,
-  Crypto.Crypto,
+  SecureRandom.SecureRandom,
 ];
 
 /** What computer_send fails with, including the access gate's refusal. */

@@ -1,5 +1,5 @@
 import { CommandId, ComputerTaskError, MessageId, ThreadId } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -125,7 +125,7 @@ const computerSend = Effect.fn("ComputerTask.computerSend")(function* (
   });
 
   if (resolved.thisMachine) {
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const dispatchFailed = (cause: unknown) =>
       new ComputerTaskError({
         code: "dispatch_failed",
@@ -133,9 +133,9 @@ const computerSend = Effect.fn("ComputerTask.computerSend")(function* (
         cause,
       });
     const [commandUuid, threadUuid, messageUuid] = yield* Effect.all([
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
+      random.uuidV4(),
+      random.uuidV4(),
+      random.uuidV4(),
     ]).pipe(Effect.mapError(dispatchFailed));
     const threadId = ThreadId.make(threadUuid);
     yield* threads
