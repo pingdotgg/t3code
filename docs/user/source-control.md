@@ -194,7 +194,8 @@ Open **Pull requests** to review changes and comments, request reviewers, check 
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
 Where you can edit a description, you can also tick its checkboxes from the Summary tab
 (the Overview tab on mobile).
-GitLab calls these merge requests.
+GitLab calls these merge requests. On desktop and web it opens as a tab, so you can keep it beside
+your threads.
 
 A link to part of a pull request opens that part: a comment or review is marked in the activity, a
 changed-line link opens the file at those lines, a checks link opens the checks, and a commit link
