@@ -7,6 +7,7 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2DomainEvent,
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
@@ -653,54 +654,100 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
     }),
   );
 
-  it.effect("leaves out answers in their question card and rolled-back turns", () =>
+  it.effect("leaves out answers in their question card and turns the thread hides", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const search = yield* ThreadSearch.ThreadSearch;
       const project = ProjectId.make("project:answers");
       const asked = ThreadId.make("thread:answers");
       const rewound = ThreadId.make("thread:rewound");
-      const run = {
-        id: RunId.make("run:rewound"),
-        threadId: rewound,
-        ordinal: 1,
-        providerInstanceId,
-        modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
-        providerThreadId: null,
-        userMessageId: MessageId.make("rewound-prompt"),
-        rootNodeId: NodeId.make("node:rewound"),
-        activeAttemptId: null,
-        status: "rolled_back" as const,
-        requestedAt: at(1),
-        startedAt: at(1),
-        completedAt: at(2),
-        checkpointId: null,
-        contextHandoffId: null,
-      };
+      const queued = ThreadId.make("thread:queued");
+      const stopped = ThreadId.make("thread:stopped");
+      const run = (owner: ThreadId, status: "rolled_back" | "cancelled") =>
+        ({
+          id: EventId.make(`run:${owner}`),
+          type: "run.created",
+          threadId: owner,
+          runId: RunId.make(`run:${owner}`),
+          nodeId: NodeId.make(`node:${owner}`),
+          providerInstanceId,
+          occurredAt: at(2),
+          payload: {
+            id: RunId.make(`run:${owner}`),
+            threadId: owner,
+            ordinal: 1,
+            providerInstanceId,
+            modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+            providerThreadId: null,
+            userMessageId: MessageId.make(`${owner}:prompt`),
+            rootNodeId: NodeId.make(`node:${owner}`),
+            activeAttemptId: null,
+            status,
+            requestedAt: at(1),
+            startedAt: at(1),
+            completedAt: at(2),
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        }) satisfies OrchestrationV2DomainEvent;
       yield* createProject(project);
       yield* Effect.forEach(
         [
           thread(asked, project),
           message(asked, "async-answer:request-1", "user", "use the albatross drive"),
           thread(rewound, project),
-          {
-            id: EventId.make("run:rewound"),
-            type: "run.created",
-            threadId: rewound,
-            runId: run.id,
-            nodeId: run.rootNodeId,
-            providerInstanceId,
-            occurredAt: at(2),
-            payload: run,
-          } satisfies OrchestrationV2DomainEvent,
+          run(rewound, "rolled_back"),
           message(rewound, "rewound-reply", "assistant", "the albatross drive is ready", {
-            runId: run.id,
+            runId: RunId.make(`run:${rewound}`),
           }),
+          thread(queued, project),
+          run(queued, "cancelled"),
+          message(queued, "queued-prompt", "user", "then mount the albatross drive", {
+            runId: RunId.make(`run:${queued}`),
+          }),
+          // A turn stopped while preparing still shows its prompt.
+          thread(stopped, project),
+          run(stopped, "cancelled"),
+          message(stopped, "stopped-prompt", "user", "format the albatross drive", {
+            runId: RunId.make(`run:${stopped}`),
+          }),
+          {
+            id: EventId.make("item:stopped-prompt"),
+            type: "turn-item.updated",
+            threadId: stopped,
+            occurredAt: at(2),
+            payload: {
+              id: TurnItemId.make("stopped-prompt"),
+              threadId: stopped,
+              runId: RunId.make(`run:${stopped}`),
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "completed",
+              title: null,
+              startedAt: at(1),
+              completedAt: at(1),
+              updatedAt: at(1),
+              type: "user_message",
+              messageId: MessageId.make("stopped-prompt"),
+              text: "format the albatross drive",
+              inputIntent: "turn_start",
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+            },
+          } satisfies OrchestrationV2DomainEvent,
         ],
         projections.apply,
         { discard: true },
       );
-      assert.deepEqual((yield* search.search({ query: "albatross" })).matches, []);
+      assert.deepEqual(
+        (yield* search.search({ query: "albatross" })).matches.map((match) => match.messageId),
+        [MessageId.make("stopped-prompt")],
+      );
     }),
   );
 

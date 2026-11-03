@@ -221,10 +221,24 @@ export const messageHitsQuery = (
       -- Answers to an agent's question show inside its question card, where
       -- neither find nor a jump can reach them.
       AND messages.message_id NOT LIKE 'async-answer:%'
-      -- Nor can they reach a rolled-back turn, which the thread hides.
+      -- Nor can they reach a rolled-back turn or a cancelled queue row, which
+      -- the thread hides. A turn cancelled while preparing keeps its prompt.
       AND NOT EXISTS (
         SELECT 1 FROM orchestration_v2_projection_runs AS runs
-        WHERE runs.run_id = messages.run_id AND runs.status = 'rolled_back'
+        WHERE runs.run_id = messages.run_id
+          AND (
+            runs.status = 'rolled_back'
+            OR (
+              runs.status = 'cancelled'
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_turn_items AS items
+                WHERE items.run_id = runs.run_id
+                  AND items.type = 'user_message'
+                  AND json_extract(items.payload_json, '$.messageId') = messages.message_id
+                  AND json_extract(items.payload_json, '$.inputIntent') IS NOT 'queued_turn'
+              )
+            )
+          )
       )
       AND NOT EXISTS (
         SELECT 1 FROM json_each(${substrings}) AS token
