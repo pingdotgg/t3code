@@ -4,13 +4,15 @@ import { Tool } from "effect/ai";
 
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 
-it("drops JSON noise, merges tagged unions, and keeps null where it is required", () => {
+it("drops JSON noise, merges tagged unions, and keeps null that was declared", () => {
   const Every = Schema.Struct({ ms: Schema.Int });
   const tool = Tool.make("example", {
     parameters: Schema.Struct({
       threadId: Schema.optional(Schema.NullOr(Schema.String)),
       beforeRunId: Schema.NullOr(Schema.String),
       limit: Schema.optional(Schema.Int),
+      // Indistinguishable from `optional(String)` in JSON, so its null is dropped too.
+      cursor: Schema.optionalKey(Schema.NullOr(Schema.String)),
       every: Schema.Union([Every, Schema.fromJsonString(Every)]),
       target: Schema.optional(
         Schema.NullOr(
@@ -26,18 +28,24 @@ it("drops JSON noise, merges tagged unions, and keeps null where it is required"
   expect(advertisedJsonSchema(tool)).toEqual({
     type: "object",
     properties: {
-      threadId: { type: "string" },
+      threadId: { anyOf: [{ type: "string" }, { type: "null" }] },
       beforeRunId: { anyOf: [{ type: "string" }, { type: "null" }] },
       limit: { type: "integer" },
+      cursor: { type: "string" },
       every: { type: "object", properties: { ms: { type: "integer" } }, required: ["ms"] },
       target: {
-        type: "object",
-        properties: {
-          kind: { type: "string", enum: ["url", "number"] },
-          url: { type: "string" },
-          number: { type: "integer" },
-        },
-        required: ["kind"],
+        anyOf: [
+          {
+            type: "object",
+            properties: {
+              kind: { type: "string", enum: ["url", "number"] },
+              url: { type: "string" },
+              number: { type: "integer" },
+            },
+            required: ["kind"],
+          },
+          { type: "null" },
+        ],
       },
     },
     required: ["beforeRunId", "every"],
