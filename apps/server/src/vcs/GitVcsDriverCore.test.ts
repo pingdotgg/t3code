@@ -4760,8 +4760,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       Effect.gen(function* () {
         const pathService = yield* Path.Path;
         const cwd = yield* makeTmpDir();
-        // Reftable also avoids Windows-invalid loose-ref lock paths during checkout.
-        yield* git(cwd, ["init", "--ref-format=reftable"]);
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         const worktreesDirectory = yield* makeTmpDir("custom-worktrees-");
         const driver = yield* GitVcsDriver.GitVcsDriver;
@@ -4775,16 +4773,21 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           `feature/${"a".repeat(40)}/18828`,
           `${"a".repeat(22)}😀/${"b".repeat(30)}`,
           "z".repeat(41),
-          "fix/a<b",
-          "fix/a>b",
-          "fix/a|b",
-          "con",
-          "aux.c",
-          "lpt0",
-          "COM¹",
-          "COM².txt",
-          "LPT³",
-          `nul.${"n".repeat(40)}`,
+          // The files ref backend cannot create or lock these branch names on Windows.
+          ...(process.platform === "win32"
+            ? []
+            : [
+                "fix/a<b",
+                "fix/a>b",
+                "fix/a|b",
+                "con",
+                "aux.c",
+                "lpt0",
+                "COM¹",
+                "COM².txt",
+                "LPT³",
+                `nul.${"n".repeat(40)}`,
+              ]),
         ];
         for (const branch of branches) {
           const created = yield* driver.createWorktree(
