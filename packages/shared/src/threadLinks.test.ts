@@ -133,6 +133,29 @@ describe("thread links", () => {
       ),
     ).toBe("Thread no longer available");
     expect(unresolved).not.toContain("v1");
+    expect(
+      relabelThreadLinks(
+        "[Old](t3-thread://v2/local/t1)",
+        local,
+        () => null,
+        (href) => unresolved.push(href),
+      ),
+    ).toBe("[Old](t3-thread://v2/local/t1)");
+    expect(unresolved).toHaveLength(3);
+    expect(
+      relabelThreadLinks("<t3-thread://v2/local/a%3A1>", local, (ref) =>
+        ref.threadId === "a:1" ? "Decoded" : null,
+      ),
+    ).toBe("[Decoded](t3-thread://v2/local/a:1)");
+    expect(
+      relabelThreadLinks(
+        "[Old](t3-thread://v2/local/a%3A1)",
+        local,
+        (ref) => (ref.threadId === "a:1" ? null : undefined),
+        (href) => unresolved.push(href),
+      ),
+    ).toBe("[Old](t3-thread://v2/local/a%3A1)");
+    expect(unresolved).toHaveLength(3);
   });
 
   it("leaves links inside code spans and fences as written", () => {
@@ -249,7 +272,7 @@ describe("hosted thread links", () => {
     );
     expect(
       relabelThreadLinks("https://app.t3.codes/threads/there/t1", local, () => undefined),
-    ).toBe("Thread on another machine");
+    ).toBe("[Thread on another machine](t3-thread://v2/there/t1)");
     expect(threadLinkRefs("Open https://app.t3.codes/threads/there/t%3A1", local)).toEqual([
       ref("there", "t:1"),
     ]);
