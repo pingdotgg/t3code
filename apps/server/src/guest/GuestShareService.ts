@@ -717,7 +717,20 @@ const make = Effect.gen(function* () {
             .find((candidate) => candidate.id === attachmentId),
         ),
         Effect.mapError(() => unavailable),
-      ));
+      )) ??
+      // A fork shows its source's earlier messages, which stay in the source thread.
+      (thread.forkedFrom === null
+        ? undefined
+        : yield* orchestrator
+            .getTimelinePage(thread.id, { view: "messages", limit: Number.MAX_SAFE_INTEGER })
+            .pipe(
+              Effect.map(({ items }) =>
+                items
+                  .flatMap(({ item }) => (item.type === "user_message" ? item.attachments : []))
+                  .find((candidate) => candidate.id === attachmentId),
+              ),
+              Effect.mapError(() => unavailable),
+            ));
     const path =
       found === undefined ? null : resolveAttachmentPath({ attachmentsDir, attachment: found });
     if (found === undefined || path === null) return yield* unavailable;
