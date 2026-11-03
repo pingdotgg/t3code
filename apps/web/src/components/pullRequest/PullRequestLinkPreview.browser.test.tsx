@@ -52,15 +52,15 @@ function renderPreview() {
   );
 }
 
-it("shows the known summary over a restored preview while the preview loads", async () => {
+it("keeps a refreshing preview's state and title over an older known summary", async () => {
   state.restoredPreview = {
     projectId: "project",
     repository: "owner/repo",
     number: 1,
-    title: "Restored title",
+    title: "Renamed title",
     url: known.url,
     author: { login: "octocat" },
-    state: "open",
+    state: "closed",
     isDraft: false,
     createdAt: "2026-08-01T00:00:00Z",
   };
@@ -68,29 +68,9 @@ it("shows the known summary over a restored preview while the preview loads", as
 
   await userEvent.hover(screen.getByRole("link"));
 
-  await expect.element(page.getByText("Known title")).toBeVisible();
-  await expect.element(page.getByText("octocat")).toBeVisible();
-  expect(page.getByText("Restored title").query()).toBeNull();
-});
-
-it("keeps a merged preview merged while an open summary is known", async () => {
-  state.restoredPreview = {
-    projectId: "project",
-    repository: "owner/repo",
-    number: 1,
-    title: "Merged title",
-    url: known.url,
-    author: { login: "octocat" },
-    state: "merged",
-    isDraft: false,
-    createdAt: "2026-08-01T00:00:00Z",
-  };
-  await using screen = await renderPreview();
-
-  await userEvent.hover(screen.getByRole("link"));
-
-  await expect.element(page.getByText("Merged", { exact: true })).toBeVisible();
-  expect(page.getByText("Open", { exact: true }).query()).toBeNull();
+  await expect.element(page.getByText("Renamed title")).toBeVisible();
+  await expect.element(page.getByText("Closed", { exact: true })).toBeVisible();
+  expect(page.getByText("Known title").query()).toBeNull();
 });
 
 it("shows the known summary while the preview loads", async () => {

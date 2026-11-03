@@ -21,19 +21,32 @@ describe("IndexedDB query cache", () => {
     }).pipe(Effect.provide(ConnectionStorage.layer)),
   );
 
-  it.effect("evicts the oldest answers past 256 rows", () =>
+  it.effect("stays within 256 rows and 32 MiB after a burst of saves ends", () =>
     Effect.gen(function* () {
       const store = (yield* EnvironmentQueryStore)!;
       const environmentId = EnvironmentId.make("query-bounded");
-      yield* store.save(environmentId, "oldest", "0");
-      yield* TestClock.adjust("1 millis");
-      for (let index = 0; index < 256; index += 1) {
-        yield* store.save(environmentId, `row-${index}`, String(index));
+      const keys = Array.from({ length: 300 }, (_, index) => `row-${index}`);
+      for (const key of keys) {
+        yield* store.save(environmentId, key, key);
+        yield* TestClock.adjust("1 millis");
       }
-      yield* TestClock.adjust("10 seconds");
-      yield* store.save(environmentId, "newest", "new");
-      expect(yield* store.load(environmentId, "oldest")).toEqual(Option.none());
-      expect(yield* store.load(environmentId, "newest")).toEqual(Option.some("new"));
+      const answer = "x".repeat(4 * 1024 * 1024);
+      const large = Array.from({ length: 9 }, (_, index) => `large-${index}`);
+      for (const key of large) {
+        yield* store.save(environmentId, key, answer);
+        yield* TestClock.adjust("1 millis");
+      }
+
+      const kept = yield* Effect.forEach([...keys, ...large], (key) =>
+        store.load(environmentId, key),
+      );
+      const payloads = kept.filter(Option.isSome).map((stored) => stored.value);
+      expect(payloads.length).toBeLessThanOrEqual(256);
+      expect(payloads.reduce((total, payload) => total + payload.length, 0)).toBeLessThanOrEqual(
+        32 * 1024 * 1024,
+      );
+      expect(kept[0]).toEqual(Option.none());
+      expect(kept.at(-1)).toEqual(Option.some(answer));
     }).pipe(Effect.provide(ConnectionStorage.layer)),
   );
 

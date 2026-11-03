@@ -55,8 +55,10 @@ const QUERY_MAX_ROWS = 256;
 const QUERY_MAX_BYTES = 32 * 1024 * 1024;
 const QUERY_MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
 const QUERY_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
-// A stats answer saves one row per listed PR; walking the bounds index on each would queue reads.
-const QUERY_PRUNE_INTERVAL_MS = 10_000;
+// A stats answer saves one row per listed PR, so the bounds index is walked once per batch of
+// saves. Each walk trims a batch below the caps, so the caps hold between walks.
+const QUERY_PRUNE_BATCH_ROWS = 32;
+const QUERY_PRUNE_BATCH_BYTES = 1024 * 1024;
 const CATALOG_KEY = "document";
 const StoredShellSnapshot = StoredOrchestrationShellSnapshot;
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
@@ -350,12 +352,12 @@ function saveQueryOnConnection(
   environmentId: EnvironmentId,
   key: string,
   payload: string,
+  bytes: number,
   updatedAt: number,
   prune: boolean,
 ) {
   return Effect.callback<void, ConnectionTransientError>((resume) => {
     try {
-      const bytes = new TextEncoder().encode(payload).length;
       const transaction = database.transaction(QUERY_STORE_NAME, "readwrite");
       transaction.addEventListener("abort", () => {
         resume(
@@ -385,8 +387,8 @@ function saveQueryOnConnection(
         rows += 1;
         totalBytes += rowBytes;
         if (
-          rows > QUERY_MAX_ROWS ||
-          totalBytes > QUERY_MAX_BYTES ||
+          rows > QUERY_MAX_ROWS - QUERY_PRUNE_BATCH_ROWS ||
+          totalBytes > QUERY_MAX_BYTES - QUERY_PRUNE_BATCH_BYTES ||
           rowUpdatedAt < updatedAt - QUERY_MAX_AGE_MS
         ) {
           store.delete(cursor.primaryKey);
@@ -1043,7 +1045,8 @@ export const layer = Layer.effectContext(
       }),
     });
 
-    const lastQueryPruneAt = new Map<EnvironmentId, number>();
+    // Unpruned writes per environment; absent until the first save of this session prunes.
+    const unprunedQueryWrites = new Map<EnvironmentId, { rows: number; bytes: number }>();
     const queryStore: NonNullable<typeof EnvironmentQueryStore.Service> = {
       load: Effect.fn("EnvironmentQueryStore.load")(
         function* (environmentId, key) {
@@ -1064,11 +1067,20 @@ export const layer = Layer.effectContext(
       save: (environmentId, key, payload) =>
         Clock.currentTimeMillis.pipe(
           Effect.flatMap((now) => {
+            const bytes = new TextEncoder().encode(payload).length;
+            const unpruned = unprunedQueryWrites.get(environmentId);
+            const rows = (unpruned?.rows ?? 0) + 1;
+            const written = (unpruned?.bytes ?? 0) + bytes;
             const prune =
-              now - (lastQueryPruneAt.get(environmentId) ?? -Infinity) >= QUERY_PRUNE_INTERVAL_MS;
-            if (prune) lastQueryPruneAt.set(environmentId, now);
+              unpruned === undefined ||
+              rows >= QUERY_PRUNE_BATCH_ROWS ||
+              written >= QUERY_PRUNE_BATCH_BYTES;
+            unprunedQueryWrites.set(
+              environmentId,
+              prune ? { rows: 0, bytes: 0 } : { rows, bytes: written },
+            );
             return withDatabase(database, (opened) =>
-              saveQueryOnConnection(opened, environmentId, key, payload, now, prune),
+              saveQueryOnConnection(opened, environmentId, key, payload, bytes, now, prune),
             );
           }),
           Effect.catch(() => Effect.logWarning("Offline query database save failed")),
