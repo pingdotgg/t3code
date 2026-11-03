@@ -149,7 +149,7 @@ index 6c81fce3dd518d3b82e3280940a001c7be84dd0a..16125c679c870e2eae48f8db953dedd3
          checkRecordingPermission()
          if (recorder.isPrepared) {
 diff --git a/android/src/main/java/expo/modules/audio/AudioRecorder.kt b/android/src/main/java/expo/modules/audio/AudioRecorder.kt
-index 2ff4a474fdea3efa652436a8a3960c3669ad298b..63229cea73ef0d2fe245b5d2a2675044ce621dc8 100644
+index 2ff4a474fdea3efa652436a8a3960c3669ad298b..1ced279991294d3d81cb20fa339ca73e5d6d6c01 100644
 --- a/android/src/main/java/expo/modules/audio/AudioRecorder.kt
 +++ b/android/src/main/java/expo/modules/audio/AudioRecorder.kt
 @@ -19,6 +19,9 @@ import expo.modules.kotlin.exception.CodedException
@@ -164,7 +164,7 @@ index 2ff4a474fdea3efa652436a8a3960c3669ad298b..63229cea73ef0d2fe245b5d2a2675044
  import java.io.File
 @@ -42,12 +45,19 @@ class AudioRecorder(
    var isPrepared = false
-
+ 
    private var recorder: MediaRecorder? = null
 +  private val inputRoute = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
 +    RecordingInputRoute(context.getSystemService(Context.AUDIO_SERVICE) as AudioManager)
@@ -181,23 +181,23 @@ index 2ff4a474fdea3efa652436a8a3960c3669ad298b..63229cea73ef0d2fe245b5d2a2675044
 +  private var inputSelectionCanceled = false
    private var durationLimitMillis: Long? = null
    var useForegroundService = false
-
+ 
 @@ -90,6 +100,7 @@ class AudioRecorder(
        throw AudioRecorderAlreadyPreparedException()
      }
-
+ 
 +    synchronized(this) { inputSelectionCanceled = false }
      val recordingOptions = options ?: this.options
      val mediaRecorder = createRecorder(recordingOptions)
      recorder = mediaRecorder
 @@ -245,10 +256,15 @@ class AudioRecorder(
    }
-
+ 
    private fun reset() {
 +    cancelInputSelection()
      recordingTimerJob?.cancel()
      recordingTimerJob = null
-
+ 
 -    recorder?.release()
 +    try {
 +      recorder?.release()
@@ -207,10 +207,18 @@ index 2ff4a474fdea3efa652436a8a3960c3669ad298b..63229cea73ef0d2fe245b5d2a2675044
      recorder = null
      isRecording = false
      isPaused = false
-@@ -475,48 +491,59 @@ class AudioRecorder(
+@@ -468,55 +484,68 @@ class AudioRecorder(
+       throw DeviceInfoNotFoundException()
+     }
+ 
+-    return getMapFromDeviceInfo(deviceInfo)
++    return getMapFromDeviceInfo(deviceInfo, recordingInputs(audioManager))
+   }
+ 
+   private fun hasRecordingPermissions() =
      ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-
-   fun getAvailableInputs(audioManager: AudioManager) =
+ 
+-  fun getAvailableInputs(audioManager: AudioManager) =
 -    audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).mapNotNull { deviceInfo ->
 -      val type = deviceInfo.type
 -      if (type == AudioDeviceInfo.TYPE_BUILTIN_MIC || type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || type == AudioDeviceInfo.TYPE_WIRED_HEADSET) {
@@ -218,7 +226,10 @@ index 2ff4a474fdea3efa652436a8a3960c3669ad298b..63229cea73ef0d2fe245b5d2a2675044
 -      } else {
 -        null
 -      }
-+    recordingInputs(audioManager).map(::getMapFromDeviceInfo)
++  fun getAvailableInputs(audioManager: AudioManager): List<Bundle> {
++    val inputs = recordingInputs(audioManager)
++    return inputs.map { getMapFromDeviceInfo(it, inputs) }
++  }
 +
 +  suspend fun setInput(uid: String, audioManager: AudioManager) {
 +    val job = currentCoroutineContext().job
@@ -240,17 +251,17 @@ index 2ff4a474fdea3efa652436a8a3960c3669ad298b..63229cea73ef0d2fe245b5d2a2675044
 +    }
 +    job?.cancel()
 +  }
-
+ 
    @Suppress("DEPRECATION")
 -  fun setInput(uid: String, audioManager: AudioManager) {
 -    val deviceInfo: AudioDeviceInfo? = getDeviceInfoFromUid(uid, audioManager)
 +  private suspend fun setInputDevice(uid: String, audioManager: AudioManager) {
 +    val deviceInfo = getDeviceInfoFromUid(uid, audioManager) ?: throw PreferredInputNotFoundException()
-
+ 
      if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
        throw SetAudioInputNotSupportedException()
      }
-
+ 
 -    if (deviceInfo != null && deviceInfo.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
 -      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
 -        audioManager.setCommunicationDevice(deviceInfo)
@@ -281,23 +292,23 @@ index 2ff4a474fdea3efa652436a8a3960c3669ad298b..63229cea73ef0d2fe245b5d2a2675044
 +      throw error
      }
    }
-
+ 
    private fun getDeviceInfoFromUid(uid: String, audioManager: AudioManager): AudioDeviceInfo? {
 -    val id = uid.toInt()
 -    val audioDevices: Array<AudioDeviceInfo> = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
 +    val audioDevices = recordingInputs(audioManager)
      for (device in audioDevices) {
 -      if (device.id == id) {
-+      if (recordingInputUid(device) == uid) {
++      if (recordingInputUid(device, audioDevices) == uid) {
          return device
        }
      }
 diff --git a/android/src/main/java/expo/modules/audio/AudioUtils.kt b/android/src/main/java/expo/modules/audio/AudioUtils.kt
-index 81819c1d771bdeec093bb35a65a5e1e1af0cf9d7..ec3e0274d0a84fd8c7960cc0ea1b30058123be54 100644
+index 81819c1d771bdeec093bb35a65a5e1e1af0cf9d7..cd0c7624b4cd8a4ebf7ed3b3390cfc76802e8530 100644
 --- a/android/src/main/java/expo/modules/audio/AudioUtils.kt
 +++ b/android/src/main/java/expo/modules/audio/AudioUtils.kt
 @@ -2,6 +2,8 @@ package expo.modules.audio
-
+ 
  import android.content.Context
  import android.media.AudioDeviceInfo
 +import android.media.AudioManager
@@ -305,9 +316,12 @@ index 81819c1d771bdeec093bb35a65a5e1e1af0cf9d7..ec3e0274d0a84fd8c7960cc0ea1b3005
  import android.os.Bundle
  import androidx.annotation.OptIn
  import androidx.media3.common.Player
-@@ -19,20 +21,45 @@ fun ensureDirExists(dir: File): File {
-
- fun getMapFromDeviceInfo(deviceInfo: AudioDeviceInfo): Bundle {
+@@ -17,22 +19,57 @@ fun ensureDirExists(dir: File): File {
+   return dir
+ }
+ 
+-fun getMapFromDeviceInfo(deviceInfo: AudioDeviceInfo): Bundle {
++fun getMapFromDeviceInfo(deviceInfo: AudioDeviceInfo, inputs: List<AudioDeviceInfo>): Bundle {
    val map = Bundle()
 -  val type = when (deviceInfo.type) {
 -    AudioDeviceInfo.TYPE_BUILTIN_MIC -> "MicrophoneBuiltIn"
@@ -321,10 +335,10 @@ index 81819c1d771bdeec093bb35a65a5e1e1af0cf9d7..ec3e0274d0a84fd8c7960cc0ea1b3005
    map.putString("name", deviceInfo.productName.toString())
    map.putString("type", type)
 -  map.putString("uid", deviceInfo.id.toString())
-+  map.putString("uid", recordingInputUid(deviceInfo))
++  map.putString("uid", recordingInputUid(deviceInfo, inputs))
    return map
  }
-
+ 
 +internal fun recordingInputs(manager: AudioManager): List<AudioDeviceInfo> {
 +  val inputs = manager.getDevices(AudioManager.GET_DEVICES_INPUTS).filter {
 +    recordingInputType(it.type) != null
@@ -335,7 +349,9 @@ index 81819c1d771bdeec093bb35a65a5e1e1af0cf9d7..ec3e0274d0a84fd8c7960cc0ea1b3005
 +    emptyList()
 +  }
 +  // Some Bluetooth microphone ports appear only after the communication route is activated.
-+  return (inputs + bluetooth).distinctBy(::recordingInputUid)
++  return (inputs + bluetooth).distinctBy {
++    if (isBluetoothInput(it.type)) recordingInputUid(it) else "port:${it.id}"
++  }
 +}
 +
 +internal fun isBluetoothInput(type: Int) = type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
@@ -351,7 +367,15 @@ index 81819c1d771bdeec093bb35a65a5e1e1af0cf9d7..ec3e0274d0a84fd8c7960cc0ea1b3005
 +  else -> null
 +}
 +
-+internal fun recordingInputUid(device: AudioDeviceInfo): String {
++internal fun recordingInputUid(device: AudioDeviceInfo, inputs: List<AudioDeviceInfo> = emptyList()): String {
++  val base = recordingInputBaseUid(device)
++  val ambiguous = !isBluetoothInput(device.type) && inputs.any {
++    it.id != device.id && recordingInputBaseUid(it) == base
++  }
++  return if (ambiguous) "$base:port:${device.id}" else base
++}
++
++private fun recordingInputBaseUid(device: AudioDeviceInfo): String {
 +  // Port IDs and USB addresses (ALSA card numbers) change on reconnect; Bluetooth addresses don't.
 +  val stable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && isBluetoothInput(device.type)
 +  return "android:${device.type}:${if (stable) device.address.ifBlank { device.productName } else device.productName}"
@@ -417,5 +441,46 @@ index 0000000000000000000000000000000000000000..cdba9724318cf06afd21b4df6b895b38
 +    } finally {
 +      if (manager.mode == AudioManager.MODE_IN_COMMUNICATION) manager.mode = mode
 +    }
++  }
++}
+diff --git a/android/src/test/java/expo/modules/audio/RecordingInputIdentityTest.kt b/android/src/test/java/expo/modules/audio/RecordingInputIdentityTest.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..4dd0567e2170770e9b0f6a17dc4581bc769d5c6a
+--- /dev/null
++++ b/android/src/test/java/expo/modules/audio/RecordingInputIdentityTest.kt
+@@ -0,0 +1,35 @@
++package expo.modules.audio
++
++import android.media.AudioDeviceInfo
++import android.media.AudioManager
++import io.mockk.every
++import io.mockk.mockk
++import org.junit.Assert.*
++import org.junit.Test
++
++class RecordingInputIdentityTest {
++  private fun device(id: Int) = mockk<AudioDeviceInfo> {
++    every { this@mockk.id } returns id
++    every { type } returns AudioDeviceInfo.TYPE_USB_DEVICE
++    every { productName } returns "USB Microphone"
++    every { address } returns "card=$id;device=0;"
++  }
++
++  @Test
++  fun identicalUsbMicrophonesRemainSelectable() {
++    val first = device(1)
++    val second = device(2)
++    val manager = mockk<AudioManager> {
++      every { getDevices(AudioManager.GET_DEVICES_INPUTS) } returns arrayOf(first, second)
++    }
++    val inputs = recordingInputs(manager)
++    assertEquals(2, inputs.size)
++    val firstUid = recordingInputUid(first, inputs)
++    val secondUid = recordingInputUid(second, inputs)
++    assertNotEquals(firstUid, secondUid)
++    assertSame(first, inputs.single { recordingInputUid(it, inputs) == firstUid })
++    assertSame(second, inputs.single { recordingInputUid(it, inputs) == secondUid })
++    val reconnected = device(99)
++    assertEquals(recordingInputUid(first, listOf(first)), recordingInputUid(reconnected, listOf(reconnected)))
 +  }
 +}
