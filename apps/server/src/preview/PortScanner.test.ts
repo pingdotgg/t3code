@@ -518,6 +518,23 @@ effectIt.effect(
       expect(lsofSpawns).toBe(0);
       expect(fdWalks).toHaveLength(walksAfterCollision);
       expect(requests).toEqual([]);
+
+      procFiles["/proc/net/tcp"] = PROC_NET_TCP;
+      procFiles["/proc/net/tcp6"] = PROC_NET_TCP6;
+      expect((yield* scanner.scan()).map(({ pid }) => pid)).toEqual([4242, 4242]);
+      yield* scanner.retain.pipe(Effect.scoped);
+      procFds["77"] = procFds["4242"]!;
+      delete procFds["4242"];
+      procFiles["/proc/77/comm"] = "python3\n";
+      yield* scanner.registerTerminalProcesses({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+        processIds: [77],
+      });
+      expect((yield* scanner.scan()).map(({ port, pid }) => ({ port, pid }))).toEqual([
+        { port: 3001, pid: 77 },
+        { port: 8765, pid: 77 },
+      ]);
     }).pipe(Effect.provide(layer));
   },
 );

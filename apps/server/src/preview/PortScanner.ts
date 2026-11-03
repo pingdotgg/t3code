@@ -939,8 +939,14 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       return [retainCount === 0, { ...state, retainCount }];
     });
     if (!idle) return;
-    const threads = yield* Ref.getAndSet(agentThreadsRef, new Map());
-    if ([...threads.values()].some((threadId) => threadId !== null)) agentScanPending = true;
+    yield* scanSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        yield* Ref.set(socketOwnersRef, new Map());
+        yield* Ref.set(socketOwnerMissesRef, new Map());
+        const threads = yield* Ref.getAndSet(agentThreadsRef, new Map());
+        if ([...threads.values()].some((threadId) => threadId !== null)) agentScanPending = true;
+      }),
+    );
   });
 
   const retain: PortDiscovery["Service"]["retain"] = Effect.acquireRelease(
