@@ -245,6 +245,7 @@ function makeFakeCursor() {
     accountKey: "account-a",
     events: [] as { readonly timestampMs: number; readonly outputTokens: number }[],
     error: null as string | null,
+    requiresSignIn: undefined as true | undefined,
     gate: undefined as Deferred.Deferred<void> | undefined,
     calls: [] as { readonly sinceMs: number; readonly untilMs: number }[],
     credentials: [] as unknown[],
@@ -255,7 +256,14 @@ function makeFakeCursor() {
       state.credentials.push(credential);
       if (state.gate !== undefined) yield* Deferred.await(state.gate);
       const { accountKey, error } = state;
-      if (error !== null) return { accountKey, records: [], missing: false, error };
+      if (error !== null)
+        return {
+          accountKey,
+          records: [],
+          missing: false,
+          error,
+          ...(state.requiresSignIn ? { requiresSignIn: true as const } : {}),
+        };
       const occurrences = new Map<string, number>();
       const records = state.events
         .filter(({ timestampMs }) => timestampMs >= sinceMs && timestampMs <= untilMs)
@@ -1421,6 +1429,7 @@ describe("UsageService", () => {
       const summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
       const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
       assert.strictEqual(cursor?.message, "Cursor credentials could not be read.");
+      assert.isUndefined(cursor?.authRecovery);
     }).pipe(Effect.scoped),
   );
 
@@ -1486,6 +1495,7 @@ describe("UsageService", () => {
       const { settings, home } = yield* setup;
       const cursor = makeFakeCursor();
       cursor.state.error = "Sign in to Cursor again to read account usage.";
+      cursor.state.requiresSignIn = true;
       const readCursorSource = Effect.gen(function* () {
         const service = yield* makeWithCursor(cursor.read);
         const summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
@@ -1508,6 +1518,7 @@ describe("UsageService", () => {
       yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(home, ".cursor")));
       const installed = yield* readCursorSource;
       assert.strictEqual(installed?.message, "Sign in to Cursor again to read account usage.");
+      assert.deepStrictEqual(installed?.authRecovery, [{ kind: "cursorCli" }]);
       assert.lengthOf(cursor.state.calls, 1);
     }).pipe(Effect.scoped),
   );
@@ -1590,8 +1601,101 @@ describe("UsageService", () => {
           { kind: "apiKey", apiKey: index === 0 ? "environment-key" : "signed-in-key" },
         ]);
         assert.strictEqual(cursorSource(summary)?.status, "ok");
+        cursor.state.error = "Sign in to Cursor again to read account usage.";
+        cursor.state.requiresSignIn = true;
+        const failed = yield* Effect.gen(function* () {
+          const service = yield* makeWithCursor(cursor.read);
+          return yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: `usage-service-cursor-api-key-denied-${index}`,
+              home,
+              settings,
+              platform: "darwin",
+              environment: testCase.environment,
+              secretStore: { get: () => Effect.succeed(testCase.stored) },
+            }),
+          ),
+        );
+        assert.deepStrictEqual(cursorSource(failed)?.authRecovery, [
+          {
+            kind: index === 0 ? "apiKey" : "provider",
+            instanceId: ProviderInstanceId.make("cursor"),
+          },
+        ]);
       }
     }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps recovery targets for Cursor instances sharing failed credentials", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      for (const [sharedKey, cached] of [
+        [true, false],
+        [false, false],
+        [false, true],
+      ] as const) {
+        const cursor = makeFakeCursor();
+        cursor.state.accountKey = "account-a";
+        cursor.state.error = "Sign in to Cursor again to read account usage.";
+        cursor.state.requiresSignIn = true;
+        const instanceIds = [
+          ProviderInstanceId.make("cursor-work"),
+          ProviderInstanceId.make("cursor-personal"),
+        ];
+        const summary = yield* Effect.gen(function* () {
+          const service = yield* makeWithCursor(cursor.read);
+          if (cached) {
+            yield* TestClock.setTime(CURSOR_NOW);
+            cursor.state.error = null;
+            cursor.state.events = [{ timestampMs: CURSOR_NOW - HOUR_MS, outputTokens: 7 }];
+            yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+            cursor.state.error = "Sign in to Cursor again to read account usage.";
+            yield* TestClock.adjust(Duration.minutes(2));
+          }
+          return yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: `usage-recovery-${sharedKey}-${cached}`,
+              home,
+              settings: {
+                ...settings,
+                providerInstances: Object.fromEntries(
+                  instanceIds.map((instanceId, index) => [
+                    instanceId,
+                    {
+                      driver: ProviderDriverKind.make("cursor"),
+                      environment: [
+                        {
+                          name: "CURSOR_API_KEY",
+                          value: sharedKey ? "shared-key" : `key-${index}`,
+                          sensitive: true,
+                        },
+                      ],
+                    },
+                  ]),
+                ),
+              },
+              environment: {},
+            }),
+          ),
+        );
+        assert.deepStrictEqual(
+          summary.sources.flatMap((source) => source.authRecovery ?? []),
+          instanceIds.map((instanceId) => ({ kind: "apiKey" as const, instanceId })),
+        );
+        assert.strictEqual(cursor.state.calls.length, cached ? 4 : sharedKey ? 1 : 2);
+        if (cached) {
+          assert.strictEqual(
+            summary.sources.filter((source) => source.fingerprint.provider === "cursor").length,
+            1,
+          );
+          assert.strictEqual(totalOutputTokens(summary), 7);
+        }
+      }
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.live("does not show a previous Cursor account's history after the API key changes", () =>

@@ -8,6 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
@@ -40,12 +41,15 @@ export interface CursorAccountUsageReadResult {
   readonly records: readonly UsageRecord[];
   readonly missing: boolean;
   readonly error: string | null;
+  readonly requiresSignIn?: true;
 }
 
 class CursorAccountUsageInvalidError extends Schema.TaggedError<CursorAccountUsageInvalidError>()(
   "CursorAccountUsageInvalidError",
-  { reason: Schema.String },
+  { reason: Schema.String, requiresSignIn: Schema.optionalKey(Schema.Literal(true)) },
 ) {}
+
+const isCursorAccountUsageInvalidError = Schema.is(CursorAccountUsageInvalidError);
 
 const invalid = (reason: string) => Effect.fail(new CursorAccountUsageInvalidError({ reason }));
 
@@ -126,7 +130,15 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
         ? exchangeCursorApiKey(credentialSource.apiKey).pipe(
             Effect.provideService(HttpClient.HttpClient, httpClient),
             Effect.mapError(
-              () => new CursorAccountUsageInvalidError({ reason: "Invalid API key" }),
+              (cause) =>
+                new CursorAccountUsageInvalidError({
+                  reason: "Invalid API key",
+                  ...(HttpClientError.isHttpClientError(cause) &&
+                  cause.reason._tag === "StatusCodeError" &&
+                  (cause.reason.response.status === 401 || cause.reason.response.status === 403)
+                    ? { requiresSignIn: true as const }
+                    : {}),
+                }),
             ),
           )
         : keychainToken,
@@ -141,6 +153,9 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
       accountKey: null,
       records: [],
       missing,
+      ...(isCursorAccountUsageInvalidError(cause) && cause.requiresSignIn
+        ? { requiresSignIn: true as const }
+        : {}),
       error: missing
         ? null
         : typeof credentialSource === "string"
@@ -228,6 +243,7 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
             records: [],
             missing: false,
             error: "Sign in to Cursor again to read account usage.",
+            requiresSignIn: true,
           } satisfies CursorAccountUsageReadResult;
         }
         if (response.status < 200 || response.status >= 300)

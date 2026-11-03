@@ -44,6 +44,7 @@ import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { UsageAuthRecovery } from "./UsageAuthRecovery";
 import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
@@ -386,6 +387,19 @@ function UsageScreen(props: {
                   </View>
                 ) : (
                   <>
+                    {selectedEnvironments.flatMap(
+                      (environment) =>
+                        environment.summary?.sources
+                          .filter((source) => source.authRecovery?.length)
+                          .map((source) => (
+                            <UsageAuthRecovery
+                              key={`${environment.environmentId}:${source.fingerprint.resolvedHomePath}`}
+                              environmentId={environment.environmentId}
+                              label={environment.label}
+                              source={source}
+                            />
+                          )) ?? [],
+                    )}
                     {sourceMessages.map((message) => (
                       <Text key={message} className="text-sm text-foreground-muted">
                         {message}

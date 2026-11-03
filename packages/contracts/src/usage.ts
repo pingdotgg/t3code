@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
 
+import { ProviderInstanceId } from "./providerInstance.ts";
+
 import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** Bump for incompatible UsageSummary changes; skipped unknown array variants need no bump. */
@@ -92,6 +94,15 @@ export const UsageSource = Schema.Struct({
   distinctSessions: NonNegativeInt,
   message: Schema.NullOr(TrimmedNonEmptyString),
   action: Schema.optionalKey(Schema.Literal("enableCursorKeychain")),
+  authRecovery: Schema.optionalKey(
+    ForwardCompatibleArray(
+      Schema.Union([
+        Schema.Struct({ kind: Schema.Literal("provider"), instanceId: ProviderInstanceId }),
+        Schema.Struct({ kind: Schema.Literal("apiKey"), instanceId: ProviderInstanceId }),
+        Schema.Struct({ kind: Schema.Literal("cursorCli") }),
+      ]),
+    ),
+  ),
   /** Cached response during refresh; repeat with awaitRefresh for fresh data. */
   refreshing: Schema.optionalKey(Schema.Literal(true)),
 });

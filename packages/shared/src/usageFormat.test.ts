@@ -87,6 +87,13 @@ describe("usage source messages", () => {
 
     expect(
       usageSourceMessages([
+        { ...source, authRecovery: [{ kind: "cursorCli" }], message: "Sign in again." },
+      ]),
+    ).toEqual([
+      "1 malformed or inconsistent usage record(s) were skipped; usage may be incomplete.",
+    ]);
+    expect(
+      usageSourceMessages([
         { ...source, message: `${readFailure} ${source.message}` },
         { ...source, malformedRecords: 0, message: readFailure },
         cursor,

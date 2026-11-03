@@ -261,6 +261,7 @@ describe("Cursor account history", () => {
           Response.json({ totalUsageEventsCount: 101, usageEventsDisplay: [] }),
         );
         assert.isNotNull(truncated.error);
+        assert.isUndefined(truncated.requiresSignIn);
         assert.deepStrictEqual(truncated.records, []);
         const denied = yield* readAccountUsage(
           authPath,
@@ -269,6 +270,7 @@ describe("Cursor account history", () => {
           async () => new Response(accessToken, { status: 401 }),
         );
         assert.isNotNull(denied.error);
+        assert.isTrue(denied.requiresSignIn);
         assert.isFalse(denied.error?.includes(accessToken) ?? true);
         assert.deepStrictEqual(denied.records, []);
         let requested = false;
@@ -317,6 +319,15 @@ describe("readCursorAccountUsage", () => {
         ],
       ]);
       assert.strictEqual(result.records[0]?.totals.outputTokens, 4);
+      for (const status of [401, 403, 503]) {
+        const denied = yield* readAccountUsage(
+          { kind: "apiKey", apiKey: "api-key" },
+          0,
+          1781000000000,
+          () => new Response(null, { status }),
+        );
+        assert.strictEqual(denied.requiresSignIn, status === 503 ? undefined : true);
+      }
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -424,6 +435,7 @@ describe("readCursorAccountUsage", () => {
           Effect.succeed(accessToken),
         );
         assert.strictEqual(result.error, error);
+        assert.strictEqual(result.requiresSignIn, error.startsWith("Sign in") ? true : undefined);
         assert.deepStrictEqual(result.records, []);
         assert.strictEqual(open, 0);
       }

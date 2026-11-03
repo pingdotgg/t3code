@@ -1,4 +1,4 @@
-import type { ProviderInstanceId } from "@t3tools/contracts";
+import type { ProviderInstanceId, UsageSource } from "@t3tools/contracts";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type { ProviderUsageScan } from "@t3tools/provider-core/server/usage";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
@@ -66,7 +66,10 @@ const make = Effect.gen(function* () {
   const caches = new Map<string, CursorAccountCache>();
   let cacheDirty = false;
   /** Failed refreshes share the cache TTL to prevent repeated requests; null means no login. */
-  const failures = new Map<string, { readonly atMs: number; readonly error: string | null }>();
+  const failures = new Map<
+    string,
+    { readonly atMs: number; readonly error: string | null; readonly requiresSignIn?: true }
+  >();
   const refreshes = new Map<string, Deferred.Deferred<void>>();
 
   const ensureLoaded = yield* Effect.cached(
@@ -137,6 +140,7 @@ const make = Effect.gen(function* () {
       failures.set(credentialKey, {
         atMs: nowMs,
         error: result.missing || result.error !== null ? result.error : CURSOR_ACCOUNT_READ_ERROR,
+        ...(result.requiresSignIn ? { requiresSignIn: true } : {}),
       });
       yield* schedulePersist;
       return;
@@ -194,6 +198,7 @@ const make = Effect.gen(function* () {
     windowStartMs: number,
     retentionStartMs: number,
     awaitRefresh: boolean,
+    recovery: NonNullable<UsageSource["authRecovery"]> = [{ kind: "cursorCli" }],
   ) {
     // A Keychain login outlives an uninstalled Cursor, so it also needs Cursor's local directory.
     const localLogin =
@@ -234,9 +239,14 @@ const make = Effect.gen(function* () {
     const failure = refreshing ? undefined : failures.get(credentialKey);
     const failureMessage = failure === undefined ? undefined : failure.error;
     if (failureMessage === null) return null;
+    const authRecovery = failure?.requiresSignIn ? recovery : undefined;
     if (cache === undefined) {
       return {
-        dir: authPath,
+        dir:
+          typeof credential !== "string" && credential.kind === "apiKey"
+            ? `cursor-${credentialKey}`
+            : authPath,
+        ...(authRecovery ? { authRecovery } : {}),
         // Never combine a local fallback with another server's account-wide history.
         ...(refreshing
           ? { files: [], refreshing: true }
@@ -259,6 +269,7 @@ const make = Effect.gen(function* () {
         ? { status: "ok" }
         : { status: "partial", message: failureMessage }),
       ...(refreshing ? { refreshing: true } : {}),
+      ...(authRecovery ? { authRecovery } : {}),
     } satisfies ProviderUsageScan;
   });
 
@@ -287,25 +298,41 @@ const make = Effect.gen(function* () {
           ? path.join(userHome, ".cursor", "auth.json")
           : path.join(cursorHome, platform === "win32" ? "Cursor" : "cursor", "auth.json");
       // T3's Cursor sign-in and CURSOR_API_KEY name the account the agent uses, so they win.
-      const apiKeys = yield* Effect.forEach(instances, ({ instanceId, environment }) =>
-        environment.CURSOR_API_KEY?.trim()
-          ? Effect.succeed(environment.CURSOR_API_KEY.trim())
-          : readStoredCursorApiKey(instanceId).pipe(
-              Effect.provideService(ProviderHost.ProviderHost, host),
-              Effect.orElseSucceed(() => undefined),
-            ),
-      );
-      const uniqueApiKeys = [...new Set(apiKeys.filter((apiKey) => apiKey !== undefined))];
-      if (uniqueApiKeys.length > 0) {
+      const credentials = yield* Effect.forEach(instances, ({ instanceId, environment }) => {
+        const override = environment.CURSOR_API_KEY?.trim();
+        return (
+          override
+            ? Effect.succeed(override)
+            : readStoredCursorApiKey(instanceId).pipe(
+                Effect.provideService(ProviderHost.ProviderHost, host),
+                Effect.orElseSucceed(() => undefined),
+              )
+        ).pipe(
+          Effect.map((apiKey) => ({
+            apiKey,
+            instanceId,
+            kind: override ? ("apiKey" as const) : ("provider" as const),
+          })),
+        );
+      });
+      const byKey = new Map<string, NonNullable<UsageSource["authRecovery"]>[number][]>();
+      for (const { apiKey, instanceId, kind } of credentials) {
+        if (!apiKey) continue;
+        const targets = byKey.get(apiKey) ?? [];
+        targets.push({ kind, instanceId });
+        byKey.set(apiKey, targets);
+      }
+      if (byKey.size > 0) {
         const sources: ReadonlyArray<ProviderUsageScan | null> = yield* Effect.forEach(
-          uniqueApiKeys,
-          (apiKey) =>
+          [...byKey],
+          ([apiKey, targets]) =>
             accountSource(
               { kind: "apiKey", apiKey },
               authPath,
               windowStartMs,
               retentionCutoffMs,
               awaitRefresh,
+              targets,
             ),
         );
         // Keys for one account share its source, and a repeated source would count sessions twice.
@@ -317,9 +344,12 @@ const make = Effect.gen(function* () {
         for (const source of sources) {
           if (source === null) continue;
           const kept = byAccount.get(source.dir);
-          if (kept === undefined || rank(source) > rank(kept)) {
-            byAccount.set(source.dir, source);
-          }
+          const preferred = kept === undefined || rank(source) > rank(kept) ? source : kept;
+          const authRecovery = [...(kept?.authRecovery ?? []), ...(source.authRecovery ?? [])];
+          byAccount.set(source.dir, {
+            ...preferred,
+            ...(authRecovery.length ? { authRecovery } : {}),
+          });
         }
         return [...byAccount.values()];
       }

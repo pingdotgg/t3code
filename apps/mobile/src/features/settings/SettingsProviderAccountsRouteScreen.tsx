@@ -9,7 +9,10 @@ import {
   isManagedDriverAllowed,
   type ProviderAuthResponse,
   type ServerProvider,
+  type EnvironmentId,
+  type ProviderInstanceId,
 } from "@t3tools/contracts";
+import type { StaticScreenProps } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
 import { useRef, useState } from "react";
 import { Linking, Pressable, ScrollView, TextInput, useWindowDimensions, View } from "react-native";
@@ -36,15 +39,32 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
-export function SettingsProviderAccountsRouteScreen() {
-  const { selectedTargets } = useSettingsEnvironmentFilter();
+export function SettingsProviderAccountsRouteScreen({
+  route,
+}: StaticScreenProps<
+  | {
+      readonly environmentId?: EnvironmentId;
+      readonly instanceId?: ProviderInstanceId;
+    }
+  | undefined
+>) {
+  const target = route.params;
+  const selection = useSettingsEnvironmentFilter();
+  const selectedTargets = target?.environmentId
+    ? selection.availableTargets.filter(
+        (environment) => environment.environmentId === target.environmentId,
+      )
+    : selection.selectedTargets;
   const permittedEnvironments = useEnvironmentsWithScope(selectedTargets, AuthProvidersManageScope);
   const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const insets = useSafeAreaInsets();
   return (
     <>
-      <SettingsEnvironmentFilterHeader />
-      <SettingsScreen title="Providers" trailing={<AndroidSettingsEnvironmentFilter />}>
+      {!target?.environmentId ? <SettingsEnvironmentFilterHeader /> : null}
+      <SettingsScreen
+        title="Providers"
+        trailing={!target?.environmentId ? <AndroidSettingsEnvironmentFilter /> : undefined}
+      >
         <ScreenScrollView
           className="flex-1"
           contentInsetAdjustmentBehavior="automatic"
@@ -66,7 +86,11 @@ export function SettingsProviderAccountsRouteScreen() {
                 ) : (
                   <>
                     {managedProviders(environment, providersByEnvironment)
-                      .filter(canManageProvider)
+                      .filter(
+                        (provider) =>
+                          canManageProvider(provider) &&
+                          (!target?.instanceId || provider.instanceId === target.instanceId),
+                      )
                       .map((provider, index) => (
                         <ProviderAccount
                           key={provider.instanceId}
@@ -76,7 +100,9 @@ export function SettingsProviderAccountsRouteScreen() {
                         />
                       ))}
                     {!managedProviders(environment, providersByEnvironment).some(
-                      canManageProvider,
+                      (provider) =>
+                        canManageProvider(provider) &&
+                        (!target?.instanceId || provider.instanceId === target.instanceId),
                     ) ? (
                       <Text className="p-4 text-foreground-muted">
                         Configure a provider with in-app sign-in in web or desktop Settings.

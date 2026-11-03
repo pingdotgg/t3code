@@ -82,6 +82,7 @@ import {
   WorkspaceBreadcrumbText,
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
+import { UsageAuthRecovery } from "./UsageAuthRecovery";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
@@ -687,6 +688,22 @@ function UsageOverview({
 
   return (
     <div aria-busy={loadingPartial} className="flex flex-col gap-6">
+      {selectedEnvironments.flatMap(
+        (environment) =>
+          environment.summary?.sources
+            .filter(
+              (source) =>
+                source.authRecovery?.length && !hiddenProviders.has(source.fingerprint.provider),
+            )
+            .map((source) => (
+              <UsageAuthRecovery
+                key={`${environment.environmentId}:${source.fingerprint.resolvedHomePath}`}
+                environmentId={environment.environmentId}
+                label={environment.label}
+                source={source}
+              />
+            )) ?? [],
+      )}
       {sourceMessages.map((message) => (
         <p key={message} className="mb-4 text-sm text-muted-foreground">
           {message}

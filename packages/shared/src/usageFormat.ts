@@ -46,7 +46,7 @@ export function usageSourceMessages(sources: readonly UsageSource[]): readonly s
       const warning = formatMalformedUsageWarning(source.malformedRecords);
       if (message?.endsWith(warning)) message = message.slice(0, -warning.length).trim();
     }
-    if (message) messages.add(message);
+    if (message && !source.authRecovery?.length) messages.add(message);
   }
   const malformedRecords = [...malformedBySource.values()].reduce(
     (total, count) => total + count,
