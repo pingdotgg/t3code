@@ -751,6 +751,19 @@ function claudeSupportsMcpApps(capabilities: ReadonlySet<string>): boolean {
   return CLAUDE_MCP_APP_CAPABILITIES.every((capability) => capabilities.has(capability));
 }
 
+// Claude Code routes `mcp__a__b__tool` to server `a` even when `a__b` is connected, so either prefix is ambiguous.
+function claudeMcpServerPrefixOverlaps(
+  statuses: ReadonlyArray<ClaudeMcpServerStatus>,
+  server: string,
+): boolean {
+  const prefix = claudeMcpToolPrefix(server);
+  return statuses.some((status) => {
+    if (status.name === server) return false;
+    const other = claudeMcpToolPrefix(status.name);
+    return other.startsWith(prefix) || prefix.startsWith(other);
+  });
+}
+
 function findClaudeMcpTool(
   statuses: ReadonlyArray<ClaudeMcpServerStatus>,
   toolName: string,
@@ -765,8 +778,12 @@ function findClaudeMcpTool(
       .filter((tool) => `${prefix}${claudeMcpToolNamePart(tool.name)}` === toolName)
       .map((tool) => ({ server: status.name, tool }));
   });
-  // Distinct servers can normalise to one name; the CLI may have run the other one.
-  return matches.length === 1 ? matches[0] : undefined;
+  const [match, ...others] = matches;
+  return match === undefined ||
+    others.length > 0 ||
+    claudeMcpServerPrefixOverlaps(statuses, match.server)
+    ? undefined
+    : match;
 }
 
 /** Claude reports `annotations` as `readOnly`/`destructive`/`openWorld`; apps expect MCP's `*Hint` names. */
@@ -7266,12 +7283,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (
             liveQuery === null ||
             liveQuery.stopping ||
-            liveQuery.nativeThreadId !== providerThread.nativeThreadRef?.nativeId ||
-            !claudeSupportsMcpApps(liveQuery.capabilities)
+            liveQuery.nativeThreadId !== providerThread.nativeThreadRef?.nativeId
           ) {
             return yield* new ProviderAdapter.ProviderAdapterProtocolError({
               driver: CLAUDE_PROVIDER,
-              detail: "No running Claude process with MCP Apps support owns this thread.",
+              detail: "No running Claude process owns this thread.",
+              reason: "session_stopped",
+            });
+          }
+          if (!claudeSupportsMcpApps(liveQuery.capabilities)) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: CLAUDE_PROVIDER,
+              detail: "This Claude process does not support MCP Apps.",
             });
           }
           return liveQuery;
@@ -11715,6 +11738,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }),
             callTool: Effect.fn("ClaudeAdapterV2.callMcpTool")(function* (call) {
               const liveQuery = yield* mcpAppQuery(call.providerThread);
+              const statuses = yield* liveQuery.query.mcpServerStatus.pipe(
+                Effect.mapError(mcpAppError("Failed to list Claude MCP tools.")),
+              );
+              // Servers can connect after capture, so the routing check runs again per call.
+              if (claudeMcpServerPrefixOverlaps(statuses, call.server)) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: "Another MCP server's tool names overlap this app's server.",
+                });
+              }
               return claudeMcpCallToolResult(
                 yield* liveQuery.query
                   .callMcpTool({

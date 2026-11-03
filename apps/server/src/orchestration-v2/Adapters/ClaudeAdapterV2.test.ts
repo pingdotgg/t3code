@@ -4948,6 +4948,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     overrides?: Partial<
       Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "mcpServerStatus" | "readMcpResource">
     >,
+    toolName = "mcp__probe_server__show_weather",
   ) {
     const mcpRequests: Array<unknown> = [];
     const harness = yield* makeWakeHarnessWithOptions({
@@ -5012,7 +5013,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             {
               type: "tool_use",
               id,
-              name: "mcp__probe_server__show_weather",
+              name: toolName,
               input: { city: "Oslo" },
             },
           ],
@@ -5124,6 +5125,71 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   ])("keeps a plain MCP tool row when $name", ({ overrides }) =>
     Effect.gen(function* () {
       const { item } = yield* runClaudeMcpAppToolTurn(MCP_APP_CAPABILITIES, overrides);
+      assert.isUndefined(mcpAppFromToolItem(item));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("refuses an app tool call Claude Code could route to an overlapping server", () =>
+    Effect.gen(function* () {
+      // Claude Code 2.1.303 runs `mcp__probe__server__refresh_weather` on `probe`.
+      const { harness, item, mcpRequests } = yield* runClaudeMcpAppToolTurn(
+        MCP_APP_CAPABILITIES,
+        {
+          mcpServerStatus: Effect.succeed([
+            { ...PROBE_SERVER_STATUS, name: "probe__server" },
+            {
+              name: "probe",
+              status: "connected",
+              tools: [{ name: "refresh_weather", _meta: { ui: { visibility: ["app"] } } }],
+            },
+          ]),
+        },
+        "mcp__probe__server__show_weather",
+      );
+      assert.isUndefined(mcpAppFromToolItem(item));
+      const exit = yield* Effect.exit(
+        harness.runtime.mcpApps!.callTool({
+          providerThread: harness.providerThread,
+          server: "probe__server",
+          tool: "refresh_weather",
+          arguments: {},
+        }),
+      );
+      assert.isTrue(Exit.isFailure(exit));
+      assert.deepEqual(mcpRequests, []);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps a plain MCP tool row when reading its ui:// resource times out", () =>
+    Effect.gen(function* () {
+      const reading = yield* Deferred.make<void>();
+      const turn = yield* runClaudeMcpAppToolTurn(MCP_APP_CAPABILITIES, {
+        readMcpResource: () =>
+          Deferred.succeed(reading, undefined).pipe(Effect.andThen(Effect.never)),
+      }).pipe(Effect.forkChild);
+      yield* Deferred.await(reading);
+      yield* TestClock.adjust("21 seconds");
+      const { item } = yield* Fiber.join(turn);
       assert.isUndefined(mcpAppFromToolItem(item));
     }).pipe(
       Effect.scoped,

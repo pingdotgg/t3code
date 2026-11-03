@@ -1,4 +1,5 @@
 import {
+  ProviderDriverKind,
   ProviderSessionId,
   ProviderThreadId,
   ThreadId,
@@ -14,7 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpAppModelContext from "./McpAppModelContext.ts";
@@ -187,6 +188,33 @@ describe("McpAppRequests", () => {
       }
       assert.equal(calls.length, before);
     }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps }))),
+  );
+
+  it.effect("reports a provider whose process has stopped as a stopped session", () =>
+    Effect.gen(function* () {
+      const requests = yield* McpAppRequests.McpAppRequests;
+      assert.equal(
+        yield* reason(requests.readResource({ threadId, itemId, uri: "ui://weather/app.html" })),
+        "session-stopped",
+      );
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          item: appItem({ t3McpApp: app }),
+          mcpApps: {
+            ...mcpApps,
+            readResource: () =>
+              Effect.fail(
+                new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                  detail: "stopped",
+                  reason: "session_stopped",
+                }),
+              ),
+          },
+        }),
+      ),
+    ),
   );
 
   it.effect("keeps each app's latest model context, without a live session", () =>

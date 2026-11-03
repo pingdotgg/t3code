@@ -388,6 +388,7 @@ export class ProviderAdapterEventStreamError extends Schema.TaggedError<Provider
 const ProviderAdapterFailureReason = Schema.Literals([
   "previous_turn_active",
   "attachment_unreadable",
+  "session_stopped",
 ]);
 export type ProviderAdapterFailureReason = typeof ProviderAdapterFailureReason.Type;
 
