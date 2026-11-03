@@ -282,6 +282,43 @@ describe("GuestPage", () => {
     await expect.element(screen.getByText("notes.txt")).not.toBeInTheDocument();
   });
 
+  it("does not send on the Enter that confirms an IME candidate", async () => {
+    using _page = visit(`/guest?share=${SHARE_ID}`);
+    using fetchSpy = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async () => new Response(null, { status: 204 }));
+    using _stream = vi
+      .spyOn(window, "EventSource")
+      .mockImplementation(fakeEventSource(opening([run("run-1", 1, "completed")], items)) as never);
+    await using screen = await render(<GuestPage />);
+    const message = screen.getByRole("textbox", { name: "Message" });
+    await message.fill("にほん");
+    const sends = () =>
+      fetchSpy.mock.calls.filter(([url]) => url === `/api/guest/messages?share=${SHARE_ID}`);
+
+    for (const composition of [
+      { key: "Enter", isComposing: true, keyCode: 13 },
+      { key: "Enter", isComposing: false, keyCode: 229 },
+    ]) {
+      const event = new KeyboardEvent("keydown", {
+        ...composition,
+        bubbles: true,
+        cancelable: true,
+      });
+      message.element().dispatchEvent(event);
+      expect(event.defaultPrevented, JSON.stringify(composition)).toBe(false);
+      expect(sends()).toHaveLength(0);
+      await expect.element(message).toHaveValue("にほん");
+      await expect.element(message).toHaveFocus();
+    }
+
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(sends()).toHaveLength(1));
+    const body = sends()[0]?.[1]?.body;
+    expect(body).toBeInstanceOf(FormData);
+    expect((body as FormData).get("text")).toBe("にほん");
+  });
+
   it("follows the end as replies stream, and shows the guest's own message even after they scrolled up", async () => {
     using _page = visit(`/guest?share=${SHARE_ID}`);
     using _session = vi
