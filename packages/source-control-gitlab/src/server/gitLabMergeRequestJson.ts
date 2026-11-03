@@ -767,7 +767,7 @@ export const AWARD_EMOJI_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!, $
       awardEmoji { nodes { name user { username } } }
       notes(first: 100, after: $cursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { id awardEmoji { nodes { name user { username } } } }
+        nodes { id author { username bot } awardEmoji { nodes { name user { username } } } }
       }
     }
   }
@@ -819,6 +819,15 @@ const RawAwardEmojiPageSchema = Schema.Struct({
                     Schema.NullOr(
                       Schema.Struct({
                         id: Schema.optional(Schema.NullOr(Schema.String)),
+                        // REST note authors carry no bot flag; GraphQL's does.
+                        author: Schema.optional(
+                          Schema.NullOr(
+                            Schema.Struct({
+                              username: Schema.optional(Schema.NullOr(Schema.String)),
+                              bot: Schema.optional(Schema.NullOr(Schema.Boolean)),
+                            }),
+                          ),
+                        ),
                         awardEmoji: RawAwardEmojiNodesSchema,
                       }),
                     ),
@@ -873,6 +882,7 @@ function noteIdOf(gid: string | null | undefined): string | null {
 export interface GitLabAwardEmojiPage {
   readonly reactions: ReadonlyArray<PullRequestReaction>;
   readonly reactionsByNoteId: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
+  readonly botLogins: ReadonlySet<string>;
   readonly nextCursor: string | null;
 }
 
@@ -887,7 +897,10 @@ export function decodeAwardEmojiJson(
   const viewer = trimmed(data.currentUser?.username);
   const mergeRequest = data.project?.mergeRequest;
   const reactionsByNoteId = new Map<string, ReadonlyArray<PullRequestReaction>>();
+  const botLogins = new Set<string>();
   for (const node of mergeRequest?.notes?.nodes ?? []) {
+    const author = trimmed(node?.author?.username);
+    if (author !== null && node?.author?.bot === true) botLogins.add(author);
     const id = noteIdOf(node?.id);
     if (id === null) continue;
     const reactions = toReactions(node?.awardEmoji, viewer);
@@ -897,6 +910,7 @@ export function decodeAwardEmojiJson(
   return Result.succeed({
     reactions: toReactions(mergeRequest?.awardEmoji, viewer),
     reactionsByNoteId,
+    botLogins,
     nextCursor: pageInfo?.hasNextPage === true ? (trimmed(pageInfo.endCursor) ?? null) : null,
   });
 }
