@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Local developer verification reads private credential files.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-import * as NodeSocket from "@effect/platform-node/NodeSocket";
+import * as NodeWS from "@effect/platform-node/NodeWS";
 import {
   ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
@@ -89,7 +89,7 @@ const main = Effect.gen(function* () {
   const layerSocketConstructor = Layer.succeed(
     Socket.WebSocketConstructor,
     (url, protocols) =>
-      new NodeSocket.NodeWS.WebSocket(url, protocols as string | string[] | undefined, {
+      new NodeWS.WebSocket(url, protocols as string | string[] | undefined, {
         headers: { authorization: `Bearer ${connection.bearerToken}` },
       }) as unknown as globalThis.WebSocket,
   );
