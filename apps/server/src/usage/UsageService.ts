@@ -727,7 +727,8 @@ export const make = Effect.gen(function* () {
 
     const startedAtMs = yield* Clock.currentTimeMillis;
     yield* ensureScanCacheLoaded;
-    // Wait rather than parse the same cold files a second time.
+    // Fetch prices while waiting rather than parse the same cold files a second time.
+    const ratesFiber = yield* Effect.forkChild(ensureRates(false));
     yield* awaitWarmup;
 
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
@@ -744,7 +745,7 @@ export const make = Effect.gen(function* () {
 
     const [, scannedDirs] = yield* Effect.all(
       [
-        ensureRates(false),
+        Fiber.join(ratesFiber),
         collectDirs(windowStartMs, settings, retentionCutoffMs, input.awaitRefresh === true),
       ],
       { concurrency: 2 },
@@ -971,8 +972,17 @@ export const make = Effect.gen(function* () {
   });
 
   const warmScanCache = Effect.gen(function* () {
-    // A summary already in flight warms the cache itself.
-    if (warming !== undefined || inflightScans.size > 0) return;
+    if (warming !== undefined) return;
+    // In-flight summaries may cover a shorter window; let them finish, then warm the rest from cache.
+    // Waiting before `warming` is set keeps a summary not yet at awaitWarmup from waiting on us.
+    yield* Effect.forEach(
+      [...inflightScans.values()],
+      (scan) => Effect.exit(Deferred.await(scan)),
+      {
+        discard: true,
+      },
+    );
+    if (warming !== undefined) return;
     const done = Deferred.makeUnsafe<void>();
     warming = done;
     yield* Effect.gen(function* () {
