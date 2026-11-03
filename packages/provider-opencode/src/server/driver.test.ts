@@ -585,9 +585,13 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
     "opens sessions through OpenCode 2 after the binary is upgraded in place from 1.x",
     () =>
       Effect.gen(function* () {
-        serverStarts.length = 0;
         versionOutput.current = "1.18.18\n";
         const instance = yield* create({}, noHttp);
+        // Let the startup status check claim the refresh permit, then wait behind it so it
+        // cannot probe after the upgrade below.
+        yield* Effect.yieldNow;
+        yield* instance.snapshot.refresh;
+        serverStarts.length = 0;
         const openSession = instance.orchestrationAdapter
           .openSession({
             threadId: ThreadId.make("thread-upgraded"),
@@ -603,7 +607,6 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
         versionOutput.current = "opencode v2.2.4\n";
         serverStarts.length = 0;
         yield* openSession;
-        // The initial status check may also start a 2.x server here; only the 1.x adapter connects.
         assert.notInclude(
           serverStarts,
           "connect",
