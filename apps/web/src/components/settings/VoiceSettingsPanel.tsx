@@ -874,6 +874,62 @@ export function VoiceSettingsPanel() {
       >
         {currentStatus?.supported && prepared ? (
           <>
+            {currentStatus.modelDirectories !== undefined ? (
+              <SettingsRow
+                title="Model folders"
+                description="Look for downloaded models in these folders on this environment. T3 Code never changes files there."
+                control={
+                  <div className="flex w-full max-w-80 items-center gap-1.5">
+                    <Input
+                      value={modelFolderDraft}
+                      placeholder="Add a folder path"
+                      aria-label="Add a model folder"
+                      disabled={operation !== null}
+                      onChange={(event) => setModelFolderDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") return;
+                        event.preventDefault();
+                        addModelFolder();
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={
+                        operation !== null ||
+                        !MODEL_FOLDER_PATH_PATTERN.test(modelFolderDraft.trim()) ||
+                        modelDirectories.length >= MODEL_FOLDER_LIMIT
+                      }
+                      onClick={addModelFolder}
+                    >
+                      Add
+                    </Button>
+                  </div>
+                }
+              >
+                {modelDirectories.length > 0 ? (
+                  <div
+                    aria-label="Model folders"
+                    className="mt-3 flex flex-wrap gap-1.5 border-t border-border/60 pt-3"
+                  >
+                    {modelDirectories.map((directory) => (
+                      <Button
+                        key={directory}
+                        type="button"
+                        size="xs"
+                        variant="secondary"
+                        disabled={operation !== null}
+                        aria-label={`Remove folder ${directory}`}
+                        onClick={() => removeModelFolder(directory)}
+                      >
+                        {directory}
+                        <XIcon className="ml-1 size-3" />
+                      </Button>
+                    ))}
+                  </div>
+                ) : null}
+              </SettingsRow>
+            ) : null}
             <SettingsRow
               title="Model language"
               description="Find models that support your language."
@@ -999,62 +1055,6 @@ export function VoiceSettingsPanel() {
               <SettingsRow title="No transcription models are available." />
             ) : visibleModels.length === 0 ? (
               <SettingsRow title="No models match your search." />
-            ) : null}
-            {currentStatus.modelDirectories !== undefined ? (
-              <SettingsRow
-                title="Model folders"
-                description="Look for downloaded models in these folders on this environment. T3 Code never changes files there."
-                control={
-                  <div className="flex w-full max-w-80 items-center gap-1.5">
-                    <Input
-                      value={modelFolderDraft}
-                      placeholder="Add a folder path"
-                      aria-label="Add a model folder"
-                      disabled={operation !== null}
-                      onChange={(event) => setModelFolderDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter") return;
-                        event.preventDefault();
-                        addModelFolder();
-                      }}
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={
-                        operation !== null ||
-                        !MODEL_FOLDER_PATH_PATTERN.test(modelFolderDraft.trim()) ||
-                        modelDirectories.length >= MODEL_FOLDER_LIMIT
-                      }
-                      onClick={addModelFolder}
-                    >
-                      Add
-                    </Button>
-                  </div>
-                }
-              >
-                {modelDirectories.length > 0 ? (
-                  <div
-                    aria-label="Model folders"
-                    className="mt-3 flex flex-wrap gap-1.5 border-t border-border/60 pt-3"
-                  >
-                    {modelDirectories.map((directory) => (
-                      <Button
-                        key={directory}
-                        type="button"
-                        size="xs"
-                        variant="secondary"
-                        disabled={operation !== null}
-                        aria-label={`Remove folder ${directory}`}
-                        onClick={() => removeModelFolder(directory)}
-                      >
-                        {directory}
-                        <XIcon className="ml-1 size-3" />
-                      </Button>
-                    ))}
-                  </div>
-                ) : null}
-              </SettingsRow>
             ) : null}
           </>
         ) : (
