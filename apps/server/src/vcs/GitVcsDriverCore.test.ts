@@ -1523,7 +1523,7 @@ it.effect("does not fetch for status when the branch tracks a local branch", () 
       const fetches: Array<ReadonlyArray<string>> = [];
       const spawner = ChildProcessSpawner.make((command) => {
         if (ChildProcess.isStandardCommand(command) && command.args.includes("fetch")) {
-          fetches.push(command.args);
+          fetches.push(command.args.map(String));
         }
         return delegate.spawn(command);
       });
