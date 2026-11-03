@@ -46,8 +46,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return { ...actual, open: vi.fn(actual.open), realpath: vi.fn(actual.realpath) };
 });
 
-const decodeAssetCreateUrlInput = Schema.decodeUnknownEffect(AssetCreateUrlInput);
-
 const layerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-asset-access-test-",
 });
@@ -1472,8 +1470,9 @@ describe("AssetAccess", () => {
 
   it.effect("preserves the change request repository through RPC decoding and signed media", () =>
     Effect.gen(function* () {
+      const decodeAssetCreateUrlInput = Schema.decodeEffect(AssetCreateUrlInput);
       const resource = {
-        _tag: "github-media",
+        _tag: SOURCE_CONTROL_MEDIA_ASSET,
         cwd: "/personal-fork",
         url: "https://github.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c",
         repository: "enterprise/private",
