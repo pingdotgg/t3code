@@ -17,6 +17,7 @@ import {
 import { persistClientSettingsPatch, useMergedSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useEnvironmentProviders } from "../../state/environments";
 import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
@@ -39,7 +40,8 @@ export function useScopedSettings<T = UnifiedSettings>(
 
 export function useScopedSettingsMixed(keys: readonly (keyof ServerSettings)[]): boolean {
   const { targets } = useSettingsScope();
-  return scopedSettingsAreMixed(targets, keys);
+  const providersByEnvironment = useEnvironmentProviders();
+  return scopedSettingsAreMixed(targets, keys, providersByEnvironment);
 }
 
 export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) {
@@ -98,11 +100,20 @@ function useRunScopedPlan() {
 }
 
 export function useUpdateScopedSettings() {
-  const { scope, environments } = useSettingsScope();
+  const { scope, environments, target } = useSettingsScope();
+  const providersByEnvironment = useEnvironmentProviders();
   const run = useRunScopedPlan();
   /** `onFailed` runs when any target rejects or drops the patch, so a draft can fall back. */
   return (patch: ScopedSettingsPatch, options?: { readonly onFailed?: () => void }) =>
-    run(planScopedSettingsPatch(scope, environments, patch), options?.onFailed);
+    run(
+      planScopedSettingsPatch(
+        scope,
+        environments,
+        patch,
+        target ? { sourceEnvironmentId: target.environmentId, providersByEnvironment } : undefined,
+      ),
+      options?.onFailed,
+    );
 }
 
 export function useClearScopedSettings() {
