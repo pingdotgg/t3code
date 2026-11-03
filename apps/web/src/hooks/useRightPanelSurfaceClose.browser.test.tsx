@@ -13,6 +13,8 @@ const fixture = vi.hoisted(() => ({
   failClose: false,
   sideChatShell: null as { latestRun: { runId: string } | null } | null,
   threadRemoved: false,
+  presence: "missing",
+  presenceReads: 0,
   failDelete: false,
   shellStatus: "live",
   clearedDrafts: [] as ScopedThreadRef[],
@@ -53,14 +55,19 @@ vi.mock("../composerDraftStore", async () => {
 });
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand:
-    (_command: unknown, label: string) =>
+    (_command: unknown, options: string | { label: string }) =>
     async (request: {
       environmentId: string;
       input: { threadId: string; terminalId: string; data?: string };
     }) => {
+      const label = typeof options === "string" ? options : options.label;
       const key = `${request.environmentId}/${request.input.threadId}/${request.input.terminalId}`;
       if (label === "terminal close" && fixture.failClose) return { _tag: "Failure" };
       if (label === "side chat delete" && fixture.failDelete) return { _tag: "Failure" };
+      if (label === "side chat presence") {
+        fixture.presenceReads += 1;
+        return { _tag: "Success", value: fixture.presence };
+      }
       if (label === "terminal close" || label === "terminal write") fixture.sessions.delete(key);
       return { _tag: "Success" };
     },
@@ -68,7 +75,10 @@ vi.mock("../state/use-atom-command", () => ({
 // The commands are replaced above; importing their runtime would connect a client.
 vi.mock("../state/terminal", () => ({ terminalEnvironment: { open: {}, close: {}, write: {} } }));
 vi.mock("../state/preview", () => ({ previewEnvironment: { close: {} } }));
-vi.mock("../state/threads", () => ({ threadEnvironment: { delete: {} } }));
+vi.mock("../state/threads", () => ({
+  threadEnvironment: { delete: {} },
+  readThreadPresence: {},
+}));
 vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: () => null } }));
 vi.mock("../rpc/atomRegistry", () => ({
   appAtomRegistry: { get: () => ({ status: fixture.shellStatus }) },
@@ -83,6 +93,8 @@ function setup() {
   fixture.failClose = false;
   fixture.sideChatShell = null;
   fixture.threadRemoved = false;
+  fixture.presence = "missing";
+  fixture.presenceReads = 0;
   fixture.failDelete = false;
   fixture.shellStatus = "live";
   fixture.clearedDrafts = [];
@@ -160,6 +172,13 @@ it.each([
   { name: "the thread leaves the live shell", threadRemoved: true, cleared: true },
   { name: "the server keeps the thread", threadRemoved: false, cleared: false },
   { name: "the delete fails", threadRemoved: true, failDelete: true, cleared: false },
+  {
+    name: "another client archived it after the shell check",
+    threadRemoved: true,
+    presence: "present",
+    cleared: false,
+  },
+  { name: "the fresh read fails", threadRemoved: true, presence: "unavailable", cleared: false },
   { name: "the shell is not live", threadRemoved: true, shellStatus: "loading", cleared: false },
   {
     name: "it already left the live shell, as an archived one does",
@@ -178,6 +197,7 @@ it.each([
   async ({
     sideChatShell = { latestRun: null },
     threadRemoved,
+    presence = "missing",
     failDelete = false,
     shellStatus = "live",
     cleared,
@@ -185,6 +205,7 @@ it.each([
     const { original } = setup();
     fixture.sideChatShell = sideChatShell;
     fixture.threadRemoved = threadRemoved;
+    fixture.presence = presence;
     fixture.failDelete = failDelete;
     fixture.shellStatus = shellStatus;
     const sideChatId = ThreadId.make("side-chat-a");
@@ -202,9 +223,16 @@ it.each([
     }
     await using screen = await render(<SideChatHarness />);
     await screen.getByRole("button").click();
+    if (cleared) {
+      await vi.waitFor(() =>
+        expect(fixture.clearedDrafts).toEqual([
+          { environmentId: original.environmentId, threadId: sideChatId },
+        ]),
+      );
+      return;
+    }
+    if (presence !== "missing") await vi.waitFor(() => expect(fixture.presenceReads).toBe(1));
     await act(async () => {});
-    expect(fixture.clearedDrafts).toEqual(
-      cleared ? [{ environmentId: original.environmentId, threadId: sideChatId }] : [],
-    );
+    expect(fixture.clearedDrafts).toEqual([]);
   },
 );

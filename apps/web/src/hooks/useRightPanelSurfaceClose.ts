@@ -25,7 +25,7 @@ import { readThreadShell, waitForThreadRemoval } from "../state/entities";
 import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { environmentShell } from "../state/shell";
-import { threadEnvironment } from "../state/threads";
+import { readThreadPresence, threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useStableCallback } from "./useStableCallback";
@@ -41,6 +41,10 @@ export function useRightPanelSurfaceClose(input: {
   const { threadRef, terminalLabelsById } = input;
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const deleteThread = useAtomCommand(threadEnvironment.delete, "side chat delete");
+  const readPresence = useAtomCommand(readThreadPresence, {
+    label: "side chat presence",
+    reportFailure: false,
+  });
   const canOperatePreview = useEnvironmentScope(
     threadRef?.environmentId ?? null,
     AuthPreviewOperateScope,
@@ -89,6 +93,12 @@ export function useRightPanelSurfaceClose(input: {
       // Success also covers a kept side chat, whose draft must survive.
       if (keptByServer || result._tag !== "Success") return;
       if (!(await waitForThreadRemoval(sideChatRef))) return;
+      // Another client's archive also drops it from the shell; only a missing thread was deleted.
+      const presence = await readPresence({
+        environmentId: ref.environmentId,
+        input: surface.threadId,
+      });
+      if (presence._tag !== "Success" || presence.value !== "missing") return;
       if (shellIsLive()) useComposerDraftStore.getState().clearDraftThread(sideChatRef);
     });
   };
