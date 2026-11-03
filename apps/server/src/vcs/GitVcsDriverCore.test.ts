@@ -2849,12 +2849,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("reads range patches from source without textconv or color", () =>
+    it.effect("reads range patches from source without textconv, color, or diff.relative", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         yield* git(cwd, ["config", "diff.probe.textconv", "touch textconv-ran; echo converted"]);
         yield* git(cwd, ["config", "color.ui", "always"]);
+        yield* git(cwd, ["config", "diff.relative", "true"]);
         yield* git(cwd, ["checkout", "-b", "feature/range"]);
         yield* writeTextFile(cwd, ".gitattributes", "*.doc diff=probe\n");
         yield* writeTextFile(cwd, "notes.doc", "source line\n");
@@ -2864,8 +2865,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["commit", "-m", "range files"]);
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const fileSystem = yield* FileSystem.FileSystem;
+        const projectCwd = `${cwd}/app`;
+        yield* fileSystem.makeDirectory(projectCwd);
 
-        const context = yield* driver.readRangeContext(cwd, initialBranch);
+        const context = yield* driver.readRangeContext(projectCwd, initialBranch);
 
         assert.include(context.diffPatch, "+source line");
         assert.notInclude(context.diffPatch, "converted");
@@ -2878,7 +2881,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.isFalse(yield* fileSystem.exists(`${cwd}/textconv-ran`));
 
         yield* writeTextFile(cwd, "notes.doc", "updated source line\n");
-        const staged = yield* driver.prepareCommitContext(cwd, ["notes.doc"]);
+        const staged = yield* driver.prepareCommitContext(projectCwd, ["notes.doc"]);
         assert.include(staged?.stagedPatch ?? "", "+updated source line");
         assert.notInclude(staged?.stagedPatch ?? "", "converted");
         assert.notInclude(staged?.stagedPatch ?? "", "\u001b[");
