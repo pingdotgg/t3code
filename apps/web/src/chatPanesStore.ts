@@ -21,6 +21,8 @@ export interface ChatPanesLayout {
   readonly direction: ChatPaneDirection;
   readonly panes: ReadonlyArray<ChatPane>;
   readonly activePaneId: string | null;
+  /** The first pane's share of the split; pane minimum sizes still win over it. */
+  readonly ratio: number;
 }
 
 export interface ResolvedChatPane extends ChatPane {
@@ -31,7 +33,15 @@ export const SINGLE_CHAT_PANE_LAYOUT: ChatPanesLayout = {
   direction: "row",
   panes: [],
   activePaneId: null,
+  ratio: 0.5,
 };
+
+const MIN_CHAT_PANE_RATIO = 0.1;
+
+function clampChatPaneRatio(ratio: number): number {
+  if (!Number.isFinite(ratio)) return SINGLE_CHAT_PANE_LAYOUT.ratio;
+  return Math.min(1 - MIN_CHAT_PANE_RATIO, Math.max(MIN_CHAT_PANE_RATIO, ratio));
+}
 
 const MAX_CHAT_PANES = 2;
 
@@ -109,6 +119,7 @@ export function openChatSplit(
     const activePaneId = input.createPaneId();
     return {
       direction,
+      ratio: SINGLE_CHAT_PANE_LAYOUT.ratio,
       panes: [
         { id: activePaneId, target: input.routeTarget },
         { id: input.createPaneId(), target: input.target },
@@ -181,6 +192,7 @@ function readPersistedLayout(value: unknown): ChatPanesLayout {
   }
   return {
     direction: layout?.direction === "column" ? "column" : "row",
+    ratio: clampChatPaneRatio(typeof layout?.ratio === "number" ? layout.ratio : NaN),
     panes,
     activePaneId: typeof layout?.activePaneId === "string" ? layout.activePaneId : panes[0].id,
   };
@@ -196,6 +208,7 @@ interface ChatPanesStoreState {
   }) => void;
   /** Returns the thread to navigate to when the focused pane closed. */
   readonly closePane: (paneId: string) => ThreadRouteTarget | null;
+  readonly setRatio: (ratio: number) => void;
 }
 
 export const useChatPanesStore = create<ChatPanesStoreState>()(
@@ -216,6 +229,11 @@ export const useChatPanesStore = create<ChatPanesStoreState>()(
         set({ layout: result.layout });
         return result.focusTarget;
       },
+      setRatio: (ratio) =>
+        set((state) => {
+          const next = clampChatPaneRatio(ratio);
+          return next === state.layout.ratio ? state : { layout: { ...state.layout, ratio: next } };
+        }),
     }),
     {
       name: "t3code:chat-panes:v1",
