@@ -162,6 +162,12 @@ export function closeChatPane(
   return { layout: { ...layout, panes, activePaneId }, focusTarget };
 }
 
+/** Trades the panes' places; each keeps its own size. */
+export function swapChatPanes(layout: ChatPanesLayout): ChatPanesLayout {
+  if (!isChatSplitOpen(layout)) return layout;
+  return { ...layout, panes: [...layout.panes].reverse(), ratio: 1 - layout.ratio };
+}
+
 function isPersistedTarget(value: unknown): value is ThreadRouteTarget {
   if (typeof value !== "object" || value === null) return false;
   const target = value as Record<string, unknown>;
@@ -209,6 +215,8 @@ interface ChatPanesStoreState {
   /** Returns the thread to navigate to when the focused pane closed. */
   readonly closePane: (paneId: string) => ThreadRouteTarget | null;
   readonly setRatio: (ratio: number) => void;
+  readonly swap: () => void;
+  readonly setDirection: (direction: ChatPaneDirection) => void;
 }
 
 export const useChatPanesStore = create<ChatPanesStoreState>()(
@@ -234,6 +242,11 @@ export const useChatPanesStore = create<ChatPanesStoreState>()(
           const next = clampChatPaneRatio(ratio);
           return next === state.layout.ratio ? state : { layout: { ...state.layout, ratio: next } };
         }),
+      swap: () => set((state) => ({ layout: swapChatPanes(state.layout) })),
+      setDirection: (direction) =>
+        set((state) =>
+          state.layout.direction === direction ? state : { layout: { ...state.layout, direction } },
+        ),
     }),
     {
       name: "t3code:chat-panes:v1",

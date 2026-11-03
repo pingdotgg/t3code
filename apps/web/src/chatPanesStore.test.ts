@@ -8,6 +8,7 @@ import {
   openChatSplit,
   resolveChatPanes,
   SINGLE_CHAT_PANE_LAYOUT,
+  swapChatPanes,
   type ChatPanesLayout,
 } from "./chatPanesStore";
 import { DraftId } from "./composerDraftStore";
@@ -104,6 +105,15 @@ describe("chat panes", () => {
       { id: "pane-1", target: "a", active: true },
       { id: "pane-2", target: "c", active: false },
     ]);
+  });
+
+  it("swapping keeps each pane's thread, focus and size", () => {
+    const layout = swapChatPanes({ ...split(thread("a"), thread("b")), ratio: 0.7 });
+    expect(shown(layout, thread("a"))).toEqual([
+      { id: "pane-2", target: "b", active: false },
+      { id: "pane-1", target: "a", active: true },
+    ]);
+    expect(layout.ratio).toBeCloseTo(0.3);
   });
 
   it("closing the unfocused pane returns to one pane without moving the route", () => {

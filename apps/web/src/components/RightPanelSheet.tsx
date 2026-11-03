@@ -1,5 +1,6 @@
-import { type ReactNode } from "react";
+import { type ReactNode, use } from "react";
 
+import { ChatPaneContext } from "./chat/chatPane";
 import { Sheet, SheetPopup } from "./ui/sheet";
 
 export function RightPanelSheet(props: {
@@ -8,6 +9,8 @@ export function RightPanelSheet(props: {
   open: boolean;
   onClose: () => void;
 }) {
+  // In a split, the sheet covers its own pane rather than the window.
+  const paneElement = use(ChatPaneContext)?.element ?? undefined;
   return (
     <Sheet
       open={props.open}
@@ -22,6 +25,7 @@ export function RightPanelSheet(props: {
         side="right"
         showCloseButton={false}
         keepMounted
+        portalContainer={paneElement}
         className="w-[min(42vw,28rem)] min-w-80 max-w-[28rem] max-[760px]:w-[min(88vw,24rem)] max-[760px]:min-w-0 wco:mt-(--workspace-topbar-height) wco:h-[calc(100%-var(--workspace-topbar-height))] wco:max-h-[calc(100%-var(--workspace-topbar-height))]"
       >
         {props.children}

@@ -1,4 +1,6 @@
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate, useRouter } from "@tanstack/react-router";
+import { useShallow } from "zustand/react/shallow";
 import { type CSSProperties, Fragment, useEffect, useState } from "react";
 
 import {
@@ -7,6 +9,7 @@ import {
   useChatPanesStore,
   type ResolvedChatPane,
 } from "../chatPanesStore";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import { useResizeDrag } from "../hooks/useResizeDrag";
 import { observeResize } from "../lib/observeResize";
@@ -17,6 +20,7 @@ import {
   isThreadRoutePathname,
   type ThreadRouteTarget,
 } from "../threadRoutes";
+import { ChatPaneContext, type ChatPaneContextValue } from "./chat/chatPane";
 import { ThreadRouteContent } from "./ThreadRouteView";
 import { Button } from "./ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
@@ -27,6 +31,16 @@ const CHAT_PANE_SPLIT_PROPERTY = "--chat-pane-split";
 const CHAT_PANE_MIN_WIDTH = 360;
 const CHAT_PANE_MIN_HEIGHT = 240;
 const CHAT_PANE_KEYBOARD_STEP = 0.05;
+/** Room for the chat column and the right panel beside it at their 360px minimums. */
+const CHAT_PANE_INLINE_RIGHT_PANEL_MIN_WIDTH = 720;
+const NO_THREAD_KEYS: ReadonlySet<string> = new Set();
+
+interface WindowEdges {
+  readonly top: boolean;
+  readonly left: boolean;
+  readonly right: boolean;
+}
+const ALL_WINDOW_EDGES: WindowEdges = { top: true, left: true, right: true };
 
 /** Threads side by side. The route shows the focused pane, so focusing a pane navigates to it. */
 export function ChatPanes({
@@ -39,7 +53,12 @@ export function ChatPanes({
   const router = useRouter();
   const navigate = useNavigate();
   const layout = useChatPanesStore((state) => state.layout);
+  const swap = useChatPanesStore((state) => state.swap);
+  const setDirection = useChatPanesStore((state) => state.setDirection);
   const panes = resolveChatPanes(layout, routeTarget);
+  const paneThreadKeys = useComposerDraftStore(
+    useShallow((store) => panes.map((pane) => paneThreadKey(pane.target, store))),
+  );
   const vertical = layout.direction === "column";
   const minPaneSize = vertical ? CHAT_PANE_MIN_HEIGHT : CHAT_PANE_MIN_WIDTH;
   // Too small for two panes: only the focused one renders, and the split returns with room.
@@ -83,8 +102,17 @@ export function ChatPanes({
         className={cn("flex min-h-0 min-w-0 flex-1", vertical ? "flex-col" : "flex-row")}
         style={{ "--chat-pane-split": layout.ratio } as CSSProperties}
       >
-        {panes.map((pane, index) =>
-          !fitsSplit && !pane.active ? null : (
+        {panes.map((pane, index) => {
+          if (!fitsSplit && !pane.active) return null;
+          const alone = !fitsSplit;
+          const edges = alone
+            ? ALL_WINDOW_EDGES
+            : {
+                top: !vertical || index === 0,
+                left: vertical || index === 0,
+                right: vertical || index === panes.length - 1,
+              };
+          return (
             <Fragment key={pane.id}>
               {index > 0 && fitsSplit ? (
                 <ChatPaneDivider
@@ -95,18 +123,60 @@ export function ChatPanes({
               ) : null}
               <ChatPane
                 pane={pane}
-                sized={index === 0 && fitsSplit}
+                sized={index === 0 && !alone}
                 vertical={vertical}
+                alone={alone}
+                edges={edges}
                 background={background}
                 onFocus={() => focusPane(pane.target)}
-                onClose={() => closePane(pane.id)}
+                chatPane={{
+                  direction: layout.direction,
+                  element: null,
+                  narrow: false,
+                  hostsHiddenTerminals: alone || index === 0,
+                  otherPaneThreadKeys: alone
+                    ? NO_THREAD_KEYS
+                    : new Set(
+                        paneThreadKeys.filter(
+                          (key, keyIndex): key is string => keyIndex !== index && key !== null,
+                        ),
+                      ),
+                  swap,
+                  setDirection,
+                  close: () => closePane(pane.id),
+                }}
               />
             </Fragment>
-          ),
-        )}
+          );
+        })}
       </div>
     </SidebarInset>
   );
+}
+
+function paneThreadKey(
+  target: ThreadRouteTarget,
+  drafts: Pick<ReturnType<typeof useComposerDraftStore.getState>, "getDraftSession">,
+): string | null {
+  if (target.kind === "server") return scopedThreadKey(target.threadRef);
+  const session = drafts.getDraftSession(target.draftId);
+  return session ? scopedThreadKey(scopeThreadRef(session.environmentId, session.threadId)) : null;
+}
+
+/**
+ * Window chrome (traffic lights, native title bar controls) sits only at the window's edges, so a
+ * pane away from an edge drops the inset that edge reserves.
+ */
+function windowEdgeStyle(edges: WindowEdges): CSSProperties {
+  return {
+    ...(edges.right
+      ? {}
+      : { "--workspace-controls-right": "0.75rem", "--workspace-native-controls-inset": "0px" }),
+    ...(edges.top ? {} : { "--workspace-controls-top": "0px" }),
+    ...(edges.top && edges.left
+      ? {}
+      : { "--workspace-titlebar-content-left": "var(--workspace-gutter)" }),
+  } as CSSProperties;
 }
 
 function isRouteFor(pathname: string, target: ThreadRouteTarget): boolean {
@@ -192,27 +262,49 @@ function ChatPane({
   pane,
   sized,
   vertical,
+  alone,
+  edges,
   background,
+  chatPane,
   onFocus,
-  onClose,
 }: {
   pane: ResolvedChatPane;
   /** The first pane takes the split ratio; the second fills the rest. */
   sized: boolean;
   vertical: boolean;
+  /** The only pane rendered, because the window cannot fit the split. */
+  alone: boolean;
+  edges: WindowEdges;
   background: boolean;
+  chatPane: ChatPaneContextValue;
   onFocus: () => void;
-  onClose: () => void;
 }) {
   const composerHandle = useComposerHandleContext();
   const passive = !pane.active;
+  const [narrow, setNarrow] = useState(false);
+  const [element, setElement] = useState<HTMLDivElement | null>(null);
+  const observePane = (node: HTMLDivElement) => {
+    setElement(node);
+    const measure = () => setNarrow(node.clientWidth < CHAT_PANE_INLINE_RIGHT_PANEL_MIN_WIDTH);
+    measure();
+    return observeResize(node, measure);
+  };
   return (
     <div
+      ref={observePane}
       className={cn(
         "relative flex min-h-0 min-w-0 flex-col",
         sized ? "shrink grow-0 basis-[calc(var(--chat-pane-split)*100%)]" : "flex-1 basis-0",
         vertical ? "min-h-60" : "min-w-90",
+        // Layout containment anchors the header's fixed title bar controls to this pane.
+        !alone && "[contain:layout]",
+        !alone &&
+          !passive &&
+          "before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-30 before:h-px before:bg-primary/60",
+        !alone && passive && "[&_[data-chat-header]]:opacity-60",
+        !edges.top && "[&_[data-chat-header]]:[-webkit-app-region:no-drag]",
       )}
+      style={windowEdgeStyle(edges)}
       data-chat-pane={pane.id}
       data-background-thread-view={passive || undefined}
       onPointerDownCapture={passive ? onFocus : undefined}
@@ -220,12 +312,16 @@ function ChatPane({
     >
       {/* The app-wide composer handle belongs to the focused pane's composer. */}
       <ComposerHandleContext value={passive ? null : composerHandle}>
-        <ThreadRouteContent
-          target={pane.target}
-          background={background}
-          passive={passive}
-          unavailable={<UnavailablePane onClose={onClose} />}
-        />
+        <ChatPaneContext
+          value={{ ...chatPane, element: alone ? null : element, narrow: !alone && narrow }}
+        >
+          <ThreadRouteContent
+            target={pane.target}
+            background={background}
+            passive={passive}
+            unavailable={<UnavailablePane onClose={chatPane.close} />}
+          />
+        </ChatPaneContext>
       </ComposerHandleContext>
     </div>
   );
