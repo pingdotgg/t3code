@@ -74,9 +74,10 @@ export function createOfflineOutbox(options: {
     });
   const drain = async () => {
     const blockedThreads = new Set<string>();
-    for (const message of messages) {
-      const id = message.input.message.messageId;
-      if (!messages.some((entry) => entry.input.message.messageId === id)) continue;
+    for (const queued of messages) {
+      const id = queued.input.message.messageId;
+      const message = messages.find((entry) => entry.input.message.messageId === id);
+      if (!message) continue;
       const threadKey = `${message.environmentId}:${message.input.threadId}`;
       if (blockedThreads.has(threadKey)) continue;
       if (message.error || sending.has(id) || !options.canSend(message)) {

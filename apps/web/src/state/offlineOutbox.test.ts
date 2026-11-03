@@ -134,17 +134,21 @@ describe("offline outbox", () => {
       },
     });
     await queue.enqueue(message("first"));
-    await queue.enqueue(message("canceled"));
+    const canceled = message("canceled");
+    const bootstrap = { prepareWorktree: { projectCwd: "/repo", baseBranch: "main" } };
+    await queue.enqueue({ ...canceled, input: { ...canceled.input, bootstrap } });
+    await queue.enqueue(message("survivor"));
     h.online.add(EnvironmentId.make("home"));
     const drain = queue.drain();
     await ready;
     await queue.remove("first");
     await queue.remove("canceled");
     await queue.drain();
-    expect(h.stored.size).toBe(1);
+    expect(h.stored.size).toBe(2);
     finish();
     await drain;
-    expect(h.sent).toHaveLength(1);
+    expect(h.sent).toHaveLength(2);
+    expect(h.sent[1]?.input.bootstrap).toEqual(bootstrap);
     expect(h.stored.size).toBe(0);
   });
 });
