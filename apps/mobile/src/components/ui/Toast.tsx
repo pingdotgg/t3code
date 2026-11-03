@@ -1,3 +1,4 @@
+import { cn } from "../../lib/cn";
 import { MOBILE_MOTION } from "../../lib/designTokens";
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import {
@@ -67,7 +68,7 @@ function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
   );
   // Keep the full touch target in the layout; hitSlop cannot extend past a parent.
   const controlInset = Math.max(0, (48 - controlSize) / 2);
-  const borderRadius = Platform.OS === "ios" ? 31 : controlSize / 2 + 8;
+  const borderRadius = Platform.OS === "ios" ? 28 : controlSize / 2 + 8;
   // Explicit single-line notices reserve the action's width and truncate the text.
   const inlineAction =
     props.singleLine ||
@@ -104,7 +105,7 @@ function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
         </View>
       </Pressable>
     ) : (
-      <Button label={props.action.label} onPress={props.action.onPress} />
+      <Button label={props.action.label} onPress={props.action.onPress} size="compact" />
     )
   ) : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- announces the toast message to VoiceOver through AccessibilityInfo
@@ -116,7 +117,7 @@ function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
       key={props.glassReady === false ? "entering" : "settled"}
       chrome={Platform.OS === "ios" && colorScheme === "dark" ? "none" : undefined}
       tintColor={Platform.OS === "ios" ? null : undefined}
-      className={Platform.OS === "ios" ? "bg-transparent p-3" : undefined}
+      className={Platform.OS === "ios" ? "bg-transparent p-2" : undefined}
       style={{
         borderRadius,
         ...(Platform.OS === "android"
@@ -132,7 +133,11 @@ function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
       }}
     >
       <View
-        className="flex-row items-center gap-3"
+        className={cn(
+          "flex-row items-center gap-3",
+          // Match the leading inset to the action label's, which sits inside the button's padding.
+          Platform.OS === "ios" && inlineAction && action && "pl-5",
+        )}
         style={Platform.OS === "android" ? { gap: 12 * layoutScale } : undefined}
       >
         {props.busy ? (
