@@ -42,12 +42,14 @@ export const layer = Layer.effect(
       shouldRunBackgroundWork: backgroundPolicy.shouldRunScopeWork,
       resolveAttachmentPath: (attachment) =>
         resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),
-      persistChatAttachments: Effect.fn("ProviderHost.persistChatAttachments")((input) =>
-        persistChatAttachments(input).pipe(
-          Effect.provideService(ServerConfig.ServerConfig, config),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-        ),
+      // ChatAttachments owns the persistence span.
+      persistChatAttachments: Effect.fnUntraced(
+        function* (input) {
+          return yield* persistChatAttachments(input);
+        },
+        Effect.provideService(ServerConfig.ServerConfig, config),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
       ),
       // DocumentText owns the path-resolution span.
       resolveExtractedTextPath: Effect.fnUntraced(
