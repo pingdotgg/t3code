@@ -1873,6 +1873,26 @@ describe("locating a device id across hosts", () => {
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
   );
 
+  it.effect("does not guess between two emulators running the same AVD", () =>
+    Effect.gen(function* () {
+      const service = yield* DeviceService.makeWithHosts(
+        new Map([
+          [
+            thisMachine.id,
+            listingHost(thisMachine, [
+              { id: "emulator-5554", name: "Medium_Phone" },
+              { id: "emulator-5556", name: "Medium_Phone" },
+            ]),
+          ],
+        ]),
+      ).pipe(Effect.provide(NodeCrypto.layer));
+      yield* service.list;
+      expect(yield* service.locateDevice({ deviceId: DeviceId.make("Medium_Phone") })).toEqual(
+        Option.none(),
+      );
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+  );
+
   it.effect("finds nothing for a device id that no host lists", () =>
     withTwoHosts((service) =>
       Effect.gen(function* () {

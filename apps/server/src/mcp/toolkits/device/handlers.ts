@@ -4,6 +4,7 @@ import {
   type DeviceHostSummary,
   type DeviceId,
   type DevicePlatform,
+  type DeviceServiceState,
   type DeviceSummary,
   DeviceToolUnavailableError,
   LOCAL_DEVICE_HOST_ID,
@@ -144,10 +145,7 @@ const mapLocateErrors = <A, R>(
   );
 
 const pickDevice = Effect.fn("handlers.pickDevice")(function* (
-  state: {
-    readonly hosts: ReadonlyArray<DeviceHostSummary>;
-    readonly devices: ReadonlyArray<DeviceSummary>;
-  },
+  state: DeviceServiceState,
   input: {
     readonly deviceId?: DeviceId | undefined;
     readonly platform?: DevicePlatform | undefined;
@@ -159,6 +157,21 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
     const devices = yield* DeviceService.DeviceService;
     const located = yield* devices.locateDevice({ deviceId, hostId }).pipe(mapLocateErrors);
     if (Option.isSome(located)) return located.value;
+    // A failed refresh keeps the previous devices, so the device may be there unlisted.
+    const failed = state.hosts.filter(
+      (host) =>
+        (hostId === undefined || host.id === hostId) &&
+        state.hostStatuses[host.id]?.status === "failed",
+    );
+    if (failed.length > 0) {
+      const failures = failed.map((host) => {
+        const detail = state.hostStatuses[host.id]?.detail;
+        return detail ? `${hostName(host)} (${detail})` : hostName(host);
+      });
+      return yield* new DeviceToolUnavailableError({
+        reason: `Device ${deviceId} is not in the last device list, and listing devices failed on ${failures.join(", ")}. Call device_list to retry.`,
+      });
+    }
     return yield* new DeviceToolUnavailableError({
       reason: `No device ${deviceId} on ${hostId === undefined ? "any host" : hostName(state.hosts.find((host) => host.id === hostId) ?? { id: hostId })}. Call device_list for current ids.`,
     });

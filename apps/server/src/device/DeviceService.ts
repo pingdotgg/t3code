@@ -201,7 +201,8 @@ export class DeviceService extends Context.Service<
     /**
      * The device an id names in the last listing. Ids are unique per host, not across hosts (an
      * Android AVD name can exist on two), so a hostId decides, and without one the id has to be
-     * on a single host.
+     * on a single host. On a host where no device has the id, the one emulator running the AVD of
+     * that name stands in for it.
      */
     readonly locateDevice: (input: {
       readonly hostId?: DeviceHostId | undefined;
@@ -1029,11 +1030,20 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     "DeviceService.locateDevice",
   )(function* (input) {
     const { state } = yield* SynchronizedRef.get(stateRef);
-    return yield* locate(
-      state,
-      input,
-      state.devices.filter((device) => device.id === input.deviceId),
+    const byId = state.devices.filter((device) => device.id === input.deviceId);
+    const hostsWithId = new Set(byId.map((device) => device.hostId));
+    // A shut-down AVD is listed by its name and a running one by its adb serial.
+    const byAvdName = state.devices.filter(
+      (device) =>
+        device.platform === "android" &&
+        !device.physical &&
+        device.name === input.deviceId &&
+        !hostsWithId.has(device.hostId),
     );
+    const unambiguousByAvdName = byAvdName.filter(
+      (device) => byAvdName.filter((other) => other.hostId === device.hostId).length === 1,
+    );
+    return yield* locate(state, input, [...byId, ...unambiguousByAvdName]);
   });
 
   const locateSession: DeviceService["Service"]["locateSession"] = Effect.fn(
