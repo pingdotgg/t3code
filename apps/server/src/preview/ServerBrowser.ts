@@ -2009,7 +2009,12 @@ const make = Effect.gen(function* () {
             if (existing) {
               if (url) await navigate(tab, url, "load", navigationTimeout);
             } else {
-              await tab.initialNavigation;
+              // A failed open returns no tabId; a leftover hidden tab would block later reuse.
+              await tab.initialNavigation?.catch(async (cause: unknown) => {
+                await runPromise(manager.close({ threadId: tab.threadId, tabId: tab.tabId }));
+                dropTab(tab, false);
+                throw cause;
+              });
             }
             const reveal = open.open ?? open.show;
             if (reveal !== false) {

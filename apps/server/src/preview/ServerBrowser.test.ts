@@ -481,7 +481,8 @@ it.live("tells the desktop once per thread when its agent turns start and end", 
 it.live("preview_open reports its navigation timeout instead of the request budget", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { broker } = yield* ready;
+      const { broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
       initialNavigation = async () => {
         throw Object.assign(new Error("page.goto: Timeout 15000ms exceeded."), {
           name: "TimeoutError",
@@ -505,6 +506,10 @@ it.live("preview_open reports its navigation timeout instead of the request budg
         timeoutMs: 15_000,
       });
       expect(error.message).toBe("Preview automation open timed out after 15000ms.");
+      // The failed open returned no tabId, so its tab must not linger and block later opens.
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions.map((session) => session.tabId)).toEqual([tabId]);
+      expect(contexts[1]!.page.close).toHaveBeenCalled();
     }),
   ).pipe(Effect.provide(layer)),
 );
