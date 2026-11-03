@@ -448,7 +448,6 @@ export function startThreadNotifications(
     }
     if (
       !hasDesktopNotifications(mode) ||
-      (document.visibilityState === "visible" && document.hasFocus()) ||
       typeof Notification === "undefined" ||
       Notification.permission !== "granted"
     ) {

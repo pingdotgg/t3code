@@ -9,6 +9,8 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
+import { hasDesktopNotifications, hasNotificationSound } from "../threadNotifications";
+
 import { emitAgentAlert } from "./agentAlertPresenter";
 
 export const layer = Layer.effectDiscard(
@@ -24,7 +26,12 @@ export const layer = Layer.effectDiscard(
     const refresh = yield* Queue.sliding<void>(1);
     const sync = Effect.fnUntraced(function* () {
       const { notificationMode, inAppNotificationsEnabled } = getClientSettings();
-      const presentable = notificationMode !== "off" || inAppNotificationsEnabled;
+      const presentable =
+        inAppNotificationsEnabled ||
+        hasNotificationSound(notificationMode) ||
+        (hasDesktopNotifications(notificationMode) &&
+          typeof Notification !== "undefined" &&
+          Notification.permission === "granted");
       const active = presentable ? yield* Ref.get(entries) : new Map<EnvironmentId, unknown>();
       const current = yield* Ref.get(running);
       for (const [environmentId, fiber] of current) {
