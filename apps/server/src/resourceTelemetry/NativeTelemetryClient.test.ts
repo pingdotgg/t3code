@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
+import * as Scheduler from "effect/Scheduler";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -146,8 +147,10 @@ describe("commitCollectionControlUpdate", () => {
 });
 
 describe("disabled native monitor", () => {
-  it.effect("does not resolve or spawn the monitor and refuses retries", () =>
-    Effect.gen(function* () {
+  it.effect("does not resolve or spawn the monitor and refuses retries", () => {
+    const scheduler = new Scheduler.MixedScheduler("sync");
+    const dispatcher = scheduler.makeDispatcher();
+    return Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const spawn = vi.fn(() => Effect.die("disabled monitor must not spawn"));
@@ -174,6 +177,7 @@ describe("disabled native monitor", () => {
           expect(error._tag).toBe("NativeTelemetryUnavailable");
         }
         expect(yield* client.retry).toBe(false);
+        dispatcher.flush();
         expect(resolve).not.toHaveBeenCalled();
         expect(spawn).not.toHaveBeenCalled();
       }).pipe(
@@ -184,9 +188,14 @@ describe("disabled native monitor", () => {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, { ...spawner, spawn }),
       );
     }).pipe(
+      Effect.provideService(Scheduler.Scheduler, {
+        executionMode: scheduler.executionMode,
+        makeDispatcher: () => dispatcher,
+        shouldYield: (fiber) => scheduler.shouldYield(fiber),
+      }),
       Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-monitor-client-" })),
       Effect.scoped,
       Effect.provide(NodeServices.layer),
-    ),
-  );
+    );
+  });
 });
