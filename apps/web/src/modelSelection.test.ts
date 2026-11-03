@@ -335,8 +335,8 @@ describe("instance-scoped model selection", () => {
 
   it.each([
     ["claude-opus-4-6", "claude-sonnet-4-6"],
-    ["openai/gpt-5.5", "claude-opus-4-6"],
-  ])("falls back when %s is hidden", (hiddenModel, fallbackModel) => {
+    ["openai/gpt-5.5", "openai/gpt-5.5"],
+  ])("hides %s while preserving configured custom selections", (hiddenModel, expectedModel) => {
     const providers = [
       provider({
         instanceId: "claude_openrouter",
@@ -366,7 +366,7 @@ describe("instance-scoped model selection", () => {
         providers,
         hiddenModel,
       ),
-    ).toBe(fallbackModel);
+    ).toBe(expectedModel);
     expect(
       resolveAppModelSelectionForInstance(
         ProviderInstanceId.make("claude_openrouter"),
@@ -375,7 +375,7 @@ describe("instance-scoped model selection", () => {
         hiddenModel,
         { preserveUnavailableSelection: true },
       ),
-    ).toBe(fallbackModel);
+    ).toBe(expectedModel);
     expect(
       getAppModelOptionsForInstance(
         { ...settings, providerModelPreferences: {} },
