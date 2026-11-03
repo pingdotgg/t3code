@@ -31,6 +31,7 @@ const state = vi.hoisted(() => ({
     projectId: ProjectId;
     title: string;
     worktreePath: string | null;
+    lineage: { parentThreadId: ThreadId | null; sideChat?: boolean };
     session: { status: "ready" | "stopped" } | null;
     latestTurn: null;
   }[],
@@ -119,7 +120,8 @@ vi.mock("../components/Sidebar.logic", () => ({
 vi.mock("../composerDraftStore", () => ({
   useComposerDraftStore: (select: (store: unknown) => unknown) =>
     select({
-      clearDraftThread: () => state.localEffects.push("clear-draft"),
+      clearDraftThread: (ref: ScopedThreadRef) =>
+        state.localEffects.push(`clear-draft:${ref.threadId}`),
       clearProjectDraftThreadById: () => state.localEffects.push("clear-project-draft"),
     }),
 }));
@@ -139,7 +141,8 @@ vi.mock("../lib/archivedThreadsState", () => ({
   refreshArchivedThreadsForEnvironment: () => state.localEffects.push("refresh-archive"),
 }));
 vi.mock("../lib/composerDraftUploads", () => ({
-  releaseComposerDraftUploads: () => state.localEffects.push("release-uploads"),
+  releaseComposerDraftUploads: (ref: ScopedThreadRef) =>
+    state.localEffects.push(`release-uploads:${ref.threadId}`),
 }));
 vi.mock("../localApi", () => ({
   readLocalApi: () => ({ dialogs: { confirm: state.confirm } }),
@@ -238,6 +241,7 @@ beforeEach(() => {
       projectId: ProjectId.make("project"),
       title: "Thread",
       worktreePath: null,
+      lineage: { parentThreadId: null },
       session: null,
       latestTurn: null,
     },
@@ -346,6 +350,24 @@ describe("thread action permissions", () => {
     expect(state.requests.map((request) => request.action)).toEqual(["stopSession", "delete"]);
     expect(state.localEffects).toContain("clear-terminal-ui");
     expect(threadPanelStatePresence(target)).toEqual(panelStateCleared);
+  });
+
+  it("clears the drafts of the side chats deleted with it", async () => {
+    state.scopes.get(secondary)!.add(AuthOrchestrationOperateScope);
+    const parent = state.threads[0]!;
+    state.threads.push(
+      {
+        ...parent,
+        id: ThreadId.make("side-chat"),
+        lineage: { parentThreadId: parent.id, sideChat: true },
+      },
+      { ...parent, id: ThreadId.make("fork"), lineage: { parentThreadId: parent.id } },
+    );
+    expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
+    expect(state.localEffects).toEqual(
+      expect.arrayContaining(["release-uploads:side-chat", "clear-draft:side-chat"]),
+    );
+    expect(state.localEffects).not.toContain("clear-draft:fork");
   });
 
   it("does not request worktree removal after its grant is revoked during delete", async () => {

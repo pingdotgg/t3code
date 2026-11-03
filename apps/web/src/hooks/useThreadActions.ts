@@ -566,6 +566,15 @@ export function useThreadActions() {
     refreshArchivedThreadsForEnvironment(threadRef.environmentId);
     releaseComposerDraftUploads(threadRef);
     clearComposerDraftForThread(threadRef);
+    // The server deletes the thread's side chats with it.
+    for (const entry of threads) {
+      if (entry.lineage.sideChat !== true || entry.lineage.parentThreadId !== threadRef.threadId) {
+        continue;
+      }
+      const sideChatRef = scopeThreadRef(threadRef.environmentId, entry.id);
+      releaseComposerDraftUploads(sideChatRef);
+      clearComposerDraftForThread(sideChatRef);
+    }
     clearProjectDraftThreadById(
       scopeProjectRef(threadRef.environmentId, thread.projectId),
       threadRef,
