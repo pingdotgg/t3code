@@ -45,6 +45,7 @@ jobs:
       - name: Check workflow runner labels
         run: |
           python3 -B .github/scripts/check-runner-labels.test.py
+          python3 -B .github/scripts/private-linux-routing.test.py
           python3 -B .github/scripts/check-runner-labels.py
 
       - name: Detect affected jobs
@@ -143,10 +144,48 @@ jobs:
         if: needs.changes.outputs.test_web != 'false'
         run: vp run --filter @t3tools/web test
 
+  private-linux-status:
+    name: Request private server tests
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+    outputs:
+      enabled: ${{ steps.request.outputs.enabled }}
+    if: >-
+      !cancelled() && vars.PRIVATE_LINUX_CI == 'true' &&
+      github.actor_id == '25274700' && github.triggering_actor == 'ScriptedAlchemy' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    steps:
+      - name: Request private server capacity
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVER_TESTS: ${{ needs.changes.outputs.test_server }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          enabled=false
+          state=success
+          description='Hosted Linux CI selected'
+          if [[ "$SERVER_TESTS" != false ]]; then
+            enabled=true
+            state=pending
+            description="Requested private-linux:$GITHUB_REPOSITORY:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:full"
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$SOURCE_SHA" \
+            -f state="$state" -f context='Private Linux CI' -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+
   server:
     name: Server tests ${{ matrix.shard }}
-    needs: changes
-    if: needs.changes.outputs.test_server != 'false'
+    needs: [changes, private-linux-status]
+    if: >-
+      !cancelled() && needs.changes.outputs.test_server != 'false' &&
+      !(needs.private-linux-status.result == 'success' && needs.private-linux-status.outputs.enabled == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -163,15 +202,9 @@ jobs:
           git fetch --no-tags --depth=2 origin "$GITHUB_SHA"
           git sparse-checkout set --no-cone '/*' '!/.repos/' '!/apps/mobile/modules/t3-terminal/Vendor/**/*.a'
           git checkout --detach FETCH_HEAD
-      - uses: ./.github/actions/setup-ci-deps
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: ./.github/actions/server-ci
         with:
-          toolchain: stable
-      - name: Install Chromium
-        run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
-      - name: Test server shard
-        run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+          shard: ${{ matrix.shard }}/${{ strategy.job-total }}
 
   rust:
     name: Rust
@@ -237,7 +270,7 @@ jobs:
   check:
     name: Fork Check
     if: ${{ !cancelled() && github.repository != 'pingdotgg/t3code' }}
-    needs: [changes, checks, clients, server, rust, mobile_native]
+    needs: [changes, private-linux-status, checks, clients, server, rust, mobile_native]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -246,9 +279,12 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          echo "$RESULTS" | jq -e '.changes.outputs as $gates
+          echo "$RESULTS" | jq -e '(."private-linux-status".result == "success" and ."private-linux-status".outputs.enabled == "true") as $private
+            | .changes.outputs as $gates
             | {clients: ["test", "test_web"], server: ["test_server"]} as $renamed
             | all(to_entries[];
                 .value.result == "success"
+                or (.key == "private-linux-status" and .value.result == "skipped")
+                or (.key == "server" and .value.result == "skipped" and $private)
                 or (.value.result == "skipped"
                   and (($renamed[.key] // [.key]) | all(.[]; $gates[.] == "false"))))' > /dev/null

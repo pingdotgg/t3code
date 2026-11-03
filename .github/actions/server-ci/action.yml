@@ -1,0 +1,36 @@
+name: Server CI
+description: Run the server suite on a hosted shard or an isolated Linux worker.
+inputs:
+  shard:
+    description: Optional Vitest shard, such as 1/8
+    default: ""
+  max-workers:
+    description: Optional Vitest worker limit
+    default: ""
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/setup-ci-deps
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      with:
+        toolchain: stable
+    - name: Install Chromium
+      shell: bash
+      run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+    - name: Test server
+      shell: bash
+      env:
+        TEST_SHARD: ${{ inputs.shard }}
+        MAX_WORKERS: ${{ inputs.max-workers }}
+      run: |
+        args=()
+        if [[ -n "$TEST_SHARD" ]]; then
+          [[ "$TEST_SHARD" =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]]
+          args+=(--shard "$TEST_SHARD")
+        fi
+        if [[ -n "$MAX_WORKERS" ]]; then
+          [[ "$MAX_WORKERS" =~ ^[1-9][0-9]*$ ]]
+          args+=(--maxWorkers "$MAX_WORKERS")
+        fi
+        vp run --filter t3 test "${args[@]}"
