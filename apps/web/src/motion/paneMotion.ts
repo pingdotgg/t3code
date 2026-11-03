@@ -375,6 +375,19 @@ export function usePaneMotion(
   } | null>(null);
   const ghosts = useRef(new WeakSet<HTMLElement>());
   const ghostDone = useEffectEvent(onGhostDone);
+  const shownScroll = useRef<number | null>(null);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Track the strip scroll the user last saw, which a layout change clamps before effects run.
+  useLayoutEffect(() => {
+    const scroller = stageRef.current?.parentElement;
+    if (!scroller) return;
+    const note = () => {
+      shownScroll.current = scroller.scrollLeft;
+    };
+    note();
+    scroller.addEventListener("scroll", note, { passive: true });
+    return () => scroller.removeEventListener("scroll", note);
+  }, [stageRef]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure committed pane boxes and start DOM animations before paint.
   useLayoutEffect(() => {
@@ -403,12 +416,23 @@ export function usePaneMotion(
       // Every pane shares the pane radius.
       if (radius === null) radius = radiusOf(child);
     }
-    const view = visibleSpan(stage);
     const before = previous.current;
     previous.current = { key, placement, boxes };
     const animate = before !== null && before.key === key && framed;
-    for (const { ghost, box } of closing) {
+    const scroller = stage.parentElement;
+    const shown = shownScroll.current;
+    const camera =
+      animate && scroller && shown !== null && stripCameraPosition(scroller) === scroller.scrollLeft
+        ? shown - scroller.scrollLeft
+        : 0;
+    if (scroller) shownScroll.current = scroller.scrollLeft;
+    const previousBoxes = new Map(
+      [...(before?.boxes ?? [])].map(([id, box]) => [id, { ...box, x: box.x - camera }]),
+    );
+    const view = visibleSpan(stage);
+    for (const { ghost, box: drawn } of closing) {
       ghosts.current.add(ghost);
+      const box = { ...drawn, x: drawn.x - camera };
       const tabId = ghost.dataset.layoutClosing!;
       let edge: Edge | null = null;
       // Hidden the moment it rests, so it never shows again for the frame
@@ -422,7 +446,7 @@ export function usePaneMotion(
         animate && before
           ? findDonor(
               box,
-              [...before.boxes]
+              [...previousBoxes]
                 .filter(([id]) => id !== tabId)
                 .map(([id, was]) => ({ box: was, other: boxes.get(id) })),
             )
@@ -433,13 +457,23 @@ export function usePaneMotion(
       }
       const { neighbour, side, gap } = donor;
       const now = neighbour.other;
-      let offset: { dx: number; dy: number };
-      if (now && (side === "left" || side === "above") && resized(side, neighbour.box, now)) {
-        // The donor grows into its room: out past its new edge, over it.
-        offset =
-          side === "left"
+      const past =
+        now && (side === "left" || side === "above") && resized(side, neighbour.box, now)
+          ? side === "left"
             ? { dx: now.x + now.width + gap - box.x, dy: 0 }
-            : { dx: 0, dy: now.y + now.height + gap - box.y };
+            : { dx: 0, dy: now.y + now.height + gap - box.y }
+          : null;
+      const coversPane =
+        past !== null &&
+        [...boxes.values()].some(
+          (pane) =>
+            overlaps(box.x + past.dx, box.x + past.dx + box.width, pane.x, pane.x + pane.width) &&
+            overlaps(box.y + past.dy, box.y + past.dy + box.height, pane.y, pane.y + pane.height),
+        );
+      let offset: { dx: number; dy: number };
+      if (past && !coversPane) {
+        // The donor grows into its room: out past its new edge, over it.
+        offset = past;
         ghost.style.zIndex = "50";
         edge = makeEdge(stage, box, side, gap, radius ?? 0, 0, true);
       } else {
@@ -449,14 +483,21 @@ export function usePaneMotion(
       const motion = MotionAnimation.start("window-movement", 0, 1);
       const keyframe = (progress: number) => translate(offset.dx * progress, offset.dy * progress);
       if (edge) playMotion(edge.element, motion, keyframe, undefined, undefined, true);
-      playMotion(ghost, motion, keyframe, done, undefined, true);
+      playMotion(
+        ghost,
+        motion,
+        (progress) => translate(offset.dx * progress - camera, offset.dy * progress),
+        done,
+        undefined,
+        true,
+      );
     }
     if (!before || !animate) return;
     // Where each pane shows now against its new place, before any slide
     // below retargets it: its move plus what a running slide still owes.
     const shows = new Map<string, { dx: number; dy: number }>();
     for (const [tabId, box] of boxes) {
-      const was = before.boxes.get(tabId);
+      const was = previousBoxes.get(tabId);
       const running = slides.get(box.element);
       const owed = running ? running.run.value() : 0;
       shows.set(tabId, {
@@ -508,16 +549,16 @@ export function usePaneMotion(
         if (travel - own <= 1 || own < 0) return undefined;
         return makeEdge(stage, box, side, beside.gap, radius ?? 0, travel, false);
       };
-    const panesBefore = new Set([...before.boxes.values()].map((box) => box.paneId));
+    const panesBefore = new Set([...previousBoxes.values()].map((box) => box.paneId));
     for (const [tabId, box] of boxes) {
-      const was = before.boxes.get(tabId);
+      const was = previousBoxes.get(tabId);
       if (!was) {
-        if (panesBefore.has(box.paneId) || before.boxes.size === 0) continue;
+        if (panesBefore.has(box.paneId) || previousBoxes.size === 0) continue;
         const donor = findDonor(
           box,
           [...boxes]
             .filter(([id, other]) => other !== box && panesBefore.has(other.paneId) && id !== tabId)
-            .map(([id, other]) => ({ box: other, other: before.boxes.get(id) })),
+            .map(([id, other]) => ({ box: other, other: previousBoxes.get(id) })),
         );
         if (!donor) continue;
         const { neighbour, side, gap } = donor;
