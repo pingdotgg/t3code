@@ -5956,7 +5956,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           const terminal = harness.terminalEvents()[0];
           assert.equal(terminal?.status, "failed");
           if (terminal?.status !== "failed") return;
-          assert.include(terminal.failure.message, detailedExplanation);
+          assert.equal(terminal.failure.message.split(detailedExplanation).length - 1, 1);
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
