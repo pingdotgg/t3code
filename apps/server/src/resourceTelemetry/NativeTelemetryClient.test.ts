@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Scheduler from "effect/Scheduler";
@@ -15,6 +16,7 @@ import {
   synchronizeCollectionControlOnStart,
 } from "./NativeTelemetryClient.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as ServerConfig from "../config.ts";
 import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
 import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
@@ -195,7 +197,7 @@ describe("disabled native monitor", () => {
       }),
       Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-monitor-client-" })),
       Effect.scoped,
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
   });
 });
