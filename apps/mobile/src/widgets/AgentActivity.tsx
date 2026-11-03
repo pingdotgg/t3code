@@ -9,7 +9,6 @@ import {
   frame,
   layoutPriority,
   lineLimit,
-  minimumScaleFactor,
   padding,
   resizable,
   widgetURL,
@@ -145,7 +144,14 @@ function AgentActivity(
     : environment.isStale
       ? "Out of date"
       : `${props.activeCount} active`;
-  const showCompactGlyph = !attentionRow && !failedRow && !allDone && !environment.isStale;
+  const compactPhase = heroRow?.phase ?? (allDone ? "completed" : "running");
+  const compactLabel = attentionRow
+    ? attentionRow.phase === "waiting_for_approval"
+      ? "Approval needed"
+      : "Input needed"
+    : failedRow
+      ? "Agent work failed"
+      : agentsLabel;
   const summary = attentionSuffix || activeLabel;
 
   // Widget taps target the containing app, so its production scheme is safe in every build.
@@ -160,11 +166,11 @@ function AgentActivity(
   const phaseSymbol = (phase: AgentActivityPhase): SFName => {
     switch (phase) {
       case "waiting_for_approval":
-        return "exclamationmark.circle.fill";
+        return "questionmark.diamond.fill";
       case "waiting_for_input":
-        return "questionmark.circle.fill";
+        return "text.bubble.fill";
       case "failed":
-        return "xmark.octagon.fill";
+        return "exclamationmark.triangle.fill";
       case "completed":
         return "checkmark.circle.fill";
       case "starting":
@@ -320,38 +326,19 @@ function AgentActivity(
       </VStack>
     ),
     compactLeading: renderLogo(14, tint, linkModifiers),
-    // While agents are only working, stay quiet: the thread list's Working
-    // glyph marks the activity without a count. Labels appear only for
-    // attention or outcomes.
-    compactTrailing: showCompactGlyph ? (
+    // Glyphs only: a word in this slot wraps or scales to illegibility once
+    // another app's Live Activity narrows it.
+    compactTrailing: (
       <HStack
         modifiers={[
           padding({ trailing: 2 }),
           accessibilityElement("ignore"),
-          accessibilityLabel(agentsLabel),
+          accessibilityLabel(compactLabel),
           ...linkModifiers,
         ]}
       >
-        {renderGlyph(phaseSymbol(heroRow?.phase ?? "running"), 14, tint)}
+        {renderGlyph(phaseSymbol(compactPhase), 18, tint)}
       </HStack>
-    ) : (
-      <Text
-        modifiers={[
-          font({ weight: "semibold", size: 11 }),
-          foregroundStyle(tint),
-          lineLimit(1),
-          minimumScaleFactor(0.5),
-          ...linkModifiers,
-        ]}
-      >
-        {attentionRow
-          ? attentionRow.phase === "waiting_for_approval"
-            ? "Approval"
-            : "Input"
-          : failedRow
-            ? "Failed"
-            : activeLabel}
-      </Text>
     ),
     minimal: heroRow
       ? renderGlyph(phaseSymbol(heroRow.phase), 13, phaseTint(heroRow.phase), linkModifiers)
