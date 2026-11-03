@@ -76,142 +76,45 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("azure-devops"),
-    listChangeRequests: (input) => {
-      const source = SourceControlProvider.sourceControlRefFromInput(input);
-      return azure
-        .listPullRequests({
-          cwd: input.cwd,
-          headSelector: input.headSelector,
-          ...(source !== undefined ? { source } : {}),
-          state: input.state,
-          ...(input.limit !== undefined ? { limit: input.limit } : {}),
-        })
-        .pipe(
-          Effect.map((items) => items.map(toChangeRequest)),
+    listChangeRequests: Effect.fn("AzureDevOpsSourceControlProvider.listChangeRequests")(
+      function (input) {
+        const source = SourceControlProvider.sourceControlRefFromInput(input);
+        return azure
+          .listPullRequests({
+            cwd: input.cwd,
+            headSelector: input.headSelector,
+            ...(source !== undefined ? { source } : {}),
+            state: input.state,
+            ...(input.limit !== undefined ? { limit: input.limit } : {}),
+          })
+          .pipe(
+            Effect.map((items) => items.map(toChangeRequest)),
+            Effect.mapError(
+              (error) =>
+                new SourceControlProviderError({
+                  provider: SourceControlProviderKind.make("azure-devops"),
+                  operation: "listChangeRequests",
+                  command: error.command,
+                  cwd: input.cwd,
+                  reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                    input.headSelector,
+                  ),
+                  detail: error.detail,
+                  cause: error,
+                }),
+            ),
+          );
+      },
+    ),
+    getChangeRequest: Effect.fn("AzureDevOpsSourceControlProvider.getChangeRequest")(
+      function (input) {
+        return azure.getPullRequest(input).pipe(
+          Effect.map(toChangeRequest),
           Effect.mapError(
             (error) =>
               new SourceControlProviderError({
                 provider: SourceControlProviderKind.make("azure-devops"),
-                operation: "listChangeRequests",
-                command: error.command,
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.headSelector,
-                ),
-                detail: error.detail,
-                cause: error,
-              }),
-          ),
-        );
-    },
-    getChangeRequest: (input) =>
-      azure.getPullRequest(input).pipe(
-        Effect.map(toChangeRequest),
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: SourceControlProviderKind.make("azure-devops"),
-              operation: "getChangeRequest",
-              command: error.command,
-              cwd: input.cwd,
-              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.reference,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
-        ),
-      ),
-    createChangeRequest: (input) => {
-      const source = SourceControlProvider.sourceControlRefFromInput(input);
-      return azure
-        .createPullRequest({
-          cwd: input.cwd,
-          baseBranch: input.baseRefName,
-          headSelector: input.headSelector,
-          ...(source !== undefined ? { source } : {}),
-          ...(input.target !== undefined ? { target: input.target } : {}),
-          title: input.title,
-          bodyFile: input.bodyFile,
-        })
-        .pipe(
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: SourceControlProviderKind.make("azure-devops"),
-                operation: "createChangeRequest",
-                command: error.command,
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.headSelector,
-                ),
-                detail: error.detail,
-                cause: error,
-              }),
-          ),
-        );
-    },
-    getRepositoryCloneUrls: (input) =>
-      azure.getRepositoryCloneUrls(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: SourceControlProviderKind.make("azure-devops"),
-              operation: "getRepositoryCloneUrls",
-              command: error.command,
-              cwd: input.cwd,
-              repository: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.repository,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
-        ),
-      ),
-    createRepository: (input) =>
-      azure.createRepository(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: SourceControlProviderKind.make("azure-devops"),
-              operation: "createRepository",
-              command: error.command,
-              cwd: input.cwd,
-              repository: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.repository,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
-        ),
-      ),
-    getDefaultBranch: (input) =>
-      azure.getDefaultBranch({ cwd: input.cwd }).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: SourceControlProviderKind.make("azure-devops"),
-              operation: "getDefaultBranch",
-              command: error.command,
-              cwd: input.cwd,
-              detail: error.detail,
-              cause: error,
-            }),
-        ),
-      ),
-    checkoutChangeRequest: (input) =>
-      azure
-        .checkoutPullRequest({
-          cwd: input.cwd,
-          reference: input.reference,
-          ...(input.context !== undefined ? { remoteName: input.context.remoteName } : {}),
-        })
-        .pipe(
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: SourceControlProviderKind.make("azure-devops"),
-                operation: "checkoutChangeRequest",
+                operation: "getChangeRequest",
                 command: error.command,
                 cwd: input.cwd,
                 reference: SourceControlProvider.transportSafeSourceControlErrorValue(
@@ -221,6 +124,122 @@ export const make = Effect.gen(function* () {
                 cause: error,
               }),
           ),
-        ),
+        );
+      },
+    ),
+    createChangeRequest: Effect.fn("AzureDevOpsSourceControlProvider.createChangeRequest")(
+      function (input) {
+        const source = SourceControlProvider.sourceControlRefFromInput(input);
+        return azure
+          .createPullRequest({
+            cwd: input.cwd,
+            baseBranch: input.baseRefName,
+            headSelector: input.headSelector,
+            ...(source !== undefined ? { source } : {}),
+            ...(input.target !== undefined ? { target: input.target } : {}),
+            title: input.title,
+            bodyFile: input.bodyFile,
+          })
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new SourceControlProviderError({
+                  provider: SourceControlProviderKind.make("azure-devops"),
+                  operation: "createChangeRequest",
+                  command: error.command,
+                  cwd: input.cwd,
+                  reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                    input.headSelector,
+                  ),
+                  detail: error.detail,
+                  cause: error,
+                }),
+            ),
+          );
+      },
+    ),
+    getRepositoryCloneUrls: Effect.fn("AzureDevOpsSourceControlProvider.getRepositoryCloneUrls")(
+      function (input) {
+        return azure.getRepositoryCloneUrls(input).pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: SourceControlProviderKind.make("azure-devops"),
+                operation: "getRepositoryCloneUrls",
+                command: error.command,
+                cwd: input.cwd,
+                repository: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.repository,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
+        );
+      },
+    ),
+    createRepository: Effect.fn("AzureDevOpsSourceControlProvider.createRepository")(
+      function (input) {
+        return azure.createRepository(input).pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: SourceControlProviderKind.make("azure-devops"),
+                operation: "createRepository",
+                command: error.command,
+                cwd: input.cwd,
+                repository: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.repository,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
+        );
+      },
+    ),
+    getDefaultBranch: Effect.fn("AzureDevOpsSourceControlProvider.getDefaultBranch")(
+      function (input) {
+        return azure.getDefaultBranch({ cwd: input.cwd }).pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: SourceControlProviderKind.make("azure-devops"),
+                operation: "getDefaultBranch",
+                command: error.command,
+                cwd: input.cwd,
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
+        );
+      },
+    ),
+    checkoutChangeRequest: Effect.fn("AzureDevOpsSourceControlProvider.checkoutChangeRequest")(
+      function (input) {
+        return azure
+          .checkoutPullRequest({
+            cwd: input.cwd,
+            reference: input.reference,
+            ...(input.context !== undefined ? { remoteName: input.context.remoteName } : {}),
+          })
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new SourceControlProviderError({
+                  provider: SourceControlProviderKind.make("azure-devops"),
+                  operation: "checkoutChangeRequest",
+                  command: error.command,
+                  cwd: input.cwd,
+                  reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                    input.reference,
+                  ),
+                  detail: error.detail,
+                  cause: error,
+                }),
+            ),
+          );
+      },
+    ),
   });
 });

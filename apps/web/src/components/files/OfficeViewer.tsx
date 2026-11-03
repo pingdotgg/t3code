@@ -85,7 +85,7 @@ function ExtendedOfficeViewer(props: {
   const [page, setPage] = useState(0);
   const workerRef = useRef<Worker | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Own the Office fetch, preparation worker, and timeout for this source and release them on cleanup.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the Office fetch, preparation worker, and timeout for this source and release them on cleanup.
   useEffect(() => {
     const controller = new AbortController();
     if ((props.sizeBytes ?? 0) > OFFICE_PREVIEW_MAX_BYTES) {

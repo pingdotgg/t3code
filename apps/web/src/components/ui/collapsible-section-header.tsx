@@ -35,20 +35,13 @@ export function CollapsibleSectionHeader({
       <span className="shrink-0">{children}</span>
       <span
         aria-hidden
-        // A collapsed header with a trailing count drops its rule so it doesn't read as a leader.
-        className={cn(
-          "h-px min-w-2 flex-1",
-          tones[tone].line,
-          !expanded && accessory && "invisible",
-        )}
+        // A header with a trailing count drops its rule so it doesn't read as a leader.
+        className={cn("h-px min-w-2 flex-1", tones[tone].line, accessory && "invisible")}
       />
       {accessory}
       <ChevronDownIcon
         aria-hidden
-        className={cn(
-          "size-3 shrink-0 transition-transform",
-          !expanded && "rotate-180 redesign:-rotate-90",
-        )}
+        className={cn("size-3 shrink-0 transition-transform", !expanded && "-rotate-90")}
       />
     </button>
   );

@@ -36,6 +36,19 @@ describe("gitHubReferenceAutolinks", () => {
     );
   });
 
+  it("scans long runs of periods and dashes in linear time", () => {
+    expect(linked(`${".".repeat(50_000)} ${".-".repeat(25_000)} #1`)).toEqual([
+      ["#1", "https://github.com/team/repo/issues/1", "reference"],
+    ]);
+  });
+
+  it("links references that follow punctuation", () => {
+    expect(linked("(#5), owner.name/repo-x#3")).toEqual([
+      ["#5", "https://github.com/team/repo/issues/5", "reference"],
+      ["owner.name/repo-x#3", "https://github.com/owner.name/repo-x/issues/3", "reference"],
+    ]);
+  });
+
   it("links against the repository's own host", () => {
     expect(
       gitHubReferenceAutolinks("See #5", "https://ghe.example.com/acme/web").map(({ url }) => url),

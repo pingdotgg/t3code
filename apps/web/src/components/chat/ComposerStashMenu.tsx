@@ -1,5 +1,5 @@
 import { BookmarkIcon, FileIcon, FileTextIcon } from "lucide-react";
-import { memo, useEffect, useRef, useState, type RefObject } from "react";
+import { memo, useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 
 import { RelativeTime } from "../RelativeTime";
@@ -38,83 +38,90 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   onClose: () => void;
 }) {
   const { entries, stashShortcutLabel, composerFormRef, onRestore, onDelete, onClose } = props;
-  const drawerRef = useRef<HTMLDivElement>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(entries[0]?.id ?? null);
 
   const highlightedEntry = entries.find((entry) => entry.id === highlightedId) ?? entries[0];
+  const drawerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      const drawer = drawerRef.current;
-      if (
-        (drawer && event.composedPath().includes(drawer)) ||
-        (event.target instanceof Element &&
-          event.target.closest('[data-prompt-stash-badge="true"]'))
-      ) {
-        return;
-      }
+  // Both listeners read entries, highlight and callbacks at event time, so they subscribe
+  // once for the menu's lifetime instead of on every highlight change.
+  const closeOnOutsidePointer = useEffectEvent((event: PointerEvent) => {
+    const drawer = drawerRef.current;
+    if (
+      (drawer && event.composedPath().includes(drawer)) ||
+      (event.target instanceof Element && event.target.closest('[data-prompt-stash-badge="true"]'))
+    ) {
+      return;
+    }
+    onClose();
+  });
+
+  const handleKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    const drawer = drawerRef.current;
+    if (!drawer) return;
+    const target = event.target;
+    if (
+      !(target instanceof Node) ||
+      (target !== document.body &&
+        !(target instanceof Element && target.closest('[data-prompt-stash-badge="true"]')) &&
+        !drawer.contains(target) &&
+        !composerFormRef.current?.querySelector('textarea, [role="textbox"]')?.contains(target))
+    ) {
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
       onClose();
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointer, true);
-    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
-  }, [onClose]);
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (entries.length === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const currentIndex = entries.findIndex((entry) => entry.id === highlightedEntry?.id);
+      const offset = event.key === "ArrowDown" ? 1 : -1;
+      const normalizedIndex = currentIndex >= 0 ? currentIndex : offset === 1 ? -1 : 0;
+      const nextIndex = (normalizedIndex + offset + entries.length) % entries.length;
+      setHighlightedId(entries[nextIndex]?.id ?? null);
+      const nextButton =
+        drawer.querySelectorAll<HTMLButtonElement>("[data-stash-restore]")[nextIndex];
+      nextButton?.scrollIntoView({ block: "nearest" });
+      if (drawer.contains(document.activeElement)) {
+        nextButton?.focus({ preventScroll: true });
+      }
+      return;
+    }
+    if (event.key === "Enter") {
+      // Let the delete button handle Enter instead of restoring its row.
+      if (event.target instanceof HTMLElement && event.target.closest("button[aria-label]")) {
+        return;
+      }
+      if (!highlightedEntry) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onRestore(highlightedEntry);
+      return;
+    }
+    if (event.key === "Backspace" && (event.metaKey || event.ctrlKey)) {
+      if (!highlightedEntry) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onDelete(highlightedEntry);
+    }
+  });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes capture-phase pointerdown and keydown listeners for outside close and keyboard navigation
   useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      const target = event.target;
-      if (
-        !(target instanceof Node) ||
-        (target !== document.body &&
-          !(target instanceof Element && target.closest('[data-prompt-stash-badge="true"]')) &&
-          !drawerRef.current?.contains(target) &&
-          !composerFormRef.current?.querySelector('textarea, [role="textbox"]')?.contains(target))
-      ) {
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        onClose();
-        return;
-      }
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        if (entries.length === 0) return;
-        event.preventDefault();
-        event.stopPropagation();
-        const currentIndex = entries.findIndex((entry) => entry.id === highlightedEntry?.id);
-        const offset = event.key === "ArrowDown" ? 1 : -1;
-        const normalizedIndex = currentIndex >= 0 ? currentIndex : offset === 1 ? -1 : 0;
-        const nextIndex = (normalizedIndex + offset + entries.length) % entries.length;
-        setHighlightedId(entries[nextIndex]?.id ?? null);
-        const nextButton =
-          drawerRef.current?.querySelectorAll<HTMLButtonElement>("[data-stash-restore]")[nextIndex];
-        nextButton?.scrollIntoView({ block: "nearest" });
-        if (drawerRef.current?.contains(document.activeElement)) {
-          nextButton?.focus({ preventScroll: true });
-        }
-        return;
-      }
-      if (event.key === "Enter") {
-        // Let the delete button handle Enter instead of restoring its row.
-        if (event.target instanceof HTMLElement && event.target.closest("button[aria-label]")) {
-          return;
-        }
-        if (!highlightedEntry) return;
-        event.preventDefault();
-        event.stopPropagation();
-        onRestore(highlightedEntry);
-        return;
-      }
-      if (event.key === "Backspace" && (event.metaKey || event.ctrlKey)) {
-        if (!highlightedEntry) return;
-        event.preventDefault();
-        event.stopPropagation();
-        onDelete(highlightedEntry);
-      }
+    const onPointerDown = (event: PointerEvent) => closeOnOutsidePointer(event);
+    const onKeyDown = (event: KeyboardEvent) => handleKeyDown(event);
+    document.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown, true);
     };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [composerFormRef, entries, highlightedEntry, onClose, onDelete, onRestore]);
+  }, []);
 
   return (
     <ComposerBanner.Root ref={drawerRef} data-composer-stash-drawer="true">

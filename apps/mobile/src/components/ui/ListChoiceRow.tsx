@@ -26,10 +26,8 @@ export function ListChoiceRow(props: {
       onPress={props.onPress}
       android_ripple={{ color: rippleStyle.backgroundColor }}
       unstable_pressDelay={Platform.OS === "android" ? 50 : undefined}
-      className={cn(
-        props.selected ? "bg-subtle" : "bg-grouped-card",
-        props.separated && "border-t border-border-subtle",
-      )}
+      // Like UIKit and Material lists, only the checkmark or radio marks the selected row.
+      className={cn("bg-grouped-card", props.separated && "border-t border-border-subtle")}
     >
       <ListRowLayout
         label={props.label}

@@ -7,7 +7,7 @@ import { appAtomRegistry } from "./atom-registry";
 import { environmentShell } from "./shell";
 import { threadOutboxManager } from "./thread-outbox";
 
-const threadOutboxShellStatusesAtom = Atom.make(
+export const threadOutboxShellStatusesAtom = Atom.make(
   (get): ReadonlyMap<EnvironmentId, EnvironmentShellStatus> => {
     const statuses = new Map<EnvironmentId, EnvironmentShellStatus>();
     for (const queue of Object.values(get(threadOutboxManager.queuedMessagesByThreadKeyAtom))) {
@@ -63,12 +63,8 @@ export const queuedThreadKeysAtom = Atom.make((get): ReadonlySet<string> => {
     }
   }
   return keys;
-}).pipe(Atom.withLabel("mobile:thread-outbox:queued-thread-keys"));
+}).pipe(Atom.keepAlive, Atom.withLabel("mobile:thread-outbox:queued-thread-keys"));
 
 export function useQueuedThreadKeys(): ReadonlySet<string> {
   return useAtomValue(queuedThreadKeysAtom);
-}
-
-export function useThreadOutboxShellStatuses() {
-  return useAtomValue(threadOutboxShellStatusesAtom);
 }

@@ -137,22 +137,19 @@ export function V5CardStackView(
     },
     [props.navigation, setNativePopSource, setScreens],
   );
-  const removeDismissed = useCallback(
-    (key: string) => {
-      if (!props.navigation.getState().routes.some((route) => route.key === key)) {
-        setScreens((current) => {
-          const descriptors = { ...current.descriptors };
-          delete descriptors[key];
-          return {
-            ...current,
-            routes: current.routes.filter((route) => route.key !== key),
-            descriptors,
-          };
-        });
-      }
-    },
-    [props.navigation, setScreens],
-  );
+  const removeDismissed = (key: string) => {
+    if (!props.navigation.getState().routes.some((route) => route.key === key)) {
+      setScreens((current) => {
+        const descriptors = { ...current.descriptors };
+        delete descriptors[key];
+        return {
+          ...current,
+          routes: current.routes.filter((route) => route.key !== key),
+          descriptors,
+        };
+      });
+    }
+  };
   return (
     <View className="flex-1 bg-screen">
       <Stack.Host>

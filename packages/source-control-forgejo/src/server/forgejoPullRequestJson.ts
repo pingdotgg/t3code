@@ -1,6 +1,5 @@
+import { toIsoUtc } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Schema from "effect/Schema";
-import * as DateTime from "effect/DateTime";
-import * as Option from "effect/Option";
 import type {
   PullRequestActor,
   PullRequestCheck,
@@ -78,6 +77,7 @@ export const ForgejoReview = Schema.Struct({
   body: Schema.String,
   user: Schema.NullOr(ForgejoUser),
   state: Schema.String,
+  dismissed: Schema.optional(Schema.Boolean),
   submitted_at: Schema.String,
   html_url: Schema.optional(Schema.String),
   comments_count: Schema.Int,
@@ -104,6 +104,7 @@ export const ForgejoCommit = Schema.Struct({
   ),
 });
 export const ForgejoStatus = Schema.Struct({
+  id: Schema.optional(Schema.Int),
   context: Schema.String,
   status: Schema.String,
   description: Schema.NullOr(Schema.String),
@@ -121,10 +122,6 @@ export function forgejoActor(
   return user?.login
     ? { login: user.login, name: user.full_name || null, avatarUrl: user.avatar_url || null }
     : null;
-}
-
-function toIsoUtc(value: string): string {
-  return Option.match(DateTime.make(value), { onNone: () => value, onSome: DateTime.formatIso });
 }
 
 export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
@@ -177,11 +174,13 @@ export function forgejoReview(review: typeof ForgejoReview.Type): PullRequestCom
     url: review.html_url || null,
     path: null,
     reviewState:
-      review.state === "REQUEST_CHANGES"
-        ? "CHANGES_REQUESTED"
-        : review.state === "COMMENT"
-          ? "COMMENTED"
-          : review.state,
+      review.dismissed === true
+        ? "DISMISSED"
+        : review.state === "REQUEST_CHANGES"
+          ? "CHANGES_REQUESTED"
+          : review.state === "COMMENT"
+            ? "COMMENTED"
+            : review.state,
   };
 }
 
@@ -241,6 +240,7 @@ export function forgejoChecks(
     statuses.map((status) => ({
       workflowName: null,
       at: status.updated_at,
+      ...(status.id === undefined ? {} : { sequence: status.id }),
       check: {
         name: status.context || "check",
         description: status.description || null,
