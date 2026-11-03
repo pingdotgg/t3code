@@ -19,10 +19,26 @@ import {
   resolveGrokAcpBaseModelId,
 } from "./acpSupport.ts";
 
+import { xAiRateLimitedErrorCode } from "./xaiAcpExtension.ts";
+
 const GROK_TIMEOUT_MS = 180_000;
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+
+function grokAcpFailureDetail(cause: EffectAcpErrors.AcpError, fallback: string) {
+  if (!isAcpRequestError(cause)) return fallback;
+  switch (cause.code) {
+    case xAiRateLimitedErrorCode:
+      return "Grok usage limit reached. Try again later.";
+    case -32000:
+      return "Grok authentication is required.";
+    case -32602:
+      return "Grok rejected the text generation model settings.";
+    default:
+      return fallback;
+  }
+}
 
 export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(function* (
   grokSettings: GrokSettings,
@@ -76,9 +92,10 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           mapError: (cause) =>
             new TextGenerationError({
               operation,
-              detail: isAcpRequestError(cause)
-                ? `Failed to set Grok ACP base model for text generation: ${cause.errorMessage}`
-                : "Failed to set Grok ACP base model for text generation.",
+              detail: grokAcpFailureDetail(
+                cause,
+                "Failed to set Grok ACP base model for text generation.",
+              ),
               cause,
             }),
         });
@@ -101,9 +118,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
             ? cause
             : new TextGenerationError({
                 operation,
-                detail: isAcpRequestError(cause)
-                  ? `Grok ACP request failed: ${cause.errorMessage}`
-                  : "Grok ACP request failed.",
+                detail: grokAcpFailureDetail(cause, "Grok ACP request failed."),
                 cause,
               }),
         ),

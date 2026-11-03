@@ -16,7 +16,10 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
     write({
       jsonrpc: "2.0",
       id: request.id,
-      error: { code: -32003, message: process.env.T3_ACP_PROMPT_ERROR_MESSAGE },
+      error: {
+        code: Number(process.env.T3_ACP_PROMPT_ERROR_CODE ?? -32003),
+        message: process.env.T3_ACP_PROMPT_ERROR_MESSAGE,
+      },
     });
     continue;
   }
