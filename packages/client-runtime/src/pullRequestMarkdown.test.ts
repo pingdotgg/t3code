@@ -59,6 +59,27 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  // GitHub keeps CRLF in a body written in its web editor.
+  it("recognizes fences in a body with CRLF line endings", () => {
+    const body = "```\r\nhttps://example.com/demo.mp4\r\n```";
+    expect(splitPullRequestBody(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body },
+    ]);
+  });
+
+  it("closes a CRLF fence, so a video after it still lifts out", () => {
+    const code = '```html\r\n<video src="https://example.com/example.mp4"></video>\r\n```';
+    expect(splitPullRequestBody(`${code}\r\n\r\nhttps://example.com/demo.mp4\r\n`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: code },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/demo.mp4",
+        media: "video",
+      },
+    ]);
+  });
+
   it("does not let a different fence marker close an open fence", () => {
     const body = "```\n~~~\nhttps://example.com/demo.mp4\n```";
     expect(splitPullRequestBody(body)).toEqual([
