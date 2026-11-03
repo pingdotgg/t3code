@@ -352,6 +352,7 @@ export interface ProjectionRecordFilter {
   readonly subagentIds?: ReadonlyArray<NodeId>;
   readonly subagentRunIds?: ReadonlyArray<RunId>;
   readonly nodeIds?: ReadonlyArray<NodeId>;
+  readonly turnItemIds?: ReadonlyArray<TurnItemId>;
   readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
   readonly turnItemStatuses?: ReadonlyArray<OrchestrationV2TurnItem["status"]>;
   readonly omitSettledLeafNodes?: boolean;
@@ -3065,6 +3066,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           (fields !== undefined && !fields.includes("turnItems")) ||
           (window === undefined &&
             matchesNothing(
+              filter?.turnItemIds,
               filter?.turnItemTypes,
               filter?.turnItemStatuses,
               filter?.turnItemRunIds,
@@ -3076,6 +3078,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
                 WHERE thread_id = ${threadId}
+                  ${filter?.turnItemIds === undefined ? sql`` : sql`AND turn_item_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemIds)}))`}
                   ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
                   ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
                   ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}

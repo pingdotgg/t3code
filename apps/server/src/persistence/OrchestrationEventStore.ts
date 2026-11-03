@@ -62,6 +62,11 @@ export class OrchestrationEventStore extends Context.Service<
       readonly skipUnknownEventTypes?: boolean;
     }) => Stream.Stream<OrchestrationV2StoredEvent, OrchestrationEventStoreError>;
 
+    /** Indexed lookup for native event replay and transcript identity reconciliation. */
+    readonly readAgentEventsById: (
+      ids: ReadonlyArray<EventId>,
+    ) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, OrchestrationEventStoreError>;
+
     readonly getAgentReplayStats: (input: {
       readonly threadId: ThreadId;
       readonly afterSequence: number;
@@ -585,6 +590,37 @@ const makeEventStore = Effect.gen(function* () {
     );
   };
 
+  const readAgentEventsById = Effect.fn("OrchestrationEventStore.readAgentEventsById")(function* (
+    ids: ReadonlyArray<EventId>,
+  ) {
+    const events: Array<OrchestrationV2StoredEvent> = [];
+    const unique = [...new Set(ids)];
+    for (let offset = 0; offset < unique.length; offset += READ_PAGE_SIZE) {
+      const rows = yield* sql<ApplicationEventRow>`
+        SELECT sequence, event_id, command_id, aggregate_kind, stream_id, event_type,
+          occurred_at, ${restoredPayloadJson} AS payload_json, metadata_json,
+          application_event_version, causation_event_id, correlation_id
+        FROM orchestration_events
+        WHERE event_id IN ${sql.in(unique.slice(offset, offset + READ_PAGE_SIZE))}
+      `.pipe(
+        Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.readAgentEventsById:query")),
+      );
+      for (const row of rows) {
+        // Keep this lookup on the unique event-ID index. SQLite otherwise prefers
+        // the application-version index for larger IN lists and scans all history.
+        if (row.application_event_version !== 2 || row.aggregate_kind !== "thread") continue;
+        events.push(
+          yield* rowToV2StoredEvent(row).pipe(
+            Effect.mapError(
+              toPersistenceDecodeError("OrchestrationEventStore.readAgentEventsById:decode"),
+            ),
+          ),
+        );
+      }
+    }
+    return events;
+  });
+
   const getAgentReplayStats: OrchestrationEventStore["Service"]["getAgentReplayStats"] = (input) =>
     sql<{
       readonly eventCount: number;
@@ -744,6 +780,7 @@ const makeEventStore = Effect.gen(function* () {
     appendProjectEvent,
     appendAgentEvents,
     readAgentEvents,
+    readAgentEventsById,
     getAgentReplayStats,
     getReplayStats,
     latestAgentSequence,

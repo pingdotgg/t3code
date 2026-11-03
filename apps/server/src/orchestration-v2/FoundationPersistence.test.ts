@@ -2792,6 +2792,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
 
   it.effect.each([
     { type: "terminal.cleanup" },
+    { type: "thread.handoff-continue" },
     { type: "provider-runtime.continue", sourceRunId: RunId.make("run:restart-replay") },
   ] as const)(
     "retires live provider effects and requeues $type after process loss",
@@ -3260,6 +3261,14 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ordinals.every((ordinal, index) => index === 0 || ordinal > ordinals[index - 1]!),
       );
 
+      const reads: string[] = [];
+      const all = NodeSqlite.StatementSync.prototype.all;
+      using readSpy = vi
+        .spyOn(NodeSqlite.StatementSync.prototype, "all")
+        .mockImplementation(function (this: NodeSqlite.StatementSync, ...params) {
+          reads.push(this.sourceSQL);
+          return all.apply(this, params);
+        });
       yield* eventSink.write({
         events: [
           {
@@ -3273,6 +3282,19 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           },
         ],
       });
+      readSpy.mockRestore();
+      // Normal streaming updates keep one indexed position read and never scan thread payloads for ordering.
+      assert.lengthOf(
+        reads.filter((query) => query.includes("FROM orchestration_v2_turn_item_positions")),
+        1,
+      );
+      assert.isFalse(
+        reads.some(
+          (query) =>
+            query.includes("json_extract") &&
+            query.includes("FROM orchestration_v2_projection_threads"),
+        ),
+      );
       const afterUpdate = yield* projectionStore.getThreadProjection(threadId);
       assert.equal(afterUpdate.turnItems[0]?.ordinal, ordinals[0]);
       assert.equal((yield* maintenance.verify).valid, true);

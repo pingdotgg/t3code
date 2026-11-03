@@ -1,3 +1,4 @@
+import { findClaudeTranscripts } from "../../provider/Drivers/ClaudeTranscript.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
@@ -1529,6 +1530,7 @@ export function makeClaudeQueryOptions(input: {
   readonly title?: string;
   readonly resume: boolean;
   readonly resumeSessionAt?: string;
+  readonly resumeTranscriptPath?: string;
   readonly cwd: string | null;
   readonly attachmentsDir?: string;
   readonly settings?: ClaudeSettings;
@@ -1576,7 +1578,7 @@ export function makeClaudeQueryOptions(input: {
     extraArgs["thinking-display"] = "summarized";
   }
   const threadIdentity: ClaudeAgentSdkThreadIdentity = input.resume
-    ? { resume: input.nativeThreadId }
+    ? { resume: input.resumeTranscriptPath ?? input.nativeThreadId }
     : { sessionId: input.nativeThreadId };
   const selectedTools = input.tools ?? CLAUDE_CODE_PRESET_TOOLS;
   const selectionSettings =
@@ -10510,6 +10512,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeThreadId,
             title: turnInput.appThread.title,
             resume: shouldResume,
+            ...(turnInput.providerThread.nativeMetadata?.claudeResumeTranscriptPath === undefined
+              ? {}
+              : {
+                  resumeTranscriptPath:
+                    turnInput.providerThread.nativeMetadata.claudeResumeTranscriptPath,
+                }),
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
@@ -11314,14 +11322,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // Any message in any transcript copy means Claude may still resume it.
           let found = false;
           let unreadable = false;
-          for (const project of yield* fileSystem.readDirectory(projectsDir)) {
-            const transcriptPath = path.join(projectsDir, project, `${nativeThreadId}.jsonl`);
-            // Stray files beside the project dirs fail with ENOTDIR.
-            if (
-              !(yield* fileSystem.exists(transcriptPath).pipe(Effect.orElseSucceed(() => false)))
-            ) {
-              continue;
-            }
+          const transcripts = yield* findClaudeTranscripts(projectsDir, nativeThreadId).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          );
+          for (const transcriptPath of transcripts) {
             const conversationLine = yield* fileSystem
               .stream(transcriptPath)
               .pipe(

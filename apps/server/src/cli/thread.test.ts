@@ -2,7 +2,14 @@ import { assert, it } from "@effect/vitest";
 import { RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { readLatestMessages, type ThreadTools, titleFromMessage, waitForRun } from "./thread.ts";
+import {
+  handoffThread,
+  ThreadUsageError,
+  readLatestMessages,
+  type ThreadTools,
+  titleFromMessage,
+  waitForRun,
+} from "./thread.ts";
 
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
@@ -165,3 +172,49 @@ it("titles from a long first line without splitting an emoji", () => {
   const title = titleFromMessage(`${"a".repeat(78)}😀 and the rest of a long first line`);
   assert.strictEqual(title, `${"a".repeat(78)}…`);
 });
+it.effect.each(["wait", "interrupt"] as const)(
+  "handoff asks once before applying the %s policy",
+  (policy) =>
+    Effect.gen(function* () {
+      const blocked = { threadId, attached: true, readOnly: false, blocked: true };
+      const done = { threadId, attached: false, readOnly: false };
+      const { tools, calls } = scriptedTools({
+        t3_thread_attach: policy === "wait" ? [blocked, blocked, done] : [blocked, done],
+      });
+      let choices = 0;
+      const result = yield* handoffThread(
+        tools,
+        threadId,
+        Effect.sync(() => {
+          choices++;
+          return policy;
+        }),
+        Effect.void,
+      );
+      assert.deepStrictEqual(result, done);
+      assert.strictEqual(choices, 1);
+      assert.deepStrictEqual(
+        calls.map((call) => call.args),
+        policy === "wait"
+          ? [0, 1, 2].map(() => ({ action: "handoff", threadId }))
+          : [
+              { action: "handoff", threadId },
+              { action: "handoff", threadId, interrupt: true },
+            ],
+      );
+    }),
+);
+it.effect("cancelled handoff never interrupts the source", () =>
+  Effect.gen(function* () {
+    const { tools, calls } = scriptedTools({
+      t3_thread_attach: [{ threadId, attached: true, readOnly: false, blocked: true }],
+    });
+    yield* handoffThread(
+      tools,
+      threadId,
+      Effect.fail(new ThreadUsageError({ detail: "cancelled" })),
+      Effect.void,
+    ).pipe(Effect.flip);
+    assert.strictEqual(calls.length, 1);
+  }),
+);
