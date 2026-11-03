@@ -1450,9 +1450,10 @@ function zenAnswerMessageIds(
     replies
       .filter(
         ({ message, index }) =>
-          (terminal.has(message.id) || steerAnswers.has(message.id)) &&
-          index < answeringFrom &&
-          (answeringRunId === null || message.runId !== answeringRunId),
+          steerAnswers.has(message.id) ||
+          (terminal.has(message.id) &&
+            index < answeringFrom &&
+            (answeringRunId === null || message.runId !== answeringRunId)),
       )
       .map(({ message }) => message.id),
   );

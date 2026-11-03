@@ -1452,7 +1452,8 @@ function timelineRowEntries(
       return (
         message.role !== "assistant" ||
         message.id === input.revealedMessageId ||
-        ((terminalIds.has(message.id) || steerAnswerIds.has(message.id)) &&
+        steerAnswerIds.has(message.id) ||
+        (terminalIds.has(message.id) &&
           index < answeringFrom &&
           (answeringRunId === null || message.runId !== answeringRunId))
       );

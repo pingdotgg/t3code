@@ -1291,6 +1291,12 @@ describe("buildThreadFeed", () => {
     const [steer, answer] = [say("steer", 2, true, true), say("answer", 3)];
     expect(rows([user, steer, answer, final], "zen")).toEqual(["user", "steer", "answer", "final"]);
     expect(rows([user, steer, step, passed, final], "zen")).toEqual(["user", "steer", "final"]);
+    expect(rows([user, steer, answer, step], "zen", running)).toEqual([
+      "user",
+      "steer",
+      "answer",
+      "thinking:step",
+    ]);
     expect(rows([user, step, passed], "zen", running)).toEqual(["user", "thinking:step"]);
     expect(rows(turn, "zen", { ...running, turnEnded: true })).toEqual(["user", "final"]);
     const nextRun = { ...running, runId: RunId.make("run-2") };
