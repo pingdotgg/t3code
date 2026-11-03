@@ -2946,6 +2946,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             "log",
             "--oneline",
             "--no-color",
+            "--no-decorate",
             "--no-show-signature",
             "--end-of-options",
             commitRange,

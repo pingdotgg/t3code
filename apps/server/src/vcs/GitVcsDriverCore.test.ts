@@ -2856,6 +2856,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["config", "diff.probe.textconv", "touch textconv-ran; echo converted"]);
         yield* git(cwd, ["config", "color.ui", "always"]);
         yield* git(cwd, ["config", "diff.relative", "true"]);
+        yield* git(cwd, ["config", "log.decorate", "short"]);
         yield* git(cwd, ["checkout", "-b", "feature/range"]);
         yield* writeTextFile(cwd, ".gitattributes", "*.doc diff=probe\n");
         yield* writeTextFile(cwd, "notes.doc", "source line\n");
@@ -2879,7 +2880,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["config", "gpg.ssh.program", "ssh-keygen"]);
         yield* git(cwd, ["config", "user.signingkey", `${signingKey}.pub`]);
         yield* git(cwd, ["config", "log.showSignature", "true"]);
-        yield* git(cwd, ["config", "log.decorate", "false"]);
         yield* git(cwd, ["commit", "-S", "-m", "range files"]);
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const fileSystem = yield* FileSystem.FileSystem;
