@@ -112,15 +112,28 @@ it("embeds an Agent Activity Home Screen layout and initial data independently o
         status: "Working",
       })),
     };
-    for (const widgetFamily of ["systemMedium", "systemLarge"]) {
+    for (const [widgetFamily, dynamicTypeSize, visibleRows] of [
+      ["systemMedium", "large", 2],
+      ["systemMedium", "xxLarge", 2],
+      ["systemMedium", "xxxLarge", 1],
+      ["systemMedium", "accessibility5", 1],
+      ["systemLarge", "large", 5],
+      ["systemLarge", "xLarge", 4],
+      ["systemLarge", "xxxLarge", 3],
+      ["systemLarge", "accessibility5", 2],
+    ]) {
       const aggregateLayout = JSON.stringify(
         context.__expoWidgetRender(aggregate, {
           widgetFamily,
+          dynamicTypeSize,
           colorScheme: "light",
           widgetRenderingMode: "fullColor",
         }),
       );
-      expect(aggregateLayout).toContain("Relay task 5");
+      expect(aggregateLayout).toContain(`Relay task ${visibleRows}`);
+      if (visibleRows < 5) {
+        expect(aggregateLayout).not.toContain(`Relay task ${visibleRows + 1}`);
+      }
       expect(aggregateLayout).toContain("10 active");
       const waitingLayout = JSON.stringify(
         context.__expoWidgetRender(
@@ -130,7 +143,7 @@ it("embeds an Agent Activity Home Screen layout and initial data independently o
               index === 0 ? { ...row, phase: "stale", status: "Waiting" } : row,
             ),
           },
-          { widgetFamily, colorScheme: "light", widgetRenderingMode: "fullColor" },
+          { widgetFamily, dynamicTypeSize, colorScheme: "light", widgetRenderingMode: "fullColor" },
         ),
       );
       expect(waitingLayout).toContain("Waiting");
