@@ -11412,6 +11412,231 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("offers a later task's wake when a cancelled wake never opens", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const SECOND_TASK_ID = "b2ndwake";
+        const SECOND_TOOL_USE_ID = "toolu_second_wake";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-never-opens"),
+            text: "Start an agent and a build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({ ...wakeTaskStarted, task_type: "local_agent" }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...wakeTaskStarted,
+            task_id: SECOND_TASK_ID,
+            tool_use_id: SECOND_TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000151",
+          }),
+        );
+        yield* harness.offerAndWait(turnOneResult);
+        yield* harness.awaitTerminal(1);
+
+        // Claude never opens a wake for the agent's notification.
+        yield* harness.offerAndWait(wakeNotification);
+        assert.lengthOf(harness.continuationRequests, 1);
+        yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...wakeNotification,
+            task_id: SECOND_TASK_ID,
+            tool_use_id: SECOND_TOOL_USE_ID,
+            output_file: `/tmp/claude-replay/tasks/${SECOND_TASK_ID}.output`,
+            uuid: "00000000-0000-4000-8000-000000000152",
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000153" }),
+        );
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000154", text: "Built." }),
+        );
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000155", result: "Built." }),
+        );
+        assert.lengthOf(
+          harness.continuationRequests,
+          2,
+          "the build's wake must get its own continuation",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each(["notification", "tool result"] as const)(
+    "does not replay a subagent that finished inside a cancelled wake (ended by %s)",
+    (ending) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const SECOND_TASK_ID = "b2ndwake";
+          const SECOND_TOOL_USE_ID = "toolu_second_wake";
+          const SUBAGENT_TASK_ID = "fg-agent";
+          const SUBAGENT_TOOL_USE_ID = "toolu-fg-agent";
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-finished-subagent"),
+              text: "Run two builds in the background.",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(wakeTaskStarted);
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...wakeTaskStarted,
+              task_id: SECOND_TASK_ID,
+              tool_use_id: SECOND_TOOL_USE_ID,
+              uuid: "00000000-0000-4000-8000-000000000161",
+            }),
+          );
+          yield* harness.offerAndWait(turnOneResult);
+          yield* harness.awaitTerminal(1);
+
+          // The first wake runs a subagent to completion before its result.
+          yield* harness.offerAndWait(wakeNotification);
+          yield* harness.offerAndWait(wakeTurnInit);
+          assert.lengthOf(harness.continuationRequests, 1);
+          yield* harness.offerAndWait(wakeAssistant);
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: SUBAGENT_TASK_ID,
+              tool_use_id: SUBAGENT_TOOL_USE_ID,
+              description: "Inspect build output",
+              subagent_type: "general-purpose",
+              task_type: "local_agent",
+              prompt: "Inspect the build output.",
+              uuid: "00000000-0000-4000-8000-000000000162",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* harness.offerAndWait(
+            ending === "notification"
+              ? claudeSdkFrame({
+                  type: "system",
+                  subtype: "task_notification",
+                  task_id: SUBAGENT_TASK_ID,
+                  tool_use_id: SUBAGENT_TOOL_USE_ID,
+                  status: "completed",
+                  output_file: "/tmp/fg-agent.output",
+                  summary: "Inspected",
+                  uuid: "00000000-0000-4000-8000-000000000163",
+                  session_id: WAKE_NATIVE_SESSION,
+                })
+              : claudeSdkFrame({
+                  type: "user",
+                  uuid: "00000000-0000-4000-8000-000000000163",
+                  session_id: WAKE_NATIVE_SESSION,
+                  parent_tool_use_id: null,
+                  message: {
+                    role: "user",
+                    content: [
+                      {
+                        type: "tool_result",
+                        tool_use_id: SUBAGENT_TOOL_USE_ID,
+                        content: "Inspected",
+                      },
+                    ],
+                  },
+                }),
+          );
+          yield* harness.offerAndWait(wakeResult);
+          yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...wakeNotification,
+              task_id: SECOND_TASK_ID,
+              tool_use_id: SECOND_TOOL_USE_ID,
+              output_file: `/tmp/claude-replay/tasks/${SECOND_TASK_ID}.output`,
+              uuid: "00000000-0000-4000-8000-000000000164",
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000165" }),
+          );
+          assert.lengthOf(harness.continuationRequests, 2);
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-finished-subagent-2"),
+              text: "Background task completed.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-000000000166",
+              text: "Second build done.",
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000167",
+              result: "Second build done.",
+              origin: { kind: "task-notification" },
+            }),
+          );
+          yield* harness.awaitTerminal(2);
+
+          const subagentStatuses = harness.events.flatMap((event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.nativeTaskRef?.nativeId === SUBAGENT_TASK_ID
+              ? [event.subagent.status]
+              : [],
+          );
+          assert.notInclude(
+            subagentStatuses,
+            "running",
+            "a subagent that finished in the cancelled wake must not be replayed as running",
+          );
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
   it.effect.each([true, false])(
     "carries a rejected wake rate limit into the continuation failure (event=%s)",
     (standaloneEvent) =>

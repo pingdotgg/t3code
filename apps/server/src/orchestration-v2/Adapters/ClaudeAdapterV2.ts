@@ -3199,6 +3199,18 @@ function isClaudeSubagentAsyncLaunchAck(output: ClaudeNativeToolOutput): boolean
   return claudeSubagentResultText(output).startsWith("Async agent launched successfully.");
 }
 
+// Background Agent launches ACK immediately and workflow launches return run handles; only task_notification settles those.
+function claudeToolResultSettlesSubagent(
+  toolResult: ClaudeToolResultContentBlock,
+  output: ClaudeNativeToolOutput,
+): boolean {
+  return (
+    isClaudeToolResultError(toolResult) ||
+    (parseClaudeWorkflowRunHandles(claudeNativeToolOutputValue(output)) === undefined &&
+      !isClaudeSubagentAsyncLaunchAck(output))
+  );
+}
+
 const WEB_FETCH_SNIPPET_MAX_CHARS = 8_000;
 
 function webSearchPatternsFromClaudeTool(input: {
@@ -5092,13 +5104,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
         // `end` is the offered wake's last frame once known: its result, or the last frame a user turn absorbed.
         // A retired latch belongs to a cancelled wake that has not ended; its root frames are dropped until it does.
+        // Claude may never open an "unopened" one, so a later task's notification releases it instead.
         const requestedContinuations = yield* Ref.make(
           new Map<
             string,
             {
               readonly token: symbol;
               readonly end: SDKMessage | undefined;
-              readonly retired: boolean;
+              readonly retired: "unopened" | "opened" | null;
             }
           >(),
         );
@@ -5581,7 +5594,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // folded in. The continuation replays that wake's buffered frames but gets no result of its own.
         const markAbsorbedWake = Effect.fnUntraced(function* (nativeThreadId: string) {
           const latch = (yield* Ref.get(requestedContinuations)).get(nativeThreadId);
-          if (latch?.retired === true) {
+          if (latch !== undefined && latch.retired !== null) {
             yield* releaseContinuationLatch(nativeThreadId);
             return;
           }
@@ -8149,15 +8162,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (!isWakeEvidence) {
             return;
           }
+          const retired = (yield* Ref.get(requestedContinuations)).get(
+            wakeInput.nativeThreadId,
+          )?.retired;
           if (
-            (yield* Ref.get(requestedContinuations)).get(wakeInput.nativeThreadId)?.retired ===
-              true &&
+            retired === "unopened" &&
+            (isPendingTaskNotification || isPendingSubagentNotification)
+          ) {
+            yield* releaseContinuationLatch(wakeInput.nativeThreadId);
+          } else if (
+            retired != null &&
             (isClaudeRootTurnFrame(message) ||
               message.type === "result" ||
               message.type === "rate_limit_event")
           ) {
             if (message.type === "result") {
               yield* releaseContinuationLatch(wakeInput.nativeThreadId);
+            } else if (retired === "unopened" && isClaudeRootTurnFrame(message)) {
+              yield* Ref.update(requestedContinuations, (current) => {
+                const latch = current.get(wakeInput.nativeThreadId);
+                return latch === undefined
+                  ? current
+                  : new Map(current).set(wakeInput.nativeThreadId, {
+                      ...latch,
+                      retired: "opened",
+                    });
+              });
             }
             return;
           }
@@ -8259,7 +8289,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             updated.set(nativeThreadId, {
               token,
               end: buffered?.messages.find((entry) => entry.type === "result"),
-              retired: false,
+              retired: null,
             });
             return [true, updated] as const;
           });
@@ -8289,7 +8319,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
-        // Drops what the unstarted continuation would have shown. Subagent task_started frames stay
+        // Drops what the unstarted continuation would have shown. Starts of subagents still running stay
         // because later child frames and notifications resolve their owner from them.
         const retireOfferedWake = Effect.fnUntraced(function* (
           nativeThreadId: string,
@@ -8302,12 +8332,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             latch.end === undefined ? messages.length - 1 : messages.indexOf(latch.end);
           const retired = messages.slice(0, endIndex + 1);
           const later = messages.slice(endIndex + 1);
-          const kept = [
-            ...retired.filter(
-              (entry) => entry.type === "system" && entry.subtype === "task_started",
-            ),
-            ...later,
-          ];
           const retiredTaskIds = new Set(
             retired.flatMap((entry) =>
               entry.type === "system" && entry.subtype === "task_notification"
@@ -8315,6 +8339,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : [],
             ),
           );
+          const settledToolUseIds = new Set(
+            retired.flatMap((entry) =>
+              entry.type === "user" && entry.parent_tool_use_id == null
+                ? claudeToolResultEntriesFromMessage(entry).flatMap(({ toolResult, output }) =>
+                    claudeToolResultSettlesSubagent(toolResult, output)
+                      ? [toolResult.tool_use_id]
+                      : [],
+                  )
+                : [],
+            ),
+          );
+          const kept = [
+            ...retired.filter(
+              (entry) =>
+                entry.type === "system" &&
+                entry.subtype === "task_started" &&
+                !retiredTaskIds.has(entry.task_id) &&
+                (entry.tool_use_id === undefined || !settledToolUseIds.has(entry.tool_use_id)),
+            ),
+            ...later,
+          ];
           const detail =
             kept
               .flatMap((entry) =>
@@ -8345,7 +8390,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
           if (latch.end === undefined) {
             yield* Ref.update(requestedContinuations, (current) =>
-              new Map(current).set(nativeThreadId, { ...latch, retired: true }),
+              new Map(current).set(nativeThreadId, {
+                ...latch,
+                retired: retired.some(isClaudeRootTurnFrame) ? "opened" : "unopened",
+              }),
             );
             return;
           }
@@ -9494,13 +9542,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               subagent !== undefined &&
               findToolCall(context, toolResult.tool_use_id) === undefined
             ) {
-              // Background Agent launches ACK immediately; only task_notification settles them.
-              if (
-                !isClaudeToolResultError(toolResult) &&
-                (runHandles !== undefined || isClaudeSubagentAsyncLaunchAck(output))
-              ) {
-                continue;
-              }
+              if (!claudeToolResultSettlesSubagent(toolResult, output)) continue;
               const result = claudeSubagentResultText(output);
               yield* updateClaudeSubagentNode({
                 context,
