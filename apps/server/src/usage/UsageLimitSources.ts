@@ -110,7 +110,17 @@ export const make = Effect.gen(function* () {
     reads: ReadonlyArray<UsageLimitSourceSnapshot> | undefined,
   ) {
     if (reads) yield* Ref.set(readsRef, reads);
-    const next = withSessionIds(yield* Ref.get(readsRef), yield* Ref.get(routesRef));
+    // Current settings, so no publish names routes for a hub switched out of Thread accounts,
+    // even when a queue read started before the switch lands after it.
+    const settings = yield* settingsService.getSettings.pipe(
+      Effect.orElseSucceed((): ServerSettings | null => null),
+    );
+    const routes = new Map(
+      [...(yield* Ref.get(routesRef))].filter(
+        ([id]) => settings?.usageLimitSources[id]?.threadAccounts,
+      ),
+    );
+    const next = withSessionIds(yield* Ref.get(readsRef), routes);
     const changed = yield* Ref.modify(stateRef, (previous) =>
       Equal.equals(previous, next) ? [false, previous] : [true, next],
     );
@@ -130,12 +140,6 @@ export const make = Effect.gen(function* () {
       entries,
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
       { concurrency: 4 },
-    );
-    // A hub switched out of Thread accounts stops naming routed accounts now, not on the next read.
-    yield* Ref.update(
-      routesRef,
-      (routes) =>
-        new Map([...routes].filter(([id]) => settings?.usageLimitSources[id]?.threadAccounts)),
     );
     yield* publish(snapshots);
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
