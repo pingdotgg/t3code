@@ -11254,6 +11254,88 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect(
+    "dates a buffered wake gateway limit from its arrival, not the continuation replay",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-gateway-1"),
+              text: "Run the build in the background.",
+              attachments: [],
+            }),
+          );
+          yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+          yield* Queue.offer(harness.sdkMessages, turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+
+          yield* Queue.offer(harness.sdkMessages, wakeNotification);
+          yield* harness.offerAndWait(
+            makeAssistantErrorFrame({
+              uuid: "00000000-0000-4000-8000-000000000634",
+              error: "server_error",
+            }),
+          );
+          assert.lengthOf(harness.continuationRequests, 1);
+          const arrivedAt = yield* DateTime.now;
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000635",
+              result:
+                'API Error: 503 [cpa/claude-opus-5-5] [429]: {"type":"error","error":{"type":"rate_limit_error","message":"All credentials are cooling down"}} (reset after 2h54m21s)',
+              isError: true,
+              apiErrorStatus: 503,
+              terminalReason: "api_error",
+              origin: { kind: "task-notification" },
+            }),
+          );
+
+          yield* TestClock.adjust("1 hour");
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-gateway-2"),
+              text: "Background task completed.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          const terminal = yield* Queue.take(harness.terminalReceipts);
+          assert.equal(terminal.status, "failed");
+          if (terminal.status !== "failed") return;
+          assert.equal(terminal.failure.class, "usage_limit");
+          assert.equal(
+            terminal.failure.resetAt,
+            DateTime.formatIso(
+              DateTime.makeUnsafe(
+                DateTime.toEpochMillis(arrivedAt) + (2 * 3_600 + 54 * 60 + 21) * 1_000,
+              ),
+            ),
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
   it.effect("leaves buffered wake messages for the continuation queued behind a user turn", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -11337,6 +11419,86 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         );
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("settles a continuation whose wake turn a user turn absorbed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-absorbed-1"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, wakeNotification);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* harness.awaitTerminal(1);
+        yield* harness.offerAndWait(wakeTurnInit);
+        yield* harness.offerAndWait(wakeAssistant);
+        yield* harness.awaitContinuation(1);
+
+        // Claude folds this prompt into the wake turn it already opened, so one result ends both.
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-absorbed-2"),
+            text: "Any update on the pull request?",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        yield* harness.until(() => harness.offeredMessages.length === 2);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000140",
+            result: "Checks passed and the pull request is up to date.",
+          }),
+        );
+        yield* harness.awaitTerminal(2);
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-absorbed-3"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 3,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* harness.awaitTerminal(3);
+        assert.equal(harness.terminalEvents()[2]?.status, "completed");
+        assert.isTrue(
+          harness.events.some(
+            (event) =>
+              event.type === "message.updated" && event.message.text === WAKE_ASSISTANT_TEXT,
+          ),
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
