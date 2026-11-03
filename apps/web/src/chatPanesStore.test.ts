@@ -3,6 +3,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  chatPaneRestoreTarget,
   closeChatPane,
   commitChatPanes,
   openChatSplit,
@@ -114,6 +115,12 @@ describe("chat panes", () => {
       { id: "pane-1", target: "a", active: true },
     ]);
     expect(layout.ratio).toBeCloseTo(0.3);
+  });
+
+  it("restarts on the focused pane's thread, and only for a split", () => {
+    expect(chatPaneRestoreTarget(SINGLE_CHAT_PANE_LAYOUT)).toBeNull();
+    const focusedRight = commitChatPanes(split(thread("a"), thread("b")), thread("b"));
+    expect(chatPaneRestoreTarget(focusedRight)).toEqual(thread("b"));
   });
 
   it("closing the unfocused pane returns to one pane without moving the route", () => {

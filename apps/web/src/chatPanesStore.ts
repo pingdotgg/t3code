@@ -87,6 +87,12 @@ export function backgroundChatPaneThreadRefs(
   );
 }
 
+/** The thread a restart resumes, so a split reopens as it was left: its focused pane's. */
+export function chatPaneRestoreTarget(layout: ChatPanesLayout): ThreadRouteTarget | null {
+  if (!isChatSplitOpen(layout)) return null;
+  return layout.panes.find((pane) => pane.id === layout.activePaneId)?.target ?? null;
+}
+
 /** Records what `resolveChatPanes` showed, so it survives focus changes and restarts. */
 export function commitChatPanes(
   layout: ChatPanesLayout,

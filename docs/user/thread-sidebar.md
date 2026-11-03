@@ -314,6 +314,27 @@ side chats.
 On mobile, a thread lists its side chats above the composer. Tap one to open it and
 answer its questions.
 
+## Split panes
+
+On web and desktop, two threads can sit side by side, each with its own composer,
+terminal, and right panel. Both keep running and streaming while you work in either.
+
+Right-click a thread in the sidebar and choose **Open in split**, or Alt-click it.
+From the command palette, choose **Open thread in split...**, or press `mod+\` to pick
+a thread. The thread opens beside the current one and takes focus.
+
+The focused pane is the one the sidebar, the command palette, and shortcuts act on.
+Click into the other pane, or press `mod+alt+]`, to switch. Opening a thread from the
+sidebar replaces the focused pane's thread; a thread already open in the other pane
+moves focus there instead, so one thread never shows twice.
+
+Drag the divider to resize the panes, or double-click it to make them even. The pane
+menu in each header swaps the panes, stacks them top and bottom, or closes one.
+Closing a pane does not stop its thread. Press `mod+\` again to go back to one pane.
+
+When the window is too narrow for two panes, only the focused one shows until there
+is room again. The split comes back after a restart, focused on the same thread.
+
 ## Snooze until later
 
 To change the choices in the snooze menu, open **Settings → Threads → Snooze options**.

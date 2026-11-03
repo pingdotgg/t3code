@@ -114,7 +114,7 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 `previewOpen`, `rightPanelOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`,
-`draftThreadRoute`, `turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
+`draftThreadRoute`, `turnRunning`, `editableFocus`, `splitPanesOpen`, `isWeb`, and `isDesktop`.
 `rightPanelOpen` applies only to `rightPanel.new` and is true while the right panel is
 open; the default `mod+t` uses it to open the panel's new-tab menu.
 `draftThreadRoute` is true on a draft thread, including a restored draft, until it is first sent.
@@ -163,6 +163,13 @@ field gets its own undo back. Terminals always keep their native shortcut.
 
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.
+
+`splitPanes.toggle` (`mod+\`) asks for a thread to open in a
+[split pane](./thread-sidebar.md#split-panes), or closes the other pane while one is
+open. The other split commands only run while a split is open: `splitPanes.close`
+(`mod+alt+\`), `splitPanes.swap` (`mod+shift+\`), `splitPanes.toggleDirection`
+(`mod+alt+shift+\`), and `splitPanes.focusNext` and `splitPanes.focusPrevious`
+(`mod+alt+]` and `mod+alt+[`). None of them run while a terminal has focus.
 
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your

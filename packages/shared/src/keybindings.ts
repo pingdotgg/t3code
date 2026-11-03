@@ -213,6 +213,21 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+arrowup", command: "modelPicker.previousProvider", when: "modelPickerOpen" },
   { key: "mod+shift+arrowdown", command: "modelPicker.nextProvider", when: "modelPickerOpen" },
   { key: "mod+o", command: "editor.openFavorite" },
+  // Off in terminals: on Linux and Windows mod+\ is Ctrl+\, the terminal's quit signal.
+  { key: "mod+\\", command: "splitPanes.toggle", when: "!terminalFocus" },
+  { key: "mod+alt+\\", command: "splitPanes.close", when: "splitPanesOpen && !terminalFocus" },
+  { key: "mod+shift+\\", command: "splitPanes.swap", when: "splitPanesOpen && !terminalFocus" },
+  {
+    key: "mod+alt+shift+\\",
+    command: "splitPanes.toggleDirection",
+    when: "splitPanesOpen && !terminalFocus",
+  },
+  { key: "mod+alt+]", command: "splitPanes.focusNext", when: "splitPanesOpen && !terminalFocus" },
+  {
+    key: "mod+alt+[",
+    command: "splitPanes.focusPrevious",
+    when: "splitPanesOpen && !terminalFocus",
+  },
   { key: "mod+shift+[", command: "thread.previous" },
   { key: "mod+shift+]", command: "thread.next" },
   { key: "mod+shift+c", command: "thread.copyReference", when: "!terminalFocus" },

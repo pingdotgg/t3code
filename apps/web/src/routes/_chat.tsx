@@ -50,15 +50,20 @@ function ChatRouteLayout() {
   );
 }
 
+// Startup opens the app on "/", which only then resumes a split's focused thread.
+let chatRouteLoaded = false;
+
 export const Route = createFileRoute("/_chat")({
-  beforeLoad: async ({ context, location }) => {
+  beforeLoad: async ({ context, location, preload }) => {
     if (
       context.authGateState.status !== "authenticated" &&
       context.authGateState.status !== "hosted-static"
     ) {
       throw redirect({ to: "/pair", replace: true });
     }
-    return { appModalPage: isAppModalPage(location.pathname) };
+    const firstChatLoad = !preload && !chatRouteLoaded;
+    if (!preload) chatRouteLoaded = true;
+    return { appModalPage: isAppModalPage(location.pathname), firstChatLoad };
   },
   component: ChatRouteLayout,
   // Every match carries the whole location's params, so this layout sees the thread route's too.

@@ -1,5 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useRouter } from "@tanstack/react-router";
+import { type AnyRouter, useRouter } from "@tanstack/react-router";
 
 import { isChatSplitOpen, useChatPanesStore } from "../chatPanesStore";
 import {
@@ -8,14 +8,12 @@ import {
   resolveThreadRouteTarget,
   type ThreadRouteTarget,
 } from "../threadRoutes";
-import { useStableCallback } from "./useStableCallback";
 
 /**
  * Split pane actions for entry points outside the panes: the sidebar, the command palette and
  * shortcuts. The route shows the focused pane, so each focus change is a navigation.
  */
-export function useChatPaneCommands() {
-  const router = useRouter();
+export function createChatPaneCommands(router: AnyRouter) {
   const readRouteTarget = () => resolveThreadRouteTarget(router.state.matches.at(-1)?.params ?? {});
   const navigateTo = (target: ThreadRouteTarget) =>
     void (target.kind === "server"
@@ -29,27 +27,49 @@ export function useChatPaneCommands() {
         }));
 
   /** Opens `threadRef` beside the routed thread and focuses it; false with no thread routed. */
-  const openInSplit = useStableCallback((threadRef: ScopedThreadRef): boolean => {
+  const openInSplit = (threadRef: ScopedThreadRef): boolean => {
     const routeTarget = readRouteTarget();
     if (routeTarget === null) return false;
     useChatPanesStore.getState().openSplit({ routeTarget, target: { kind: "server", threadRef } });
     navigateTo({ kind: "server", threadRef });
     return true;
-  });
+  };
 
-  const focusOtherPane = useStableCallback(() => {
+  /** Focuses the pane `offset` places after the focused one, wrapping around. */
+  const focusPaneAt = (offset: 1 | -1) => {
     const { layout } = useChatPanesStore.getState();
-    const other = layout.panes.find((pane) => pane.id !== layout.activePaneId);
-    if (isChatSplitOpen(layout) && other) navigateTo(other.target);
-  });
+    if (!isChatSplitOpen(layout)) return;
+    const index = layout.panes.findIndex((pane) => pane.id === layout.activePaneId);
+    const next = layout.panes.at((index + offset) % layout.panes.length);
+    if (next && next.id !== layout.activePaneId) navigateTo(next.target);
+  };
 
-  const closeFocusedPane = useStableCallback(() => {
+  const closeFocusedPane = () => {
     const store = useChatPanesStore.getState();
     const { activePaneId } = store.layout;
     if (activePaneId === null) return;
     const focusTarget = store.closePane(activePaneId);
     if (focusTarget) navigateTo(focusTarget);
-  });
+  };
 
-  return { openInSplit, focusOtherPane, closeFocusedPane };
+  /** Back to one pane, keeping the focused one; the route already shows it. */
+  const closeOtherPanes = () => {
+    const store = useChatPanesStore.getState();
+    for (const pane of store.layout.panes) {
+      if (pane.id !== store.layout.activePaneId) store.closePane(pane.id);
+    }
+  };
+
+  return {
+    openInSplit,
+    focusNextPane: () => focusPaneAt(1),
+    focusPreviousPane: () => focusPaneAt(-1),
+    focusOtherPane: () => focusPaneAt(1),
+    closeFocusedPane,
+    closeOtherPanes,
+  };
+}
+
+export function useChatPaneCommands() {
+  return createChatPaneCommands(useRouter());
 }

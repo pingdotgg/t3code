@@ -1,7 +1,7 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { isElectron } from "../env";
@@ -20,6 +20,9 @@ import {
   useVisibleThreadShells,
 } from "../state/entities";
 import { useEnvironments } from "../state/environments";
+import { chatPaneRestoreTarget, useChatPanesStore } from "../chatPanesStore";
+import { useComposerDraftStore } from "../composerDraftStore";
+import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
@@ -118,5 +121,26 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
 }
 
 export const Route = createFileRoute("/_chat/")({
+  beforeLoad: ({ context, preload }) => {
+    if (preload || !context.firstChatLoad) return;
+    const target = chatPaneRestoreTarget(useChatPanesStore.getState().layout);
+    if (target?.kind === "server") {
+      throw redirect({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(target.threadRef),
+        replace: true,
+      });
+    }
+    if (
+      target?.kind === "draft" &&
+      useComposerDraftStore.getState().getDraftSession(target.draftId)
+    ) {
+      throw redirect({
+        to: "/draft/$draftId",
+        params: buildDraftThreadRouteParams(target.draftId),
+        replace: true,
+      });
+    }
+  },
   component: ChatIndexRouteView,
 });

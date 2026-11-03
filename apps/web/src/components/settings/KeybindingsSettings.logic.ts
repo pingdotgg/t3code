@@ -382,6 +382,8 @@ export function commandLabel(command: KeybindingCommand): string {
   if (usagePeriod) return `Usage: Period: ${usagePeriod.label}`;
   if (command === "view.reopenClosed") return "Reopen Closed Tab";
   if (command === "preview.focusUrl") return "Preview: Focus URL";
+  if (command === "splitPanes.toggle") return "Split Panes: Open or Close Split";
+  if (command === "splitPanes.close") return "Split Panes: Close Focused Pane";
   const raw = String(command);
   if (raw.startsWith("script.") && raw.endsWith(".run")) {
     return `Run Script: ${titleCaseCommandSegment(raw.slice("script.".length, -".run".length))}`;
