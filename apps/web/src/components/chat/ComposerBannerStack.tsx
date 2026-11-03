@@ -16,6 +16,7 @@ export type ComposerBannerGroup = "environment" | "attention";
 export interface ComposerBannerStackItem {
   readonly id: string;
   readonly variant: ComposerBannerVariant;
+  readonly textSize?: "compact" | "body";
   readonly group?: ComposerBannerGroup;
   readonly icon: ReactNode;
   readonly title: ReactNode;
@@ -214,6 +215,7 @@ function NoticeCard({
     <ComposerBanner.Root
       role={item.variant === "error" || item.variant === "warning" ? "alert" : undefined}
       variant={item.variant}
+      textSize={item.textSize ?? "compact"}
       detached={detached}
       density="comfortable"
       data-chat-composer-collapsed-controls="true"

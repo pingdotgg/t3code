@@ -5,7 +5,6 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { ComposerHandleContext, type ComposerHandleRef } from "../../composerHandleContext";
-import { ComposerContextPermissions } from "../ComposerContextPermissions";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
@@ -16,6 +15,11 @@ import {
 import { ComposerFooterModeControls, ComposerPermissionsSection } from "./ComposerFooterControls";
 import { ComposerPickerFooter } from "./ComposerModelEffort";
 import { runtimeModeConfig, runtimeModeOptions } from "./runtimeModeConfig";
+import {
+  resolveRuntimeModeOptions,
+  runtimeModeConfig,
+  runtimeModeOptions,
+} from "./runtimeModeConfig";
 
 const options = runtimeModeOptions.map((mode) => ({ mode, ...runtimeModeConfig[mode] }));
 
@@ -185,10 +189,12 @@ it("returns focus to the editor when picking the default hides the chip", async 
 function ContextPermissions() {
   const [mode, setMode] = useState<RuntimeMode>("full-access");
   return (
-    <ComposerContextPermissions
-      environmentId={null}
+    <ComposerFooterModeControls
       runtimeMode={mode}
-      supportedRuntimeModes={["approval-required", "full-access"]}
+      runtimeModeOptions={resolveRuntimeModeOptions(
+        ["approval-required", "full-access"],
+        undefined,
+      )}
       onRuntimeModeChange={setMode}
     />
   );
