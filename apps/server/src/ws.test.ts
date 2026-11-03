@@ -1182,7 +1182,10 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
           ),
       }),
       Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
-        resolve: (cwd) => Queue.offer(refreshes, `identity ${cwd}`).pipe(Effect.as(null)),
+        resolve: (cwd, options) =>
+          Queue.offer(refreshes, `identity ${cwd} refresh=${options?.refresh === true}`).pipe(
+            Effect.as(null),
+          ),
       }),
       Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
         refreshStatus: (cwd) =>
@@ -1235,7 +1238,7 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
     assert.equal(yield* Queue.take(exits), "Failure");
     assert.deepEqual(
       [yield* Queue.take(refreshes), yield* Queue.take(refreshes)],
-      ["identity /repo", "status /repo"],
+      ["identity /repo refresh=true", "status /repo"],
     );
   }).pipe(
     Effect.provide(
