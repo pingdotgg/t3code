@@ -140,6 +140,7 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
         [-32003, "Grok usage limit reached. Try again later."],
         [-32000, "Grok authentication is required."],
         [-32603, "Grok ACP request failed."],
+        [-32602, "Grok ACP request failed."],
       ] as const) {
         yield* withFakeAcpGrok(
           {

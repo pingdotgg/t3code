@@ -33,8 +33,6 @@ function grokAcpFailureDetail(cause: EffectAcpErrors.AcpError, fallback: string)
       return "Grok usage limit reached. Try again later.";
     case -32000:
       return "Grok authentication is required.";
-    case -32602:
-      return "Grok rejected the text generation model settings.";
     default:
       return fallback;
   }
@@ -94,7 +92,9 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
               operation,
               detail: grokAcpFailureDetail(
                 cause,
-                "Failed to set Grok ACP base model for text generation.",
+                isAcpRequestError(cause) && cause.code === -32602
+                  ? "Grok rejected the text generation model settings."
+                  : "Failed to set Grok ACP base model for text generation.",
               ),
               cause,
             }),
