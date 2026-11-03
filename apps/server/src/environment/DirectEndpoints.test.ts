@@ -289,6 +289,58 @@ const resolveWithServe = (probeStatus: number) =>
   );
 
 describe("DirectEndpoints Tailscale Serve", () => {
+  for (const probeState of ["healthy", "failed", "timeout"] as const) {
+    effectIt.effect(`keeps an unspecified listener loopback when HTTPS is ${probeState}`, () =>
+      Effect.gen(function* () {
+        using _interfaces = vi
+          .spyOn(NodeOS, "networkInterfaces")
+          .mockReturnValue({ tailscale0: vpnInterface("100.64.1.2") });
+        const probeStarted = yield* Deferred.make<void>();
+        const service = yield* DirectEndpoints.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.effect(
+                ServerConfig.ServerConfig,
+                Effect.map(ServerConfig.ServerConfig, (config) => ({ ...config, host: undefined })),
+              ).pipe(Layer.provide(layerServeConfig())),
+              layerTailscaleUp,
+              Layer.succeed(
+                HttpClient.HttpClient,
+                HttpClient.make((request) =>
+                  Deferred.succeed(probeStarted, undefined).pipe(
+                    Effect.andThen(
+                      probeState === "timeout"
+                        ? Effect.never
+                        : Effect.succeed(
+                            HttpClientResponse.fromWeb(
+                              request,
+                              new Response(null, { status: probeState === "healthy" ? 200 : 502 }),
+                            ),
+                          ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        const resolving = yield* Effect.forkScoped(service.resolve());
+        yield* Deferred.await(probeStarted);
+        if (probeState === "timeout") {
+          expect(yield* service.resolveAvailable()).toEqual([]);
+          yield* TestClock.adjust("3 seconds");
+        }
+        const endpoints = yield* Fiber.join(resolving);
+        expect(endpoints).toEqual(
+          probeState === "healthy"
+            ? [{ kind: "tailnet", httpBaseUrl: "https://bb-1.tail1234.ts.net/" }]
+            : [],
+        );
+        expect(yield* service.resolveAvailable()).toEqual(endpoints);
+      }).pipe(Effect.scoped),
+    );
+  }
+
   effectIt.effect("lists the tailnet name once Serve answers for this server", () =>
     Effect.gen(function* () {
       expect(yield* resolveWithServe(200)).toEqual([

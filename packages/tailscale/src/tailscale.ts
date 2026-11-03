@@ -410,7 +410,7 @@ export function buildTailscaleDirectBaseUrl(input: {
     )
   )
     return null;
-  const host = input.host === undefined ? "::" : normalizeIpAddress(input.host);
+  const host = normalizeIpAddress(input.host ?? "127.0.0.1");
   if (host === null) return null;
   const selfAddresses = new Set(
     [...status.tailnetIpv4Addresses, ...status.tailnetIpv6Addresses].map(normalizeIpAddress),
