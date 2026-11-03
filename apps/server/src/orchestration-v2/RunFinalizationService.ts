@@ -36,6 +36,7 @@ export class RunFinalizationObserver extends Context.Reference<{
     readonly cwd: string;
     readonly threadId: ThreadId;
     readonly runId: RunId;
+    readonly followBranch?: (branch: string) => Effect.Effect<void>;
   }) => Effect.Effect<string | null, RunFinalizationRefreshError>;
 }>("t3/orchestration-v2/RunFinalizationObserver", {
   defaultValue: () => ({
@@ -76,6 +77,7 @@ const make = Effect.gen(function* () {
       if (
         !thread ||
         thread.branch === null ||
+        isTemporaryWorktreeBranch(thread.branch) ||
         thread.branch === input.checkedOutBranch ||
         thread.worktreePath !== input.cwd
       ) {
@@ -95,8 +97,6 @@ const make = Effect.gen(function* () {
         expectedBranch: thread.branch,
         expectedWorktreePath: input.cwd,
       });
-      // The first refresh skipped the PR lookup because the thread still had the old branch.
-      yield* observer.refresh({ cwd: input.cwd, threadId: thread.id, runId: input.runId });
     },
     (effect, input) =>
       effect.pipe(
@@ -129,8 +129,19 @@ const make = Effect.gen(function* () {
     const cwd = projection.checkpointScopes.find((scope) => scope.id === input.scopeId)?.cwd;
     if (cwd !== undefined) {
       // Retrying a display refresh after the checkpoint is durable blocks the next turn.
-      const checkedOutBranch = yield* observer
-        .refresh({ cwd, threadId: input.threadId, runId: input.runId })
+      yield* observer
+        .refresh({
+          cwd,
+          threadId: input.threadId,
+          runId: input.runId,
+          followBranch: (checkedOutBranch) =>
+            followWorktreeBranch({
+              threadId: input.threadId,
+              runId: input.runId,
+              cwd,
+              checkedOutBranch,
+            }),
+        })
         .pipe(
           Effect.catchTags({
             RunFinalizationRefreshError: (cause) =>
@@ -140,14 +151,6 @@ const make = Effect.gen(function* () {
               }).pipe(Effect.as(null)),
           }),
         );
-      if (checkedOutBranch !== null) {
-        yield* followWorktreeBranch({
-          threadId: input.threadId,
-          runId: input.runId,
-          cwd,
-          checkedOutBranch,
-        });
-      }
     }
   });
   return RunFinalizationService.of({ finalize });
@@ -166,12 +169,13 @@ export const layerObserver = Layer.effect(
     return {
       refreshAfterTurn: pullRequests.refreshAfterTurn,
       refresh: Effect.fn("RunFinalizationService.refresh")(
-        function* ({ cwd, threadId, runId }) {
+        function* ({ cwd, threadId, runId, followBranch }) {
           const [, local] = yield* Effect.all(
             [workspaceEntries.refresh(cwd), vcsStatus.refreshLocalStatus(cwd)],
             { concurrency: "unbounded" },
           );
           if (local.refName === null) return null;
+          if (followBranch) yield* followBranch(local.refName);
           if (local.isDefaultRef) return local.refName;
           const thread = yield* projections.getThreadShell(threadId);
           if (!thread || thread.branch !== local.refName) return local.refName;

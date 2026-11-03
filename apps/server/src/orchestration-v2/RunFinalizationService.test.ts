@@ -75,6 +75,14 @@ it.effect.each(
         expected: ["/repo"],
       },
       {
+        label: "discovers the renamed branch's PR in the same refresh",
+        branch: "feature",
+        checkedOut: "renamed",
+        follow: true,
+        activeRun: null,
+        expected: ["/repo"],
+      },
+      {
         label: "leaves the default branch's PR cache alone",
         branch: "main",
         checkedOut: "main",
@@ -99,6 +107,7 @@ it.effect.each(
   ).map((scenario) => [scenario.label, scenario] as const),
 )("%s", ([, scenario]) => {
   const refreshed: string[] = [];
+  let branch: string = scenario.branch;
   const lookedUp = Deferred.makeUnsafe<void>();
   const threadId = ThreadId.make("thread-pr-refresh");
   const runId = RunId.make("completed-run");
@@ -131,7 +140,7 @@ it.effect.each(
           getThreadShell: () =>
             Effect.succeed({
               id: threadId,
-              branch: scenario.branch,
+              branch,
               activeRunId: scenario.activeRun === null ? null : RunId.make(scenario.activeRun),
             } as OrchestrationV2ThreadShell),
         }),
@@ -140,7 +149,19 @@ it.effect.each(
   );
   return Effect.gen(function* () {
     const observer = yield* RunFinalization.RunFinalizationObserver;
-    yield* observer.refresh({ cwd: "/repo", threadId, runId });
+    yield* observer.refresh({
+      cwd: "/repo",
+      threadId,
+      runId,
+      ...("follow" in scenario
+        ? {
+            followBranch: (checkedOutBranch: string) =>
+              Effect.sync(() => {
+                branch = checkedOutBranch;
+              }),
+          }
+        : {}),
+    });
     if (scenario.expected.length > 0) yield* Deferred.await(lookedUp);
     assert.deepEqual(refreshed, [...scenario.expected]);
   }).pipe(Effect.provide(layer));
@@ -289,7 +310,7 @@ it.effect.each(
   const threadId = ThreadId.make("thread-branch-drift");
   const runId = RunId.make("run-branch-drift");
   const scopeId = CheckpointScopeId.make("scope-branch-drift");
-  let refreshes = 0;
+  const followed: string[] = [];
   const updates: Array<{
     branch: unknown;
     expectedBranch: unknown;
@@ -336,9 +357,10 @@ it.effect.each(
             }),
         }),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
-          refresh: () =>
-            Effect.sync(() => {
-              refreshes += 1;
+          refresh: ({ followBranch }) =>
+            Effect.gen(function* () {
+              if (followBranch) yield* followBranch(scenario.checkedOut);
+              followed.push(scenario.checkedOut);
               return scenario.checkedOut;
             }),
           refreshAfterTurn: () => Effect.void,
@@ -357,7 +379,6 @@ it.effect.each(
         expectedWorktreePath: "/repo",
       })),
     );
-    // An adopted branch is refreshed again so its PR is found this turn.
-    assert.equal(refreshes, 1 + scenario.expected.length);
+    assert.deepEqual(followed, [scenario.checkedOut]);
   }).pipe(Effect.provide(layer));
 });
