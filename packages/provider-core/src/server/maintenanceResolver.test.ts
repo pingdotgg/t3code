@@ -463,6 +463,62 @@ it.layer(
       }),
   );
 
+  // Root ignores directory modes, and chmod does not stop writes on Windows.
+  const readOnlyDirsUnenforced = windowsHost || process.getuid?.() === 0;
+  const resolveNpmInstallWithReadOnlyDir = (readOnlySegments: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-npm-read-only");
+      const link = linkIntoPackage(tempDir, "package-tool", [
+        "lib",
+        "node_modules",
+        "@example",
+        "package-tool",
+      ]);
+      const readOnlyDir = NodePath.join(tempDir, ...readOnlySegments);
+      NodeFS.chmodSync(readOnlyDir, 0o555);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.chmodSync(readOnlyDir, 0o755);
+          NodeFS.rmSync(tempDir, { recursive: true, force: true });
+        }),
+      );
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: link,
+        env: { PATH: NodePath.join(tempDir, "bin") },
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+      return { tempDir, capabilities };
+    });
+
+  it.effect.skipIf(!symlinksSupported || readOnlyDirsUnenforced)(
+    "shows the npm command without offering to run it when the package scope is read-only",
+    () =>
+      Effect.gen(function* () {
+        const { tempDir, capabilities } = yield* resolveNpmInstallWithReadOnlyDir([
+          "lib",
+          "node_modules",
+          "@example",
+        ]);
+
+        expect(capabilities.update).toBeNull();
+        expect(capabilities.manualCommand).toContain(
+          `npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
+        );
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported || readOnlyDirsUnenforced)(
+    "shows the npm command without offering to run it when the prefix bin is read-only",
+    () =>
+      Effect.gen(function* () {
+        const { tempDir, capabilities } = yield* resolveNpmInstallWithReadOnlyDir(["bin"]);
+
+        expect(capabilities.update).toBeNull();
+        expect(capabilities.manualCommand).toContain(
+          `npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
+        );
+      }),
+  );
+
   it("derives the npm prefix only from the global lib/node_modules layout", () => {
     expect(
       npmGlobalPrefixFromCommandPath(
