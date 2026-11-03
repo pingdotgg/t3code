@@ -636,11 +636,14 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       context.platform !== "win32" &&
       (yield* npmPrefixDeniesWrite(npmPrefix, packageName))
     ) {
+      // The version lookup still needs the provider's npm and prefix.
+      const { lookupLatestVersion } = yield* withConfiguredNpmVersionLookup(npm);
       return makeManualOnlyProviderMaintenanceCapabilities({
         provider: definition.provider,
         packageName,
         installPath: context.realCommandPath,
         manualCommand: `sudo ${npm.update.command}`,
+        ...(lookupLatestVersion ? { lookupLatestVersion } : {}),
       });
     }
     return npm;

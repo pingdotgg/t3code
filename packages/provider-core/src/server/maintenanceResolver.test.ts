@@ -474,6 +474,9 @@ it.layer(
         "@example",
         "package-tool",
       ]);
+      // An npm only the provider's PATH reaches, like a version manager's.
+      const providerNpm = NodePath.join(tempDir, "provider-bin", "npm");
+      writeExecutable(providerNpm);
       const readOnlyDir = NodePath.join(tempDir, ...readOnlySegments);
       NodeFS.chmodSync(readOnlyDir, 0o555);
       yield* Effect.addFinalizer(() =>
@@ -482,27 +485,50 @@ it.layer(
           NodeFS.rmSync(tempDir, { recursive: true, force: true });
         }),
       );
+      const views: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
       const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
         binaryPath: link,
-        env: { PATH: NodePath.join(tempDir, "bin") },
-      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
-      return { tempDir, capabilities };
+        env: { PATH: [NodePath.dirname(providerNpm), NodePath.join(tempDir, "bin")].join(":") },
+      }).pipe(
+        Effect.provideService(HostProcess.Environment, { PATH: "" }),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          stdoutSpawner((command, args) => {
+            views.push({ command, args });
+            return '"1.2.0"';
+          }),
+        ),
+      );
+      const latestVersion = yield* capabilities.lookupLatestVersion ?? Effect.succeed(null);
+      return { tempDir, providerNpm, capabilities, latestVersion, views };
     });
 
   it.effect.skipIf(!symlinksSupported || readOnlyDirsUnenforced)(
     "shows the npm command without offering to run it when the package scope is read-only",
     () =>
       Effect.gen(function* () {
-        const { tempDir, capabilities } = yield* resolveNpmInstallWithReadOnlyDir([
-          "lib",
-          "node_modules",
-          "@example",
-        ]);
+        const { tempDir, providerNpm, capabilities, latestVersion, views } =
+          yield* resolveNpmInstallWithReadOnlyDir(["lib", "node_modules", "@example"]);
 
         expect(capabilities.update).toBeNull();
-        expect(capabilities.manualCommand).toContain(
-          `npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
+        expect(capabilities.manualCommand).toBe(
+          `sudo npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
         );
+        expect(latestVersion).toBe("1.2.0");
+        expect(views).toEqual([
+          {
+            command: providerNpm,
+            args: [
+              "view",
+              "--global",
+              "--prefix",
+              tempDir,
+              "--json",
+              "@example/package-tool@latest",
+              "version",
+            ],
+          },
+        ]);
       }),
   );
 
@@ -513,8 +539,8 @@ it.layer(
         const { tempDir, capabilities } = yield* resolveNpmInstallWithReadOnlyDir(["bin"]);
 
         expect(capabilities.update).toBeNull();
-        expect(capabilities.manualCommand).toContain(
-          `npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
+        expect(capabilities.manualCommand).toBe(
+          `sudo npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
         );
       }),
   );
