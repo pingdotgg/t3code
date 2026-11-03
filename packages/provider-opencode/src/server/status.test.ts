@@ -1092,9 +1092,13 @@ it.effect("keeps reading OpenCode 2 models until its location plugins finish act
       const remaining = activatedAt - (yield* Clock.currentTimeMillis);
       yield* Effect.sleep(Math.min(remaining, 5_000) + 50);
       if (remaining > 5_000) {
-        return yield* new ServiceUnavailableError({
-          message: "Location plugins did not finish activating",
-          service: "plugin",
+        return yield* new OpenCodeRuntime.OpenCodeRuntimeError({
+          operation: "model.list",
+          detail: "The OpenCode server could not list its models.",
+          cause: new ServiceUnavailableError({
+            message: "Location plugins did not finish activating",
+            service: "plugin",
+          }),
         });
       }
       return models;
