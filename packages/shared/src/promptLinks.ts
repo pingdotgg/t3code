@@ -1,4 +1,3 @@
-import { parseThreadPath } from "./threadDeepLinks.ts";
 import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
 
 export const PROMPT_LINK_MAX_PROMPT_LENGTH = 8_000;
@@ -183,6 +182,7 @@ export function buildNewThreadLink(input: {
 }
 
 const APP_SCHEME = /^t3code(?:-[a-z]+)?:$/;
+const THREAD_PATH = /^\/([^/]+)\/([^/]+)\/?$/;
 
 export function promptLinkAppPath(
   value: string,
@@ -194,13 +194,18 @@ export function promptLinkAppPath(
     if (url.host === "new" && (url.pathname === "" || url.pathname === "/")) {
       return `/new${url.search}`;
     }
-    const thread = url.host === "threads" ? parseThreadPath(url.pathname) : null;
-    return thread ? `${url.pathname.replace(/\/$/, "")}${url.search}` : null;
+    const thread = url.host === "threads" ? THREAD_PATH.exec(url.pathname) : null;
+    return thread ? `/${thread[1]}/${thread[2]}${url.search}` : null;
   }
   if (!URL.canParse(hostedAppUrl) || url.origin !== new URL(hostedAppUrl).origin) return null;
   if (url.pathname === "/new") return `/new${url.search}`;
-  const thread = parseThreadPath(url.pathname);
-  return thread ? `${url.pathname.replace(/\/$/, "")}${url.search}` : null;
+  // The web app's own thread route is a link only with a prompt, so reloading a tab never asks.
+  const thread = url.pathname.startsWith("/threads/")
+    ? THREAD_PATH.exec(url.pathname.slice("/threads".length))
+    : url.searchParams.has("prompt")
+      ? THREAD_PATH.exec(url.pathname)
+      : null;
+  return thread ? `/${thread[1]}/${thread[2]}${url.search}` : null;
 }
 
 export function promptLinkDeepLink(appPath: string, scheme = "t3code"): string {

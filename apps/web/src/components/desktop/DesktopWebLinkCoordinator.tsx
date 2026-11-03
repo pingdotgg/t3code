@@ -5,7 +5,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { parseThreadDeepLink, threadDeepLink } from "@t3tools/shared/threadDeepLinks";
+import { parseThreadDeepLink } from "@t3tools/shared/threadDeepLinks";
+import { hostedThreadLink } from "@t3tools/shared/threadLinks";
 import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
 import { readLocalApi } from "../../localApi";
 import { readPairingAppLink, resolveRemotePairingTarget } from "@t3tools/shared/remote";
@@ -226,8 +227,14 @@ export function DesktopWebLinkCoordinator() {
       return;
     }
     if (bareThread !== null) {
+      if (environments.some((e) => e.environmentId === bareThread.environmentId)) {
+        await router.navigate({
+          href: new URL(hostedThreadLink(bareThread)).pathname.replace("/threads", ""),
+        });
+        return;
+      }
       try {
-        await readLocalApi()?.shell.openExternal(threadDeepLink(bareThread));
+        await readLocalApi()?.shell.openExternal(hostedThreadLink(bareThread));
       } catch (error) {
         reportFailure(url, error instanceof Error ? error.message : url);
       }

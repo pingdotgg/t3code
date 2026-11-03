@@ -49,7 +49,11 @@ export function parseThreadDeepLink(value: string): ScopedThreadRef | null {
       ["t3code:", "t3code-dev:", "t3code-preview:"].includes(url.protocol) &&
       url.host === "threads";
     if (!web && !app) return null;
-    return parseThreadPath(url.pathname);
+    return parseThreadPath(
+      web && url.pathname.startsWith("/threads/")
+        ? url.pathname.slice("/threads".length)
+        : url.pathname,
+    );
   } catch {
     return null;
   }

@@ -168,6 +168,27 @@ export function nextSnoozeWakeAfter(
   return next;
 }
 
+// Outside search, the clock only changes list membership/order at snooze deadlines.
+export function threadListV2LayoutTime(input: {
+  readonly threads: ReadonlyArray<{ readonly snoozedUntil?: string | null }>;
+  readonly now: string;
+  readonly searchQuery: string;
+}) {
+  if (input.searchQuery !== "") return input.now;
+  const nowMs = Date.parse(input.now);
+  if (!Number.isFinite(nowMs)) return input.now;
+  let previousWakeAt: number | undefined;
+  let nextWakeAt: number | undefined;
+  for (const thread of input.threads) {
+    if (thread.snoozedUntil == null) continue;
+    const wakeAt = Date.parse(thread.snoozedUntil);
+    if (!Number.isFinite(wakeAt)) continue;
+    if (wakeAt <= nowMs) previousWakeAt = Math.max(previousWakeAt ?? wakeAt, wakeAt);
+    else nextWakeAt = Math.min(nextWakeAt ?? wakeAt, wakeAt);
+  }
+  return new Date(previousWakeAt ?? (nextWakeAt === undefined ? 0 : nextWakeAt - 1)).toISOString();
+}
+
 export const THREAD_LIST_V2_SETTLED_INITIAL_COUNT = 10;
 export const THREAD_LIST_V2_SETTLED_PAGE_COUNT = 25;
 

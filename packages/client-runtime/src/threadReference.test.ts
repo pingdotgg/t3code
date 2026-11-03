@@ -1,6 +1,9 @@
 import { EnvironmentId, ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
-import { normalizeThreadClipboard } from "@t3tools/shared/composerContextClipboard";
-import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import {
+  decodeComposerContextFragment,
+  encodeComposerContextFragment,
+} from "@t3tools/shared/composerContextClipboard";
+import { threadLinkContextReferences } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveThreadReferenceCopyTarget } from "./threadReference.ts";
@@ -79,15 +82,34 @@ describe("resolveThreadReferenceCopyTarget", () => {
 
     expect(target).toMatchObject({
       kind: "thread",
-      value: "https://app.t3.codes/env-1/thread-1",
       description: "Fix the login flow",
       successTitle: "Thread copied",
     });
-    expect(target).not.toHaveProperty("fragment");
-    const pasted = normalizeThreadClipboard(target!.value, null);
-    expect(pasted.fragment?.records).toMatchObject([
-      { kind: "thread", environmentId: "env-1", threadId: "thread-1" },
-    ]);
-    expect(collectComposerContextReferences(pasted.text)).toMatchObject([{ kind: "thread" }]);
+    const pasted = decodeComposerContextFragment(encodeComposerContextFragment(target!.fragment!));
+    expect(pasted).toEqual({
+      version: 1,
+      source: { environmentId: "env-1" },
+      records: [
+        expect.objectContaining({
+          kind: "thread",
+          environmentId: "env-1",
+          threadId: "thread-1",
+          title: "Fix the login flow",
+        }),
+      ],
+    });
+    // The plain text opens the thread anywhere and pastes back as the copied record's chip.
+    expect(target!.value).toBe("https://app.t3.codes/threads/env-1/thread-1");
+    expect(threadLinkContextReferences(target!.value, pasted!.records, () => undefined)).toEqual({
+      text: `[Fix the login flow](t3-context://v1/thread/${pasted!.records[0]!.contextId})`,
+      records: pasted!.records,
+    });
+  });
+
+  it("links through the build's hosted app", () => {
+    expect(
+      resolveThreadReferenceCopyTarget({ ...thread, hostedAppUrl: "https://preview.t3.codes" })
+        ?.value,
+    ).toBe("https://preview.t3.codes/threads/env-1/thread-1");
   });
 });

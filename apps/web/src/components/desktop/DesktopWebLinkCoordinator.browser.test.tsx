@@ -403,7 +403,7 @@ it.each([
     using notification = vi.spyOn(toastManager, "add");
     await using _coordinator = await mount(url);
     await vi.waitFor(() =>
-      expect(state.openExternal).toHaveBeenCalledWith("https://app.t3.codes/unknown/thread"),
+      expect(state.openExternal).toHaveBeenCalledWith("https://app.t3.codes/threads/unknown/thread"),
     );
     expect(state.openScratchProject).not.toHaveBeenCalled();
     expect(state.preview).not.toHaveBeenCalled();

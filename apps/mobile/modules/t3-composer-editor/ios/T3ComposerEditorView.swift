@@ -201,10 +201,7 @@ private final class ComposerTextView: UITextView {
     }
     let pasteboard = UIPasteboard.general
     let context = T3ComposerClipboard.read()
-    let text = context["text", default: ""]
-    let hasThreadLink = text.contains("app.t3.codes/") || text.contains("://threads/")
-    if !context["fragment", default: ""].isEmpty || context["html", default: ""].contains("data-t3-context-fragment=") ||
-       (!pasteboard.hasImages && !bypassTextPasteInterception && hasThreadLink && !shouldInterceptTextPaste(text)) {
+    if !context["fragment", default: ""].isEmpty || context["html", default: ""].contains("data-t3-context-fragment=") {
       onPasteContext?(context)
       return
     }
@@ -227,6 +224,12 @@ private final class ComposerTextView: UITextView {
     if !bypassTextPasteInterception,
        let text = pasteboard.string, shouldInterceptTextPaste(text) {
       onPasteText?(text, selectedRange)
+      return
+    }
+    // read() sees only the first item; native paste keeps every item of a longer pasteboard.
+    if !bypassTextPasteInterception, pasteboard.numberOfItems == 1,
+       T3ComposerClipboard.hasThreadLink(context["text", default: ""]) {
+      onPasteContext?(context)
       return
     }
     super.paste(sender)

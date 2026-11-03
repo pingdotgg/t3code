@@ -2,12 +2,15 @@ import { NodeHttpServer } from "@effect/platform-node";
 import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as HttpRouter from "effect/http/HttpRouter";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { Tool, Toolkit } from "effect/ai";
@@ -32,6 +35,8 @@ import {
   type ServedPeer,
 } from "./PeerLinks.testkit.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
+
+import { layerReaderDatabase, traceSqlRouting } from "../persistence/testkit/SqliteRouting.ts";
 
 /** What B's probe saw: the calling client and the modes it may start work with. */
 const Probe = Schema.Struct({ caller: Schema.String, modes: Schema.String });
@@ -111,6 +116,47 @@ const serveApart = (descriptor: ExecutionEnvironmentDescriptor) =>
   Layer.build(Layer.fresh(NodeHttpServer.layerTest)).pipe(
     Effect.flatMap((server) => serveB(descriptor).pipe(Effect.provideContext(server))),
   );
+
+it.effect("routes peer reads to readers and sees uncommitted link updates", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const context = yield* layerLinkingEnvironment(
+        laptop,
+        ServerSecretStore.layer,
+        layerReaderDatabase,
+      ).pipe(Layer.build);
+      const links = Context.get(context, PeerLinks.PeerLinks);
+      const sql = Context.get(context, SqlClient.SqlClient);
+      yield* sql`
+      INSERT INTO peer_environment_links (
+        environment_id, secret_name, label, urls_json, access, linked_at, expires_at, fenced
+      ) VALUES (
+        ${box.environmentId}, 'test-secret', 'Box', '[]', 'auto',
+        '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', 1
+      )
+    `;
+      const { queries, trace } = traceSqlRouting();
+      yield* links.list.pipe(trace);
+      expect(Option.getOrThrow(yield* links.get(box.environmentId).pipe(trace)).label).toBe("Box");
+      const reads = queries.filter(({ query }) =>
+        query.includes("SELECT * FROM peer_environment_links"),
+      );
+      expect(reads).toHaveLength(2);
+      expect(reads.map((row) => row.connection)).toEqual(["reader", "reader"]);
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`UPDATE peer_environment_links SET label = 'Uncommitted box'`;
+          expect(Option.getOrThrow(yield* links.get(box.environmentId)).label).toBe(
+            "Uncommitted box",
+          );
+          expect((yield* links.list)[0]?.label).toBe("Uncommitted box");
+        }),
+      );
+      expect(yield* links.unlink(box.environmentId)).toBe(true);
+      expect(yield* links.list).toEqual([]);
+    }),
+  ),
+);
 
 it.effect("links with a pairing code, and the peer holds its agents to the limits they carry", () =>
   Effect.scoped(
@@ -335,6 +381,57 @@ it.effect("never sends a link's token to an address that stops answering as that
       expect(failed.message).toContain("Box did not answer");
       expect(yield* Ref.get(b.bearers)).toEqual([]);
       expect((yield* a.links.list).map((link) => link.status)).toEqual(["unreachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("cancelling a descriptor probe aborts its request and leaves later resolves fresh", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const hold = yield* Ref.make(false);
+      const requests = yield* Ref.make(0);
+      const entered = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      const holdDescriptor = HttpRouter.middleware(
+        (httpEffect) =>
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            if (request.url.startsWith("/.well-known/t3/environment")) {
+              yield* Ref.update(requests, (count) => count + 1);
+              if (yield* Ref.get(hold)) {
+                return yield* Deferred.succeed(entered, undefined).pipe(
+                  Effect.andThen(Effect.never),
+                  Effect.onInterrupt(() =>
+                    Deferred.succeed(interrupted, undefined).pipe(Effect.asVoid),
+                  ),
+                  Effect.interruptible,
+                );
+              }
+            }
+            return yield* httpEffect;
+          }),
+        { global: true },
+      );
+      const b = yield* servePeer(
+        box,
+        Layer.merge(McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers), holdDescriptor),
+      );
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+      yield* Ref.set(b.bearers, []);
+      yield* Ref.set(requests, 0);
+      yield* Ref.set(hold, true);
+
+      const resolving = yield* a.links.resolve(box.environmentId).pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      yield* Fiber.interrupt(resolving);
+      yield* Deferred.await(interrupted);
+
+      yield* Ref.set(hold, false);
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      expect(yield* Ref.get(requests)).toBe(2);
+      expect(yield* Ref.get(b.bearers)).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
