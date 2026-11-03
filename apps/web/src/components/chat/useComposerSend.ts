@@ -474,6 +474,10 @@ export function useComposerSend(input: ComposerSendInput) {
       sendCtx && !directAnnotation && !queuedRunEdit.isEditing
         ? parseSideChatCommand(promptAtSend)
         : null;
+    if (activeEnvironmentUnavailable && sideChatCommand) {
+      toastManager.add({ type: "warning", title: "Reconnect to start a side chat." });
+      return;
+    }
     const answeringQuestion =
       !activeEnvironmentUnavailable &&
       Boolean(activePendingProgress) &&

@@ -45,7 +45,7 @@ export const offlineMessages = createOfflineOutbox({
       message.attachments,
       attachments,
     );
-    if (!message.input.bootstrap) {
+    if (!message.input.bootstrap?.createThread) {
       const runtimeResult = await runAtomCommand(
         appAtomRegistry,
         threadEnvironment.setRuntimeMode,

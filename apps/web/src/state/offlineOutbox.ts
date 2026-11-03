@@ -12,7 +12,7 @@ export interface OfflineMessage {
 export function createOfflineOutbox(options: {
   load: () => Promise<OfflineMessage[]>;
   put: (message: OfflineMessage) => Promise<void>;
-  remove: (id: string) => Promise<void>;
+  remove: (id: string, successor?: OfflineMessage) => Promise<void>;
   canSend: (message: OfflineMessage) => boolean;
   send: (message: OfflineMessage) => Promise<void>;
 }) {
@@ -41,8 +41,28 @@ export function createOfflineOutbox(options: {
   const remove = (id: string) =>
     serialize(async () => {
       if (sending.has(id)) return;
-      await options.remove(id);
-      publish(messages.filter((message) => message.input.message.messageId !== id));
+      const index = messages.findIndex((message) => message.input.message.messageId === id);
+      const removed = messages[index];
+      const bootstrap = removed?.input.bootstrap;
+      const next = bootstrap
+        ? messages
+            .slice(index + 1)
+            .find(
+              (message) =>
+                message.environmentId === removed.environmentId &&
+                message.input.threadId === removed.input.threadId,
+            )
+        : undefined;
+      const successor =
+        next && bootstrap && !next.input.bootstrap
+          ? { ...next, input: { ...next.input, bootstrap } }
+          : undefined;
+      await options.remove(id, successor);
+      publish(
+        messages
+          .filter((message) => message !== removed)
+          .map((message) => (message === next && successor ? successor : message)),
+      );
     });
   const retry = (id: string) =>
     serialize(async () => {

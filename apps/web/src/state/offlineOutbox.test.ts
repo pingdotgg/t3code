@@ -25,7 +25,8 @@ function setup() {
     put: async (entry: OfflineMessage) => {
       stored.set(entry.input.message.messageId, structuredClone(entry));
     },
-    remove: async (id: string) => {
+    remove: async (id: string, successor?: OfflineMessage) => {
+      if (successor) stored.set(successor.input.message.messageId, structuredClone(successor));
       stored.delete(id);
     },
     canSend: (entry: OfflineMessage) => online.has(entry.environmentId),
@@ -79,6 +80,27 @@ describe("offline outbox", () => {
     await h.queue.drain();
     expect(h.sent.map((entry) => entry.input.message.messageId)).toEqual(["first"]);
     expect(h.stored.size).toBe(0);
+    const bootstrap = {
+      prepareWorktree: { projectCwd: "/repo", baseBranch: "main" },
+      runSetupScript: true,
+    };
+    const first = message("launch");
+    await h.queue.enqueue({ ...first, input: { ...first.input, bootstrap } });
+    await h.queue.enqueue(message("survivor"));
+    await h.queue.enqueue(message("other", "remote"));
+    await h.queue.remove("launch");
+    const restarted = createOfflineOutbox(h.options);
+    await restarted.load();
+    expect(
+      restarted.getSnapshot().find((entry) => entry.input.message.messageId === "survivor")?.input
+        .bootstrap,
+    ).toEqual(bootstrap);
+    expect(
+      restarted.getSnapshot().find((entry) => entry.input.message.messageId === "other")?.input
+        .bootstrap,
+    ).toBeUndefined();
+    await restarted.drain();
+    expect(h.sent.at(-1)?.input.bootstrap).toEqual(bootstrap);
   });
 
   it("does not publish a message when durable storage fails", async () => {

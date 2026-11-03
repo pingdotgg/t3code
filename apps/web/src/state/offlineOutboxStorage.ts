@@ -77,7 +77,10 @@ export const offlineOutboxStorage = {
   put: async (message: OfflineMessage) => {
     await transact("readwrite", (store) => store.put(message, message.input.message.messageId));
   },
-  remove: async (id: string) => {
-    await transact("readwrite", (store) => store.delete(id));
+  remove: async (id: string, successor?: OfflineMessage) => {
+    await transact("readwrite", (store) => {
+      if (successor) store.put(successor, successor.input.message.messageId);
+      return store.delete(id);
+    });
   },
 };
