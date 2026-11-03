@@ -268,7 +268,7 @@ function isAnnotationNode(node: EventTarget | null): boolean {
 }
 
 const isFrameElement = (node: EventTarget | null): node is HTMLIFrameElement | HTMLFrameElement =>
-  isElementNode(node) && (node.tagName === "IFRAME" || node.tagName === "FRAME");
+  isElementNode(node) && (node.localName === "iframe" || node.localName === "frame");
 
 /** The document of a same-origin frame; null for cross-origin frames and non-frames. */
 const frameDocument = (element: Element): Document | null =>
@@ -321,20 +321,28 @@ function intersectRects(
   };
 }
 
-/** Moves a rect in `view`'s viewport into the top viewport, clipped by each enclosing frame. */
-function inTopViewport(view: Window, rect: PreviewAnnotationRect): PreviewAnnotationRect {
+type RectMapper = (rect: PreviewAnnotationRect) => PreviewAnnotationRect;
+
+/** Moves rects in `view`'s viewport into the top viewport, clipped by each enclosing frame. */
+function topViewportMapper(view: Window): RectMapper {
   const frame = enclosingFrame(view);
-  if (!frame) return rect;
-  return intersectRects({ ...rect, ...topPoint(view, rect.x, rect.y) }, visibleElementRect(frame));
+  if (!frame) return (rect) => rect;
+  const offset = topPoint(view, 0, 0);
+  const clip = visibleElementRect(frame);
+  return (rect) => intersectRects({ ...rect, x: rect.x + offset.x, y: rect.y + offset.y }, clip);
 }
+
+const inTopViewport = (view: Window, rect: PreviewAnnotationRect): PreviewAnnotationRect =>
+  topViewportMapper(view)(rect);
 
 const EMPTY_RECT: PreviewAnnotationRect = { x: 0, y: 0, width: 0, height: 0 };
 
-function elementRect(element: Element): PreviewAnnotationRect {
+function elementRect(element: Element, toTop?: RectMapper): PreviewAnnotationRect {
   const view = element.ownerDocument.defaultView;
   if (!view) return EMPTY_RECT;
   const rect = element.getBoundingClientRect();
-  return inTopViewport(view, { x: rect.left, y: rect.top, width: rect.width, height: rect.height });
+  const local = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+  return toTop ? toTop(local) : inTopViewport(view, local);
 }
 
 /** Takes top-viewport coordinates and descends into same-origin frames. */
@@ -1263,9 +1271,14 @@ function startAnnotation(sendEnabled: boolean): void {
 
   const selectElementsInRect = (rect: PreviewAnnotationRect): number => {
     const candidates = [document, ...frameDocuments(document)]
-      .flatMap((root) => Array.from(root.querySelectorAll("body *")))
-      .filter((element) => !isAnnotationNode(element) && frameDocument(element) === null)
-      .map((element) => ({ element, rect: elementRect(element) }))
+      .flatMap((root) => {
+        if (!root.defaultView) return [];
+        // One offset and clip per document: per element they would re-walk every frame ancestor.
+        const toTop = topViewportMapper(root.defaultView);
+        return Array.from(root.querySelectorAll("body *"))
+          .filter((element) => !isAnnotationNode(element) && frameDocument(element) === null)
+          .map((element) => ({ element, rect: elementRect(element, toTop) }));
+      })
       .filter(({ rect: candidate }) => {
         if (candidate.width < 2 || candidate.height < 2) return false;
         return !(
@@ -1284,8 +1297,8 @@ function startAnnotation(sendEnabled: boolean): void {
           centerY >= rect.y &&
           centerY <= rect.y + rect.height &&
           (element.children.length === 0 ||
-            element.tagName === "BUTTON" ||
-            element.tagName === "A" ||
+            element.localName === "button" ||
+            element.localName === "a" ||
             element.getAttribute("role") === "button")
         );
       })
