@@ -1,11 +1,9 @@
 package expo.modules.t3voicetranscription
 
 import android.content.Context
-import android.net.Uri
 import com.google.mlkit.genai.common.DownloadStatus
 import com.google.mlkit.genai.common.FeatureStatus
 import com.google.mlkit.genai.common.GenAiException
-import com.google.mlkit.genai.common.audio.AudioSource
 import com.google.mlkit.genai.speechrecognition.SpeechRecognition
 import com.google.mlkit.genai.speechrecognition.SpeechRecognizerOptions
 import com.google.mlkit.genai.speechrecognition.SpeechRecognizerResponse
@@ -18,7 +16,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
-internal class VoiceTranscriptionException(val code: String, message: String) : Exception(message)
+internal class VoiceTranscriptionException(
+  val code: String,
+  message: String,
+  cause: Throwable? = null
+) : Exception(message, cause)
 
 private val recognitionModes = listOf(
   SpeechRecognizerOptions.Mode.MODE_ADVANCED,
@@ -26,7 +28,7 @@ private val recognitionModes = listOf(
 )
 
 internal suspend fun isGoogleVoiceTranscriptionSupported(
-  createClient: (Int) -> MlKitSpeechClient
+  createClient: (Int) -> GoogleSpeechClient
 ): Boolean {
   for (mode in recognitionModes) {
     createClient(mode).use { client ->
@@ -41,7 +43,7 @@ internal suspend fun isGoogleVoiceTranscriptionSupported(
 }
 
 internal suspend fun prepareGoogleVoiceTranscription(
-  createClient: (Int) -> MlKitSpeechClient
+  createClient: (Int) -> GoogleSpeechClient
 ): Int {
   for (mode in recognitionModes) {
     createClient(mode).use { client ->
@@ -54,7 +56,7 @@ internal suspend fun prepareGoogleVoiceTranscription(
   )
 }
 
-private suspend fun prepareModel(client: MlKitSpeechClient): Boolean = try {
+private suspend fun prepareModel(client: GoogleSpeechClient): Boolean = try {
   val status = client.checkStatus()
   if (status == FeatureStatus.UNAVAILABLE) {
     false
@@ -64,13 +66,14 @@ private suspend fun prepareModel(client: MlKitSpeechClient): Boolean = try {
     ) {
       client.download()
     }
-    if (client.checkStatus() != FeatureStatus.AVAILABLE) {
-      throw VoiceTranscriptionException(
+    when (client.checkStatus()) {
+      FeatureStatus.UNAVAILABLE -> false
+      FeatureStatus.AVAILABLE -> true
+      else -> throw VoiceTranscriptionException(
         "preparation-failed",
         "Voice transcription could not prepare this language."
       )
     }
-    true
   }
 } catch (error: GenAiException) {
   if (!isModelUnavailable(error)) throw error
@@ -78,7 +81,7 @@ private suspend fun prepareModel(client: MlKitSpeechClient): Boolean = try {
 }
 
 // Any probe failure for one mode means "try the next mode"; prepare surfaces the real error.
-private suspend fun checkModelSupport(client: MlKitSpeechClient): Int = try {
+private suspend fun checkModelSupport(client: GoogleSpeechClient): Int = try {
   client.checkStatus()
 } catch (_: GenAiException) {
   FeatureStatus.UNAVAILABLE
@@ -92,28 +95,36 @@ private fun isModelUnavailable(error: GenAiException): Boolean = when (error.err
   else -> false
 }
 
-private suspend fun collectGoogleVoiceTranscript(
+internal suspend fun collectGoogleVoiceTranscript(
   responses: Flow<SpeechRecognizerResponse>
 ): String {
   val text = StringBuilder()
   var partial = ""
+  var completed = false
   responses.collect { response ->
     when (response) {
-      // ONE_SHOT files can emit multiple final utterances, with separators supplied by the SDK.
+      // Separators between final utterances are supplied by the SDK.
       is SpeechRecognizerResponse.FinalTextResponse -> {
         text.append(response.text)
         partial = ""
       }
       is SpeechRecognizerResponse.PartialTextResponse -> partial = response.text
       is SpeechRecognizerResponse.ErrorResponse -> throw response.e
+      is SpeechRecognizerResponse.CompletedResponse -> completed = true
       else -> Unit
     }
   }
-  // Some file sessions complete with a trailing partial instead of another final event.
+  requireCompleteAudio(completed) { "Speech recognition did not complete the recording." }
+  // Some sessions complete with a trailing partial instead of another final event.
   return text.append(partial).toString().trim()
 }
 
-internal class MlKitSpeechClient(context: Context, locale: Locale, mode: Int) : Closeable {
+internal interface GoogleSpeechClient : Closeable {
+  suspend fun checkStatus(): Int
+  suspend fun download()
+}
+
+internal class MlKitSpeechClient(context: Context, locale: Locale, mode: Int) : GoogleSpeechClient {
   private val context = context.applicationContext
   private val recognizer = SpeechRecognition.getClient(
     speechRecognizerOptions {
@@ -122,25 +133,28 @@ internal class MlKitSpeechClient(context: Context, locale: Locale, mode: Int) : 
     }
   )
 
-  suspend fun checkStatus() = recognizer.checkStatus()
+  override suspend fun checkStatus() = recognizer.checkStatus()
 
-  suspend fun download() {
+  override suspend fun download() {
     val result = recognizer.download().first {
       it is DownloadStatus.DownloadCompleted || it is DownloadStatus.DownloadFailed
     }
     if (result is DownloadStatus.DownloadFailed) throw result.e
   }
 
-  suspend fun transcribe(uri: String): String = AudioSource.fromUri(
-    context,
-    Uri.parse(uri)
-  ).use { source ->
-    val request = speechRecognizerRequest { audioSource = source }
-    try {
-      collectGoogleVoiceTranscript(recognizer.startRecognition(request))
-    } finally {
-      // Stop inference before closing its audio descriptor, including coroutine cancellation.
-      withContext(NonCancellable) { runCatching { recognizer.stopRecognition() } }
+  suspend fun transcribe(uri: String): String = withRecordedPcm(context, uri) { pcm ->
+    PcmPipe.open().use { pipe ->
+      val request = speechRecognizerRequest { audioSource = pipe.source }
+      try {
+        collectGoogleVoiceTranscript(
+          pacedRecordedResponses(pcm, pipe) {
+            recognizer.startRecognition(request)
+          }
+        )
+      } finally {
+        // Stop inference before closing the SDK-owned descriptor, including cancellation.
+        withContext(NonCancellable) { runCatching { recognizer.stopRecognition() } }
+      }
     }
   }
 

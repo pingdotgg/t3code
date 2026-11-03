@@ -90,7 +90,7 @@ class T3VoiceTranscriptionModule : Module() {
     synchronized(lock) {
       if (operation != null) {
         job.cancel()
-        promise.reject(errorCode, "Another voice transcription is already active.", null)
+        promise.reject("busy", "Another voice transcription is already active.", null)
         return
       }
       operation = id to job
@@ -102,11 +102,7 @@ class T3VoiceTranscriptionModule : Module() {
       outcome.fold(
         onSuccess = { promise.resolve(it) },
         onFailure = { error ->
-          val code = when (error) {
-            is CancellationException -> "cancelled"
-            is VoiceTranscriptionException -> error.code
-            else -> errorCode
-          }
+          val code = voiceTranscriptionErrorCode(error, errorCode)
           promise.reject(code, error.message, error)
         }
       )
