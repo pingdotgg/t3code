@@ -35,9 +35,12 @@ import {
   resolveBackgroundActivitySettings,
 } from "./backgroundActivitySettings.ts";
 
-// Only observability: a value the server migrates on load elsewhere in the file must not drop it.
+// Only these fields: a value the server migrates on load elsewhere in the file must not drop them.
 const ServerObservabilitySettingsJson = fromLenientJson(
-  Schema.Struct({ observability: ServerSettings.fields.observability }),
+  Schema.Struct({
+    observability: ServerSettings.fields.observability,
+    telemetryEnabled: ServerSettings.fields.telemetryEnabled,
+  }),
 );
 const decodeServerObservabilitySettingsJson = Schema.decodeUnknownOption(
   ServerObservabilitySettingsJson,

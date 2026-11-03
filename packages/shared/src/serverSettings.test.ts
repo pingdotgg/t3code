@@ -289,6 +289,12 @@ describe("serverSettings helpers", () => {
       parsePersistedServerObservabilitySettings(JSON.stringify({ telemetryEnabled: false }))
         .telemetryEnabled,
     ).toBe(false);
+    // The retired token streaming mode must not cost the file its opt-out either.
+    expect(
+      parsePersistedServerObservabilitySettings(
+        JSON.stringify({ responseStreamingMode: "token", telemetryEnabled: false }),
+      ).telemetryEnabled,
+    ).toBe(false);
   });
 
   it("falls back to no endpoints and telemetry off when persisted settings are invalid", () => {
