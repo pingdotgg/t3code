@@ -160,14 +160,8 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
       );
       if (written._tag === "Failure")
         failed.push(`${read.relativePath}: ${failureMessage(written)}`);
-      else if (
-        read.mode !== undefined &&
-        (read.mode & 0o111) !== 0 &&
-        written.value.mode !== read.mode
-      )
-        failed.push(
-          `${read.relativePath}: The destination could not preserve executable permissions.`,
-        );
+      else if (read.mode !== undefined && written.value.mode !== read.mode)
+        failed.push(`${read.relativePath}: The destination could not preserve file permissions.`);
     }
     setFileCopy(
       copyKey,
