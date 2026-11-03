@@ -18,14 +18,14 @@ import {
   remainingPercent,
   tightestSessionLimit,
 } from "@t3tools/shared/usageLimits";
-import { GaugeIcon } from "lucide-react";
+import { GaugeIcon, InfoIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { ensureLocalApi } from "../../localApi";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Button } from "../ui/button";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { providerClients } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { LimitWindows, ResetCredits } from "../usage/UsageLimits";
@@ -198,47 +198,94 @@ function UsageLimitsAccounts({
   const now = Date.parse(report.createdAt);
   return (
     <>
-      {report.accounts.map((account) => {
-        const resetCreditInput =
-          account.resetCreditInput ??
-          (account.instanceId ? { instanceId: account.instanceId } : undefined);
-        const notice = limitsNotice(account.limits);
-        const externalUsage = account.limits.externalUsage;
+      {[false, true].map((unavailable) => {
+        const accounts = report.accounts.filter(
+          (account) => (account.limits.unavailable?.reason === "unsupported") === unavailable,
+        );
+        if (accounts.length === 0) return null;
         return (
-          <div key={account.id} className="flex min-w-0 flex-col gap-1">
-            <span className="truncate font-medium text-muted-foreground text-xs">
-              <AccountSummary account={account} />
-            </span>
-            {notice ? (
-              <span className="text-xs text-muted-foreground">{notice}</span>
-            ) : (
-              <LimitWindows
-                compact
-                driver={account.driver}
-                accentColor={account.accentColor}
-                windows={account.limits.windows}
-                now={now}
-              />
-            )}
-            {externalUsage ? (
-              <Button
-                size="sm"
-                variant="link"
-                className="self-start"
-                onClick={() => void ensureLocalApi().shell.openExternal(externalUsage.url)}
-              >
-                Manage usage
-              </Button>
+          <section
+            key={String(unavailable)}
+            className="flex min-w-0 flex-col gap-3"
+            aria-label={unavailable ? "Connections" : "Reported usage"}
+          >
+            {report.accounts.some(
+              (account) => account.limits.unavailable?.reason === "unsupported",
+            ) ? (
+              <Text variant="meta" tone="dim">
+                {unavailable ? "Connections" : "Reported usage"}
+              </Text>
             ) : null}
-            {resetCreditInput && account.limits.resetCredits ? (
-              <ResetCredits
-                environmentId={environmentId}
-                input={resetCreditInput}
-                credits={account.limits.resetCredits}
-                now={now}
-              />
-            ) : null}
-          </div>
+            {accounts.map((account) => {
+              const resetCreditInput =
+                account.resetCreditInput ??
+                (account.instanceId ? { instanceId: account.instanceId } : undefined);
+              const notice =
+                account.limits.unavailable?.reason === "unsupported"
+                  ? "Usage unavailable for this API connection"
+                  : limitsNotice(account.limits);
+              const externalUsage = account.limits.externalUsage;
+              return (
+                <div key={account.id} className="flex min-w-0 flex-col gap-1">
+                  <div className="flex min-w-0 items-start gap-2">
+                    <AccountSummary account={account} />
+                    {account.sourceLabel ? (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              size="icon-xs"
+                              variant="ghost-muted"
+                              aria-label="Account source and ID"
+                            />
+                          }
+                        >
+                          <InfoIcon />
+                        </TooltipTrigger>
+                        <TooltipPopup>
+                          <div className="flex flex-col gap-1">
+                            <Text variant="meta">Source: {account.sourceLabel}</Text>
+                            <Text variant="meta">Account ID: {account.id}</Text>
+                          </div>
+                        </TooltipPopup>
+                      </Tooltip>
+                    ) : null}
+                  </div>
+                  {notice ? (
+                    <Text variant="meta" tone="muted">
+                      {notice}
+                    </Text>
+                  ) : (
+                    <LimitWindows
+                      compact
+                      driver={account.driver}
+                      accentColor={account.accentColor}
+                      windows={account.limits.windows}
+                      now={now}
+                    />
+                  )}
+                  {externalUsage ? (
+                    <Button
+                      size="sm"
+                      variant="link"
+                      className="self-start"
+                      onClick={() => void ensureLocalApi().shell.openExternal(externalUsage.url)}
+                    >
+                      Manage usage
+                    </Button>
+                  ) : null}
+                  {resetCreditInput && account.limits.resetCredits ? (
+                    <ResetCredits
+                      environmentId={environmentId}
+                      input={resetCreditInput}
+                      credits={account.limits.resetCredits}
+                      now={now}
+                    />
+                  ) : null}
+                </div>
+              );
+            })}
+          </section>
         );
       })}
       {report.notices.map((notice) => (
@@ -415,6 +462,7 @@ function LimitsPopoverReport({ source }: { readonly source: LimitsSource }) {
   );
   return (
     <div className="flex flex-col gap-3">
+      <PopoverTitle>Usage limits</PopoverTitle>
       {report ? (
         <UsageLimitsAccounts report={report} environmentId={source.environmentId} />
       ) : (
