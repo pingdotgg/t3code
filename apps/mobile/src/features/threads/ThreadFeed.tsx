@@ -59,6 +59,7 @@ import {
   type ScheduledTaskId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
@@ -268,9 +269,6 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { ThreadWorkflowOpening, useWorkflowOpening } from "./thread-workflow-opening";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { mobilePreferencesAtom } from "../../state/preferences";
-import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/reactivity";
 import { useV2ItemSupport } from "../../state/v2-item-support";
 import {
   fileRoutePathSegments,
@@ -344,6 +342,7 @@ export interface ThreadFeedHandle {
 }
 
 export interface ThreadFeedProps {
+  readonly toolCallVisibility?: ToolCallVisibility;
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
@@ -2587,10 +2586,6 @@ function useThreadFeedPresentation(
   revealedMessageId: MessageId | null,
 ) {
   const [feedCache] = useState(createThreadFeedCache);
-  const preferences = useAtomValue(mobilePreferencesAtom);
-  const toolCallVisibility = AsyncResult.isSuccess(preferences)
-    ? (preferences.value.toolCallVisibility ?? "showAll")
-    : "showAll";
   return appendPendingThreadMessages(
     deriveThreadFeedPresentation(
       props.feed,
@@ -2604,7 +2599,7 @@ function useThreadFeedPresentation(
       props.activeWorkStartedAt,
       props.runlessWorkActive ?? false,
       feedCache,
-      { toolCallVisibility, revealedMessageId },
+      { toolCallVisibility: props.toolCallVisibility ?? "showAll", revealedMessageId },
     ),
     props.feed,
     props.queuedMessages,
