@@ -1,17 +1,27 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ProjectId,
   RunId,
   ThreadId,
   type OrchestrationV2ThreadShell,
+  type Project,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ProcessRunner from "../processRunner.ts";
+import * as ProjectEnrichment from "../project/ProjectEnrichmentService.ts";
+import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
@@ -241,3 +251,91 @@ it.effect("replaces a still-running PR lookup when a newer turn finishes", () =>
     assert.strictEqual(lookups, 2);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("resolves the identity of a project whose remote was added during the turn", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-run-finalization-identity-test-",
+    });
+    const git = (args: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        const processRunner = yield* ProcessRunner.ProcessRunner;
+        return yield* processRunner.run({ command: "git", args: ["-C", workspaceRoot, ...args] });
+      }).pipe(Effect.provide(ProcessRunner.layer));
+    yield* git(["init"]);
+
+    const projectId = ProjectId.make("project-remote-added");
+    const threadId = ThreadId.make("thread-remote-added");
+    const runId = RunId.make("completed-run");
+    const layerEnrichment = Layer.effect(
+      ProjectEnrichment.ProjectEnrichmentService,
+      ProjectEnrichment.make(),
+    ).pipe(
+      Layer.provideMerge(RepositoryIdentityResolver.layer),
+      Layer.provideMerge(
+        Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+          invalidate: () => Effect.void,
+          resolvePath: () => Effect.succeed(null),
+        }),
+      ),
+    );
+    const layer = RunFinalization.layerObserver.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          layerEnrichment,
+          Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+          Layer.mock(PullRequestService.PullRequestService)({
+            refreshAfterTurn: () => Effect.void,
+          }),
+          Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+            refreshLocalStatus: () =>
+              Effect.succeed({
+                isRepo: true,
+                hasPrimaryRemote: true,
+                isDefaultRef: true,
+                refName: "main",
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+              }),
+          }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThreadShell: () =>
+              Effect.succeed({
+                id: threadId,
+                projectId,
+                branch: "main",
+                worktreePath: null,
+                activeRunId: null,
+              } as OrchestrationV2ThreadShell),
+          }),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () => Effect.succeedSome({ id: projectId, workspaceRoot } as Project),
+          }),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const enrichment = yield* ProjectEnrichment.ProjectEnrichmentService;
+      // A shell read before the turn caches the folder as having no repository.
+      assert.isNull(yield* enrichment.readRepositoryIdentity(workspaceRoot));
+
+      yield* git(["remote", "add", "origin", "https://github.com/t3-triage/example-29929.git"]);
+      const changes = yield* enrichment.subscribeChanges;
+      const observer = yield* RunFinalization.RunFinalizationObserver;
+      yield* observer.refresh({ cwd: workspaceRoot, threadId, runId });
+
+      let available = yield* enrichment.getAvailable(workspaceRoot);
+      while (!available.repositoryIdentityResolved) {
+        yield* PubSub.take(changes);
+        available = yield* enrichment.getAvailable(workspaceRoot);
+      }
+      assert.strictEqual(
+        available.repositoryIdentity?.locator.remoteUrl,
+        "https://github.com/t3-triage/example-29929.git",
+        "the project's repository identity is still null after the turn added a remote",
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
