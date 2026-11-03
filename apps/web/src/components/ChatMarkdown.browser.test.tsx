@@ -90,6 +90,12 @@ vi.mock(import("../hooks/useTheme"), async (original) => {
   };
 });
 
+const { openFilePreviewDialog } = vi.hoisted(() => ({ openFilePreviewDialog: vi.fn() }));
+vi.mock(import("./files/FilePreviewDialog"), async (original) => ({
+  ...(await original()),
+  openFilePreviewDialog,
+}));
+
 const settingsOverrides = vi.hoisted(() => ({ mathRenderingEnabled: false }));
 vi.mock(import("../hooks/useSettings"), async (original) => {
   const actual = await original();
@@ -340,9 +346,7 @@ describe("ChatMarkdown workspace file opens", () => {
       resolvePending = resolve;
     });
     workspaceSearch.mockReturnValueOnce(pending);
-    using openFile = vi
-      .spyOn(useRightPanelStore.getState(), "openFile")
-      .mockImplementation(() => {});
+    openFilePreviewDialog.mockReset();
     await using screen = await renderText(
       "[Notes](physics/notes/a.md) and [Other](/elsewhere/b.md:9)",
       {
@@ -354,12 +358,12 @@ describe("ChatMarkdown workspace file opens", () => {
     const [notes, other] = container.querySelectorAll("a");
     await act(async () => notes!.click());
     expect(workspaceSearch).toHaveBeenCalledOnce();
-    expect(openFile).not.toHaveBeenCalled();
+    expect(openFilePreviewDialog).not.toHaveBeenCalled();
 
     await act(async () => other!.click());
     await act(async () => resolvePending(result));
 
-    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
+    expect(openFilePreviewDialog).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
     expect(workspaceSearch).toHaveBeenCalledOnce();
   });
 });

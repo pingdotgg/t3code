@@ -22,11 +22,16 @@ const state = vi.hoisted(() => ({
   search: vi.fn(),
   choose: vi.fn(),
   openFile: vi.fn(),
+  openFileDialog: vi.fn(),
   openExternal: vi.fn(),
   copy: vi.fn(),
   pullRequests: [] as ThreadPullRequestLink[],
 }));
 
+vi.mock(import("./files/FilePreviewDialog"), async (original) => ({
+  ...(await original()),
+  openFilePreviewDialog: state.openFileDialog,
+}));
 vi.mock(import("../state/use-atom-query-runner"), async (original) => ({
   ...(await original()),
   useAtomQueryRunner: (() => state.search) as never,
@@ -136,6 +141,7 @@ function setup() {
   state.search.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
   state.choose.mockReset().mockResolvedValue(null);
   state.openFile.mockReset();
+  state.openFileDialog.mockReset();
   state.openExternal.mockReset().mockResolvedValue(undefined);
   state.copy.mockReset().mockResolvedValue(undefined);
   const { openFile } = useRightPanelStore.getState();
@@ -192,7 +198,7 @@ it("removes host actions after revocation while keeping file preview and copying
   expect(offeredActions()).toEqual(["copy-relative", "copy-full"]);
   await vi.waitFor(() => expect(state.copy).toHaveBeenCalledWith("/work/docs/readme.md"));
   await act(async () => screen.anchor().click());
-  expect(state.openFile).toHaveBeenCalledWith(threadRef, "docs/readme.md", undefined);
+  expect(state.openFileDialog).toHaveBeenCalledWith(threadRef, "docs/readme.md", undefined);
   expect(state.openEditor).not.toHaveBeenCalled();
 });
 
