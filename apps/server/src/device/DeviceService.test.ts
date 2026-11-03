@@ -1443,7 +1443,12 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
   }).pipe(
     Effect.scoped,
     Effect.provide(
-      Layer.mergeAll(ServerSettings.layerTest(), layerSecretResolver, NodeServices.layer),
+      Layer.mergeAll(
+        ServerSettings.layerTest(),
+        layerSecretResolver,
+        NodeServices.layer,
+        NodeCrypto.layer,
+      ),
     ),
   ),
 );
