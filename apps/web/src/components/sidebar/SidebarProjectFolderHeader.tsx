@@ -65,6 +65,7 @@ export function SidebarProjectFolderHeader(props: {
       className="group/project-folder relative mt-2 list-none first:mt-0"
     >
       <SidebarMenuButton
+        size="project"
         type="button"
         data-sidebar-row={rowId}
         aria-expanded={!collapsed}
@@ -75,7 +76,7 @@ export function SidebarProjectFolderHeader(props: {
         }}
       >
         <ProjectFavicon project={group} className="size-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate text-label text-strong-foreground">
+        <span className="min-w-0 flex-1 truncate text-label text-sidebar-foreground/90">
           {group.displayName}
         </span>
         {dot ? (
