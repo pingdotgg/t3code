@@ -1469,6 +1469,28 @@ describe("OrchestratorMcpService provider resolution", () => {
                   },
                 },
                 {
+                  providerInstanceId: ProviderInstanceId.make("acpRegistry"),
+                  failedAt: DateTime.makeUnsafe(0),
+                  model: "acp-model",
+                  failure: {
+                    class: "provider_error",
+                    message: "Request failed with status: 402",
+                    code: null,
+                    retryable: null,
+                  },
+                },
+                {
+                  providerInstanceId: antigravityInstanceId,
+                  failedAt: DateTime.makeUnsafe(0),
+                  model: "ant-model",
+                  failure: {
+                    class: "provider_error",
+                    message: "Request failed with status:429",
+                    code: null,
+                    retryable: null,
+                  },
+                },
+                {
                   providerInstanceId: ProviderInstanceId.make("claudeAgent"),
                   failedAt: DateTime.makeUnsafe(-60_000),
                   model: "claude-sonnet-4-6",
@@ -1564,6 +1586,11 @@ describe("OrchestratorMcpService provider resolution", () => {
             class: "provider_error",
             summary: "The provider reported an error.",
           });
+          assert.equal(
+            byId.get(ProviderInstanceId.make("acpRegistry"))?.lastFailure?.summary,
+            "Billing or credit balance problem.",
+          );
+          assert.equal(byId.get(antigravityInstanceId)?.lastFailure?.summary, "Rate limited.");
           assert.isUndefined(byId.get(ProviderInstanceId.make("claudeAgent"))?.lastFailure);
 
           const disabled = byId.get(disabledAntigravityInstanceId);

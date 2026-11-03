@@ -351,8 +351,8 @@ const PROVIDER_FAILURE_WINDOW_HOURS = 24;
 // Messages can carry another project's paths or raw provider output, so only these fixed
 // summaries leave the server; the patterns recognize billing and rate limits a class misses.
 const BILLING_FAILURE =
-  /\bpayment required\b|\b(?:status|http) 402\b|\binsufficient (?:balance|credits?|funds)\b|\b(?:balance|credits?) (?:is |are |was )?(?:exhausted|depleted)\b/i;
-const RATE_LIMIT_FAILURE = /\b(?:status|http) 429\b|\brate[ -]limit/i;
+  /\bpayment required\b|\b(?:status|http)(?::\s*|\s+)402\b|\binsufficient (?:balance|credits?|funds)\b|\b(?:balance|credits?) (?:is |are |was )?(?:exhausted|depleted)\b/i;
+const RATE_LIMIT_FAILURE = /\b(?:status|http)(?::\s*|\s+)429\b|\brate[ -]limit/i;
 
 function failureSummary(failure: ProjectionProviderInstanceFailure["failure"]): string {
   if (failure.class === "usage_limit") return "Usage limit reached.";
