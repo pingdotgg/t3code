@@ -89,7 +89,9 @@ export function checkStatus(check: PullRequestCheck) {
 }
 
 export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) {
-  const failed = pr.checks.filter((check) => check.status === "failure").length;
+  const failed = pr.checks.filter(
+    (check) => check.status === "failure" || check.status === "cancelled",
+  ).length;
   const required = pr.checks.filter((check) => check.status === "action-required").length;
   const pending = pr.checks.filter((check) => check.status === "pending").length;
   const passed = pr.checks.filter((check) => check.status === "success").length;
