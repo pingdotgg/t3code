@@ -1,5 +1,6 @@
 import { closestCenter, type CollisionDetection, type Modifier } from "@dnd-kit/core";
 import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sortable";
+import { restrictToFirstScrollableAncestor } from "@dnd-kit/modifiers";
 import {
   resolveSidebarDropTarget,
   sidebarListItemId,
@@ -10,6 +11,40 @@ import {
 } from "./Sidebar.logic";
 
 const stationary = { x: 0, y: 0, scaleX: 1, scaleY: 1 };
+
+export function resolveSidebarDragSourceRect(
+  event: Event,
+  initialRect: Parameters<Modifier>[0]["activeNodeRect"],
+) {
+  // DragStart precedes dnd-kit's first rectangle measurement.
+  return (
+    initialRect ??
+    (event.target instanceof Element
+      ? event.target.closest<HTMLElement>("[data-thread-item]")?.getBoundingClientRect()
+      : undefined)
+  );
+}
+
+export function restrictSidebarDrag(
+  args: Parameters<Modifier>[0],
+  preview?: { readonly width: number; readonly offsetX: number },
+) {
+  const rect = args.draggingNodeRect;
+  if (!preview || !rect) return restrictToFirstScrollableAncestor(args);
+  const width = preview.width;
+  return restrictToFirstScrollableAncestor({
+    ...args,
+    transform: { ...args.transform, x: args.transform.x + preview.offsetX },
+    draggingNodeRect: {
+      top: rect.top,
+      bottom: rect.bottom,
+      left: rect.left,
+      right: rect.left + width,
+      width,
+      height: rect.height,
+    },
+  });
+}
 const hidden = { ...stationary, scaleY: 0 };
 type ThreadItem = Extract<SidebarListItem, { kind: "thread" }>;
 type Layout = Parameters<SortingStrategy>[0];

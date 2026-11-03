@@ -651,7 +651,6 @@ export function SortableThreadRow(
       : transform && isDragging
         ? {
             ...transform,
-            x: transform.x + (rowProps.pinnedDragPreview?.offsetX ?? 0),
             scaleX: rowProps.pinnedDragPreview?.widthRatio ?? 1,
           }
         : transform,
