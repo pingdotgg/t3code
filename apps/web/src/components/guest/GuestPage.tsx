@@ -712,7 +712,12 @@ function GuestComposer({
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // Same as the app composer: Enter sends, Shift+Enter adds a line, IME composition is left alone.
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing &&
+      event.keyCode !== 229
+    ) {
       event.preventDefault();
       void send();
     }
