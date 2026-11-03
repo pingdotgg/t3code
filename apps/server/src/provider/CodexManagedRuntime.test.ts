@@ -377,6 +377,10 @@ it.live("managed Codex helper renews a token the API rejected before its local e
         HttpClient.HttpClient,
         HttpClient.make((request) =>
           Effect.sync(() => {
+            if (request.url === "https://api.openai.com/v1/models") {
+              assert.equal(request.headers.authorization, "Bearer rejected-access");
+              return HttpClientResponse.fromWeb(request, new Response(null, { status: 401 }));
+            }
             if (request.url === "https://auth.openai.com/api/accounts/oauth/token") {
               renewals++;
               return HttpClientResponse.fromWeb(

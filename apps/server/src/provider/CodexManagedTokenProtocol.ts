@@ -8,7 +8,7 @@ export const Request = Schema.Struct({
   instanceId: Schema.NonEmptyString,
   environmentId: Schema.NonEmptyString,
   profileKey: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
-  // One per Codex process: a repeat request from a launch is Codex retrying after a 401.
+  // One per Codex process, so a repeat request can name the token that launch was served.
   launchId: Schema.String.check(Schema.isUUID(4)),
 });
 export const Response = Schema.Struct({ token: Schema.NonEmptyString });

@@ -159,8 +159,7 @@ const acquireListener = Effect.fn("CodexManagedTokenBroker.acquireListener")(fun
                 instanceId: request.instanceId,
                 expectedProfileKey: request.profileKey,
               });
-              // Codex caches its token and asks again only after a 401, so a launch asking
-              // twice reports the token it was served as rejected.
+              // A launch asking twice may be Codex retrying after a 401; auth checks with the API.
               const served = launches.get(request.launchId);
               // Retire abandoned permit waits; access saves a started rotation before honoring interruption.
               const credentials = yield* (

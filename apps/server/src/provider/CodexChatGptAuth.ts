@@ -739,7 +739,6 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
         ),
       )
       .pipe(Effect.map(Hex.encode), Effect.orDie);
-  // Codex reports a 401 only by asking again, so a rejected token renews before its local expiry.
   const accessUnlessRejected = Effect.fn("CodexChatGptAuth.access")(
     function* (rejectedAccessToken: string | undefined) {
       const saved = yield* read;
@@ -813,6 +812,32 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
     lock.withPermit,
   );
   const access = accessUnlessRejected(undefined);
+  // Codex asks again after a 401 but also whenever it builds a new auth manager, so only the API
+  // can say whether the served token was rejected. Probe outside the lock; renewal re-compares.
+  const renewRejected = Effect.fn("CodexChatGptAuth.renewRejected")(function* (
+    accessToken: string,
+  ) {
+    const saved = yield* read;
+    const now = yield* Clock.currentTimeMillis;
+    if (
+      Option.isNone(saved) ||
+      saved.value.accessToken !== accessToken ||
+      saved.value.expiresAt - now <= 60_000
+    )
+      return yield* access;
+    const rejected = yield* http
+      .execute(
+        HttpClientRequest.get(`${resource}/models`).pipe(
+          HttpClientRequest.bearerToken(accessToken),
+        ),
+      )
+      .pipe(
+        Effect.map((response) => response.status === 401),
+        Effect.timeout("10 seconds"),
+        Effect.orElseSucceed(() => false),
+      );
+    return yield* accessUnlessRejected(rejected ? accessToken : undefined);
+  });
   const logout = Effect.gen(function* () {
     const credentials = Option.getOrUndefined(yield* read);
     let confirmed = !credentials?.refreshToken;
@@ -1011,7 +1036,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
     controller: { ...controller, reconnectProfile, importProfile },
     read,
     access,
-    renewRejected: (accessToken: string) => accessUnlessRejected(accessToken),
+    renewRejected,
     profileKey,
     exportProfile,
     revoke: lock.withPermit(withSessionLock(remove)),
