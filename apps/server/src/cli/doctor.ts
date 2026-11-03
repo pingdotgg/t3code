@@ -128,8 +128,12 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
         .compact(databasePath, reportStep)
         .pipe(
           Effect.tap((result) =>
-            Console.log(
-              `Done: ${formatBytes(result.beforeBytes)} -> ${formatBytes(result.afterBytes)}, ${result.deletedEventCount} superseded events removed.`,
+            Clock.currentTimeMillis.pipe(
+              Effect.flatMap((now) =>
+                Console.log(
+                  `Done in ${formatElapsed(now - startedAt)}: ${formatBytes(result.beforeBytes)} -> ${formatBytes(result.afterBytes)}, ${result.deletedEventCount} superseded events removed.`,
+                ),
+              ),
             ),
           ),
         ),
