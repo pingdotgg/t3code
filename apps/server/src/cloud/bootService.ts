@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import { HttpClient } from "effect/http";
 import * as Schema from "effect/Schema";
 
@@ -392,8 +393,7 @@ const decodeSystemdUnitPaths = Schema.decodeUnknownEffect(
 
 // The manager may not share the installer's environment; JSON preserves spaces in its paths.
 const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit_directory")(
-  function* () {
-    const runner = yield* ProcessRunner.ProcessRunner;
+  function* (runner: ProcessRunner.ProcessRunner["Service"]) {
     const path = yield* Path.Path;
     const result = yield* runner.run({
       command: "busctl",
@@ -581,12 +581,26 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
   const xdgConfigHome = yield* Config.String("XDG_CONFIG_HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
+  const xdgRuntimeDir = yield* Config.String("XDG_RUNTIME_DIR").pipe(Config.withDefault(""));
   const runningInsideService =
     (yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
     BOOT_SERVICE_UNIT_FILE;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const runner = yield* ProcessRunner.ProcessRunner;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  // Without a login session nothing sets this, so `--user` commands cannot find the user bus.
+  // The directory only appears once lingering starts the manager, so it need not exist yet.
+  const userManagerEnv =
+    platform === "linux" && xdgRuntimeDir === "" && uid !== undefined
+      ? { XDG_RUNTIME_DIR: `/run/user/${uid}` }
+      : undefined;
+  const runner: ProcessRunner.ProcessRunner["Service"] =
+    userManagerEnv === undefined
+      ? processRunner
+      : {
+          run: (request) =>
+            processRunner.run({ ...request, env: { ...userManagerEnv, ...request.env } }),
+        };
   const host = input.host ?? { execPath: hostExecPath };
   const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
   const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
@@ -617,7 +631,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     ),
   ).join(":");
 
-  const systemdUnitDir = platform === "linux" ? yield* readSystemdUnitDirectory() : undefined;
+  const systemdUnitDir = platform === "linux" ? yield* readSystemdUnitDirectory(runner) : undefined;
   const detectedManager = selectBootServiceManager({
     platform,
     homeDir,
@@ -752,19 +766,31 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
   const requireSystemdPrerequisites = Effect.gen(function* () {
     const problems = yield* readSystemdProblems(false);
-    const unavailable = problems.find((problem) => problem !== "linger-disabled");
-    if (unavailable) return yield* new BootServicePrerequisiteError({ problem: unavailable });
-    if (!problems.includes("linger-disabled")) return;
+    // Logind reports an unknown user, one without a session yet, as linger-unavailable.
+    const notLingering = problems.find(
+      (problem) => problem === "linger-disabled" || problem === "linger-unavailable",
+    );
+    if (problems[0] === undefined) return;
+    if (notLingering === undefined) {
+      return yield* new BootServicePrerequisiteError({ problem: problems[0] });
+    }
     yield* runStep("enabling lingering for this user", "loginctl", [
       "enable-linger",
       "--no-ask-password",
       ...(uid === undefined ? [] : [String(uid)]),
     ]).pipe(
       Effect.mapError(
-        (cause) => new BootServicePrerequisiteError({ problem: "linger-disabled", cause }),
+        (cause) => new BootServicePrerequisiteError({ problem: notLingering, cause }),
       ),
     );
-    const remaining = yield* readSystemdProblems(false);
+    // Lingering starts the user manager asynchronously.
+    const remaining = yield* readSystemdProblems(false).pipe(
+      Effect.repeat({
+        schedule: Schedule.spaced("500 millis"),
+        times: 10,
+        while: (current) => current.includes("user-manager-unavailable"),
+      }),
+    );
     if (remaining[0]) return yield* new BootServicePrerequisiteError({ problem: remaining[0] });
   });
 
