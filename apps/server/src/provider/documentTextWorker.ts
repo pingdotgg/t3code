@@ -47,7 +47,8 @@ function xml(source: string, odfSpaces = false, htmlEntities = false): XmlNode {
     stack.push(node);
   });
   parser.on("closetag", () => {
-    stack.pop();
+    // Markup-compatibility fallbacks repeat their mc:Choice content, e.g. Word text boxes.
+    if (stack.pop()!.name === "Fallback") stack.at(-1)!.children.pop();
   });
   const text = (value: string) => {
     stack.at(-1)!.children.push(value);
