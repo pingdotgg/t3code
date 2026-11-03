@@ -16,7 +16,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { type AcpError } from "effect-acp/errors";
+import { type AcpError, AcpRequestError } from "effect-acp/errors";
 import type * as AcpSchema from "effect-acp/compat";
 import { expect } from "vite-plus/test";
 
@@ -448,6 +448,27 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         .generateThreadTitle(fixture.titleInput)
         .pipe(Effect.flip);
       expect(error.detail).toContain("cancelled");
+      yield* fixture.assertCleaned;
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps Antigravity's error message when the prompt request fails", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({
+        prompt: () =>
+          Effect.fail(
+            new AcpRequestError({
+              code: -32603,
+              errorMessage: "Model is temporarily unavailable.",
+            }),
+          ),
+      });
+      const error = yield* fixture.textGeneration
+        .generateThreadTitle(fixture.titleInput)
+        .pipe(Effect.flip);
+      expect(error.detail).toBe(
+        "Antigravity text generation failed: Model is temporarily unavailable.",
+      );
       yield* fixture.assertCleaned;
     }).pipe(Effect.scoped),
   );
