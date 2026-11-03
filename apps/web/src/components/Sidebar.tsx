@@ -36,7 +36,7 @@ import {
   type Modifier,
 } from "@dnd-kit/core";
 import { SortableContext } from "@dnd-kit/sortable";
-import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
   canSnooze,
   effectiveSnoozed,
@@ -229,6 +229,8 @@ import {
   type SidebarPinnedGrid,
   createSidebarSortingStrategy,
   restrictBelowSidebarLabel,
+  restrictSidebarDrag,
+  resolveSidebarDragSourceRect,
 } from "./Sidebar.drag";
 import { SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
@@ -1812,11 +1814,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       dragLabelOffsetRef.current,
       threadListRef.current?.getBoundingClientRect().top,
     );
-  // Pinned tiles reorder across grid columns; list rows stay in their column.
-  const dndModifiers =
-    dragState?.activeSection === "pinned"
-      ? [restrictBelowPins, restrictToFirstScrollableAncestor]
-      : [restrictToVerticalAxis, restrictBelowPins, restrictToFirstScrollableAncestor];
   const attachListMotionRef = (node: HTMLUListElement) => {
     threadListRef.current = node;
     const motion = createSidebarListMotion(node);
@@ -2035,6 +2032,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const header = list?.querySelector<HTMLElement>('[data-testid="sidebar-pinned-header"]');
     const grid = list?.querySelector<HTMLElement>('[data-testid="sidebar-pinned-grid"]');
     const listRect = list?.getBoundingClientRect();
+    const sourceRect = resolveSidebarDragSourceRect(
+      event.activatorEvent,
+      event.active.rect.current.initial,
+    );
     const scale = list && listRect && list.offsetWidth > 0 ? listRect.width / list.offsetWidth : 1;
     if (listRect && header) {
       dragLabelOffsetRef.current =
@@ -2053,10 +2054,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       pinnedTargetIndex: activeSection === "pinned" ? pinnedKeys.indexOf(activeKey) : null,
       grabOffsetX:
         event.activatorEvent instanceof PointerEvent
-          ? event.activatorEvent.clientX -
-            (event.active.rect.current.initial?.left ?? event.activatorEvent.clientX)
+          ? event.activatorEvent.clientX - (sourceRect?.left ?? event.activatorEvent.clientX)
           : 0,
-      sourceWidth: event.active.rect.current.initial?.width ?? listRect?.width ?? 0,
+      sourceWidth: sourceRect?.width ?? listRect?.width ?? 0,
       occurredAt: new Date().toISOString(),
       activationY:
         event.activatorEvent instanceof PointerEvent ? event.activatorEvent.clientY : null,
@@ -2237,14 +2237,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const sourceWidth =
       from < 0 ? dragState.sourceWidth : sidebarPinnedGridCell(grid, from, pinnedKeys.length).width;
     if (sourceWidth <= 0) return undefined;
-    const widthRatio =
-      sidebarPinnedGridCell(
-        grid,
-        dragState.pinnedTargetIndex,
-        pinnedKeys.length + (from < 0 ? 1 : 0),
-      ).width / sourceWidth;
-    return { widthRatio, offsetX: dragState.grabOffsetX * (1 - widthRatio) };
+    const width = sidebarPinnedGridCell(
+      grid,
+      dragState.pinnedTargetIndex,
+      pinnedKeys.length + (from < 0 ? 1 : 0),
+    ).width;
+    const widthRatio = width / sourceWidth;
+    return { width, widthRatio, offsetX: dragState.grabOffsetX * (1 - widthRatio) };
   })();
+  const restrictPreview: Modifier = (args) => restrictSidebarDrag(args, pinnedDragPreview);
+  const dndModifiers =
+    dragState?.activeSection === "pinned"
+      ? [restrictBelowPins, restrictPreview]
+      : [restrictToVerticalAxis, restrictBelowPins, restrictPreview];
   const dndCollisionDetection = (() => {
     if (draggedThreadKey === undefined || draggedFromSection === undefined)
       return createSidebarCollisionDetection(() => true);
