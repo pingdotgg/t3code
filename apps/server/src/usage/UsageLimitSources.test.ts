@@ -1,11 +1,13 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
-import { ServerConfigStreamEvent, UsageLimitSourceId } from "@t3tools/contracts";
+import { SecretProviderId, ServerConfigStreamEvent, UsageLimitSourceId } from "@t3tools/contracts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Deferred from "effect/Deferred";
+import * as TestClock from "effect/testing/TestClock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -38,6 +40,10 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
     );
   }).pipe(
     Effect.provide([
+      Layer.succeed(SecretResolver.SecretResolver, {
+        read: (references) => Effect.succeed(references.map(() => undefined)),
+        invalidate: () => Effect.void,
+      }),
       ServerSettings.layerTest({
         usageLimitSources: {
           [UsageLimitSourceId.make("local-hub")]: {
@@ -86,11 +92,78 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
   ),
 );
 
+it.effect("reads a management key from its secret provider", () => {
+  const authorizations: Array<string | undefined> = [];
+  const keySource = (reference: string) => ({
+    provider: SecretProviderId.make("homelab"),
+    reference,
+  });
+  return Effect.gen(function* () {
+    const sources = yield* UsageLimitSources.make;
+    const snapshots = yield* sources.streamChanges.pipe(
+      Stream.filter((next) => next.length > 0),
+      Stream.runHead,
+      Effect.flatMap(Effect.fromOption),
+    );
+    expect(snapshots.map(({ id, error }) => ({ id, error }))).toEqual([
+      { id: "resolved-hub", error: undefined },
+      {
+        id: "unresolved-hub",
+        error: "Could not read the management key from its secret provider.",
+      },
+    ]);
+    expect(authorizations).toEqual(["Bearer resolved-key"]);
+  }).pipe(
+    Effect.provide([
+      ServerSettings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("resolved-hub")]: {
+            kind: "cliproxy",
+            url: "https://resolved.test",
+            managementKey: keySource("cliproxy#key"),
+            enabled: true,
+          },
+          [UsageLimitSourceId.make("unresolved-hub")]: {
+            kind: "cliproxy",
+            url: "https://unresolved.test",
+            managementKey: keySource("missing#key"),
+            enabled: true,
+          },
+        },
+      }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      Layer.succeed(SecretResolver.SecretResolver, {
+        read: (references) =>
+          Effect.succeed(
+            references.map((reference) =>
+              reference.reference === "cliproxy#key" ? "resolved-key" : undefined,
+            ),
+          ),
+        invalidate: () => Effect.void,
+      }),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            authorizations.push(request.headers.authorization);
+            return HttpClientResponse.fromWeb(request, Response.json({ files: [] }));
+          }),
+        ),
+      ),
+      NodeCrypto.layer,
+    ]),
+    Effect.scoped,
+  );
+});
+
 it.effect("reads routed sessions from opted-in hubs, even with no client open", () =>
   Effect.gen(function* () {
     const queueReads: string[] = [];
     const http = HttpClient.make((request) =>
       Effect.sync(() => {
+        expect(request.headers.authorization).toBe("Bearer key");
         const url = new URL(request.url);
         if (url.pathname.endsWith("/usage-queue")) {
           queueReads.push(url.host);
@@ -148,12 +221,19 @@ it.effect("reads routed sessions from opted-in hubs, even with no client open", 
     );
   }).pipe(
     Effect.provide([
+      Layer.succeed(SecretResolver.SecretResolver, {
+        read: (references) => Effect.succeed(references.map(() => "key")),
+        invalidate: () => Effect.void,
+      }),
       ServerSettings.layerTest({
         usageLimitSources: {
           [UsageLimitSourceId.make("routed")]: {
             kind: "cliproxy",
             url: "https://routed.test",
-            managementKey: "key",
+            managementKey: {
+              provider: SecretProviderId.make("homelab"),
+              reference: "cliproxy#key",
+            },
             enabled: true,
             threadAccounts: true,
           },
@@ -228,6 +308,10 @@ it.effect("drops a queue read that lands after Thread accounts was switched off"
     expect(snapshots[0]?.accounts[0]?.sessionIds).toBe(undefined);
   }).pipe(
     Effect.provide([
+      Layer.succeed(SecretResolver.SecretResolver, {
+        read: (references) => Effect.succeed(references.map(() => undefined)),
+        invalidate: () => Effect.void,
+      }),
       ServerSettings.layerTest({
         usageLimitSources: {
           [UsageLimitSourceId.make("routed")]: {
