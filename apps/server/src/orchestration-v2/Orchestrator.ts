@@ -11808,8 +11808,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       readonly now: DateTime.Utc;
     }) {
       const { command, events, effects, projection, now, targetRunId } = input;
+      // Completions are renumbered too: a message moved ahead of them shares their position range.
       const others = queuedRunsInDeliveryOrder(projection).filter(
-        (run) => run.id !== input.queuedRunId && !isAutomaticCompletionRun(projection, run),
+        (run) => run.id !== input.queuedRunId,
       );
       for (const [index, run] of others.entries()) {
         const queuePosition = index + 2;

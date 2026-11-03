@@ -1628,7 +1628,7 @@ it.effect("promotes a queued goal by stopping the running turn", () =>
 );
 
 it.effect.each(["next", "/goal ship it"])(
-  "promoting %s, moved ahead of a completion, into a compaction stops it",
+  "promoting %s into a compaction while a message is moved ahead of a completion",
   (promoted) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1742,7 +1742,9 @@ it.effect.each(["next", "/goal ship it"])(
             Effect.map(orchestrator.getThreadProjection(threadId), ({ runs }) =>
               runs.find((run) => run.userMessageId === MessageId.make(`message:${key}`))!,
             );
-          for (const key of ["next", "queued"]) {
+          yield* send("correction", "correction", "queue");
+          // A goal is moved ahead of the completion too, so promoting it must drop that priority.
+          for (const key of promoted === "next" ? ["correction"] : ["next", "correction"]) {
             yield* orchestrator.dispatch({
               type: "queued-run.reorder",
               commandId: CommandId.make(`reorder-${key}`),
@@ -1770,15 +1772,15 @@ it.effect.each(["next", "/goal ship it"])(
             ),
           );
           yield* finish(2);
-          // A plain message keeps the other prioritized message ahead of the completion; a goal,
-          // like any queued goal, sends after automatic completions.
+          // A plain message leaves the reordered correction ahead of the completion; a goal, like
+          // any queued goal, goes after automatic completions and ahead of other messages.
           assert.deepEqual(
             started.map((turn) => turn.runId),
             [
               started[0]!.runId,
               compactRun.id,
               ...(promoted === "next"
-                ? [(yield* runFor("next")).id, (yield* runFor("queued")).id]
+                ? [(yield* runFor("correction")).id, (yield* runFor("completion")).id]
                 : [(yield* runFor("completion")).id, (yield* runFor("next")).id]),
             ],
           );
