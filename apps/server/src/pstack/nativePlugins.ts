@@ -22,12 +22,13 @@ export function codexPstackPluginOverrideArgs(configToml: string): ReadonlyArray
 
 /** Claude flag-settings `enabledPlugins` entries that switch off enabled pstack plugins. */
 export function claudePstackPluginOverrides(
-  enabledPlugins: ReadonlyMap<string, boolean>,
+  enabledPlugins: ReadonlyMap<string, unknown>,
   launchPlugins: Readonly<Record<string, unknown>> = {},
 ): Record<string, false> | undefined {
   const merged = new Map<string, unknown>([...enabledPlugins, ...Object.entries(launchPlugins)]);
   const keys = [...merged]
-    .filter(([key, enabled]) => enabled === true && isNativePstackPluginKey(key))
+    // Claude also enables plugins through version-constrained arrays and objects.
+    .filter(([key, enabled]) => enabled !== false && isNativePstackPluginKey(key))
     .map(([key]) => key);
   return keys.length === 0 ? undefined : Object.fromEntries(keys.map((key) => [key, false]));
 }

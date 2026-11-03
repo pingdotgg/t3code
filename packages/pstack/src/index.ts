@@ -8,12 +8,12 @@ export { parsePstackRoleDefaults, PSTACK_PANEL_ROLES, type PstackRoleDefault } f
 export const PSTACK_SKILL_PREFIX = "pstack:";
 export const PSTACK_LAYOUT_VERSION = 3;
 
-// Desktop builds prune this test corpus (prunePackagedPstackTestFixtures), so delivery must skip it.
-const PACKAGED_PRUNED_PREFIX = "skills/statechart/scripts/test/";
+/** Upstream test corpus that packaged desktop builds delete; the runtime pack never needs it. */
+export const PSTACK_PACKAGED_PRUNED_DIR = "skills/statechart/scripts/test";
 
 const isRuntimePackFile = (packPath: string) =>
   NodePath.posix.basename(packPath) !== ".gitignore" &&
-  !packPath.startsWith(PACKAGED_PRUNED_PREFIX);
+  !packPath.startsWith(`${PSTACK_PACKAGED_PRUNED_DIR}/`);
 
 /** Files relative to a source root containing upstream/ and UPSTREAM.json. */
 export function pstackPackEntries(sourceRoot: string): ReadonlyArray<{
