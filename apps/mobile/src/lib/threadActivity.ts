@@ -1152,10 +1152,8 @@ function deriveThreadFeedRunFolds(
       group.entries
         .filter(
           (entry) =>
-            // Assistant prose stays visible; only tool/reasoning work folds.
-            // A short closing note must not hide earlier answers.
+            // Every reply stays visible: a turn can answer, run tools, then close briefly.
             entry.type !== "message" &&
-            entry.id !== terminalAssistantId &&
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
             !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&

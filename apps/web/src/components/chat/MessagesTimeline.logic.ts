@@ -1121,10 +1121,8 @@ function deriveTurnFolds(input: {
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
     for (const [index, entry] of group.entries.entries()) {
-      // Assistant prose stays visible; only tool/reasoning work folds under
-      // "Worked for". Hiding earlier messages when a short closing note is
-      // terminal makes the answer look like it disappeared.
-      if (entry.kind === "message" || entry.id === group.terminalEntry?.id) {
+      // Every reply stays visible: a turn can answer, run tools, then close briefly.
+      if (entry.kind === "message") {
         continue;
       }
       const isCompaction = timelineEntryIsCompaction(entry);
