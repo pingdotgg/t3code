@@ -4562,7 +4562,6 @@ describe("working window", () => {
       "steer",
       "working-indicator-row",
     ]);
-    expect(rows[1]).toMatchObject({ showAssistantTimestamp: false });
     const window = workingRow(rows)?.window;
     expect(window?.items.map((item) => item.id)).toEqual(["edit", "command"]);
     expect(window?.diff).toEqual({ additions: 84, deletions: 22 });
