@@ -108,6 +108,7 @@ it("embeds an Agent Activity Home Screen layout and initial data independently o
         ...props.activities[0],
         threadId: `thread-${index}`,
         threadTitle: `Relay task ${index + 1}`,
+        deepLink: `/threads/environment/task%3A${index + 1}`,
         phase: "running",
         status: "Working",
       })),
@@ -135,6 +136,8 @@ it("embeds an Agent Activity Home Screen layout and initial data independently o
         expect(aggregateLayout).not.toContain(`Relay task ${visibleRows + 1}`);
       }
       expect(aggregateLayout).toContain("10 active");
+      expect(aggregateLayout).toContain(`t3code-dev:///threads/environment/task%3A${visibleRows}`);
+      expect(aggregateLayout).toContain("LinkView");
       const waitingLayout = JSON.stringify(
         context.__expoWidgetRender(
           {

@@ -63,7 +63,7 @@ describe("agentActivityWidgetTimeline", () => {
     expect(nativeWidget.updateTimeline.mock.lastCall?.[0][0].props).not.toHaveProperty("accountId");
   });
 
-  it("keeps sign-out last when an earlier cached timeline read is delayed", async () => {
+  it("discards obsolete account publications when sign-out clearing fails after a delayed read", async () => {
     let release = (_entries: unknown[]) => {};
     let requested = () => {};
     const started = new Promise<void>((resolve) => {
@@ -80,9 +80,19 @@ describe("agentActivityWidgetTimeline", () => {
 
     const loading = publishAgentActivityWidget({ kind: "loading" }, "user-a");
     await started;
+    const obsolete = publishAgentActivityWidget(
+      { kind: "snapshot", aggregate: aggregate([row("running", "Working")]) },
+      "user-a",
+    );
+    nativeWidget.updateTimeline.mockImplementationOnce(() => {
+      throw new Error("Native clearing failed");
+    });
     const signOut = publishAgentActivityWidget({ kind: "signed-out" }, null);
     release([]);
-    await Promise.all([loading, signOut]);
+    await Promise.all([loading, obsolete]);
+    await expect(signOut).rejects.toThrow("Native clearing failed");
+
+    expect(nativeWidget.updateTimeline).toHaveBeenCalledTimes(1);
 
     expect(nativeWidget.updateTimeline).toHaveBeenLastCalledWith([
       expect.objectContaining({
@@ -106,6 +116,20 @@ describe("agentActivityWidgetTimeline", () => {
     await publishAgentActivityWidget({ kind: "unavailable" }, "user-a");
 
     expect(nativeWidget.updateTimeline).not.toHaveBeenCalled();
+
+    await Promise.all([
+      publishAgentActivityWidget(
+        { kind: "snapshot", aggregate: aggregate([row("running", "Working")]) },
+        "user-a",
+      ),
+      publishAgentActivityWidget({ kind: "loading" }, "user-a"),
+      publishAgentActivityWidget({ kind: "unavailable" }, "user-a"),
+    ]);
+    expect(nativeWidget.updateTimeline).toHaveBeenCalledTimes(1);
+    expect(nativeWidget.updateTimeline).toHaveBeenLastCalledWith([
+      expect.objectContaining({ props: expect.objectContaining({ accountId: "user-a" }) }),
+      expect.objectContaining({ props: expect.objectContaining({ accountId: "user-a" }) }),
+    ]);
   });
 
   it("replaces another account's persisted rows before its first relay read", async () => {

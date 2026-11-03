@@ -7,16 +7,25 @@ import {
 } from "./agentActivityWidgetTimeline";
 
 let publication = Promise.resolve();
+let latestAccountId: string | null = null;
+let accountGeneration = 0;
 
 export function publishAgentActivityWidget(
   source: AgentActivityWidgetSource,
   accountId: string | null,
 ) {
+  if (latestAccountId !== accountId) {
+    latestAccountId = accountId;
+    accountGeneration++;
+  }
+  const generation = accountGeneration;
   const next = publication.then(async () => {
     if (!requireOptionalNativeModule("ExpoWidgets")) return;
     const { default: widget } = await import("./AgentActivityWidget");
+    if (generation !== accountGeneration) return;
     if (accountId && (source.kind === "loading" || source.kind === "unavailable")) {
       const cached = await widget.getTimeline().catch(() => []);
+      if (generation !== accountGeneration) return;
       if (cached.some(({ props }) => props?.accountId === accountId && props.activities?.length)) {
         return;
       }

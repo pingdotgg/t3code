@@ -1,4 +1,4 @@
-import { HStack, Image, Spacer, Text, VStack } from "@expo/ui/swift-ui";
+import { HStack, Image, Link, Spacer, Text, VStack } from "@expo/ui/swift-ui";
 import {
   fixedSize,
   font,
@@ -133,44 +133,61 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
       ]}
     >
       {showRows ? (
-        rows.slice(0, rowLimit).map((row) => (
-          <HStack key={`${row.environmentId}:${row.threadId}`} spacing={10} alignment="center">
-            {!accessibility ? (
-              <Image
-                systemName={statusSymbols[row.phase]}
-                modifiers={[font({ textStyle: "body" }), foregroundStyle(statusColor(row))]}
-              />
-            ) : null}
-            <VStack alignment="leading" spacing={3}>
-              <Text
-                modifiers={[
-                  font({ textStyle: "headline" }),
-                  lineLimit(large && !accessibility ? 2 : 1),
-                ]}
-              >
-                {row.threadTitle}
-              </Text>
-              {!accessibility || large ? (
+        rows.slice(0, rowLimit).map((row) => {
+          const content = (
+            <HStack key={`${row.environmentId}:${row.threadId}`} spacing={10} alignment="center">
+              {!accessibility ? (
+                <Image
+                  systemName={statusSymbols[row.phase]}
+                  modifiers={[font({ textStyle: "body" }), foregroundStyle(statusColor(row))]}
+                />
+              ) : null}
+              <VStack alignment="leading" spacing={3}>
                 <Text
                   modifiers={[
-                    font({ textStyle: "caption2" }),
-                    foregroundStyle("secondary"),
-                    lineLimit(1),
+                    font({ textStyle: "subheadline", weight: "semibold" }),
+                    foregroundStyle("primary"),
+                    lineLimit(large && !accessibility ? 2 : 1),
                   ]}
                 >
-                  {row.projectTitle}
+                  {row.threadTitle}
                 </Text>
-              ) : null}
-            </VStack>
-            <Spacer minLength={8} />
-            {renderStatus(row, true)}
-          </HStack>
-        ))
+                {!accessibility || large ? (
+                  <Text
+                    modifiers={[
+                      font({ textStyle: "caption2" }),
+                      foregroundStyle("secondary"),
+                      lineLimit(1),
+                    ]}
+                  >
+                    {row.projectTitle}
+                  </Text>
+                ) : null}
+              </VStack>
+              <Spacer minLength={8} />
+              {renderStatus(row, true)}
+            </HStack>
+          );
+          return props.baseUrl ? (
+            <Link
+              key={`${row.environmentId}:${row.threadId}`}
+              destination={`${props.baseUrl}${row.deepLink.slice(1)}`}
+            >
+              {content}
+            </Link>
+          ) : (
+            content
+          );
+        })
       ) : hero ? (
         <VStack alignment="leading" spacing={accessory ? 3 : 8}>
           <Text
             modifiers={[
-              font({ size: accessory ? 13 : small ? 15 : 18, weight: "semibold" }),
+              font(
+                accessory
+                  ? { size: 13, weight: "semibold" }
+                  : { textStyle: "subheadline", weight: "semibold" },
+              ),
               lineLimit(accessory ? 1 : 3),
               fixedSize({ horizontal: false, vertical: true }),
             ]}
