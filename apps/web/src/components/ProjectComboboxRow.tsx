@@ -1,17 +1,14 @@
-import type { MouseEvent, PointerEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { CheckboxMark } from "./ui/checkbox";
 
 /**
- * A project row's icon slot in a combobox, with the machine badge on its corner. With `selection`,
- * a checkbox takes the icon's place on the highlighted row and stays while the row is checked.
- * Touch has no hover, so it always shows the checkbox. Render it after the name: it moves itself
- * first, so the option reads "name, On machine".
+ * A project row's icon slot. With `selection`, a checkbox takes the icon's place on the highlighted
+ * row and stays while the row is checked. Touch has no hover, so it always shows the checkbox.
  */
 export function ProjectRowLeading(props: {
   readonly icon: ReactNode;
-  readonly machine?: ReactNode;
   readonly selection?:
     | {
         readonly checked: boolean;
@@ -20,20 +17,8 @@ export function ProjectRowLeading(props: {
     | undefined;
 }) {
   const { selection } = props;
-  // The badge covers part of the checkbox, so it toggles too instead of picking the row.
-  const toggleHandlers = selection
-    ? {
-        onPointerDown: (event: PointerEvent) => event.stopPropagation(),
-        onMouseDown: (event: MouseEvent) => event.preventDefault(),
-        onClick: (event: MouseEvent) => {
-          event.preventDefault();
-          event.stopPropagation();
-          selection.onToggle();
-        },
-      }
-    : {};
   return (
-    <span className="relative order-first mr-1 grid shrink-0">
+    <span className="grid shrink-0">
       <span
         className={cn(
           "col-start-1 row-start-1 flex",
@@ -55,23 +40,16 @@ export function ProjectRowLeading(props: {
             !selection.checked &&
               "invisible pointer-coarse:visible pointer-fine:in-data-highlighted:visible",
           )}
-          {...toggleHandlers}
+          onPointerDown={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            selection.onToggle();
+          }}
         >
           <CheckboxMark checked={selection.checked} />
         </button>
-      ) : null}
-      {props.machine ? (
-        <span
-          className={cn(
-            "absolute -right-1.5 -bottom-1 z-10 flex",
-            selection && "cursor-pointer",
-            // Checked rows drop the badge visually but keep its label for screen readers.
-            selection?.checked && "pointer-events-none opacity-0",
-          )}
-          {...toggleHandlers}
-        >
-          {props.machine}
-        </span>
       ) : null}
     </span>
   );

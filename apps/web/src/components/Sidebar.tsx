@@ -3096,7 +3096,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               if (project) handleProjectSettings(event, project);
                             }}
                           >
-                            <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
                             <ProjectRowLeading
                               icon={
                                 project ? (
@@ -3104,15 +3103,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 ) : (
                                   <FolderIcon className="size-4 shrink-0" />
                                 )
-                              }
-                              machine={
-                                project && showProjectEnvironments ? (
-                                  <ProjectEnvironmentBadge
-                                    group={project}
-                                    primaryEnvironmentId={primaryEnvironmentId}
-                                    machineByEnvironmentId={environmentMachineById}
-                                  />
-                                ) : null
                               }
                               selection={
                                 project
@@ -3123,6 +3113,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   : undefined
                               }
                             />
+                            <span className="min-w-0 truncate text-sm">{item.label}</span>
+                            {project && showProjectEnvironments ? (
+                              // A checked row drops the badge visually but keeps its label for screen readers.
+                              <span className={cn("flex", isSelected && "opacity-0")}>
+                                <ProjectEnvironmentBadge
+                                  group={project}
+                                  primaryEnvironmentId={primaryEnvironmentId}
+                                  machineByEnvironmentId={environmentMachineById}
+                                />
+                              </span>
+                            ) : null}
                             {project ? (
                               <ProjectRowActions
                                 pin={
@@ -3156,7 +3157,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               />
                             ) : (
                               // Keeps "All projects" as tall as the project rows.
-                              <span className="size-7 shrink-0 sm:size-6" />
+                              <span className="ml-auto size-7 shrink-0 sm:size-6" />
                             )}
                           </ComboboxItem>
                         );
