@@ -1,4 +1,5 @@
 import type { NavigationState } from "@react-navigation/native";
+import { isSettingsRoute } from "../features/settings/settings-navigation";
 import { resetRootStack, type RootStackNavigation } from "./root-stack-reset";
 
 function androidWorkspaceBackReturnsToThread(state: NavigationState) {
@@ -70,7 +71,8 @@ export function returnToAndroidWorkspaceList(
 // In the split view these destinations swap the detail pane beside the sidebar instead of
 // stacking over Home, so the default slide-in would show a layer that is not there.
 export function androidWorkspaceDestinationAnimation(routeName: string, usesSplitView: boolean) {
-  return usesSplitView && (routeName === "Thread" || routeName === "PullRequest")
+  return usesSplitView &&
+    (routeName === "Thread" || routeName === "PullRequest" || isSettingsRoute(routeName))
     ? ("none" as const)
     : undefined;
 }
