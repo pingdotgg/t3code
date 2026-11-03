@@ -216,7 +216,7 @@ export function PreviewChromeRow({
           {onOpenInBrowser && inputFocused ? (
             // Cancelling mousedown keeps the input focused, so this node stays mounted for the click.
             <span
-              className="absolute inset-y-0.75 end-0.75 hidden items-center pointer-fine:flex pointer-events-none opacity-0 transition-opacity has-[:hover]:opacity-100"
+              className="absolute inset-y-0.75 end-0.75 hidden items-center not-any-pointer-coarse:flex pointer-events-none opacity-0 transition-opacity has-[:hover]:opacity-100"
               aria-hidden
               onMouseDown={(event) => event.preventDefault()}
             >
