@@ -592,7 +592,54 @@ describe("RelayEnvironmentDiscovery", () => {
         yield* Fiber.join(refreshFiber);
         yield* Fiber.join(lastRefresh);
 
-        expect(yield* Ref.get(harness.listCalls)).toBe(3);
+        // The first refresh, one queued refresh, one trailing check's listing, and the last refresh.
+        expect(yield* Ref.get(harness.listCalls)).toBe(4);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("lists a registration that lands while a foreground check is refreshing", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Ref.set(harness.listedEnvironments, []);
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        yield* Effect.yieldNow;
+        yield* harness.wake("credentials-changed");
+        yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.filter((state) => state.listed && !state.refreshing),
+          Stream.runHead,
+        );
+
+        yield* Ref.set(harness.listedEnvironments, [environments[0]!]);
+        yield* harness.wake("application-active");
+        yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.filter((state) => state.environments.has(environments[0]!.environmentId)),
+          Stream.runHead,
+        );
+
+        // The check's refresh now waits on the first status while another device registers.
+        yield* Ref.set(harness.listedEnvironments, environments);
+        yield* harness.wake("application-focused");
+        yield* Effect.yieldNow;
+        const requests = yield* Ref.get(harness.statusRequests);
+        for (const environment of environments) {
+          yield* Deferred.succeed(
+            requests.get(environment.environmentId)!,
+            status(environment, "online"),
+          );
+        }
+
+        const relisted = yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.filter(
+            (state) => state.environments.size === environments.length && !state.refreshing,
+          ),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        expect([...relisted.environments.keys()]).toEqual(
+          environments.map((environment) => environment.environmentId),
+        );
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

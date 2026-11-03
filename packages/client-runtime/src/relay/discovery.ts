@@ -124,6 +124,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
   const state = yield* SubscriptionRef.make(EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
   const refreshLock = yield* Semaphore.make(1);
   const foregroundCheckLock = yield* Semaphore.make(1);
+  const registrationCheckRequested = yield* Ref.make(false);
   const hasRefreshed = yield* Ref.make(false);
   const accountGeneration = yield* Ref.make(0);
   const activeAccountId = yield* Ref.make<Option.Option<string>>(Option.none());
@@ -355,8 +356,18 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
     Effect.catch((error) =>
       Effect.logDebug("Relay foreground registration check failed", { error }),
     ),
-    // A check that waits on an in-flight refresh lists the account again once it finishes.
-    foregroundCheckLock.withPermitsIfAvailable(1),
+  );
+  // A wakeup during a running check is answered by one more check once that one finishes.
+  const requestRegistrationCheck = Ref.set(registrationCheckRequested, true).pipe(
+    Effect.andThen(
+      foregroundCheckLock.withPermitsIfAvailable(1)(
+        Effect.gen(function* () {
+          while (yield* Ref.getAndSet(registrationCheckRequested, false)) {
+            yield* checkRegistrations();
+          }
+        }),
+      ),
+    ),
   );
 
   yield* connectivity.changes.pipe(
@@ -385,7 +396,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
             yield* refresh.pipe(Effect.forkScoped);
           })
         : ConnectionWakeups.shouldRelistAccountAfterWakeup(reason)
-          ? checkRegistrations().pipe(Effect.forkScoped)
+          ? requestRegistrationCheck.pipe(Effect.forkScoped)
           : Effect.void,
     ),
     Effect.forkScoped,
