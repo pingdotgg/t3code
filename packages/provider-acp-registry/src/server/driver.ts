@@ -15,11 +15,14 @@ import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -56,6 +59,7 @@ import {
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistryAuth from "./auth.ts";
+import { readDevinUsageLimits } from "./devinUsageLimits.ts";
 import * as AcpRegistryAuthenticationState from "./authenticationState.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
@@ -467,7 +471,8 @@ export const checkAcpRegistryProviderReadiness = Effect.fn(
 export type AcpRegistryDriverEnv =
   | AcpRegistryAdapterV2DriverEnv
   | Digest.Digest
-  | ProviderHost.ProviderHost;
+  | ProviderHost.ProviderHost
+  | HttpClient.HttpClient;
 
 export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -500,7 +505,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       );
     }
     const random = yield* SecureRandom.SecureRandom;
+    const digest = yield* Digest.Digest;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const pathService = yield* Path.Path;
+    const httpClient = yield* HttpClient.HttpClient;
     const hostEnvironment = yield* HostProcess.Environment;
     const host = yield* ProviderHost.ProviderHost;
     const continuationIdentity = defaultProviderContinuationIdentity({
@@ -582,10 +591,32 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             }),
           );
     });
-    const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
+    const checkProviderBase = checkAcpRegistryProviderReadiness(readinessInput).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.flatMap(withLiveRuntimeState),
     );
+    // ACP exposes no quota data; Devin is the one registry agent whose own API
+    // reports usage limits.
+    const checkUsageLimits =
+      effectiveConfig.source === "registry" && effectiveConfig.agentId === "devin"
+        ? readDevinUsageLimits({ environment: processEnvironment }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, pathService),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.provideService(Digest.Digest, digest),
+          )
+        : undefined;
+    const checkProvider =
+      checkUsageLimits === undefined
+        ? checkProviderBase
+        : Effect.all(
+            { provider: checkProviderBase, usageLimits: checkUsageLimits },
+            { concurrency: "unbounded" },
+          ).pipe(
+            Effect.map(({ provider, usageLimits }) =>
+              provider.enabled && provider.installed ? { ...provider, usageLimits } : provider,
+            ),
+          );
     const enrichProvider = checkAcpRegistryProviderStatus(
       {
         ...readinessInput,
@@ -649,8 +680,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       getSettings: snapshotSettings.getSettings,
       streamSettings: snapshotSettings.streamSettings,
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-      initialSnapshot: () => checkProvider,
+      // The first forced checkProvider lands usage limits right after creation;
+      // keep the network read out of the initial snapshot.
+      initialSnapshot: () => checkProviderBase,
       checkProvider,
+      ...(checkUsageLimits === undefined ? {} : { checkUsageLimits }),
       enrichSnapshot: Effect.fn("enrichSnapshot")(function ({
         snapshot,
         getSnapshot,
