@@ -105,8 +105,8 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
     protocolVersion: null,
     nextRequestId: 0,
   }));
-  // Current-draft agents address the declared server directly and share one MCP session.
-  const serverConnection = yield* makeConnection;
+  // Current-draft agents address the declared server directly; each initialize opens a new MCP session.
+  let serverConnection = yield* makeConnection;
 
   const checkServerId = (serverId: string): Effect.Effect<void, AcpMcpOverAcpError> =>
     serverId === T3_SERVER_ID
@@ -126,7 +126,20 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
   ): Effect.Effect<Connection, AcpMcpOverAcpError> =>
     "connectionId" in request
       ? legacyConnection(request.connectionId)
-      : Effect.as(checkServerId(request.serverId), serverConnection);
+      : checkServerId(request.serverId).pipe(
+          Effect.andThen(
+            request.method === "initialize"
+              ? renewServerConnection
+              : Effect.sync(() => serverConnection),
+          ),
+        );
+
+  const renewServerConnection = Effect.gen(function* () {
+    const previous = serverConnection;
+    serverConnection = yield* makeConnection;
+    yield* close(previous).pipe(Effect.ignore);
+    return serverConnection;
+  });
 
   // Only initialization needs ordering; negotiated calls may wait independently.
   const untilNegotiated = <A, E>(connection: Connection, effect: Effect.Effect<A, E>) =>
@@ -285,6 +298,6 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         (connectionId) => disconnect({ connectionId }).pipe(Effect.ignore),
         { discard: true },
       ),
-    ).pipe(Effect.andThen(close(serverConnection).pipe(Effect.ignore))),
+    ).pipe(Effect.andThen(Effect.suspend(() => close(serverConnection)).pipe(Effect.ignore))),
   };
 });

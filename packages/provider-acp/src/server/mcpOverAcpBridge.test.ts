@@ -234,6 +234,81 @@ describe("AcpMcpOverAcpBridge", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("opens a new MCP session when a current-draft agent initializes again", () =>
+    Effect.gen(function* () {
+      const requests: Array<{
+        readonly verb: string;
+        readonly method: unknown;
+        readonly sessionId: string | null;
+      }> = [];
+      let sessions = 0;
+      const bridge = yield* makeAcpMcpOverAcpBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        allocateConnectionId: Effect.succeed("connection-1"),
+        fetchImplementation: (_url, init) => {
+          const verb = init?.method ?? "GET";
+          const sessionId = new Headers(init?.headers).get("mcp-session-id");
+          const request =
+            verb === "DELETE"
+              ? {}
+              : (JSON.parse(String(init?.body)) as {
+                  readonly id?: unknown;
+                  readonly method?: unknown;
+                });
+          requests.push({ verb, method: request.method, sessionId });
+          if (verb === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
+          const reply = (outcome: object, headers: Record<string, string> = {}, status = 200) =>
+            new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, ...outcome }), {
+              status,
+              headers: { "content-type": "application/json", ...headers },
+            });
+          if (request.method !== "initialize") {
+            return Promise.resolve(reply({ result: { tools: [] } }));
+          }
+          // The MCP endpoint refuses an initialize that carries an existing session.
+          if (sessionId !== null) {
+            return Promise.resolve(
+              reply(
+                {
+                  error: {
+                    code: -32600,
+                    message: "initialize must not include an MCP-Session-Id header",
+                  },
+                },
+                {},
+                400,
+              ),
+            );
+          }
+          return Promise.resolve(
+            reply(
+              { result: { protocolVersion: "2025-06-18" } },
+              { "mcp-session-id": `session-${++sessions}` },
+            ),
+          );
+        },
+      });
+      const message = (method: string, requestId: string) =>
+        bridge.message({ serverId: "t3-code", requestId, method });
+
+      yield* message("initialize", "mcp-1");
+      yield* message("tools/list", "mcp-2");
+      expect(yield* message("initialize", "mcp-3")).toEqual({
+        result: { protocolVersion: "2025-06-18" },
+      });
+      yield* message("tools/list", "mcp-4");
+
+      expect(requests).toEqual([
+        { verb: "POST", method: "initialize", sessionId: null },
+        { verb: "POST", method: "tools/list", sessionId: "session-1" },
+        { verb: "DELETE", method: undefined, sessionId: "session-1" },
+        { verb: "POST", method: "initialize", sessionId: null },
+        { verb: "POST", method: "tools/list", sessionId: "session-2" },
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("closes the current-draft session its notifications ride on when disposed", () =>
     Effect.gen(function* () {
       const requests: Array<{ readonly method: string; readonly headers: Headers }> = [];
