@@ -276,3 +276,141 @@ it.live.each(
       ),
     ),
 );
+
+// regression: #29927 Codex caches the first token and reruns the same helper command only after
+// a 401, so that rerun must renew even when the saved token has not reached its local expiry.
+it.live("managed Codex helper renews a token the API rejected before its local expiry", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const instanceId = ProviderInstanceId.make("codex");
+    const sharedHome = yield* fs.makeTempDirectoryScoped({ prefix: "codex-shared-home-" });
+    const data = new Map<string, Uint8Array>();
+    let renewals = 0;
+    const executable = {
+      executablePath: "/isolated/tools/codex/0.156.1/bin/codex",
+      managedVersionDirectory: "/isolated/tools/codex/0.156.1",
+      source: "managed" as const,
+      version: "0.156.1",
+    };
+    yield* Effect.gen(function* () {
+      const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId);
+      const json = yield* encodeJson({
+        clientId: "oaiapp_test",
+        accessToken: "rejected-access",
+        refreshToken: "dummy-refresh",
+        expiresAt: (yield* Clock.currentTimeMillis) + 3_600_000,
+        earliestRefreshAt: null,
+        scopes: ["chatgpt.tokens.use.direct"],
+        subject: "test-user",
+        email: null,
+      });
+      yield* store.set(new TextEncoder().encode(json));
+      const runtime = yield* makeCodexManagedRuntime({
+        instanceId,
+        enabled: true,
+        config: decodeSettings({ setupMode: "managed", homePath: sharedHome }),
+        environment: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot },
+      });
+      const effective = yield* runtime.resolve;
+      const provider = codexAppServerArgs(effective.config.launchArgs).find((arg) =>
+        arg.startsWith("model_providers.openai_token_sharing="),
+      )!;
+      const commandMatch = /auth=\{command=(.*),args=(\[.*\]),timeout_ms=/u.exec(provider);
+      assert.isNotNull(commandMatch);
+      const [command, helperArgs] = decodeCommand(`[${commandMatch![1]},${commandMatch![2]}]`);
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const runHelper = Effect.gen(function* () {
+        const child = yield* spawner.spawn(
+          ChildProcess.make(command, helperArgs, { extendEnv: false, env: effective.environment }),
+        );
+        const [stdout, code] = yield* Effect.all(
+          [child.stdout.pipe(Stream.decodeText(), Stream.mkString), child.exitCode],
+          { concurrency: "unbounded" },
+        );
+        return { stdout, code: Number(code) };
+      }).pipe(Effect.scoped);
+
+      assert.deepEqual(yield* runHelper, { stdout: "rejected-access", code: 0 });
+      assert.equal(renewals, 0);
+      // Codex's UnauthorizedRecovery after a 401 reruns the identical command once.
+      assert.deepEqual(
+        yield* runHelper,
+        { stdout: "renewed-access", code: 0 },
+        "the helper returned the token the API just rejected instead of renewing it",
+      );
+      assert.equal(renewals, 1);
+    }).pipe(
+      Effect.provide(CodexManagedTokenBroker.layer),
+      Effect.provideService(HostProcess.Arguments, [
+        process.execPath,
+        NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url)),
+      ]),
+      Effect.provideService(
+        ServerSecretStore.ServerSecretStore,
+        ServerSecretStore.ServerSecretStore.of({
+          get: (key) => Effect.sync(() => Option.fromUndefinedOr(data.get(key))),
+          set: (key, value) =>
+            Effect.sync(() => {
+              data.set(key, value);
+            }),
+          remove: (key) =>
+            Effect.sync(() => {
+              data.delete(key);
+            }),
+          create: () => Effect.die("unused"),
+          getOrCreateRandom: () => Effect.die("unused"),
+        }),
+      ),
+      Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
+        getEnvironmentId: Effect.succeed(
+          EnvironmentId.make("00000000-0000-4000-8000-000000000001"),
+        ),
+      }),
+      Effect.provide(
+        Layer.mock(CodexInstallation.CodexInstallation)({
+          managedDirectory: "/isolated/tools/codex",
+          resolve: () => Effect.succeed(executable),
+          acquire: () => Effect.succeed(executable),
+        }),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            if (request.url === "https://auth.openai.com/api/accounts/oauth/token") {
+              renewals++;
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  access_token: "renewed-access",
+                  refresh_token: "renewed-refresh",
+                  token_type: "Bearer",
+                  expires_in: 3600,
+                  scope: "chatgpt.tokens.use.direct",
+                }),
+              );
+            }
+            assert.equal(request.url, "https://auth.openai.com/.well-known/openid-configuration");
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                issuer: "https://auth.openai.com",
+                authorization_endpoint: "https://auth.openai.com/api/accounts/authorize",
+                token_endpoint: "https://auth.openai.com/api/accounts/oauth/token",
+                jwks_uri: "https://auth.openai.com/jwks",
+                revocation_endpoint: "https://auth.openai.com/revoke",
+              }),
+            );
+          }),
+        ),
+      ),
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-managed-runtime-",
+      }).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    ),
+  ),
+);
