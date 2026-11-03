@@ -503,11 +503,13 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       yield* git(["init", "--shared=0660"]);
       const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/shared");
       yield* fs.writeFileString(path.join(cwd, "shared.txt"), "new shared object\n");
-      const blob = (yield* git(["hash-object", "shared.txt"])).stdout.trim();
+      const blob = (yield* git(["hash-object", "-w", "shared.txt"])).stdout.trim();
       const directory = path.join(cwd, ".git/objects", blob.slice(0, 2));
+      const expectedMode = (yield* fs.stat(directory)).mode & 0o7777;
+      yield* fs.remove(directory, { recursive: true });
       assert.isFalse(yield* fs.exists(directory));
       yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
-      assert.strictEqual((yield* fs.stat(directory)).mode & 0o7777, 0o2770);
+      assert.strictEqual((yield* fs.stat(directory)).mode & 0o7777, expectedMode);
       yield* git(["fsck", "--full"]);
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
