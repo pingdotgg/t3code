@@ -913,7 +913,20 @@ it.effect("reports unsupported hosts without wrapping a synthetic cause", () =>
 it.effect("selects another installed model after removing the active model", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
-    const models = yield* speech.removeModel("test-model");
+    yield* speech.prepareModel;
+    const disposing = Promise.withResolvers<void>();
+    const disposed = Promise.withResolvers<void>();
+    native.dispose.mockImplementationOnce(() => {
+      disposing.resolve();
+      return disposed.promise;
+    });
+    const removing = yield* speech.removeModel("test-model").pipe(Effect.forkChild);
+    yield* Effect.promise(() => disposing.promise);
+    expect(readyModels.has("test-model")).toBe(true);
+    disposed.resolve();
+    const models = yield* Fiber.join(removing);
+    expect(native.dispose).toHaveBeenCalledOnce();
+    expect(readyModels.has("test-model")).toBe(false);
     const status = yield* speech.status;
     expect(status).toMatchObject({
       supported: true,

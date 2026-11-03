@@ -1,10 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off - verifies isolated native worker processes and their exit events.
 import * as NodeHttp from "node:http";
 import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
 import * as NodeSea from "node:sea";
 import * as NodeURL from "node:url";
 import { expect, it, vi } from "vite-plus/test";
+import { it as effectIt } from "@effect/vitest";
 import * as NodeChildProcess from "node:child_process";
+import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { listNativeSpeechGpuDevices, loadNativeSpeechModel } from "./native.ts";
 
 vi.mock("node:sea", async (importOriginal) => {
@@ -32,6 +36,45 @@ it("ignores unrelated device probe messages and returns GPU devices", async () =
 
 const fixture = (transcribe: string, maxAudioMs = 0) =>
   `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false, maxAudioMs: ${maxAudioMs} }, supports: () => false, transcribe: ${transcribe} }) };`)}`;
+
+it.each([
+  { acceleration: "auto", options: { backend: "auto" } },
+  { acceleration: "cpu", options: { backend: "cpu" } },
+  {
+    acceleration: 'gpu:["vulkan","gpu-1"]',
+    options: { device: { kind: "vulkan", deviceType: "gpu", deviceId: "gpu-1", name: "GPU" } },
+  },
+  {
+    acceleration: 'gpu:["vulkan","Integrated GPU"]',
+    options: { device: { kind: "vulkan", deviceType: "igpu", name: "Integrated GPU" } },
+  },
+])(
+  "loads $acceleration with the default memory-mapping policy",
+  async ({ acceleration, options }) => {
+    const moduleUrl = `data:text/javascript,${encodeURIComponent(`
+    export const getAvailableBackends = () => [
+      { kind: "vulkan", deviceType: "gpu", deviceId: "gpu-1", name: "GPU" },
+      { kind: "vulkan", deviceType: "igpu", name: "Integrated GPU" },
+    ];
+    export const TranscribeModel = { load: async (_path, options) => ({
+      backend: JSON.stringify(options),
+      capabilities: { supportsStreaming: false },
+      supports: () => false,
+    }) };
+  `)}`;
+    const model = await loadNativeSpeechModel(
+      "unused.gguf",
+      new AbortController().signal,
+      moduleUrl,
+      acceleration,
+    );
+    try {
+      expect(JSON.parse(model.backend)).toEqual(options);
+    } finally {
+      await model.dispose();
+    }
+  },
+);
 
 it.each(["whisper", "voxtral"])(
   "only enables vocabulary prompts accepted by the %s model",
@@ -477,3 +520,40 @@ it("loads the installed native package for device discovery without an ESM resol
   const devices = await listNativeSpeechGpuDevices();
   expect(Array.isArray(devices)).toBe(true);
 });
+
+effectIt.live.each([
+  { directory: "/app/server.asar/node_modules/native", override: undefined },
+  { directory: "/app/node_modules/native", override: undefined },
+  { directory: "/app/server.asar/node_modules/native", override: "/custom/speech-library" },
+])(
+  "resolves Electron native artifacts from $directory with override $override",
+  ({ directory, override }) =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcess.Platform;
+      const libraryName =
+        platform === "win32"
+          ? "transcribe.dll"
+          : platform === "darwin"
+            ? "libtranscribe.dylib"
+            : "libtranscribe.so";
+      const expected =
+        override ??
+        (directory.includes(".asar/")
+          ? NodePath.join(directory.replace(".asar/", ".asar.unpacked/"), libraryName)
+          : "default");
+      const moduleUrl = `data:text/javascript,${encodeURIComponent(`
+    Object.defineProperty(process.versions, "electron", { value: "test" });
+    delete process.env.TRANSCRIBE_LIBRARY;
+    ${override ? `process.env.TRANSCRIBE_LIBRARY = ${JSON.stringify(override)};` : ""}
+    export const artifactDir = () => ${JSON.stringify(directory)};
+    export const getAvailableBackends = () => [{
+      kind: "vulkan", deviceType: "gpu", name: process.env.TRANSCRIBE_LIBRARY ?? "default",
+    }];
+  `)}`;
+      yield* Effect.promise(() =>
+        expect(listNativeSpeechGpuDevices(moduleUrl)).resolves.toEqual([
+          { id: JSON.stringify(["vulkan", expected]), name: expected },
+        ]),
+      );
+    }),
+);

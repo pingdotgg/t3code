@@ -28,8 +28,7 @@ process.on("message", async (message) => {
       process.send({ type: "t3-speech-reply", ok: true, backend: model.backend,
         supportsStreaming: model.capabilities.supportsStreaming,
         supportsTranslation: model.capabilities.supportsTranslate,
-        // Only the Whisper run extension exposes an initial prompt in 0.2.4.
-        // Voxtral advertises the feature without a usable prompt extension.
+        // Keep vocabulary prompts on the Whisper run extension until generic prompting is supported here.
         supportsInitialPrompt: model.supports("initial_prompt") && model.accepts({ kind: "whisper" }) });
     } else if (message.kind === "begin") {
       correct = makeCorrector(message.customWords ?? [], message.dictionary ?? []);
@@ -122,10 +121,22 @@ const loaderEntry = `
   const { createRequire, findPackageJSON } = await import("node:module");
   const { dirname, join } = await import("node:path");
   const loadSpeechModule = async (moduleUrl) => {
-    if (moduleUrl) return await import(moduleUrl);
-    const packagePath = findPackageJSON("transcribe-cpp", baseUrl);
-    if (!packagePath) throw new Error("The native speech package is unavailable.");
-    return createRequire(packagePath)(join(dirname(packagePath), "dist/index.js"));
+    let speech;
+    if (moduleUrl) speech = await import(moduleUrl);
+    else {
+      const packagePath = findPackageJSON("transcribe-cpp", baseUrl);
+      if (!packagePath) throw new Error("The native speech package is unavailable.");
+      speech = createRequire(packagePath)(join(dirname(packagePath), "dist/index.js"));
+    }
+    if (process.versions.electron && !process.env.TRANSCRIBE_LIBRARY) {
+      const directory = speech.artifactDir();
+      const unpacked = directory.replace(/\\.asar([\\\\/])/g, ".asar.unpacked$1");
+      // Koffi opens native libraries outside Electron's ASAR-aware filesystem.
+      if (unpacked !== directory) process.env.TRANSCRIBE_LIBRARY = join(unpacked,
+        process.platform === "win32" ? "transcribe.dll"
+          : process.platform === "darwin" ? "libtranscribe.dylib" : "libtranscribe.so");
+    }
+    return speech;
   };
 `;
 
