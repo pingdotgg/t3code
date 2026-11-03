@@ -360,6 +360,22 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
   );
 
   // regression: #29881
+  it.effect("reports the unreachable user manager when lingering cannot start it", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, control } = yield* makeHarness();
+      control.linger = undefined;
+      control.managerReachable = false;
+      control.failCommand = "loginctl enable-linger --no-ask-password 501";
+
+      expect(yield* service.install().pipe(Effect.flip)).toMatchObject({
+        _tag: "BootServicePrerequisiteError",
+        problem: "user-manager-unavailable",
+      });
+      expect(yield* fs.exists(statePath)).toBe(false);
+    }),
+  );
+
+  // regression: #29881
   it.effect("installs into the unit directory of the user manager that lingering starts", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
