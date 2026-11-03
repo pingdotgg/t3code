@@ -36,12 +36,12 @@ T3 Code's confirmation.
 
 Choose **Sign-in method** in the Antigravity provider settings:
 
-| Method                     | Credentials                                                                                  |
-| -------------------------- | -------------------------------------------------------------------------------------------- |
-| Google account             | Personal Google sign-in in the browser                                                       |
-| Gemini Enterprise          | Browser sign-in, GCP project, and GCP location                                               |
-| Gemini API key             | API key; choose Connect without a browser                                                    |
-| Agent Platform / Vertex AI | API key, or GCP project and location with Application Default Credentials on the environment |
+| Method                     | Credentials                                                                                                                                                                                     |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Google account             | Personal Google sign-in in the browser                                                                                                                                                          |
+| Gemini Enterprise          | Browser sign-in, GCP project, and GCP location                                                                                                                                                  |
+| Gemini API key             | API key; choose Connect without a browser                                                                                                                                                       |
+| Agent Platform / Vertex AI | API key, or GCP project and location with Application Default Credentials on the environment, such as a service-account key in `GOOGLE_APPLICATION_CREDENTIALS` under **Environment variables** |
 
 The environment stores the Antigravity API key outside its settings file, and
 clients only see whether one is saved. The agent uses the method and credentials selected for this instance;

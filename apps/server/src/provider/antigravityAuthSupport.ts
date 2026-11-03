@@ -197,10 +197,18 @@ function antigravityEnvironment(
   auth: AntigravityAuthConfig,
   runtimeTempDirectory?: string,
 ) {
+  // Application Default Credentials are the selected credential here, not an ambient override.
+  const usesApplicationDefaultCredentials = auth.authMethod === "agent-platform" && !auth.apiKey;
   const environment: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
     // Windows treats environment keys as case-insensitive. Remove aliases too.
-    if (!removedEnvironmentKeys.has(key.toUpperCase())) environment[key] = value;
+    const name = key.toUpperCase();
+    if (
+      !removedEnvironmentKeys.has(name) ||
+      (usesApplicationDefaultCredentials && name === "GOOGLE_APPLICATION_CREDENTIALS")
+    ) {
+      environment[key] = value;
+    }
   }
   // Put the GCP pair in settings.json because GOOGLE_API_KEY takes precedence in the environment.
   const credential =
