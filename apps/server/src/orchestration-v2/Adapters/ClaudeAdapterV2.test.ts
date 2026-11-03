@@ -6348,6 +6348,81 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("resumes a per-block streamed head at its persisted transcript message", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const configDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-claude-derived-head-",
+      });
+      const promptUuid = "00000000-0000-4000-8000-0a1b2c3d4e5f";
+      const persistedUuid = "00000000-0000-4000-8000-3c5a91e0d7f2";
+      // Claude streams [thinking, text] as one message per block: uuid.slice(0, 24) + block index.
+      const streamedTextBlockUuid = `${persistedUuid.slice(0, 24)}000000000001`;
+      const projectDir = path.join(configDir, "projects", "-workspace");
+      yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(projectDir, `${WAKE_NATIVE_SESSION}.jsonl`),
+        [
+          JSON.stringify({
+            type: "user",
+            uuid: promptUuid,
+            parentUuid: null,
+            sessionId: WAKE_NATIVE_SESSION,
+            message: { role: "user", content: "Think, then answer." },
+          }),
+          JSON.stringify({
+            type: "assistant",
+            uuid: persistedUuid,
+            parentUuid: promptUuid,
+            sessionId: WAKE_NATIVE_SESSION,
+            message: {
+              id: "msg_synthetic_derived_head",
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "Considering.", signature: "synthetic" },
+                { type: "text", text: "Answer." },
+              ],
+            },
+          }),
+          "",
+        ].join("\n"),
+      );
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: { CLAUDE_CONFIG_DIR: configDir },
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: {
+            ...harness.providerThread,
+            nativeConversationHeadRef: {
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeId: streamedTextBlockUuid,
+              strength: "weak",
+            },
+          },
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-derived-head"),
+          text: "Continue.",
+          attachments: [],
+          providerTurnOrdinal: 2,
+          nativeThreadHasTurns: true,
+        }),
+      );
+      assert.equal(harness.getOpenedOptions()?.resumeSessionAt, persistedUuid);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("never records a subagent uuid for a turn with no main-thread assistant message", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarnessWithOptions({
