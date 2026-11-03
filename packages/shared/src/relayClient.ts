@@ -8,7 +8,8 @@ import type {
 } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -60,6 +61,7 @@ export class RelayClientInstallError extends Data.TaggedError("RelayClientInstal
     | "download_failed"
     | "invalid_checksum"
     | "install_locked"
+    | "managed_by_policy"
     | "override_missing"
     | "unsupported_platform"
     | "validation_failed"
@@ -248,12 +250,14 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   RelayClientShape,
   never,
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
+  | Digest.Digest
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
 > {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const fileSystem = yield* FileSystem.FileSystem;
   const httpClient = yield* HttpClient.HttpClient;
   const path = yield* Path.Path;
@@ -462,7 +466,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       ),
     );
     yield* report("verifying");
-    const checksum = yield* crypto.digest("SHA-256", bytes).pipe(
+    const checksum = yield* digest.digest(Digest.sha256, bytes).pipe(
       Effect.mapError(
         (cause) =>
           new RelayClientInstallError({
@@ -496,7 +500,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   const acquireInstallLock = Effect.fn("cloudflared.acquireInstallLock")(function* (
     lockPath: string,
   ) {
-    const owner = `${process.pid}-${yield* crypto.randomUUIDv4()}`;
+    const owner = `${process.pid}-${yield* random.uuidV4()}`;
     const candidate = yield* Effect.acquireRelease(
       fileSystem.makeTempDirectory({ directory: path.dirname(lockPath), prefix: ".lock-" }),
       (directory) =>
@@ -633,7 +637,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
         });
       }
 
-      const stagedPath = `${managedPath}.${yield* crypto.randomUUIDv4()}.tmp`;
+      const stagedPath = `${managedPath}.${yield* random.uuidV4()}.tmp`;
       yield* report("activating");
       yield* renameWhenUnlocked(executablePath, stagedPath).pipe(
         wrapInstallFailure("write_failed", "Could not stage the relay client."),

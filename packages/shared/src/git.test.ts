@@ -268,6 +268,12 @@ describe("sanitizeFeatureBranchName", () => {
   ])("keeps the fallback for unprefixed input %s", (input, expected) => {
     expect(sanitizeFeatureBranchName(input)).toBe(expected);
   });
+
+  it("keeps accented letters as their plain letters", () => {
+    expect(sanitizeFeatureBranchName("fix/Añadir validación del café")).toBe(
+      "fix/anadir-validacion-del-cafe",
+    );
+  });
 });
 
 describe("resolveAutoFeatureBranchName", () => {
