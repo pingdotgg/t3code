@@ -3,6 +3,7 @@ const motionTiming = { duration: 150, easing: "ease-out" };
 const settleTiming = { duration: 200, easing: "cubic-bezier(0.23, 1, 0.32, 1)" };
 const SETTLING_ATTRIBUTE = "data-sidebar-settling";
 const LEAD_ATTRIBUTE = "data-sidebar-motion-lead";
+const MOVING_ATTRIBUTE = "data-sidebar-motion-moving";
 /** Matches a list that is dragging (Sidebar sets the attribute) or landing a drop. */
 export const SIDEBAR_SORTING_SELECTOR = `[data-sidebar-dragging], [${SETTLING_ATTRIBUTE}]`;
 const rowTravel = (height: number) => Math.min(height, 40);
@@ -135,6 +136,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     running.get(node)?.animation.cancel();
     running.delete(node);
     node.removeAttribute(LEAD_ATTRIBUTE);
+    node.removeAttribute(MOVING_ATTRIBUTE);
   };
   const suspend = () => {
     for (const node of running.keys()) cancel(node);
@@ -157,6 +159,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     if (entry) entry.travel = 0;
     if (offset === 0 && offsetX === 0 && !entry) return undefined;
     if (isLead) node.setAttribute(LEAD_ATTRIBUTE, "");
+    node.setAttribute(MOVING_ATTRIBUTE, "");
     const animation = node.animate(
       [{ transform: `translate(${offsetX}px, ${offset}px)` }, { transform: "translate(0px, 0px)" }],
       timing,
@@ -168,6 +171,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
         if (running.get(node)?.animation === animation) {
           running.delete(node);
           node.removeAttribute(LEAD_ATTRIBUTE);
+          node.removeAttribute(MOVING_ATTRIBUTE);
         }
       },
       { once: true },

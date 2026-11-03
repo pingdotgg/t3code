@@ -2285,14 +2285,14 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
     display: none;
   }
   /* Inline-size containers isolate stacking; raise the group as well as its travelling tile. */
-  .sidebar-pinned-grid:has(> [data-sidebar-motion-lead], > [data-sidebar-drag-source]) {
+  .sidebar-pinned-grid:has(> [data-sidebar-motion-moving], > [data-sidebar-drag-source]) {
     z-index: 20;
   }
   [data-sidebar-motion-lead] {
     position: relative;
     z-index: 20;
   }
-  [data-sidebar-motion-lead] [data-sidebar-row] {
+  [data-sidebar-motion-moving] [data-sidebar-row] {
     background-color: var(--sidebar);
     opacity: 1;
   }
