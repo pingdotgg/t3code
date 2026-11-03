@@ -23,7 +23,7 @@ export function shouldRebuildFileTree(
   nextPaths: readonly string[],
   updates: readonly FileTreeBatchOperation[],
 ): boolean {
-  // Up to this many operations can't outweigh a rebuild, whatever the folder sizes.
+  // Up to this many operations, the estimate below can't exceed the rebuild, so skip counting.
   if (updates.length <= REBUILD_COST_IN_FOLDER_OPERATIONS) return false;
   const previousCounts = countByParent(previousPaths);
   const nextCounts = countByParent(nextPaths);
