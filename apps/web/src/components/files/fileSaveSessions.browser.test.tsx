@@ -70,7 +70,7 @@ describe("file save sessions in React", () => {
     );
     finishWrite();
     getUnsavedFile.mockReturnValue(null);
-    await vi.runAllTimersAsync();
+    await vi.waitFor(() => expect(onPendingChange).toHaveBeenLastCalledWith("README.md", false));
 
     expect(runAtomCommand.mock.calls.map(([, , request]) => request)).toEqual([
       {
@@ -78,6 +78,5 @@ describe("file save sessions in React", () => {
         input: { cwd: "/workspace", relativePath: "README.md", contents: "draft" },
       },
     ]);
-    expect(onPendingChange).toHaveBeenLastCalledWith("README.md", false);
   });
 });
