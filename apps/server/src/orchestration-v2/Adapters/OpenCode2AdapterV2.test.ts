@@ -3347,6 +3347,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               status: "completed",
               reason: "auto",
               summary: "First turn summary",
+              recent: 42,
             },
             { id: "msg_dropped", time: { created: 3 }, text: "second", type: "user" },
           ],
