@@ -59,6 +59,9 @@ export class ProviderRegistry extends Context.Service<
       provider?: ProviderDriverKind,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
+    /** Re-probes every instance without rereading maintenance, for callers that only show status. */
+    readonly refreshSnapshots: Effect.Effect<ReadonlyArray<ServerProvider>>;
+
     /** Unknown instance ids return the cached list without error. */
     readonly refreshInstance: (
       instanceId: ProviderInstanceId,
@@ -342,6 +345,7 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
   driverKind: instance.driverKind,
   getSnapshot: instance.snapshot.getSnapshot,
   refresh: instance.snapshot.refresh,
+  refreshSnapshot: instance.snapshot.refreshSnapshot ?? instance.snapshot.refresh,
   streamChanges: instance.snapshot.streamChanges,
 });
 
@@ -603,8 +607,9 @@ export const layer = Layer.effect(
 
     const refreshOneSource = Effect.fn("refreshOneSource")(function* (
       providerSource: ProviderSnapshotSource,
+      refreshSource: ProviderSnapshotSource["refresh"] = providerSource.refresh,
     ) {
-      return yield* providerSource.refresh.pipe(
+      return yield* refreshSource.pipe(
         Effect.flatMap((nextProvider) =>
           correlateSnapshotWithSource(providerSource, nextProvider).pipe(
             Effect.flatMap(syncProvider),
@@ -670,6 +675,16 @@ export const layer = Layer.effect(
         return yield* Ref.get(providersRef);
       }
       return yield* refreshOneSource(providerSource);
+    });
+
+    const refreshSnapshots = Effect.fn("refreshSnapshots")(function* () {
+      yield* syncLiveSourcesAndContinue;
+      const sources = yield* getLiveSources;
+      yield* Effect.forEach(sources, (source) => refreshOneSource(source, source.refreshSnapshot), {
+        concurrency: "unbounded",
+        discard: true,
+      });
+      return yield* Ref.get(providersRef);
     });
 
     const refreshInstance = Effect.fn("refreshInstance")(function* (
@@ -1069,6 +1084,7 @@ export const layer = Layer.effect(
       getProviders: Ref.get(providersRef),
       refresh: (provider?: ProviderDriverKind) =>
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refreshSnapshots: refreshSnapshots().pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       reloadSecretsAndRefresh: (instanceId?: ProviderInstanceId) =>

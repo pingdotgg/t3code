@@ -14,6 +14,8 @@ export interface ManagedServerProvider {
   }) => Effect.Effect<ProviderMaintenanceCapabilities>;
   readonly getSnapshot: Effect.Effect<ServerProvider>;
   readonly refresh: Effect.Effect<ServerProvider>;
+  /** Like `refresh` without rereading maintenance, whose release lookups can take seconds. */
+  readonly refreshSnapshot?: Effect.Effect<ServerProvider>;
   readonly refreshUsage?: Effect.Effect<void, ServerSettingsError>;
   readonly streamChanges: Stream.Stream<ServerProvider>;
   /** Merge windows by ID; updates with no usable window leave the snapshot untouched. */

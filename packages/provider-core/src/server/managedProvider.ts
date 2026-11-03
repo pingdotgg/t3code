@@ -373,6 +373,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     refresh: input
       .resolveMaintenance({ fresh: true })
       .pipe(Effect.andThen(refreshSnapshot), Effect.tapError(Effect.logError), Effect.orDie),
+    refreshSnapshot: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
     applyUsageLimits,
     refreshUsage: refreshUsage(),
     get streamChanges() {
