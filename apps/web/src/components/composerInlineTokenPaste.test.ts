@@ -127,4 +127,11 @@ it("allows large logs with an incidental thread URL to fold", () => {
     isComposerContextPaste(legacyClipboard("log line\n".repeat(10000) + threadDeepLink(ref))),
   ).toBe(false);
   expect(isComposerContextPaste(legacyClipboard(threadDeepLink(ref)))).toBe(true);
+  expect(isComposerContextPaste(legacyClipboard("<t3-thread://v2/env/thread>"))).toBe(true);
+  expect(isComposerContextPaste(legacyClipboard("[Work](t3-thread://v2/env/thread)"))).toBe(true);
+  expect(
+    isComposerContextPaste(
+      legacyClipboard("log line\n".repeat(10000) + "<t3-thread://v2/env/thread>"),
+    ),
+  ).toBe(false);
 });

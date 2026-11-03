@@ -11,6 +11,7 @@ import {
   toKindScopedComposerContextId,
 } from "./composerContextReferences.ts";
 import { parseThreadDeepLink } from "./threadDeepLinks.ts";
+import { parseThreadLinkHref } from "./threadLinks.ts";
 
 export { COMPOSER_CONTEXT_CLIPBOARD_MIME };
 
@@ -50,7 +51,9 @@ export function normalizeThreadClipboard(
           ? (candidate.match(/[.,;:!?)\]\x27\x22]+$/)?.[0] ?? "")
           : "";
       const address = punctuation ? candidate.slice(0, -punctuation.length) : candidate;
-      const ref = parseThreadDeepLink(address.replace(/^<|>$/g, ""));
+      const href = address.replace(/^<|>$/g, "");
+      if (parseThreadLinkHref(href) !== null) return value;
+      const ref = parseThreadDeepLink(href);
       if (!ref) return value;
       const key = JSON.stringify([ref.environmentId, ref.threadId]);
       let record = byThread.get(key);

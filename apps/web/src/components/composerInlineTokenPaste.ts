@@ -1,4 +1,3 @@
-import { parseThreadDeepLink } from "@t3tools/shared/threadDeepLinks";
 import { ComposerContextId } from "@t3tools/contracts";
 import type {
   ComposerContextClipboardFragment,
@@ -104,5 +103,14 @@ export function isComposerContextPaste(clipboardData: Pick<DataTransfer, "getDat
   )
     return true;
   const text = clipboardData.getData("text/plain").trim();
-  return text.length > 0 && text.split(/\s+/).every((value) => parseThreadDeepLink(value) !== null);
+  const normalized = normalizeThreadClipboard(text, null);
+  const threads = threadLinkContextReferences(
+    normalized.text,
+    normalized.fragment?.records ?? [],
+    threadTitle,
+  );
+  return (
+    (normalized.fragment?.records.length ?? 0) + threads.records.length > 0 &&
+    replaceComposerContextReferences(threads.text, () => "").trim() === ""
+  );
 }

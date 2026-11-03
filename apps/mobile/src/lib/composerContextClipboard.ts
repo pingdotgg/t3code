@@ -81,9 +81,21 @@ export async function importComposerContextClipboard(
     decodeComposerContextFragment(input.fragment) ?? decodeComposerContextClipboardHtml(input.html),
   );
   const copied = normalized.fragment;
+  const accepted = new Map(
+    (copied?.records ?? [])
+      .filter(
+        (record) =>
+          record.kind !== "thread" ||
+          "payload" in record ||
+          destinationEnvironmentId === undefined ||
+          record.environmentId === destinationEnvironmentId ||
+          linkedEnvironments.has(record.environmentId),
+      )
+      .map((record) => [record.contextId, record.contextId]),
+  );
   // A thread link becomes a chip only where this agent can read its machine; others stay links.
   const threads = threadLinkContextReferences(
-    normalized.text,
+    normalizeThreadClipboard(input.text, copied, accepted).text,
     copied?.records ?? [],
     (ref) => appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref))?.title,
     (record) =>
