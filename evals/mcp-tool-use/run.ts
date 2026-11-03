@@ -10,6 +10,7 @@ import * as NodeUtil from "node:util";
 import * as NodeVM from "node:vm";
 import * as NodeZlib from "node:zlib";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ComposerContextRecord,
@@ -139,6 +140,8 @@ const PriorToolCall = Schema.Struct({
   input: Schema.Unknown,
   /** For a device tool, `"default"` runs the call on the world's devices for T3's result. */
   result: Schema.Unknown,
+  /** Repository-relative file whose current contents supply this tool result. */
+  resultFile: Schema.optional(Schema.String),
 });
 
 /**
@@ -162,6 +165,11 @@ const McpToolUseExpect = Schema.Struct({
   order: Schema.optional(Schema.Array(Schema.String)),
   minCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
   maxCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
+  /**
+   * One `args`-style value per new top-level thread the agent asks for, by `t3_thread_launch` or a
+   * `create_threads` entry. Each matches a different thread's request; no other thread is asked for.
+   */
+  newThreads: Schema.optional(Schema.Array(Schema.Unknown)),
   /** The last step with tool calls includes this tool, then the turn ends. */
   endsTurnAfter: Schema.optional(Schema.String),
   /** Regexes that no shell command may match. */
@@ -269,6 +277,7 @@ export const McpToolUseCase = Schema.Struct({
       Schema.Struct({ parentThreadId: Schema.String, digest: Schema.Array(Schema.String) }),
     ),
   }),
+  /** Empty to resume a top-level thread without side-chat context after its last tool result. */
   prompt: Schema.String,
   /** Records for the context chips `prompt` links, projected as T3 sends them. */
   promptContext: Schema.optional(Schema.Struct({ records: Schema.Array(ComposerContextRecord) })),
@@ -732,7 +741,8 @@ const createdPullRequests = ({ tool, input, output }: ShellEntry) =>
     : [];
 /**
  * One sample's state. ToolSearch adds loaded schemas to `tools`, like Claude Code. `shell` is the
- * history the simulator keeps consistent with; `linked` and `nextTask` do the same for T3 results.
+ * history the simulator keeps consistent with; `linked`, `nextTask` and `threads` do the same for
+ * T3 results.
  */
 type Sample = {
   readonly testCase: McpToolUseCase;
@@ -744,6 +754,8 @@ type Sample = {
   readonly linked: Set<string>;
   readonly codeStore: Record<string, unknown>;
   nextTask: number;
+  /** Threads the agent launched in this sample, by id, so reading one shows its own brief. */
+  readonly threads: Map<string, { readonly title: string; readonly brief: string }>;
   /** T3's device tools, once `withDevices` builds them for a world with devices. */
   devices?: DeviceTools;
   /** T3's results for prior device calls whose case result is "default". */
@@ -788,6 +800,7 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     linked: new Set([...urls, ...shell.flatMap(createdPullRequests)]),
     codeStore: {},
     nextTask: Math.max(0, ...taskNumbers) + 1,
+    threads: new Map(),
     priorResults: new Map(),
   };
 };
@@ -870,6 +883,19 @@ export const buildMessages = (sample: Sample) => {
     else messages[messages.length - 1] = { role, content: [...last.content, ...blocks] };
   };
   const { role, context, delegateRole, priorTurns = [] } = testCase.setup;
+  const sideChat = testCase.setup.sideChat;
+  if (testCase.prompt === "" && (role !== "top" || sideChat !== undefined)) {
+    throw new Error(
+      `${testCase.id}: Empty-prompt replay requires a top-level thread without side-chat context.`,
+    );
+  }
+  const sideChatContext =
+    sideChat === undefined
+      ? undefined
+      : makeSideChatContext({
+          parentThreadId: ThreadId.make(sideChat.parentThreadId),
+          digest: sideChat.digest,
+        });
   const native = role === "native-subagent";
   const notes = [
     native
@@ -916,19 +942,11 @@ export const buildMessages = (sample: Sample) => {
     testCase.promptContext === undefined
       ? testCase.prompt
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
-  const sideChat = testCase.setup.sideChat;
   const prompt =
-    sideChat === undefined
-      ? userText
-      : withInlineContext(
-          makeSideChatContext({
-            parentThreadId: ThreadId.make(sideChat.parentThreadId),
-            digest: sideChat.digest,
-          }),
-          userText,
-        );
+    sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
-  push("user", text(role === "delegated-child" ? childPrompt() : prompt));
+  if (testCase.prompt !== "")
+    push("user", text(role === "delegated-child" ? childPrompt() : prompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
     push("user", reminder(`SubagentStart hook additional context: ${base.subagentContext}`));
@@ -1000,9 +1018,41 @@ const linkedEntry = (sample: Sample, url: string) => {
 };
 
 /** A believable T3 result for a tool the case does not mock. */
-const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, unknown>>) => {
+export const t3Default = (
+  sample: Sample,
+  name: string,
+  input: Readonly<Record<string, unknown>>,
+) => {
   const pr = () => pullRequest(sample.repo, input);
+  const newThread = (request: unknown, brief: unknown) => {
+    const n = sample.nextTask++;
+    const title =
+      isRecord(request) && typeof request.title === "string" ? request.title : "New thread";
+    const text = typeof brief === "string" ? brief.trim() : "";
+    sample.threads.set(uuid(n), { title, brief: text });
+    return {
+      threadId: uuid(n),
+      title,
+      ...(text ? { runId: `run-${n}`, status: "starting" } : { status: "idle" }),
+    };
+  };
   switch (name) {
+    case "t3_thread_launch":
+      return newThread(input, input.message);
+    case "create_threads":
+      return {
+        threads: (Array.isArray(input.threads) ? input.threads : []).map((request) => {
+          const target = isRecord(request) && isRecord(request.target) ? request.target : {};
+          return {
+            ...newThread(request, isRecord(request) ? request.prompt : undefined),
+            createdBy: "agent",
+            creationSource: "mcp",
+            providerInstanceId:
+              target.providerInstanceId ?? (sample.base.codex ? "codex" : "claudeAgent"),
+            model: target.model ?? sample.base.model,
+          };
+        }),
+      };
     case "orchestrator_capabilities":
       return {
         inheritedProviderInstanceId: "claudeAgent",
@@ -1108,6 +1158,20 @@ const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, 
       };
     case "t3_thread_read": {
       const threadId = valueText(input.threadId);
+      const launched = sample.threads.get(threadId);
+      if (launched !== undefined) {
+        const items = launched.brief
+          ? [{ position: 1, createdBy: "agent", creationSource: "mcp", text: launched.brief }]
+          : [];
+        const thread = {
+          threadId,
+          title: launched.title,
+          createdBy: "agent",
+          creationSource: "mcp",
+          status: launched.brief ? "running" : "idle",
+        };
+        return { thread, items, nextPosition: items.length + 1, hasMore: false };
+      }
       const { title, status, items } = DEFAULT_THREAD;
       return { thread: { threadId, title, status }, items, nextPosition: 3, hasMore: false };
     }
@@ -1438,6 +1502,35 @@ const matches = (expected: unknown, actual: unknown): boolean => {
   return Object.entries(expected).every(([path, value]) => matches(value, at(path)));
 };
 
+/** Each new top-level thread request in a run; a failed call created nothing. */
+const newThreadRequests = (calls: ReadonlyArray<Call>) =>
+  calls.flatMap((call): ReadonlyArray<{ request: unknown; brief: unknown }> => {
+    if (call.failed === true || !isRecord(call.input)) return [];
+    if (call.tool === "t3_thread_launch")
+      return [{ request: call.input, brief: call.input.message }];
+    if (call.tool !== "create_threads" || !Array.isArray(call.input.threads)) return [];
+    return call.input.threads.map((request: unknown) => ({
+      request,
+      brief: isRecord(request) ? request.prompt : undefined,
+    }));
+  });
+
+/** Whether every expected value can take a different request it matches. */
+const matchesDistinct = (
+  expected: ReadonlyArray<unknown>,
+  requests: ReturnType<typeof newThreadRequests>,
+  taken: ReadonlySet<number> = new Set(),
+): boolean => {
+  const [first, ...rest] = expected;
+  if (expected.length === 0) return true;
+  return requests.some(
+    ({ request, brief }, i) =>
+      !taken.has(i) &&
+      matches(first, typeof first === "string" ? brief : request) &&
+      matchesDistinct(rest, requests, new Set([...taken, i])),
+  );
+};
+
 /** delegate_task takes `target.options` as an object or `[{id, value}]`. Grade both as an object. */
 const withOptionsObject = (input: unknown) => {
   if (!isRecord(input) || !isRecord(input.target) || !Array.isArray(input.target.options)) {
@@ -1472,6 +1565,13 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun) =>
     add(`minCalls ${t} >= ${n}`, count(t) >= n);
   for (const [t, n] of Object.entries(expect.maxCalls ?? {}))
     add(`maxCalls ${t} <= ${n}`, count(t) <= n);
+  if (expect.newThreads !== undefined) {
+    const requests = newThreadRequests(calls);
+    add(
+      `newThreads ${valueText(expect.newThreads)}`,
+      requests.length === expect.newThreads.length && matchesDistinct(expect.newThreads, requests),
+    );
+  }
   if (expect.endsTurnAfter !== undefined) {
     const lastStep = Math.max(-1, ...calls.map((call) => call.step));
     const last = calls.filter((call) => call.step === lastStep).map((call) => call.tool);
@@ -2033,12 +2133,35 @@ const main = Effect.gen(function* () {
   const wanted = flags.case?.flatMap((ids) => ids.split(","));
   const codex = isCodex(flags.model);
   const harness = codex ? "codex" : "claude";
-  const selected = cases.filter(
+  const selectedCases = cases.filter(
     ({ id, setup }) =>
       (wanted === undefined || wanted.includes(id)) &&
       (setup.harness === undefined || setup.harness === harness),
   );
-  if (selected.length === 0) return yield* Effect.die(new Error("No case matches --case."));
+  if (selectedCases.length === 0) return yield* Effect.die(new Error("No case matches --case."));
+  const selected = yield* Effect.forEach(selectedCases, (testCase) =>
+    Effect.gen(function* () {
+      const priorTurns = yield* Effect.forEach(testCase.setup.priorTurns ?? [], (turn) =>
+        Effect.gen(function* () {
+          const toolCalls = yield* Effect.forEach(turn.toolCalls ?? [], (call) =>
+            call.resultFile === undefined
+              ? Effect.succeed(call)
+              : fs
+                  .readFileString(path.resolve(import.meta.dirname, "../..", call.resultFile))
+                  .pipe(Effect.map((result) => ({ ...call, result }))),
+          );
+          return { ...turn, toolCalls };
+        }),
+      );
+      return {
+        ...testCase,
+        setup: {
+          ...testCase.setup,
+          priorTurns,
+        },
+      };
+    }),
+  );
   // Trimmed captures without user data ship beside the cases. `--template` also takes a raw
   // CLIProxyAPI capture.
   const templatePath =
@@ -2235,7 +2358,7 @@ const main = Effect.gen(function* () {
 
 if (import.meta.main) {
   main.pipe(
-    Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer)),
     NodeRuntime.runMain,
   );
 }
