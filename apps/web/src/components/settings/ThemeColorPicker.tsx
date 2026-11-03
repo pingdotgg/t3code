@@ -312,7 +312,7 @@ export function ThemeColorHexInput({
     <input
       aria-invalid={!isThemeColor(value)}
       aria-label={`${label} hex value`}
-      className="w-[8.5ch] min-w-0 shrink-0 rounded-sm bg-transparent font-mono text-caption text-dim-foreground uppercase tabular-nums outline-none placeholder:normal-case hover:text-muted-foreground focus-visible:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring aria-invalid:text-destructive"
+      className="w-[8.5ch] min-w-0 shrink-0 rounded-sm bg-transparent font-mono text-meta text-dim-foreground uppercase tabular-nums outline-none placeholder:normal-case hover:text-muted-foreground focus-visible:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring aria-invalid:text-destructive"
       onChange={(event) => onChange(event.currentTarget.value)}
       onFocus={onFocus}
       spellCheck={false}
@@ -350,7 +350,7 @@ export const ThemeColorField = memo(function ThemeColorField({
   return (
     <div
       className={cn(
-        "flex min-w-0 items-center gap-2.5 rounded-item border border-transparent px-2 py-1.5 transition-colors hover:bg-foreground/[0.04]",
+        "flex min-h-11 min-w-0 items-center gap-2.5 rounded-item border border-transparent px-2 py-1.5 transition-colors hover:bg-foreground/[0.04]",
         selected && "border-foreground/12 bg-foreground/6 hover:bg-foreground/6",
       )}
       data-theme-color-role={role}
