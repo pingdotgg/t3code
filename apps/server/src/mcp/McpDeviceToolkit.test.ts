@@ -115,6 +115,7 @@ const openSession = {
 const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
   state: Effect.succeed(state),
   list: Effect.succeed(state),
+  ensureEnabled: () => Effect.void,
   agentReadinessIfSupported: () => Effect.succeed(readiness),
   open: (input) =>
     Effect.succeed({
@@ -245,6 +246,7 @@ it.effect("registers the device tools and returns the screenshot as image conten
 it.effect("rejects unavailable agent access before booting or opening a device", () => {
   const layerUnavailable = Layer.mock(DeviceService.DeviceService)({
     list: Effect.succeed(state),
+    ensureEnabled: () => Effect.void,
     agentReadinessIfSupported: () =>
       Effect.fail(
         new DeviceHostUnavailableError({ hostId: "local", reason: "Agent access is disabled." }),
@@ -358,6 +360,7 @@ describe("device targeting across hosts", () => {
     const layerDevices = Layer.mock(DeviceService.DeviceService)({
       state: Effect.succeed(multiHostState),
       list: Effect.succeed(multiHostState),
+      ensureEnabled: () => Effect.void,
       agentReadinessIfSupported: () => Effect.succeed(readiness),
       open: (input) =>
         Effect.sync(() => {
@@ -521,6 +524,33 @@ describe("device targeting across hosts", () => {
           expect(opened).toEqual([]);
         }),
       { locateDevice: () => Effect.fail(onTheMac) },
+    ),
+  );
+
+  it.effect("explains disabled local devices before selecting a device", () =>
+    run(
+      [],
+      ({ opened, call }) =>
+        Effect.gen(function* () {
+          for (const input of [{ hostId: "local", platform: "android" }, { platform: "android" }]) {
+            const result = yield* call("device_open", input);
+            expect(result.isError).toBe(true);
+            expect(text(result)).toContain(
+              "Local simulators are turned off. Turn them on in Settings → Devices.",
+            );
+          }
+          expect(opened).toEqual([]);
+        }),
+      {
+        list: Effect.succeed({ ...multiHostState, devices: [macIphone] }),
+        ensureEnabled: () =>
+          Effect.fail(
+            new DeviceHostUnavailableError({
+              hostId: "local",
+              reason: "Local simulators are turned off. Turn them on in Settings → Devices.",
+            }),
+          ),
+      },
     ),
   );
 

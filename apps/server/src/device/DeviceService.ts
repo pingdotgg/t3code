@@ -219,6 +219,7 @@ export class DeviceService extends Context.Service<
       Option.Option<DeviceSession>,
       DeviceHostAmbiguousError | DeviceOnOtherHostError
     >;
+    readonly ensureEnabled: (hostId?: DeviceHostId) => Effect.Effect<void, DeviceError>;
     readonly readiness: (hostId?: DeviceHostId) => Effect.Effect<DeviceReadiness, DeviceError>;
     readonly readinessIfSupported: (
       hostId?: DeviceHostId,
@@ -408,25 +409,32 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           })),
     );
 
+  const ensureEnabled: DeviceService["Service"]["ensureEnabled"] = Effect.fn(
+    "DeviceService.ensureEnabled",
+  )(function* (hostId) {
+    const host = yield* resolveHost(hostId);
+    const deviceSettings = yield* readDeviceSettings;
+    if (!deviceSettings.enabled) {
+      return yield* new DeviceHostUnavailableError({
+        hostId: host.id,
+        hostLabel: host.label,
+        reason:
+          "Device support is off. Enable it in the Device panel before installing or starting device tools.",
+      });
+    }
+    if (host.id === LOCAL_DEVICE_HOST_ID && !deviceSettings.localEnabled) {
+      return yield* new DeviceHostUnavailableError({
+        hostId: host.id,
+        hostLabel: host.label,
+        reason: "Local simulators are turned off. Turn them on in Settings → Devices.",
+      });
+    }
+  });
+
   const readiness: DeviceService["Service"]["readiness"] = Effect.fn("DeviceService.readiness")(
     function* (hostId) {
       const host = yield* resolveHost(hostId);
-      const deviceSettings = yield* readDeviceSettings;
-      if (!deviceSettings.enabled) {
-        return yield* new DeviceHostUnavailableError({
-          hostId: host.id,
-          hostLabel: host.label,
-          reason:
-            "Device support is off. Enable it in the Device panel before installing or starting device tools.",
-        });
-      }
-      if (host.id === LOCAL_DEVICE_HOST_ID && !deviceSettings.localEnabled) {
-        return yield* new DeviceHostUnavailableError({
-          hostId: host.id,
-          hostLabel: host.label,
-          reason: "Local simulators are turned off. Turn them on in Settings → Devices.",
-        });
-      }
+      yield* ensureEnabled(host.id);
       const ready = yield* host
         .ensureReady((status, detail) =>
           setHostStatus(host.id, { status, detail }).pipe(Effect.asVoid),
@@ -560,7 +568,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     const hostSummaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
     return yield* lifecycleLock.withPermit(
       Effect.gen(function* () {
-        if (!(yield* readDeviceSettings).enabled || !host || hosts.get(ready.hostId) !== host)
+        const deviceSettings = yield* readDeviceSettings;
+        if (
+          !deviceSettings.enabled ||
+          (ready.hostId === LOCAL_DEVICE_HOST_ID && !deviceSettings.localEnabled) ||
+          !host ||
+          hosts.get(ready.hostId) !== host
+        )
           return (yield* SynchronizedRef.get(stateRef)).state;
         return yield* publish((state) => ({
           ...state,
@@ -600,24 +614,28 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       const { state } = yield* SynchronizedRef.get(stateRef);
       const isLocal = (entry: { readonly hostId: DeviceHostId }) =>
         entry.hostId === LOCAL_DEVICE_HOST_ID;
+      const local = hosts.get(LOCAL_DEVICE_HOST_ID);
       if (
+        !(local && (yield* local.current)) &&
+        !state.bootingDevices?.some(isLocal) &&
         !state.devices.some(isLocal) &&
         !state.sessions.some(isLocal) &&
         state.hostStatuses[LOCAL_DEVICE_HOST_ID] === undefined
       )
         return;
-      const local = hosts.get(LOCAL_DEVICE_HOST_ID);
       if (local) yield* local.stop;
-      const { [LOCAL_DEVICE_HOST_ID]: _retired, ...hostStatuses } = state.hostStatuses;
-      yield* publish((current) => ({
-        ...current,
-        hostStatus: "idle",
-        hostStatusDetail: undefined,
-        hostStatuses,
-        devices: current.devices.filter((device) => !isLocal(device)),
-        sessions: current.sessions.filter((session) => !isLocal(session)),
-        bootingDevices: current.bootingDevices?.filter((device) => !isLocal(device)),
-      }));
+      yield* publish((current) => {
+        const { [LOCAL_DEVICE_HOST_ID]: _retired, ...hostStatuses } = current.hostStatuses;
+        return {
+          ...current,
+          hostStatus: "idle",
+          hostStatusDetail: undefined,
+          hostStatuses,
+          devices: current.devices.filter((device) => !isLocal(device)),
+          sessions: current.sessions.filter((session) => !isLocal(session)),
+          bootingDevices: current.bootingDevices?.filter((device) => !isLocal(device)),
+        };
+      });
     }),
   );
 
@@ -772,6 +790,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const open: DeviceService["Service"]["open"] = Effect.fn("DeviceService.open")(
     function* (input, context) {
       const host = yield* resolveHost(input.hostId);
+      yield* ensureEnabled(host.id);
       yield* ensurePlatform(host, input.platform);
       const ready = yield* readiness(host.id);
       let state = yield* refresh(ready);
@@ -858,6 +877,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               hostLabel: host.label,
               reason: "Device support was turned off while the device was opening.",
             });
+          yield* ensureEnabled(host.id);
           yield* publish((current) => ({
             ...current,
             sessions: [
@@ -1226,6 +1246,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       screenshot,
       locateDevice,
       locateSession,
+      ensureEnabled,
       readiness,
       readinessIfSupported,
       agentReadinessIfSupported,

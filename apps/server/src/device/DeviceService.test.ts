@@ -100,6 +100,7 @@ const fixture = Effect.fn("fixture")(function* (
   const discoveryErrors = yield* Ref.make<Array<{ message: string; error?: string }>>([]);
   const androidAvailable = yield* Ref.make(true);
   const encoderResult = yield* Ref.make({ code: 0, stdout: " V....D libx264", stderr: "" });
+  let running = false;
   let booted = false;
   let shutDown = false;
   const connection = { online: true, kind: "local" as "local" | "ssh", failShutdown: false };
@@ -242,6 +243,7 @@ const fixture = Effect.fn("fixture")(function* (
       Effect.gen(function* () {
         if (runtimeFailure && runtimeFailure._tag !== "AgentDeviceStartError")
           return yield* runtimeFailure;
+        running = true;
         starts.push("start");
         yield* onPhase("installing", "Updating device hub from 0.9.0 to 0.10.1…");
         return ready;
@@ -257,7 +259,7 @@ const fixture = Effect.fn("fixture")(function* (
         };
       }),
     current: Effect.sync(() =>
-      connection.online
+      connection.online && running
         ? {
             ...ready,
             ...(agentStarts.length > agentStops.length
@@ -275,6 +277,7 @@ const fixture = Effect.fn("fixture")(function* (
       agentStops.push("stop");
     }),
     stop: Effect.sync(() => {
+      running = false;
       starts.push("stop");
     }),
   };
@@ -557,30 +560,40 @@ describe("device setup consent", () => {
   );
 });
 
-it.effect("publishes boot progress and does not restore sessions after support is disabled", () =>
-  Effect.gen(function* () {
-    const started = yield* Deferred.make<void>();
-    const finish = yield* Deferred.make<void>();
-    const { service } = yield* fixture(
-      Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(finish))),
-    );
-    yield* service.configure({ enabled: true });
-    const opening = yield* service
-      .open({ threadId: ThreadId.make("thread-1"), deviceId: "Pixel_API_35", platform: "android" })
-      .pipe(Effect.result, Effect.forkChild);
-    yield* Deferred.await(started);
-    expect((yield* service.state).bootingDevices?.map((device) => device.name)).toEqual([
-      "Pixel_API_35",
-    ]);
-    yield* service.configure({ enabled: false });
-    yield* Deferred.succeed(finish, undefined);
-    expect((yield* Fiber.join(opening))._tag).toBe("Failure");
-    const state = yield* service.state;
-    expect(state.hostStatus).toBe("disabled");
-    expect(state.devices).toEqual([]);
-    expect(state.sessions).toEqual([]);
-    expect(state.bootingDevices).toEqual([]);
-  }).pipe(Effect.scoped),
+it.effect.each(["all", "local"] as const)(
+  "does not restore sessions after %s support is disabled",
+  (disabled) =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      const { service, settings } = yield* fixture(
+        Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(finish))),
+      );
+      yield* service.configure({ enabled: true });
+      const opening = yield* service
+        .open({
+          threadId: ThreadId.make("thread-1"),
+          deviceId: "Pixel_API_35",
+          platform: "android",
+        })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Deferred.await(started);
+      expect((yield* service.state).bootingDevices?.map((device) => device.name)).toEqual([
+        "Pixel_API_35",
+      ]);
+      if (disabled === "all") yield* service.configure({ enabled: false });
+      else {
+        yield* Ref.update(settings, (current) => ({ ...current, localDevicesEnabled: false }));
+        yield* service.list;
+      }
+      yield* Deferred.succeed(finish, undefined);
+      expect((yield* Fiber.join(opening))._tag).toBe("Failure");
+      const state = yield* service.state;
+      expect(state.hostStatus).toBe(disabled === "all" ? "disabled" : "idle");
+      expect(state.devices).toEqual([]);
+      expect(state.sessions).toEqual([]);
+      expect(state.bootingDevices).toEqual([]);
+    }).pipe(Effect.scoped),
 );
 
 it.effect.each([

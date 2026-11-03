@@ -356,7 +356,7 @@ export function DeviceSourcesSettings(props: {
     member.settings?.localDevicesEnabled !== false;
   const anyLocalEnabled = active.some(localEnabled);
   const setLocalEnabled = async (enabled: boolean) => {
-    const saved = await write(
+    await write(
       active.map((member) => ({
         environmentId: member.environmentId,
         patch: { localDevicesEnabled: enabled },
@@ -366,8 +366,7 @@ export function DeviceSourcesSettings(props: {
         : "Local simulators not turned off everywhere",
     );
     // Listing again stops or starts the local hub now instead of on the next panel open.
-    if (saved)
-      for (const member of active) void list({ environmentId: member.environmentId, input: {} });
+    for (const member of active) void list({ environmentId: member.environmentId, input: {} });
   };
 
   rows.push({

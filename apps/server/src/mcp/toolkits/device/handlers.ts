@@ -228,6 +228,8 @@ const handlers = {
         });
       }
       const hostId = yield* resolveHostId(state.hosts, input.hostId);
+      if (hostId !== undefined || input.deviceId === undefined)
+        yield* devices.ensureEnabled(hostId);
       const target = yield* pickDevice(state, { ...input, hostId });
       // Resolve consent and agent connectivity before booting or registering a session.
       if (!(yield* devices.agentReadinessIfSupported(target.hostId))) {
