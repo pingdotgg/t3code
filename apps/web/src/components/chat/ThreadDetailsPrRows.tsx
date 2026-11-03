@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import type { EnvironmentId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
@@ -6,7 +7,7 @@ import {
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
-import { ChevronDown, ChevronUp, Minus, Plus } from "lucide";
+import { ChevronDown, ChevronUp } from "lucide";
 import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
 
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -17,7 +18,6 @@ import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { MorphIcon } from "~/components/MorphIcon";
-import { useClientSettings } from "~/hooks/useSettings";
 import { linkedPullRequestSnapshotStatus, prStatusIndicator } from "../ThreadStatusIndicators";
 
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
@@ -76,8 +76,6 @@ export function ThreadDetailsPrRows({
   onOpenLink: (event: ReactMouseEvent<HTMLElement>, url: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  // The plus already means "add" in this card (Add project script).
-  const redesign = useClientSettings((s) => s.redesignEnabled);
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
   const stopWatching = (link: ThreadPullRequestLink | null) =>
     link?.watch === undefined
@@ -97,7 +95,7 @@ export function ThreadDetailsPrRows({
   const rest =
     currentLink === null
       ? []
-      : pullRequestListLines(resolveThreadPullRequestChains(visibleThreadPullRequests(links)))
+      : pipe(visibleThreadPullRequests(links), resolveThreadPullRequestChains, pullRequestListLines)
           .map((line) => line.link)
           .filter((link) => threadPullRequestKeyOf(link) !== threadPullRequestKeyOf(currentLink));
   if (rest.length === 0) return currentRow;
@@ -130,7 +128,8 @@ export function ThreadDetailsPrRows({
         <MorphIcon
           aria-hidden
           className="size-4 shrink-0"
-          icon={expanded ? (redesign ? ChevronUp : Minus) : redesign ? ChevronDown : Plus}
+          // Chevrons, not plus and minus: the plus already means "add" in this card.
+          icon={expanded ? ChevronUp : ChevronDown}
         />
         {expanded ? "Show less" : `Show ${rest.length} more`}
       </ThreadDetailsControl>

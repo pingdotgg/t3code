@@ -1,9 +1,7 @@
 import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  BackHandler,
   Keyboard,
-  Platform,
   Pressable,
   View,
   useWindowDimensions,
@@ -14,6 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { GlassSurface } from "../../components/ui/GlassSurface";
+import { useHardwareBack } from "../../lib/backHandler";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { WorkspaceDock } from "./WorkspaceDock";
 import { WorkspaceSearchField } from "./WorkspaceSearchField";
@@ -59,7 +58,7 @@ export function WorkspaceToolbar(props: {
   const edge = width < 360 ? 12 : WORKSPACE_TOOLBAR.edge;
   const gap = width < 360 ? 6 : WORKSPACE_TOOLBAR.gap;
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
-  const focusSearch = useCallback(() => {
+  const focusSearch = () => {
     if (!workspace) return false;
     const tab = workspace.state.selectedTab;
     if (tab !== "threads" && tab !== "pullRequests") return false;
@@ -67,10 +66,10 @@ export function WorkspaceToolbar(props: {
     workspace.dispatch({ type: "search" });
     setFocusRequest((request) => request + 1);
     return true;
-  }, [workspace]);
+  };
   useHardwareKeyboardCommand("focusSearch", focusSearch);
   useFocusEffect(useCallback(() => () => Keyboard.dismiss(), []));
-  const cancelSearch = useCallback(() => {
+  const cancelSearch = () => {
     Keyboard.dismiss();
     if (workspace)
       workspace.recordScrollOffset(
@@ -78,19 +77,16 @@ export function WorkspaceToolbar(props: {
         workspace.state.tabs[workspace.state.selectedTab].searchEntryOffset,
       );
     workspace?.dispatch({ type: "cancel" });
-  }, [workspace]);
-  const handleBack = useEffectEvent(() => {
-    if (!workspace || workspace.state.tabs[workspace.state.selectedTab].searchMode === "resting")
-      return false;
+  };
+  const searchOpen =
+    workspace !== null &&
+    workspace.state.tabs[workspace.state.selectedTab].searchMode !== "resting";
+  useHardwareBack(searchOpen, () => {
     if (keyboardVisible) Keyboard.dismiss();
     else cancelSearch();
     return true;
   });
-  useEffect(() => {
-    if (Platform.OS !== "android") return;
-    const subscription = BackHandler.addEventListener("hardwareBackPress", handleBack);
-    return () => subscription.remove();
-  }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the search TextInput after a focus request renders it
   useEffect(() => {
     if (focusRequest > 0) input.current?.focus();
   }, [focusRequest]);

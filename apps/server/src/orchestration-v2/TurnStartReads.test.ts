@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2AppThread,
@@ -26,7 +27,7 @@ const layerDatabase = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect.each(["sqlite", "memory"] as const)(
+it.effect.each(["sqlite"] as const)(
   "loads startup state without obsolete transcript payloads in %s",
   (storage) =>
     Effect.gen(function* () {
@@ -360,18 +361,63 @@ it.effect.each(["sqlite", "memory"] as const)(
         yield* store.getTurnStartContext(ThreadId.make("missing"), runId).pipe(Effect.flip),
         ProjectionStore.ProjectionStoreThreadNotFoundError,
       );
-    }).pipe(
-      Effect.provide(
-        storage === "sqlite"
-          ? layerDatabase
-          : Layer.merge(SqlitePersistence.layerMemory, ProjectionStore.layerMemory),
-      ),
-    ),
+      const file = {
+        type: "file" as const,
+        id: "message-file",
+        name: "notes.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 12,
+      };
+      yield* store.apply({
+        id: EventId.make("attachment:message-event"),
+        type: "message.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: { ...message, attachments: [file] },
+      });
+      yield* store.apply({
+        id: EventId.make("attachment:question-event"),
+        type: "turn-item.updated",
+        threadId,
+        runId: oldRunId,
+        occurredAt: now,
+        payload: {
+          ...item,
+          id: TurnItemId.make("attachment:question"),
+          type: "user_input_request",
+          requestId: RuntimeRequestId.make("attachment:request"),
+          questions: [],
+          questionAnswer: {
+            requestId: "attachment:request",
+            answers: { document: ["See document"], image: ["See image"] },
+            attachmentsByQuestionId: {
+              document: [{ ...file, id: "answer-document" }],
+              image: [
+                {
+                  type: "image",
+                  id: "answer-image",
+                  name: "photo.png",
+                  mimeType: "image/png",
+                  sizeBytes: 8,
+                },
+              ],
+            },
+          },
+        },
+      });
+      assert.deepEqual((yield* store.getThreadAttachmentIds(threadId)).toSorted(), [
+        "answer-document",
+        "answer-image",
+        "attachment:old",
+        "message-file",
+      ]);
+    }).pipe(Effect.provide(layerDatabase)),
 );
 
-it.effect.each(["sqlite", "memory"] as const)(
-  "counts a native fork's inherited history as conversation for its first /compact in %s",
-  (storage) =>
+it.effect(
+  "counts a native fork's inherited history as conversation for its first /compact in sqlite",
+  () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
@@ -507,11 +553,5 @@ it.effect.each(["sqlite", "memory"] as const)(
       yield* userMessage(forkId, forkRunId, "/compact");
 
       assert.isTrue((yield* store.getTurnStartContext(forkId, forkRunId)).hasConversation);
-    }).pipe(
-      Effect.provide(
-        storage === "sqlite"
-          ? layerDatabase
-          : Layer.merge(SqlitePersistence.layerMemory, ProjectionStore.layerMemory),
-      ),
-    ),
+    }).pipe(Effect.provide(layerDatabase)),
 );

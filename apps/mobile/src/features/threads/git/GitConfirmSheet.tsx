@@ -66,7 +66,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
     [branchName, confirmAction, includesCommit, terminology],
   );
 
-  const continuePendingAction = useCallback(async () => {
+  const continuePendingAction = async () => {
     if (!canWriteSourceControl || !confirmAction) return;
     navigation.dispatch(StackActions.replace("Thread", { environmentId, threadId }));
     await gitActions.onRunSelectedThreadGitAction({
@@ -74,15 +74,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
       ...(params.commitMessage ? { commitMessage: params.commitMessage } : {}),
       ...(params.filePaths ? { filePaths: params.filePaths.split(",") } : {}),
     });
-  }, [
-    canWriteSourceControl,
-    confirmAction,
-    environmentId,
-    gitActions,
-    params,
-    navigation,
-    threadId,
-  ]);
+  };
 
   const movePendingActionToFeatureBranch = useCallback(async () => {
     if (!canChangeThreadBranch || !confirmAction) return;
@@ -102,6 +94,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
       gitState.selectedThreadBranches.length > 0
         ? gitState.selectedThreadBranches
         : await gitActions.refreshSelectedThreadBranches();
+    if (branches === null) return;
     const newBranchName = resolveAutoFeatureBranchName(
       Arr.filterMap(branches, (branch) =>
         branch.isRemote ? Result.failVoid : Result.succeed(branch.name),

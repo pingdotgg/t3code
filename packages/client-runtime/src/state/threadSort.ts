@@ -329,20 +329,3 @@ export function sortActiveThreadsByOrderKey<
     );
   });
 }
-
-export function planPinnedMove(input: {
-  readonly orderedIds: readonly string[];
-  readonly keysById: ReadonlyMap<string, string | null | undefined>;
-  readonly movedId: string;
-  readonly direction: "up" | "down";
-}): ReadonlyArray<{ readonly id: string; readonly orderKey: string }> | null {
-  const { orderedIds, keysById, movedId, direction } = input;
-  const from = orderedIds.indexOf(movedId);
-  if (from === -1) return null;
-  const to = direction === "up" ? from - 1 : from + 1;
-  if (to < 0 || to >= orderedIds.length) return null;
-  const newOrder = [...orderedIds];
-  newOrder.splice(from, 1);
-  newOrder.splice(to, 0, movedId);
-  return planPinnedReorder({ orderedIds: newOrder, keysById, movedId });
-}

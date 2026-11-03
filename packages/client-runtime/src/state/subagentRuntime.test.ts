@@ -59,6 +59,9 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
           agents: [
             member({
               state: "completed",
+              model: "claude-opus-5[1m]",
+              effort: "xhigh",
+              speed: "standard",
               startedAt: Date.UTC(2026, 7, 1, 10, 0, 0),
               durationMs: 1500,
               completedAt: Date.UTC(2026, 7, 1, 10, 0, 4, 432),
@@ -74,6 +77,9 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     expect(settled?.status).toBe("completed");
     expect(settled?.completedAt).toBe("2026-08-01T10:00:04.432Z");
     expect(settled?.result).toBe("A1");
+    expect(settled?.model).toBe("claude-opus-5[1m]");
+    expect(settled?.effort).toBe("xhigh");
+    expect(settled?.speed).toBe("standard");
     expect(settled?.progress).toBe("Reply with exactly: A1");
     expect(settled?.usage).toEqual({ totalTokens: 71_141, toolUses: 3, durationMs: 1500 });
   });
@@ -108,6 +114,9 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
         "2026-08-01T10:00:09.000Z",
         "2026-08-01T10:00:01.500Z",
       ]);
+      expect(members?.[0]?.model).toBeNull();
+      expect(members?.[0]?.effort).toBeNull();
+      expect(members?.[0]?.speed).toBeUndefined();
     },
   );
 });
