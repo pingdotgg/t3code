@@ -2330,13 +2330,9 @@ export const layer = Layer.effect(
                 yield* remove;
                 continue;
               }
-              // A running row was already sent, so recovery keeps the prompt it was sent with.
-              // A failed load falls back to the snapshot and runTask fails the delivery.
-              const current =
-                entry.state === "dispatching"
-                  ? yield* findTask(taskId).pipe(Effect.orElseSucceed(() => null))
-                  : null;
               const prepared = yield* Effect.gen(function* () {
+                // A running row was already sent, so recovery keeps the prompt it was sent with.
+                const current = entry.state === "dispatching" ? yield* findTask(taskId) : null;
                 const snapshot = yield* decodePendingTask(entry.task_json);
                 // The snapshot keeps the identity runTask checks; the prompt is the one saved now.
                 const task =

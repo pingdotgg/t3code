@@ -1121,8 +1121,11 @@ it.effect("a coalesced window fails its delivery when the task row cannot be rea
         assert.equal((yield* sql`SELECT 1 FROM scheduled_task_webhook_pending`).length, 0);
         const [delivery] = yield* sql<{
           outcome: string;
-        }>`SELECT outcome FROM scheduled_task_webhook_deliveries`;
+          error: string | null;
+        }>`SELECT outcome, error FROM scheduled_task_webhook_deliveries`;
         assert.equal(delivery?.outcome, "dispatch_failed");
+        // Failing before dispatch means a later successful read cannot send the stale snapshot.
+        assert.equal(delivery?.error, "The pending webhook payload could not be prepared.");
       }),
     { workers },
   );
