@@ -163,6 +163,7 @@ export interface AcpAdapterV2RuntimeInput {
   readonly onTermination: NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["onTermination"]>;
   readonly onOutgoingResponseFailure?: AcpSessionRuntime.AcpSessionRuntimeOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: AcpSessionRuntime.AcpSessionRuntimeOptions["onOutgoingResponse"];
+  readonly onIncomingRequest?: AcpSessionRuntime.AcpSessionRuntimeOptions["onIncomingRequest"];
 }
 
 export type AcpAdapterV2NativeLogging = Pick<
@@ -508,6 +509,11 @@ export interface AcpAdapterV2Flavor {
   readonly reportsPerTurnPromptUsage?: boolean;
   /** Gemini-style usage: inputTokens leaves out cachedReadTokens, outputTokens leaves out thoughtTokens. */
   readonly geminiPromptUsage?: boolean;
+  /**
+   * Fails a dispatched prompt after this long with no update for its session while no
+   * agent request, tool or subagent is open, and replaces the agent before the next turn.
+   */
+  readonly promptInactivityTimeout?: Duration.Input;
   /** Grok can retain task_already_running until process exit. */
   readonly restartRuntimeAfterInterrupt?: boolean;
   /** Prompt failures after which the agent process keeps failing until replaced. */
@@ -1378,6 +1384,9 @@ interface ActiveAcpTurn {
   backgroundFinalizeGeneration: number;
   /** The agent's own id for this turn's prompt, from `forkFromTurn.nativeTurnId`. */
   nativePromptId: string | undefined;
+  /** Clock millis of the prompt's last progress, for `promptInactivityTimeout`. */
+  lastProgressAt: number;
+  inactivityWatchdog: Fiber.Fiber<void> | undefined;
 }
 
 type AcpRuntimeTeardownState =
@@ -2242,6 +2251,38 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           Effect.void;
 
         const nativeLogging = options.nativeLogging?.(input.threadId);
+        const promptInactivityTimeoutMillis =
+          flavor.promptInactivityTimeout === undefined
+            ? undefined
+            : Duration.toMillis(flavor.promptInactivityTimeout);
+        // Agent requests T3 has not answered yet, by runtime generation.
+        const openAgentRequests = new Map<number, Set<string>>();
+        const notePromptProgress =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(function* (sessionId?: string) {
+            if (promptInactivityTimeoutMillis === undefined) return;
+            const context = yield* Ref.get(activeTurn);
+            if (
+              context === null ||
+              (sessionId !== undefined &&
+                sessionId !== context.nativeThreadId &&
+                !context.subagentsBySessionId.has(sessionId))
+            ) {
+              return;
+            }
+            context.lastProgressAt = yield* Clock.currentTimeMillis;
+          });
+        const closeAgentRequest = (runtimeGeneration: number, requestId: string) =>
+          Effect.suspend(() => {
+            const open = openAgentRequests.get(runtimeGeneration);
+            if (open === undefined || !open.delete(requestId)) return Effect.void;
+            if (open.size === 0) openAgentRequests.delete(runtimeGeneration);
+            return Ref.get(runtimeCallbackGeneration).pipe(
+              Effect.flatMap((current) =>
+                current === runtimeGeneration ? notePromptProgress() : Effect.void,
+              ),
+            );
+          });
         const handleRuntimeTerminationAtGeneration = (runtimeGeneration: number) =>
           runRuntimeCallbackAtGeneration(
             runtimeGeneration,
@@ -2305,6 +2346,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             },
             clientInfo: { name: "t3-code", version: "0.0.0" },
             onTermination,
+            ...(promptInactivityTimeoutMillis === undefined
+              ? {}
+              : {
+                  onIncomingRequest: (requestId: string) =>
+                    Effect.sync(() => {
+                      const open = openAgentRequests.get(runtimeGeneration) ?? new Set();
+                      openAgentRequests.set(runtimeGeneration, open.add(requestId));
+                    }),
+                }),
             onOutgoingResponseFailure: (requestId, error) =>
               Ref.modify(nativeResponseAcknowledgements, (current) => {
                 const entry = current.get(requestId);
@@ -2333,7 +2383,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ),
                   updated,
                 ] as const;
-              }).pipe(Effect.flatten),
+              }).pipe(
+                Effect.flatten,
+                Effect.andThen(closeAgentRequest(runtimeGeneration, requestId)),
+              ),
             onOutgoingResponse: (requestId) =>
               Ref.modify(nativeResponseAcknowledgements, (current) => {
                 const entry = current.get(requestId);
@@ -2362,7 +2415,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ),
                   updated,
                 ] as const;
-              }).pipe(Effect.flatten),
+              }).pipe(
+                Effect.flatten,
+                Effect.andThen(closeAgentRequest(runtimeGeneration, requestId)),
+              ),
             ...(nativeLogging?.requestLogger === undefined
               ? {}
               : { requestLogger: nativeLogging.requestLogger }),
@@ -6153,6 +6209,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           Effect.fnUntraced(
             function* (rawNotification: EffectAcpSchema.SessionNotification) {
               if (flavor.ignoreSessionUpdate?.(rawNotification) === true) return;
+              yield* notePromptProgress(rawNotification.sessionId);
               const nativePromptId = flavor.forkFromTurn?.nativeTurnId(rawNotification);
               if (nativePromptId !== undefined) {
                 const context = yield* Ref.get(activeTurn);
@@ -7476,6 +7533,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const settledStatus = context.interrupted ? "interrupted" : status;
           context.finalizedStatus = settledStatus;
           context.finalized = true;
+          const watchdog = context.inactivityWatchdog;
+          context.inactivityWatchdog = undefined;
+          if (watchdog !== undefined) {
+            yield* Fiber.interrupt(watchdog).pipe(Effect.forkDetach, Effect.asVoid);
+          }
           const directStopQuarantine = yield* Ref.get(stoppedRunQuarantine);
           if (flavor.subagentsIdleOnTurnCompletion === true) {
             for (const subagent of context.subagents.values()) {
@@ -7669,6 +7731,98 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             options.testHooks?.onDeferredFinalizeScheduled?.(ACP_DEFERRED_FINALIZE_DEBOUNCE) ??
               Effect.void
           );
+        });
+
+        const promptInactivityPaused = Effect.fn("AcpAdapterV2.promptInactivityPaused")(function* (
+          context: ActiveAcpTurn,
+          generation: number,
+        ) {
+          if ((openAgentRequests.get(generation)?.size ?? 0) > 0) return true;
+          if ((yield* Ref.get(pendingRuntimeRequests)).size > 0) return true;
+          for (const tool of context.tools.values()) {
+            const status = toolStatus(tool.status);
+            if (status === "pending" || status === "running" || status === "waiting") return true;
+          }
+          for (const subagent of context.subagents.values()) {
+            if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) return true;
+          }
+          return false;
+        });
+
+        /**
+         * Holds the transition permit from the deadline check through process teardown,
+         * so Stop and the next turn see either a running prompt or a replaced runtime.
+         */
+        const retireInactivePrompt = Effect.fn("AcpAdapterV2.retireInactivePrompt")(function* (
+          context: ActiveAcpTurn,
+          generation: number,
+          timeoutMillis: number,
+        ) {
+          const retired = yield* runRuntimeCallbackAtGeneration(
+            generation,
+            Effect.gen(function* () {
+              if (context.finalized || context.interrupted) return "done" as const;
+              if ((yield* Ref.get(activeTurn)) !== context) return "done" as const;
+              if (yield* Deferred.isDone(context.promptWireSettled)) return "done" as const;
+              const now = yield* Clock.currentTimeMillis;
+              if (context.lastProgressAt + timeoutMillis > now) return "rearm" as const;
+              if (yield* promptInactivityPaused(context, generation)) {
+                context.lastProgressAt = now;
+                return "rearm" as const;
+              }
+              context.inactivityWatchdog = undefined;
+              openAgentRequests.delete(generation);
+              yield* quarantineNativeTransportAtGeneration(generation);
+              yield* advanceRuntimeCallbackGeneration;
+              yield* Ref.set(runtimeRestartRequired, true);
+              yield* cancelPendingRuntimeRequests();
+              yield* terminalizeOpenForegroundTools(context, "failed");
+              const minutes = Math.max(1, Math.round(timeoutMillis / 60_000));
+              yield* finalizeTurn(
+                context,
+                "failed",
+                makeProviderFailure({
+                  class: "provider_error",
+                  message: `${flavor.runtimeHarness ?? driver} sent nothing for ${minutes} ${minutes === 1 ? "minute" : "minutes"}, so T3 Code stopped the turn and restarted the agent. Send a message to continue.`,
+                }),
+              );
+              return "retired" as const;
+            }),
+          );
+          if (Option.isNone(retired) || retired.value !== "retired") {
+            return Option.getOrElse(retired, () => "done" as const);
+          }
+          yield* Effect.logWarning("orchestration-v2.acp-prompt-inactive", {
+            driver,
+            providerSessionId: input.providerSessionId,
+            providerTurnId: context.providerTurnId,
+            timeoutMillis,
+          });
+          if (runtimeScope !== undefined) {
+            yield* Scope.close(runtimeScope, Exit.void).pipe(Effect.ignore);
+          }
+          return "retired" as const;
+        });
+
+        const watchPromptInactivity = Effect.fn("AcpAdapterV2.watchPromptInactivity")(function* (
+          context: ActiveAcpTurn,
+          generation: number,
+          timeoutMillis: number,
+        ) {
+          yield* Deferred.await(context.promptDispatched);
+          context.lastProgressAt = yield* Clock.currentTimeMillis;
+          while (true) {
+            const remaining =
+              context.lastProgressAt + timeoutMillis - (yield* Clock.currentTimeMillis);
+            if (remaining > 0) {
+              yield* Effect.sleep(Duration.millis(remaining));
+              continue;
+            }
+            const outcome = yield* runtimeTransitionPermit.withPermit(
+              retireInactivePrompt(context, generation, timeoutMillis),
+            );
+            if (outcome !== "rearm") return;
+          }
         });
 
         const resolvePromptParts = Effect.fnUntraced(function* (
@@ -7981,6 +8135,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptUsage: undefined,
               backgroundFinalizeGeneration: 0,
               nativePromptId: undefined,
+              lastProgressAt: 0,
+              inactivityWatchdog: undefined,
             };
             const carryover = yield* Ref.getAndSet(carryoverSubagents, null);
             let rehydratedCarryoverSubagents: ReadonlyArray<ActiveAcpSubagent> = [];
@@ -8122,6 +8278,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
             const promptOptions = { dispatched: context.promptDispatched };
             context.promptSentAt = yield* Clock.currentTimeMillis;
+            if (promptInactivityTimeoutMillis !== undefined) {
+              context.inactivityWatchdog = yield* watchPromptInactivity(
+                context,
+                promptGeneration,
+                promptInactivityTimeoutMillis,
+              ).pipe(Effect.forkIn(sessionScope));
+            }
             const compactSession = isCompactionMessage(turnInput.message)
               ? flavor.compactSession
               : undefined;
