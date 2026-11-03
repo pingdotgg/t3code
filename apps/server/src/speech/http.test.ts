@@ -105,7 +105,7 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
             }),
             duplex: "half",
           }),
-        ).rejects.toMatchObject({ cause: { code: "UND_ERR_SOCKET" } }),
+        ).resolves.toMatchObject({ status: 413 }),
       );
       expect(transcribe).not.toHaveBeenCalled();
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeHttpServer.layerTest, dependencies)));
