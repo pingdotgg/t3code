@@ -1,4 +1,4 @@
-import { ManagedPolicyDocument } from "@t3tools/contracts";
+import { ManagedPolicyClient, ManagedPolicyDocument } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -369,6 +369,7 @@ const dwordBoolean = (value: RegistryValue) =>
  */
 function windowsPolicyDocument(
   values: ReadonlyArray<PolicyRegistryValue>,
+  knownDrivers: ReadonlyArray<string>,
 ): { readonly document: unknown } | { readonly error: string } {
   // Registry names ignore case; a hand-written `organization` is still Organization.
   const canonical = new Map(
@@ -407,7 +408,12 @@ function windowsPolicyDocument(
       if (checked === undefined) return { error: `${where} must be a DWORD of 0 or 1` };
       const list = lists.get(value.key) ?? [];
       lists.set(value.key, list);
-      if (checked) list.push(value.name);
+      if (checked) {
+        const names = value.key === "Clients" ? ManagedPolicyClient.literals : knownDrivers;
+        list.push(
+          names.find((name) => name.toLowerCase() === value.name.toLowerCase()) ?? value.name,
+        );
+      }
       continue;
     }
     if (Object.hasOwn(WINDOWS_POLICY_GROUPS, value.name)) continue;
@@ -476,7 +482,10 @@ function unwrapForced(json: string): unknown {
 }
 
 /** Read the policy a configuration profile or Group Policy set; absent means no such policy. */
-const readPlatformPolicy = Effect.fnUntraced(function* (platform: NodeJS.Platform) {
+const readPlatformPolicy = Effect.fnUntraced(function* (
+  platform: NodeJS.Platform,
+  knownDrivers: ReadonlyArray<string>,
+) {
   if (platform === "darwin") {
     const path = MACOS_MANAGED_PREFERENCES_PATH;
     const exists = yield* (yield* FileSystem.FileSystem)
@@ -543,7 +552,7 @@ const readPlatformPolicy = Effect.fnUntraced(function* (platform: NodeJS.Platfor
       }
       values.push(...checkboxes.values.map((value) => ({ ...value, key: list })));
     }
-    const built = windowsPolicyDocument(values);
+    const built = windowsPolicyDocument(values, knownDrivers);
     if ("error" in built) return yield* refuse(built.error);
     // An empty key, or one holding only policies set to Disabled, sets nothing.
     if (built.document === undefined) return undefined;
@@ -559,10 +568,11 @@ const readPlatformPolicy = Effect.fnUntraced(function* (platform: NodeJS.Platfor
  */
 export const readManagedPolicy = Effect.fn("readManagedPolicy")(function* (
   platform: NodeJS.Platform,
+  knownDrivers: ReadonlyArray<string> = [],
 ) {
   const filePath = managedPolicyPath(platform);
   const [platformPolicy, file] = yield* Effect.all([
-    readPlatformPolicy(platform),
+    readPlatformPolicy(platform, knownDrivers),
     readManagedPolicyFile(filePath),
   ]);
   if (platformPolicy !== undefined && file !== undefined) {

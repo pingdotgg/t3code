@@ -208,7 +208,7 @@ describe("readManagedPolicy", () => {
     Effect.gen(function* () {
       const organization = text("Organization", "Société 日本 ✓");
       const document = (registry: RegistryAnswer) =>
-        readManagedPolicy("win32").pipe(
+        readManagedPolicy("win32", ["codex", "claudeAgent"]).pipe(
           Effect.map((found): unknown => found?.document),
           Effect.catchTags({
             ManagedPolicyFileError: (error) => Effect.succeed(`error: ${error.reason}`),
@@ -233,7 +233,10 @@ describe("readManagedPolicy", () => {
               dword("AllowedDrivers", 1),
             ],
             // Registry names ignore case, so a subkey written in other case still counts.
-            { clients: { desktop: 1, remote: 0 }, AllowedDrivers: { codex: 1, claudeAgent: 1 } },
+            {
+              clients: { Desktop: 1, "LOCAL-BROWSER": 1, REMOTE: 1 },
+              AllowedDrivers: { Codex: 1, CLAUDEAGENT: 1, UnknownDriver: 1 },
+            },
           ),
         ),
         {
@@ -244,8 +247,8 @@ describe("readManagedPolicy", () => {
             maxRuntimeMode: "auto-accept-edits",
             telemetry: false,
             updates: { mode: "off", allowNightly: true },
-            clients: ["desktop"],
-            providers: { allowedDrivers: ["codex", "claudeAgent"] },
+            clients: ["desktop", "local-browser", "remote"],
+            providers: { allowedDrivers: ["codex", "claudeAgent", "UnknownDriver"] },
           },
         },
       );
@@ -295,6 +298,10 @@ describe("readManagedPolicy", () => {
         ],
         [policyKey([organization, text("Settings", "{")]), "not valid JSON"],
         [policyKey([organization, dword("Clients", 2)]), "DWORD of 0 or 1"],
+        [
+          policyKey([organization, dword("Clients", 1)], { Clients: { UnknownClient: 1 } }),
+          "does not match the policy schema",
+        ],
         [
           policyKey([organization, dword("Clients", 1)], { Clients: { desktop: 0 } }),
           "does not match the policy schema",
