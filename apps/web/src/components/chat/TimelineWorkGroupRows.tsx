@@ -69,6 +69,8 @@ import {
   ShieldQuestionMarkIcon,
   ArrowDownIcon,
 } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide";
+import { MorphIcon } from "../MorphIcon";
 import { Button } from "../ui/button";
 import { getVirtualizedScrollFadeClassName, ScrollArea } from "../ui/scroll-area";
 import {
@@ -382,7 +384,13 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
             {label}
             {isPreparingWorktree ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
           </span>
-          {foldable ? <span aria-hidden className="size-3 shrink-0" /> : null}
+          {foldable ? (
+            <MorphIcon
+              aria-hidden
+              className="size-3 shrink-0 text-dim-foreground"
+              icon={historyOpen ? ChevronDown : ChevronRight}
+            />
+          ) : null}
         </WorkingBarControl>
         {backgroundWorktreeSetup ? (
           <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
