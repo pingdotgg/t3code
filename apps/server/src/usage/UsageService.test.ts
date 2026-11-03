@@ -538,12 +538,22 @@ describe("UsageService", () => {
         );
       });
       const comparable = ({ readAt: _, scanDurationMs: __, ...summary }: UsageSummary) => summary;
-      let childOutputBytes = 0;
-      // Counts what real children print, so a silent in-process fallback cannot pass for parity.
+      let requestedFiles = 0;
+      let childResultLines = 0;
+      // Every request goes to a child here, so each must come back as a child result line;
+      // a silent in-process fallback for any file cannot pass for parity.
       const subprocessParser = Layer.effect(
         UsageTranscriptParser.UsageTranscriptParser,
-        // Small fixtures would otherwise stay in process.
-        UsageTranscriptParser.make({ minChildBytes: 0 }).pipe(Effect.orDie),
+        Effect.gen(function* () {
+          // Small fixtures would otherwise stay in process.
+          const parser = yield* UsageTranscriptParser.make({ minChildBytes: 0 });
+          return UsageTranscriptParser.UsageTranscriptParser.of({
+            parse: (requests) =>
+              Effect.sync(() => {
+                requestedFiles += requests.length;
+              }).pipe(Effect.andThen(parser.parse(requests))),
+          });
+        }).pipe(Effect.orDie),
       ).pipe(
         Layer.provide(
           Layer.effect(
@@ -558,7 +568,7 @@ describe("UsageService", () => {
                       stdout: handle.stdout.pipe(
                         Stream.tap((chunk) =>
                           Effect.sync(() => {
-                            childOutputBytes += chunk.length;
+                            for (const byte of chunk) if (byte === 10) childResultLines += 1;
                           }),
                         ),
                       ),
@@ -572,7 +582,8 @@ describe("UsageService", () => {
       );
       const scan = (transcriptParser: "inProcess" | "subprocess") =>
         Effect.gen(function* () {
-          childOutputBytes = 0;
+          requestedFiles = 0;
+          childResultLines = 0;
           const service = yield* UsageService.make;
           const summary = yield* service.readSummary(WINDOW);
           yield* service.awaitPersisted;
@@ -580,7 +591,10 @@ describe("UsageService", () => {
           const cache = yield* Effect.promise(() =>
             NodeFSP.readFile(NodePath.join(stateDir, SCAN_CACHE_FILE_NAME), "utf8"),
           );
-          assert.strictEqual(childOutputBytes > 0, transcriptParser === "subprocess");
+          if (transcriptParser === "subprocess") {
+            assert.isAbove(requestedFiles, 0);
+            assert.strictEqual(childResultLines, requestedFiles);
+          } else assert.strictEqual(childResultLines, 0);
           return { summary: comparable(summary), cache };
         }).pipe(
           Effect.scoped,
