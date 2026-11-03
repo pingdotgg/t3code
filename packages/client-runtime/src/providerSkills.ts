@@ -55,7 +55,11 @@ export function getProviderSlashCommandsForSlashMenu(
   slashCommands: ReadonlyArray<ServerProviderSlashCommand>,
   visibleSkills: ReadonlyArray<ServerProviderSkill>,
 ): ServerProviderSlashCommand[] {
-  const skillNames = new Set(visibleSkills.map((skill) => skill.name.trim().toLowerCase()));
+  const skillNames = new Set(
+    visibleSkills.flatMap((skill) =>
+      [skill.name, skill.slashCommandName ?? skill.name].map((name) => name.trim().toLowerCase()),
+    ),
+  );
   return slashCommands.filter((command) => !skillNames.has(command.name.trim().toLowerCase()));
 }
 

@@ -41,8 +41,18 @@ function Menu({ showSkills, query }: { showSkills: boolean; query: string }) {
     selectedProvider: ProviderDriverKind.make("claudeAgent"),
     selectedProviderSkills: [
       { name: "pstack:bro", path: "/plugins/pstack/skills/bro/SKILL.md", enabled: true },
+      {
+        name: "boat",
+        slashCommandName: "sandbox",
+        path: "/skills/boat/SKILL.md",
+        enabled: true,
+      },
     ],
-    selectedProviderSlashCommands: [{ name: "pstack:bro" }, { name: "compact" }],
+    selectedProviderSlashCommands: [
+      { name: "pstack:bro" },
+      { name: "sandbox" },
+      { name: "compact" },
+    ],
     showSkillsInSlashMenu: showSkills,
     workspaceSkillsScanning: false,
     questionAttachmentTarget: null,
@@ -58,7 +68,7 @@ it("hides skill-backed commands when skills are off and restores one skill row w
   await screen.rerender(<Menu showSkills query="" />);
   await expect
     .element(screen.getByRole("status"))
-    .toHaveTextContent(JSON.stringify([...commands, "/skill:pstack:bro"]));
+    .toHaveTextContent(JSON.stringify([...commands, "/skill:pstack:bro", "/skill:boat"]));
 
   await screen.rerender(<Menu showSkills={false} query="" />);
   await expect.element(screen.getByRole("status")).toHaveTextContent(JSON.stringify(commands));
