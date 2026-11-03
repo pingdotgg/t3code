@@ -629,13 +629,13 @@ export const make = Effect.gen(function* () {
 
   // Threads that ran a close command this run, with the commands already read for.
   const closeCommands = new Map<ThreadId, Set<string>>();
-  const refreshOpenLinks = (threadId: ThreadId) =>
+  const refreshUnmergedLinks = (threadId: ThreadId) =>
     projections.getThreadsWithPullRequests(threadId).pipe(
       Effect.flatMap((threads) =>
         Effect.forEach(
           threads.flatMap((thread) =>
             visibleThreadPullRequests(thread.pullRequests ?? []).filter(
-              (link) => link.snapshot?.state === "open",
+              (link) => link.snapshot?.state === "open" || link.snapshot?.state === "closed",
             ),
           ),
           requestSync,
@@ -700,7 +700,7 @@ export const make = Effect.gen(function* () {
               { discard: true },
             );
           // An agent can merge or close its pull request from a shell with its host's CLI, which
-          // sends no merge notification. Read the thread's open links fresh once that command
+          // sends no merge notification. Read the thread's unmerged links fresh once that command
           // ends, while the agent usually still replies, so settlement can land before the run
           // ends. Read again when the run ends, since `merge --auto` returns before it merges.
           case "turn-item.updated": {
@@ -712,11 +712,11 @@ export const make = Effect.gen(function* () {
             closeCommands.set(event.threadId, ended);
             if (isOrchestrationV2WorkActive(item.status) || ended.has(item.id)) return linked;
             ended.add(item.id);
-            return Effect.andThen(linked, refreshOpenLinks(event.threadId));
+            return Effect.andThen(linked, refreshUnmergedLinks(event.threadId));
           }
           case "run.updated":
             return isTerminalRunStatus(event.payload.status) && closeCommands.delete(event.threadId)
-              ? refreshOpenLinks(event.threadId)
+              ? refreshUnmergedLinks(event.threadId)
               : Effect.void;
           default:
             return Effect.void;
