@@ -1,4 +1,4 @@
-import { render, fakeTimers } from "../../../test/render";
+import { act, render, fakeTimers } from "../../../test/render";
 import { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { StrictMode } from "react";
@@ -68,9 +68,8 @@ describe("file save sessions in React", () => {
         <MarkdownSurface />
       </StrictMode>,
     );
-    finishWrite();
     getUnsavedFile.mockReturnValue(null);
-    await vi.runAllTimersAsync();
+    await act(() => finishWrite());
 
     expect(runAtomCommand.mock.calls.map(([, , request]) => request)).toEqual([
       {
