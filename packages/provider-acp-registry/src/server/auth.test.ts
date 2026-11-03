@@ -61,6 +61,7 @@ const makeHarness = (
   failVerification = false,
   settings = decodeSettings({ agentId: "test-agent" }),
   providerInstanceId = instanceId,
+  failAuthentication?: string,
 ) =>
   Effect.gen(function* () {
     const verify = yield* Deferred.make<void>();
@@ -110,6 +111,12 @@ const makeHarness = (
               }),
             authenticate: (methodId) =>
               Effect.gen(function* () {
+                if (failAuthentication)
+                  return yield* new AcpRequestError({
+                    method: "authenticate",
+                    code: -32000,
+                    errorMessage: failAuthentication,
+                  });
                 authenticated.push(methodId);
                 if (elicitation)
                   yield* elicitation(
@@ -342,8 +349,31 @@ it.effect("does not report authentication when post-login verification fails", (
     h.exit(0);
     yield* h.phase("verifying");
     yield* Deferred.succeed(h.verify, undefined);
-    yield* h.phase("failed");
+    const failed = yield* h.phase("failed");
+    assert.strictEqual(
+      failed.message,
+      "The provider could not create a session after terminal sign-in. Authentication required",
+    );
     assert.deepEqual(h.changed, []);
     assert.isTrue(h.killed());
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("includes the agent error message when authenticate fails", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(
+      browserMethod,
+      false,
+      undefined,
+      undefined,
+      "Connect to the VPN, then sign in again.",
+    );
+    yield* h.controller.start("owner", Effect.void, "browser");
+    const failed = yield* h.phase("failed");
+    assert.strictEqual(
+      failed.message,
+      "The ACP agent could not complete sign-in. Connect to the VPN, then sign in again.",
+    );
+    assert.deepEqual(h.changed, []);
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
