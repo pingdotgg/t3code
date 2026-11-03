@@ -292,14 +292,19 @@ export function decodeScanCache(
       continue;
     }
     // Keep history for deleted rollouts, but re-parse incompatible reducer state.
-    // v11 re-reads Codex evidence that older readers ignored, including before a resume point.
+    // v9 and v11 repair skipped Codex requests; clean v8+ entries stay served while unchanged.
     // v10 adds Claude advisor calls, which no older Claude entry holds.
     const legacy =
       (entry.p === "claude" && version < 10) ||
-      (format.state !== undefined && (version < 6 || (entry.p === "codex" && version < 11)));
+      (format.state !== undefined &&
+        (version < 6 ||
+          (entry.p === "codex" && (version < 8 || (version < 11 && malformedRecords > 0)))));
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;
+    // Before v11 a clean scan could end past an interrupted request whose usage its state dropped,
+    // so a grown file re-parses whole instead of resuming.
+    const resumable = !legacy && !(entry.p === "codex" && version < 11);
 
     const provider = entry.p;
     const records = decodeRecords(entry.r, provider);
@@ -313,14 +318,14 @@ export function decodeScanCache(
       records,
       tailRecords,
       malformedRecords,
-      position: legacy
-        ? { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null }
-        : {
+      position: resumable
+        ? {
             resumeOffset: entry.o,
             guardLength: entry.gl,
             guardHash: entry.gh,
             state: entry.cs,
-          },
+          }
+        : { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
     });
   }
 
