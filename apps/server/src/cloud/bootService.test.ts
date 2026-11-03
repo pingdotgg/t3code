@@ -116,12 +116,15 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   const control: {
     failCommand: string | undefined;
     stateAfterStop?: string;
-    linger: string;
+    /** `undefined` makes `loginctl show-user` fail, as when logind does not know the user. */
+    linger: string | undefined;
+    managerReachable: boolean;
     enabled: boolean;
     active: boolean;
   } = {
     failCommand: undefined,
     linger: "yes",
+    managerReachable: true,
     enabled: true,
     active: true,
   };
@@ -134,8 +137,10 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       invocations.push(input);
       timeouts.set(command, input.timeout);
       const failed = command === control.failCommand;
-      if (!failed && command === "loginctl enable-linger --no-ask-password 501")
+      if (!failed && command === "loginctl enable-linger --no-ask-password 501") {
         control.linger = "yes";
+        control.managerReachable = true;
+      }
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
       if (!failed && command === "systemctl --user restart t3code.service") control.active = true;
       // A timed-out stop may still stop the service.
@@ -163,7 +168,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
             : input.args[0] === "--version"
               ? `t3 v${/versions\/([^/]+)\//.exec(input.command)?.[1] ?? "1.2.3"}\n`
               : input.command === "loginctl" && input.args[0] === "show-user"
-                ? `${control.linger}\n`
+                ? `${control.linger ?? ""}\n`
                 : input.args[1] === "is-enabled"
                   ? control.enabled
                     ? "enabled\n"
@@ -172,6 +177,10 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
           failed ||
+            (command === "systemctl --user show-environment" && !control.managerReachable) ||
+            (input.command === "loginctl" &&
+              input.args[0] === "show-user" &&
+              control.linger === undefined) ||
             (input.args[1] === "is-active" && !control.active) ||
             (input.args[1] === "is-enabled" && !control.enabled)
             ? 1
@@ -319,6 +328,45 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       });
       yield* service.install();
       expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  // regression: #29881
+  it.effect.each([
+    { logind: "has lingering disabled", linger: "no" },
+    { logind: "does not know the user", linger: undefined },
+  ])(
+    "enables lingering to bring up an unreachable user manager when logind $logind",
+    ({ linger }) =>
+      Effect.gen(function* () {
+        const { service, commands, control } = yield* makeHarness();
+        control.linger = linger;
+        control.managerReachable = false;
+
+        yield* service.install();
+
+        expect(commands).toContain("loginctl enable-linger --no-ask-password 501");
+        expect((yield* service.status).current).toBe(true);
+      }),
+  );
+
+  // regression: #29881
+  it.effect("points systemd user commands at the user's runtime directory when none is set", () =>
+    Effect.gen(function* () {
+      const { service, invocations, makeService } = yield* makeHarness();
+      yield* service.install();
+      const inside = yield* makeService(undefined, "1.2.4", undefined, true);
+      yield* inside.install({ allowDowngrade: true });
+
+      const systemdCalls = invocations.filter(({ command }) =>
+        ["systemctl", "busctl", "systemd-run", "loginctl"].includes(command),
+      );
+      expect(new Set(systemdCalls.map(({ command }) => command)).size).toBe(4);
+      expect(
+        systemdCalls
+          .filter(({ env }) => env?.XDG_RUNTIME_DIR !== "/run/user/501")
+          .map(({ command, args }) => `${command} ${args.join(" ")}`),
+      ).toEqual([]);
     }),
   );
 
