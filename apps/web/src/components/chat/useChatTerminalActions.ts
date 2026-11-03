@@ -13,6 +13,7 @@ import {
   AuthTerminalOperateScope,
   type EnvironmentId,
   type ProjectScript,
+  type ProviderInstanceId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -201,6 +202,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const runProjectScript = async (
     script: ProjectScript,
     options?: {
+      providerInstanceId?: ProviderInstanceId;
       cwd?: string;
       env?: Record<string, string>;
       worktreePath?: string | null;
@@ -209,7 +211,8 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       shellHistory?: "preserve" | "suppress";
     },
   ) => {
-    if (!hasTerminalWriteAccess() || !activeThreadId || !activeProject || !activeThread) return;
+    if (!hasTerminalWriteAccess() || !activeThreadId || !activeProject || !activeThread)
+      return false;
     if (options?.rememberAsLastInvoked !== false) {
       setLastInvokedScriptByProjectId((current) => {
         if (current[activeProject.id] === script.id) return current;
@@ -240,7 +243,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       worktreePath: targetWorktreePath,
     });
     if (!activeThreadRef) {
-      return;
+      return false;
     }
 
     const launched = terminalActions.launchTerminal({
@@ -254,9 +257,10 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         ? { size: { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS } }
         : { terminalId: reusableTerminalId }),
       location: { cwd: targetCwd, worktreePath: targetWorktreePath },
+      ...(options?.providerInstanceId ? { providerInstanceId: options.providerInstanceId } : {}),
       ...(options?.env ? { extraEnv: options.env } : {}),
     });
-    if (!launched) return;
+    if (!launched) return false;
     const targetTerminalId = launched.terminalId;
     focusTerminal(activeThreadRef, targetTerminalId);
     const openResult = await launched.result;
@@ -268,7 +272,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
           error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
         );
       }
-      return;
+      return false;
     }
 
     const writeResult = await terminalActions.writeToTerminal(
@@ -276,8 +280,9 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       options?.shellHistory === "preserve"
         ? `${script.command}\r`
         : projectScriptTerminalInput(script.command),
+      activeThreadRef,
     );
-    if (!writeResult) return;
+    if (!writeResult) return false;
     if (writeResult._tag === "Failure") {
       if (!isAtomCommandInterrupted(writeResult)) {
         const error = squashAtomCommandFailure(writeResult);
@@ -286,7 +291,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
           error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
         );
       }
-      return;
+      return false;
     }
     if (script.autoOpenPreview && script.previewUrl && isPreviewSupportedInRuntime()) {
       const previewResult = await openUrlInPreview({
@@ -305,6 +310,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         );
       }
     }
+    return true;
   };
   const runProjectScriptStable = useStableCallback(runProjectScript);
 
