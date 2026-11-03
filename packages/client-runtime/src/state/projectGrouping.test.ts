@@ -121,6 +121,35 @@ function settings(
 }
 
 describe("buildProjectGroups", () => {
+  it("keeps the preferred scratch home's saved identity when grouping environments", () => {
+    const remoteEnvironmentId = EnvironmentId.make("remote");
+    const local = makeProject("scratch-local", "/local/scratch", {
+      title: "Scratchpad",
+      isScratch: true,
+      repositoryIdentity: null,
+      projectIcon: { kind: "lucide", name: "info", color: "gray" },
+    });
+    const remote = makeProject("scratch-remote", "/remote/scratch", {
+      title: "Notes",
+      environmentId: remoteEnvironmentId,
+      isScratch: true,
+      repositoryIdentity: null,
+    });
+
+    for (const preferred of [local, remote]) {
+      const groups = buildProjectGroups({
+        projects: [local, remote],
+        settings: settings("repository"),
+        groupScratchProjects: true,
+        preferredEnvironmentId: preferred.environmentId,
+      });
+      expect(groups).toHaveLength(1);
+      expect(groups[0]?.label).toBe(preferred.title);
+      expect(groups[0]?.representative.projectIcon).toEqual(preferred.projectIcon);
+      expect(groups[0]?.memberProjectRefs).toHaveLength(2);
+    }
+  });
+
   it.each(["repository", "repository_path", "separate"] as const)(
     "keeps scratch project ownership separate by default in %s mode",
     (mode) => {

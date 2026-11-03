@@ -301,13 +301,15 @@ export function DraftHeroHeadline({
             />
           }
         >
-          <DraftProjectName
-            value={isScratchDraft ? "No project" : (activeProjectDisplayName ?? "Choose a project")}
-            singleLine
-          />
+          {isScratchDraft ? (
+            <ProjectFavicon project={activeProject} className="size-4 shrink-0" />
+          ) : null}
+          <DraftProjectName value={activeProjectDisplayName ?? "Choose a project"} singleLine />
         </TooltipTrigger>
-        {activeProjectDisplayName && !isScratchDraft ? (
-          <TooltipPopup side="top">{activeProjectDisplayName}</TooltipPopup>
+        {activeProjectDisplayName ? (
+          <TooltipPopup side="top" role="tooltip">
+            {activeProjectDisplayName}
+          </TooltipPopup>
         ) : null}
       </Tooltip>
       <ComboboxPopup align="center" className="w-72 overflow-hidden">
