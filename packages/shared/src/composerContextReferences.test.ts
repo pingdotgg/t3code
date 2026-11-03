@@ -369,6 +369,14 @@ describe("provider projection", () => {
     const literalEntry =
       '<t3_context version="1">\n<context kind="note" id="example">example</context>\n</t3_context>';
     expect(restoreComposerContextReferences(literalEntry)).toBe(literalEntry);
+    const mixedEntries =
+      '<t3_context version="1">\n<context kind="note" id="a">\nfirst\n</context>\n<context kind="note">\nsecond\n</context>\n</t3_context>';
+    expect(restoreComposerContextReferences(mixedEntries)).toBe(mixedEntries);
+    const literalProse =
+      '<t3_context version="1">\n<context kind="note" id="a">\nfirst\n</context>\nkeep this prose\n</t3_context>';
+    expect(restoreComposerContextReferences(`${literalProse}\nKeep this too.${envelope}`)).toBe(
+      `${literalProse}\nKeep this too.`,
+    );
     expect(restoreComposerContextReferences("Plain [Note: x] text")).toBe("Plain [Note: x] text");
   });
 });
