@@ -187,6 +187,35 @@ describe("getChangeRequest", () => {
         expect(detail.changedFiles).toBe(0);
       }),
   );
+
+  it.effect("reads the pull request once for its detail, diff and conversation", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () =>
+              Effect.sync(() => {
+                reads += 1;
+                return PULL_REQUEST;
+              }),
+            listIterations: () => Effect.succeed([ITERATION]),
+            listIterationChanges: () =>
+              Effect.succeed({ changes: [change("a.ts")], truncated: false }),
+            readItemContent: () => Effect.succeed({ contents: side("new", 2, 4), isBinary: false }),
+            listThreads: () => Effect.succeed([]),
+          }),
+        ),
+      );
+      const input = { cwd: "/w", repository: "acme/web", host: "dev.azure.com", number: 7 };
+
+      yield* provider.getChangeRequest(input);
+      yield* provider.getDiff(input);
+      yield* provider.getChangeRequestActivity(input);
+
+      expect(reads).toBe(1);
+    }),
+  );
 });
 
 describe("getDiff reads", () => {
