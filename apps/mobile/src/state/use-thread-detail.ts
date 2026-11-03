@@ -1,6 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
-import type { EnvironmentThreadStructure } from "@t3tools/client-runtime/state/models";
+import type {
+  EnvironmentThreadStructure,
+  ThreadStructureVisibleTurnItem,
+} from "@t3tools/client-runtime/state/models";
 import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
 import type {
   EnvironmentId,
@@ -71,6 +74,20 @@ function useThreadVisibleTurnItems(
     target.environmentId === null || target.threadId === null
       ? EMPTY_VISIBLE_TURN_ITEMS_ATOM
       : environmentThreadDetails.visibleTurnItemsAtom({
+          environmentId: target.environmentId,
+          threadId: target.threadId,
+        }),
+  );
+}
+
+/** Holds while only streamed assistant text moves; tool status changes still come through. */
+export function useQuietThreadVisibleTurnItems(
+  target: ThreadDetailTarget,
+): ReadonlyArray<ThreadStructureVisibleTurnItem> {
+  return useAtomValue(
+    target.environmentId === null || target.threadId === null
+      ? EMPTY_VISIBLE_TURN_ITEMS_ATOM
+      : environmentThreadDetails.quietVisibleTurnItemsAtom({
           environmentId: target.environmentId,
           threadId: target.threadId,
         }),

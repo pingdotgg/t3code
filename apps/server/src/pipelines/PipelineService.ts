@@ -91,6 +91,17 @@ export class PipelineService extends Context.Service<
       readonly threadId: ThreadId;
       readonly output: string;
     }) => Effect.Effect<PipelineRunResult, PipelineError>;
+    /** A step agent's out-of-scope user request, posted to the run's coordinator; any run status. */
+    readonly escalateToCoordinator: (input: {
+      readonly runId: PipelineRunId;
+      readonly threadId: ThreadId;
+      readonly stepLink: string;
+      readonly request: string;
+      readonly reason: string;
+    }) => Effect.Effect<
+      { readonly runId: PipelineRunId; readonly coordinatorThreadId: ThreadId },
+      PipelineError
+    >;
     readonly rerunFromStep: (
       input: PipelineRunRerunInput,
     ) => Effect.Effect<PipelineRunResult, PipelineError>;
@@ -382,6 +393,7 @@ export const layerWithStarters = (
         retryStep: runner.retryStep,
         skipStep: runner.skipStep,
         handoffStep: runner.handoffStep,
+        escalateToCoordinator: runner.escalateToCoordinator,
         rerunFromStep: runner.rerunFromStep,
         reviseStep: runner.reviseStep,
         cancel: runner.cancel,

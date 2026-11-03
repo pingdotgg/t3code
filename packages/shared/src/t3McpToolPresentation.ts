@@ -19,6 +19,7 @@ export type T3McpToolSummaryAction =
   | "pipeline-start"
   | "pipeline-status"
   | "pipeline-continue"
+  | "pipeline-escalate"
   | "pipeline-cancel"
   | "thread-create"
   | "thread-list"
@@ -188,6 +189,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   handoff_pipeline_step: tool(
     ["Hand off", "Handing off", "Handed off", "a pipeline step"],
     "pipeline-continue",
+  ),
+  escalate_to_pipeline_coordinator: tool(
+    ["Pass", "Passing", "Passed", "a request to the pipeline coordinator"],
+    "pipeline-escalate",
   ),
   request_secret: tool(["Ask for", "Asking for", "Asked for", "a secret"], "secret-request"),
   create_threads: tool(["Create", "Creating", "Created", "T3 threads"], "thread-create"),

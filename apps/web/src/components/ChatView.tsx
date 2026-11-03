@@ -283,7 +283,10 @@ import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { NativeChildWorkDialog } from "./chat/NativeChildWorkDialog";
 import { PipelineMessageFeedbackDialog } from "./chat/PipelineMessageFeedbackDialog";
 import { PipelineRunView } from "./chat/PipelineRunView";
-import { pipelineStepBreadcrumbTitle } from "@t3tools/client-runtime/pipeline-run-presentation";
+import {
+  createPipelineEscalationWatcher,
+  pipelineStepBreadcrumbTitle,
+} from "@t3tools/client-runtime/pipeline-run-presentation";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
@@ -1055,6 +1058,18 @@ export default function ChatView(props: ChatViewProps) {
   const openCoordinator = useStableCallback(() => {
     if (activeThreadRef) openPipelineCoordinator(activeThreadRef);
   });
+  const [watchEscalation] = useState(createPipelineEscalationWatcher);
+  const escalationThreadKey =
+    pipelineStepId !== null && !embedded && activeThreadRef !== null
+      ? scopedThreadKey(activeThreadRef)
+      : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the coordinator panel when the step's agent hands the user's request to it, a live event from the thread's stream
+  useEffect(() => {
+    if (watchEscalation(escalationThreadKey, serverVisibleTurnItems) && activeThreadRef) {
+      // Not openPipelineCoordinator: an automatic open must not take focus from the step's composer.
+      useRightPanelStore.getState().open(activeThreadRef, "pipeline-coordinator");
+    }
+  }, [watchEscalation, escalationThreadKey, activeThreadRef, serverVisibleTurnItems]);
   const [feedbackQuote, setFeedbackQuote] = useState<string | null>(null);
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const activeEnvironmentServerBrowser = useEnvironmentSupportsServerBrowser(

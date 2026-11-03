@@ -53,6 +53,12 @@ a short instruction to every step's prompt: hand off with the `handoff_pipeline_
 the work is done, and ask you when something it builds on is missing, such as an earlier step's
 work or the branch it stacks on. Open a step's thread to steer it like any other chat.
 
+If you ask a step for something outside its role, for example to change code in a review step, or
+to fix what an earlier step got wrong, it does not do it itself: the work would skip the steps
+after it. It asks whether to pass the request to the run's coordinator. Say yes and the step ends
+its turn with **No handoff**, and the coordinator opens beside the step (a sheet on mobile) to
+route the request. Say no, or tell it to do the work anyway, and it does what you say.
+
 If a step's agent ends its turn without handing off, for example with a question, the run pauses
 and the step shows **No handoff**. Answer in the step's thread; when the agent then hands off, the
 run continues on its own. **Continue with last message** moves on with the thread's latest answer
@@ -93,15 +99,20 @@ thread.
 ### Coordinator
 
 A run's page is a chat with its coordinator, an agent that knows the run and can check on it,
-send feedback to steps, continue past a pause when you ask it to, rerun or cancel. It only acts
-when you message it, and it does not edit files itself. Change its model in the composer like in
-any thread. The step list stays pinned above the chat, where each step's feedback is listed.
+send feedback to steps, continue past a pause when you ask it to, rerun or cancel. It acts when
+you message it, or when a step passes a request on (below), and it does not edit files itself.
+Change its model in the composer like in any thread. The step list stays pinned above the chat,
+where each step's feedback is listed.
 
 From a step's thread, click **Coordinator** in the header (or run **Open pipeline coordinator**
-from the command palette) to chat with it beside the step. On a message, **Send feedback** lets
-the coordinator decide where it goes, or sends it straight to one step. On mobile, tap
-**Coordinator** on the bar above a step's composer to chat in a sheet, and the speech bubble below
-an assistant message to send feedback.
+from the command palette) to chat with it beside the step. When a step passes your request to the
+coordinator, it opens by itself while you are looking at that step. The step's message starts with
+"From step <name>". The coordinator sends the request as feedback to the step that owns it, so
+every later step, including the one that passed it on, redoes its work. When that is unclear it
+asks you, and when the step should do the work after all it sends it back there. On a message,
+**Send feedback** lets the coordinator decide where it goes, or sends it straight to one step. On
+mobile, tap **Coordinator** on the bar above a step's composer to chat in a sheet, and the speech
+bubble below an assistant message to send feedback.
 
 ### Shared workspace
 

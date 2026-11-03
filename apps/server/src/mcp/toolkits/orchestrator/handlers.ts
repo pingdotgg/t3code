@@ -199,6 +199,13 @@ const handlers = {
       return yield* service.handoffPipelineStep(scope, input);
     }),
   ),
+  escalate_to_pipeline_coordinator: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.escalateToPipelineCoordinator(scope, input);
+    }),
+  ),
   request_secret: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

@@ -35,6 +35,11 @@ import { Tool } from "effect/ai";
 import * as McpSchema from "effect/ai/McpSchema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
+import { pipelineCoordinatorNote } from "../../apps/server/src/pipelines/pipelineCoordinator.ts";
+import {
+  pipelineEscalationMessage,
+  pipelineHandoffInstructions,
+} from "../../apps/server/src/pipelines/pipelineTemplate.ts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
@@ -43,6 +48,7 @@ import {
   EnvironmentId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
   PullRequestState,
+  PipelineRunId,
   ThreadId,
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
@@ -292,6 +298,19 @@ export const McpToolUseCase = Schema.Struct({
     role: Schema.Literals(["top", "delegated-child", "native-subagent"]),
     /** Runs only on this harness, for cases whose right answer depends on it. */
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
+    /**
+     * The thread is this step of a pipeline run: T3 appends its handoff instructions to the step's
+     * first prompt, the first user prior turn or else `prompt`.
+     */
+    pipelineStep: Schema.optional(
+      Schema.Struct({ number: Schema.Number, count: Schema.Number, name: Schema.String }),
+    ),
+    /** The thread is a run's coordinator chat: T3 puts the coordinator's instructions ahead of `prompt`. */
+    pipelineCoordinatorRunId: Schema.optional(Schema.String),
+    /** `prompt` is a request this step handed to the coordinator, posted in T3's own words. */
+    pipelineEscalation: Schema.optional(
+      Schema.Struct({ stepName: Schema.String, stepLink: Schema.String, reason: Schema.String }),
+    ),
     /** The Linked environments beta is on, so T3 lists its link tools. */
     linkedEnvironments: Schema.optional(Schema.Boolean),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
@@ -985,6 +1004,15 @@ export const buildMessages = (sample: Sample) => {
   const reminders = base.reminders.toSpliced(base.gitStatusAt, 0, reminder(gitStatus(testCase)));
   push("user", ...reminders, ...notes.flatMap((note) => (note ? [reminder(note)] : [])));
   const toolSearch = findTool(base, "ToolSearch")?.name ?? "ToolSearch";
+  const { pipelineStep, pipelineCoordinatorRunId, pipelineEscalation } = testCase.setup;
+  let stepInstructions =
+    pipelineStep === undefined
+      ? undefined
+      : pipelineHandoffInstructions({
+          stepNumber: pipelineStep.number,
+          stepCount: pipelineStep.count,
+          stepName: pipelineStep.name,
+        });
   let nextId = 0;
   for (const turn of priorTurns) {
     const calls = (turn.toolCalls ?? []).map((call) => {
@@ -1015,12 +1043,32 @@ export const buildMessages = (sample: Sample) => {
           : (sample.priorResults.get(prior) ?? result);
       push("user", toolResult(id, replayed));
     }
-    if (turn.text) push(turn.role, text(turn.text));
+    if (turn.text && turn.role === "user" && stepInstructions !== undefined) {
+      push("user", text(`${turn.text}\n\n${stepInstructions}`));
+      stepInstructions = undefined;
+    } else if (turn.text) push(turn.role, text(turn.text));
   }
+  const pipelinePrompt = [
+    pipelineCoordinatorRunId === undefined
+      ? ""
+      : pipelineCoordinatorNote({
+          pipeline: { runId: PipelineRunId.make(pipelineCoordinatorRunId), stepId: null },
+          nativeCommand: false,
+          providerThreadId: "provider-thread",
+          activeAttemptId: null,
+          providerTurns: [],
+        }),
+    pipelineEscalation === undefined
+      ? testCase.prompt
+      : pipelineEscalationMessage({ ...pipelineEscalation, request: testCase.prompt }),
+    stepInstructions ?? "",
+  ]
+    .filter((part) => part !== "")
+    .join("\n\n");
   const userText =
     testCase.promptContext === undefined
-      ? testCase.prompt
-      : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+      ? pipelinePrompt
+      : projectComposerContextForProvider({ text: pipelinePrompt, ...testCase.promptContext });
   const prompt =
     sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });

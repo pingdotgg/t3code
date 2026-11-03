@@ -1340,6 +1340,72 @@ it.effect("only the current attempt's thread can hand off, and only while it may
   ),
 );
 
+it.effect(
+  "a step's escalation reaches the coordinator as the step, and fails when it is gone",
+  () =>
+    withService(
+      Effect.fn(function* (harness, service) {
+        const { run } = yield* service.start(startInput("cmd-escalate"));
+        const first = yield* Queue.take(harness.launches);
+        const input = {
+          runId: run.id,
+          threadId: first.threadId,
+          stepLink: "<t3-thread://step>",
+          request: "Fix the button",
+          reason: "this step does not change code",
+        };
+
+        const stranger = yield* Effect.flip(
+          service.escalateToCoordinator({ ...input, threadId: decodeThreadId("thread-elsewhere") }),
+        );
+        assert.include(stranger.message, "not the latest attempt");
+        assert.strictEqual(yield* Queue.size(harness.sentMessages), 0);
+
+        const result = yield* service.escalateToCoordinator(input);
+        assert.strictEqual(result.coordinatorThreadId, run.parentThreadId);
+        const sent = yield* Queue.take(harness.sentMessages);
+        assert.strictEqual(sent.input.threadId, run.parentThreadId);
+        assert.strictEqual(sent.input.mode, "queue");
+        assert.strictEqual(sent.input.createdBy, "agent");
+        assert.strictEqual(sent.input.senderThreadId, first.threadId);
+        assert.isTrue(
+          sent.input.text.startsWith(
+            `From step ${run.definition.steps[0]?.name} (<t3-thread://step>): `,
+          ),
+        );
+        assert.include(sent.input.text, "> Fix the button");
+        assert.include(sent.input.text, "this step does not change code");
+
+        harness.archivedThreads.add(run.parentThreadId);
+        const archived = yield* Effect.flip(service.escalateToCoordinator(input));
+        assert.include(archived.message, "is archived");
+        harness.archivedThreads.delete(run.parentThreadId);
+        harness.deletedThreads.add(run.parentThreadId);
+        const deleted = yield* Effect.flip(service.escalateToCoordinator(input));
+        assert.include(deleted.message, "no longer exists");
+        harness.deletedThreads.delete(run.parentThreadId);
+
+        const long = yield* Effect.flip(
+          service.escalateToCoordinator({ ...input, request: "x".repeat(300_000) }),
+        );
+        assert.include(long.message, "Summarize it more briefly");
+        assert.strictEqual(yield* Queue.size(harness.sentMessages), 0);
+
+        // A finished run still takes requests, and escalating never moves the run itself.
+        assert.strictEqual(yield* Queue.take(harness.waitsStarted), first.threadId);
+        yield* service.cancel({ runId: run.id });
+        yield* service.escalateToCoordinator(input);
+        assert.strictEqual(
+          (yield* Queue.take(harness.sentMessages)).input.threadId,
+          run.parentThreadId,
+        );
+        const after = yield* service.getRun(run.id);
+        assert.strictEqual(after.status, "cancelled");
+        assert.strictEqual(yield* Queue.size(harness.launches), 0);
+      }),
+    ),
+);
+
 it.effect("rerun from an earlier step keeps its predecessors and runs the rest again", () =>
   withService(
     Effect.fn(function* (harness, service) {

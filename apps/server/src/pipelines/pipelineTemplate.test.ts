@@ -2,6 +2,8 @@ import { assert, describe, it } from "@effect/vitest";
 import type { PipelineRunStepStatus, PipelineSnapshot, PipelineStep } from "@t3tools/contracts";
 
 import {
+  pipelineEscalationMessage,
+  pipelineHandoffInstructions,
   pipelineReferencedStepIndexes,
   pipelineUpstreamChangedMessage,
   renderPipelinePrompt,
@@ -138,5 +140,26 @@ describe("revision messages", () => {
     assert.isTrue(listing.indexOf("first note") < listing.indexOf("second note"));
     assert.include(text, "> old text");
     assert.isTrue(text.endsWith("HANDOFF"));
+  });
+});
+
+describe("escalation", () => {
+  it("offers every step, the last included, the coordinator for out-of-scope requests", () => {
+    for (const stepNumber of [1, 3]) {
+      const text = pipelineHandoffInstructions({ stepNumber, stepCount: 3, stepName: "Review" });
+      assert.include(text, "escalate_to_pipeline_coordinator");
+    }
+  });
+
+  it("speaks as the step and quotes the request", () => {
+    const text = pipelineEscalationMessage({
+      stepName: "Review",
+      stepLink: "<t3-thread://x>",
+      request: "line one\nline two",
+      reason: "Review does not edit code",
+    });
+    assert.match(text, /^From step Review \(<t3-thread:\/\/x>\): /);
+    assert.include(text, "> line one\n> line two");
+    assert.include(text, "Review does not edit code");
   });
 });

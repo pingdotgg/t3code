@@ -1,13 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigation } from "@react-navigation/native";
+import { useIsFocused, useNavigation } from "@react-navigation/native";
 import type {
   EnvironmentId,
   PipelineRun,
   PipelineRunId,
   PipelineRunResult,
+  ThreadId,
 } from "@t3tools/contracts";
 import {
   availablePipelineActions,
+  createPipelineEscalationWatcher,
   pipelineRevisionAuthorLabel,
   pipelineRunStateLabel,
   pipelineStepPosition,
@@ -20,7 +22,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { formatModelSlugName } from "@t3tools/shared/model";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 
 import { StatusPill, type StatusTone } from "../../components/StatusPill";
@@ -35,6 +37,7 @@ import { threadHasUnseenCompletion } from "./threadListV2";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useQuietThreadVisibleTurnItems } from "../../state/use-thread-detail";
 import { pipelineStepTone, stepRevisions, type PipelineStepTone } from "./pipeline-run-view";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 
@@ -573,6 +576,43 @@ function PipelineStepRow(props: {
       ) : null}
     </View>
   );
+}
+
+/**
+ * Opens the coordinator over a step thread when the step's agent hands the user's request to it.
+ * Renders nothing; only a call seen in flight while this thread is on screen counts.
+ */
+export function PipelineEscalationWatcher(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly runId: PipelineRunId;
+}) {
+  const runQuery = useEnvironmentQuery(
+    serverEnvironment.pipelineRunLive({
+      environmentId: props.environmentId,
+      input: { runId: props.runId },
+    }),
+  );
+  const navigation = useNavigation();
+  // Covered stack screens stay mounted; only the screen in front may open the sheet.
+  const focused = useIsFocused();
+  const turnItems = useQuietThreadVisibleTurnItems({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+  });
+  const [watchEscalation] = useState(createPipelineEscalationWatcher);
+  const parentThreadId = runQuery.data?.run.parentThreadId ?? null;
+  const threadKey = focused ? `${props.environmentId}:${props.threadId}` : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the coordinator sheet when the step's agent hands the user's request to it, a live event from the thread's stream
+  useEffect(() => {
+    if (watchEscalation(threadKey, turnItems) && parentThreadId !== null) {
+      navigation.navigate("PipelineCoordinator", {
+        environmentId: String(props.environmentId),
+        threadId: String(parentThreadId),
+      });
+    }
+  }, [watchEscalation, threadKey, turnItems, parentThreadId, props.environmentId, navigation]);
+  return null;
 }
 
 /** Shown above a step thread's composer: names its place in the run and links to the parent. */

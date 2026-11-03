@@ -38,6 +38,7 @@ import {
 } from "./run.ts";
 import { briefRoute, gradeDevice, shellInvocations } from "./device-grading.ts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
+import { pipelineHandoffInstructions } from "../../apps/server/src/pipelines/pipelineTemplate.ts";
 
 it("grades Codex shell and subagent calls with the shared rules", () => {
   const calls = [
@@ -622,6 +623,32 @@ it("replays earlier capability results with the model under test as the caller",
       /Empty-prompt replay/,
     );
   }
+});
+
+it("puts a step's handoff instructions on its first prompt, as T3 does", () => {
+  const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+  const instructions = pipelineHandoffInstructions({ stepNumber: 3, stepCount: 5, stepName: "QA" });
+  const step = { number: 3, count: 5, name: "QA" };
+  const texts = (testCase: McpToolUseCase) =>
+    buildMessages(makeSample(testCase, base))
+      .flatMap((message) => message.content)
+      .flatMap((block) => (block.type === "text" ? [block.text] : []));
+  const followUp = texts({
+    ...childCase,
+    setup: {
+      role: "top",
+      pipelineStep: step,
+      priorTurns: [
+        { role: "user", text: "Check the export." },
+        { role: "assistant", text: "Checked." },
+      ],
+    },
+    prompt: "Fix it.",
+  });
+  assert.include(followUp, `Check the export.\n\n${instructions}`);
+  assert.include(followUp, "Fix it.");
+  const first = texts({ ...childCase, setup: { role: "top", pipelineStep: step } });
+  assert.include(first, `${childCase.prompt}\n\n${instructions}`);
 });
 
 it("gives each launched thread its own id, and reading it back shows that thread's brief", () => {

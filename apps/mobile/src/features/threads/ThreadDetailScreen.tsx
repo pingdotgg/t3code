@@ -182,6 +182,7 @@ import { PendingUserInputCard } from "./PendingUserInputCard";
 import { feedbackQuoteExcerpt } from "@t3tools/client-runtime/pipeline-run-presentation";
 import { PipelineCoordinatorScopeContext } from "./pipeline-coordinator-scope";
 import {
+  PipelineEscalationWatcher,
   PipelineRunPanel,
   PipelineRunSummaryHeader,
   PipelineStepParentBar,
@@ -1853,6 +1854,13 @@ function ThreadDetailBody(
                 </View>
 
                 <View style={composerSlotHidden ? { display: "none" } : undefined}>
+                  {pipelineStep !== null && !inCoordinatorSheet ? (
+                    <PipelineEscalationWatcher
+                      environmentId={props.environmentId}
+                      threadId={props.selectedThread.id}
+                      runId={pipelineStep.runId}
+                    />
+                  ) : null}
                   {pipelineStep !== null ? (
                     <View
                       className="self-center px-3 pt-1.5"

@@ -65,6 +65,8 @@ export function renderPipelinePrompt(input: RenderPipelinePromptInput): { prompt
 
 /** The MCP tool a step calls to hand its result to the next step. */
 const PIPELINE_HANDOFF_TOOL = "handoff_pipeline_step";
+/** The MCP tool a step calls to pass the user's out-of-scope request to the run's coordinator. */
+const PIPELINE_ESCALATE_TOOL = "escalate_to_pipeline_coordinator";
 
 /**
  * Appended to every step's prompt, whatever its template says: a step's turn ending is not a
@@ -86,7 +88,21 @@ export function pipelineHandoffInstructions(input: {
   }
 - Hand off only when this step's work is done, as your last action. Ending your turn without handing off pauses the pipeline until I respond.
 - If something this step needs is missing or unfinished (an earlier step's work, the branch or pull request it builds on, another ticket's work), or a decision only I can make blocks you, ask me with your question tool and wait for my answer. Do not hand off a report that the work could not be done, and do not end your turn with an open question.
-- If I tell you to stop, end your turn without handing off.`;
+- If I tell you to stop, end your turn without handing off.
+- If I ask you for a change or other work that does not belong to this step's role (for example, you are not the implementation step and I ask you to change code, or I point out that an earlier step's result was wrong), do not do it yourself: the steps after it would never check it. Ask me with your question tool whether to pass the request to the run's coordinator. Only after I say yes, call \`${PIPELINE_ESCALATE_TOOL}\`, then end your turn without handing off and say briefly that the coordinator has the request. If I say no, or insist that you do it, do what I say. Work inside your own role needs no question. This is only for requests I make; report what you find yourself in your reply or handoff.`;
+}
+
+/**
+ * The message a step's escalation posts to the run's coordinator. It speaks as the step, never as
+ * the user, in the "From step <name> (<link>)" form the coordinator's instructions know.
+ */
+export function pipelineEscalationMessage(input: {
+  readonly stepName: string;
+  readonly stepLink: string;
+  readonly request: string;
+  readonly reason: string;
+}): string {
+  return `From step ${input.stepName} (${input.stepLink}): the user asked this step for the work below, and this step handed it to you because it is outside its role (${input.reason.replace(/\s+/g, " ").trim()}). The step did not do it. Decide where it belongs.\n\n${blockquote(input.request.trim())}`;
 }
 
 const REVISION_HISTORY_FEEDBACK_CHARS = 600;

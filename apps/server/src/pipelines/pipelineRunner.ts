@@ -54,6 +54,7 @@ import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingEr
 import { forkParked } from "../serverActivation.ts";
 import * as PipelineStore from "./PipelineStore.ts";
 import {
+  pipelineEscalationMessage,
   pipelineHandoffInstructions,
   pipelineReferencedStepIndexes,
   pipelineRevisionMessage,
@@ -1401,6 +1402,86 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     return yield* result(input.runId);
   });
 
+  const escalateToCoordinator = Effect.fn("PipelineRunner.escalateToCoordinator")(
+    function* (input: {
+      readonly runId: PipelineRunId;
+      readonly threadId: ThreadId;
+      readonly stepLink: string;
+      readonly request: string;
+      readonly reason: string;
+    }) {
+      const run = yield* readRun(input.runId);
+      const step = run.steps.find((candidate) => candidate.childThreadId === input.threadId);
+      if (step === undefined) {
+        return yield* pipelineError(
+          "This thread is not the latest attempt of a step in its pipeline run, so it cannot hand a request to the run's coordinator.",
+          { runId: run.id },
+        );
+      }
+      const unavailable = (why: string) =>
+        pipelineError(
+          `The run's coordinator thread ${why}, so it cannot take the request. Tell the user, and do the work only if they ask you to.`,
+          { runId: run.id },
+        );
+      const coordinator = yield* threads.getThreadShell(run.parentThreadId).pipe(
+        Effect.mapError((cause) =>
+          pipelineError(failureMessage(cause, "Could not read the run's coordinator thread."), {
+            runId: run.id,
+            cause,
+          }),
+        ),
+      );
+      if (coordinator === null || coordinator.deletedAt !== null) {
+        return yield* unavailable("no longer exists");
+      }
+      if (coordinator.archivedAt !== null) return yield* unavailable("is archived");
+      const text = pipelineEscalationMessage({
+        stepName: run.definition.steps[step.index]?.name ?? `Step ${step.index + 1}`,
+        stepLink: input.stepLink,
+        request: input.request,
+        reason: input.reason,
+      });
+      if (text.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+        return yield* pipelineError(
+          `The request would be ${text.length} characters, over the ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS} limit. Summarize it more briefly.`,
+          { runId: run.id },
+        );
+      }
+      const suffix = yield* crypto
+        .randomUUIDv4()
+        .pipe(
+          Effect.mapError((cause) =>
+            pipelineError("Could not generate an escalation id.", { runId: run.id, cause }),
+          ),
+        );
+      yield* threads
+        .sendToThread({
+          projectId: run.projectId,
+          commandId: commandIdFor(run.id, "escalate", suffix),
+          threadId: run.parentThreadId,
+          messageId: MessageId.make(`pipeline-escalation:${run.id}:${suffix}`),
+          senderThreadId: input.threadId,
+          text,
+          attachments: [],
+          mode: "queue",
+          createdBy: "agent",
+          creationSource: "mcp",
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            pipelineError(
+              failureMessage(
+                cause,
+                "The run's coordinator could not be reached. Tell the user, and do the work only if they ask you to.",
+              ),
+              { runId: run.id },
+            ),
+          ),
+        );
+      return { runId: run.id, coordinatorThreadId: run.parentThreadId };
+    },
+  );
+
   const requireRerunnable = Effect.fn("PipelineRunner.requireRerunnable")(function* (
     run: PipelineRun,
     stepIndex: number,
@@ -1864,6 +1945,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     retryStep,
     skipStep,
     handoffStep,
+    escalateToCoordinator,
     rerunFromStep,
     reviseStep,
     cancel,

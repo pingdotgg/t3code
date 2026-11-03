@@ -859,6 +859,27 @@ export const OrchestratorMcpHandoffPipelineStepResult = Schema.Struct({
 export type OrchestratorMcpHandoffPipelineStepResult =
   typeof OrchestratorMcpHandoffPipelineStepResult.Type;
 
+export const OrchestratorMcpEscalateToPipelineCoordinatorInput = Schema.Struct({
+  request: OrchestratorMcpPrompt.annotate({
+    description:
+      "What the user asked for, verbatim or as a faithful summary. Include any quoted text they pointed at.",
+  }),
+  reason: OrchestratorMcpTitle.annotate({
+    description: "One short sentence on why this is outside this step's role.",
+  }),
+});
+export type OrchestratorMcpEscalateToPipelineCoordinatorInput =
+  typeof OrchestratorMcpEscalateToPipelineCoordinatorInput.Type;
+
+export const OrchestratorMcpEscalateToPipelineCoordinatorResult = Schema.Struct({
+  runId: PipelineRunId,
+  coordinatorThreadId: ThreadId,
+  link: Schema.String,
+  next: Schema.String,
+});
+export type OrchestratorMcpEscalateToPipelineCoordinatorResult =
+  typeof OrchestratorMcpEscalateToPipelineCoordinatorResult.Type;
+
 export const OrchestratorMcpPipelineStep = Schema.Struct({
   index: NonNegativeInt,
   stepId: PipelineStepId,
