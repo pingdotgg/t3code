@@ -45,10 +45,22 @@ jobs:
             /pnpm-workspace.yaml
             /.github/scripts/ci-changes.cjs
             /.github/actions/ci-changes/
+            /.github/workflows/
+            /.github/scripts/check-runner-labels.py
+            /.github/scripts/check-runner-labels.test.py
             /*/package.json
             /*/*/package.json
             !/.repos/
           sparse-checkout-cone-mode: false
+
+      # The repository has no self-hosted runners, so a workflow that selects
+      # one is a security bug rather than a configuration choice. This is the
+      # cheapest job and it runs before everything else, so a pull request that
+      # introduces a private runner label fails before any other job starts.
+      - name: Check workflow runner labels
+        run: |
+          python3 -B .github/scripts/check-runner-labels.test.py
+          python3 -B .github/scripts/check-runner-labels.py
 
       - name: Detect affected jobs
         id: detect
