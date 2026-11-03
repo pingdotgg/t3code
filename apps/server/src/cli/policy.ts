@@ -1,13 +1,17 @@
 import * as Console from "effect/Console";
+import type { ManagedPolicyDocument } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as References from "effect/References";
-import { Argument, Command, GlobalFlag } from "effect/cli";
+import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import { macosProfile, windowsAdml, windowsAdmx } from "../policy/policyTemplates.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -103,7 +107,62 @@ const checkCommand = Command.make("check", {
   ),
 );
 
+const SAMPLE_POLICY: ManagedPolicyDocument = {
+  schemaVersion: 1,
+  organization: "Example Corp",
+  limits: { maxRuntimeMode: "auto-accept-edits", clients: ["desktop"], telemetry: false },
+};
+
+const templatesCommand = Command.make("templates", {
+  directory: Argument.String("directory").pipe(
+    Argument.withDescription("Directory to write the templates to."),
+  ),
+  policy: Flag.String("policy").pipe(
+    Flag.withDescription("Policy file to put in the macOS profile. Default: a small sample."),
+    Flag.optional,
+  ),
+}).pipe(
+  Command.withDescription(
+    "Write the Windows Group Policy template and a macOS configuration profile.",
+  ),
+  Command.withHandler(
+    Effect.fn("cli.policy.templates")(function* ({ directory, policy }) {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      let document = SAMPLE_POLICY;
+      if (Option.isSome(policy)) {
+        if (!(yield* fs.exists(policy.value))) {
+          return yield* new CliError.UserError({
+            cause: policy.value,
+            userMessage: `No policy file at ${policy.value}.`,
+          });
+        }
+        const loaded = (yield* ManagedPolicy.load(policy.value)).document;
+        if (loaded !== undefined) document = loaded;
+      }
+      const random = yield* SecureRandom.SecureRandom;
+      const profile = macosProfile(document, {
+        profile: yield* random.uuidV4().pipe(Effect.orDie),
+        payload: yield* random.uuidV4().pipe(Effect.orDie),
+      });
+      if (profile._tag === "Invalid") {
+        return yield* new CliError.UserError({ cause: document, userMessage: profile.reason });
+      }
+      const files = [
+        [path.join(directory, "windows", "t3code.admx"), windowsAdmx()],
+        [path.join(directory, "windows", "en-US", "t3code.adml"), windowsAdml()],
+        [path.join(directory, "macos", "t3code.mobileconfig"), profile.profile],
+      ] as const;
+      for (const [file, contents] of files) {
+        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, contents);
+        yield* Console.log(file);
+      }
+    }),
+  ),
+);
+
 export const policyCommand = Command.make("policy").pipe(
   Command.withDescription("Inspect the administrator's managed policy."),
-  Command.withSubcommands([showCommand, checkCommand]),
+  Command.withSubcommands([showCommand, checkCommand, templatesCommand]),
 );
