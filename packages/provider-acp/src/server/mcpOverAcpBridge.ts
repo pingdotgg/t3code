@@ -311,6 +311,13 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         (connectionId) => disconnect({ connectionId }).pipe(Effect.ignore),
         { discard: true },
       ),
-    ).pipe(Effect.andThen(Effect.suspend(() => close(serverConnection)).pipe(Effect.ignore))),
+    ).pipe(
+      Effect.andThen(
+        Effect.suspend(() => {
+          serverConnection.retired = true;
+          return close(serverConnection);
+        }).pipe(Effect.ignore),
+      ),
+    ),
   };
 });

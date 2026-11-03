@@ -357,6 +357,45 @@ describe("AcpMcpOverAcpBridge", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("closes the session of an initialize still in flight when disposed", () =>
+    Effect.gen(function* () {
+      const started = Promise.withResolvers<void>();
+      const respond = Promise.withResolvers<void>();
+      const deleted: Array<string | null> = [];
+      const bridge = yield* makeAcpMcpOverAcpBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        allocateConnectionId: Effect.succeed("connection-1"),
+        fetchImplementation: async (_url, init) => {
+          if (init?.method === "DELETE") {
+            deleted.push(new Headers(init.headers).get("mcp-session-id"));
+            return new Response(null, { status: 204 });
+          }
+          const request = JSON.parse(String(init?.body)) as { readonly id?: unknown };
+          started.resolve();
+          await respond.promise;
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: request.id,
+              result: { protocolVersion: "2025-06-18" },
+            }),
+            { headers: { "content-type": "application/json", "mcp-session-id": "session-1" } },
+          );
+        },
+      });
+
+      const initialize = yield* bridge
+        .message({ serverId: "t3-code", requestId: "mcp-1", method: "initialize" })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => started.promise);
+      yield* bridge.dispose;
+      respond.resolve();
+      yield* Fiber.join(initialize);
+      expect(deleted).toEqual(["session-1"]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("closes the session of a replaced initialize even when that initialize fails", () =>
     Effect.gen(function* () {
       const firstStarted = Promise.withResolvers<void>();
