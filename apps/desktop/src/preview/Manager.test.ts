@@ -86,6 +86,12 @@ describe("previewWindowOpenAction", () => {
     ).toBe("popup");
   });
 
+  it("opens HTTP links in preview tabs", () => {
+    for (const disposition of ["foreground-tab", "background-tab"] as const) {
+      expect(PreviewManager.previewWindowOpenAction(details({ disposition }))).toBe("new-tab");
+    }
+  });
+
   it("keeps a form POST with a body on the in-place path", () => {
     const postBody = { data: [], contentType: "application/x-www-form-urlencoded" };
     expect(
@@ -98,12 +104,29 @@ describe("previewWindowOpenAction", () => {
 
   it("does not hand a window to schemes that cannot be hardened", () => {
     for (const url of [
-      "javascript:alert(1)",
-      "file:///etc/passwd",
       "vscode://vscode-remote/ssh-remote+box/tmp",
-      "not a url",
+      "blob:https://example.com/0b6c6a5e-55d4-4b4c-9d47-8f1b0c1d2e3f",
     ]) {
       expect(PreviewManager.previewWindowOpenAction(details({ url }))).toBe("navigate");
+    }
+  });
+
+  it("denies local and inline schemes that no page could open in place itself", () => {
+    for (const url of [
+      "data:text/html,<h1>hi</h1>",
+      "DaTa:text/html,<h1>hi</h1>",
+      "file:///etc/passwd",
+      "javascript:alert(1)",
+      "view-source:https://example.com",
+      "chrome://gpu",
+      "about:srcdoc",
+      "devtools://devtools/bundled/inspector.html",
+      "filesystem:https://example.com/temporary/page.html",
+      "not a url",
+    ]) {
+      for (const disposition of ["new-window", "foreground-tab", "background-tab"] as const) {
+        expect(PreviewManager.previewWindowOpenAction(details({ url, disposition }))).toBe("deny");
+      }
     }
   });
 
@@ -596,7 +619,8 @@ describe("PreviewManager", () => {
     withManager((manager) =>
       Effect.gen(function* () {
         const send = vi.fn();
-        const host = { isDestroyed: () => false, send };
+        const focus = vi.fn();
+        const host = { isDestroyed: () => false, send, focus };
         const older = makeFaviconWebContents({ id: 42 });
         const newer = makeFaviconWebContents({ id: 43 });
         for (const tab of [older, newer]) Object.assign(tab.webContents, { hostWebContents: host });
@@ -625,6 +649,22 @@ describe("PreviewManager", () => {
         expect(preventDefault).toHaveBeenCalledOnce();
         expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", "view.reopenClosed");
 
+        yield* manager.setForwardedShortcuts([
+          { command: "preview.focusUrl", shortcut: parseKeybindingShortcut("mod+l")! },
+        ]);
+        beforeInput({ preventDefault } as never, { ...key, key: "l", shift: false } as never);
+        expect(focus).toHaveBeenCalledOnce();
+        expect(send).toHaveBeenLastCalledWith("desktop:menu-action", "preview.focusUrl");
+        expect(focus.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[1]!);
+        beforeInput(
+          { preventDefault } as never,
+          { ...key, key: "l", shift: false, isAutoRepeat: true } as never,
+        );
+        expect(focus).toHaveBeenCalledOnce();
+        expect(send).toHaveBeenCalledTimes(2);
+        send.mockClear();
+        yield* manager.setForwardedShortcuts([{ command: "view.reopenClosed", shortcut }]);
+
         Object.assign(newer.webContents, { focusedFrame: null });
         const agentInput = newer.listeners.get("before-input-event")!;
         const agentPreventDefault = vi.fn();
@@ -640,7 +680,7 @@ describe("PreviewManager", () => {
           { ...key, key: "T", shift: true } as never,
         );
         expect(agentPreventDefault).not.toHaveBeenCalled();
-        expect(send).toHaveBeenCalledOnce();
+        expect(send).not.toHaveBeenCalled();
       }),
     ),
   );

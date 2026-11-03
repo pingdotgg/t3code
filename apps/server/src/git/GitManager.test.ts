@@ -6,6 +6,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -490,7 +491,12 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
           repository: input.repository,
         }).pipe(
           Effect.flatMap(() => {
-            const cloneUrls = scenario.repositoryCloneUrls?.[input.repository];
+            const repository = input.host ? `${input.host}/${input.repository}` : input.repository;
+            const cloneUrls =
+              scenario.repositoryCloneUrls?.[repository] ??
+              (input.host === "github.com"
+                ? scenario.repositoryCloneUrls?.[input.repository]
+                : undefined);
             return cloneUrls
               ? Effect.succeed({ nameWithOwner: input.repository, ...cloneUrls })
               : Effect.fail(
@@ -627,7 +633,7 @@ function makeManager(input?: {
             const args =
               command._tag === "StandardCommand" &&
               NodePath.parse(command.command).name.toLowerCase() === "git"
-                ? command.args
+                ? command.args.map(String)
                 : null;
             if (args !== null) gitCommands?.push(args.join(" "));
             if (args === null || gitSpawnGate === undefined || !gitSpawnGate.matches(args)) {
@@ -645,7 +651,7 @@ function makeManager(input?: {
               );
           });
         }),
-      ).pipe(Layer.provide(NodeServices.layer))
+      ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)))
     : Layer.empty;
   const gitVcsDriver = input?.gitConfigReads
     ? Layer.effect(
@@ -666,7 +672,7 @@ function makeManager(input?: {
   const layerVcsDriver = (watchesGitSpawns ? Layer.fresh(gitVcsDriver) : gitVcsDriver).pipe(
     Layer.provide(layerGitDriverSpawner),
     Layer.provideMerge(VcsProcess.layer),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(layerServerConfig),
   );
   const layerSourceControlRegistry = Layer.effect(
@@ -708,7 +714,7 @@ function makeManager(input?: {
   ).pipe(
     Layer.provideMerge(layerSourceControlRegistry),
     Layer.provideMerge(layerVcsDriver),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
   const layerStores = Layer.merge(ProjectionStore.layer, ProjectStore.layer).pipe(
     Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -732,7 +738,7 @@ const asThreadId = (threadId: string) => threadId as ThreadId;
 const layerGitManagerTest = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-git-manager-test-" })),
   Layer.provideMerge(VcsProcess.layer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
@@ -3086,6 +3092,56 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("create_pr reports a created PR when the lookup after creation fails", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/lookup-after-create"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "lookup.txt"), "lookup\n");
+      yield* runGit(repoDir, ["add", "lookup.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Lookup after create"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/lookup-after-create"]);
+
+      const { service: github } = createFakeSourceControlProvider();
+      let created = false;
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...github,
+          createChangeRequest: (input) =>
+            github.createChangeRequest(input).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  created = true;
+                }),
+              ),
+            ),
+          listChangeRequests: (input) =>
+            created
+              ? Effect.fail(
+                  new SourceControlProviderFailure({
+                    provider: github.kind,
+                    operation: "listChangeRequests",
+                    cwd: input.cwd,
+                    detail: "GitHub API rate limit exceeded.",
+                  }),
+                )
+              : github.listChangeRequests(input),
+        },
+      });
+
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+
+      expect(created).toBe(true);
+      expect(result.pr).toMatchObject({
+        status: "created",
+        headBranch: "feature/lookup-after-create",
+      });
+      expect(result.pr.url).toBeUndefined();
+    }),
+  );
+
   it.effect("returns existing PR metadata for commit/push/pr action", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -3904,6 +3960,163 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       );
       expect(errorMessage).toContain("detached HEAD");
     }),
+  );
+
+  it.effect.each([
+    { mode: "local", repositoryType: "same repo" },
+    { mode: "local", repositoryType: "fork" },
+    { mode: "worktree", repositoryType: "same repo" },
+    { mode: "worktree", repositoryType: "fork" },
+  ] as const)(
+    "checks out same-named repositories on the pull request host ($mode, $repositoryType)",
+    ({ mode, repositoryType }) =>
+      Effect.gen(function* () {
+        const isCrossRepository = repositoryType === "fork";
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        // The checkout is on github.com, which also has a same-named repository,
+        // and the pull request is on another host. Clone lookups that fall back
+        // to the checkout's host find the github.com repository.
+        const enterpriseRemote = yield* createBareRemote();
+        const defaultHostRemote = yield* createBareRemote();
+        const host = "github.enterprise.test";
+        const repository = isCrossRepository ? "fork/repo" : "owner/base";
+        const cloneUrl = `https://${host}/${repository}.git`;
+        yield* runGit(repoDir, ["remote", "add", "origin", defaultHostRemote]);
+        yield* runGit(repoDir, ["push", "origin", "main", "main:feature/host"]);
+        yield* runGit(repoDir, ["push", enterpriseRemote, "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/host"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "host.txt"), "enterprise head\n");
+        yield* runGit(repoDir, ["add", "host.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Enterprise head"]);
+        const expectedHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["push", enterpriseRemote, "feature/host"]);
+        yield* runGit(repoDir, ["checkout", "main"]);
+        if (mode === "worktree") {
+          yield* runGit(repoDir, ["branch", "-D", "feature/host"]);
+        }
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "https://github.com/owner/base.git",
+          defaultHostRemote,
+        );
+        yield* runGit(repoDir, ["config", `url.${enterpriseRemote}.insteadOf`, cloneUrl]);
+        const defaultCloneUrl = `https://github.com/${repository}.git`;
+        yield* runGit(repoDir, [
+          "config",
+          "--add",
+          `url.${defaultHostRemote}.insteadOf`,
+          defaultCloneUrl,
+        ]);
+
+        const { manager } = yield* makeManager({
+          providerScenario: {
+            pullRequest: {
+              number: 42,
+              title: "Enterprise head",
+              url: `https://${host}/owner/base/pull/42`,
+              baseRefName: "main",
+              headRefName: "feature/host",
+              state: "open",
+              isCrossRepository,
+              headRepositoryNameWithOwner: repository,
+              headRepositoryOwnerLogin: isCrossRepository ? "fork" : "owner",
+            },
+            repositoryCloneUrls: {
+              [repository]: { url: defaultCloneUrl, sshUrl: defaultCloneUrl },
+              [`${host}/${repository}`]: { url: cloneUrl, sshUrl: cloneUrl },
+            },
+          },
+        });
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "42",
+          mode,
+        });
+        const checkoutDir = result.worktreePath ?? repoDir;
+        const upstreamRemote = (yield* runGit(checkoutDir, [
+          "config",
+          `branch.${result.branch}.remote`,
+        ])).stdout.trim();
+        const upstreamUrl = (yield* runGit(checkoutDir, [
+          "config",
+          `remote.${upstreamRemote}.url`,
+        ])).stdout.trim();
+        const head = (yield* runGit(checkoutDir, ["rev-parse", "HEAD"])).stdout.trim();
+        expect({ upstreamUrl, head }).toEqual({ upstreamUrl: cloneUrl, head: expectedHead });
+        expect(NodeFS.readFileSync(NodePath.join(checkoutDir, "host.txt"), "utf8")).toBe(
+          "enterprise head\n",
+        );
+      }),
+  );
+
+  it.effect.each([
+    { mode: "local", url: "malformed pull request URL" },
+    { mode: "worktree", url: "malformed pull request URL" },
+    { mode: "local", url: "file:///owner/base/pull/42" },
+    { mode: "worktree", url: "file:///owner/base/pull/42" },
+  ] as const)(
+    "checks out pull requests with hostless URLs using the default host ($mode, $url)",
+    ({ mode, url }) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const forkDir = yield* createBareRemote();
+        const cloneUrl = "https://github.com/fork/repo.git";
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["push", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/malformed-url"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "fork.txt"), "fork head\n");
+        yield* runGit(repoDir, ["add", "fork.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Fork head"]);
+        const expectedHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["push", forkDir, "feature/malformed-url"]);
+        yield* runGit(repoDir, ["checkout", "main"]);
+        if (mode === "worktree") {
+          yield* runGit(repoDir, ["branch", "-D", "feature/malformed-url"]);
+        }
+        yield* runGit(repoDir, ["config", `url.${forkDir}.insteadOf`, cloneUrl]);
+
+        const { manager } = yield* makeManager({
+          providerScenario: {
+            pullRequest: {
+              number: 42,
+              title: "Fork head",
+              url,
+              baseRefName: "main",
+              headRefName: "feature/malformed-url",
+              state: "open",
+              isCrossRepository: true,
+              headRepositoryNameWithOwner: "fork/repo",
+              headRepositoryOwnerLogin: "fork",
+            },
+            repositoryCloneUrls: {
+              "fork/repo": { url: cloneUrl, sshUrl: cloneUrl },
+            },
+          },
+        });
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "42",
+          mode,
+        });
+        const checkoutDir = result.worktreePath ?? repoDir;
+        const upstreamRemote = (yield* runGit(checkoutDir, [
+          "config",
+          `branch.${result.branch}.remote`,
+        ])).stdout.trim();
+        const upstreamUrl = (yield* runGit(checkoutDir, [
+          "config",
+          `remote.${upstreamRemote}.url`,
+        ])).stdout.trim();
+        const head = (yield* runGit(checkoutDir, ["rev-parse", "HEAD"])).stdout.trim();
+        expect({ upstreamUrl, head }).toEqual({ upstreamUrl: cloneUrl, head: expectedHead });
+        expect(NodeFS.readFileSync(NodePath.join(checkoutDir, "fork.txt"), "utf8")).toBe(
+          "fork head\n",
+        );
+      }),
   );
 
   const setUpLocalCheckoutPullRequest = Effect.fnUntraced(function* (
