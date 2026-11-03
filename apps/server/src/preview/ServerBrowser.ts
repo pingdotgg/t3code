@@ -2011,6 +2011,10 @@ const make = Effect.gen(function* () {
             } else {
               // A failed open returns no tabId; a leftover hidden tab would block later reuse.
               await tab.initialNavigation?.catch(async (cause: unknown) => {
+                // Playwright rejects downloads too; their tab must survive to save the file.
+                if (cause instanceof Error && cause.message.includes("Download is starting")) {
+                  throw cause;
+                }
                 await runPromise(manager.close({ threadId: tab.threadId, tabId: tab.tabId }));
                 dropTab(tab, false);
                 throw cause;

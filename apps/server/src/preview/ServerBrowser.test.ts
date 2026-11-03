@@ -514,6 +514,50 @@ it.live("preview_open reports its navigation timeout instead of the request budg
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("an initial download stays available after preview_open reports the navigation error", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const released = Promise.withResolvers<void>();
+      initialNavigation = async () => {
+        contexts[1]!.page.emit("download", {
+          failure: async () => null,
+          delete: async () => released.resolve(),
+          saveAs: (path: string) => NodeFSP.writeFile(path, "a,b"),
+          suggestedFilename: () => "report.csv",
+          url: () => "http://localhost:1337/report.csv",
+        });
+        throw new Error("page.goto: Download is starting");
+      };
+      const error = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { url: "http://localhost:1337/report.csv", reuseExistingTab: false, open: false },
+        })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("Download is starting");
+      yield* Effect.promise(() => released.promise);
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions).toHaveLength(2);
+      const downloadTabId = PreviewTabId.make(sessions.find((tab) => tab.tabId !== tabId)!.tabId);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId: downloadTabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.downloads).toEqual([
+        expect.objectContaining({ fileName: "report.csv", sizeBytes: 3 }),
+      ]);
+      expect(yield* (yield* FileSystem.FileSystem).readFileString(status.downloads![0]!.path)).toBe(
+        "a,b",
+      );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live.each(["desktop" as const, undefined])(
   "explicit desktop targets ($0 runtime) fail without creating a server tab",
   (runtime) =>
