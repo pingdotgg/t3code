@@ -50,6 +50,8 @@ import {
 } from "./threadHistoryPaging.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 
+import { layerReaderDatabase, traceSqlRouting } from "../persistence/testkit/SqliteRouting.ts";
+
 const layerTest = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
   SqlitePersistence.layerMemory,
@@ -216,6 +218,51 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
 
   return threadId;
 });
+
+it.effect("routes full projection reads to readers and retains uncommitted writer state", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const parentId = yield* addRolledBackRecoveryCandidate("reader-routing");
+    const parent = yield* store.getThreadProjection(parentId);
+    const threadId = ThreadId.make("thread:reader-routing:fork");
+    yield* store.apply({
+      id: EventId.make("event:reader-routing:fork"),
+      type: "thread.created",
+      threadId,
+      occurredAt: parent.thread.createdAt,
+      payload: {
+        ...parent.thread,
+        id: threadId,
+        forkedFrom: { type: "run", threadId: parentId, runId: parent.runs[0]!.id },
+      },
+    });
+    const { queries, trace } = traceSqlRouting();
+    const projection = yield* store.getThreadProjection(threadId).pipe(trace);
+    assert.equal(projection.thread.id, threadId);
+    assert.deepEqual(
+      projection.visibleTurnItems
+        .filter((row) => row.visibility === "inherited")
+        .map((row) => row.sourceItemId),
+      parent.turnItems.map((item) => item.id),
+    );
+    assert.isAbove(queries.length, 1);
+    assert.deepEqual([...new Set(queries.map((row) => row.connection))], ["reader"]);
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+        UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.title', 'Uncommitted title')
+        WHERE thread_id = ${threadId}
+      `;
+        assert.equal(
+          (yield* store.getThreadProjection(threadId)).thread.title,
+          "Uncommitted title",
+        );
+      }),
+    );
+  }).pipe(Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(layerReaderDatabase)))),
+);
 
 it.effect("record reads restrict provider histories to delivery identities", () =>
   Effect.gen(function* () {
