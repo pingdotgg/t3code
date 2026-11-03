@@ -16,6 +16,7 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
       readonly setUserAgent: ReturnType<typeof vi.fn>;
+      readonly webRequest: { readonly onBeforeSendHeaders: ReturnType<typeof vi.fn> };
     }
   >(),
 }));
@@ -62,6 +63,7 @@ describe("BrowserSession", () => {
         setPermissionRequestHandler: vi.fn(),
         setPermissionCheckHandler: vi.fn(),
         setUserAgent: vi.fn(),
+        webRequest: { onBeforeSendHeaders: vi.fn() },
       };
       sessions.set(partition, browserSession);
       return browserSession;
@@ -131,6 +133,7 @@ describe("BrowserSession", () => {
           setUserAgent: vi.fn((next: string) => {
             userAgent = next;
           }),
+          webRequest: { onBeforeSendHeaders: vi.fn() },
         };
         sessions.set(partition, browserSession);
         return browserSession;
@@ -143,6 +146,65 @@ describe("BrowserSession", () => {
       const browserSession = sessions.get(partition);
       assert.isDefined(browserSession);
       assert.strictEqual(browserSession.getUserAgent(), nativeUserAgent);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("drops only the Electron/ token from the User-Agent sent to Microsoft sign-in", () =>
+    Effect.gen(function* () {
+      const nativeUserAgent =
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3CodeDev/44.10.0 Chrome/152.0.7977.169 Electron/44.10.0 Safari/537.36";
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const browserSession = sessions.get(partition);
+      assert.isDefined(browserSession);
+
+      const registration = browserSession.webRequest.onBeforeSendHeaders.mock.calls.at(-1);
+      const [filter, listener] =
+        typeof registration?.[0] === "function"
+          ? [undefined, registration[0]]
+          : [registration?.[0] as { urls?: ReadonlyArray<string> } | undefined, registration?.[1]];
+      // Chromium match patterns: `*` in the host or path matches any run of characters.
+      const filterMatches = (url: string): boolean =>
+        filter?.urls === undefined ||
+        filter.urls.length === 0 ||
+        filter.urls.some((pattern) =>
+          new RegExp(
+            `^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`,
+          ).test(url),
+        );
+      const sentUserAgent = (url: string): string | undefined => {
+        const requestHeaders = { Accept: "text/html", "User-Agent": nativeUserAgent };
+        if (typeof listener !== "function" || !filterMatches(url)) {
+          return requestHeaders["User-Agent"];
+        }
+        let response: { requestHeaders?: Record<string, string> } | undefined;
+        listener(
+          { url, method: "GET", resourceType: "mainFrame", requestHeaders },
+          (value: { requestHeaders?: Record<string, string> }) => {
+            response = value;
+          },
+        );
+        assert.isDefined(response, `onBeforeSendHeaders never answered for ${url}`);
+        return (response.requestHeaders ?? requestHeaders)["User-Agent"];
+      };
+
+      for (const url of [
+        "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=x&response_type=code",
+        "https://login.microsoft.com/common/oauth2/v2.0/authorize?client_id=x",
+        "https://login.live.com/login.srf?wa=wsignin1.0",
+      ]) {
+        assert.strictEqual(
+          sentUserAgent(url),
+          nativeUserAgent.replace(" Electron/44.10.0", ""),
+          `preview sessions send the Electron/ token to Microsoft sign-in (${url})`,
+        );
+      }
+      assert.strictEqual(
+        sentUserAgent("https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile"),
+        nativeUserAgent,
+        "non-Microsoft hosts must keep Electron's native User-Agent header",
+      );
     }).pipe(Effect.provide(layer)),
   );
 
