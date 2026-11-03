@@ -42,6 +42,20 @@ import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
+import { useQuietThreadShell } from "../../state/entities";
+import { useThreadHasNoPendingWake } from "../../hooks/useThreadHasNoPendingWake";
+
+// Its own component, so shell updates during a turn re-render only the badge.
+function ThreadIdleBadge(props: { threadRef: ScopedThreadRef }) {
+  const shell = useQuietThreadShell(props.threadRef);
+  if (!useThreadHasNoPendingWake(shell)) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<Badge variant="outline" size="sm" />}>Idle</TooltipTrigger>
+      <TooltipPopup side="top">Nothing will resume this thread</TooltipPopup>
+    </Tooltip>
+  );
+}
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -418,6 +432,7 @@ export const ChatHeader = memo(function ChatHeader({
               <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
             </Tooltip>
           )}
+          {renamingTitle === null ? <ThreadIdleBadge threadRef={activeThreadRef} /> : null}
           {renamingTitle === null && activeThreadLinkOrigin ? (
             <Tooltip>
               <TooltipTrigger render={<Badge variant="info" size="sm" />}>
