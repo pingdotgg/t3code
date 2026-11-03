@@ -675,6 +675,29 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("keeps matches past the truncated part of a long line", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-long-line-" });
+        yield* writeTextFile(cwd, "dist/app.min.js", `${"x".repeat(600)} needleSuffix\n`);
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const search = (wholeWord: boolean) =>
+          workspaceEntries.searchContents({
+            cwd,
+            query: "needle",
+            limit: 100,
+            caseSensitive: true,
+            wholeWord,
+            useRegex: false,
+          });
+
+        expect((yield* search(false)).matches).toEqual([
+          expect.objectContaining({ path: "dist/app.min.js", lineNumber: 1 }),
+        ]);
+        expect((yield* search(true)).matches).toEqual([]);
+      }),
+    );
+
     it.effect("keeps answering from the live index when a refresh outlasts the scan wait", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-refresh-" });

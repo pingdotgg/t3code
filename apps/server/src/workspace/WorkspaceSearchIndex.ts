@@ -505,7 +505,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
           (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
         );
-        if (matchRanges.length === 0) continue;
+        // fff reports hits past its 512-char lineContent cap with no ranges, so whole words can't be verified there.
+        if (input.wholeWord && matchRanges.length === 0) continue;
         matches.push({
           path: toPosixPath(match.relativePath),
           lineNumber: match.lineNumber,
