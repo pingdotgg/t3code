@@ -21,7 +21,7 @@ import { readEnvironmentScope } from "../../state/session";
 import {
   environmentThreadShells,
   threadEnvironment,
-  waitForTitleRegenerationFailure,
+  watchThreadTitleRegeneration,
 } from "../../state/threads";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -516,6 +516,10 @@ export function useThreadListActions(): {
     titleRegenerationInFlightThreadKeys.current.add(key);
     selectionHaptic();
     const commandId = CommandId.make(uuidv4());
+    const watch = watchThreadTitleRegeneration(
+      { environmentId: thread.environmentId, threadId: thread.id },
+      commandId,
+    );
     const succeeded = await (async () => {
       const result = await updateThreadMetadata({
         environmentId: thread.environmentId,
@@ -535,12 +539,11 @@ export function useThreadListActions(): {
     })();
     titleRegenerationInFlightThreadKeys.current.delete(key);
     if (succeeded) {
-      void waitForTitleRegenerationFailure(
-        { environmentId: thread.environmentId, threadId: thread.id },
-        commandId,
-      ).then((failure) => {
+      void watch.failure.then((failure) => {
         if (failure !== null) Dialog.alert("Could not regenerate title", failure);
       });
+    } else {
+      watch.cancel();
     }
     return succeeded;
   };

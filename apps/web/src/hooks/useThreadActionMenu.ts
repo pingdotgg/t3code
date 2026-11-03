@@ -34,7 +34,7 @@ import {
   readEnvironmentSupportsAutoSettleOptOut,
   readThreadShell,
   useProjects,
-  waitForTitleRegenerationFailure,
+  watchThreadTitleRegeneration,
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { readLocalApi } from "../localApi";
@@ -252,17 +252,19 @@ export function useThreadActionMenu(input: {
         case "regenerate-title": {
           if (isRegeneratingTitle) return;
           const commandId = CommandId.make(randomUUID());
+          const watch = watchThreadTitleRegeneration(threadRef, commandId);
           const result = await updateThreadMetadata({
             environmentId: threadRef.environmentId,
             input: { threadId: threadRef.threadId, regenerateTitle: true, commandId },
           });
           if (result._tag === "Failure") {
+            watch.cancel();
             if (!isAtomCommandInterrupted(result)) {
               failureToast("Failed to regenerate thread title", squashAtomCommandFailure(result));
             }
             return;
           }
-          void waitForTitleRegenerationFailure(threadRef, commandId).then((failure) => {
+          void watch.failure.then((failure) => {
             if (failure !== null) {
               failureToast("Failed to regenerate thread title", new Error(failure));
             }

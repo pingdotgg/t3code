@@ -8,10 +8,11 @@ import type {
   ThreadStructureVisibleTurnItem,
 } from "@t3tools/client-runtime/state/shell";
 import {
-  awaitTitleRegenerationFailure,
   EMPTY_THREAD_HISTORY_META,
   type EnvironmentThreadStatus,
   type ThreadHistoryMeta,
+  type TitleRegenerationWatch,
+  watchTitleRegeneration,
 } from "@t3tools/client-runtime/state/threads";
 import {
   arrayElementsEqual,
@@ -339,12 +340,12 @@ export function waitForThreadShell(ref: ScopedThreadRef, timeoutMs = 5_000): Pro
   });
 }
 
-/** Resolves with why the requested regeneration kept the title, or null. */
-export function waitForTitleRegenerationFailure(
+/** Start before dispatching the request; see `watchTitleRegeneration`. */
+export function watchThreadTitleRegeneration(
   ref: ScopedThreadRef,
   requestId: string,
-): Promise<string | null> {
-  return awaitTitleRegenerationFailure({
+): TitleRegenerationWatch {
+  return watchTitleRegeneration({
     registry: appAtomRegistry,
     atom: environmentThreadShells.threadShellAtom(ref),
     requestId,

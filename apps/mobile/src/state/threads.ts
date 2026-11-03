@@ -1,7 +1,6 @@
 import { createChildThreadApprovalsAtom } from "@t3tools/client-runtime/state/thread-requests";
 import { useAtomValue } from "@effect/atom-react";
 import {
-  awaitTitleRegenerationFailure,
   createEnvironmentThreadDetailAtoms,
   createEnvironmentThreadShellAtoms,
   createEnvironmentThreadStateAtoms,
@@ -10,6 +9,8 @@ import {
   createOlderSettledThreadAtoms,
   createThreadEnvironmentAtoms,
   createThreadFamilyAtoms,
+  type TitleRegenerationWatch,
+  watchTitleRegeneration,
 } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -48,12 +49,12 @@ export const environmentThreadShells = createEnvironmentThreadShellAtoms({
   hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
 });
 
-/** Resolves with why the requested regeneration kept the title, or null. */
-export function waitForTitleRegenerationFailure(
+/** Start before dispatching the request; see `watchTitleRegeneration`. */
+export function watchThreadTitleRegeneration(
   ref: ScopedThreadRef,
   requestId: string,
-): Promise<string | null> {
-  return awaitTitleRegenerationFailure({
+): TitleRegenerationWatch {
+  return watchTitleRegeneration({
     registry: appAtomRegistry,
     atom: environmentThreadShells.threadShellAtom(ref),
     requestId,

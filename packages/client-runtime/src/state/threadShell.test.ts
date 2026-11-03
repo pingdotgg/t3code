@@ -18,7 +18,7 @@ import { applyShellStreamEvent } from "./shellReducer.ts";
 import { isThreadWorking } from "./threadInbox.ts";
 import type { EnvironmentThreadShell } from "./models.ts";
 import {
-  awaitTitleRegenerationFailure,
+  watchTitleRegeneration,
   childThreadInputsTitle,
   createEnvironmentThreadShellAtoms,
 } from "./threadShell.ts";
@@ -640,7 +640,7 @@ describe("v2 thread shell lists", () => {
   });
 });
 
-describe("awaitTitleRegenerationFailure", () => {
+describe("watchTitleRegeneration", () => {
   const shell = (
     fields: Pick<EnvironmentThreadShell, "titleRegeneration" | "titleRegenerationFailure">,
   ) => fields as EnvironmentThreadShell;
@@ -662,10 +662,19 @@ describe("awaitTitleRegenerationFailure", () => {
   ])("$name", async ({ after, expected }) => {
     const registry = AtomRegistry.make();
     const atom = Atom.make<EnvironmentThreadShell | null>(shell({})).pipe(Atom.keepAlive);
-    const outcome = awaitTitleRegenerationFailure({ registry, atom, requestId: "a" });
+    const watch = watchTitleRegeneration({ registry, atom, requestId: "a" });
     registry.set(atom, pending("a"));
     registry.set(atom, after);
-    await expect(outcome).resolves.toBe(expected);
+    await expect(watch.failure).resolves.toBe(expected);
+    registry.dispose();
+  });
+
+  it("settles when cancelled because the request was never accepted", async () => {
+    const registry = AtomRegistry.make();
+    const atom = Atom.make<EnvironmentThreadShell | null>(shell({})).pipe(Atom.keepAlive);
+    const watch = watchTitleRegeneration({ registry, atom, requestId: "a" });
+    watch.cancel();
+    await expect(watch.failure).resolves.toBeNull();
     registry.dispose();
   });
 });

@@ -200,26 +200,33 @@ function sameApartFromStreaming(
   );
 }
 
+export interface TitleRegenerationWatch {
+  /** The server's reason when the request kept the title; null when it landed or stopped mattering. */
+  readonly failure: Promise<string | null>;
+  readonly cancel: () => void;
+}
+
 /**
- * Resolves with the server's reason once a title regeneration request ends without a new
- * title, or null when it lands, is superseded, the thread goes away, or it times out.
+ * Watches one title regeneration request. Start it before dispatching: a request that
+ * finishes before the watch starts never shows as pending, so its success goes unseen.
  */
-export function awaitTitleRegenerationFailure(input: {
+export function watchTitleRegeneration(input: {
   readonly registry: AtomRegistry.AtomRegistry;
   readonly atom: Atom.Atom<EnvironmentThreadShell | null>;
   readonly requestId: string;
   readonly timeoutMs?: number;
-}): Promise<string | null> {
-  return new Promise((resolve) => {
+}): TitleRegenerationWatch {
+  let finish: (failure: string | null) => void = () => {};
+  const failure = new Promise<string | null>((resolve) => {
     let pending = false;
     let settled = false;
     let unsubscribe: (() => void) | null = null;
-    const finish = (failure: string | null) => {
+    finish = (value) => {
       if (settled) return;
       settled = true;
       globalThis.clearTimeout(timeout);
       unsubscribe?.();
-      resolve(failure);
+      resolve(value);
     };
     const inspect = (shell: EnvironmentThreadShell | null) => {
       if (shell === null) return finish(null);
@@ -235,6 +242,7 @@ export function awaitTitleRegenerationFailure(input: {
     if (settled) unsubscribe();
     else inspect(input.registry.get(input.atom));
   });
+  return { failure, cancel: () => finish(null) };
 }
 
 export function createEnvironmentThreadShellAtoms(input: {
