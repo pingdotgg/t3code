@@ -1034,12 +1034,16 @@ describe("pullCurrentBranch", () => {
           span(options) {
             const span = new Tracer.NativeSpan(options);
             if (options.name === "GitVcsDriver.fetchRemoteForStatus.wait") {
+              const attribute = span.attribute.bind(span);
+              span.attribute = (key, value) => {
+                attribute(key, value);
+                if (key === "statusFetch.joining") Deferred.doneUnsafe(targetEntered, Effect.void);
+              };
               const end = span.end.bind(span);
               span.end = (endTime, exit) => {
                 waiterSucceeded = Exit.isSuccess(exit);
                 end(endTime, exit);
               };
-              Deferred.doneUnsafe(targetEntered, Effect.void);
             }
             return span;
           },
@@ -1152,12 +1156,17 @@ describe("pullCurrentBranch", () => {
             span(options) {
               const span = new Tracer.NativeSpan(options);
               if (options.name === "GitVcsDriver.fetchRemoteForStatus.wait") {
+                const attribute = span.attribute.bind(span);
+                span.attribute = (key, value) => {
+                  attribute(key, value);
+                  if (key === "statusFetch.joining")
+                    Deferred.doneUnsafe(targetEntered, Effect.void);
+                };
                 const end = span.end.bind(span);
                 span.end = (endTime, exit) => {
                   waiterSucceeded = Exit.isSuccess(exit);
                   end(endTime, exit);
                 };
-                Deferred.doneUnsafe(targetEntered, Effect.void);
               }
               return span;
             },
