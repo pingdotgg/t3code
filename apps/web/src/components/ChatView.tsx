@@ -4,13 +4,11 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
-import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
 import { announcedRun, isDetailBehindShell } from "./chat/threadActivityAnnouncement";
 import {
   deriveAvailableRevertTurnCounts,
   deriveThreadPendingBackgroundTasks,
-  deriveWorkspaceMutationId,
   presentThreadShellFromProjection,
 } from "./ChatView.logic";
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
@@ -94,6 +92,7 @@ import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
   codexFeedbackMessage,
+  deriveWorkspaceMutationId,
   isCompleteTurnItemRow,
   shouldShowLoadEarlierControl,
   type CodexFeedbackSubmission,
@@ -112,6 +111,7 @@ import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
 import { type SetStateAction, use, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
+import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";

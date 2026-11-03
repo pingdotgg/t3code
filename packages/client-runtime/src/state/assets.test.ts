@@ -244,10 +244,18 @@ const resource: AssetResource = {
   path: "docs/diagram.png",
 };
 
-type MintResult = AsyncResult.AsyncResult<{ relativeUrl: string; expiresAt: number }>;
+type MintResult = AsyncResult.AsyncResult<{
+  relativeUrl: string;
+  expiresAt: number;
+  fileRevision?: string;
+}>;
 
-const minted = (n: number): MintResult =>
-  AsyncResult.success({ relativeUrl: `/a/${n}`, expiresAt: 0 });
+const minted = (n: number, fileRevision?: string): MintResult =>
+  AsyncResult.success({
+    relativeUrl: `/a/${n}`,
+    expiresAt: 60 * 60_000,
+    ...(fileRevision === undefined ? {} : { fileRevision }),
+  });
 
 // A stand-in for the asset URL query: a refresh starts a mint (counted, shown as
 // waiting) and `settle` completes the latest one.
@@ -270,7 +278,10 @@ function setup(initial: MintResult) {
       registry.set(server, AsyncResult.waiting(registry.get(server)));
     },
   ).pipe(Atom.keepAlive);
-  const revisioned = makeRevisionedAssetUrlFamily(() => query);
+  const revisioned = makeRevisionedAssetUrlFamily(
+    () => query,
+    () => 0,
+  );
   const mount = (revision: string | null) => {
     const release = registry.mount(revisioned({ environmentId, input: { resource }, revision }));
     return () => {
@@ -281,8 +292,12 @@ function setup(initial: MintResult) {
   const flush = () => {
     for (const task of scheduled.splice(0)) task();
   };
-  const settle = () => registry.set(server, minted(mints + 1));
-  return { mount, settle, flush, reset: () => registry.reset(), mints: () => mints };
+  const settle = (fileRevision?: string) => registry.set(server, minted(mints + 1, fileRevision));
+  const url = (revision: string | null) => {
+    const result = registry.get(revisioned({ environmentId, input: { resource }, revision }));
+    return result._tag === "Success" ? result.value.relativeUrl : null;
+  };
+  return { mount, settle, flush, url, reset: () => registry.reset(), mints: () => mints };
 }
 
 describe("makeRevisionedAssetUrlFamily", () => {
@@ -370,5 +385,33 @@ describe("makeRevisionedAssetUrlFamily", () => {
     flush();
     expect(mints()).toBe(3);
     stillMinting();
+  });
+  it("keeps the URL while the file is unchanged and swaps it once the file changes", () => {
+    const { mount, settle, flush, url } = setup(minted(0, "file-a"));
+
+    const first = mount("mutation-1");
+    flush();
+    settle("file-a");
+    first();
+
+    const unchanged = mount("mutation-2");
+    flush();
+    settle("file-a");
+    expect(url("mutation-2")).toBe("/a/0");
+    unchanged();
+
+    // The query now holds /a/3; a later revision must still keep the URL on screen.
+    const stillUnchanged = mount("mutation-3");
+    flush();
+    expect(url("mutation-3")).toBe("/a/0");
+    settle("file-a");
+    expect(url("mutation-3")).toBe("/a/0");
+    stillUnchanged();
+
+    const edited = mount("mutation-4");
+    flush();
+    settle("file-b");
+    expect(url("mutation-4")).toBe("/a/5");
+    edited();
   });
 });

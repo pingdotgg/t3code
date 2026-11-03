@@ -36,6 +36,10 @@ export const projectFaviconUrlAtom = createProjectFaviconUrlAtomFamily({
   projectClones: environmentProjectCloneListAtom,
 });
 
+/**
+ * Pass `revision` for a host file whose bytes can change under the same path; each new
+ * revision re-mints the URL so the image reloads.
+ */
 export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
