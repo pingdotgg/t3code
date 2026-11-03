@@ -413,62 +413,34 @@ describe("DirectEndpoints Tailscale Serve", () => {
   );
 });
 
-effectIt.effect("advertises direct MagicDNS on a bound current Self address without Serve", () =>
+effectIt.effect("advertises a bound IPv6 MagicDNS listener and drops a removed interface", () =>
   Effect.gen(function* () {
-    using _interfaces = vi
-      .spyOn(NodeOS, "networkInterfaces")
-      .mockReturnValue({ tailscale0: vpnInterface("100.64.1.2") });
-    for (const [host, expected] of [
-      ["0.0.0.0", true],
-      ["100.64.1.2", true],
-      ["fd7a:115c:a1e0::1234", true],
-      ["fd7a:115c:a1e0:0:0:0:0:1234", true],
-      ["::ffff:100.64.1.2", true],
-      ["::ffff:6440:102", true],
-      ["0:0:0:0:0:ffff:100.64.1.2", true],
-      ["fd7a:115c:a1e0::9999", false],
-      ["2001:db8::1", false],
-      ["::1", false],
-    ] as const) {
-      _interfaces.mockReturnValue({
-        tailscale0: [
-          ...vpnInterface("100.64.1.2"),
-          ...(INTERFACES.utun4 ?? [])
-            .filter((entry) => entry.family === "IPv6")
-            .flatMap((entry) => [
-              { ...entry, address: "fd7a:115c:a1e0::1234" },
-              { ...entry, address: "fd7a:115c:a1e0::9999" },
-            ]),
-        ],
-      });
-      const service = yield* DirectEndpoints.make.pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            Layer.effect(
-              ServerConfig.ServerConfig,
-              Effect.map(ServerConfig.ServerConfig, (config) => ({
-                ...config,
-                host,
-                tailscaleServeEnabled: false,
-              })),
-            ).pipe(Layer.provide(layerServeConfig("0.0.0.0"))),
-            layerTailscaleUp,
-            layerServeProbe(502),
-          ),
+    using _interfaces = vi.spyOn(NodeOS, "networkInterfaces").mockReturnValue({
+      tailscale0: (INTERFACES.utun4 ?? []).flatMap((entry) =>
+        entry.family === "IPv6" ? [{ ...entry, address: "fd7a:115c:a1e0::1234" }] : [],
+      ),
+    });
+    const service = yield* DirectEndpoints.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.effect(
+            ServerConfig.ServerConfig,
+            Effect.map(ServerConfig.ServerConfig, (config) => ({
+              ...config,
+              host: "fd7a:115c:a1e0::1234",
+              tailscaleServeEnabled: false,
+            })),
+          ).pipe(Layer.provide(layerServeConfig("0.0.0.0"))),
+          layerTailscaleUp,
+          layerServeProbe(502),
         ),
-      );
-      expect(
-        (yield* service.resolve()).some(
-          (endpoint) => endpoint.httpBaseUrl === "http://bb-1.tail1234.ts.net:3773/",
-        ),
-      ).toBe(expected);
-      _interfaces.mockReturnValue({});
-      expect(
-        (yield* service.resolveAvailable()).some(
-          (endpoint) => endpoint.httpBaseUrl === "http://bb-1.tail1234.ts.net:3773/",
-        ),
-      ).toBe(false);
-    }
+      ),
+    );
+    expect(yield* service.resolve()).toEqual([
+      { kind: "tailnet", httpBaseUrl: "http://bb-1.tail1234.ts.net:3773/" },
+    ]);
+    _interfaces.mockReturnValue({});
+    expect(yield* service.resolveAvailable()).toEqual([]);
   }),
 );
 

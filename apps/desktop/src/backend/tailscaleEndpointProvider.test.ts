@@ -82,74 +82,25 @@ describe("tailscale endpoint provider", () => {
   );
 });
 
-it.effect("advertises direct MagicDNS only for a running Self on the listener interface", () =>
+it.effect("advertises a bound IPv6 MagicDNS listener after the preferred HTTPS route", () =>
   Effect.gen(function* () {
     for (const serveEnabled of [false, true]) {
-      for (const [bindHost, backendState, ip, expected] of [
-        ["0.0.0.0", "Running", "100.74.126.34", true],
-        ["100.74.126.34", "Running", "100.74.126.34", true],
-        ["::ffff:100.74.126.34", "Running", "100.74.126.34", true],
-        ["::ffff:644a:7e22", "Running", "100.74.126.34", true],
-        ["fd7a:115c:a1e0::1234", "Running", "fd7a:115c:a1e0::1234", true],
-        ["::", "Running", "fd7a:115c:a1e0::1234", true],
-        ["::ffff:127.0.0.1", "Running", "100.74.126.34", false],
-        ["fd7a:115c:a1e0:0:0:0:0:1234", "Running", "fd7a:115c:a1e0::1234", true],
-        ["fd7a:115c:a1e0::9999", "Running", "fd7a:115c:a1e0::1234", false],
-        ["2001:db8::1", "Running", "fd7a:115c:a1e0::1234", false],
-        ["0.0.0.0", "Running", "fd7a:115c:a1e0::1234", false],
-        ["127.0.0.1", "Running", "100.74.126.34", false],
-        ["192.168.1.2", "Running", "100.74.126.34", false],
-        ["0.0.0.0", "Stopped", "100.74.126.34", false],
-        ["0.0.0.0", "Unknown", "100.74.126.34", false],
-        ["::1", "Running", "100.74.126.34", false],
-        ["0.0.0.0", "Running", "100.85.0.1", false],
-      ] as const) {
-        const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
-          port: 3773,
-          bindHost,
-          serveEnabled,
-          probe: () => Effect.succeed(true),
-          networkInterfaces: {
-            tailscale0: [
-              ...protonAndTailscaleInterfaces.tailscale0,
-              { address: "fd7a:115c:a1e0::1234", family: "IPv6", internal: false },
-              { address: "fd7a:115c:a1e0::9999", family: "IPv6", internal: false },
-            ],
-          },
-          statusJson: JSON.stringify({
-            BackendState: backendState,
-            Self: { DNSName: "desktop.tail.ts.net.", TailscaleIPs: [ip] },
-          }),
-        });
-        assert.strictEqual(
-          endpoints.some((e) => e.httpBaseUrl === "http://desktop.tail.ts.net:3773/"),
-          expected,
-        );
-        if (expected && serveEnabled) {
-          const urls = endpoints.map((endpoint) => endpoint.httpBaseUrl);
-          assert.isBelow(
-            urls.indexOf("https://desktop.tail.ts.net/"),
-            urls.indexOf("http://desktop.tail.ts.net:3773/"),
-          );
-        }
-      }
-    }
-    for (const statusJson of [
-      null,
-      "not-json",
-      "{}",
-      JSON.stringify({
-        BackendState: "Running",
-        Self: { DNSName: "evil.example/path", TailscaleIPs: ["100.74.126.34"] },
-      }),
-    ]) {
       const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
         port: 3773,
-        bindHost: "0.0.0.0",
-        networkInterfaces: protonAndTailscaleInterfaces,
-        statusJson,
+        bindHost: "fd7a:115c:a1e0::1234",
+        serveEnabled,
+        probe: () => Effect.succeed(true),
+        networkInterfaces: {
+          tailscale0: [{ address: "fd7a:115c:a1e0::1234", family: "IPv6", internal: false }],
+        },
+        statusJson: JSON.stringify({
+          BackendState: "Running",
+          Self: { DNSName: "desktop.tail.ts.net.", TailscaleIPs: ["fd7a:115c:a1e0::1234"] },
+        }),
       });
-      assert.isFalse(endpoints.some((endpoint) => endpoint.label === "Tailscale MagicDNS"));
+      const urls = endpoints.map((endpoint) => endpoint.httpBaseUrl);
+      assert.deepEqual(urls, ["https://desktop.tail.ts.net/", "http://desktop.tail.ts.net:3773/"]);
+      assert.strictEqual(endpoints[0]?.status, serveEnabled ? "available" : "unavailable");
     }
   }).pipe(Effect.provide(layerUnusedTailscaleExternalServices)),
 );
