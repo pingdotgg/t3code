@@ -393,8 +393,7 @@ const decodeSystemdUnitPaths = Schema.decodeUnknownEffect(
 
 // The manager may not share the installer's environment; JSON preserves spaces in its paths.
 const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit_directory")(
-  function* (runner: ProcessRunner.ProcessRunner["Service"]) {
-    const path = yield* Path.Path;
+  function* (runner: ProcessRunner.ProcessRunner["Service"], path: Path.Path) {
     const result = yield* runner.run({
       command: "busctl",
       args: [
@@ -631,18 +630,29 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     ),
   ).join(":");
 
-  const systemdUnitDir = platform === "linux" ? yield* readSystemdUnitDirectory(runner) : undefined;
-  const detectedManager = selectBootServiceManager({
-    platform,
-    homeDir,
-    xdgConfigHome,
-    systemdUnitDir,
-    uid,
-    path,
-    environmentPath,
-  });
-  const unitPath = detectedManager?.unitPath ?? "";
   const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
+  const resolveTarget = (systemdUnitDir: string | undefined) => {
+    const manager = selectBootServiceManager({
+      platform,
+      homeDir,
+      xdgConfigHome,
+      systemdUnitDir,
+      uid,
+      path,
+      environmentPath,
+    });
+    const unitPath = manager?.unitPath ?? "";
+    const plan: BootServicePlan = {
+      program: [runtimePaths.entryPath, "__service-launcher"],
+      baseDir: input.baseDir,
+      logPath,
+      unitPath,
+    };
+    return { manager, unitPath, plan };
+  };
+  let systemdUnitDir =
+    platform === "linux" ? yield* readSystemdUnitDirectory(runner, path) : undefined;
+  let { manager: detectedManager, unitPath, plan } = resolveTarget(systemdUnitDir);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
   const writeDurably = (filePath: string, contents: string) =>
@@ -664,13 +674,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         );
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-  const plan: BootServicePlan = {
-    program: [runtimePaths.entryPath, "__service-launcher"],
-    baseDir: input.baseDir,
-    logPath,
-    unitPath,
-  };
-
   const requireManager = Effect.suspend(() =>
     detectedManager === undefined
       ? new BootServiceUnsupportedError({ platform })
@@ -797,13 +800,20 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     readonly allowDowngrade?: boolean;
     readonly start?: boolean;
   }) {
-    const manager = yield* requireManager;
+    let manager = yield* requireManager;
     yield* fs
       .makeDirectory(input.logsDir, { recursive: true })
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
 
     if (manager.kind === "systemd") {
       yield* requireSystemdPrerequisites.pipe(Effect.tapError(logFailure));
+      // Without a session the manager was unreachable at construction, and the one lingering
+      // started may use another config root than this shell's XDG_CONFIG_HOME.
+      if (systemdUnitDir === undefined) {
+        systemdUnitDir = yield* readSystemdUnitDirectory(runner, path);
+        ({ manager: detectedManager, unitPath, plan } = resolveTarget(systemdUnitDir));
+        manager = yield* requireManager;
+      }
     }
 
     yield* ensurePinnedRuntimeInstalled({
@@ -1048,7 +1058,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   }).pipe(Effect.withSpan("cloud.boot_service.uninstall"));
 
   const status: BootService["Service"]["status"] = Effect.gen(function* () {
-    if (detectedManager === undefined) {
+    const manager = detectedManager;
+    if (manager === undefined) {
       return { supported: false, installed: false, current: false, unitPath, logPath };
     }
     if (!(yield* fs.exists(unitPath))) {
@@ -1066,11 +1077,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       : undefined;
     const installedBaseDir = bootServiceBaseDirOf(unit);
     const normalizeUnit = (contents: string) =>
-      detectedManager.kind === "launchd"
+      manager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
         : contents;
     const problems: BootServiceProblem[] =
-      detectedManager.kind === "systemd" ? [...(yield* readSystemdProblems(true))] : [];
+      manager.kind === "systemd" ? [...(yield* readSystemdProblems(true))] : [];
     if (yield* fs.exists(restartPendingPath)) problems.push("restart-pending");
     return {
       supported: true,
@@ -1080,7 +1091,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       problems,
       current:
         problems.length === 0 &&
-        normalizeUnit(unit) === normalizeUnit(detectedManager.render(plan)) &&
+        normalizeUnit(unit) === normalizeUnit(manager.render(plan)) &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&

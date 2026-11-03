@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -119,12 +120,14 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     /** `undefined` makes `loginctl show-user` fail, as when logind does not know the user. */
     linger: string | undefined;
     managerReachable: boolean;
+    lingerStartsManager: boolean;
     enabled: boolean;
     active: boolean;
   } = {
     failCommand: undefined,
     linger: "yes",
     managerReachable: true,
+    lingerStartsManager: true,
     enabled: true,
     active: true,
   };
@@ -139,10 +142,14 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       const failed = command === control.failCommand;
       if (!failed && command === "loginctl enable-linger --no-ask-password 501") {
         control.linger = "yes";
-        control.managerReachable = true;
+        control.managerReachable ||= control.lingerStartsManager;
       }
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
       if (!failed && command === "systemctl --user restart t3code.service") control.active = true;
+      // The manager loads units only from its own unit directory.
+      const unitOutsideManager =
+        command === "systemctl --user enable t3code.service" &&
+        !(yield* fs.exists(path.join(managerUnitDir, "t3code.service")));
       // A timed-out stop may still stop the service.
       if (command === "systemctl --user stop t3code.service") control.active = false;
       if (
@@ -150,7 +157,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         (command === "systemctl --user stop t3code.service" ||
           command.startsWith("launchctl bootout --wait "))
       ) {
-        yield* fs.writeFileString(statePath, control.stateAfterStop).pipe(Effect.orDie);
+        yield* fs.writeFileString(statePath, control.stateAfterStop);
       }
       return {
         stdout:
@@ -177,7 +184,9 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
           failed ||
-            (command === "systemctl --user show-environment" && !control.managerReachable) ||
+            unitOutsideManager ||
+            ((command === "systemctl --user show-environment" || input.command === "busctl") &&
+              !control.managerReachable) ||
             (input.command === "loginctl" &&
               input.args[0] === "show-user" &&
               control.linger === undefined) ||
@@ -192,7 +201,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         stdoutInvalidUtf8: false,
         stderrInvalidUtf8: false,
       };
-    }),
+    }, Effect.orDie),
   });
   const makeService = (
     environmentPath: string | undefined = installerPath,
@@ -347,6 +356,75 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
         expect(commands).toContain("loginctl enable-linger --no-ask-password 501");
         expect((yield* service.status).current).toBe(true);
+      }),
+  );
+
+  // regression: #29881
+  it.effect("installs into the unit directory of the user manager that lingering starts", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const shellConfigHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-xdg-config-" });
+      const { makeService, home, control } = yield* makeHarness(
+        "linux",
+        undefined,
+        shellConfigHome,
+        "",
+      );
+      control.linger = "no";
+      control.managerReachable = false;
+      const service = yield* makeService();
+
+      const plan = yield* service.install();
+
+      const unitPath = path.join(home, ".config", "systemd", "user", "t3code.service");
+      expect(plan.unitPath).toBe(unitPath);
+      expect(yield* service.status).toMatchObject({ current: true, unitPath });
+    }),
+  );
+
+  // regression: #29881
+  it.effect.each([
+    { manager: "starts after three probes", upAfterPauses: 3, pauses: 3 },
+    { manager: "never starts", upAfterPauses: undefined, pauses: 10 },
+  ])(
+    "waits a bounded time for the user manager lingering starts when it $manager",
+    ({ upAfterPauses, pauses }) =>
+      Effect.gen(function* () {
+        const { service, fs, commands, control } = yield* makeHarness();
+        const { unitPath } = yield* service.status;
+        control.linger = "no";
+        control.managerReachable = false;
+        control.lingerStartsManager = false;
+        const clock = yield* Clock.Clock;
+        const waited: number[] = [];
+
+        const result = yield* service.install().pipe(
+          Effect.provideService(Clock.Clock, {
+            ...clock,
+            sleep: (duration) =>
+              Effect.sync(() => {
+                if (waited.push(Duration.toMillis(duration)) === upAfterPauses) {
+                  control.managerReachable = true;
+                }
+              }),
+          }),
+          Effect.result,
+        );
+
+        expect(waited).toEqual(Array.from({ length: pauses }, () => 500));
+        expect(
+          commands.filter((command) => command === "systemctl --user show-environment"),
+        ).toHaveLength(pauses + 2);
+        if (upAfterPauses === undefined) {
+          expect(result).toMatchObject({
+            failure: { _tag: "BootServicePrerequisiteError", problem: "user-manager-unavailable" },
+          });
+          expect(yield* fs.exists(unitPath)).toBe(false);
+        } else {
+          expect(result._tag).toBe("Success");
+          expect((yield* service.status).current).toBe(true);
+        }
       }),
   );
 
