@@ -36,14 +36,16 @@ export function AddUsageLimitSourceDialog({
   const [url, setUrl] = useState("");
   const secretSources = useSecretSources(environmentId);
   const [keyDraft, setKeyDraft] = useState<string | SecretReference>("");
+  const [keyValid, setKeyValid] = useState(true);
   const managementKey = typeof keyDraft === "string" ? keyDraft.trim() : keyDraft;
   const trimmedUrl = url.trim();
-  const canSave = trimmedUrl.length > 0 && managementKey !== "";
+  const canSave = keyValid && trimmedUrl.length > 0 && managementKey !== "";
 
   const reset = () => {
     setLabel("");
     setUrl("");
     setKeyDraft("");
+    setKeyValid(true);
   };
 
   const save = () => {
@@ -107,8 +109,7 @@ export function AddUsageLimitSourceDialog({
                 sources={secretSources}
                 onChange={(event) => setKeyDraft(event.target.value)}
                 onSecretChange={(secret) => setKeyDraft(secret ?? "")}
-                onProviderPick={() => setKeyDraft("")}
-                onReferenceReject={() => setKeyDraft("")}
+                onValidityChange={setKeyValid}
               />
             </div>
             <div className="grid gap-1.5">
