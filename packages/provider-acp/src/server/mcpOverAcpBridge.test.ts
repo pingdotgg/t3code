@@ -81,6 +81,76 @@ describe("AcpMcpOverAcpBridge", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("routes server-scoped requests and preserves inner MCP outcomes", () =>
+    Effect.gen(function* () {
+      const requests: Array<{ method: string; headers: Headers; body: unknown }> = [];
+      const error = { code: -32601, message: "Unknown method", data: null, extension: true };
+      const bridge = yield* makeAcpMcpOverAcpBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        allocateConnectionId: Effect.die("Request-scoped MCP does not allocate connection IDs"),
+        fetchImplementation: async (_url, init) => {
+          const method = init?.method ?? "GET";
+          const headers = new Headers(init?.headers);
+          const body = init?.body === undefined ? null : JSON.parse(String(init.body));
+          requests.push({ method, headers, body });
+          if (method === "DELETE") return new Response(null, { status: 204 });
+          const request = body as { id: string; method: string };
+          if (request.method === "notifications/initialized") {
+            return new Response(null, { status: 202 });
+          }
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: request.id,
+              ...(request.method === "server/discover"
+                ? { error }
+                : {
+                    result:
+                      request.method === "initialize"
+                        ? { protocolVersion: "2025-06-18" }
+                        : request.method === "tools/call"
+                          ? null
+                          : { tools: [] },
+                  }),
+            }),
+            { headers: { "content-type": "application/json", "mcp-session-id": "session-42" } },
+          );
+        },
+      });
+      const discover = { serverId: "t3-code", requestId: "peri-1", method: "server/discover" };
+      expect(yield* bridge.message(discover)).toEqual({ error });
+      const initialize = { serverId: "t3-code", requestId: "peri-2", method: "initialize" };
+      expect(yield* bridge.message(initialize)).toEqual({
+        result: { protocolVersion: "2025-06-18" },
+      });
+      const list = { serverId: "t3-code", requestId: "peri-3", method: "tools/list", params: null };
+      expect(yield* bridge.message(list)).toEqual({ result: { tools: [] } });
+      expect(requests[0]?.body).toEqual({
+        jsonrpc: "2.0",
+        id: "peri-1",
+        method: "server/discover",
+      });
+      expect(requests[2]?.headers.get("mcp-session-id")).toBe("session-42");
+      expect(requests[2]?.headers.get("mcp-protocol-version")).toBe("2025-06-18");
+      expect(requests[2]?.headers.get("authorization")).toBe("Bearer bridge-test");
+      expect(yield* bridge.message({ ...list, serverId: "other" }).pipe(Effect.flip)).toMatchObject(
+        { _tag: "AcpMcpOverAcpError" },
+      );
+      expect(requests).toHaveLength(3);
+      yield* bridge.notification({ ...list, method: "notifications/initialized" });
+      expect(requests[3]?.body).toEqual({ jsonrpc: "2.0", method: "notifications/initialized" });
+      expect(yield* bridge.message({ ...list, requestId: "peri-4", method: "tools/call" })).toEqual(
+        {
+          result: null,
+        },
+      );
+      yield* bridge.dispose;
+      expect(requests.at(-1)?.method).toBe("DELETE");
+      expect(requests.at(-1)?.headers.get("mcp-session-id")).toBe("session-42");
+    }),
+  );
+
   it.effect("aborts an in-flight HTTP request when the ACP call is interrupted", () =>
     Effect.gen(function* () {
       const started = Promise.withResolvers<AbortSignal>();

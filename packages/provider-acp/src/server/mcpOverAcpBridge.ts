@@ -84,6 +84,13 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
   const fetchImplementation = options.fetchImplementation ?? fetch;
   const connections = yield* Effect.sync(() => new Map<string, Connection>());
 
+  const serverConnection: Connection = {
+    mutex: yield* Semaphore.make(1),
+    sessionId: null,
+    protocolVersion: null,
+    nextRequestId: 0,
+  };
+
   const connectionFor = (connectionId: string): Effect.Effect<Connection, AcpMcpOverAcpError> =>
     Effect.suspend(() => {
       const connection = connections.get(connectionId);
@@ -91,6 +98,17 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         ? Effect.fail(new AcpMcpOverAcpError(`Unknown MCP-over-ACP connection "${connectionId}".`))
         : Effect.succeed(connection);
     });
+
+  const messageConnection = Effect.fn("mcpOverAcpBridge.messageConnection")(
+    (
+      request: AcpSchema.MessageMcpRequest | AcpSchema.MessageMcpNotification,
+    ): Effect.Effect<Connection, AcpMcpOverAcpError> =>
+      "serverId" in request
+        ? request.serverId === "t3-code"
+          ? Effect.succeed(serverConnection)
+          : Effect.fail(new AcpMcpOverAcpError(`Unknown ACP MCP server "${request.serverId}".`))
+        : connectionFor(request.connectionId),
+  );
 
   // Only initialization needs ordering; negotiated calls may wait independently.
   const untilNegotiated = <A, E>(connection: Connection, effect: Effect.Effect<A, E>) =>
@@ -146,11 +164,9 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
       }).pipe(Effect.mapError(bridgeError)),
     );
 
-  const disconnect = Effect.fn("mcpOverAcpBridge.disconnect")(function* (
-    request: AcpSchema.DisconnectMcpRequest,
-  ): Effect.fn.Return<AcpSchema.DisconnectMcpResponse, AcpMcpOverAcpError> {
-    const connection = yield* connectionFor(request.connectionId);
-    connections.delete(request.connectionId);
+  const closeConnection = Effect.fn("mcpOverAcpBridge.closeConnection")(function* (
+    connection: Connection,
+  ) {
     const sessionId = connection.sessionId;
     if (sessionId !== null) {
       const response = yield* Effect.tryPromise({
@@ -179,6 +195,15 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
       );
     }
+    connection.sessionId = null;
+  });
+
+  const disconnect = Effect.fn("mcpOverAcpBridge.disconnect")(function* (
+    request: AcpSchema.DisconnectMcpRequest,
+  ): Effect.fn.Return<AcpSchema.DisconnectMcpResponse, AcpMcpOverAcpError> {
+    const connection = yield* connectionFor(request.connectionId);
+    connections.delete(request.connectionId);
+    yield* closeConnection(connection);
     return {};
   });
 
@@ -202,8 +227,8 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
       return { connectionId };
     }),
     message: Effect.fn("mcpOverAcpBridge.message")(function* (request) {
-      const connection = yield* connectionFor(request.connectionId);
-      const id = ++connection.nextRequestId;
+      const connection = yield* messageConnection(request);
+      const id = "requestId" in request ? request.requestId : ++connection.nextRequestId;
       const payloads = yield* send(connection, {
         jsonrpc: "2.0",
         id,
@@ -217,13 +242,20 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
           new AcpMcpOverAcpError("MCP server did not return a matching response."),
         );
       }
+      if ("serverId" in request) {
+        return (
+          envelope.error !== undefined
+            ? { error: envelope.error }
+            : { result: envelope.result ?? null }
+        ) as AcpSchema.MessageMcpResponse;
+      }
       if (envelope.error !== undefined) {
         return yield* Effect.fail(new AcpMcpOverAcpError(errorMessage(envelope.error)));
       }
       return (envelope.result ?? null) as AcpSchema.MessageMcpResponse;
     }),
     notification: Effect.fn("mcpOverAcpBridge.notification")(function* (request) {
-      const connection = yield* connectionFor(request.connectionId);
+      const connection = yield* messageConnection(request);
       yield* send(connection, {
         jsonrpc: "2.0",
         method: request.method,
@@ -233,10 +265,10 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
     disconnect,
     dispose: Effect.suspend(() =>
       Effect.forEach(
-        [...connections.keys()],
-        (connectionId) => disconnect({ connectionId }).pipe(Effect.ignore),
+        [...connections.values(), serverConnection],
+        (connection) => closeConnection(connection).pipe(Effect.ignore),
         { discard: true },
-      ),
+      ).pipe(Effect.andThen(Effect.sync(() => connections.clear()))),
     ),
   };
 });

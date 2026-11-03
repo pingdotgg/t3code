@@ -1427,6 +1427,46 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("routes request-scoped MCP messages without a connect handshake", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const acp = yield* AcpClient.make(stdio);
+      const request = { serverId: "t3-code", requestId: "peri-1", method: "tools/list" };
+      let received: unknown;
+      yield* acp.handleMcpMessage((payload) => {
+        received = payload;
+        return Effect.succeed({ result: { tools: [] } });
+      });
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcRequest("mcp/message", Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: 21,
+          headers: [],
+          method: "mcp/message",
+          params: request,
+        }),
+      );
+      const response = yield* decodeWireResponse(yield* Queue.take(output));
+      assert.deepEqual(response, { jsonrpc: "2.0", id: 21, result: { result: { tools: [] } } });
+      assert.deepEqual(received, request);
+      const notified = yield* Deferred.make<AcpCompat.MessageMcpNotification>();
+      yield* acp.handleMcpNotification((notification) =>
+        Deferred.succeed(notified, notification).pipe(Effect.asVoid),
+      );
+      const notification = { ...request, method: "notifications/initialized", params: null };
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcNotification("mcp/message", Schema.Unknown), {
+          jsonrpc: "2.0",
+          method: "mcp/message",
+          params: notification,
+        }),
+      );
+      assert.deepEqual(yield* Deferred.await(notified), notification);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("routes MCP-over-ACP connect, message, notification, and disconnect callbacks", () =>
     Effect.gen(function* () {
       const handle = yield* makeHandle({ ACP_MOCK_MCP_OVER_ACP: "1" });

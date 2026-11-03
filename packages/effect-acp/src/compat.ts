@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import type * as V2 from "./_generated/schema.gen.ts";
+import * as V2 from "./_generated/schema.gen.ts";
 
 type Meta = AcpMeta | null;
 type AcpMeta = NonNullable<V2.InitializeRequest["_meta"]>;
@@ -36,8 +36,21 @@ export type DisableProviderRequest = V2.DisableProviderRequest;
 export type DisableProviderResponse = V2.DisableProviderResponse;
 export type ConnectMcpRequest = V2.ConnectMcpRequest;
 export type ConnectMcpResponse = V2.ConnectMcpResponse;
-export type MessageMcpRequest = V2.MessageMcpRequest;
-export type MessageMcpNotification = V2.MessageMcpNotification;
+// MCP-over-ACP changed drafts without a capability version; accept both wire formats.
+const RequestScopedMcpMessage = Schema.Struct({
+  serverId: Schema.String,
+  requestId: Schema.String,
+  method: Schema.String,
+  params: Schema.optionalKey(Schema.NullOr(Schema.Record(Schema.String, Schema.Json))),
+  _meta: Schema.optionalKey(Schema.NullOr(Schema.Record(Schema.String, Schema.Json))),
+});
+export const MessageMcpRequest = Schema.Union([RequestScopedMcpMessage, V2.MessageMcpRequest]);
+export type MessageMcpRequest = typeof MessageMcpRequest.Type;
+export const MessageMcpNotification = Schema.Union([
+  RequestScopedMcpMessage,
+  V2.MessageMcpNotification,
+]);
+export type MessageMcpNotification = typeof MessageMcpNotification.Type;
 export type MessageMcpResponse = V2.MessageMcpResponse;
 export type DisconnectMcpRequest = V2.DisconnectMcpRequest;
 export type DisconnectMcpResponse = V2.DisconnectMcpResponse;
