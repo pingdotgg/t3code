@@ -50,28 +50,43 @@ describe("tool image output parsing", () => {
   it.each(["image-only", "summary", "json"] as const)(
     "keeps structured fields beside %s content",
     (shape) => {
-      const item = toolItem({
-        structuredContent: { temp: 21 },
-        content: [
-          { type: "image", mimeType: "image/png" },
-          ...(shape === "image-only"
-            ? []
-            : [{ type: "text", text: shape === "summary" ? "Sunny" : '{"temp":21}' }]),
-        ],
-      });
-      expect(turnItemOutputText(item)).toBe('{\n  "temp": 21\n}');
-      expect(turnItemOutputImages(item)).toHaveLength(1);
+      const content = [
+        { type: "image", mimeType: "image/png" },
+        ...(shape === "image-only"
+          ? []
+          : [{ type: "text", text: shape === "summary" ? "Sunny" : '{"temp":21}' }]),
+      ];
+      for (const structuredContent of [
+        { temp: 21 },
+        { type: "text", text: "Sunny", temp: 21 },
+        { content: [{ type: "text", text: "Sunny" }], temp: 21 },
+      ]) {
+        const item = toolItem({ structuredContent, content });
+        expect(turnItemOutputText(item)).toBe(JSON.stringify(structuredContent, null, 2));
+        expect(turnItemOutputImages(item)).toHaveLength(1);
+      }
+      for (const structuredContent of [null, {}, [], ""]) {
+        const item = toolItem({ structuredContent, content: [{ type: "text", text: "Sunny" }] });
+        expect(turnItemOutputText(item)).toBe("Sunny");
+      }
     },
   );
-  it.each(["array", "content"] as const)(
+  it.each(["array", "content", "structured"] as const)(
     "keeps markers for images beyond the served positions in %s output",
     (shape) => {
       // Detail responses retain image metadata after the server strips image bytes.
       const image = { type: "image", mimeType: "image/png" };
       const blocks = Array.from({ length: 8 }, () => ({ ...image }));
-      const wrap = (content: unknown[]) => (shape === "array" ? content : { content });
+      const wrap = (content: unknown[]) =>
+        shape === "array"
+          ? content
+          : shape === "structured"
+            ? { content, structuredContent: { temp: 21 } }
+            : { content };
       const withinLimit = toolItem(wrap(blocks));
-      expect(turnItemOutputText(withinLimit)).toBeNull();
+      expect(turnItemOutputText(withinLimit)).toBe(
+        shape === "structured" ? '{\n  "temp": 21\n}' : null,
+      );
       expect(turnItemOutputImages(withinLimit)).toHaveLength(8);
 
       const overflow = toolItem(
@@ -83,7 +98,10 @@ describe("tool image output parsing", () => {
         ]),
       );
       expect(turnItemOutputImages(overflow)).toHaveLength(8);
-      expect(turnItemOutputText(overflow)).toBe("Two additional screenshots:\n[image]\n[image]");
+      expect(turnItemOutputText(overflow)).toBe(
+        (shape === "structured" ? '{\n  "temp": 21\n}' : "Two additional screenshots:") +
+          "\n[image]\n[image]",
+      );
     },
   );
 });

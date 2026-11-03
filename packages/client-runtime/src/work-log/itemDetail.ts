@@ -38,8 +38,14 @@ function textFromBlocks(
   if (keys.length === 1 && keys[0] === "content")
     return textFromBlocks(value.content, depth + 1, imageBlocks);
   if (keys.length === 2 && keys.includes("content") && keys.includes("structuredContent")) {
-    const structured = formatToolValue(value.structuredContent);
-    if (structured !== null) return structured;
+    const structured = formatJsonValue(value.structuredContent);
+    if (structured !== null) {
+      const images = Array.isArray(value.content)
+        ? value.content.filter((block) => isRecord(block) && block.type === "image")
+        : [];
+      const markers = textFromBlocks(images, depth + 1, imageBlocks);
+      return [structured, markers].filter(Boolean).join("\n");
+    }
     const text = textFromBlocks(value.content, depth + 1, imageBlocks);
     return text?.trim() ? text : null;
   }
@@ -71,11 +77,9 @@ function prettyJsonText(text: string): string {
   return documents.map((document) => JSON.stringify(document, null, 2)).join("\n\n");
 }
 
-function formatToolValue(value: unknown, hasImagePreview = false): string | null {
+function formatJsonValue(value: unknown): string | null {
   if (value === undefined || value === null) return null;
-  if (hasImagePreview && isRecord(value) && value.type === "image") return null;
-  const text = textFromBlocks(value, 0, toolOutputImageBlocks(value));
-  if (text !== null) return text.trim() ? prettyJsonText(text) : null;
+  if (typeof value === "string" && !value.trim()) return null;
   let json: string | undefined;
   try {
     json = JSON.stringify(value, null, 2);
@@ -84,6 +88,14 @@ function formatToolValue(value: unknown, hasImagePreview = false): string | null
   }
   if (json === undefined || json === "{}" || json === "[]") return null;
   return json;
+}
+
+function formatToolValue(value: unknown, hasImagePreview = false): string | null {
+  if (value === undefined || value === null) return null;
+  if (hasImagePreview && isRecord(value) && value.type === "image") return null;
+  const text = textFromBlocks(value, 0, toolOutputImageBlocks(value));
+  if (text !== null) return text.trim() ? prettyJsonText(text) : null;
+  return formatJsonValue(value);
 }
 
 export function toolCallLines(input: {
