@@ -2367,8 +2367,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ? {}
               : { requestLogger: nativeLogging.requestLogger }),
             protocolLogging: nativeLogging?.protocolLogging ?? {
-              logIncoming: true,
-              logOutgoing: true,
+              logIncoming: false,
+              logOutgoing: false,
               logger: () => Effect.void,
             },
           };
