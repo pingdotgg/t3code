@@ -1371,24 +1371,31 @@ const make = Effect.gen(function* () {
         ...(inheritedCandidate === undefined ? [] : [inheritedCandidate]),
         ...healthyCandidates.filter((candidate) => candidate !== inheritedCandidate),
       ];
+      let enabledCandidateHidesEveryModel = false;
       for (const candidate of orderedCandidates) {
-        if (
-          requestedModel === undefined &&
-          candidate !== inheritedCandidate &&
-          fallbackModel(candidate) === undefined
-        ) {
-          continue;
-        }
         const enabledForProject =
           input.skipProjectEnablementFilter === true ||
           (yield* threadManagement.isProviderInstanceEnabledForProject({
             projectId: input.parent.thread.projectId,
             instanceId: candidate.instanceId,
           }));
-        if (enabledForProject) {
-          instanceId = candidate.instanceId;
-          break;
+        if (!enabledForProject) continue;
+        if (
+          requestedModel === undefined &&
+          candidate !== inheritedCandidate &&
+          fallbackModel(candidate) === undefined
+        ) {
+          enabledCandidateHidesEveryModel = true;
+          continue;
         }
+        instanceId = candidate.instanceId;
+        break;
+      }
+      if (instanceId === undefined && enabledCandidateHidesEveryModel) {
+        return yield* failure(
+          "model_unavailable",
+          `Every enabled instance of driver ${requestedDriver} has all its models hidden. Pass target.model, or unhide a model in Settings.`,
+        );
       }
       if (instanceId === undefined) {
         return yield* failure(

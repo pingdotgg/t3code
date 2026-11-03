@@ -1777,6 +1777,13 @@ describe("OrchestratorMcpService provider resolution", () => {
       altHiddenModels: ["hidden-custom", "gpt-5.4"],
       expectedModel: "hidden-custom",
     },
+    {
+      name: "driver-only delegation reports hidden models when every enabled instance hides them all",
+      accepted: false,
+      target: { driverKind: ProviderDriverKind.make("codex") },
+      altHiddenModels: ["hidden-custom", "gpt-5.4"],
+      expectedModel: null,
+    },
   ])("$name", ({ accepted, target, altHiddenModels, expectedModel }) =>
     Effect.gen(function* () {
       const altInstanceId = ProviderInstanceId.make("codex-alt");
@@ -1887,12 +1894,18 @@ describe("OrchestratorMcpService provider resolution", () => {
 
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const result = yield* service.delegateTask(scope, {
+        const delegation = service.delegateTask(scope, {
           task: "Summarize the diff.",
           target,
           mode: "async",
           clientRequestId: "delegate-driver-skip-disabled-1",
         });
+        if (expectedModel === null) {
+          const error = yield* Effect.flip(delegation);
+          assert.equal(error.code, "model_unavailable");
+          return;
+        }
+        const result = yield* delegation;
         assert.equal(result.status, "running");
         const commands = yield* Ref.get(dispatched);
         assert.equal(commands.length, 1);
