@@ -150,7 +150,11 @@ it.effect.each([
     const refs = yield* driver.listRefs({ cwd });
     assert.isFalse(refs.isRepo);
     assert.deepEqual(refs.refs, []);
-  }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+  }).pipe(
+    Effect.provide(
+      layerServerConfig.pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    ),
+  ),
 );
 
 describe("Git output collection", () => {
