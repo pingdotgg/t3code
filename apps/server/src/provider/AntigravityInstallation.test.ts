@@ -1,7 +1,9 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -58,11 +60,11 @@ const releaseAsset = Effect.fn("test.antigravityReleaseAsset")(function* (
   archive: Uint8Array = completeArchive,
   platform: NodeJS.Platform = hostPlatform,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   return {
     version: "fixture-new",
     url: "https://dl.google.com/antigravity-test.zip",
-    sha256: Hex.encode(yield* crypto.digest("SHA-256", archive).pipe(Effect.orDie)),
+    sha256: Hex.encode(yield* digest.digest(Digest.sha256, archive).pipe(Effect.orDie)),
     archiveBytes: archive.byteLength,
     executable: {
       name: platform === "win32" ? "agy_acp_server.exe" : "agy_acp_server.par",
@@ -233,7 +235,7 @@ const expectPreviousRelease = Effect.fn("test.expectPreviousAntigravityRelease")
   expect((yield* installation.state).installedVersion).toBe(previousVersion);
 });
 
-it.layer(NodeServices.layer)("Antigravity installation", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity installation", (it) => {
   it.effect("reports missing Node before downloading the standalone provider runtime", () =>
     Effect.gen(function* () {
       const { installation, requests, validations } = yield* makeHarness();
