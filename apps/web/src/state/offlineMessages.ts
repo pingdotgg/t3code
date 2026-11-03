@@ -29,6 +29,27 @@ export const offlineMessages = createOfflineOutbox({
       .phase === "connected" &&
     appAtomRegistry.get(environmentShell.statusAtom(environmentId)) === "live" &&
     readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
+  prepare: (message) => {
+    if (!message.inheritedBootstrap) return message;
+    const { bootstrap: queuedBootstrap, ...turnInput } = message.input;
+    let bootstrap = queuedBootstrap;
+    if (bootstrap) {
+      const existing = appAtomRegistry.get(
+        environmentThreadShells.threadShellAtom(
+          scopeThreadRef(message.environmentId, message.input.threadId),
+        ),
+      );
+      if (existing) {
+        const { createThread: _, ...remaining } = bootstrap;
+        bootstrap = existing.latestRun === null ? remaining : undefined;
+      }
+    }
+    return {
+      ...message,
+      inheritedBootstrap: false,
+      input: { ...turnInput, ...(bootstrap ? { bootstrap } : {}) },
+    };
+  },
   send: async (message) => {
     for (const attachment of message.attachments) {
       const input = { environmentId: message.environmentId, image: attachment };
@@ -46,19 +67,7 @@ export const offlineMessages = createOfflineOutbox({
       message.attachments,
       attachments,
     );
-    const { bootstrap: queuedBootstrap, ...turnInput } = message.input;
-    let bootstrap = queuedBootstrap;
-    if (message.inheritedBootstrap && bootstrap) {
-      const existing = appAtomRegistry.get(
-        environmentThreadShells.threadShellAtom(
-          scopeThreadRef(message.environmentId, message.input.threadId),
-        ),
-      );
-      if (existing) {
-        const { createThread: _, ...remaining } = bootstrap;
-        bootstrap = existing.latestRunId === null ? remaining : undefined;
-      }
-    }
+    const { bootstrap, ...turnInput } = message.input;
     if (!bootstrap?.createThread) {
       const runtimeResult = await runAtomCommand(
         appAtomRegistry,

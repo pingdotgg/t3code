@@ -99,9 +99,27 @@ describe("offline outbox", () => {
       restarted.getSnapshot().find((entry) => entry.input.message.messageId === "other")?.input
         .bootstrap,
     ).toBeUndefined();
-    await restarted.drain();
+    let preparations = 0;
+    const options = {
+      ...h.options,
+      prepare: (entry: OfflineMessage) => {
+        if (!entry.inheritedBootstrap) return entry;
+        preparations++;
+        return { ...entry, inheritedBootstrap: false };
+      },
+    };
+    const delivery = createOfflineOutbox(options);
+    await delivery.load();
+    h.fail(new Error("Lost launch reply"));
+    await delivery.drain();
+    expect(h.stored.get("survivor")?.inheritedBootstrap).toBe(false);
+    const retried = createOfflineOutbox(options);
+    await retried.load();
+    await retried.retry("survivor");
+    h.fail();
+    await retried.drain();
+    expect(preparations).toBe(1);
     expect(h.sent.at(-1)?.input.bootstrap).toEqual(bootstrap);
-    expect(h.sent.at(-1)?.inheritedBootstrap).toBe(true);
   });
 
   it("does not publish a message when durable storage fails", async () => {

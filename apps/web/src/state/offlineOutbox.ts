@@ -15,6 +15,7 @@ export function createOfflineOutbox(options: {
   put: (message: OfflineMessage) => Promise<void>;
   remove: (id: string, successor?: OfflineMessage) => Promise<void>;
   canSend: (message: OfflineMessage) => boolean;
+  prepare?: (message: OfflineMessage) => OfflineMessage;
   send: (message: OfflineMessage) => Promise<void>;
 }) {
   let messages: ReadonlyArray<OfflineMessage> = [];
@@ -77,7 +78,7 @@ export function createOfflineOutbox(options: {
     const blockedThreads = new Set<string>();
     for (const queued of messages) {
       const id = queued.input.message.messageId;
-      const message = messages.find((entry) => entry.input.message.messageId === id);
+      let message = messages.find((entry) => entry.input.message.messageId === id);
       if (!message) continue;
       const threadKey = `${message.environmentId}:${message.input.threadId}`;
       if (blockedThreads.has(threadKey)) continue;
@@ -88,6 +89,16 @@ export function createOfflineOutbox(options: {
       sending.add(id);
       publish([...messages]);
       try {
+        const prepared = options.prepare?.(message) ?? message;
+        if (prepared !== message) {
+          await serialize(async () => {
+            await options.put(prepared);
+            publish(
+              messages.map((entry) => (entry.input.message.messageId === id ? prepared : entry)),
+            );
+          });
+          message = prepared;
+        }
         await options.send(message);
         await serialize(async () => {
           await options.remove(id);
