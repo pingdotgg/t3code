@@ -32,6 +32,7 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
 
+import { normalizePairingCredential } from "../auth/PairingGrantStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
@@ -439,7 +440,7 @@ const make = Effect.gen(function* () {
     }
     // A code issued here, even a used or expired one, must not reach the peer.
     const issuedHere = yield* pairingLinks
-      .getByCredential({ credential: input.pairingCode })
+      .getByCredential({ credential: normalizePairingCredential(input.pairingCode.trim()) })
       .pipe(Effect.catch(failStorage));
     if (Option.isSome(issuedHere)) {
       return yield* new PeerLinkError({

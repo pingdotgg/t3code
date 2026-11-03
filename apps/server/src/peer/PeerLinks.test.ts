@@ -171,12 +171,14 @@ it.effect(
         const a = yield* makeA(laptop);
         const own = yield* a.auth.issuePairingCredential();
 
-        const refused = yield* a.links
-          .link({ url: b.url, pairingCode: own.credential, access: "read-only" })
-          .pipe(Effect.flip);
-        expect(refused.reason).toBe("pairing_rejected");
-        expect(refused.message).toContain("Laptop");
-        expect(refused.message).toContain("Box");
+        for (const pairingCode of [own.credential, ` ${own.credential.toLowerCase()} `]) {
+          const refused = yield* a.links
+            .link({ url: b.url, pairingCode, access: "read-only" })
+            .pipe(Effect.flip);
+          expect(refused.reason).toBe("pairing_rejected");
+          expect(refused.message).toContain("Laptop");
+          expect(refused.message).toContain("Box");
+        }
         expect((yield* Ref.get(b.paths)).filter((path) => path.startsWith("/oauth/mcp/"))).toEqual(
           [],
         );
