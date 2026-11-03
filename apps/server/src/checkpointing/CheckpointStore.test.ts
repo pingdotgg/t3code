@@ -672,6 +672,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         yield* writeTextFile(NodePath.join(tmp, "kept.txt"), "kept\n");
         yield* git(tmp, ["add", "kept.txt"]);
         yield* git(tmp, ["commit", "-S", "-m", "kept"]);
+        yield* git(tmp, ["fetch", ".", "HEAD:refs/remotes/upstream/main"]);
         yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
 
         expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["kept.txt"]));

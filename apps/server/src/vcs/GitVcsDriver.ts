@@ -1525,7 +1525,15 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           if (recentRemoteRefs.length === 0) return new Set<string>();
 
           const entries = (yield* lines(
-            ["log", "--walk-reflogs", "--stdin", "--date=unix", "--format=%H %gD %gs"],
+            [
+              "-c",
+              "log.showSignature=false",
+              "log",
+              "--walk-reflogs",
+              "--stdin",
+              "--date=unix",
+              "--format=%H %gD %gs",
+            ],
             `${[...recentRemoteRefs, "HEAD"].join("\n")}\n`,
           )).map((line) => {
             const [commit = "", selector = "", ...subject] = line.split(" ");
