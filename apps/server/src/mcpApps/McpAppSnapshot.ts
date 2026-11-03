@@ -14,6 +14,7 @@ import * as Predicate from "effect/Predicate";
 
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { createAttachmentId } from "../attachmentStore.ts";
+import { matchesResourceUri } from "./resourceUri.ts";
 
 const encoder = new TextEncoder();
 
@@ -23,7 +24,11 @@ function readMcpAppDocument(
 ): { readonly html: string | null; readonly meta: unknown } | undefined {
   for (const content of contents) {
     if (!Predicate.isObject(content)) continue;
-    if (content.uri !== undefined && content.uri !== uri) continue;
+    if (
+      content.uri !== undefined &&
+      (typeof content.uri !== "string" || !matchesResourceUri(uri, content.uri))
+    )
+      continue;
     const mimeType = typeof content.mimeType === "string" ? content.mimeType : "";
     if (mimeType.replace(/\s+/g, "").toLowerCase() !== MCP_APP_MIME_TYPE) continue;
     // Bound before decoding to avoid oversized copies; UTF-8 is at least string length, base64 decodes to 3/4.
