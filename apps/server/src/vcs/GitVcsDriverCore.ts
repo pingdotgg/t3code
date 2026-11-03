@@ -4183,7 +4183,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       // Git refs already exclude Windows' other invalid characters and trailing dots or spaces.
       const windowsSafeName = directoryName
         .replace(/[<>"|]/g, "-")
-        .replace(/^(con|prn|aux|nul|com\d|lpt\d|conin\$|conout\$)(\.|$)/i, "$1-");
+        .replace(/^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$)(\.|$)/i, "$1-");
       // Leave room for files beneath the worktree on Windows, regardless of branch length.
       // The digest also keeps branches that differ only in replaced characters apart.
       if (directoryName.length > 40 || windowsSafeName !== directoryName) {
