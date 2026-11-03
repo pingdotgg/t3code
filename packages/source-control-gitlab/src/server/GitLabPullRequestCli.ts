@@ -461,6 +461,7 @@ export class GitLabPullRequestCli extends Context.Service<
       {
         readonly reactions: ReadonlyArray<PullRequestReaction>;
         readonly reactionsByNoteId: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
+        readonly editedAtByNoteId: ReadonlyMap<string, string>;
       },
       GitLabPullRequestCliError
     >;
@@ -1086,11 +1087,13 @@ export const make = Effect.gen(function* () {
     readonly collected: {
       readonly reactions: ReadonlyArray<PullRequestReaction>;
       readonly reactionsByNoteId: Map<string, ReadonlyArray<PullRequestReaction>>;
+      readonly editedAtByNoteId: Map<string, string>;
     } | null;
   }): Effect.Effect<
     {
       readonly reactions: ReadonlyArray<PullRequestReaction>;
       readonly reactionsByNoteId: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
+      readonly editedAtByNoteId: ReadonlyMap<string, string>;
     },
     GitLabPullRequestCliError
   > =>
@@ -1123,9 +1126,12 @@ export const make = Effect.gen(function* () {
         const collected = input.collected ?? {
           reactions: decoded.success.reactions,
           reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+          editedAtByNoteId: new Map<string, string>(),
         };
         for (const [id, reactions] of decoded.success.reactionsByNoteId)
           collected.reactionsByNoteId.set(id, reactions);
+        for (const [id, editedAt] of decoded.success.editedAtByNoteId)
+          collected.editedAtByNoteId.set(id, editedAt);
         return decoded.success.nextCursor === null || input.page >= CONVERSATION_PAGES
           ? Effect.succeed(collected)
           : awardsPage({

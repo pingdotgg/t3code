@@ -328,28 +328,37 @@ export const make = Effect.gen(function* () {
           recoverRead(cli.listReactions(input), {
             reactions: [] as ReadonlyArray<PullRequestReaction>,
             reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+            editedAtByNoteId: new Map<string, string>(),
           }),
         ],
         { concurrency: 4 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => ({
-          reactions: awards.reactions,
-          comments: notes.comments.map((comment) => ({
-            ...comment,
-            reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-          })),
-          commentCount: notes.comments.length,
-          commentsTruncated: notes.truncated || discussions.truncated,
-          reviewThreads: discussions.threads.map((thread) => ({
-            ...thread,
-            comments: thread.comments.map((comment) => ({
+        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => {
+          const edited = (id: string) => {
+            const editedAt = awards.editedAtByNoteId.get(id);
+            return editedAt === undefined ? {} : { editedAt };
+          };
+          return {
+            reactions: awards.reactions,
+            comments: notes.comments.map((comment) => ({
               ...comment,
+              ...edited(comment.id),
               reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
             })),
-          })),
-          commits,
-        })),
+            commentCount: notes.comments.length,
+            commentsTruncated: notes.truncated || discussions.truncated,
+            reviewThreads: discussions.threads.map((thread) => ({
+              ...thread,
+              comments: thread.comments.map((comment) => ({
+                ...comment,
+                ...edited(comment.id),
+                reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+              })),
+            })),
+            commits,
+          };
+        }),
       ),
 
     // Straight from the host, never the shared read: this is what a write is refused or let
