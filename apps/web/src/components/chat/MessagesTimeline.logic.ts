@@ -592,7 +592,6 @@ type MessagesTimelineRowContent =
       /** False when the fold holds only what its ending line already says. */
       foldable: boolean;
       failureMessage: string | null;
-      failureResetAt: string | null;
       noticeMessage: string | null;
     }
   | {
@@ -767,7 +766,6 @@ interface TurnFold {
    */
   endingEntryIds: ReadonlySet<string>;
   failureMessage: string | null;
-  failureResetAt: string | null;
   noticeMessage: string | null;
 }
 
@@ -1294,7 +1292,6 @@ function deriveTurnFolds(input: {
     const hiddenEntryIds = new Set<string>();
     const endingEntryIds = new Set<string>();
     let failureMessage: string | null = null;
-    let failureResetAt: string | null = null;
     let noticeMessage: string | null = null;
     const terminalEntryIndex = group.terminalEntry
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
@@ -1308,13 +1305,7 @@ function deriveTurnFolds(input: {
         const notice =
           entry.kind === "work" && entry.entry.itemType === "system_notice" ? entry.entry : null;
         if (failedItem !== null || notice !== null) {
-          if (failedItem !== null) {
-            failureMessage = failedItem.failure.message;
-            failureResetAt =
-              failedItem.failure.class === "usage_limit"
-                ? (failedItem.failure.resetAt ?? null)
-                : null;
-          }
+          if (failedItem !== null) failureMessage = failedItem.failure.message;
           if (notice !== null) noticeMessage = notice.label;
           hiddenEntryIds.add(entry.id);
           endingEntryIds.add(entry.id);
@@ -1406,7 +1397,6 @@ function deriveTurnFolds(input: {
       diff,
       endingEntryIds,
       failureMessage,
-      failureResetAt,
       noticeMessage,
     });
   }
@@ -2019,7 +2009,6 @@ export function deriveMessagesTimelineRows(input: {
           (entryId) => !turnFold.endingEntryIds.has(entryId),
         ),
         failureMessage: turnFold.failureMessage,
-        failureResetAt: turnFold.failureResetAt,
         noticeMessage: turnFold.noticeMessage,
       });
     }
@@ -2589,6 +2578,7 @@ export interface WorkingWindow {
   readonly retryAttempt: number | null;
   /** Stop was requested and the provider has not let go yet. */
   readonly stopping: boolean;
+  readonly answering: boolean;
   readonly historyOpen: boolean;
   /** A standalone /compact owns its progress row and clock. */
   readonly compactCommand?: boolean;
@@ -2620,6 +2610,7 @@ function sameWorkingWindow(a: WorkingWindow | undefined, b: WorkingWindow | unde
     a.key === b.key &&
     a.historyOpen === b.historyOpen &&
     a.stopping === b.stopping &&
+    a.answering === b.answering &&
     a.compactCommand === b.compactCommand &&
     a.retryAttempt === b.retryAttempt &&
     a.failedTests?.count === b.failedTests?.count &&
@@ -2700,9 +2691,9 @@ function rowIsReplacedByWindow(row: MessagesTimelineRow, ids: ReadonlySet<string
 }
 
 /**
- * Moves the running turn's work under the working bar. Tool calls, commentary
- * and subagents become window items. The bar sits after the latest steer;
- * steers and the replies they answered stay above it in timeline order.
+ * Moves the running turn's tool calls, commentary and subagents under the working
+ * bar. Trailing text stays below it as the answer. The bar sits after the latest
+ * steer; steers and their replies stay above it in timeline order.
  * Everything else (plans, resource cards, notices) keeps its row.
  */
 export function applyWorkingWindow(
@@ -2826,6 +2817,7 @@ export function applyWorkingWindow(
     }
   }
 
+  const answer = items.at(-1)?.kind === "text" ? items.pop() : undefined;
   const ids = collectWindowIds(items);
   const windowStartIndex = Math.max(
     workingIndex,
@@ -2845,6 +2837,7 @@ export function applyWorkingWindow(
     failedTests: deriveFailedTests(items),
     retryAttempt: deriveRetryAttempt(items),
     stopping: interruptRequested && !interruptSettled,
+    answering: answer?.kind === "text" && answer.message.streaming,
     historyOpen: historyOpenKey === key,
   };
   return [
@@ -2923,6 +2916,8 @@ export function applyBackgroundActivityGroups(
   }
   for (const runId of excluded) notifications.delete(runId);
   if (notifications.size === 0) return rows;
+  const pendingRunId =
+    activeRunId !== null && ![...entryRuns.values()].includes(activeRunId) ? activeRunId : null;
   const previousGroupIds = new Map<RunId, string>();
   for (const row of previousRows) {
     if (row.kind !== "background-activity") continue;
@@ -2971,9 +2966,11 @@ export function applyBackgroundActivityGroups(
     while (index < rows.length) {
       const nextRow = rows[index]!;
       const nextRunId = rowRunId(nextRow);
-      if (nextRunId === null || !notifications.has(nextRunId)) break;
+      if (nextRunId === null || (!notifications.has(nextRunId) && nextRunId !== pendingRunId)) {
+        break;
+      }
       runIds.add(nextRunId);
-      const update = notifications.get(nextRunId)!.get(nextRow.id);
+      const update = notifications.get(nextRunId)?.get(nextRow.id);
       if (update) {
         updateIds.add(nextRow.id);
         updates.push(update);
@@ -3004,17 +3001,12 @@ export function applyBackgroundActivityGroups(
     if (expanded) {
       result.push(...groupRows);
     } else {
-      const lastRunId = [...runIds].at(-1);
-      const finalAnswer =
-        activeRunId === lastRunId
-          ? undefined
-          : groupRows.findLast(
-              (row) =>
-                row.kind === "message" &&
-                row.message.role === "assistant" &&
-                row.message.runId === lastRunId &&
-                !row.message.streaming,
-            );
+      const finalAnswer = groupRows.findLast(
+        (row) =>
+          row.kind === "message" &&
+          row.message.role === "assistant" &&
+          (row.message.runId === activeRunId || !row.message.streaming),
+      );
       if (finalAnswer?.kind === "message") {
         result.push(
           ...groupRows.filter(

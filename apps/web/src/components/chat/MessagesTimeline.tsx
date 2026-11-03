@@ -1774,13 +1774,8 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   const isLatestRun = latestRunId === row.runId;
   // One line says why the run failed: its error, unless the composer banner
   // already does, then the provider notice that carries the limit's reset.
-  const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const resetTime = row.failureResetAt
-    ? `${formatUpcomingTimestamp(row.failureResetAt, ctx.timestampFormat, undefined, timeZone)} (${timeZone})`
-    : null;
-  const failureLine = resetTime
-    ? `Usage limit reached. Retry after ${resetTime}.`
-    : row.failureMessage !== null && !(isLatestRun && row.failureMessage === threadErrorMessage)
+  const failureLine =
+    row.failureMessage !== null && !(isLatestRun && row.failureMessage === threadErrorMessage)
       ? row.failureMessage
       : row.noticeMessage;
   const labelClassName = cn(
