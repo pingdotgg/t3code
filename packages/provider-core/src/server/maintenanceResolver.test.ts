@@ -1,12 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { expect, it } from "@effect/vitest";
 import * as NodeFS from "node:fs";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -44,8 +45,8 @@ const driver = (value: string) => ProviderDriverKind.make(value);
 // Shell stubs use POSIX paths; Windows temp paths cannot split on colon.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 const makeTempDir = (name: string) =>
-  Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) => crypto.randomUUIDv4()),
+  SecureRandom.SecureRandom.pipe(
+    Effect.flatMap((random) => random.uuidV4()),
     Effect.map((id) => NodePath.join(NodeFS.realpathSync(NodeOS.tmpdir()), `${name}-${id}`)),
   );
 const isNativeTestCommandPath =
@@ -131,7 +132,11 @@ function stdoutSpawner(
 }
 
 it.layer(
-  NodeServices.layer.pipe(Layer.merge(Layer.succeed(HostProcess.Environment, { PATH: "" }))),
+  Layer.mergeAll(
+    NodeServices.layer,
+    NodeCrypto.layer,
+    Layer.succeed(HostProcess.Environment, { PATH: "" }),
+  ),
 )("providerMaintenance", (it) => {
   it.effect("prefers the installer's own latest version over the npm registry", () =>
     resolveLatestProviderVersion({ ...manualPackageTool, latestVersion: "1.2.0" }).pipe(
@@ -706,7 +711,7 @@ it.layer(
           maintenanceCapabilities: capabilities,
         }),
       ).toMatchObject({ status: "current", canUpdate: false, canInstallVersion: false });
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("stays unknown when choco search fails instead of asking npm", () =>
@@ -737,7 +742,7 @@ it.layer(
       );
 
       expect(latest).toBeNull();
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect.each([
@@ -1431,6 +1436,26 @@ it.layer(
           env: { PATH: "" },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
         expect(mise.update).toBeNull();
+
+        // A mise command wrapper is a symlink to the mise binary, not to the tool.
+        const miseBinary = NodePath.join(tempDir, "usr", "bin", "mise");
+        writeExecutable(miseBinary);
+        const wrapper = NodePath.join(
+          tempDir,
+          ".local",
+          "share",
+          "mise",
+          "command-wrappers",
+          "bin",
+          "package-tool",
+        );
+        NodeFS.mkdirSync(NodePath.dirname(wrapper), { recursive: true });
+        NodeFS.symlinkSync(miseBinary, wrapper);
+        const viaWrapper = yield* resolveProviderMaintenanceCapabilitiesEffect(selfUpdating, {
+          binaryPath: wrapper,
+          env: { PATH: "" },
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+        expect(viaWrapper.update).toBeNull();
       }),
   );
 
