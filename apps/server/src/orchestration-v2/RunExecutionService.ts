@@ -1324,6 +1324,7 @@ export const layer: Layer.Layer<
         // Serializes routing and ingestion with idle flushes, so a flushed snapshot can never land
         // after a newer or final one, or after its child moved to another run.
         const ingestLock = yield* Semaphore.make(1);
+        // Untraced: runs per provider event and per idle flush, so a span per call would add noise.
         const ingestDelivered = Effect.fnUntraced(function* (
           event: ProviderAdapter.ProviderAdapterV2Event,
           deliveredEvent: ProviderAdapter.ProviderAdapterV2Event,

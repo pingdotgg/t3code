@@ -158,13 +158,13 @@ const seedParentWithTerminalTask = (input: {
   readonly runId: RunId;
   readonly rootNodeId: NodeId;
   readonly taskId: NodeId;
-  readonly deliveryState: "delivered" | "claimed" | "acknowledged" | "disposed";
+  readonly deliveryState: "delivered" | "claimed" | "acknowledged" | "disposed" | "pending";
   readonly completionWake?: "always" | "settled_only";
   readonly deliveryTaskIds?: ReadonlyArray<NodeId>;
   readonly parentRunStatus?: "running" | "completed";
   readonly siblingTasks?: ReadonlyArray<{
     readonly id: NodeId;
-    readonly deliveryState: "delivered" | "claimed";
+    readonly deliveryState: "delivered" | "claimed" | "pending";
   }>;
   readonly now: DateTime.Utc;
 }) =>
@@ -455,6 +455,93 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         assert.equal(lateTask.completionDelivery?.state, "disposed");
         assert.deepEqual(finished.runs, newer.runs);
         assert.deepEqual(finished.messages, newer.messages);
+      }),
+  );
+
+  it.effect(
+    "an interrupted wake with an open cohort preserves undelivered sibling tasks for successor delivery",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("open-cohort-wake-parent");
+        const originRunId = RunId.make("open-cohort-wake-origin");
+        const carriedTaskId = NodeId.make("open-cohort-wake-carried");
+        const siblingTaskId = NodeId.make("open-cohort-wake-sibling");
+
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId: ProjectId.make("open-cohort-wake-project"),
+          runId: originRunId,
+          rootNodeId: NodeId.make("open-cohort-wake-root"),
+          taskId: carriedTaskId,
+          deliveryState: "claimed",
+          deliveryTaskIds: [carriedTaskId],
+          completionWake: "always",
+          siblingTasks: [
+            {
+              id: siblingTaskId,
+              deliveryState: "pending",
+            },
+          ],
+          now,
+        });
+
+        const origin = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* sink.write({
+          events: [
+            {
+              ...runEvent({ threadId, runId: originRunId, ordinal: 1, status: "completed", now }),
+              payload: { ...origin, status: "completed", completedAt: now },
+            },
+          ],
+        });
+
+        const delivery = origin.delegatedCompletion!.delivery!;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "server",
+          commandId: CommandId.make("open-cohort-wake-start"),
+          threadId,
+          messageId: delivery.messageId,
+          text: "Delegated task completed",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+          delegatedCompletion: {
+            parentRunId: originRunId,
+            generation: delivery.generation,
+            taskIds: delivery.taskIds,
+          },
+        });
+        yield* orchestrator.resumeQueuedRuns;
+
+        const wake = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === delivery.messageId,
+        )!;
+
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("open-cohort-wake-interrupt"),
+          threadId,
+          runId: wake.id,
+        });
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const interruptedWake = projection.runs.find((run) => run.id === wake.id)!;
+        assert.equal(interruptedWake.status, "interrupted");
+
+        const parentRun = projection.runs.find((run) => run.id === originRunId)!;
+        assert.equal(parentRun.delegatedCompletion?.disposition, "open");
+
+        const carried = projection.subagents.find((task) => task.id === carriedTaskId)!;
+        assert.equal(carried.completionDelivery?.state, "disposed");
+
+        const sibling = projection.subagents.find((task) => task.id === siblingTaskId)!;
+        assert.equal(sibling.completionDelivery?.state, "claimed");
+        assert.deepEqual(parentRun.delegatedCompletion?.delivery?.taskIds, [siblingTaskId]);
       }),
   );
 
