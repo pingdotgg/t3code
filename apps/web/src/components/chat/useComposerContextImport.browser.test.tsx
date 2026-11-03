@@ -250,7 +250,7 @@ it.each([false, true])(
     });
     expect(Object.fromEntries(remapped)).toEqual({
       [unlinked.contextId]: {
-        markdown: "[Thread remote](https://app.t3.codes/threads/unlinked-source/remote)",
+        markdown: "[Thread remote](t3-thread://v2/unlinked-source/remote)",
       },
       [linked.contextId]: linked.contextId,
     });

@@ -521,7 +521,7 @@ describe("threadLinkContextReferences", () => {
       () => "Here",
     );
     expect(pasted.records).toEqual([copied, threadContextRecord(thread("env-9", "t9"), "Here")]);
-    for (const threadId of ["a)b", "a b", "a>b", "a%29b"]) {
+    for (const threadId of ["a)b", "a b", "a>b", "a%29b", ".", ".."]) {
       const record = threadContextRecord(thread("env-1", threadId), "Copied title");
       expect(
         threadLinkContextReferences(unreadableThreadContextLink(record), [], () => undefined)
