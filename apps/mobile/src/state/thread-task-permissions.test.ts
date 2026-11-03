@@ -142,6 +142,8 @@ vi.mock("./use-composer-drafts", async () => {
     composerDraftsAtom: Atom.make({}),
     composerContextImportsAtom: Atom.make({}),
     getComposerDraftSnapshot: () => state.draft,
+    isFreshSessionPending: () => false,
+    setFreshSessionPending: vi.fn(),
     clearComposerDraftContent: state.clearDraft,
     clearComposerDraft: state.clearDraft,
     setComposerDraftText: (_key: string, text: string) => {
