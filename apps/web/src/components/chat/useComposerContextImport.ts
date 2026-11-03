@@ -322,12 +322,13 @@ export function useComposerContextImport(input: {
       const record = asKnownContextRecord(candidate);
       if (!record) continue;
       // A reminted annotation needs its screenshot under the new annotation id.
-      const existing = dependentAttachmentLocalIds.has(record.contextId)
+      const existingId = dependentAttachmentLocalIds.has(record.contextId)
         ? undefined
-        : composerContextImportLookupIds(record).flatMap((contextId) => {
-            const found = composerContextRecords.get(contextId);
-            return found ? [found] : [];
-          })[0];
+        : composerContextImportLookupIds(record).find((contextId) =>
+            composerContextRecords.has(contextId),
+          );
+      const existing =
+        existingId === undefined ? undefined : composerContextRecords.get(existingId);
       // Upload completion can change the server id since copy; the local bytes still match.
       if (
         sourceEnvironmentId !== null &&
@@ -336,8 +337,10 @@ export function useComposerContextImport(input: {
         existing.record.file !== null &&
         existing.record.file ===
           copiedComposerAttachmentFile(sourceEnvironmentId, record.attachmentId)
-      )
+      ) {
+        rewritten.set(record.contextId, existingId ?? record.contextId);
         continue;
+      }
       const existingRecord =
         existing?.kind === "terminal"
           ? terminalContextRecord(existing.record)
@@ -364,6 +367,8 @@ export function useComposerContextImport(input: {
         if (record.kind === "preview-annotation" && record.screenshotContextId) {
           skippedDependentAttachmentIds.add(record.screenshotContextId);
         }
+        // The draft may hold the record under its kind-scoped alias.
+        rewritten.set(record.contextId, existingId ?? record.contextId);
         continue;
       }
       const conflicts = existing !== undefined;

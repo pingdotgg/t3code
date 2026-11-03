@@ -274,6 +274,28 @@ it("imports a pasted thread from a machine this one does not link to as its tran
   expect(store.getComposerDraft(target)?.threadContexts ?? []).toEqual([]);
 });
 
+it("points a pasted duplicate at the id the draft holds it under", async () => {
+  const target = DraftId.make("clipboard-alias-duplicate");
+  const held = threadContextRecord(
+    { environmentId: EnvironmentId.make("clipboard-target"), threadId: ThreadId.make("alias") },
+    "Alias thread",
+  );
+  const pasted = { ...held, contextId: ComposerContextId.make("alias") };
+  let importer!: Importer;
+  await using _screen = await render(
+    <Harness
+      input={{
+        ...importInput(target, { current: "" }),
+        composerContextRecords: new Map([[held.contextId, { kind: "thread", record: held }]]),
+      }}
+      ready={(value) => {
+        importer = value;
+      }}
+    />,
+  );
+  expect(importer.importContextRecords([pasted], null).get("alias")).toBe(held.contextId);
+});
+
 // A stash restores into the prompt behind an open question, not into the question's answer.
 it("imports a restored thread's transcript into the draft the restore names", async () => {
   const target = DraftId.make("stash-unlinked-thread");
