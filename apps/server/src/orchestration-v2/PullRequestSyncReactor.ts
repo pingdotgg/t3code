@@ -250,7 +250,7 @@ function snapshotFieldsEqual(left: SnapshotFields, right: SnapshotFields): boole
     left.headBranch === right.headBranch &&
     left.baseBranch === right.baseBranch &&
     left.isDraft === right.isDraft &&
-    (left.isInMergeQueue === true) === (right.isInMergeQueue === true) &&
+    left.isInMergeQueue === right.isInMergeQueue &&
     left.updatedAt === right.updatedAt &&
     (left.closedAt ?? null) === (right.closedAt ?? null) &&
     (left.mergedAt ?? null) === (right.mergedAt ?? null) &&

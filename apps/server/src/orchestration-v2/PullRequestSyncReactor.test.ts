@@ -1053,24 +1053,30 @@ describe("PullRequestSyncReactor", () => {
   );
 
   it.effect.each([
-    { field: "isDraft", value: true },
-    { field: "isDraft", value: false },
-    { field: "isInMergeQueue", value: true },
-    { field: "isInMergeQueue", value: false },
+    { field: "isDraft", value: true, before: false },
+    { field: "isDraft", value: false, before: true },
+    { field: "isInMergeQueue", value: true, before: false },
+    { field: "isInMergeQueue", value: false, before: true },
+    // Snapshots saved before the field existed have no value to compare against.
+    { field: "isInMergeQueue", value: false, before: undefined },
   ] as const)(
-    "syncs linked $field $value as soon as a reader reports a change",
-    ({ field, value }) =>
+    "syncs linked $field from $before to $value as soon as a reader reports a change",
+    ({ field, value, before }) =>
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
-        const current = yield* Ref.make(!value);
+        const current = yield* Ref.make<boolean | undefined>(before);
         const invalidated = yield* Ref.make<ReadonlyArray<number>>([]);
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([
-            makeThread("agent", { pullRequests: [makeLink(7, { [field]: !value })] }),
+            makeThread("agent", {
+              pullRequests: [makeLink(7, before === undefined ? {} : { [field]: before })],
+            }),
           ]),
           summary: (input) =>
             Ref.get(current).pipe(
-              Effect.map((reading) => makeSummary(input, { [field]: reading })),
+              Effect.map((reading) =>
+                makeSummary(input, reading === undefined ? {} : { [field]: reading }),
+              ),
             ),
           invalidate: ({ reference }) =>
             Ref.update(invalidated, (numbers) => [...numbers, reference?.number ?? -1]),
