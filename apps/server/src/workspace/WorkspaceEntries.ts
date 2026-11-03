@@ -306,7 +306,7 @@ export const make = Effect.gen(function* () {
                   relativePath: directoryPath,
                 })
                 .pipe(Effect.mapError(toError));
-        const { entries, throughSymlink } = yield* Effect.tryPromise({
+        const { entries, throughSymlink, nestedGitRoots } = yield* Effect.tryPromise({
           try: async () => {
             const root = await NodeFSP.realpath(normalizedCwd);
             const directory = await NodeFSP.realpath(target.absolutePath);
@@ -378,7 +378,17 @@ export const make = Effect.gen(function* () {
                 )),
               );
             }
+            const nestedGitRoots: Array<string> = [];
+            const segments = target.relativePath.split("/").filter(Boolean);
+            for (let index = 1; index <= segments.length; index += 1) {
+              const candidate = segments.slice(0, index).join("/");
+              const dotGit = await NodeFSP.lstat(path.join(normalizedCwd, candidate, ".git")).catch(
+                () => null,
+              );
+              if (dotGit) nestedGitRoots.push(candidate);
+            }
             return {
+              nestedGitRoots,
               entries: children.flatMap((child, index): ProjectEntry[] => {
                 const kind = kinds[index];
                 if (kind === undefined) return [];
@@ -395,6 +405,8 @@ export const make = Effect.gen(function* () {
           },
           catch: toError,
         });
+        let gitRoot = "";
+        let gitPrefix = "";
         // stdin avoids argument limits; ignore classification is optional without git/repositories.
         const checkIgnore = (paths: ReadonlyArray<string>) =>
           vcsProcess
@@ -402,20 +414,27 @@ export const make = Effect.gen(function* () {
               operation: "WorkspaceEntries.list",
               command: "git",
               args: ["-c", "core.fsmonitor=false", "check-ignore", "-z", "--stdin"],
-              cwd: normalizedCwd,
-              stdin: `${paths.join("\0")}\0`,
+              cwd: path.join(normalizedCwd, gitRoot),
+              stdin: `${paths.map((entryPath) => entryPath.slice(gitPrefix.length)).join("\0")}\0`,
               allowNonZeroExit: true,
               timeoutMs: 10_000,
               maxOutputBytes: 16 * 1024 * 1024,
             })
             .pipe(Effect.orElseSucceed(() => undefined));
+        // Git refuses paths inside a submodule (128) but still answers for nested clones.
+        for (const nestedGitRoot of nestedGitRoots) {
+          if ((yield* checkIgnore([`${nestedGitRoot}/.git`]))?.exitCode !== 128) continue;
+          gitRoot = nestedGitRoot;
+          gitPrefix = `${gitRoot}/`;
+        }
+        const directoryGitPath = target.relativePath.slice(gitPrefix.length);
         // Check ignored folders once to avoid child index lookups; exit 0 guarantees no tracked descendants.
         // Symlinks and pathspec magic still need per-child checks.
         if (
           entries.length > IGNORE_CHECK_CHUNK_SIZE &&
-          target.relativePath !== "" &&
+          directoryGitPath !== "" &&
           !throughSymlink &&
-          !/^:|[*?[\\]/.test(target.relativePath) &&
+          !/^:|[*?[\\]/.test(directoryGitPath) &&
           (yield* checkIgnore([target.relativePath]))?.exitCode === 0
         ) {
           return {
@@ -429,7 +448,7 @@ export const make = Effect.gen(function* () {
             entries.slice(offset, offset + IGNORE_CHECK_CHUNK_SIZE).map((entry) => entry.path),
           );
           if (!result || (result.exitCode !== 0 && result.exitCode !== 1)) break;
-          for (const ignoredPath of result.stdout.split("\0")) ignored.add(ignoredPath);
+          for (const ignoredPath of result.stdout.split("\0")) ignored.add(gitPrefix + ignoredPath);
         }
         return {
           entries: entries.map((entry) =>
