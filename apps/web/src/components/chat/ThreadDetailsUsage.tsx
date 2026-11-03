@@ -5,7 +5,7 @@ import type {
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
-  collectProviderUsageLimits,
+  resolveProviderUsageLimits,
   elapsedShare,
   formatDuration,
   type LimitPace,
@@ -23,7 +23,7 @@ import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import { formatContextWindowCompactionMessage } from "./ContextWindowMeter.logic";
+import { ContextWindowMeter } from "./ContextWindowMeter";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
 const PACE_LABEL: Record<LimitPace, string> = {
@@ -47,13 +47,10 @@ export function ThreadDetailsUsage({
 }: Omit<ThreadDetailsUsageInput, "contextWindow">) {
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
-  const report =
-    providerInstanceId !== null
-      ? collectProviderUsageLimits(providerInstanceId, providers, sources, now)
-      : null;
   const limits =
-    report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
-    providers.find((provider) => provider.instanceId === providerInstanceId)?.usageLimits;
+    providerInstanceId !== null
+      ? resolveProviderUsageLimits(providerInstanceId, providers, sources)
+      : undefined;
   const notice = limits ? limitsNotice(limits) : "This provider has not reported usage limits.";
   return (
     <ThreadDetailsSection title="Usage limits" variant="usage">
@@ -85,35 +82,82 @@ export function ThreadDetailsContext({
   readonly compactDisabled?: boolean | undefined;
   readonly compactDisabledReason?: string | null | undefined;
 }) {
-  const maxTokens = usage?.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
-  const used =
-    maxTokens !== null && usage?.usedPercentage != null
-      ? Math.round(Math.max(0, Math.min(100, usage.usedPercentage)))
-      : null;
-  const threshold = usage?.autoCompactThreshold ?? null;
+  if (!usage) {
+    return (
+      <ThreadDetailsSection title="Context window" variant="usage">
+        <UsageRow
+          label="Context"
+          icon={<GaugeIcon />}
+          fill={null}
+          tone={null}
+          value="N/A"
+          tooltip="The provider has not reported context usage."
+        />
+      </ThreadDetailsSection>
+    );
+  }
+  const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
+  const used = maxTokens !== null ? Math.max(0, Math.min(100, usage.usedPercentage ?? 0)) : null;
+  const threshold = usage.autoCompactThreshold ?? null;
   const tick =
     maxTokens !== null && threshold !== null && threshold > 0 && threshold < maxTokens
       ? (threshold / maxTokens) * 100
       : null;
-  const usedTokens = usage ? formatContextWindowTokens(usage.usedTokens) : null;
+  const tokens =
+    maxTokens !== null
+      ? `${formatContextWindowTokens(usage.usedTokens)} / ${formatContextWindowTokens(maxTokens)}`
+      : `${formatContextWindowTokens(usage.usedTokens)} tokens`;
   return (
     <ThreadDetailsSection title="Context window" variant="usage">
-      <UsageRow
-        label="Context"
-        icon={<GaugeIcon />}
-        fill={used}
-        tick={tick}
-        tone={used === null ? null : used >= 90 ? "error" : used >= 80 ? "warning" : null}
-        value={used !== null ? `${used}%` : (usedTokens ?? "N/A")}
-        ariaValue={
-          used !== null
-            ? `${used}% used`
-            : usedTokens
-              ? `${usedTokens} tokens used`
-              : "Not reported"
-        }
-        trailing={
-          onCompact && usage ? (
+      <div className="flex min-h-11 items-center gap-2 ps-3 pe-2 text-meta">
+        <ContextWindowMeter
+          usage={usage}
+          side="left"
+          onCompact={onCompact}
+          compactDisabled={compactDisabled}
+          compactDisabledReason={compactDisabledReason}
+          trigger={
+            <ThreadDetailsControl
+              part="heading"
+              aria-label={`Context: ${tokens}${maxTokens !== null ? " tokens" : ""}${used !== null ? `, ${Math.round(used)}% used` : " used"}`}
+            >
+              <GaugeIcon className="size-4 shrink-0" />
+              <span className="flex min-w-0 flex-1 flex-col gap-1 text-meta">
+                <span className="flex items-center justify-between gap-2 text-foreground">
+                  <span>Context</span>
+                  {used !== null ? (
+                    <span className="tabular-nums text-muted-foreground">{Math.round(used)}%</span>
+                  ) : null}
+                </span>
+                <span className="flex items-center gap-2">
+                  {used !== null ? (
+                    <span className="relative h-1 min-w-0 flex-1 rounded-full bg-muted-foreground/20">
+                      <span
+                        className={cn(
+                          "absolute inset-y-0 left-0 rounded-full",
+                          used >= 90 ? "bg-error" : used >= 80 ? "bg-warning" : "bg-foreground/80",
+                        )}
+                        style={{ width: used > 0 ? `max(${used}%, 2px)` : "0%" }}
+                      />
+                      {tick !== null ? (
+                        <span
+                          aria-hidden
+                          className="absolute -top-[3px] h-2.5 w-0.5 rounded-sm bg-muted-foreground"
+                          style={{ left: `${tick}%` }}
+                        />
+                      ) : null}
+                    </span>
+                  ) : null}
+                  <span className="shrink-0 text-caption tabular-nums text-muted-foreground">
+                    {tokens}
+                  </span>
+                </span>
+              </span>
+            </ThreadDetailsControl>
+          }
+        />
+        <span className="flex w-11 shrink-0 justify-end">
+          {onCompact ? (
             <ThreadDetailsControl
               part="icon"
               aria-label="Compact context"
@@ -122,30 +166,9 @@ export function ThreadDetailsContext({
             >
               <Minimize2Icon className="size-3.5" />
             </ThreadDetailsControl>
-          ) : undefined
-        }
-        tooltip={
-          <>
-            <span className="text-foreground">
-              {used !== null
-                ? `Context: ${used}% used`
-                : usedTokens
-                  ? `Context: ${usedTokens} tokens used`
-                  : "The provider has not reported context usage."}
-            </span>
-            {usage && maxTokens !== null ? (
-              <span>
-                {usage.usedTokens.toLocaleString("en-US")} of {maxTokens.toLocaleString("en-US")}{" "}
-                tokens
-              </span>
-            ) : null}
-            {threshold !== null && threshold > 0 ? (
-              <span>{formatContextWindowCompactionMessage(null, threshold)}</span>
-            ) : null}
-            {compactDisabled && compactDisabledReason ? <span>{compactDisabledReason}</span> : null}
-          </>
-        }
-      />
+          ) : null}
+        </span>
+      </div>
     </ThreadDetailsSection>
   );
 }
