@@ -44,10 +44,11 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
       ? { ...row, phase: "stale" as const, status: "Out of date" }
       : row,
   );
-  const stale = rows.some((row) => row.phase === "stale");
+  const outOfDate = expired && rows.some((row) => row.phase === "stale");
   const activeCount = props.activeCount ?? 0;
   const accessory = environment.widgetFamily === "accessoryRectangular";
   const small = environment.widgetFamily === "systemSmall";
+  const large = environment.widgetFamily === "systemLarge";
   const hero = rows[0];
   const multiple = !small && !accessory && rows.length > 1;
   const monochrome =
@@ -91,7 +92,7 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
     const text = (
       <Text
         modifiers={[
-          font({ size: 11, weight: "medium" }),
+          font({ size: large ? 12 : 11, weight: "medium" }),
           foregroundStyle(color),
           lineLimit(1),
           ...(horizontal ? [layoutPriority(1)] : []),
@@ -115,7 +116,7 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
   return (
     <VStack
       alignment="leading"
-      spacing={accessory ? 5 : multiple ? 4 : 10}
+      spacing={accessory ? 5 : multiple ? (large ? 8 : 4) : 10}
       modifiers={[
         frame({ maxWidth: Infinity, maxHeight: Infinity, alignment: "topLeading" }),
         ...(props.baseUrl ? [widgetURL(`${props.baseUrl}${hero?.deepLink.slice(1) ?? ""}`)] : []),
@@ -123,13 +124,30 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
     >
       {multiple ? (
         rows.slice(0, 5).map((row) => (
-          <HStack key={`${row.environmentId}:${row.threadId}`} spacing={6} alignment="center">
-            <Text modifiers={[font({ size: 13, weight: "semibold" }), lineLimit(1)]}>
-              {row.threadTitle}
-            </Text>
-            <Text modifiers={[font({ size: 11 }), foregroundStyle("secondary"), lineLimit(1)]}>
-              {row.projectTitle}
-            </Text>
+          <HStack
+            key={`${row.environmentId}:${row.threadId}`}
+            spacing={large ? 10 : 6}
+            alignment="center"
+          >
+            {large ? (
+              <VStack alignment="leading" spacing={3}>
+                <Text modifiers={[font({ size: 16, weight: "semibold" }), lineLimit(2)]}>
+                  {row.threadTitle}
+                </Text>
+                <Text modifiers={[font({ size: 12 }), foregroundStyle("secondary"), lineLimit(1)]}>
+                  {row.projectTitle}
+                </Text>
+              </VStack>
+            ) : (
+              <>
+                <Text modifiers={[font({ size: 13, weight: "semibold" }), lineLimit(1)]}>
+                  {row.threadTitle}
+                </Text>
+                <Text modifiers={[font({ size: 11 }), foregroundStyle("secondary"), lineLimit(1)]}>
+                  {row.projectTitle}
+                </Text>
+              </>
+            )}
             <Spacer minLength={8} />
             {renderStatus(row, true)}
           </HStack>
@@ -191,7 +209,7 @@ function AgentActivityWidget(props: AgentActivityWidgetProps, environment: Widge
             lineLimit(1),
           ]}
         >
-          {stale
+          {outOfDate
             ? "Out of date"
             : activeCount > 0
               ? `${activeCount} active`

@@ -64,7 +64,7 @@ it("embeds an Agent Activity Home Screen layout and initial data independently o
         },
       ],
     };
-    for (const widgetFamily of ["systemSmall", "systemMedium", "accessoryRectangular"]) {
+    for (const widgetFamily of widget.ios.supportedFamilies) {
       const environment = { widgetFamily, colorScheme: "dark", widgetRenderingMode: "fullColor" };
       const initial = JSON.stringify(
         context.__expoWidgetRender(widgets.AgentActivity.initialProps, environment),
@@ -112,15 +112,31 @@ it("embeds an Agent Activity Home Screen layout and initial data independently o
         status: "Working",
       })),
     };
-    const aggregateLayout = JSON.stringify(
-      context.__expoWidgetRender(aggregate, {
-        widgetFamily: "systemMedium",
-        colorScheme: "light",
-        widgetRenderingMode: "fullColor",
-      }),
-    );
-    expect(aggregateLayout).toContain("Relay task 5");
-    expect(aggregateLayout).toContain("10 active");
+    for (const widgetFamily of ["systemMedium", "systemLarge"]) {
+      const aggregateLayout = JSON.stringify(
+        context.__expoWidgetRender(aggregate, {
+          widgetFamily,
+          colorScheme: "light",
+          widgetRenderingMode: "fullColor",
+        }),
+      );
+      expect(aggregateLayout).toContain("Relay task 5");
+      expect(aggregateLayout).toContain("10 active");
+      const waitingLayout = JSON.stringify(
+        context.__expoWidgetRender(
+          {
+            ...aggregate,
+            activities: aggregate.activities.map((row, index) =>
+              index === 0 ? { ...row, phase: "stale", status: "Waiting" } : row,
+            ),
+          },
+          { widgetFamily, colorScheme: "light", widgetRenderingMode: "fullColor" },
+        ),
+      );
+      expect(waitingLayout).toContain("Waiting");
+      expect(waitingLayout).toContain("10 active");
+      expect(waitingLayout).not.toContain("Out of date");
+    }
   } finally {
     NodeFS.rmSync(directory, { recursive: true, force: true });
   }

@@ -192,7 +192,7 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
         description: "Shows the current state of active T3 Code agents.",
         android: null,
         ios: {
-          supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
+          supportedFamilies: ["systemSmall", "systemMedium", "systemLarge", "accessoryRectangular"],
           initialLayout: "./src/widgets/AgentActivityWidget.tsx",
         },
       },
