@@ -7286,6 +7286,26 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
               ),
           ),
+          // Archived threads leave the active Codex thread list; resumeNativeThread unarchives them.
+          archiveThread: Effect.fn("CodexAdapterV2.archiveThread")(
+            function* (archiveInput) {
+              const nativeThreadId = yield* getNativeThreadId(archiveInput.providerThread);
+              sessionApprovals.delete(nativeThreadId);
+              yield* client.request("thread/archive", { threadId: nativeThreadId });
+            },
+            (effect, archiveInput) =>
+              effect.pipe(
+                Effect.mapError((cause) =>
+                  cause._tag === "ProviderAdapterProtocolError"
+                    ? cause
+                    : new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver: CODEX_PROVIDER,
+                        detail: `Failed to archive Codex thread for provider thread ${archiveInput.providerThread.id}`,
+                        cause,
+                      }),
+                ),
+              ),
+          ),
           interruptTurn: Effect.fn("CodexAdapterV2.interruptTurn")(
             function* (requestedInput) {
               const nativeThreadId = requestedInput.providerThread.nativeThreadRef?.nativeId;
