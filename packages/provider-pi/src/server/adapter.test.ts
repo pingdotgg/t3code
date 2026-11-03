@@ -4184,6 +4184,8 @@ describe("PiAdapterV2", () => {
         undefined,
         2,
       );
+      // Writes go out in order, so this round trip flushes any prompt sent before it.
+      yield* runtime.readThreadSnapshot({ providerThread });
       fake.setCompacting(false);
       const compactionEnded = fake.allRequests().length;
       assert.isFalse(
@@ -4314,6 +4316,8 @@ describe("PiAdapterV2", () => {
         });
         yield* takeEvent((event) => event.type === "runtime_request.updated");
         yield* startTurn(runtime, providerThread, "default", [], "Held prompt", undefined, 2);
+        // Writes go out in order, so this round trip flushes any prompt sent before it.
+        yield* runtime.readThreadSnapshot({ providerThread });
         assert.isFalse(
           fake
             .allRequests()
