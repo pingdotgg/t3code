@@ -31,6 +31,8 @@ describe("splitMarkdownBlocks", () => {
     "| a | b |\n| - | - |\n| 1 | 2 |\n\nAfter the table.",
     "para\n\n    indented code\n\nnext",
     "Setext\n===\n\nnext\n---\n\n- [ ] task\n- [x] done",
+    "- a\n\n  ```\n  x\n\n```\n\nb",
+    "- a\n\n  ```\n  x\n\ny\n\n  ```\n\nb",
   ])("renders each block as the whole text renders it, at every streamed prefix: %j", (text) => {
     for (let end = 0; end <= text.length; end++) {
       const source = text.slice(0, end);
