@@ -1107,7 +1107,8 @@ export const t3Default = (
     }
     case "request_secret": {
       // T3 names both a ref and a file with 32 hex characters, and keeps files in its secrets dir.
-      const id = "5f0c9e2a7b4d4183a6e1c8d2b9f07a64";
+      // Each card gets its own file, so an agent asking for several secrets sees distinct paths.
+      const id = (sample.nextTask++).toString(16).padStart(32, "0");
       const home =
         /^\/(?:home|Users)\/[^/]+/.exec(sample.base.environment.cwd)?.[0] ?? "/home/user";
       return input.delivery === "file"
