@@ -14,6 +14,9 @@ const SENT_KEY = "t3code:github-star-prompt:sent";
 const DISMISSED_KEY = "t3code:github-star-prompt:dismissed";
 const REPOSITORY = "pingdotgg/t3code";
 const PROMPTS_BEFORE_ASKING = 5;
+const IDLE_MS = 30_000;
+// Every user-driven action (send, navigate, type, scroll) starts with one of these.
+const ACTIVITY_EVENTS = ["pointerdown", "keydown", "wheel", "touchstart", "focus"] as const;
 
 let shownThisSession = false;
 
@@ -49,6 +52,26 @@ function showStarPrompt() {
   });
 }
 
+// Resolves after IDLE_MS without input while this window has focus.
+function waitForIdle() {
+  return new Promise<void>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const restart = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        // Input inside another app or an embedded frame never reaches us; the next focus restarts.
+        if (!document.hasFocus() || document.activeElement?.matches("iframe, webview")) return;
+        for (const type of ACTIVITY_EVENTS) window.removeEventListener(type, restart, true);
+        resolve();
+      }, IDLE_MS);
+    };
+    for (const type of ACTIVITY_EVENTS) {
+      window.addEventListener(type, restart, { capture: true, passive: true });
+    }
+    restart();
+  });
+}
+
 // The server's GitHub account stands in for the user's; it may not be theirs on a shared server.
 async function alreadyStarred(environmentId: EnvironmentId) {
   const result = await runAtomCommand(
@@ -69,7 +92,7 @@ async function alreadyStarred(environmentId: EnvironmentId) {
 
 /**
  * Counts a sent prompt. After more than five, asks once per session for a star until dismissed,
- * unless the environment's GitHub account already starred the repo.
+ * unless the environment's GitHub account already starred the repo. Waits until the user is idle.
  */
 export async function recordPromptSent(environmentId: EnvironmentId): Promise<void> {
   if (shownThisSession) return;
@@ -86,8 +109,9 @@ export async function recordPromptSent(environmentId: EnvironmentId): Promise<vo
   const starred = await alreadyStarred(environmentId);
   if (starred === undefined) return;
   if (starred) return dismiss();
+  await waitForIdle();
   try {
-    // Another tab can dismiss while the check runs.
+    // Another tab can dismiss while the check or the idle wait runs.
     if (getLocalStorageItem(DISMISSED_KEY, Schema.Boolean)) return;
   } catch {
     return;

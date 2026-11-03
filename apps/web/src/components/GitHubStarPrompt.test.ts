@@ -3,9 +3,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { toastManager } from "./ui/toast";
 
-const { add, starred } = vi.hoisted(() => ({
+const { add, starred, page } = vi.hoisted(() => ({
   add: vi.fn<typeof toastManager.add>(),
   starred: { value: false, failed: false, duringCheck: () => {} },
+  page: { focused: true, events: new EventTarget() },
 }));
 vi.mock("./ui/toast", () => ({ toastManager: { add, close: vi.fn() } }));
 vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
@@ -18,14 +19,20 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
 }));
 
 const environmentId = EnvironmentId.make("environment-1");
+const IDLE_MS = 30_000;
 
 function setup({ sent = 0, writable = true, alreadyStarred = false } = {}) {
   add.mockReset();
   starred.value = alreadyStarred;
   starred.failed = false;
   starred.duringCheck = () => {};
+  page.focused = true;
+  page.events = new EventTarget();
   const store = new Map([["t3code:github-star-prompt:sent", String(sent)]]);
+  vi.stubGlobal("document", { hasFocus: () => page.focused, activeElement: null });
   vi.stubGlobal("window", {
+    addEventListener: page.events.addEventListener.bind(page.events),
+    removeEventListener: page.events.removeEventListener.bind(page.events),
     localStorage: {
       getItem: (key: string) => store.get(key) ?? null,
       setItem: (key: string, value: string) => {
@@ -41,10 +48,39 @@ function setup({ sent = 0, writable = true, alreadyStarred = false } = {}) {
 async function startSession() {
   vi.resetModules();
   const session = await import("./GitHubStarPrompt");
-  return { send: () => session.recordPromptSent(environmentId) };
+  return {
+    // Sends a prompt, then leaves the page idle long enough to ask.
+    send: async () => {
+      const sent = session.recordPromptSent(environmentId);
+      await vi.advanceTimersByTimeAsync(IDLE_MS);
+      await sent;
+    },
+    sendWithoutWaiting: () => void session.recordPromptSent(environmentId),
+  };
 }
 
 describe("recordPromptSent", () => {
+  vi.useFakeTimers();
+
+  it("asks only after the focused page is idle", async () => {
+    setup({ sent: 5 });
+    (await startSession()).sendWithoutWaiting();
+    await vi.advanceTimersByTimeAsync(IDLE_MS - 1);
+    page.events.dispatchEvent(new Event("keydown"));
+    await vi.advanceTimersByTimeAsync(IDLE_MS - 1);
+    expect(add).not.toHaveBeenCalled();
+
+    page.focused = false;
+    await vi.advanceTimersByTimeAsync(IDLE_MS);
+    expect(add).not.toHaveBeenCalled();
+
+    page.focused = true;
+    page.events.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(IDLE_MS);
+    expect(add).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
+
   it("asks after five prompts, once per session, and never again once closed", async () => {
     setup();
     let session = await startSession();
