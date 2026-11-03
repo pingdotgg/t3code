@@ -205,8 +205,8 @@ describe("useDraftEnvironmentRouting", () => {
 
     // Re-arming Auto retries the failed open.
     await userEvent.click(screen.getByRole("button", { name: "Auto balance" }));
-    expect(opened()).toEqual([machineA, machineB, machineB]);
     await expect.element(screen.getByText("Preparing machine")).toBeInTheDocument();
+    expect(opened()).toEqual([machineA, machineB, machineB]);
   });
 
   it("keeps a machine pin set elsewhere while an Auto open is still in flight", async () => {
