@@ -1,6 +1,6 @@
 import type { ServerConfigStreamEvent } from "@t3tools/contracts";
 
-const KEYBINDINGS_SUCCESS_TOAST_COOLDOWN_MS = 2_000;
+const KEYBINDINGS_TOAST_COOLDOWN_MS = 2_000;
 
 export type KeybindingsUpdateToastDecision =
   | { readonly _tag: "Success" }
@@ -14,7 +14,7 @@ export function createKeybindingsUpdateToastController(input: {
   readonly now?: () => number;
 }): KeybindingsUpdateToastController {
   const now = input.now ?? Date.now;
-  let lastSuccessToastAt: number | null = null;
+  let lastToast: { readonly key: string; readonly at: number } | null = null;
 
   return {
     handle: (event) => {
@@ -23,23 +23,24 @@ export function createKeybindingsUpdateToastController(input: {
       }
 
       const issue = event.payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
-      if (issue) {
-        return {
-          _tag: "InvalidConfiguration",
-          message: issue.message,
-        };
-      }
+      const decision: KeybindingsUpdateToastDecision = issue
+        ? { _tag: "InvalidConfiguration", message: issue.message }
+        : { _tag: "Success" };
 
+      // A save and the server's file watcher each publish the same snapshot,
+      // so an identical toast inside the cooldown is the same change twice.
+      const key = issue ? `invalid:${issue.message}` : "success";
       const currentTime = now();
       if (
-        lastSuccessToastAt !== null &&
-        currentTime - lastSuccessToastAt < KEYBINDINGS_SUCCESS_TOAST_COOLDOWN_MS
+        lastToast !== null &&
+        lastToast.key === key &&
+        currentTime - lastToast.at < KEYBINDINGS_TOAST_COOLDOWN_MS
       ) {
         return null;
       }
 
-      lastSuccessToastAt = currentTime;
-      return { _tag: "Success" };
+      lastToast = { key, at: currentTime };
+      return decision;
     },
   };
 }
