@@ -74,7 +74,7 @@ export const layer = Layer.effect(
               HttpClientRequest.setBody(HttpBody.empty),
             );
           }
-          yield* Effect.scoped(Stream.toPull(response.stream));
+          yield* Effect.scoped(Effect.asVoid(Stream.toPull(response.stream)));
           request = HttpClientRequest.setUrl(request, destination);
           originalUrl = destination;
         }
