@@ -5534,6 +5534,28 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("a compaction resumed after a restart releases the user's held queue", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("runtime-layer-held-queue-resumed-compaction");
+      const { send, runFor, end, startedRunIds, releasedAfter, awaitHeld } =
+        yield* queueTestThread(threadId);
+      yield* send("cut", "agent", true);
+      yield* send("user", "user", false);
+      yield* end("cut", "failed");
+      yield* awaitHeld("user");
+      const cut = yield* runFor("cut");
+      yield* send(" /compact", "agent", true);
+      yield* end(" /compact", "completed");
+      yield* send("/compact", "agent", true);
+      assert.equal((yield* runFor("/compact")).status, "starting");
+      // A compaction that is not a continuation leaves the hold for the user.
+      assert.isTrue((yield* runFor("user")).queueHeld);
+      yield* end("/compact", "completed", "", { restartContinuationOfRunId: cut.id });
+      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("user")).id);
+      yield* releasedAfter("user", "/compact");
+    }),
+  );
+
   it.effect("keeps held agent messages while the thread's worktree setup is unresolved", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

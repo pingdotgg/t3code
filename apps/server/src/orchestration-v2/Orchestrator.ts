@@ -2356,17 +2356,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   // A hold waits for a person to review what they queued. Nobody reviews messages from agents,
   // the server or scheduled tasks, so a later completed run releases those unless it was stopped.
+  // A restart that cut a compaction held what was queued behind it; redoing it releases them all.
   const releaseUnattendedHolds = Effect.fn("Orchestrator.releaseUnattendedHolds")(function* (
     threadId: ThreadId,
-    completedRunId: RunId,
+    completedRun: OrchestrationV2Run,
   ) {
+    const completedRunId = completedRun.id;
     const held = yield* projectionStore.getHeldQueuedRuns(threadId);
     if (held.length === 0) return;
     const projection = yield* projectionStore.getThreadRecords(
       threadId,
       ["runs", "messages", "turnItems"],
       {
-        messageIds: held.map((run) => run.userMessageId),
+        messageIds: [...held.map((run) => run.userMessageId), completedRun.userMessageId],
         turnItemTypes: ["run_interrupt_request"],
         turnItemRunIds: [completedRunId],
       },
@@ -2385,8 +2387,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .filter((message) => message.createdBy !== "user" || message.scheduledTaskId !== undefined)
         .map((message) => message.id),
     );
+    const resumedCompaction =
+      completedRun.restartContinuationOfRunId !== undefined &&
+      messages.some(
+        (message) =>
+          message.id === completedRun.userMessageId && isCompactionCommandMessage(message),
+      );
     const now = yield* DateTime.now;
-    const released = held.filter((run) => unattended.has(run.userMessageId));
+    const released = resumedCompaction
+      ? held
+      : held.filter((run) => unattended.has(run.userMessageId));
     if (released.length === 0) return;
     yield* writeSystemEvents(
       released.map((run) => ({
@@ -13763,10 +13773,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* threadDispatch
           .withLock(
             threadId,
-            (run.status === "completed"
-              ? releaseUnattendedHolds(threadId, run.id)
-              : Effect.void
-            ).pipe(
+            (run.status === "completed" ? releaseUnattendedHolds(threadId, run) : Effect.void).pipe(
               Effect.andThen(
                 startNextQueuedRun(threadId, {
                   endedRunId: run.id,

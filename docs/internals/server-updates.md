@@ -87,7 +87,10 @@ cannot be overwritten by a stale cancellation.
 
 The [continuation handler](../../apps/server/src/orchestration-v2/RestartContinuation.ts)
 rechecks the preference, provider selection, newer user work, a stop the user requested,
-and maintenance turns such as `/compact` before dispatching. Intent and delivery both
+and maintenance turns before dispatching. A cut `/logout` is not repeated. A cut `/compact`
+runs again instead of receiving the continuation prompt, and its completion releases the
+queue held behind it, since that queue was waiting on the compaction rather than on a person.
+Intent and delivery both
 refuse a thread that is archived, settled, or still snoozed, a cut turn whose provider
 turn already ended, and a run waiting on the user: an approval, question, or secret that was pending,
 or that recovery closed on the cut turn. Message-capable questions stay answerable, so

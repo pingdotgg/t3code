@@ -2,6 +2,8 @@ import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  IDLE_COMPACTION_TEXT,
+  isCompactionCommandMessage,
   isOrchestrationV2WorkActive,
   latestProviderTurnForAttempt,
   MessageId,
@@ -290,7 +292,19 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const sourceMessage = sourceRecords.messages.find(
       (message) => message.id === source.userMessageId,
     );
-    if (sourceMessage !== undefined && isNativeMaintenanceCommand(sourceMessage)) return;
+    // Compaction changes nothing a repeat could double, so a cut one runs again.
+    const recompactMessage =
+      sourceMessage !== undefined &&
+      isCompactionCommandMessage(sourceMessage) &&
+      !isRestartNoteSource(source, projection.providerTurns)
+        ? sourceMessage
+        : undefined;
+    if (
+      recompactMessage === undefined &&
+      sourceMessage !== undefined &&
+      isNativeMaintenanceCommand(sourceMessage)
+    )
+      return;
     const note = restartContinuationNote(
       source,
       projection.runs,
@@ -311,19 +325,29 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         commandId: CommandId.make(`command:restart-continuation:${input.sourceRunId}`),
         threadId: input.threadId,
         messageId,
-        text,
-        notification: {
-          source: { kind: "system" },
-          outcome: "updated",
-          summary: note.settled
-            ? "T3 Code restarted and stopped background work"
-            : "T3 Code restarted and resumed this turn",
-          detail: text,
-        },
+        ...(recompactMessage === undefined
+          ? {
+              text,
+              notification: {
+                source: { kind: "system" },
+                outcome: "updated",
+                summary: note.settled
+                  ? "T3 Code restarted and stopped background work"
+                  : "T3 Code restarted and resumed this turn",
+                detail: text,
+              },
+            }
+          : {
+              text: IDLE_COMPACTION_TEXT,
+              ...(recompactMessage.idleCompaction === undefined
+                ? {}
+                : { idleCompaction: recompactMessage.idleCompaction }),
+            }),
         attachments: [],
         modelSelection: source.modelSelection,
         dispatchMode: { type: "start_immediately" },
-        createdBy: "agent",
+        // A repeated /compact keeps its author, so a person's still reads as theirs, not idle.
+        createdBy: recompactMessage?.createdBy ?? "agent",
         creationSource: "server",
         restartContinuationOfRunId: input.sourceRunId,
       })
