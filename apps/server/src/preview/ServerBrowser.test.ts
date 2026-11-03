@@ -698,6 +698,18 @@ it.effect("an agent's desktop tab's popup windows become its tabs, drawn by the 
       expect(sessions.map((session) => session.tabId)).toContain(laterTab.tabId);
       expect(sessions.map((session) => session.tabId)).not.toContain(existingTab.tabId);
 
+      const failed = makeContext(undefined, "https://example.com/failed-setup");
+      failed.newCDPSession = async () => {
+        throw new Error("Popup debugger setup failed");
+      };
+      openerPage.emit("popup", failed.page);
+      const failedTab = yield* nextOpened;
+      let closed = yield* PubSub.take(events);
+      while (closed.type !== "closed" || closed.tabId !== failedTab.tabId)
+        closed = yield* PubSub.take(events);
+      expect(failed.page.isClosed()).toBe(false);
+      expect(releasedDesktopTabs).toEqual([]);
+
       // A person's desktop tab keeps its popup windows to itself.
       desktopRendersNext = true;
       const human = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });

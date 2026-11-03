@@ -816,7 +816,7 @@ const make = Effect.gen(function* () {
     const desktop =
       connection ??
       (adopted?.native ? { page: adopted.page, close: () => adopted.page.close() } : null);
-    if (desktop) opened.push(desktop.close);
+    if (connection) opened.push(connection.close);
     // Otherwise a desktop that attaches late shows its own page, and the agent drives another.
     if (!connection && desktopChannel.available) {
       await runPromise(
@@ -1015,6 +1015,7 @@ const make = Effect.gen(function* () {
     const key = tabKey(tab.threadId, tab.tabId);
     if (closedPendingTabs.delete(key)) {
       await control.close().catch(constVoid);
+      if (adopted?.native) await page.close().catch(constVoid);
       throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
     }
     page.on("close", () => dropTab(tab, true));
