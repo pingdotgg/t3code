@@ -619,15 +619,13 @@ function SidebarRail({
 function SidebarInset({
   className,
   variant = "pane",
-  embedded = false,
   ...props
-}: React.ComponentProps<"main"> & { variant?: "pane" | "split"; embedded?: boolean }) {
+}: React.ComponentProps<"main"> & { variant?: "pane" | "split" }) {
   return (
     <main
       className={cn(
         "relative flex min-w-0 w-full flex-1 flex-col",
         variant === "pane" && "bg-background surface-grain",
-        variant === "pane" && embedded && "md:rounded-pane",
         // The inset pane (pen mSaSF) on the window chrome: 12px from the window
         // and from the sidebar's content, centered on the chrome row at the top.
         // It stretches in the flex wrapper, so the route's own height yields.
