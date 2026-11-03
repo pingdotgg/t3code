@@ -134,7 +134,7 @@ Filter with the environment dropdown to see what a single machine has.
 
 Devin accounts added through the ACP Registry show the daily and weekly allowance reported by
 your plan. Sign in to the Devin CLI on the connected environment first. Plans without a daily
-quota show only the weekly allowance. **Manage usage** opens Devin's usage dashboard.
+quota show only the weekly allowance.
 
 When a Claude or Codex account has no overall weekly quota left, its pooled session contribution
 shows 0% left. The next refill depends on both reset times: an exhausted session must also reset,

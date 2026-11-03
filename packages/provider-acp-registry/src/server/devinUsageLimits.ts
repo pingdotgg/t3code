@@ -18,7 +18,6 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const DEFAULT_API_SERVER_URL = "https://server.codeium.com";
-const DEFAULT_WEBAPP_HOST = "app.devin.ai";
 const USER_STATUS_PATH = "/exa.seat_management_pb.SeatManagementService/GetUserStatus";
 
 const tomlString = (contents: string, key: string): string | undefined =>
@@ -36,9 +35,6 @@ const GetUserStatusResponse = Schema.Struct({
             Schema.Struct({
               billingStrategy: Schema.optionalKey(Schema.String),
               hideDailyQuota: Schema.optionalKey(Schema.Boolean),
-              devinInfo: Schema.optionalKey(
-                Schema.Struct({ webappHost: Schema.optionalKey(Schema.String) }),
-              ),
             }),
           ),
           dailyQuotaRemainingPercent: Schema.optionalKey(Schema.Finite),
@@ -162,14 +158,9 @@ export const readDevinUsageLimits = Effect.fn("readDevinUsageLimits")(function* 
         new TextEncoder().encode(userId ? `devin-account\0${userId}` : `devin\0${apiKey}`),
       )
       .pipe(Effect.map(Hex.encode), Effect.orDie);
-    const webappHost =
-      planStatus.planInfo?.devinInfo?.webappHost?.trim() ||
-      tomlString(credentialsToml, "devin_webapp_host")?.trim() ||
-      DEFAULT_WEBAPP_HOST;
     return {
       ...makeUsageLimits({ checkedAt, windows }),
       credentialFingerprint,
-      externalUsage: { label: "Devin usage", url: `https://${webappHost}/settings/usage` },
     };
   }).pipe(
     Effect.timeout("10 seconds"),

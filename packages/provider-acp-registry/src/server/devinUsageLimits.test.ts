@@ -121,10 +121,7 @@ describe("readDevinUsageLimits", () => {
       expect(limits.credentialFingerprint).toBe(
         "f9d39b225610aa5f5dc0a7beafb3633c502db2035acc4daf62cb93142782493c",
       );
-      expect(limits.externalUsage).toEqual({
-        label: "Devin usage",
-        url: "https://app.devin.ai/settings/usage",
-      });
+      expect(limits).not.toHaveProperty("externalUsage");
       expect(captured).toHaveLength(1);
       expect(captured[0]?.url).toBe(
         "https://server.codeium.com/exa.seat_management_pb.SeatManagementService/GetUserStatus",
