@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /** Native and canonical views share write state to avoid races on the same thread file. */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -35,6 +36,8 @@ const MAX_RECORD_CHARACTERS = 64 * 1024;
 const MAX_RECORD_FIELDS = 1_024;
 const MAX_RECORD_DEPTH = 16;
 const GLOBAL_THREAD_SEGMENT = "_global";
+const THREAD_SEGMENT_MAX_CHARS = 80;
+const THREAD_SEGMENT_HASH_CHARS = 16;
 const LOG_SCOPE = "provider-observability";
 const encodeUnknownJsonString = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -144,9 +147,35 @@ function logWarning(message: string, context: Record<string, unknown>): Effect.E
   return Effect.logWarning(message, context).pipe(Effect.annotateLogs({ scope: LOG_SCOPE }));
 }
 
+function isSegmentEdge(character: string | undefined): boolean {
+  return character === "-" || character === "_";
+}
+
+/** Length of the attachment segment before `toSafeThreadAttachmentSegment` cuts it. */
+function uncutThreadSegmentLength(raw: string): number {
+  const sanitized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "-");
+  let start = 0;
+  let end = sanitized.length;
+  while (start < end && isSegmentEdge(sanitized[start])) start += 1;
+  while (end > start && isSegmentEdge(sanitized[end - 1])) end -= 1;
+  return end - start;
+}
+
 function resolveThreadSegment(raw: string | null | undefined): string {
-  const normalized = typeof raw === "string" ? toSafeThreadAttachmentSegment(raw) : null;
-  return normalized ?? GLOBAL_THREAD_SEGMENT;
+  const segment = typeof raw === "string" ? toSafeThreadAttachmentSegment(raw) : null;
+  if (typeof raw !== "string" || segment === null) return GLOBAL_THREAD_SEGMENT;
+  if (uncutThreadSegmentLength(raw) <= THREAD_SEGMENT_MAX_CHARS) return segment;
+  // Sibling delegated threads share their first 80 characters, so cut ids need a hash.
+  let prefixEnd = THREAD_SEGMENT_MAX_CHARS - THREAD_SEGMENT_HASH_CHARS - 1;
+  while (prefixEnd > 0 && isSegmentEdge(segment[prefixEnd - 1])) prefixEnd -= 1;
+  const hash = NodeCrypto.createHash("sha256")
+    .update(raw)
+    .digest("hex")
+    .slice(0, THREAD_SEGMENT_HASH_CHARS);
+  return `${segment.slice(0, prefixEnd)}-${hash}`;
 }
 
 function resolveStreamLabel(stream: EventNdjsonStream): string {
