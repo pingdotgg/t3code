@@ -92,6 +92,15 @@ export function resolveThreadFeedLiveFollow(
   }
 }
 
+export function shouldShowThreadFeedScrollToEnd(input: {
+  readonly endFollowEnabled: boolean;
+  readonly isAtEnd: boolean;
+}): boolean {
+  // A drag pauses follow before the list moves, including one that cannot move because the
+  // list is already at its end, so a paused follow alone does not mean there is more below.
+  return !input.endFollowEnabled && !input.isAtEnd;
+}
+
 /** The LegendList state a width reflow reads before rows re-measure and after they settle. */
 export interface ThreadFeedReflowListState {
   readonly data: ReadonlyArray<{ readonly id: string }>;
