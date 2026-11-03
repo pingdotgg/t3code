@@ -22,11 +22,22 @@ function readMcpAppDocument(
   contents: ReadonlyArray<unknown>,
   uri: string,
 ): { readonly html: string | null; readonly meta: unknown } | undefined {
+  return findMcpAppDocument(contents, uri, false) ?? findMcpAppDocument(contents, uri, true);
+}
+
+function findMcpAppDocument(
+  contents: ReadonlyArray<unknown>,
+  uri: string,
+  fallback: boolean,
+): { readonly html: string | null; readonly meta: unknown } | undefined {
   for (const content of contents) {
     if (!Predicate.isObject(content)) continue;
     if (
-      content.uri !== undefined &&
-      (typeof content.uri !== "string" || !matchesResourceUri(uri, content.uri))
+      fallback
+        ? typeof content.uri !== "string" ||
+          content.uri === uri ||
+          !matchesResourceUri(uri, content.uri)
+        : content.uri !== undefined && content.uri !== uri
     )
       continue;
     const mimeType = typeof content.mimeType === "string" ? content.mimeType : "";
