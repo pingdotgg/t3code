@@ -12,7 +12,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as EffectAcpErrors from "effect-acp/errors";
 import type * as AcpSchema from "effect-acp/compat";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
@@ -26,6 +28,9 @@ type Runtime = Pick<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   "initialize" | "authenticate" | "start" | "handleElicitation" | "logout"
 >;
+
+const MAX_ERROR_MESSAGE_LENGTH = 1_024;
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
 export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (options: {
   readonly instanceId: ProviderInstanceId;
@@ -46,8 +51,22 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   );
   const agentKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : options.settings.agentId;
-  const failure = (operation: string, detail: string, cause?: unknown) =>
-    new ProviderSetupError({ instanceId: options.instanceId, operation, detail, cause });
+  const failure = (operation: string, detail: string, cause?: unknown) => {
+    let resolvedDetail = detail;
+    if (isAcpRequestError(cause)) {
+      const message = cause.errorMessage.trim().slice(0, MAX_ERROR_MESSAGE_LENGTH);
+      if (message.length > 0) {
+        const prefix = detail.endsWith(".") ? detail : `${detail}.`;
+        resolvedDetail = `${prefix} ${message}`;
+      }
+    }
+    return new ProviderSetupError({
+      instanceId: options.instanceId,
+      operation,
+      detail: resolvedDetail,
+      cause,
+    });
+  };
   const resolve = catalog
     .resolve(options.settings, options.cwd, options.environment)
     .pipe(
