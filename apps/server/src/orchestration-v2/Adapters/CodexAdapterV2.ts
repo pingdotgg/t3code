@@ -118,6 +118,8 @@ import {
 } from "../../provider/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
+import { codexPstackPluginOverrideArgs } from "../../pstack/nativePlugins.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -1563,6 +1565,20 @@ export const layerAppServerClientFactory: Layer.Layer<
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
+    const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+    const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
+    const pstackPluginOverrideArgs = Effect.fn("CodexAdapterV2.pstackPluginOverrideArgs")(
+      function* (codexHome: string | undefined) {
+        if (Option.isNone(serverSettings) || Option.isNone(fileSystem)) return [];
+        const settings = yield* serverSettings.value.getSettings;
+        if (!settings.pstackEnabled) return [];
+        const home = codexHome ?? `${yield* HostProcess.HomeDirectory}/.codex`;
+        return codexPstackPluginOverrideArgs(
+          yield* fileSystem.value.readFileString(`${home}/config.toml`),
+        );
+      },
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    );
 
     return CodexAppServerClientFactory.of({
       open: Effect.fn("CodexAdapterV2.open")(function* (input) {
@@ -1573,9 +1589,13 @@ export const layerAppServerClientFactory: Layer.Layer<
         };
         const command = yield* makeCodexAppServerSpawnCommand({
           command: input.settings.binaryPath || "codex",
-          args: codexAppServerArgs(
-            resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
-          ),
+          args: [
+            ...codexAppServerArgs(
+              resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
+            ),
+            // T3's pstack pack replaces a native install; two copies register conflicting skills.
+            ...(yield* pstackPluginOverrideArgs(environment.CODEX_HOME)),
+          ],
           env: environment,
           threadId: input.threadId,
         }).pipe(Effect.provideService(AgentScope, agentScope));

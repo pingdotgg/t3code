@@ -68,7 +68,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import * as NodeUtil from "node:util";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- The SDK subprocess exposes stderr as a Node readable stream.
-import type { Readable } from "node:stream";
+import type * as NodeStream from "node:stream";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -153,7 +153,9 @@ import {
 import {
   claudeLaunchArgDirectories,
   discoverClaudeSkills,
+  readClaudeEnabledPlugins,
 } from "../../provider/Drivers/ClaudeSkills.ts";
+import { claudePstackPluginOverrides } from "../../pstack/nativePlugins.ts";
 import {
   compileClaudeModelSelection,
   type CompiledClaudeModelSelection,
@@ -1015,8 +1017,9 @@ export const layerQueryRunner: Layer.Layer<
               ? options.spawnClaudeCodeProcess(spawnOptions)
               : spawnClaudeProcess(spawnOptions, platform, undefined, undefined, options.stderr);
             // Native account spawners retain stderr even though the SDK interface omits it.
-            const stderr = (child as ClaudeSpawnedProcess & { readonly stderr?: Readable | null })
-              .stderr;
+            const stderr = (
+              child as ClaudeSpawnedProcess & { readonly stderr?: NodeStream.Readable | null }
+            ).stderr;
             if (stderr != null) {
               stderr.setEncoding("utf8").on("data", appendStderr);
               stderrClosed = new Promise((resolve) => stderr.once("close", resolve));
@@ -10550,6 +10553,39 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 Effect.orElseSucceed(() => true),
               )
             : true;
+          // T3's pstack pack replaces a native install; two copies register conflicting skills.
+          const pstackPluginOverrides =
+            Option.isSome(serverSettings) &&
+            (yield* serverSettings.value.getSettings.pipe(
+              Effect.map((settings) => settings.pstackEnabled),
+              Effect.orElseSucceed(() => false),
+            ))
+              ? claudePstackPluginOverrides(
+                  yield* readClaudeEnabledPlugins(
+                    adapterOptions.settings,
+                    turnInput.runtimePolicy.cwd ?? undefined,
+                    adapterOptions.environment,
+                  ).pipe(
+                    Effect.provideService(FileSystem.FileSystem, fileSystem),
+                    Effect.provideService(Path.Path, path),
+                  ),
+                  launchArgSettings?.enabledPlugins,
+                )
+              : undefined;
+          const launchSdkSettings =
+            launchArgSettings === undefined
+              ? undefined
+              : claudeSdkLaunchArgSettings(launchArgSettings);
+          const sdkSettings =
+            pstackPluginOverrides === undefined
+              ? launchSdkSettings
+              : ({
+                  ...launchSdkSettings,
+                  enabledPlugins: {
+                    ...launchSdkSettings?.enabledPlugins,
+                    ...pstackPluginOverrides,
+                  },
+                } as ClaudeSdkSettings);
           const queryOptions = makeClaudeQueryOptions({
             platform,
             modelSelection: turnInput.modelSelection,
@@ -10560,9 +10596,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
             settings: adapterOptions.settings,
-            ...(launchArgSettings === undefined
-              ? {}
-              : { sdkSettings: claudeSdkLaunchArgSettings(launchArgSettings) }),
+            ...(sdkSettings === undefined ? {} : { sdkSettings }),
             environment: claudeQueryEnvironment(
               adapterOptions.environment,
               turnInput.appThread,

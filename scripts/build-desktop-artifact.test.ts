@@ -71,6 +71,7 @@ import {
   ReleasePackageManifestError,
   releasePackageFiles,
 } from "./update-release-package-versions.ts";
+import { pstackPackEntries } from "@t3tools/pstack";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
@@ -1377,10 +1378,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         path.join(import.meta.dirname, "../packages/pstack/upstream"),
         path.join(packagedPstackDir, "upstream"),
       );
+      yield* fs.copy(
+        path.join(import.meta.dirname, "../packages/pstack/UPSTREAM.json"),
+        path.join(packagedPstackDir, "UPSTREAM.json"),
+      );
       yield* prunePackagedPstackTestFixtures(packagedPstackDir);
       const scriptsDir = path.join(packagedPstackDir, "upstream/skills/statechart/scripts");
       assert.isFalse(yield* fs.exists(path.join(scriptsDir, "test")));
       assert.isTrue(yield* fs.exists(path.join(scriptsDir, "statechart.ts")));
+      for (const { sourcePath } of pstackPackEntries(packagedPstackDir)) {
+        assert.isTrue(yield* fs.exists(sourcePath), sourcePath);
+      }
       yield* stageSelfContainedPlatformPackages(
         path.join(import.meta.dirname, "../apps/server/node_modules"),
         path.join(fixture.packagedAppDir, "resources/node_modules"),

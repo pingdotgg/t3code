@@ -8231,10 +8231,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const nativeThreadId = "archived-rollback-thread";
       const resumeParams = {
         threadId: nativeThreadId,
+        modelProvider: "openai",
         excludeTurns: true,
         cwd: CODEX_TEST_RUNTIME_POLICY.cwd,
         model: CODEX_TEST_MODEL_SELECTION.model,
-        config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+        config: {
+          ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+          [T3_THREAD_ENV_KEY]: "thread-codex-archived-rollback",
+        },
       };
       const thread = codexReplayThreadResult({ nativeThreadId, forkedFromId: null });
       const exchange = (

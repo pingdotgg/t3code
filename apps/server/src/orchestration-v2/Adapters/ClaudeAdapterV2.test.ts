@@ -82,6 +82,7 @@ import * as PortScanner from "../../preview/PortScanner.ts";
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { WorkflowAgentTranscriptReadObserver } from "../workflowAgentTranscript.ts";
 import * as ServerConfig from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
@@ -1213,36 +1214,80 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
   );
 
   // regression: #15073 the SDK replaced the --settings launch argument with T3's settings
-  it.effect.each([
-    `--settings '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false}'`,
-    "--settings user-settings.json",
-  ])("merges %s beneath T3's settings", (launchArgs) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-settings-" });
-        yield* fileSystem.writeFileString(
-          NodePath.join(cwd, "user-settings.json"),
-          '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false}',
-        );
-        const { exit, opened } = yield* startTurnWithLaunchArgs(launchArgs, cwd);
-        assert.isTrue(Exit.isSuccess(exit));
-        assert.deepInclude(opened[0]!.settings, {
-          skillOverrides: { lint: "off" },
-          showThinkingSummaries: true,
-        });
-        assert.isUndefined(opened[0]!.extraArgs?.["settings"]);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
+  it.effect.each(["inline JSON", "a file"])(
+    "merges --settings %s beneath T3's settings",
+    (source) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-settings-" });
+          const launchSettings = {
+            skillOverrides: { lint: "off" },
+            showThinkingSummaries: false,
+            enabledPlugins: {
+              "pstack@launch": true,
+              "pstack@launch-array": ["^1.0.0"],
+              "pstack@launch-object": { version: "^1.0.0" },
+              "pstack@disabled": false,
+              "tracedecay@local": true,
+            },
+          };
+          const launchArgs =
+            source === "inline JSON"
+              ? `--settings '${JSON.stringify(launchSettings)}'`
+              : "--settings user-settings.json";
+          yield* fileSystem.writeFileString(
+            NodePath.join(cwd, "user-settings.json"),
+            JSON.stringify(launchSettings),
+          );
+          yield* fileSystem.makeDirectory(NodePath.join(cwd, ".claude"));
+          yield* fileSystem.writeFileString(
+            NodePath.join(cwd, ".claude", "settings.json"),
+            JSON.stringify({
+              enabledPlugins: {
+                "pstack@settings": true,
+                "pstack@settings-array": ["^1.0.0"],
+                "pstack@settings-object": { version: "^1.0.0" },
+                "pstack@disabled": true,
+              },
+            }),
+          );
+          for (const pstackEnabled of [false, true]) {
+            const { exit, opened } = yield* startTurnWithLaunchArgs(launchArgs, cwd).pipe(
+              Effect.provide(ServerSettings.layerTest({ pstackEnabled })),
+            );
+            assert.isTrue(Exit.isSuccess(exit));
+            assert.deepInclude(opened[0]!.settings, {
+              skillOverrides: { lint: "off" },
+              showThinkingSummaries: true,
+              enabledPlugins: {
+                "pstack@launch": !pstackEnabled,
+                "pstack@launch-array": pstackEnabled ? false : ["^1.0.0"],
+                "pstack@launch-object": pstackEnabled ? false : { version: "^1.0.0" },
+                "pstack@disabled": false,
+                "tracedecay@local": true,
+                ...(pstackEnabled
+                  ? {
+                      "pstack@settings": false,
+                      "pstack@settings-array": false,
+                      "pstack@settings-object": false,
+                    }
+                  : {}),
+              },
+            });
+            assert.isUndefined(opened[0]!.extraArgs?.["settings"]);
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
       ),
-    ),
   );
 
   // regression: #20413 malformed append-system-prompt launch args fail before a query opens
