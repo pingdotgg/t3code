@@ -679,17 +679,21 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("restart leaves a service that serves another T3 home alone", () =>
+  it.effect("restart and install leave a service that serves another T3 home alone", () =>
     Effect.gen(function* () {
-      const { service, fs, commands, makeService } = yield* makeHarness();
-      yield* service.install();
-      commands.length = 0;
+      const { service, fs, baseDir, commands, makeService } = yield* makeHarness();
+      const plan = yield* service.install();
+      const unit = yield* fs.readFileString(plan.unitPath);
       const path = yield* Path.Path;
       const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-other-home-" });
 
       const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".t3"));
+      commands.length = 0;
       expect(yield* other.restart).toBe("skipped");
-      expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([]);
+      expect((yield* other.install().pipe(Effect.flip))._tag).toBe("BootServiceOtherBaseDirError");
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+      expect(commands).toEqual([]);
+      expect((yield* other.status).otherBaseDir).toBe(baseDir);
     }),
   );
 
