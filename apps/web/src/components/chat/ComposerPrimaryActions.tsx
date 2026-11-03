@@ -163,19 +163,17 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
   const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
 
-  const stopGenerationButton = (insidePendingAction: boolean) => (
-    <StopGenerationButton
-      canOperateThread={canOperateThread}
-      insidePendingAction={insidePendingAction}
-      preserveComposerFocusOnPointerDown={preserveComposerFocusOnPointerDown}
-      onInterrupt={onInterrupt}
-    />
-  );
-
   if (pendingAction) {
     return (
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
-        {canInterrupt ? stopGenerationButton(true) : null}
+        {canInterrupt ? (
+          <StopGenerationButton
+            canOperateThread={canOperateThread}
+            insidePendingAction
+            preserveComposerFocusOnPointerDown={preserveComposerFocusOnPointerDown}
+            onInterrupt={onInterrupt}
+          />
+        ) : null}
         {pendingAction.questionIndex > 0 ? (
           compact ? (
             <Button
@@ -281,7 +279,13 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   }
 
   if (canInterrupt && !hasSendableContent && !isEditingQueuedMessage) {
-    return stopGenerationButton(false);
+    return (
+      <StopGenerationButton
+        canOperateThread={canOperateThread}
+        preserveComposerFocusOnPointerDown={preserveComposerFocusOnPointerDown}
+        onInterrupt={onInterrupt}
+      />
+    );
   }
 
   const showResume = canResume && !hasSendableContent && !isEditingQueuedMessage;
