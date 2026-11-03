@@ -4,6 +4,7 @@ import type {
   SpeechAcceleration,
   SpeechCustomWords,
   SpeechLanguage,
+  SpeechModelDirectories,
   SpeechModelUnloadTimeout,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -182,6 +183,9 @@ export class SpeechService extends Context.Service<
     readonly updateCustomWords: (
       words: SpeechCustomWords,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly updateModelDirectories: (
+      directories: SpeechModelDirectories,
+    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly updateFillerWordRemoval: (
       enabled: boolean,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
@@ -251,13 +255,27 @@ export const make = Effect.gen(function* () {
     environment.HF_HUB_CACHE ||
     (environment.HF_HOME ? path.join(environment.HF_HOME, "hub") : "") ||
     (home && path.join(home, ".cache", "huggingface", "hub"));
-  const sharedModelSources: SpeechModelSources = {
-    directories: sharedDirectories,
-    huggingFaceCaches: huggingFaceCache ? [huggingFaceCache] : [],
-  };
-  const modelSources: SpeechModelSources = {
-    directories: [modelDirectory, ...sharedDirectories],
-    huggingFaceCaches: sharedModelSources.huggingFaceCaches,
+  const huggingFaceCaches = huggingFaceCache ? [huggingFaceCache] : [];
+  // The user's own folders sit between T3's directory and the other apps',
+  // so a model found in any of them reports `shared` and can't be deleted.
+  const modelSources = (settings: SettingsSnapshot): SpeechModelSources => ({
+    directories: [modelDirectory, ...settings.speechModelDirectories, ...sharedDirectories],
+    huggingFaceCaches,
+  });
+  const sharedModelSources = (settings: SettingsSnapshot): SpeechModelSources => ({
+    directories: [...settings.speechModelDirectories, ...sharedDirectories],
+    huggingFaceCaches,
+  });
+  const normalizeModelDirectories = (directories: readonly string[]) => {
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const directory of directories) {
+      const trimmed = directory.trim();
+      if (!trimmed || seen.has(trimmed) || !path.isAbsolute(trimmed)) continue;
+      seen.add(trimmed);
+      normalized.push(trimmed);
+    }
+    return normalized;
   };
   let model: LoadedModel | undefined;
   let loadedModelId: string | undefined;
@@ -355,10 +373,10 @@ export const make = Effect.gen(function* () {
     return getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
   };
 
-  const download = async (modelId: string, signal = lifetime) => {
+  const download = async (modelId: string, settings: SettingsSnapshot, signal = lifetime) => {
     const definition = getSpeechModel(modelId);
     if (!definition) throw new SpeechModelNotFoundError({ modelId });
-    const shared = await findInstalledSpeechModel(sharedModelSources, definition);
+    const shared = await findInstalledSpeechModel(sharedModelSources(settings), definition);
     if (shared !== undefined) return shared;
     if (downloading) throw new SpeechBusyError({ operation: "model download" });
     const controller = new AbortController();
@@ -392,6 +410,7 @@ export const make = Effect.gen(function* () {
 
   const loadModel = async (
     definition: ReturnType<typeof selectedModel>,
+    settings: SettingsSnapshot,
     signal = lifetime,
     acceleration = "auto",
   ) => {
@@ -410,7 +429,8 @@ export const make = Effect.gen(function* () {
     // as is skips re-hashing gigabytes on every cold load, and does not wait
     // on the download slot a Settings download of another model holds.
     const installedOrDownloaded = async () =>
-      (await findInstalledSpeechModel(modelSources, definition)) ?? download(definition.id, signal);
+      (await findInstalledSpeechModel(modelSources(settings), definition)) ??
+      download(definition.id, settings, signal);
     const pending =
       loading ??
       installedOrDownloaded()
@@ -637,7 +657,7 @@ export const make = Effect.gen(function* () {
       state:
         activeTranscriptions > 0
           ? "transcribing"
-          : (await findInstalledSpeechModel(modelSources, definition)) !== undefined
+          : (await findInstalledSpeechModel(modelSources(settings), definition)) !== undefined
             ? "ready"
             : "missing-model",
       modelId: definition.id,
@@ -653,6 +673,7 @@ export const make = Effect.gen(function* () {
       gpuDevices: await (gpuDevices ??= listNativeSpeechGpuDevices().catch(() => [])),
       customWords: normalizeSpeechCustomWords(settings.speechCustomWords),
       removeFillerWords: settings.speechRemoveFillerWords,
+      modelDirectories: settings.speechModelDirectories,
     };
   };
 
@@ -661,7 +682,7 @@ export const make = Effect.gen(function* () {
     return {
       models: await Promise.all(
         SPEECH_MODELS.map(async (definition) => {
-          const installedPath = await findInstalledSpeechModel(modelSources, definition);
+          const installedPath = await findInstalledSpeechModel(modelSources(settings), definition);
           const ready = installedPath !== undefined;
           const shared = ready && path.dirname(installedPath) !== modelDirectory;
           const operation = downloading?.modelId === definition.id ? downloading : undefined;
@@ -725,7 +746,12 @@ export const make = Effect.gen(function* () {
               attemptSpeech("model preparation", async () => {
                 if (unsupportedReason)
                   throw new SpeechUnsupportedPlatformError({ platform, architecture });
-                await loadModel(selectedModel(settings), lifetime, settings.speechAcceleration);
+                await loadModel(
+                  selectedModel(settings),
+                  settings,
+                  lifetime,
+                  settings.speechAcceleration,
+                );
               }).pipe(Effect.uninterruptible),
             ),
           ),
@@ -783,7 +809,7 @@ export const make = Effect.gen(function* () {
       yield* preemptOrphaned;
       const preparation = yield* attemptSpeech(operation, async () => {
         const startedAt = performance.now();
-        const prepared = await loadModel(definition, signal, settings.speechAcceleration);
+        const prepared = await loadModel(definition, settings, signal, settings.speechAcceleration);
         loaded = prepared;
         if (!prepared.supportsStreaming)
           throw new Error("The selected model does not support streaming.");
@@ -851,7 +877,7 @@ export const make = Effect.gen(function* () {
                 loadedAcceleration = undefined;
                 loading = undefined;
               }
-              streamModel = await loadModel(definition, signal, "cpu");
+              streamModel = await loadModel(definition, settings, signal, "cpu");
               loaded = streamModel;
               await streamModel.begin(language === "auto" ? undefined : language);
               let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
@@ -895,13 +921,14 @@ export const make = Effect.gen(function* () {
     models: modelsEffect,
     // Not exclusive: a download that takes minutes must not hold the slot
     // dictation needs. The download slot keeps it to one at a time.
-    downloadModel: Effect.fn("SpeechService.downloadModel")((modelId) =>
-      attemptSpeech("model download", async () => {
+    downloadModel: Effect.fn("SpeechService.downloadModel")(function* (modelId) {
+      const settings = yield* readSettings("model download");
+      return yield* attemptSpeech("model download", async () => {
         if (unsupportedReason) throw new SpeechUnsupportedPlatformError({ platform, architecture });
         if (closing || downloading) throw new SpeechBusyError({ operation: "model download" });
-        await download(modelId);
-      }).pipe(Effect.andThen(freshStatus("model download"))),
-    ),
+        await download(modelId, settings);
+      }).pipe(Effect.andThen(freshStatus("model download")));
+    }),
     selectModel: Effect.fn("SpeechService.selectModel")((modelId) =>
       exclusive("model selection", async () => {
         if (!getSpeechModel(modelId)) throw new SpeechModelNotFoundError({ modelId });
@@ -925,6 +952,15 @@ export const make = Effect.gen(function* () {
       return exclusive("custom words update", async () => {}).pipe(
         Effect.andThen(writeSettings("custom words update", { speechCustomWords: customWords })),
         Effect.andThen(freshStatus("custom words update")),
+      );
+    }),
+    updateModelDirectories: Effect.fn("SpeechService.updateModelDirectories")((directories) => {
+      const normalized = normalizeModelDirectories(directories);
+      return exclusive("model directories update", async () => {}).pipe(
+        Effect.andThen(
+          writeSettings("model directories update", { speechModelDirectories: normalized }),
+        ),
+        Effect.andThen(freshStatus("model directories update")),
       );
     }),
     updateFillerWordRemoval: Effect.fn("SpeechService.updateFillerWordRemoval")((enabled) =>
@@ -983,6 +1019,7 @@ export const make = Effect.gen(function* () {
                   try: (signal) =>
                     loadModel(
                       definition,
+                      settings,
                       AbortSignal.any([signal, lifetime]),
                       settings.speechAcceleration,
                     ),
@@ -1044,7 +1081,12 @@ export const make = Effect.gen(function* () {
                       });
                       const cpu = yield* Effect.tryPromise({
                         try: (signal) =>
-                          loadModel(definition, AbortSignal.any([signal, lifetime]), "cpu"),
+                          loadModel(
+                            definition,
+                            settings,
+                            AbortSignal.any([signal, lifetime]),
+                            "cpu",
+                          ),
                         catch: (loadCause) => speechError("transcription", loadCause),
                       });
                       inferenceModel = cpu;
@@ -1128,7 +1170,9 @@ export const make = Effect.gen(function* () {
               SPEECH_MODELS.filter((candidate) => candidate.id !== modelId).map(
                 async (candidate) => ({
                   candidate,
-                  ready: (await findInstalledSpeechModel(modelSources, candidate)) !== undefined,
+                  ready:
+                    (await findInstalledSpeechModel(modelSources(settings), candidate)) !==
+                    undefined,
                 }),
               ),
             );

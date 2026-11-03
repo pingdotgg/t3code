@@ -27,8 +27,9 @@ that machine for transcription.
 
 T3 Code reuses speech models another app already downloaded instead of
 downloading them again: Hex on Windows, Handy, or anything stored in the
-Hugging Face cache. These models can't be deleted from Voice settings because
-the other app owns the file.
+Hugging Face cache. Add your own folders under Settings, then Voice, then
+Model folders. T3 Code only reads these locations, so models found there can't
+be deleted from Voice settings.
 
 Models marked Streaming show a live preview while you speak. The tentative ending
 may change as the model hears more. Stop recording to finish and insert the text;

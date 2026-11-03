@@ -26,6 +26,7 @@ export {
   postProcessEnvironmentTranscript,
   prepareEnvironmentSpeechModel,
   updateEnvironmentSpeechCustomWords,
+  updateEnvironmentSpeechModelDirectories,
   updateEnvironmentSpeechFillerWordRemoval,
   updateEnvironmentSpeechAcceleration,
   updateEnvironmentSpeechModelUnloadTimeout,

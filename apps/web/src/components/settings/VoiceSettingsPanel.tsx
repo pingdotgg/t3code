@@ -6,6 +6,7 @@ import {
   removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
   updateEnvironmentSpeechCustomWords,
+  updateEnvironmentSpeechModelDirectories,
   updateEnvironmentSpeechFillerWordRemoval,
   updateEnvironmentSpeechAcceleration,
   updateEnvironmentSpeechModelUnloadTimeout,
@@ -83,6 +84,8 @@ const PRIMARY_ENVIRONMENT = "primary-environment";
 const deviceValue = (id: string) => `device:${id}`;
 const environmentValue = (id: EnvironmentId) => `environment:${id}`;
 const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
+const MODEL_FOLDER_PATH_PATTERN = /^(\/|\\\\|[A-Za-z]:[/\\])/;
+const MODEL_FOLDER_LIMIT = 20;
 const normalizeDictionaryTerm = (value: string) =>
   value
     .replace(/[<>"']/g, "")
@@ -368,6 +371,7 @@ export function VoiceSettingsPanel() {
     modelIds: ReadonlySet<string>;
   } | null>(null);
   const [customWordDraft, setCustomWordDraft] = useState("");
+  const [modelFolderDraft, setModelFolderDraft] = useState("");
   const [bulkWordsDraft, setBulkWordsDraft] = useState("");
   const [bulkWordsOpen, setBulkWordsOpen] = useState(false);
   const [aliasDrafts, setAliasDrafts] = useState<Record<string, string>>({});
@@ -518,6 +522,7 @@ export function VoiceSettingsPanel() {
     : "System default";
   const currentStatus = status?.prepared === prepared ? status.value : null;
   const customWords = currentStatus?.supported ? currentStatus.customWords : [];
+  const modelDirectories = currentStatus?.supported ? (currentStatus.modelDirectories ?? []) : [];
   const removeFillerWords = currentStatus?.supported ? currentStatus.removeFillerWords : true;
   const acceleration = currentStatus?.supported ? currentStatus.acceleration : "auto";
   const modelUnloadTimeout = currentStatus?.supported ? currentStatus.modelUnloadTimeout : "min_15";
@@ -541,6 +546,33 @@ export function VoiceSettingsPanel() {
         });
       })
       .finally(() => setOperation(null));
+  };
+  const updateModelFolders = (directories: string[], onSuccess?: () => void) => {
+    if (!prepared) return;
+    setOperation("model-folders");
+    void runtime
+      .runPromise(updateEnvironmentSpeechModelDirectories(prepared, directories))
+      .then(() => {
+        onSuccess?.();
+        return refreshModels();
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not update model folders",
+          description: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => setOperation(null));
+  };
+  const addModelFolder = () => {
+    const folder = modelFolderDraft.trim();
+    if (!MODEL_FOLDER_PATH_PATTERN.test(folder) || modelDirectories.length >= MODEL_FOLDER_LIMIT)
+      return;
+    updateModelFolders([...modelDirectories, folder], () => setModelFolderDraft(""));
+  };
+  const removeModelFolder = (folder: string) => {
+    updateModelFolders(modelDirectories.filter((entry) => entry !== folder));
   };
   const addCustomWord = () => {
     if (
@@ -967,6 +999,62 @@ export function VoiceSettingsPanel() {
               <SettingsRow title="No transcription models are available." />
             ) : visibleModels.length === 0 ? (
               <SettingsRow title="No models match your search." />
+            ) : null}
+            {currentStatus.modelDirectories !== undefined ? (
+              <SettingsRow
+                title="Model folders"
+                description="Look for downloaded models in these folders on this environment. T3 Code never changes files there."
+                control={
+                  <div className="flex w-full max-w-80 items-center gap-1.5">
+                    <Input
+                      value={modelFolderDraft}
+                      placeholder="Add a folder path"
+                      aria-label="Add a model folder"
+                      disabled={operation !== null}
+                      onChange={(event) => setModelFolderDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") return;
+                        event.preventDefault();
+                        addModelFolder();
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={
+                        operation !== null ||
+                        !MODEL_FOLDER_PATH_PATTERN.test(modelFolderDraft.trim()) ||
+                        modelDirectories.length >= MODEL_FOLDER_LIMIT
+                      }
+                      onClick={addModelFolder}
+                    >
+                      Add
+                    </Button>
+                  </div>
+                }
+              >
+                {modelDirectories.length > 0 ? (
+                  <div
+                    aria-label="Model folders"
+                    className="mt-3 flex flex-wrap gap-1.5 border-t border-border/60 pt-3"
+                  >
+                    {modelDirectories.map((directory) => (
+                      <Button
+                        key={directory}
+                        type="button"
+                        size="xs"
+                        variant="secondary"
+                        disabled={operation !== null}
+                        aria-label={`Remove folder ${directory}`}
+                        onClick={() => removeModelFolder(directory)}
+                      >
+                        {directory}
+                        <XIcon className="ml-1 size-3" />
+                      </Button>
+                    ))}
+                  </div>
+                ) : null}
+              </SettingsRow>
             ) : null}
           </>
         ) : (

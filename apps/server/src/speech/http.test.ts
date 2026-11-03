@@ -75,6 +75,8 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
           selectModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
           cancelDownload: () => Effect.succeed({ supported: false as const, reason: "test" }),
           updateCustomWords: () => Effect.succeed({ supported: false as const, reason: "test" }),
+          updateModelDirectories: () =>
+            Effect.succeed({ supported: false as const, reason: "test" }),
           updateFillerWordRemoval: () =>
             Effect.succeed({ supported: false as const, reason: "test" }),
           updateAcceleration: () => Effect.succeed({ supported: false as const, reason: "test" }),
@@ -166,6 +168,7 @@ effectIt.effect.each([
         selectModel: () => Effect.fail(error),
         cancelDownload: () => Effect.fail(error),
         updateCustomWords: () => Effect.fail(error),
+        updateModelDirectories: () => Effect.fail(error),
         updateFillerWordRemoval: () => Effect.fail(error),
         updateAcceleration: () => Effect.fail(error),
         updateModelUnloadTimeout: () => Effect.fail(error),
