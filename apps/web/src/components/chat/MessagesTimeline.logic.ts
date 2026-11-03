@@ -1382,19 +1382,10 @@ function toolCallIsHidden(entry: TimelineEntry, visibility: ToolCallVisibility):
   );
 }
 
-function shownAsFinalAnswerOnly(
+function workShownAsFinalAnswerOnly(
   entry: TimelineEntry,
-  terminalAssistantMessageIds: ReadonlySet<string>,
-  answeringRunId: RunId | null,
   pendingApprovalRequestIds: ReadonlySet<RuntimeRequestId> | undefined,
 ): boolean {
-  if (entry.kind === "message") {
-    return (
-      entry.message.role !== "assistant" ||
-      (terminalAssistantMessageIds.has(entry.message.id) &&
-        (answeringRunId === null || entry.message.runId !== answeringRunId))
-    );
-  }
   if (entry.kind === "event") return entry.projectedItem.item.type !== "subagent";
   if (entry.kind !== "work") return true;
   const work = entry.entry;
@@ -1403,6 +1394,7 @@ function shownAsFinalAnswerOnly(
     (item?.type === "approval_request" &&
       pendingApprovalRequestIds?.has(item.requestId) === true) ||
     work.questionAnswer !== undefined ||
+    timelineEntryIsCompaction(entry) ||
     work.tone === "error" ||
     work.sourceActivityKind === "runtime.error" ||
     (work.itemType === "error" && work.toolLifecycleStatus === "failed")
@@ -1414,6 +1406,7 @@ function timelineRowEntries(
     MessagesTimelineRowsInput,
     | "timelineEntries"
     | "toolCallVisibility"
+    | "revealedMessageId"
     | "isWorking"
     | "latestRun"
     | "runningRunId"
@@ -1424,14 +1417,25 @@ function timelineRowEntries(
   const entries = input.timelineEntries;
   let shown = entries;
   if (visibility === "finalAnswersOnly") {
-    const answeringRunId =
-      input.isWorking && input.latestRun?.turnEnded !== true
-        ? deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null)
-        : null;
+    const answering = input.isWorking && input.latestRun?.turnEnded !== true;
+    const answeringRunId = answering
+      ? deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null)
+      : null;
+    const answeringFrom = answering ? lastResponseBoundaryIndex(entries) + 1 : entries.length;
     const terminalIds = deriveTerminalAssistantMessageIds(entries);
-    shown = entries.filter((entry) =>
-      shownAsFinalAnswerOnly(entry, terminalIds, answeringRunId, input.pendingApprovalRequestIds),
-    );
+    shown = entries.filter((entry, index) => {
+      if (entry.kind !== "message") {
+        return workShownAsFinalAnswerOnly(entry, input.pendingApprovalRequestIds);
+      }
+      const { message } = entry;
+      return (
+        message.role !== "assistant" ||
+        message.id === input.revealedMessageId ||
+        (terminalIds.has(message.id) &&
+          index < answeringFrom &&
+          (answeringRunId === null || message.runId !== answeringRunId))
+      );
+    });
   } else if (visibility !== "showAll") {
     shown = entries.filter((entry) => !toolCallIsHidden(entry, visibility));
   }
@@ -1447,6 +1451,7 @@ function deriveTimelineTurnFolds(
     | "runlessWorkActive"
     | "runningRunId"
     | "toolCallVisibility"
+    | "revealedMessageId"
   >,
 ) {
   const timelineEntries = timelineRowEntries(input);
@@ -1486,6 +1491,7 @@ export function deriveMessagesTimelineRows(input: {
   availableRevertTurnCounts?: ReadonlySet<number> | undefined;
   worktreeSetup?: WorktreeSetupSnapshot | null;
   toolCallVisibility?: ToolCallVisibility;
+  revealedMessageId?: MessageId | null;
 }): MessagesTimelineRow[] {
   const timelineEntries = timelineRowEntries(input);
   const isPendingApproval = (entry: WorkLogEntry) => {
@@ -2331,6 +2337,7 @@ export function timelineTurnFoldRunIdsByEntryId(
     | "runlessWorkActive"
     | "runningRunId"
     | "toolCallVisibility"
+    | "revealedMessageId"
   >,
 ): ReadonlyMap<string, RunId> {
   const byEntryId = new Map<string, RunId>();

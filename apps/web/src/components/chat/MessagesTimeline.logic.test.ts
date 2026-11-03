@@ -2765,6 +2765,57 @@ describe("v2 run and attempt history", () => {
       toolCallVisibility: "finalAnswersOnly",
     });
     expect(answering.map((row) => row.kind)).toEqual(["message", "working", "thinking"]);
+    const zenRowIds = (
+      timelineEntries: ReadonlyArray<TimelineEntry>,
+      context: { isWorking?: boolean; runlessWorkActive?: boolean } = {},
+    ) =>
+      deriveMessagesTimelineRows({
+        timelineEntries,
+        isWorking: context.isWorking ?? false,
+        runlessWorkActive: context.runlessWorkActive ?? false,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+        toolCallVisibility: "finalAnswersOnly",
+      }).map((row) => row.id);
+    const compaction: TimelineEntry = {
+      id: "compaction-entry",
+      kind: "work",
+      createdAt: "2026-01-01T00:00:06Z",
+      entry: {
+        id: "compaction",
+        createdAt: "2026-01-01T00:00:06Z",
+        runId,
+        label: "Context compaction failed",
+        tone: "info",
+        sourceActivityKind: "context-compaction",
+      },
+    };
+    expect(zenRowIds([user, compaction, final])).toContain("compaction-entry");
+    const runlessReply: TimelineEntry = {
+      id: "runless-entry",
+      kind: "message",
+      createdAt: "2026-01-01T00:00:05Z",
+      message: {
+        id: MessageId.make("runless"),
+        role: "assistant",
+        text: "runless",
+        runId: null,
+        createdAt: "2026-01-01T00:00:05Z",
+        updatedAt: "2026-01-01T00:00:05Z",
+        streaming: true,
+      },
+    };
+    expect(
+      zenRowIds([user, runlessReply], { isWorking: true, runlessWorkActive: true }),
+    ).not.toContain("runless-entry");
+    expect(
+      timelineTurnFoldRunIdsByEntryId({
+        timelineEntries: [user, commentary, passed, final],
+        isWorking: false,
+        toolCallVisibility: "finalAnswersOnly",
+        revealedMessageId: MessageId.make("commentary"),
+      }).get("commentary-entry"),
+    ).toBe(runId);
 
     const steer = message("steer", "user", "2026-01-01T00:00:10Z", "steer");
     const steeredCommentary = message("commentary", "assistant", "2026-01-01T00:00:12Z");
