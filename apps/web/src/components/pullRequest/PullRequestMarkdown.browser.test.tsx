@@ -62,3 +62,19 @@ it("chips only inline code paths inside the repository", async () => {
   const code = [...screen.container.querySelectorAll("code")].map((c) => c.textContent);
   expect(code).toEqual(["~/Dév", "~/", "/etc/hosts", "../outside.ts"]);
 });
+
+it("chips only links to files inside the repository", async () => {
+  await using screen = await renderBody("github", {
+    cwd: "/home/alice/repo",
+    text: "See [hosts](/etc/hosts), [key](~/.ssh/id_rsa), [up](file:///etc/hosts) and [y](packages/x/y.ts).",
+  });
+  await expect
+    .element(screen.getByRole("button", { name: "File options for y.ts" }))
+    .toBeInTheDocument();
+  const chips = [...screen.container.querySelectorAll(".chat-markdown-file-link")];
+  expect(chips.map((chip) => chip.getAttribute("data-markdown-copy"))).toEqual([
+    "[y](packages/x/y.ts)",
+  ]);
+  expect(screen.container.querySelectorAll("a")).toHaveLength(0);
+  expect(screen.container.textContent).toContain("See hosts, key, up and");
+});
