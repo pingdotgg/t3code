@@ -1977,9 +1977,11 @@ function makeProviderThread(input: {
 }
 
 const decodeClaudeTranscriptLine = Schema.decodeUnknownOption(
-  Schema.fromJsonString(
-    Schema.Struct({ type: Schema.String, uuid: Schema.optional(Schema.String) }),
-  ),
+  Schema.fromJsonString(Schema.Struct({ type: Schema.String })),
+);
+
+const decodeClaudeTranscriptAssistantUuid = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ type: Schema.Literal("assistant"), uuid: Schema.String })),
 );
 
 // Claude streams each block of a multi-block assistant message as its own message with uuid
@@ -11311,6 +11313,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
         yield* Effect.addFinalizer(() => closeSession());
 
+        // Untraced: every caller is already a named span.
         const claudeTranscriptPaths = Effect.fnUntraced(function* (nativeThreadId: string) {
           const configuredDir = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
           const projectsDir = path.join(
@@ -11373,9 +11376,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 Stream.decodeText,
                 Stream.splitLines,
                 Stream.filter((line) => line.includes(prefix)),
-                Stream.map((line) => Option.getOrUndefined(decodeClaudeTranscriptLine(line))),
-                Stream.filter((entry) => entry?.type === "assistant"),
-                Stream.map((entry) => entry?.uuid),
+                Stream.map(
+                  (line) => Option.getOrUndefined(decodeClaudeTranscriptAssistantUuid(line))?.uuid,
+                ),
                 Stream.filter((uuid): uuid is string => uuid?.startsWith(prefix) === true),
                 Stream.runHead,
               );
