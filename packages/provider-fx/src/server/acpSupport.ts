@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import type { FxSettings } from "../settings.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import type * as Crypto from "effect/Crypto";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
@@ -219,7 +219,7 @@ export const makeFxAcpRuntime = Effect.fn("makeFxAcpRuntime")(function* (
 ): Effect.fn.Return<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope
 > {
   const { fxSettings, environment, ...runtimeOptions } = input;
   const context = yield* Layer.build(
