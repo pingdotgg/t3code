@@ -35,6 +35,22 @@ export class ContextHandoffBackgroundWorkError extends Schema.TaggedError<Contex
   }
 }
 
+export const CONTEXT_COMPACTION_REQUIRED_CODE = "context_compaction_required";
+
+/** The resumed native session is full; compacting it makes room without replacing it. */
+export class ContextCompactionRequiredError extends Schema.TaggedError<ContextCompactionRequiredError>()(
+  "ContextCompactionRequiredError",
+  {},
+) {
+  get code() {
+    return CONTEXT_COMPACTION_REQUIRED_CODE;
+  }
+
+  override get message() {
+    return "The conversation is too long to continue as is. T3 Code is compacting it and will continue automatically.";
+  }
+}
+
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
@@ -100,6 +116,11 @@ function curatedCauseMessages(cause: unknown): {
       switch (tag) {
         case "ContextHandoffBudgetError":
           return { known: new ContextHandoffBudgetError().message, category: categoryMessage() };
+        case "ContextCompactionRequiredError":
+          return {
+            known: new ContextCompactionRequiredError().message,
+            category: categoryMessage(),
+          };
         case "ContextHandoffBackgroundWorkError":
           return {
             known: new ContextHandoffBackgroundWorkError().message,

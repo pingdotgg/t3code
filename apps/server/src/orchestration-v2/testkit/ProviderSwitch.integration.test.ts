@@ -50,12 +50,16 @@ import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../Orchestrator.ts";
+import * as ContextCompactionService from "../ContextCompactionService.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
-import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import {
+  CONTEXT_COMPACTION_REQUIRED_CODE,
+  makeProviderFailure,
+} from "@t3tools/provider-core/server/failure";
 import {
   CLAUDE_MODEL_SELECTION,
   CODEX_MODEL_SELECTION,
@@ -1475,6 +1479,140 @@ describe("orchestration v2 provider switching", () => {
           );
         }),
       ),
+  );
+
+  it.live("compacts a full native session and continues instead of replacing it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const name = "full-native-session-compacts";
+        const cwd = yield* checkpointWorkspace(name);
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const nativeThreadGeneration = yield* Ref.make(0);
+        // A request that never reached the provider is resent as history on the next turn.
+        const failStartOnce = yield* Ref.make(false);
+        // Replacing the native session would orphan this work, so only compaction can make room.
+        const pendingBackgroundWork = yield* Ref.make(true);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            injectedHistory,
+            nativeThreadGeneration,
+            pendingBackgroundWork,
+            failStartOnce,
+            getModelContextWindow: () => 258_400,
+            tokenUsageByRunOrdinal: {
+              1: { usedTokens: 250_164, maxTokens: 258_400 },
+              4: { usedTokens: 20_000, maxTokens: 258_400 },
+            },
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          yield* (yield* ContextCompactionService.make).start();
+          const send = Effect.fn("send")(function* (ordinal: number, text: string) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`full-native:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`full-native:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text,
+              attachments: [],
+              modelSelection: CODEX_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+          });
+          const settled = Effect.fn("settled")(function* (ordinal: number) {
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("full-native:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Full native session",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* send(1, "Original brief");
+          yield* settled(1);
+          const providerSessionId = (yield* orchestrator.getThreadProjection(threadId))
+            .providerThreads[0]!.providerSessionId!;
+          yield* orchestrator.dispatch({
+            type: "provider-session.detach",
+            commandId: CommandId.make("full-native:detach"),
+            threadId,
+            providerSessionId,
+          });
+          yield* worker.drain();
+          yield* Ref.set(failStartOnce, true);
+          yield* send(2, `Request 2 ${"r".repeat(6_000)}`);
+          yield* settled(2);
+          yield* send(3, "Request 3");
+          yield* settled(3);
+          const failure = (yield* orchestrator.getThreadProjection(threadId)).turnItems.findLast(
+            (item) => item.type === "error",
+          );
+          assert.equal(
+            failure?.type === "error" ? failure.failure.code : null,
+            CONTEXT_COMPACTION_REQUIRED_CODE,
+          );
+          yield* settled(5);
+
+          const projection = yield* waitForIdle(threadId);
+          assert.deepEqual(
+            projection.runs.map((run) => run.status),
+            ["completed", "failed", "failed", "completed", "completed"],
+          );
+          const turns = yield* Ref.get(capturedTurns);
+          assert.deepEqual(
+            turns.map((turn) => turn.text.slice(0, 9)),
+            ["Original ", "/compact", turns[2]!.text.slice(0, 9)],
+          );
+          // One native thread throughout: compaction made room, nothing was replaced.
+          assert.equal(yield* Ref.get(nativeThreadGeneration), 1);
+          assert.equal(new Set(turns.map((turn) => turn.nativeThreadId)).size, 1);
+          const delivered = `${yield* encodeJson(yield* Ref.get(injectedHistory))}${turns[2]!.text}`;
+          assert.include(delivered, "Request 2");
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name,
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+    ),
   );
 
   it.live.each([
