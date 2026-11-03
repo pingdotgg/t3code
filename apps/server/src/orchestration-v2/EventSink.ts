@@ -346,7 +346,38 @@ const layerBase: Layer.Layer<
                   event.payload,
                   event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
                 )
-                .pipe(Effect.map((payload) => ({ ...event, payload })))
+                .pipe(
+                  Effect.flatMap((payload) =>
+                    Effect.gen(function* () {
+                      if (
+                        event.driver === "codex" &&
+                        payload.type === "error" &&
+                        payload.failure.class === "usage_limit" &&
+                        payload.failure.resetAt == null
+                      ) {
+                        // The direct enrichment lane can commit before the queued terminal.
+                        const existing = yield* projectionStore.getTurnItem({
+                          threadId: payload.threadId,
+                          itemId: payload.id,
+                        });
+                        if (
+                          existing?.type === "error" &&
+                          existing.failure.class === "usage_limit" &&
+                          existing.failure.resetAt != null
+                        ) {
+                          return {
+                            ...event,
+                            payload: {
+                              ...payload,
+                              failure: { ...payload.failure, resetAt: existing.failure.resetAt },
+                            },
+                          };
+                        }
+                      }
+                      return { ...event, payload };
+                    }),
+                  ),
+                )
             : Effect.succeed(event),
         { concurrency: 1 },
       );

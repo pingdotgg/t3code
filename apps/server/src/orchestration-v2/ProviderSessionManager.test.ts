@@ -3376,6 +3376,8 @@ it.effect.each([false, true])(
           nodeId,
           event: terminal,
         });
+        const initialProjection = yield* projectionStore.getThreadProjection(threadId);
+        assert.deepInclude(initialProjection.turnItems[0], { failure });
         if (!subscribed) yield* subscription.close;
         const resetAt = "2026-11-02T12:00:00.000Z";
         const item = makeProviderFailureTurnItem({
@@ -3446,6 +3448,27 @@ it.effect.each([false, true])(
           payload: item,
         });
         assert.equal(yield* eventSink.latestSequence({ threadId }), afterSequence + 1);
+        yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+          runId,
+          nodeId,
+          event: terminal,
+        });
+        const afterTerminal = yield* projectionStore.getThreadProjection(threadId);
+        const persisted = afterTerminal.turnItems.find((candidate) => candidate.id === item.id);
+        assert.deepInclude(persisted, { failure: { ...failure, resetAt } });
+        assert.deepEqual(
+          afterTerminal.turnItems.find((candidate) => candidate.id === newerItem.id),
+          newerItem,
+        );
+        const terminalUpdates = yield* eventSink
+          .stream({ threadId, afterSequence: afterSequence + 1 })
+          .pipe(Stream.take(1), Stream.runCollect);
+        assert.deepInclude(terminalUpdates[0]!.event.payload, {
+          failure: { ...failure, resetAt },
+        });
         assert.deepEqual((yield* projectionStore.getThreadProjection(otherThreadId)).turnItems, []);
         if (subscribed) {
           const next = yield* Queue.take(receivedEvents);
