@@ -13069,6 +13069,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} changed before automatic settlement.`,
           });
         }
+        const { runs } = yield* loadProjectionForCommand(command, ["runs"], {
+          runStatuses: ["queued"],
+        });
+        if (runs.length > 0) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} has a queued run before automatic settlement.`,
+          });
+        }
         yield* dispatchThreadMutation(
           {
             type: "thread.settle",

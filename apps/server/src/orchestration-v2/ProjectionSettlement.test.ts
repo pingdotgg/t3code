@@ -157,8 +157,6 @@ it.effect(
       for (const status of ["preparing", "starting", "running", "waiting"] as const) {
         yield* createRun(yield* createThread(status), status);
       }
-      const queued = yield* createThread("queued");
-      yield* createRun(queued, "queued");
       const blocked = yield* createThread("blocked");
       yield* store.apply({
         id: EventId.make("event:settlement:request"),
@@ -250,7 +248,7 @@ it.effect(
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
-        new Set([idle, completed, queued, woke, background, persistent, rolledBack]),
+        new Set([idle, completed, woke, background, persistent, rolledBack]),
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
@@ -289,6 +287,50 @@ it.effect(
         "ProjectionStoreThreadNotFoundError",
       );
     }).pipe(Effect.provide(layerSql)),
+);
+
+it.effect("sql: queued runs hold settlement until they finish or are cancelled", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    for (const terminalStatus of ["completed", "cancelled"] as const) {
+      const threadId = yield* createThread(`queued-wake-${terminalStatus}`);
+      yield* createRun(threadId);
+      const runId = yield* createRun(threadId, "queued", 2);
+      const run = (yield* store.getThreadProjection(threadId)).runs.find(
+        (run) => run.id === runId,
+      )!;
+      for (const status of ["queued", "running", terminalStatus] as const) {
+        yield* store.apply({
+          id: EventId.make(`event:${runId}:${status}`),
+          type: "run.updated",
+          threadId,
+          runId,
+          occurredAt: old,
+          payload: {
+            ...run,
+            status,
+            startedAt: status === "queued" ? null : old,
+            completedAt: status === "completed" || status === "cancelled" ? old : null,
+          },
+        });
+        const candidates = yield* store.getSettlementCandidates(threadId);
+        if (status === "queued" || status === "running") {
+          assert.isEmpty(candidates, `a ${status} wake must hold automatic settlement`);
+        } else {
+          assert.lengthOf(candidates, 1);
+          assert.isNotNull(
+            resolveAutoSettlementAt({
+              thread: candidates[0]!,
+              pullRequest: { state: "merged", mergedAt: DateTime.formatIso(now) },
+              nowMs: DateTime.toEpochMillis(now),
+              autoSettleAfterDays: null,
+              autoSettleOnMerge: true,
+            }),
+          );
+        }
+      }
+    }
+  }).pipe(Effect.provide(layerSql)),
 );
 
 it.effect("sql: the user-authored message time ignores agent notifications", () =>

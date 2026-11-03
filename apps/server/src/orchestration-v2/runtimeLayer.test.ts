@@ -4706,6 +4706,24 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
       yield* holdQueueAfterRestart("settle-automatic-restart");
 
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const autoSettleError = yield* orchestrator
+        .dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("settle-automatic-blocked"),
+          threadId,
+          snapshotAt: before.thread.updatedAt,
+        })
+        .pipe(Effect.flip);
+      assert.equal(autoSettleError._tag, "OrchestratorDispatchError");
+      assert.equal(
+        autoSettleError.cause,
+        `Thread ${threadId} has a queued run before automatic settlement.`,
+      );
+      const preserved = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNull(preserved.thread.settledAt);
+      assert.deepEqual(preserved.runs, before.runs);
+
       yield* orchestrator.dispatch({
         type: "thread.settle",
         commandId: CommandId.make("settle-automatic-settle"),

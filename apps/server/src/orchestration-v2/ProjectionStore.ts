@@ -6417,7 +6417,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_runs active
                 WHERE active.thread_id = t.thread_id
-                  AND active.status IN ('preparing', 'starting', 'running', 'waiting')
+                  AND active.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
               )
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_runtime_requests request
