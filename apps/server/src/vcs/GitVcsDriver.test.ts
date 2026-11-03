@@ -110,6 +110,8 @@ it("treats only reflog entries that create local commits as local", () => {
     "pull (pick): own",
     "pull --rebase origin main (pick): own",
     "rebase (pick): own",
+    "rebase (continue): own",
+    "rebase (merge): own",
     "merge upstream/main: Merge made by the 'ort' strategy.",
   ];
   const fetched = [

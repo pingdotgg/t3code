@@ -569,6 +569,33 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         yield* git(upstream, ["branch", "other", "agent"]);
         yield* git(tmp, ["fetch", "upstream"], { committedAt: afterCheckpoint });
         expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["own.txt"]));
+
+        yield* writeTextFile(NodePath.join(tmp, "upstream.txt"), "local\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "local conflict"], { committedAt: afterCheckpoint });
+        yield* writeTextFile(NodePath.join(upstream, "upstream.txt"), "remote\n");
+        yield* git(upstream, ["add", "."]);
+        yield* git(upstream, ["commit", "-m", "remote conflict"], { committedAt: afterCheckpoint });
+        yield* git(tmp, ["fetch", "upstream"], { committedAt: afterCheckpoint });
+        yield* git(tmp, ["rebase", `upstream/${branch}`], {
+          committedAt: afterCheckpoint,
+          allowNonZeroExit: true,
+        });
+        expect(yield* git(tmp, ["diff", "--name-only", "--diff-filter=U"])).toBe("upstream.txt");
+        yield* writeTextFile(NodePath.join(tmp, "upstream.txt"), "resolved\n");
+        yield* git(tmp, ["add", "upstream.txt"]);
+        yield* git(tmp, ["-c", "core.editor=true", "rebase", "--continue"], {
+          committedAt: afterCheckpoint,
+        });
+        yield* git(tmp, ["push", "upstream", "HEAD:refs/heads/resolved"], {
+          committedAt: afterCheckpoint,
+        });
+        yield* git(upstream, ["branch", "rediscovered", "resolved"]);
+        yield* git(tmp, ["fetch", "upstream"], { committedAt: afterCheckpoint });
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(
+          new Set(["own.txt", "upstream.txt"]),
+        );
       }),
     );
 
