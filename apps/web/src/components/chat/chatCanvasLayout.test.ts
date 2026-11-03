@@ -23,6 +23,47 @@ const expectClear = (result: ReturnType<typeof resolve>) => {
 };
 
 describe("chat canvas layout", () => {
+  it("does not enlarge the preview when its right edge is dragged inward", () => {
+    for (const height of [300, 400, 600, 900]) {
+      for (const x of [12, 200, 500, 700]) {
+        const start = resolve(1000, { ...preview, position: { x, y: 500 } }, height).frame!;
+        const resized = resizePreviewMiniPlayer({
+          start,
+          direction: "east",
+          delta: { x: -30, y: 0 },
+          source: preview.source,
+          container: { width: 1000, height },
+        });
+        expect(resized.width, JSON.stringify({ height, x, start, resized })).toBeLessThanOrEqual(
+          start.width,
+        );
+        const rendered = resolve(
+          1000,
+          {
+            ...preview,
+            width: resized.width,
+            position: resized,
+            lastInteraction: "resize",
+          },
+          height,
+        ).frame!;
+        expect(
+          rendered.width,
+          JSON.stringify({ height, x, start, resized, rendered }),
+        ).toBeLessThanOrEqual(start.width);
+        expect(rendered.x).toBe(start.x);
+        expect(rendered.y, JSON.stringify({ height, x, start, resized, rendered })).toBe(start.y);
+        expect(
+          resolve(1000, {
+            ...preview,
+            width: resized.width,
+            position: resized,
+            lastInteraction: "resize",
+          }).frame!.width,
+        ).toBe(resized.width);
+      }
+    }
+  });
   it("lifts a growing preview above the composer without snapping at the chat boundary", () => {
     let previous: ReturnType<typeof resolve> | undefined;
     for (let width = 480; width <= 1100; width++) {

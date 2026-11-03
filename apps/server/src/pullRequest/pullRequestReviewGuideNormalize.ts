@@ -87,26 +87,29 @@ function clampExcerpt(
 function mergeExcerpts(
   excerpts: ReadonlyArray<PullRequestReviewGuideExcerpt>,
 ): Array<PullRequestReviewGuideExcerpt> {
-  const merged: Array<PullRequestReviewGuideExcerpt> = [];
+  let merged: Array<PullRequestReviewGuideExcerpt> = [];
   for (const excerpt of excerpts) {
-    const index = merged.findIndex(
-      (other) =>
-        other.path === excerpt.path &&
-        other.side === excerpt.side &&
-        other.start <= excerpt.end + 1 &&
-        excerpt.start <= other.end + 1,
-    );
-    const other = merged[index];
-    if (other === undefined) {
+    const touches = (other: PullRequestReviewGuideExcerpt) =>
+      other.path === excerpt.path &&
+      other.side === excerpt.side &&
+      other.start <= excerpt.end + 1 &&
+      excerpt.start <= other.end + 1;
+    // An excerpt can bridge several earlier ones; fold them all into the first.
+    const group = merged.filter(touches);
+    const first = group[0];
+    if (first === undefined) {
       merged.push(excerpt);
       continue;
     }
-    merged[index] = {
-      ...other,
-      start: Math.min(other.start, excerpt.start),
-      end: Math.max(other.end, excerpt.end),
-      caption: other.caption || excerpt.caption,
+    const combined = {
+      ...first,
+      start: Math.min(excerpt.start, ...group.map((other) => other.start)),
+      end: Math.max(excerpt.end, ...group.map((other) => other.end)),
+      caption: group.find((other) => other.caption)?.caption ?? excerpt.caption,
     };
+    merged = merged.flatMap((other) =>
+      other === first ? [combined] : touches(other) ? [] : [other],
+    );
   }
   return merged.map((excerpt) => ({
     ...excerpt,
