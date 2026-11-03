@@ -39,8 +39,14 @@ export function subagentThreadTitle(input: {
   if (detail === undefined) {
     return `${input.parentTitle} subagent ${input.ordinal}`;
   }
-  const clipped = detail.length > 72 ? `${detail.slice(0, 69)}...` : detail;
-  return clipped;
+  if (detail.length <= 72) return detail;
+  let end = 69;
+  const previous = detail.charCodeAt(end - 1);
+  const next = detail.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${detail.slice(0, end)}...`;
 }
 
 export function makeSubagentChildThread(input: {
