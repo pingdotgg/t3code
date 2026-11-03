@@ -6,6 +6,7 @@ import { applyClaudeGatewayModels } from "./Drivers/ClaudeGatewayModels.ts";
 
 import { resolveProviderCatalog, type ModelManifestData } from "./ModelManifest.ts";
 import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
   formatClaudeVersionUpgradeMessage,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
@@ -89,10 +90,11 @@ describe("Claude model catalog", () => {
         auth: { status: "authenticated" },
       },
     });
-    const result = applyClaudeGatewayModels(provider, [
-      { id: "known" },
-      { id: "claude-haiku-4-5-20251001", display_name: "Gateway Haiku" },
-    ]);
+    const result = applyClaudeGatewayModels(
+      provider,
+      [{ id: "known" }, { id: "claude-haiku-4-5-20251001", display_name: "Gateway Haiku" }],
+      BUNDLED_CLAUDE_MODEL_CATALOG,
+    );
     assert.deepStrictEqual(result.models, [
       { slug: "known", name: "Known", isCustom: false, capabilities: null },
       {

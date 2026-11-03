@@ -10,6 +10,7 @@ import {
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { readClaudeConnectionSettings } from "./ClaudeSkills.ts";
 import { makeClaudeEnvironment } from "./ClaudeHome.ts";
+import { resolveClaudeModelSlug, type ClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
 
 const GatewayModels = Schema.Struct({
   data: Schema.Array(
@@ -122,30 +123,37 @@ export const discoverClaudeGatewayModels = Effect.fn("discoverClaudeGatewayModel
 export function applyClaudeGatewayModels(
   provider: ServerProviderDraft,
   models: ReadonlyArray<GatewayModel>,
+  catalog: ClaudeModelCatalog,
 ): ServerProviderDraft {
   const known = new Map(provider.models.map((model) => [model.slug, model]));
   const unavailable = new Set(provider.updateRequiredModels?.map((model) => model.slug));
   const offered = new Set(models.map((model) => model.id));
+  const offeredCanonical = new Set(
+    models.map((model) => resolveClaudeModelSlug(catalog, model.id)),
+  );
   return {
     ...provider,
     models: [
       ...models
-        .filter((model) => !unavailable.has(model.id))
-        .map(
-          (model) =>
-            known.get(model.id) ?? {
-              slug: model.id,
-              name: model.display_name || model.id,
-              isCustom: false,
-              capabilities: { optionDescriptors: [] },
-            },
-        ),
+        .filter((model) => !unavailable.has(resolveClaudeModelSlug(catalog, model.id)))
+        .map((model) => {
+          const metadata =
+            known.get(model.id) ?? known.get(resolveClaudeModelSlug(catalog, model.id));
+          return metadata
+            ? { ...metadata, slug: model.id }
+            : {
+                slug: model.id,
+                name: model.display_name || model.id,
+                isCustom: false,
+                capabilities: { optionDescriptors: [] },
+              };
+        }),
       ...provider.models.filter((model) => model.isCustom && !offered.has(model.slug)),
     ],
     ...(provider.updateRequiredModels
       ? {
           updateRequiredModels: provider.updateRequiredModels.filter((model) =>
-            offered.has(model.slug),
+            offeredCanonical.has(model.slug),
           ),
         }
       : {}),

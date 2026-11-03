@@ -249,23 +249,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
                 ),
+            ).pipe(
+              Effect.flatMap((provider) =>
+                Effect.gen(function* () {
+                  if (!provider.enabled || !provider.installed) return provider;
+                  const models = yield* discoverClaudeGatewayModels(
+                    effectiveConfig,
+                    processEnv,
+                    stateDir,
+                  ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+                  return models === undefined
+                    ? provider
+                    : applyClaudeGatewayModels(provider, models, catalog);
+                }),
+              ),
             ),
           ),
           Effect.tap((provider) =>
             provider.auth.status === "unauthenticated"
               ? Cache.invalidateAll(capabilitiesProbeCache)
               : Effect.void,
-          ),
-          Effect.flatMap((provider) =>
-            Effect.gen(function* () {
-              if (!provider.enabled || !provider.installed) return provider;
-              const models = yield* discoverClaudeGatewayModels(
-                effectiveConfig,
-                processEnv,
-                stateDir,
-              ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
-              return models === undefined ? provider : applyClaudeGatewayModels(provider, models);
-            }),
           ),
           Effect.map(stampIdentity),
         ),
