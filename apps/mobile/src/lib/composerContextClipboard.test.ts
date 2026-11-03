@@ -29,8 +29,14 @@ vi.mock("expo-file-system", () => ({
 }));
 vi.mock("../state/atom-registry", () => ({
   appAtomRegistry: {
-    get: () => ({ _tag: "Some", value: { httpBaseUrl: "https://source.example" } }),
+    get: (atom: unknown) =>
+      atom === "environments"
+        ? []
+        : { _tag: "Some", value: { httpBaseUrl: "https://source.example" } },
   },
+}));
+vi.mock("../state/workspace", () => ({
+  workspaceConnections: { environmentsAtom: "environments" },
 }));
 vi.mock("../state/session", () => ({
   environmentSession: { preparedConnectionValueAtom: vi.fn() },

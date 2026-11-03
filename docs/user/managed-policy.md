@@ -232,7 +232,8 @@ so restart T3 Code after that.
 
 `providers.allowedDrivers` lists the providers that may run, by ID: `codex` (Codex),
 `claudeAgent` (Claude), `cursor` (Cursor), `grok` (Grok), `opencode` (OpenCode), `antigravity`
-(Antigravity), `fx` (fx), `pi` (Pi), `muse` (Muse Code), and `acpRegistry` (ACP Registry).
+(Antigravity), `fx` (fx), `kiro` (Kiro), `pi` (Pi), `muse` (Muse Code), and `acpRegistry` (ACP
+Registry).
 `t3 policy check` rejects an ID this version does not know. Threads on other providers stay,
 marked unavailable, and users can still turn those providers off.
 
@@ -249,9 +250,13 @@ starts the binary you set.
 
 - `mode`: `auto` keeps the normal update flow. `off` stops T3 Code from checking for updates, for
   machines that get T3 Code through device management.
-- `feedUrl`: the desktop app updates from your own mirror of the release feed instead of GitHub.
-  Publish only the versions you have approved. The `t3` command-line server updates through npm,
-  so pin it with your package tooling.
+- `feedUrl`: T3 Code updates from your own mirror instead of GitHub: the desktop app, `t3 update`,
+  and updates started from another device. Publish only the versions you have approved, laid out
+  as on a GitHub release. The release's update files (`latest.yml`, `latest-mac.yml`,
+  `latest-linux.yml`, `latest-linux-arm64.yml`, and their `nightly` versions if you allow nightly)
+  and the desktop installers they list go at the URL's root. The release's `t3-*` archives and
+  `SHA256SUMS` go under `v<version>/`. A `t3` run through `npx` comes from npm, so pin it with your
+  package tooling.
 - `allowNightly: false`: the nightly channel is unavailable.
 
 ## What a policy does not cover
