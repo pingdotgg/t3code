@@ -598,7 +598,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     // ACP exposes no quota data; Devin is the one registry agent whose own API
     // reports usage limits.
     const checkUsageLimits =
-      effectiveConfig.source === "registry" && effectiveConfig.agentId === "devin"
+      effectiveConfig.enabled &&
+      effectiveConfig.source === "registry" &&
+      effectiveConfig.agentId === "devin"
         ? readDevinUsageLimits({ environment: processEnvironment }).pipe(
             Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.provideService(Path.Path, pathService),

@@ -297,6 +297,7 @@ describe("pools", () => {
             providers: [
               {
                 ...go,
+                iconUrl: "https://example.com/opencode-go.svg",
                 usageLimits: {
                   ...go.usageLimits!,
                   checkedAt: "2026-09-03T11:30:00.000Z",
@@ -314,6 +315,7 @@ describe("pools", () => {
       { environmentId: "env-a", label: "Laptop" },
       { environmentId: "env-b", label: "Desktop" },
     ]);
+    expect(accounts[0]?.iconUrl).toBe("https://example.com/opencode-go.svg");
     expect(collectLimitPools(accounts, now)[0]?.windows[0]?.members).toHaveLength(1);
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(4);
 

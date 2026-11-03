@@ -3,6 +3,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Hex from "effect/encoding/Hex";
@@ -50,7 +51,7 @@ const GetUserStatusResponse = Schema.Struct({
 const resetAtIso = (value: number | string | undefined): string | undefined => {
   const seconds = typeof value === "string" ? Number(value) : value;
   return seconds !== undefined && Number.isFinite(seconds) && seconds > 0
-    ? DateTime.formatIso(DateTime.makeUnsafe(seconds * 1000))
+    ? Option.getOrUndefined(Option.map(DateTime.make(seconds * 1000), DateTime.formatIso))
     : undefined;
 };
 

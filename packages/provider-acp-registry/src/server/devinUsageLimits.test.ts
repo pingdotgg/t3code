@@ -109,6 +109,35 @@ describe("readDevinUsageLimits", () => {
         },
       ],
     },
+    {
+      name: "reports the daily window without a reset when its timestamp is out of range",
+      planStatus: {
+        planInfo: {
+          billingStrategy: "BILLING_STRATEGY_QUOTA",
+          devinInfo: { webappHost: "app.devin.ai" },
+        },
+        weeklyQuotaRemainingPercent: 50,
+        dailyQuotaResetAtUnix: "99999999999999",
+        weeklyQuotaResetAtUnix: "1794124800",
+      },
+      expectedWindows: [
+        {
+          id: "devin_daily",
+          kind: "session",
+          label: "Devin · Daily",
+          windowDurationMins: 1440,
+          usedPercent: 100,
+        },
+        {
+          id: "devin_weekly",
+          kind: "weekly",
+          label: "Devin · Weekly",
+          windowDurationMins: 10080,
+          usedPercent: 50,
+          resetsAt: "2026-11-08T08:00:00.000Z",
+        },
+      ],
+    },
   ])("$name", ({ planStatus, expectedWindows }) =>
     Effect.gen(function* () {
       const dataHome = yield* withCredentialsDir(CREDENTIALS_TOML);
