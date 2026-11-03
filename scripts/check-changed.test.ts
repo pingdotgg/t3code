@@ -414,7 +414,11 @@ it("lints an Astro component and runs knip when only it changed", () => {
   const result = project.run();
   expect(result.status, result.stdout + result.stderr).toBe(0);
   const calls = project.calls();
-  expect(calls.find(({ args }) => args[0] === "lint")?.args).toEqual(["lint", page]);
+  expect(calls.find(({ args }) => args[0] === "lint")?.args).toEqual([
+    "lint",
+    "--no-error-on-unmatched-pattern",
+    page,
+  ]);
   expect(calls.some(({ args }) => args[0] === "exec" && args[1] === "knip")).toBe(true);
 });
 
