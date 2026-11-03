@@ -226,6 +226,17 @@ describe("watchAntigravityPromptOutcome", () => {
         corruptDb.close();
       }
 
+      const blocked = `${dbPath}.corrupt-0`;
+      yield* fs.makeDirectory(blocked);
+      const walPath = `${dbPath}-wal`;
+      yield* fs.writeFileString(walPath, "fixture wal");
+      const failed = yield* check({ stopReason: "end_turn" });
+      assert.equal(failed?.retryable, false);
+      assert.isTrue(yield* fs.exists(dbPath));
+      assert.isTrue(yield* fs.exists(walPath));
+      yield* fs.remove(blocked, { recursive: true });
+      yield* fs.remove(walPath);
+
       const failure = yield* check({ stopReason: "end_turn" });
       assert.deepEqual(failure, {
         class: "provider_error",

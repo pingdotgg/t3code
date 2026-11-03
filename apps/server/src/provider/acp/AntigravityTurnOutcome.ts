@@ -143,9 +143,25 @@ async function quarantineAntigravitySessionDatabase(
   timestamp: number,
 ): Promise<string> {
   const quarantinePath = `${databasePath}.corrupt-${timestamp}`;
-  await NodeFSP.rename(databasePath, quarantinePath).catch(() => {});
-  await NodeFSP.rename(`${databasePath}-wal`, `${quarantinePath}-wal`).catch(() => {});
-  await NodeFSP.rename(`${databasePath}-shm`, `${quarantinePath}-shm`).catch(() => {});
+  const moved: Array<readonly [string, string]> = [];
+  try {
+    for (const suffix of ["-wal", "-shm", ""]) {
+      const source = `${databasePath}${suffix}`;
+      const destination = `${quarantinePath}${suffix}`;
+      try {
+        await NodeFSP.rename(source, destination);
+        moved.push([source, destination]);
+      } catch (error) {
+        if (suffix !== "" && (error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+    }
+  } catch (error) {
+    for (const [source, destination] of moved.reverse()) {
+      await NodeFSP.rename(destination, source);
+    }
+    throw error;
+  }
   return quarantinePath;
 }
 
@@ -219,7 +235,7 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
     const failure = turnFailure(result.stopReason, step, now);
     if (failure?.code === "SESSION_CORRUPTED" && after !== undefined) {
       const timestamp = DateTime.toEpochMillis(now);
-      yield* Effect.tryPromise(() =>
+      const quarantined = yield* Effect.tryPromise(() =>
         quarantineAntigravitySessionDatabase(after.path, timestamp),
       ).pipe(
         Effect.tap(() =>
@@ -227,8 +243,20 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
             path: after.path,
           }),
         ),
-        Effect.orElseSucceed(() => undefined),
+        Effect.as(true),
+        Effect.tapError((error) =>
+          Effect.logWarning("Could not quarantine Antigravity session database", { error }),
+        ),
+        Effect.orElseSucceed(() => false),
       );
+      if (!quarantined) {
+        return makeProviderFailure({
+          class: "provider_error",
+          message: "Antigravity session checkpoint is corrupted and could not be quarantined.",
+          code: "SESSION_QUARANTINE_FAILED",
+          retryable: false,
+        });
+      }
     }
     return failure;
   });
