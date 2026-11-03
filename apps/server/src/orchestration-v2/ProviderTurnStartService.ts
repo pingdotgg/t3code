@@ -554,14 +554,14 @@ export const layer: Layer.Layer<
       );
       if (input.failBeforeStart !== undefined) {
         yield* settleRunBeforeStart({
-          signal: "provider-turn-restart-failure",
+          signal: "provider-turn-start-abandoned",
           status: "failed",
           now: yield* DateTime.now,
           providerInstanceId: run.providerInstanceId,
           itemProviderThreadId: providerThread.id,
           item: {
             type: "error",
-            title: "Provider restart failed",
+            title: "Provider turn failed to start",
             failure: makeProviderFailure({
               cause: input.failBeforeStart,
               class: "provider_error",
@@ -1720,10 +1720,12 @@ export const layer: Layer.Layer<
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         // Ending the session stops the process, so a turn it accepted without
         // answering cannot keep editing the workspace. The next start reopens
-        // the session and resumes the native conversation.
+        // the session and resumes the native conversation. A shared process
+        // stays up while another thread's turn is busy on it.
         containUnansweredStart: providerSessions
-          .release({
+          .releaseUnlessBusy({
             providerSessionId,
+            ownProviderThreadIds: [providerThread.id],
             reason: "runtime_error",
             detail: "The provider did not answer the turn start.",
           })
