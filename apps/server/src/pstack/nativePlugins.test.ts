@@ -21,6 +21,21 @@ describe("native pstack plugins", () => {
       "plugins.pstack@other.enabled=false",
     ]);
     expect(codexPstackPluginOverrideArgs('[plugins."tracedecay@local"]\n')).toEqual([]);
+    for (const config of [
+      "[plugins.'pstack@local']\nenabled = true\n",
+      'plugins."pstack@local".enabled = true\n',
+      '[plugins]\n"pstack@local" = { enabled = true }\n',
+      'plugins = { "pstack@local" = { enabled = true } }\n',
+    ]) {
+      expect(codexPstackPluginOverrideArgs(config)).toEqual([
+        "-c",
+        "plugins.pstack@local.enabled=false",
+      ]);
+    }
+    expect(
+      codexPstackPluginOverrideArgs('instructions = """\n[plugins."pstack@fake"]\n"""\n'),
+    ).toEqual([]);
+    expect(codexPstackPluginOverrideArgs('[plugins."pstack@broken"')).toEqual([]);
   });
 
   it("disables only Claude pstack plugins that settings enable", () => {

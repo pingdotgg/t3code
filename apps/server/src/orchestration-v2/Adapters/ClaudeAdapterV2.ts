@@ -10384,6 +10384,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(FileSystem.FileSystem, fileSystem),
                     Effect.provideService(Path.Path, path),
                   ),
+                  launchArgSettings?.enabledPlugins,
                 )
               : undefined;
           const launchSdkSettings =
