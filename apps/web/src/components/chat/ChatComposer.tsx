@@ -2518,9 +2518,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const insertComposerTextAtEndStable = useStableCallback(insertComposerTextAtEnd);
 
-  const insertComposerFolders = async (folders: File[], target: FolderDropTarget) => {
+  const insertComposerFolders = async (
+    folders: File[],
+    target: FolderDropTarget,
+    draftKey: string,
+  ) => {
     const bridge = window.desktopBridge;
-    const draftKey = attachmentTargetKeyRef.current;
     for (const folder of folders) {
       const droppedPath = resolveDroppedFolderPath(folder, bridge?.getPathForFile);
       const path =
@@ -2576,7 +2579,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       return;
     }
-    void insertComposerFolders(folders, target);
+    const draftKey = attachmentTargetKeyRef.current;
+    // Hold send until every conversion lands, or the folder misses the message.
+    pendingDraftWork.begin(draftKey);
+    void insertComposerFolders(folders, target, draftKey).finally(() =>
+      pendingDraftWork.end(draftKey),
+    );
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
 
