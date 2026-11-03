@@ -35,7 +35,7 @@ import {
 } from "@t3tools/shared/linearWriteBack";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hash from "effect/Hash";
@@ -116,7 +116,7 @@ export const layer = Layer.effect(
     const store = yield* LinearLinkStore.LinearLinkStore;
     const pipelines = yield* PipelineService.PipelineService;
     const projection = yield* ProjectionStore.ProjectionStoreV2;
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const linkLock = yield* KeyedLock.make<string>();
 
     const backoff: LinearBackoff = makeLinearBackoff();
@@ -442,7 +442,7 @@ export const layer = Layer.effect(
             };
       const stored = yield* store
         .upsert({
-          linkId: yield* crypto.randomUUIDv4().pipe(Effect.orDie),
+          linkId: yield* random.uuidV4(),
           issueId: input.issueId,
           issueIdentifier: identity.identifier,
           teamId: identity.teamId,
