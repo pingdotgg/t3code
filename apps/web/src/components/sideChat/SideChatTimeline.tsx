@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { LegendListRef } from "@legendapp/list/react";
 import type { ReactNode } from "react";
 import { useLayoutEffect, useRef } from "react";
@@ -15,13 +16,16 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
+import { environmentThreadDetails } from "~/state/threads";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { deriveActiveWorkStartedAt, derivePhase, type PendingApproval } from "../../session-logic";
 import type { ChatMessage } from "../../types";
 import type { AssistantCitationRequest } from "../chat/AssistantCitationSource";
+import { WorkspaceMutationIdContext } from "../chat/ChatMarkdownMedia";
 import { useCitedHistory } from "../chat/citationProcedure";
 import { openExpandedImagePreview } from "../chat/ExpandedImageDialog";
 import { ThreadTimeline } from "../chat/ThreadTimeline";
@@ -33,6 +37,7 @@ import type { TimelineViewport } from "../chat/timelineViewport";
 
 const noop = () => {};
 const EMPTY_TIMELINE_ENTRIES = [] as const;
+const NO_WORKSPACE_MUTATION_ID_ATOM = Atom.make<string | null | undefined>(undefined);
 
 /**
  * A side chat's timeline in the lesson's panel. It stays out of the held-timeline
@@ -128,77 +133,89 @@ export function SideChatTimeline(props: {
     if (optimisticMessageId !== null && optimisticMessageId !== previous) scrollToEnd();
   }, [optimisticMessageId, scrollToEnd]);
 
+  const workspaceMutationId = useAtomValue(
+    props.detailRef === null
+      ? NO_WORKSPACE_MUTATION_ID_ATOM
+      : environmentThreadDetails.workspaceMutationIdAtom(props.detailRef),
+  );
+
   return (
     <div className="relative h-full min-h-0">
-      <ThreadTimeline
-        holdTimeline={false}
-        pendingApprovals={props.pendingApprovals}
-        respondingRequestIds={props.respondingRequestIds}
-        canOperateThread={props.canOperate}
-        onRespondToApproval={props.onRespondToApproval}
-        threadDetailRef={props.detailRef}
-        entriesInput={{
-          optimisticMessages: props.optimisticMessages,
-          ...(props.attachmentUrlById === undefined
-            ? {}
-            : { attachmentUrlById: props.attachmentUrlById }),
-          ...(projection === null
-            ? {}
-            : { attempts: projection.attempts, nodes: projection.nodes, plans: projection.plans }),
-        }}
-        draftEntries={null}
-        activeThreadKey={sideChatKey}
-        syncing={props.detailLoading}
-        detailLoading={props.detailLoading}
-        citationRequest={props.citationRequest}
-        citationHistory={citationHistory}
-        onCiteAssistantText={props.onCiteAssistantText}
-        onAskInSideChat={props.onAskInSideChat}
-        askInSideChatPending={props.askInSideChatPending}
-        isWorking={isWorking}
-        runlessWorkActive={runlessWorkStartedAt !== null}
-        activeTurnStartedAt={
-          deriveActiveWorkStartedAt(activityRun, runtime, null) ?? runlessWorkStartedAt
-        }
-        onCancelWorktreeSetup={noop}
-        listRef={props.listRef}
-        runs={projection?.runs ?? []}
-        latestRun={activityRun}
-        runningRunId={runtime?.activeRunId ?? null}
-        turnDiffSummaries={[]}
-        activeThreadEnvironmentId={props.sideChatRef.environmentId}
-        routeThreadKey={sideChatKey}
-        threadFind={false}
-        onOpenThread={props.onOpenThread}
-        {...(props.onOpenSideChat === undefined ? {} : { onOpenSideChat: props.onOpenSideChat })}
-        supportsConversationRollback={false}
-        onRevertToTurnCount={noop}
-        isRevertingCheckpoint={false}
-        onImageExpand={(preview) => openExpandedImagePreview(lessonKey, preview)}
-        markdownCwd={workspaceRoot}
-        resolvedTheme={resolvedTheme}
-        timestampFormat={timestampFormat}
-        workspaceRoot={workspaceRoot}
-        anchorMessageId={null}
-        onAnchorReady={noop}
-        onAnchorSizeChanged={noop}
-        contentInsetEndAdjustment={0}
-        liveFollowEnabled={follow.timelineLiveFollowEnabled}
-        onIsAtEndChange={follow.onIsAtEndChangeStable}
-        onViewportAttach={attachTimelineViewport}
-        onFooterGrow={follow.onTimelineFooterGrowStable}
-        hideEmptyPlaceholder={props.detailLoading}
-        emptyPlaceholder={
-          props.label === null ? undefined : (
-            // The question is the side chat's only prompt to type, so it reads at full muted strength.
-            <span className="text-muted-foreground">
-              What do you want to know about “{props.label}”?
-            </span>
-          )
-        }
-        emptyPlaceholderInset={0}
-        footer={props.footer}
-      />
+      <WorkspaceMutationIdContext value={workspaceMutationId}>
+        <ThreadTimeline
+          holdTimeline={false}
+          pendingApprovals={props.pendingApprovals}
+          respondingRequestIds={props.respondingRequestIds}
+          canOperateThread={props.canOperate}
+          onRespondToApproval={props.onRespondToApproval}
+          threadDetailRef={props.detailRef}
+          entriesInput={{
+            optimisticMessages: props.optimisticMessages,
+            ...(props.attachmentUrlById === undefined
+              ? {}
+              : { attachmentUrlById: props.attachmentUrlById }),
+            ...(projection === null
+              ? {}
+              : {
+                  attempts: projection.attempts,
+                  nodes: projection.nodes,
+                  plans: projection.plans,
+                }),
+          }}
+          draftEntries={null}
+          activeThreadKey={sideChatKey}
+          syncing={props.detailLoading}
+          detailLoading={props.detailLoading}
+          citationRequest={props.citationRequest}
+          citationHistory={citationHistory}
+          onCiteAssistantText={props.onCiteAssistantText}
+          onAskInSideChat={props.onAskInSideChat}
+          askInSideChatPending={props.askInSideChatPending}
+          isWorking={isWorking}
+          runlessWorkActive={runlessWorkStartedAt !== null}
+          activeTurnStartedAt={
+            deriveActiveWorkStartedAt(activityRun, runtime, null) ?? runlessWorkStartedAt
+          }
+          onCancelWorktreeSetup={noop}
+          listRef={props.listRef}
+          runs={projection?.runs ?? []}
+          latestRun={activityRun}
+          runningRunId={runtime?.activeRunId ?? null}
+          turnDiffSummaries={[]}
+          activeThreadEnvironmentId={props.sideChatRef.environmentId}
+          routeThreadKey={sideChatKey}
+          threadFind={false}
+          onOpenThread={props.onOpenThread}
+          {...(props.onOpenSideChat === undefined ? {} : { onOpenSideChat: props.onOpenSideChat })}
+          supportsConversationRollback={false}
+          onRevertToTurnCount={noop}
+          isRevertingCheckpoint={false}
+          onImageExpand={(preview) => openExpandedImagePreview(lessonKey, preview)}
+          markdownCwd={workspaceRoot}
+          resolvedTheme={resolvedTheme}
+          timestampFormat={timestampFormat}
+          workspaceRoot={workspaceRoot}
+          anchorMessageId={null}
+          onAnchorReady={noop}
+          onAnchorSizeChanged={noop}
+          contentInsetEndAdjustment={0}
+          liveFollowEnabled={follow.timelineLiveFollowEnabled}
+          onIsAtEndChange={follow.onIsAtEndChangeStable}
+          onViewportAttach={attachTimelineViewport}
+          onFooterGrow={follow.onTimelineFooterGrowStable}
+          hideEmptyPlaceholder={props.detailLoading}
+          emptyPlaceholder={
+            props.label === null ? undefined : (
+              // The question is the side chat's only prompt to type, so it reads at full muted strength.
+              <span className="text-muted-foreground">
+                What do you want to know about “{props.label}”?
+              </span>
+            )
+          }
+          emptyPlaceholderInset={0}
+          footer={props.footer}
+        />
+      </WorkspaceMutationIdContext>
       {follow.showScrollToBottom ? (
         <ScrollToEndButton bottom={4} summary={null} onScrollToEnd={scrollToEnd} />
       ) : null}
