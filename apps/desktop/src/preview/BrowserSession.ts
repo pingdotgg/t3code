@@ -55,6 +55,16 @@ const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null =>
   }
 };
 
+/** Entra hides passkey sign-in when it detects an Electron User-Agent. */
+const MICROSOFT_SIGN_IN_URL_PATTERNS: ReadonlyArray<string> = [
+  "https://login.microsoftonline.com/*",
+  "https://login.microsoft.com/*",
+  "https://login.live.com/*",
+];
+
+export const stripElectronUserAgentToken = (userAgent: string): string =>
+  userAgent.replace(/ Electron\/\S+/, "");
+
 const MAX_PROMPT_URL_LENGTH = 300;
 
 const truncateForPrompt = (text: string): string =>
@@ -341,6 +351,23 @@ export const make = Effect.gen(function* BrowserSessionMake() {
             permission === "clipboard-read"
               ? clipboardReadDecisions.get(permissionOrigin(requestingOrigin) ?? "") === true
               : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
+          );
+          // Scoped to Microsoft sign-in hosts and to the request header only: rewriting the User-Agent
+          // for every site breaks Turnstile (see above).
+          browserSession.webRequest.onBeforeSendHeaders(
+            { urls: [...MICROSOFT_SIGN_IN_URL_PATTERNS] },
+            (details, callback) => {
+              const requestHeaders = { ...details.requestHeaders };
+              const userAgentKey = Object.keys(requestHeaders).find(
+                (key) => key.toLowerCase() === "user-agent",
+              );
+              const userAgent =
+                userAgentKey === undefined ? undefined : requestHeaders[userAgentKey];
+              if (userAgentKey !== undefined && userAgent !== undefined) {
+                requestHeaders[userAgentKey] = stripElectronUserAgentToken(userAgent);
+              }
+              callback({ requestHeaders });
+            },
           );
           const next = new Map(sessions);
           next.set(partition, browserSession);

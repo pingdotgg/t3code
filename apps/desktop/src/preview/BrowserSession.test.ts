@@ -16,6 +16,7 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
       readonly setUserAgent: ReturnType<typeof vi.fn>;
+      readonly webRequest: { readonly onBeforeSendHeaders: ReturnType<typeof vi.fn> };
     }
   >(),
 }));
@@ -62,6 +63,7 @@ describe("BrowserSession", () => {
         setPermissionRequestHandler: vi.fn(),
         setPermissionCheckHandler: vi.fn(),
         setUserAgent: vi.fn(),
+        webRequest: { onBeforeSendHeaders: vi.fn() },
       };
       sessions.set(partition, browserSession);
       return browserSession;
@@ -131,6 +133,7 @@ describe("BrowserSession", () => {
           setUserAgent: vi.fn((next: string) => {
             userAgent = next;
           }),
+          webRequest: { onBeforeSendHeaders: vi.fn() },
         };
         sessions.set(partition, browserSession);
         return browserSession;
@@ -144,6 +147,54 @@ describe("BrowserSession", () => {
       assert.isDefined(browserSession);
       assert.strictEqual(browserSession.getUserAgent(), nativeUserAgent);
     }).pipe(Effect.provide(layer)),
+  );
+
+  it("strips only the Electron token from a User-Agent", () => {
+    const withElectron =
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) T3CodeBeta/0.1.6 Chrome/152.0.7977.169 Electron/44.10.0 Safari/537.36";
+    const withoutElectron =
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) T3CodeBeta/0.1.6 Chrome/152.0.7977.169 Safari/537.36";
+    assert.strictEqual(BrowserSession.stripElectronUserAgentToken(withElectron), withoutElectron);
+    assert.strictEqual(
+      BrowserSession.stripElectronUserAgentToken(withoutElectron),
+      withoutElectron,
+    );
+  });
+
+  it.effect(
+    "strips the Electron token from User-Agent headers on Microsoft sign-in hosts only",
+    () =>
+      Effect.gen(function* () {
+        const browserSessions = yield* BrowserSession.BrowserSession;
+        const partition = yield* browserSessions.getPartition("scope-a");
+        yield* browserSessions.getSession("scope-a");
+
+        const calls = sessions.get(partition)?.webRequest.onBeforeSendHeaders.mock.calls ?? [];
+        assert.strictEqual(calls.length, 1);
+        const [filter, listener] = calls[0] ?? [];
+        assert.deepStrictEqual(filter, {
+          urls: [
+            "https://login.microsoftonline.com/*",
+            "https://login.microsoft.com/*",
+            "https://login.live.com/*",
+          ],
+        });
+        assert.isFunction(listener);
+
+        const nativeUserAgent = "Mozilla/5.0 Chrome/152.0.0.0 Electron/44.10.0 Safari/537.36";
+        for (const key of ["User-Agent", "user-agent"]) {
+          const requestHeaders = { [key]: nativeUserAgent, Accept: "*/*" };
+          let rewritten: { requestHeaders: Record<string, string> } | undefined;
+          listener({ requestHeaders }, (response: { requestHeaders: Record<string, string> }) => {
+            rewritten = response;
+          });
+          assert.deepStrictEqual(rewritten, {
+            requestHeaders: { [key]: "Mozilla/5.0 Chrome/152.0.0.0 Safari/537.36", Accept: "*/*" },
+          });
+          // The original request headers object is left untouched.
+          assert.strictEqual(requestHeaders[key], nativeUserAgent);
+        }
+      }).pipe(Effect.provide(layer)),
   );
 
   it.effect("grants preview permissions through both the request and check handlers", () =>
