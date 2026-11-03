@@ -442,6 +442,7 @@ export function NewTaskFlowProvider(
     selectedEnvironmentServerConfig,
     storedStickyModelSelection,
     selectedProject?.id ?? null,
+    { requireVisible: true },
   );
   const modelOptions = buildModelOptions(
     selectedEnvironmentServerConfig,

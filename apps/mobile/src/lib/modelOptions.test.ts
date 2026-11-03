@@ -824,6 +824,9 @@ describe("synchronized mobile model visibility", () => {
           selection,
         });
         expect(resolveDefaultableModelSelection(config, selection, null)).toEqual(selection);
+        expect(
+          resolveDefaultableModelSelection(config, selection, null, { requireVisible: true }),
+        ).toBeNull();
       }
     },
   );

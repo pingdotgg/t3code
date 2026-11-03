@@ -250,6 +250,7 @@ export function resolveDefaultableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null,
   projectId: ProjectId | null,
+  options?: { readonly requireVisible?: boolean },
 ): ModelSelection | null {
   const usable = resolveSelectableModelSelection(config, selection, projectId);
   if (!usable || !config) {
@@ -257,6 +258,13 @@ export function resolveDefaultableModelSelection(
   }
   const provider = config.providers.find((candidate) => candidate.instanceId === usable.instanceId);
   const model = provider?.models.find((candidate) => candidate.slug === usable.model);
+  if (
+    options?.requireVisible &&
+    config.settings?.providerModelPreferences?.[usable.instanceId]?.hiddenModels.includes(
+      usable.model,
+    )
+  )
+    return null;
   return provider?.driver !== "antigravity" && model?.isLegacy === true ? null : usable;
 }
 
