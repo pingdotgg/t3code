@@ -1386,7 +1386,7 @@ function ComposerPromptEditorTiptapInner(
           const importFragment = readCallbacks().importContextFragment;
           let text =
             !literalText && importFragment
-              ? importPastedComposerText(clipboardData, importFragment)
+              ? importPastedComposerText(clipboardData, importFragment, answerThreadLinks)
               : pastedText;
           const tokens = literalText
             ? []

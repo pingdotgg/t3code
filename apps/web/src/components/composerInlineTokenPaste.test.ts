@@ -40,6 +40,18 @@ describe("importPastedComposerText", () => {
     );
     expect(text).toBe(`See ${chip("Fix the login flow")}`);
     expect(imported.map((fragment) => fragment.records)).toEqual([target.fragment!.records]);
+    const answerImports: Array<ComposerContextClipboardFragment> = [];
+    expect(
+      importPastedComposerText(
+        clipboard({
+          "text/plain": `See ${target.value}`,
+          [COMPOSER_CONTEXT_CLIPBOARD_MIME]: encodeComposerContextFragment(target.fragment!)!,
+        }),
+        importAll(answerImports),
+        true,
+      ),
+    ).toBe(`See ${target.value}`);
+    expect(answerImports).toEqual([]);
   });
 
   it("makes a chip of a v2 link pasted without T3's clipboard format", () => {
@@ -48,6 +60,12 @@ describe("importPastedComposerText", () => {
       importAll([]),
     );
     expect(text).toBe(chip("Login"));
+    const imported: Array<ComposerContextClipboardFragment> = [];
+    const answer = "[Login](t3-thread://v2/env-1/thread-1)";
+    expect(
+      importPastedComposerText(clipboard({ "text/plain": answer }), importAll(imported), true),
+    ).toBe(answer);
+    expect(imported).toEqual([]);
   });
 
   it("keeps the link when the composer cannot take the thread", () => {

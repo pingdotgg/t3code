@@ -23,16 +23,15 @@ const threadTitle = (ref: ScopedThreadRef) => readThreadShell(ref)?.title;
 /** Pasted thread links count as context too, so they become chips like a copied chip does. */
 export function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
+  preserveThreadLinks = false,
 ): ComposerContextClipboardFragment | null {
   const pastedText = clipboardData.getData("text/plain");
   const decodedFragment =
     decodeComposerContextFragment(clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) ??
     decodeComposerContextClipboardHtml(clipboardData.getData("text/html"));
-  const threads = threadLinkContextReferences(
-    pastedText,
-    decodedFragment?.records ?? [],
-    threadTitle,
-  );
+  const threads = preserveThreadLinks
+    ? { text: pastedText, records: [] }
+    : threadLinkContextReferences(pastedText, decodedFragment?.records ?? [], threadTitle);
   const source =
     decodedFragment?.source ??
     (threads.records[0] ? { environmentId: threads.records[0].environmentId } : null);
@@ -64,9 +63,12 @@ export function importPastedComposerText(
   importContextFragment?: (
     fragment: ComposerContextClipboardFragment,
   ) => ReadonlyMap<string, string>,
+  preserveThreadLinks = false,
 ): string {
   const pastedText = clipboardData.getData("text/plain");
-  const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
+  const fragment = importContextFragment
+    ? readPastedComposerContext(clipboardData, preserveThreadLinks)
+    : null;
   const rewrittenIds =
     fragment && fragment.records.length > 0 ? importContextFragment!(fragment) : null;
   if (!rewrittenIds || rewrittenIds.size === 0) return pastedText;
@@ -84,6 +86,7 @@ export function importPastedComposerText(
         })
       : occurrence.source;
   });
+  if (preserveThreadLinks) return text;
   // A thread the import refused, on a machine this agent cannot read, stays the link it was.
   return threadLinkContextReferences(text, fragment?.records ?? [], threadTitle, (record) =>
     nextId(record.contextId),
