@@ -760,6 +760,8 @@ const sidebarMenuButtonVariants = cva(
         // the footer's icon controls: its glyph stays on their center line.
         control:
           "h-(--workspace-titlebar-control-size) rounded-[var(--control-radius)] px-[var(--sidebar-row-content-inset)] text-label has-[>svg:first-child]:ps-[calc(var(--sidebar-row-content-inset)+1px)] has-[>svg:first-child]:gap-[calc(var(--sidebar-control-gap)-1px)]",
+        project:
+          "h-8 gap-2.5 rounded-[var(--control-radius)] px-(--sidebar-row-content-inset) text-label",
         icon: "size-8 justify-center rounded-[var(--control-radius)] p-0",
         sm: "h-7 rounded-control p-2 text-meta",
       },
