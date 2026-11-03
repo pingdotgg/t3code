@@ -21,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
@@ -385,6 +386,7 @@ it.effect.each([
         metadata_json: "{}",
         application_event_version: 2,
       }));
+      assert(Arr.isArrayNonEmpty(rows));
       const inserted = yield* sql<{ sequence: number }>`
       INSERT INTO orchestration_events ${sql.insert(rows)} RETURNING sequence
     `;
@@ -1398,11 +1400,15 @@ it.effect.each(["thread", "shell"] as const)(
         return Effect.succeed(statement);
       };
       const subscription = Effect.gen(function* () {
-        const stream =
-          scope === "thread"
-            ? yield* subscribeOrchestrationV2Thread({ threadId, afterSequence: first!.sequence })
-            : yield* subscribeOrchestrationV2Shell({ afterSequence: first!.sequence });
-        return stream;
+        if (scope === "thread") {
+          return yield* subscribeOrchestrationV2Thread({
+            threadId,
+            afterSequence: first!.sequence,
+          }).pipe(Effect.flatMap(Stream.runDrain));
+        }
+        return yield* subscribeOrchestrationV2Shell({ afterSequence: first!.sequence }).pipe(
+          Effect.flatMap(Stream.runDrain),
+        );
       }).pipe(
         Effect.provideService(Statement.CurrentTransformer, gateReplayRead),
         Effect.provideService(ThreadManagement.ThreadManagementService, {

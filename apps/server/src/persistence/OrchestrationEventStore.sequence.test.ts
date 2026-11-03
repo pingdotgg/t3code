@@ -97,7 +97,7 @@ it.effect("fetches the next byte-bounded replay page after delivering the previo
     const store = yield* OrchestrationEventStore.OrchestrationEventStore;
     const sql = yield* SqlClient.SqlClient;
     const threadId = ThreadId.make("byte-paged-replay");
-    const rows = [1, 2].map((ordinal) => ({
+    const rows = Arr.map([1, 2] as const, (ordinal) => ({
       ...eventRow(ordinal, "thread", 2, threadId),
       payload_json: encodeJson({
         providerSessionId: `session:${ordinal}:${"x".repeat(180_000)}`,
