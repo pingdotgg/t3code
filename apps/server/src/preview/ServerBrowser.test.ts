@@ -3,6 +3,7 @@ import * as NodeVM from "node:vm";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Playwright download mocks perform real file operations outside the Effect runtime.
 import * as NodeFSP from "node:fs/promises";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it } from "@effect/vitest";
@@ -384,7 +385,7 @@ const dependencies = Layer.mergeAll(
   PreviewAgentActivity.layer,
 ).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const layer = ServerBrowser.layer.pipe(Layer.provideMerge(dependencies));
 const ready = Effect.gen(function* () {
@@ -1083,6 +1084,26 @@ it.effect.each([
     ],
   },
   {
+    name: "wheel burst before a click",
+    inputs: [
+      ...Array.from({ length: 120 }, () => ({
+        type: "wheel",
+        x: 100,
+        y: 200,
+        deltaX: 0,
+        deltaY: 12,
+      })),
+      { type: "mouse", action: "down", x: 100, buttons: 1, button: "left" },
+      { type: "mouse", action: "up", x: 100, buttons: 0, button: "left" },
+    ],
+    expected: [
+      { type: "mouseMoved", x: -1 },
+      { type: "mouseWheel", x: 100, y: 200, deltaX: 0, deltaY: 1440 },
+      { type: "mousePressed", x: 100 },
+      { type: "mouseReleased", x: 100 },
+    ],
+  },
+  {
     name: "modifier changes and drag points",
     inputs: [
       { type: "mouse", action: "move", x: 1, buttons: 0, button: "none" },
@@ -1116,11 +1137,28 @@ it.effect.each([
     expected: [
       { type: "mouseMoved", x: -1 },
       { type: "mouseMoved", x: 1 },
-      { type: "mouseWheel", deltaY: 20 },
-      { type: "mouseWheel", deltaY: 30 },
+      { type: "mouseWheel", deltaY: 50 },
       { type: "mouseMoved", x: 2 },
       { type: "keyDown", key: "a" },
       { type: "mouseMoved", x: 3 },
+    ],
+  },
+  {
+    name: "wheel position, modifier and direction boundaries",
+    inputs: [
+      { type: "wheel", x: 1, deltaX: 5, deltaY: 10 },
+      { type: "wheel", x: 1, deltaX: 5, deltaY: 10 },
+      { type: "wheel", x: 2, deltaY: 10 },
+      { type: "wheel", x: 2, deltaY: 10, modifiers: 2 },
+      { type: "wheel", x: 2, deltaY: -10, modifiers: 2 },
+      { type: "wheel", x: 2, deltaY: -10, modifiers: 2 },
+    ],
+    expected: [
+      { type: "mouseMoved", x: -1 },
+      { type: "mouseWheel", x: 1, deltaX: 10, deltaY: 20, modifiers: 0 },
+      { type: "mouseWheel", x: 2, deltaX: 0, deltaY: 10, modifiers: 0 },
+      { type: "mouseWheel", x: 2, deltaY: 10, modifiers: 2 },
+      { type: "mouseWheel", x: 2, deltaY: -20, modifiers: 2 },
     ],
   },
   {
