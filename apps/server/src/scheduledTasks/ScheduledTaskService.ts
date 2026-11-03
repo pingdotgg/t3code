@@ -194,8 +194,8 @@ const encodeHeadersJson = Schema.encodeSync(HeadersJson);
 const encodeMissingFieldsJson = Schema.encodeSync(MissingFieldsJson);
 
 /**
- * Clients that predate thread modes send none. Clearing the thread of a bound task unbinds it, as
- * before; an edit that leaves the binding alone keeps the stored mode. Current clients send it.
+ * Clients that predate thread modes send none, and may send a thread loaded before the first run
+ * bound one. An edit keeps the stored mode; binding a thread to a new-thread task continues it.
  */
 function resolveThreadMode(
   input: Pick<ScheduledTaskUpsertInput, "threadId" | "threadMode">,
@@ -203,8 +203,7 @@ function resolveThreadMode(
 ): ScheduledTaskThreadMode {
   if (input.threadMode !== undefined) return input.threadMode;
   const stored = existing === null ? "new_thread" : scheduledTaskThreadMode(existing);
-  if (input.threadId == null) return existing?.threadId == null ? stored : "new_thread";
-  return stored === "fresh_session" ? "fresh_session" : "continue";
+  return stored === "new_thread" && input.threadId != null ? "continue" : stored;
 }
 
 interface ScheduledTaskRow {

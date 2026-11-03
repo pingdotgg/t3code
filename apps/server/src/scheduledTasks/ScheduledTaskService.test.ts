@@ -545,6 +545,10 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
       });
       assert.equal(task.threadId, launched);
       assert.equal(task.threadMode, "fresh_session");
+      // A client that predates thread modes sends neither; both stay.
+      const legacy = yield* service.upsert({ ...input, threadId: null });
+      assert.equal(legacy.task.threadId, launched);
+      assert.equal(legacy.task.threadMode, "fresh_session");
       yield* service.runNow({ id: input.id });
 
       assert.equal(yield* Ref.get(launches), 1);
