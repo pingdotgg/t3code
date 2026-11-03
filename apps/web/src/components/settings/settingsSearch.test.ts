@@ -210,6 +210,7 @@ describe("searchSettings", () => {
   });
 
   it("keeps voice settings on the voice page", () => {
+    expect(SETTINGS_NAV_GROUPS.flatMap((group) => group.paths)).toContain("/settings/voice");
     expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "local-voice-input")?.to).toBe(
       "/settings/voice",
     );
