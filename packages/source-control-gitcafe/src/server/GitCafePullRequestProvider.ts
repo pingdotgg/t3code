@@ -897,7 +897,7 @@ export const make = Effect.gen(function* () {
     ),
     getChangeRequestPreview: (input) =>
       readPull("getChangeRequestPreview", input).pipe(
-        Effect.map((pull) => Json.toChangeRequest(pull, input)),
+        Effect.map((pull) => ({ ...Json.toChangeRequest(pull, input), ...settledMerge(pull) })),
       ),
     getChangeRequestSummary: Effect.fn("GitCafePullRequestProvider.getChangeRequestSummary")(
       function* (input) {
