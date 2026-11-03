@@ -392,7 +392,7 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       if (source.error) {
         notices.push(`${label(environmentLabel, source.label)}: ${source.error}`);
-      } else if (source.accounts.length === 0) {
+      } else if (source.accounts.length === 0 && (source.hidden?.length ?? 0) === 0) {
         notices.push(`${label(environmentLabel, source.label)}: No accounts reported.`);
       }
     }

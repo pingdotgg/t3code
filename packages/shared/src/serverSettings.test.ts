@@ -574,6 +574,7 @@ describe("serverSettings helpers", () => {
       url,
       managementKey: "secret",
       enabled: true,
+      hiddenAccounts: [],
     });
     const current = {
       ...DEFAULT_SERVER_SETTINGS,

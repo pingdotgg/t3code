@@ -12,6 +12,7 @@ const config = {
   url: "http://hub.test:8317",
   managementKey: "management-secret",
   enabled: true,
+  hiddenAccounts: [],
 } as const;
 const accounts = [
   {
@@ -202,11 +203,12 @@ describe("CLIProxyAPI built-in management API", () => {
         const test = fixture();
         const api = yield* test.api;
         const result = yield* api.readAccounts(config);
-        expect(result.map((account) => account.usageLimits.resetCredits)).toEqual([
+        expect(result.accounts.map((account) => account.usageLimits.resetCredits)).toEqual([
           { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
           { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
         ]);
-        expect(result[0]?.usageLimits.windows).toMatchObject([
+        expect(result.hidden).toEqual([]);
+        expect(result.accounts[0]?.usageLimits.windows).toMatchObject([
           { id: "secondary", usedPercent: 78, kind: "weekly" },
         ]);
         const calls = test.requests.filter((request) => request.body?.url);
@@ -222,6 +224,19 @@ describe("CLIProxyAPI built-in management API", () => {
           ],
         ).toBe("account-b");
       }),
+  );
+
+  it.effect("probes only the accounts the user chose to show", () =>
+    Effect.gen(function* () {
+      const test = fixture();
+      const api = yield* test.api;
+      const result = yield* api.readAccounts({ ...config, hiddenAccounts: ["first.json"] });
+      expect(result.accounts.map((account) => account.id)).toEqual(["second.json"]);
+      expect(
+        result.hidden.map((account) => [account.id, String(account.driver), account.email]),
+      ).toEqual([["first.json", "codex", "first@example.com"]]);
+      expect(test.requests.filter((request) => request.body?.auth_index === "a")).toEqual([]);
+    }),
   );
 
   it.effect("resolves a missing usage plan from current, then legacy, token plans", () =>
@@ -254,13 +269,13 @@ describe("CLIProxyAPI built-in management API", () => {
       });
       const api = yield* test.api;
       const result = yield* api.readAccounts(config);
-      expect(result.map((account) => [account.plan, account.usageLimits.windows[0]?.kind])).toEqual(
-        [
-          ["ChatGPT Plus Subscription", "session"],
-          ["ChatGPT Go Subscription", "monthly"],
-          ["ChatGPT Free Subscription", "monthly"],
-        ],
-      );
+      expect(
+        result.accounts.map((account) => [account.plan, account.usageLimits.windows[0]?.kind]),
+      ).toEqual([
+        ["ChatGPT Plus Subscription", "session"],
+        ["ChatGPT Go Subscription", "monthly"],
+        ["ChatGPT Free Subscription", "monthly"],
+      ]);
     }),
   );
 
@@ -286,8 +301,8 @@ describe("CLIProxyAPI built-in management API", () => {
       });
       const api = yield* test.api;
       const result = yield* api.readAccounts(config);
-      expect(result[0]?.usageLimits.windows[0]?.usedPercent).toBe(12);
-      expect(result[0]?.usageLimits.resetCredits).toBeUndefined();
+      expect(result.accounts[0]?.usageLimits.windows[0]?.usedPercent).toBe(12);
+      expect(result.accounts[0]?.usageLimits.resetCredits).toBeUndefined();
     }),
   );
 
@@ -306,9 +321,9 @@ describe("CLIProxyAPI built-in management API", () => {
       });
       const api = yield* test.api;
       const result = yield* api.readAccounts(config);
-      expect(result[0]?.usageLimits.unavailable?.reason).toBe("probeFailed");
-      expect(result[1]?.usageLimits.windows[0]?.usedPercent).toBe(12);
-      expect(encodeJson(result)).not.toContain("do-not-publish");
+      expect(result.accounts[0]?.usageLimits.unavailable?.reason).toBe("probeFailed");
+      expect(result.accounts[1]?.usageLimits.windows[0]?.usedPercent).toBe(12);
+      expect(encodeJson(result.accounts)).not.toContain("do-not-publish");
     }),
   );
 
@@ -336,7 +351,7 @@ describe("CLIProxyAPI built-in management API", () => {
       const api = yield* test.api;
       const result = yield* api.readAccounts(config);
       expect(
-        result[0]?.usageLimits.windows.map((window) => [window.id, window.usedPercent]),
+        result.accounts[0]?.usageLimits.windows.map((window) => [window.id, window.usedPercent]),
       ).toEqual([
         ["five_hour", 10],
         ["seven_day", 50],
@@ -447,7 +462,7 @@ describe("CLIProxyAPI built-in management API", () => {
     Effect.gen(function* () {
       const test = fixture({ accounts: [{ ...accounts[0]!, disabled: true }] });
       const api = yield* test.api;
-      expect(yield* api.readAccounts(config)).toEqual([]);
+      expect(yield* api.readAccounts(config)).toEqual({ accounts: [], hidden: [] });
       expect((yield* api.consume(config, "first.json", "credit").pipe(Effect.result))._tag).toBe(
         "Failure",
       );
