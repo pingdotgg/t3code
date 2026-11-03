@@ -592,6 +592,7 @@ type MessagesTimelineRowContent =
       /** False when the fold holds only what its ending line already says. */
       foldable: boolean;
       failureMessage: string | null;
+      failureResetAt: string | null;
       noticeMessage: string | null;
     }
   | {
@@ -766,6 +767,7 @@ interface TurnFold {
    */
   endingEntryIds: ReadonlySet<string>;
   failureMessage: string | null;
+  failureResetAt: string | null;
   noticeMessage: string | null;
 }
 
@@ -1292,6 +1294,7 @@ function deriveTurnFolds(input: {
     const hiddenEntryIds = new Set<string>();
     const endingEntryIds = new Set<string>();
     let failureMessage: string | null = null;
+    let failureResetAt: string | null = null;
     let noticeMessage: string | null = null;
     const terminalEntryIndex = group.terminalEntry
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
@@ -1305,7 +1308,13 @@ function deriveTurnFolds(input: {
         const notice =
           entry.kind === "work" && entry.entry.itemType === "system_notice" ? entry.entry : null;
         if (failedItem !== null || notice !== null) {
-          if (failedItem !== null) failureMessage = failedItem.failure.message;
+          if (failedItem !== null) {
+            failureMessage = failedItem.failure.message;
+            failureResetAt =
+              failedItem.failure.class === "usage_limit"
+                ? (failedItem.failure.resetAt ?? null)
+                : null;
+          }
           if (notice !== null) noticeMessage = notice.label;
           hiddenEntryIds.add(entry.id);
           endingEntryIds.add(entry.id);
@@ -1397,6 +1406,7 @@ function deriveTurnFolds(input: {
       diff,
       endingEntryIds,
       failureMessage,
+      failureResetAt,
       noticeMessage,
     });
   }
@@ -2009,6 +2019,7 @@ export function deriveMessagesTimelineRows(input: {
           (entryId) => !turnFold.endingEntryIds.has(entryId),
         ),
         failureMessage: turnFold.failureMessage,
+        failureResetAt: turnFold.failureResetAt,
         noticeMessage: turnFold.noticeMessage,
       });
     }
