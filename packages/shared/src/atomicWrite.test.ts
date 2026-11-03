@@ -14,6 +14,36 @@ import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as HostProcess from "./HostProcess.ts";
 
 it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
+  it.effect.each(HostProcess.Platform.defaultValue() === "linux" ? [39, 40, 41] : [])(
+    "matches native file access for a chain of %i symlinks",
+    (hops) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
+        const destination = path.join(root, "settings.json");
+        const first = path.join(root, "link-0");
+        yield* fs.writeFileString(destination, "before");
+        for (let index = hops - 1; index >= 0; index--) {
+          const target = index === hops - 1 ? "settings.json" : `link-${index + 1}`;
+          yield* fs.symlink(target, path.join(root, `link-${index}`));
+        }
+
+        const read = yield* Effect.exit(fs.readFileString(first));
+        const write = yield* Effect.exit(
+          writeFileStringAtomically({ filePath: first, contents: "after" }),
+        );
+
+        assert.strictEqual(Exit.isSuccess(read), hops <= 40);
+        assert.strictEqual(Exit.isSuccess(write), Exit.isSuccess(read));
+        assert.strictEqual(
+          yield* fs.readFileString(destination),
+          Exit.isSuccess(read) ? "after" : "before",
+        );
+        assert.strictEqual(yield* fs.readLink(first), "link-1");
+      }),
+  );
+
   it.effect("keeps a symlinked file linked and rewrites its destination", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

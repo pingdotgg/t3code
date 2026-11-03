@@ -53,7 +53,11 @@ import type {
 import { waitForDraftHeroTransition } from "./components/chat/draftHeroTransition";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { readThreadPreviewState } from "./previewStateStore";
-import { resolveAppModelSelection, resolveAppModelSelectionForInstance } from "./modelSelection";
+import {
+  readInstanceCustomModels,
+  resolveAppModelSelection,
+  resolveAppModelSelectionForInstance,
+} from "./modelSelection";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -637,17 +641,10 @@ interface ComposerDraftModelState {
   modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
 }
 
-function providerSelectionsFromModelSelection(
+function selectionsByInstance(
   modelSelection: ModelSelection | null | undefined,
-): ProviderOptionSelectionsByProvider | null {
-  if (!modelSelection) {
-    return null;
-  }
-  const options = modelSelection.options;
-  if (!options || options.length === 0) {
-    return null;
-  }
-  return { [modelSelection.instanceId]: options };
+): Partial<Record<string, ModelSelection>> | null {
+  return modelSelection ? { [modelSelection.instanceId]: modelSelection } : null;
 }
 
 function modelSelectionByProviderToOptions(
@@ -1100,6 +1097,8 @@ export function deriveEffectiveComposerModelState(input: {
   providers: ReadonlyArray<ServerProvider>;
   selectedProvider: ProviderDriverKind;
   selectedInstanceId?: ProviderInstanceId | null | undefined;
+  /** The instance the draft, thread or project asked for; differs from the selection on fallback. */
+  requestedInstanceId?: ProviderInstanceId | null | undefined;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
@@ -1133,8 +1132,8 @@ export function deriveEffectiveComposerModelState(input: {
   const instanceSelection = input.selectedInstanceId
     ? input.draft?.modelSelectionByProvider?.[input.selectedInstanceId]
     : undefined;
+  // Legacy driver-keyed drafts belong to the default instance.
   const legacySelection =
-    input.selectedProvider === "antigravity" &&
     input.selectedInstanceId &&
     input.selectedInstanceId !== defaultInstanceIdForDriver(input.selectedProvider)
       ? undefined
@@ -1159,16 +1158,76 @@ export function deriveEffectiveComposerModelState(input: {
         activeSelection.model,
       ))
     : baseModel;
-  const modelOptions =
-    modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
-    providerSelectionsFromModelSelection(input.threadModelSelection) ??
-    providerSelectionsFromModelSelection(input.projectModelSelection) ??
-    null;
+  // Options come from the first of the draft, thread and project that has any. Their selections
+  // stay with them, so a fallback instance can check which model the options belong to.
+  const optionSelections =
+    [
+      input.draft?.modelSelectionByProvider,
+      selectionsByInstance(input.threadModelSelection),
+      selectionsByInstance(input.projectModelSelection),
+    ].find((selections) => modelSelectionByProviderToOptions(selections) !== null) ?? null;
+  const modelOptions = modelSelectionByProviderToOptions(optionSelections);
 
   return {
     selectedModel,
-    modelOptions,
+    modelOptions: withFallbackInstanceOptions({
+      ...input,
+      modelOptions,
+      optionSelections,
+      selectedModel,
+    }),
   };
+}
+
+/**
+ * When the requested instance is disabled or unavailable, the composer shows another instance of
+ * the same driver. When that instance has no options of its own and shows the model the requested
+ * instance's options were picked with, it takes those options instead of the model's defaults.
+ */
+function withFallbackInstanceOptions(input: {
+  readonly modelOptions: ProviderOptionSelectionsByProvider | null;
+  readonly optionSelections: Partial<Record<string, ModelSelection>> | null;
+  readonly selectedModel: string;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly selectedProvider: ProviderDriverKind;
+  readonly selectedInstanceId?: ProviderInstanceId | null | undefined;
+  readonly requestedInstanceId?: ProviderInstanceId | null | undefined;
+  readonly settings: UnifiedSettings;
+}): ProviderOptionSelectionsByProvider | null {
+  const { modelOptions, selectedInstanceId, requestedInstanceId } = input;
+  if (
+    !modelOptions ||
+    !selectedInstanceId ||
+    !requestedInstanceId ||
+    selectedInstanceId === requestedInstanceId ||
+    modelOptions[selectedInstanceId] !== undefined
+  ) {
+    return modelOptions;
+  }
+  const requestedOptions = modelOptions[requestedInstanceId];
+  const requestedProvider = input.providers.find(
+    (provider) => provider.instanceId === requestedInstanceId,
+  );
+  const requestedModel = input.optionSelections?.[requestedInstanceId]?.model;
+  // Static aliases are shared across instances; exact custom slugs and catalog aliases are not.
+  const modelIdentity = (instanceId: ProviderInstanceId, model: string | undefined) => {
+    const isCustom =
+      input.providers
+        .find((provider) => provider.instanceId === instanceId)
+        ?.models.some((entry) => entry.slug === model && entry.isCustom) ||
+      readInstanceCustomModels(input.settings, instanceId, input.selectedProvider).some(
+        (entry) => entry.slug === model,
+      );
+    return isCustom ? model : normalizeModelSlug(model, input.selectedProvider);
+  };
+  const sameModel =
+    requestedModel === input.selectedModel ||
+    modelIdentity(requestedInstanceId, requestedModel) ===
+      modelIdentity(selectedInstanceId, input.selectedModel);
+  if (!requestedOptions || requestedProvider?.driver !== input.selectedProvider || !sameModel) {
+    return modelOptions;
+  }
+  return { ...modelOptions, [selectedInstanceId]: requestedOptions };
 }
 
 function revokeObjectPreviewUrl(previewUrl: string): void {

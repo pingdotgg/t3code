@@ -96,6 +96,31 @@ export const clientModeCeiling = (client: McpClientCaller | undefined): ClientMo
   };
 };
 
+/**
+ * A client approved above an administrator's runtime-mode ceiling acts as if it had narrowed
+ * itself to the ceiling, so what it starts and schedules is not refused for a mode it never chose.
+ */
+export const withRuntimeModeCeiling = (
+  scope: McpInvocationScope,
+  ceiling: RuntimeMode | undefined,
+): McpInvocationScope => {
+  if (ceiling === undefined || scope.client === undefined) return scope;
+  const asked = scope.client.narrowedTo;
+  return {
+    ...scope,
+    client: {
+      ...scope.client,
+      narrowedTo: {
+        runtimeMode:
+          asked !== undefined && runtimeModeRank[asked.runtimeMode] < runtimeModeRank[ceiling]
+            ? asked.runtimeMode
+            : ceiling,
+        interactionMode: asked?.interactionMode ?? "default",
+      },
+    },
+  };
+};
+
 /** Thread callers default to their own thread; client callers need thread for tools that act as the caller. */
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
