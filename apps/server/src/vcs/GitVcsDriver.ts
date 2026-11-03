@@ -1377,6 +1377,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           // Not --no-relative, which Git before 2.28 rejects.
           "-c",
           "diff.relative=false",
+          "-c",
+          "diff.suppressBlankEmpty=false",
           "diff",
           ...(input.format === "numstat" ? ["--numstat", "-z"] : ["--patch"]),
           "--no-color",
