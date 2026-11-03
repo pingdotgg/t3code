@@ -145,6 +145,43 @@ describe("AcpMcpOverAcpBridge", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("answers current-draft messages by serverId with a result or error outcome", () =>
+    Effect.gen(function* () {
+      const bridge = yield* makeAcpMcpOverAcpBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        allocateConnectionId: Effect.succeed("connection-1"),
+        fetchImplementation: (_url, init) => {
+          const request = JSON.parse(String(init?.body)) as {
+            readonly id?: unknown;
+            readonly method?: unknown;
+          };
+          const outcome =
+            request.method === "initialize"
+              ? { result: { protocolVersion: "2025-06-18" } }
+              : { error: { code: -32602, message: "Unknown tool" } };
+          return Promise.resolve(
+            new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, ...outcome }), {
+              headers: { "content-type": "application/json", "mcp-session-id": "session-42" },
+            }),
+          );
+        },
+      });
+      // Current ACP drafts address the declared server directly; there is no mcp/connect.
+      const message = (method: string, requestId: string) =>
+        bridge.message({ serverId: "t3-code", requestId, method } as unknown as Parameters<
+          typeof bridge.message
+        >[0]);
+
+      expect(yield* message("initialize", "mcp-1")).toEqual({
+        result: { protocolVersion: "2025-06-18" },
+      });
+      expect(yield* message("tools/call", "mcp-2")).toEqual({
+        error: { code: -32602, message: "Unknown tool" },
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("rejects unknown servers, connections, and oversized messages", () =>
     Effect.gen(function* () {
       const bridge = yield* makeAcpMcpOverAcpBridge({
