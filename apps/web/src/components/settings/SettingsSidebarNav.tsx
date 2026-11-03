@@ -12,7 +12,7 @@ import {
   ArchiveIcon,
   FlaskConicalIcon,
   BotIcon,
-  CameraIcon,
+  ScanIcon,
   CalendarClockIcon,
   FileDiffIcon,
   FolderTreeIcon,
@@ -86,7 +86,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/layout": LayoutDashboardIcon,
   "/settings/projects": PanelsTopLeftIcon,
   "/settings/keybindings": KeyboardIcon,
-  "/settings/snap-shot": CameraIcon,
+  "/settings/snap-shot": ScanIcon,
   "/settings/providers": BotIcon,
   "/settings/threads": MessagesSquareIcon,
   "/settings/browser": GlobeIcon,
@@ -249,6 +249,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
 
   return (
     <nav
+      data-chrome-scope
       {...navArea}
       role="navigation"
       aria-label="Settings sections"
@@ -362,10 +363,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     >
                       <SettingsSectionIcon to={item.to} />
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium text-sidebar-foreground">
+                        <span className="block truncate text-label text-sidebar-foreground">
                           {item.title}
                         </span>
-                        <span className="block truncate text-2xs text-dim-foreground">
+                        <span className="block truncate text-caption text-dim-foreground">
                           {SETTINGS_SECTION_LABELS[item.to]}
                         </span>
                       </span>
