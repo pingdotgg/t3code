@@ -76,7 +76,9 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           mapError: (cause) =>
             new TextGenerationError({
               operation,
-              detail: "Failed to set Grok ACP base model for text generation.",
+              detail: isAcpRequestError(cause)
+                ? `Failed to set Grok ACP base model for text generation: ${cause.errorMessage}`
+                : "Failed to set Grok ACP base model for text generation.",
               cause,
             }),
         });

@@ -155,4 +155,24 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
         }),
     ),
   );
+
+  it.effect("keeps Grok's error message when switching models fails", () =>
+    withFakeAcpGrok({}, (textGeneration) =>
+      Effect.gen(function* () {
+        const error = yield* textGeneration
+          .generateThreadTitle({
+            cwd: process.cwd(),
+            message: "the lint job is red",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("grok"),
+              "grok-mock-missing",
+            ),
+          })
+          .pipe(Effect.flip);
+        expect(error.detail).toBe(
+          "Failed to set Grok ACP base model for text generation: Unknown Grok model",
+        );
+      }),
+    ),
+  );
 });
