@@ -116,13 +116,13 @@ describe("watchAntigravityPromptOutcome", () => {
           [USER_INPUT, input],
           [ERROR_MESSAGE, RATE_LIMIT_ERROR],
         ]),
-        {
+        reusable({
           class: "usage_limit",
           message: "Resource has been exhausted (e.g. check quota).",
           code: "RESOURCE_EXHAUSTED",
           retryable: true,
           resetAt: "1970-01-01T00:00:42.000Z",
-        },
+        }),
       );
       assert.deepEqual(
         yield* turn([
