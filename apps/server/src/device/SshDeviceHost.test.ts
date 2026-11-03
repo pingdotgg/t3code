@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Net from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
@@ -31,7 +32,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
       Effect.gen(function* () {
         if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
         const forwarding = command.args.includes("-L");
-        (forwarding ? tunnelArgs : commandArgs).push([...command.args]);
+        (forwarding ? tunnelArgs : commandArgs).push(command.args.map(String));
         if (forwarding) tunnelStdins.push(command.options.stdin);
         let output = "";
         let exitCode = 0;
@@ -191,7 +192,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     }
     yield* host.stop;
     expect(forwards).toBe(0);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("lists Android devices without probing the host again once it reports Android", () =>
@@ -306,5 +307,5 @@ it.effect("lists Android devices without probing the host again once it reports 
     expect(yield* androidNames).toEqual(["Pixel_8"]);
     expect(modes.splice(0)).toEqual([""]);
     yield* host.stop;
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

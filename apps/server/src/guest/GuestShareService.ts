@@ -23,7 +23,7 @@ import {
 import { chatMarkdownImageSources } from "@t3tools/shared/markdownPipeline";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -239,7 +239,7 @@ const make = Effect.gen(function* () {
   const managedEndpoint = yield* CloudManagedEndpointRuntime;
   const { attachmentsDir } = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const analytics = yield* AnalyticsService.AnalyticsService;
   const signingKey = yield* Effect.cached(
@@ -308,7 +308,7 @@ const make = Effect.gen(function* () {
     );
 
   const commandId = (label: string) =>
-    crypto.randomUUIDv4().pipe(
+    random.uuidV4().pipe(
       Effect.map((uuid) => CommandId.make(`server:guest-share:${label}:${uuid}`)),
       Effect.orDie,
     );
@@ -350,9 +350,7 @@ const make = Effect.gen(function* () {
     if (host === null) {
       return yield* new GuestShareCreateError({ reason: "connect_unavailable" });
     }
-    const shareId = GuestShareId.make(
-      base64UrlEncode(yield* crypto.randomBytes(SHARE_ID_BYTES).pipe(Effect.orDie)),
-    );
+    const shareId = GuestShareId.make(base64UrlEncode(yield* random.randomBytes(SHARE_ID_BYTES)));
     const now = yield* DateTime.now;
     const expiresAt = DateTime.formatIso(DateTime.add(now, { milliseconds: GUEST_SHARE_TTL_MS }));
     yield* orchestrator
@@ -472,7 +470,7 @@ const make = Effect.gen(function* () {
       commandId: yield* commandId("submit"),
       threadId: thread.id,
       shareId: share.id,
-      guestMessageId: GuestMessageId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie)),
+      guestMessageId: GuestMessageId.make(yield* random.uuidV4()),
       text: request.text,
       ...(attachments.length === 0 ? {} : { attachments }),
     }).pipe(Effect.onError(() => removeStored(attachments)));
@@ -717,7 +715,18 @@ const make = Effect.gen(function* () {
             .find((candidate) => candidate.id === attachmentId),
         ),
         Effect.mapError(() => unavailable),
-      ));
+      )) ??
+      // A fork shows its source's earlier messages, which stay in the source thread.
+      (thread.forkedFrom === null
+        ? undefined
+        : yield* orchestrator.getTimelinePage(thread.id, { attachmentId, limit: 1 }).pipe(
+            Effect.map(({ items }) =>
+              items
+                .flatMap(({ item }) => (item.type === "user_message" ? item.attachments : []))
+                .find((candidate) => candidate.id === attachmentId),
+            ),
+            Effect.mapError(() => unavailable),
+          ));
     const path =
       found === undefined ? null : resolveAttachmentPath({ attachmentsDir, attachment: found });
     if (found === undefined || path === null) return yield* unavailable;
