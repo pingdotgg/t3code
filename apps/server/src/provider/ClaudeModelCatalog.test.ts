@@ -1,8 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { type ModelSelection, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
 import { resolveProviderCatalog, type ModelManifestData } from "./ModelManifest.ts";
 import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  type ClaudeModelCatalog,
   formatClaudeVersionUpgradeMessage,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
@@ -13,6 +15,7 @@ import {
   resolveClaudeModelSlug,
   resolveClaudeUpdateRequiredModels,
   scopeClaudeModelCatalog,
+  withClaudeCodeModelRoutes,
 } from "./ClaudeModelCatalog.ts";
 
 const manifest = (): ModelManifestData => ({
@@ -221,5 +224,64 @@ describe("Claude model catalog", () => {
       resolveClaudeModelsForVersion(catalog, "3.2.0").map((model) => model.slug),
       ["claude-synthetic-next", "claude-custom-tuned"],
     );
+  });
+
+  // Rows Claude Code 2.1.310 reports from initialization for each configuration.
+  it("sends the model id Claude Code reports when it serves a catalog model under another id", () => {
+    const apiModel = (
+      catalog: ClaudeModelCatalog,
+      model: string,
+      options?: ModelSelection["options"],
+    ) =>
+      resolveClaudeCatalogApiModelId(catalog, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model,
+        ...(options ? { options } : {}),
+      });
+
+    // Bedrock with ANTHROPIC_DEFAULT_*_MODEL and an availableModels allowlist of their ids.
+    const configuredBedrock = withClaudeCodeModelRoutes(BUNDLED_CLAUDE_MODEL_CATALOG, [
+      { value: "default", resolvedModel: "global.anthropic.claude-opus-5-5" },
+      { value: "sonnet", resolvedModel: "global.anthropic.claude-sonnet-5-5[1m]" },
+      { value: "opus", resolvedModel: "global.anthropic.claude-opus-5-5" },
+      { value: "haiku", resolvedModel: "global.anthropic.claude-haiku-5-5" },
+    ]);
+    assert.strictEqual(apiModel(configuredBedrock, "claude-haiku-5-5"), "haiku");
+    assert.strictEqual(apiModel(configuredBedrock, "haiku-5.5"), "haiku");
+    assert.strictEqual(apiModel(configuredBedrock, "claude-sonnet-5-5"), "sonnet");
+    assert.strictEqual(apiModel(configuredBedrock, "claude-opus-5-5"), "opus");
+    assert.strictEqual(apiModel(configuredBedrock, "claude-opus-5"), "claude-opus-5");
+
+    // Bedrock with no model settings: Claude Code's `haiku` is Haiku 4.5 there.
+    const defaultBedrock = withClaudeCodeModelRoutes(BUNDLED_CLAUDE_MODEL_CATALOG, [
+      {
+        value: "us.anthropic.claude-opus-4-6-v1",
+        resolvedModel: "us.anthropic.claude-opus-4-6-v1",
+      },
+      {
+        value: "us.anthropic.claude-opus-4-6-v1[1m]",
+        resolvedModel: "us.anthropic.claude-opus-4-6-v1[1m]",
+      },
+      { value: "haiku", resolvedModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0" },
+    ]);
+    assert.strictEqual(
+      apiModel(defaultBedrock, "claude-opus-4-6", [{ id: "contextWindow", value: "1m" }]),
+      "us.anthropic.claude-opus-4-6-v1[1m]",
+    );
+    assert.strictEqual(
+      apiModel(defaultBedrock, "claude-opus-4-6", [{ id: "contextWindow", value: "200k" }]),
+      "us.anthropic.claude-opus-4-6-v1",
+    );
+    assert.strictEqual(apiModel(defaultBedrock, "claude-haiku-4-5"), "haiku");
+    assert.strictEqual(apiModel(defaultBedrock, "claude-haiku-5-5"), "claude-haiku-5-5");
+
+    // First-party ids already are what Claude Code runs, even when an alias points elsewhere.
+    const firstParty = withClaudeCodeModelRoutes(BUNDLED_CLAUDE_MODEL_CATALOG, [
+      { value: "default", resolvedModel: "claude-opus-5-5" },
+      { value: "opus", resolvedModel: "claude-opus-5-5" },
+      { value: "claude-fable-5-1[1m]", resolvedModel: "claude-fable-5-1[1m]" },
+      { value: "haiku", resolvedModel: "claude-haiku-4-5-20251001" },
+    ]);
+    assert.strictEqual(firstParty, BUNDLED_CLAUDE_MODEL_CATALOG);
   });
 });
