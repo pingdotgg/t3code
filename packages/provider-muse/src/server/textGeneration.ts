@@ -9,6 +9,7 @@ import type { MuseSettings } from "../settings.ts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -71,6 +72,7 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 type Operation = keyof ProviderTextGeneration;
+class MuseTurnFailure extends Error {}
 
 async function generateMuseText(
   host: MuseSdkHost,
@@ -137,7 +139,9 @@ async function generateMuseText(
           }
         } else {
           rejectCompletion(
-            new Error(completed.error?.message ?? `Muse turn ${completed.terminal}.`),
+            completed.error
+              ? new MuseTurnFailure(completed.error.message)
+              : new Error(`Muse turn ${completed.terminal}.`),
           );
         }
       } else if (
@@ -267,7 +271,9 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
           new TextGenerationError({
             operation,
             detail:
-              "Muse Code text generation failed. Check Muse login and availability on this T3 server host.",
+              Cause.isUnknownError(cause) && cause.cause instanceof MuseTurnFailure
+                ? `Muse Code text generation failed: ${cause.cause.message}`
+                : "Muse Code text generation failed. Check Muse login and availability on this T3 server host.",
             cause,
           }),
       ),

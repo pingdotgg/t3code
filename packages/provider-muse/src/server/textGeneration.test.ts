@@ -226,6 +226,23 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
     }),
   );
 
+  it.effect("keeps Muse's reason when the turn fails", () =>
+    Effect.gen(function* () {
+      const test = fixture((emit) =>
+        emit("turn/completed", {
+          terminal: "failed",
+          error: { message: "You've reached your usage limit." },
+        }),
+      );
+      const service = yield* test.make;
+      expect(yield* service.generateThreadTitle(titleInput).pipe(Effect.flip)).toMatchObject({
+        _tag: "TextGenerationError",
+        detail: "Muse Code text generation failed: You've reached your usage limit.",
+      });
+      expect(test.host.close).toHaveBeenCalledOnce();
+    }),
+  );
+
   it.effect("settles a completed turn even when its start acknowledgement never arrives", () =>
     Effect.gen(function* () {
       const test = fixture(finish('{"title":"Fix login form"}'), false);
