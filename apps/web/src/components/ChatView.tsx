@@ -3207,7 +3207,10 @@ export default function ChatView(props: ChatViewProps) {
       onCloseSurface={closeRightPanelSurface}
       sideChatParentPanel={sideChatParentPanel}
       approvals={{
-        pending: pendingApprovals,
+        // Held while the user types in the composer, so the panel cannot be approved by a stray click.
+        pending: pendingApprovals.filter(
+          (approval) => !heldApprovalRequestIds.has(approval.requestId),
+        ),
         respondingRequestIds,
         canOperate: canOperateThread,
         onRespond: onRespondToApprovalStable,
