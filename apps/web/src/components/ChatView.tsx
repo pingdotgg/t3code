@@ -3643,7 +3643,9 @@ export default function ChatView(props: ChatViewProps) {
                               sideChatAvailable={sideChat.available}
                               sideChatDisabledReason={sideChatDisabledReason}
                               onOpenSideChat={
-                                sideChat.available && !composerHasNonPromptContent
+                                sideChat.available &&
+                                !composerHasNonPromptContent &&
+                                !queuedRunEdit.isEditing
                                   ? openSideChatStable
                                   : undefined
                               }
