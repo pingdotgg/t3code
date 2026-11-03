@@ -323,15 +323,19 @@ describe("PiProvider", () => {
           { models: [{ provider: "auto", id: "gpt-6-luna" }] },
           { version: "1.4.0", noExtensionsExits: true },
         );
-        const snapshot = yield* checkPiProviderStatus(settings).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        );
+        const snapshot = yield* checkPiProviderStatus({
+          ...settings,
+          customModels: ["openai/custom-model"],
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
         assert.equal(snapshot.status, "ready");
-        assert.propertyVal(
-          snapshot.models.find((model) => model.slug === "auto/gpt-6-luna"),
-          "supportsTextGeneration",
-          false,
-        );
+        for (const slug of ["default", "auto/gpt-6-luna", "openai/custom-model"]) {
+          assert.propertyVal(
+            snapshot.models.find((model) => model.slug === slug),
+            "supportsTextGeneration",
+            false,
+            slug,
+          );
+        }
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 

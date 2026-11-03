@@ -85,6 +85,8 @@ interface PiDiscovery extends PiDiscoveredCommands {
   readonly authenticated: boolean;
   /** Pi's active model when Pi lists no model of its provider, so it cannot start a turn. */
   readonly unavailableActiveModel: { readonly provider: string; readonly id: string } | undefined;
+  /** Pi without extensions can load no model, so text generation fails for every entry. */
+  readonly textGenerationUnavailable: boolean;
 }
 
 function piModelsFromSettings(
@@ -243,6 +245,7 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
       !discoveredModels.some((model) => model.subProvider === activeProvider)
         ? { provider: activeProvider, id: activeModelId }
         : undefined,
+    textGenerationUnavailable: usableSlugs?.size === 0,
   } satisfies PiDiscovery;
 }, Effect.scoped);
 
@@ -550,7 +553,10 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   }
 
   const discovery = discoveryExit.value.value;
-  const models = piModelsFromSettings(piSettings.customModels, discovery.models);
+  const settingsModels = piModelsFromSettings(piSettings.customModels, discovery.models);
+  const models = discovery.textGenerationUnavailable
+    ? settingsModels.map((model) => ({ ...model, supportsTextGeneration: false }))
+    : settingsModels;
   const message = !discovery.authenticated
     ? "Pi has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent."
     : discovery.unavailableActiveModel === undefined
