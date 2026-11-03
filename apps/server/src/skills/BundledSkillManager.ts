@@ -325,7 +325,19 @@ const make = Effect.gen(function* () {
             return yield* placed.failure;
           }
         }
-        yield* io(fs.remove(stage, { recursive: true }), stage);
+        if (before.status !== "not_installed")
+          yield* fs.rename(backup, path.join(stage, "committed")).pipe(
+            Effect.mapError(
+              (cause) =>
+                new SkillManagementError({
+                  reason: "recovery_required",
+                  path: destination,
+                  backupPath: backup,
+                  cause,
+                }),
+            ),
+          );
+        yield* fs.remove(stage, { recursive: true }).pipe(Effect.ignore({ log: true }));
         return yield* describe(target.directory, source);
       });
       return yield* operation.pipe(

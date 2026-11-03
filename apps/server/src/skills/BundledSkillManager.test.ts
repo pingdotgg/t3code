@@ -254,11 +254,14 @@ it.layer(
         ...fs,
         remove: (target, options) =>
           target.includes(".t3-")
-            ? Effect.fail(new PlatformError.PlatformError({
-                reason: new PlatformError.PermissionDenied({
-                  module: "FileSystem", method: "remove", pathOrDescriptor: target,
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "remove",
+                  pathOrDescriptor: target,
                 }),
-              }))
+              )
             : fs.remove(target, options),
       });
       const manager = yield* getManager(home).pipe(
@@ -266,17 +269,23 @@ it.layer(
       );
       const installed = yield* install(manager);
       expect(installed.status).toBe("installed");
-      const next = yield* getManager(home, [{ ...source, files: { "SKILL.md": "updated skill\n" } }]).pipe(
-        Effect.provideService(FileSystem.FileSystem, faultyFs),
-      );
+      const next = yield* getManager(home, [
+        { ...source, files: { "SKILL.md": "updated skill\n" } },
+      ]).pipe(Effect.provideService(FileSystem.FileSystem, faultyFs));
       const outdated = yield* skill(next);
       const updated = yield* next.manage({
-        instanceId, skillId: outdated.id, action: "update", expectedFingerprint: outdated.fingerprint,
+        instanceId,
+        skillId: outdated.id,
+        action: "update",
+        expectedFingerprint: outdated.fingerprint,
       });
       expect(updated.status).toBe("installed");
       expect(yield* fs.readFileString(updated.path + "/SKILL.md")).toBe("updated skill\n");
       const removed = yield* next.manage({
-        instanceId, skillId: updated.id, action: "remove", expectedFingerprint: updated.fingerprint,
+        instanceId,
+        skillId: updated.id,
+        action: "remove",
+        expectedFingerprint: updated.fingerprint,
       });
       expect(removed.status).toBe("not_installed");
       expect((yield* skill(next)).status).toBe("not_installed");
@@ -330,6 +339,37 @@ it.layer(
         expect(error.reason).toBe("recovery_required");
         expect(error.backupPath).toBe(path.join(stage, "previous"));
         expect(yield* fs.readFileString(`${stage}/previous/SKILL.md`)).toBe("original skill\n");
+        yield* fs.rename(path.join(stage, "previous"), installed.path);
+        const failing = yield* getManager(home).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            rename: (from, to) =>
+              path.basename(to) === "committed"
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "PermissionDenied",
+                      module: "FileSystem",
+                      method: "rename",
+                      pathOrDescriptor: to,
+                    }),
+                  )
+                : fs.rename(from, to),
+          }),
+        );
+        const current = yield* skill(failing);
+        const failedRemoval = yield* failing
+          .manage({
+            instanceId,
+            skillId: current.id,
+            action: "remove",
+            expectedFingerprint: current.fingerprint,
+          })
+          .pipe(Effect.flip);
+        expect(failedRemoval.reason).toBe("recovery_required");
+        expect(yield* fs.readFileString(path.join(failedRemoval.backupPath!, "SKILL.md"))).toBe(
+          "original skill\n",
+        );
+        expect((yield* failing.catalog.pipe(Effect.flip)).reason).toBe("recovery_required");
       }),
   );
   it.effect("resolves the provider's configured and environment-specific homes on the server", () =>
