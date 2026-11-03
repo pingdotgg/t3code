@@ -194,14 +194,28 @@ describe("CursorTextGeneration", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.each(["error", "cancelled"] as const)(
-    "rejects a %s Cursor SDK run that includes valid title JSON",
-    (status) =>
+  it.effect.each([
+    {
+      status: "error",
+      error: { message: "Raw Cursor usage text", code: "PRO_USER_USAGE_LIMIT" },
+      detail:
+        "Cursor usage limit reached. Try again later or choose another text-generation provider.",
+    },
+    {
+      status: "error",
+      error: { message: "Raw Cursor backend text", code: "internal" },
+      detail: "Cursor SDK request finished with an error.",
+    },
+    { status: "cancelled", error: undefined, detail: "Cursor SDK request was cancelled." },
+  ] as const)(
+    "rejects a $status Cursor SDK run ($error.code) that includes valid title JSON",
+    ({ status, error, detail }) =>
       Effect.gen(function* () {
         const promptResult = {
           id: "run-cursor-partial-title-test",
           status,
           result: '{"title":"Partial title from a failed run."}',
+          ...(error ? { error } : {}),
         } satisfies RunResult;
         cursorSdkMock.prompt.mockResolvedValueOnce(promptResult);
         const generation = yield* makeCursorTextGeneration(cursorSettings, {
@@ -219,11 +233,9 @@ describe("CursorTextGeneration", () => {
         );
         expect(failure).toBeInstanceOf(TextGenerationError);
         expect(failure.operation).toBe("generateThreadTitle");
-        expect(failure.detail).toBe(
-          status === "cancelled"
-            ? "Cursor SDK request was cancelled."
-            : "Cursor SDK request finished with an error.",
-        );
+        expect(failure.detail).toBe(detail);
+        expect(failure.message).not.toContain("Raw Cursor");
+        expect(failure.cause).toBe(error);
         expect(cursorSdkMock.close).toHaveBeenCalledOnce();
       }).pipe(Effect.provide(layerTest)),
   );
