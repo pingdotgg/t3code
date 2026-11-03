@@ -126,6 +126,8 @@ interface BranchToolbarProps {
   environmentUnavailable?: boolean;
   /** Panel only: where the branch picker renders the thread's PR rows. */
   panelPrRowsContainer?: HTMLElement | null;
+  /** Panel-only actions that belong to the environment, such as opening its editor. */
+  panelEnvironmentActions?: ReactNode;
 }
 
 interface WorkspaceMenuProps {
@@ -370,7 +372,7 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
                   value={env.environmentId}
                   closeOnClick
                 >
-                  <span className="flex min-w-0 items-center gap-2.5">
+                  <span className="flex min-w-0 items-center gap-2">
                     <EnvironmentMachineIcon
                       kind={env.machine}
                       className="size-4 shrink-0 text-muted-foreground"
@@ -393,7 +395,7 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
                     if (autoEnvironmentLabel) onAutoEnvironment?.();
                   }}
                 >
-                  <span className="flex min-w-0 items-center gap-2.5">
+                  <span className="flex min-w-0 items-center gap-2">
                     <ScaleIcon
                       className="size-4 shrink-0 text-muted-foreground"
                       aria-hidden="true"
@@ -438,7 +440,7 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
             onValueChange={(value) => onEnvModeChange(value as EnvMode)}
           >
             <MenuRadioItem disabled={envModeLocked || forceNewWorktree} value="local" closeOnClick>
-              <span className="flex min-w-0 items-center gap-2.5">
+              <span className="flex min-w-0 items-center gap-2">
                 {activeWorktreePath ? (
                   <FolderGitIcon className="size-4 shrink-0 text-muted-foreground" />
                 ) : (
@@ -452,7 +454,7 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
               </span>
             </MenuRadioItem>
             <MenuRadioItem disabled={envModeLocked} value="worktree" closeOnClick>
-              <span className="flex min-w-0 items-center gap-2.5">
+              <span className="flex min-w-0 items-center gap-2">
                 <FolderGit2Icon className="size-4 shrink-0 text-muted-foreground" />
                 <span className="shrink-0">{resolveEnvModeLabel("worktree")}</span>
                 <span className="min-w-0 truncate text-meta text-dim-foreground">
@@ -544,6 +546,7 @@ function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string)
 
 interface RunContextSelectorProps {
   displayMode?: "toolbar" | "panel";
+  panelEnvironmentActions?: ReactNode;
   workspaceRoot?: string;
   forceNewWorktree: boolean;
   autoEnvironmentLabel?: string | undefined;
@@ -569,6 +572,7 @@ interface RunContextSelectorProps {
 
 const RunContextSelector = memo(function RunContextSelector({
   displayMode = "toolbar",
+  panelEnvironmentActions,
   workspaceRoot,
   forceNewWorktree,
   autoEnvironmentLabel,
@@ -857,6 +861,12 @@ const RunContextSelector = memo(function RunContextSelector({
             ) : null}
           </MenuRadioGroup>
         </MenuGroup>
+        {isPanel && panelEnvironmentActions ? (
+          <>
+            <MenuSeparator />
+            {panelEnvironmentActions}
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );
@@ -1074,6 +1084,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   afterBranch,
   environmentUnavailable = false,
   panelPrRowsContainer,
+  panelEnvironmentActions,
 }: BranchToolbarProps) {
   const branchSelectorRef = useRef<BranchToolbarBranchSelectorHandle>(null);
   const threadRef = scopeThreadRef(environmentId, threadId);
@@ -1143,6 +1154,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           // Without Git there is no worktree to make, so the row only names the folder.
           <RunContextSelector
             displayMode="panel"
+            panelEnvironmentActions={panelEnvironmentActions}
             workspaceRoot={activeProject.workspaceRoot}
             forceNewWorktree={forceNewWorktree}
             autoEnvironmentLabel={autoEnvironmentLabel}

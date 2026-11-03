@@ -107,10 +107,11 @@ function ThreadServersList(props: ThreadServersPanelProps) {
   return (
     <ThreadDetailsSection
       title="Servers"
+      empty={servers.length === 0}
       summary={servers.length ? `${servers.length} running` : "None running"}
     >
       {servers.length === 0 ? (
-        <div className="flex h-9 items-center gap-2.5 px-2.5 text-caption text-dim-foreground">
+        <div className="flex h-9 items-center gap-2.5 px-2.5 text-caption text-muted-foreground">
           <GlobeIcon className="size-4" />
           No servers running
         </div>
@@ -146,10 +147,10 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                   </span>
                   {/* The end padding keeps text clear of the stop button. */}
                   <span className={cn("flex min-w-0 flex-1 flex-col gap-0.5", stoppable && "pe-6")}>
-                    <span className="truncate text-label text-foreground">
+                    <span className="truncate text-label leading-4 text-foreground">
                       localhost:{server.port}
                     </span>
-                    <span className="truncate text-caption text-dim-foreground">
+                    <span className="truncate text-caption leading-4 text-muted-foreground">
                       {server.processName ?? (server.terminal === null ? "Agent" : "Terminal")}
                     </span>
                   </span>
