@@ -87,13 +87,14 @@ export const layer = Layer.effectDiscard(
         messageId: MessageId,
         dispatched: Orchestrator.OrchestratorV2DispatchResult,
       ) {
-        const clearIfCurrent = request.clearIfCurrent;
+        const onRunEndedWithoutStarting = request.onRunEndedWithoutStarting;
+        if (onRunEndedWithoutStarting === undefined) return;
         const runId = dispatched.storedEvents.flatMap(({ event }) =>
           event.type === "run.created" && event.payload.userMessageId === messageId
             ? [event.payload.id]
             : [],
         )[0];
-        if (clearIfCurrent === undefined || runId === undefined) return;
+        if (runId === undefined) return;
         yield* threads
           .streamStoredEventsFrom({
             threadId: request.threadId,
@@ -112,7 +113,7 @@ export const layer = Layer.effectDiscard(
               Option.isSome(ended) &&
               ended.value.event.type === "run.updated" &&
               ended.value.event.payload.startedAt === null
-                ? clearIfCurrent()
+                ? onRunEndedWithoutStarting()
                 : Effect.void,
             ),
             Effect.catchCause((cause) =>

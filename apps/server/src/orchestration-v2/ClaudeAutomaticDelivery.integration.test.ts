@@ -530,7 +530,7 @@ const wakeAssistant = (uuid: string) =>
       role: "assistant",
       type: "message",
       model: modelSelection.model,
-      content: [{ type: "text", text: "Background build finished." }],
+      content: [{ type: "text", text: `Background build finished (${uuid}).` }],
       stop_reason: null,
       stop_sequence: null,
       usage: { input_tokens: 1, output_tokens: 1 },
@@ -700,6 +700,23 @@ it.effect("offers a continuation for a later wake after a queued continuation is
 
         yield* userTurnWithBackgroundTask("second", "build-2");
         yield* worker.drain();
+        // The second user run has completed, so this continuation starts without queueing.
+        const isContinuationRun = (
+          event: OrchestrationV2DomainEvent,
+          type: string,
+          status: string,
+        ) =>
+          (event.type === "run.created" || event.type === "run.updated") &&
+          event.type === type &&
+          event.payload.status === status &&
+          event.payload.userMessageId !== MessageId.make("first") &&
+          event.payload.userMessageId !== MessageId.make("second");
+        const secondCreated = yield* watch((event) =>
+          isContinuationRun(event, "run.created", "starting"),
+        );
+        const secondRunning = yield* watch((event) =>
+          isContinuationRun(event, "run.updated", "running"),
+        );
         yield* offerAndWait(backgroundTaskNotification("build-2"));
         yield* offerAndWait(wakeAssistant("wake-2"));
         assert.lengthOf(
@@ -707,6 +724,37 @@ it.effect("offers a continuation for a later wake after a queued continuation is
           2,
           "the wake after a cancelled queued continuation must offer a new continuation",
         );
+        yield* Fiber.join(secondCreated);
+        yield* worker.drain();
+        yield* Fiber.join(secondRunning);
+        const secondContinuation = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.status === "running",
+        );
+        assert.ok(secondContinuation !== undefined);
+        const secondWaiting = yield* watch(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.id === secondContinuation.id &&
+            event.payload.status === "waiting",
+        );
+        yield* offerAndWait(result("wake-2-result", false));
+        yield* Fiber.join(secondWaiting);
+        yield* worker.drain();
+        const settled = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          settled.runs.find((run) => run.id === secondContinuation.id)?.status,
+          "completed",
+        );
+        assert.deepEqual(
+          settled.turnItems.flatMap((item) =>
+            item.runId === secondContinuation.id && item.type === "assistant_message"
+              ? [item.text]
+              : [],
+          ),
+          ["Background build finished (wake-2)."],
+          "the continuation must carry only its own wake's output",
+        );
+        assert.lengthOf(continuations, 2, "two wakes must offer exactly two continuations");
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(

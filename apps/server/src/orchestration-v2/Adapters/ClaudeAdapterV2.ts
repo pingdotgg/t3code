@@ -5090,10 +5090,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return { kind: "command", label, outcome };
           }
         });
-        // A released latch belongs to a cancelled continuation; it drops at its wake turn's end so
-        // that turn's later frames cannot offer it again.
+        // `end` is the offered wake's last frame once known: its result, or the last frame a user turn absorbed.
+        // A retired latch belongs to a cancelled wake that has not ended; its root frames are dropped until it does.
         const requestedContinuations = yield* Ref.make(
-          new Map<string, { readonly token: symbol; readonly released: boolean }>(),
+          new Map<
+            string,
+            {
+              readonly token: symbol;
+              readonly end: SDKMessage | undefined;
+              readonly retired: boolean;
+            }
+          >(),
         );
         const absorbedWakes = yield* Ref.make(new Set<string>());
         const heldProposedPlansByToolUseId = new Map<string, string>();
@@ -5562,15 +5569,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* forgetAbsorbedWake(nativeThreadId);
           });
 
-        const wakeTurnOpen = Effect.fnUntraced(function* (nativeThreadId: string) {
-          const messages = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
-          const lastResult = messages.findLastIndex((entry) => entry.type === "result");
-          return messages.slice(lastResult + 1).some(isClaudeRootTurnFrame);
-        });
-
-        const dropReleasedContinuation = (nativeThreadId: string) =>
+        const releaseContinuationLatch = (nativeThreadId: string) =>
           Ref.update(requestedContinuations, (current) => {
-            if (current.get(nativeThreadId)?.released !== true) return current;
+            if (!current.has(nativeThreadId)) return current;
             const updated = new Map(current);
             updated.delete(nativeThreadId);
             return updated;
@@ -5579,9 +5580,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // Claude runs one root turn at a time, so a user turn's result also ends a wake turn it
         // folded in. The continuation replays that wake's buffered frames but gets no result of its own.
         const markAbsorbedWake = Effect.fnUntraced(function* (nativeThreadId: string) {
-          if (!(yield* wakeTurnOpen(nativeThreadId))) return;
+          const latch = (yield* Ref.get(requestedContinuations)).get(nativeThreadId);
+          if (latch?.retired === true) {
+            yield* releaseContinuationLatch(nativeThreadId);
+            return;
+          }
+          const messages = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
+          const lastResult = messages.findLastIndex((entry) => entry.type === "result");
+          if (!messages.slice(lastResult + 1).some(isClaudeRootTurnFrame)) return;
           yield* Ref.update(absorbedWakes, (current) => new Set(current).add(nativeThreadId));
-          yield* dropReleasedContinuation(nativeThreadId);
+          if (latch !== undefined && latch.end === undefined) {
+            yield* Ref.update(requestedContinuations, (current) =>
+              new Map(current).set(nativeThreadId, {
+                ...latch,
+                end: messages.findLast(isClaudeRootTurnFrame),
+              }),
+            );
+          }
         });
 
         // The SDK emits no initial roster; reset roster and wake eligibility when opening a live query.
@@ -8134,6 +8149,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (!isWakeEvidence) {
             return;
           }
+          if (
+            (yield* Ref.get(requestedContinuations)).get(wakeInput.nativeThreadId)?.retired ===
+              true &&
+            (isClaudeRootTurnFrame(message) ||
+              message.type === "result" ||
+              message.type === "rate_limit_event")
+          ) {
+            if (message.type === "result") {
+              yield* releaseContinuationLatch(wakeInput.nativeThreadId);
+            }
+            return;
+          }
           const notificationSummary =
             isNotification && typeof message.summary === "string" && message.summary.length > 0
               ? message.summary
@@ -8184,6 +8211,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message.task_id,
             );
           }
+          if (message.type === "result") {
+            yield* Ref.update(requestedContinuations, (current) => {
+              const latch = current.get(wakeInput.nativeThreadId);
+              if (latch === undefined || latch.end !== undefined) return current;
+              return new Map(current).set(wakeInput.nativeThreadId, { ...latch, end: message });
+            });
+          }
           // Open continuations only after root init, user, assistant, or result frames prove a wake began.
           // Background child frames can stream while the root is idle.
           const buffered = (yield* Ref.get(wakeBuffers)).get(wakeInput.nativeThreadId);
@@ -8203,35 +8237,36 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             return;
           }
-          const route = (yield* Ref.get(lastTurnRouteByNativeThread)).get(wakeInput.nativeThreadId);
+          yield* offerWakeContinuation(wakeInput.nativeThreadId);
+        });
+
+        const offerWakeContinuation = Effect.fnUntraced(function* (nativeThreadId: string) {
+          const route = (yield* Ref.get(lastTurnRouteByNativeThread)).get(nativeThreadId);
           if (route === undefined) {
             yield* Effect.logWarning("orchestration-v2.claude-wake-turn-unroutable", {
               providerSessionId: input.providerSessionId,
-              nativeThreadId: wakeInput.nativeThreadId,
+              nativeThreadId,
             });
             return;
           }
-          const nativeThreadId = wakeInput.nativeThreadId;
-          const latch = Symbol(nativeThreadId);
+          const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId);
+          const token = Symbol(nativeThreadId);
           const shouldOffer = yield* Ref.modify(requestedContinuations, (current) => {
-            const held = current.get(nativeThreadId);
-            if (held !== undefined && (!held.released || message.type !== "result")) {
+            if (current.has(nativeThreadId)) {
               return [false, current] as const;
             }
             const updated = new Map(current);
-            if (held !== undefined) {
-              updated.delete(nativeThreadId);
-              return [false, updated] as const;
-            }
-            updated.set(nativeThreadId, { token: latch, released: false });
+            updated.set(nativeThreadId, {
+              token,
+              end: buffered?.messages.find((entry) => entry.type === "result"),
+              retired: false,
+            });
             return [true, updated] as const;
           });
           if (!shouldOffer) {
             return;
           }
-          const detail =
-            (yield* Ref.get(wakeBuffers)).get(wakeInput.nativeThreadId)?.detail ?? null;
-          const reports = yield* takeWakeReports(wakeInput.nativeThreadId);
+          const reports = yield* takeWakeReports(nativeThreadId);
           const notification = backgroundWorkNotification(
             [...(reports?.values() ?? [])].map((entry) => entry.report),
           );
@@ -8240,29 +8275,86 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             threadId: route.threadId,
             providerThreadId: route.providerThreadId,
           });
+          // A process reset can clear and re-latch this thread; a stale request must not retire the newer wake.
+          const retire = (): Effect.Effect<void> =>
+            sdkMessageLock.withPermits(1)(retireOfferedWake(nativeThreadId, token));
           yield* continuationRequests.offer({
             threadId: route.threadId,
             providerThreadId: route.providerThreadId,
             driver: CLAUDE_PROVIDER,
-            detail,
+            detail: buffered?.detail ?? null,
             ...(notification === null ? {} : { notification }),
-            // A process reset can clear and re-latch this thread; a stale request must not release the newer wake.
-            clearIfCurrent: () =>
-              sdkMessageLock.withPermits(1)(
-                Effect.gen(function* () {
-                  const open =
-                    (yield* wakeTurnOpen(nativeThreadId)) &&
-                    !(yield* Ref.get(absorbedWakes)).has(nativeThreadId);
-                  yield* Ref.update(requestedContinuations, (current) => {
-                    if (current.get(nativeThreadId)?.token !== latch) return current;
-                    const updated = new Map(current);
-                    if (open) updated.set(nativeThreadId, { token: latch, released: true });
-                    else updated.delete(nativeThreadId);
-                    return updated;
-                  });
-                }),
-              ),
+            clearIfCurrent: retire,
+            onRunEndedWithoutStarting: retire,
           });
+        });
+
+        // Drops what the unstarted continuation would have shown. Subagent task_started frames stay
+        // because later child frames and notifications resolve their owner from them.
+        const retireOfferedWake = Effect.fnUntraced(function* (
+          nativeThreadId: string,
+          token: symbol,
+        ) {
+          const latch = (yield* Ref.get(requestedContinuations)).get(nativeThreadId);
+          if (latch?.token !== token) return;
+          const messages = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
+          const endIndex =
+            latch.end === undefined ? messages.length - 1 : messages.indexOf(latch.end);
+          const retired = messages.slice(0, endIndex + 1);
+          const later = messages.slice(endIndex + 1);
+          const kept = [
+            ...retired.filter(
+              (entry) => entry.type === "system" && entry.subtype === "task_started",
+            ),
+            ...later,
+          ];
+          const retiredTaskIds = new Set(
+            retired.flatMap((entry) =>
+              entry.type === "system" && entry.subtype === "task_notification"
+                ? [entry.task_id]
+                : [],
+            ),
+          );
+          const detail =
+            kept
+              .flatMap((entry) =>
+                entry.type === "system" &&
+                entry.subtype === "task_notification" &&
+                typeof entry.summary === "string" &&
+                entry.summary.length > 0
+                  ? [entry.summary]
+                  : [],
+              )
+              .at(-1) ?? null;
+          yield* Ref.update(wakeBuffers, (current) => {
+            const updated = new Map(current);
+            if (kept.length === 0) updated.delete(nativeThreadId);
+            else updated.set(nativeThreadId, { messages: kept, detail });
+            return updated;
+          });
+          yield* Ref.update(wakeReportsByNativeThread, ({ userTurns, reports }) => {
+            const threadReports = reports.get(nativeThreadId);
+            if (threadReports === undefined) return { userTurns, reports };
+            const remaining = new Map(
+              [...threadReports].filter(([taskId]) => !retiredTaskIds.has(taskId)),
+            );
+            const updatedReports = new Map(reports);
+            if (remaining.size === 0) updatedReports.delete(nativeThreadId);
+            else updatedReports.set(nativeThreadId, remaining);
+            return { userTurns, reports: updatedReports };
+          });
+          if (latch.end === undefined) {
+            yield* Ref.update(requestedContinuations, (current) =>
+              new Map(current).set(nativeThreadId, { ...latch, retired: true }),
+            );
+            return;
+          }
+          yield* releaseContinuationLatch(nativeThreadId);
+          yield* forgetAbsorbedWake(nativeThreadId);
+          // A later wake buffered behind the retired one never got its own offer.
+          if (later.some((entry) => isClaudeRootTurnFrame(entry) || entry.type === "result")) {
+            yield* offerWakeContinuation(nativeThreadId);
+          }
         });
 
         // Untraced like the roster message handling: it runs for every streamed roster change.

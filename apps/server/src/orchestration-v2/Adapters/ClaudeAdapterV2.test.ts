@@ -11267,7 +11267,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.lengthOf(harness.continuationRequests, 2);
 
-        yield* harness.continuationRequests[0]!.clearIfCurrent!();
+        yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
         yield* harness.offerAndWait(
           claudeSdkFrame({ ...wakeAssistant, uuid: "00000000-0000-4000-8000-000000000135" }),
         );
@@ -11276,6 +11276,129 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           2,
           "clearing the first wake's request must not release the second wake's latch",
         );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("offers the next wake when a cancelled wake's release arrives after it opened", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const SECOND_TASK_ID = "b2ndwake";
+        const SECOND_TOOL_USE_ID = "toolu_second_wake";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-late-release"),
+            text: "Run two builds in the background.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...wakeTaskStarted,
+            task_id: SECOND_TASK_ID,
+            tool_use_id: SECOND_TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000141",
+          }),
+        );
+        yield* harness.offerAndWait(turnOneResult);
+        yield* harness.awaitTerminal(1);
+
+        yield* harness.offerAndWait(wakeNotification);
+        yield* harness.offerAndWait(wakeTurnInit);
+        yield* harness.offerAndWait(wakeAssistant);
+        yield* harness.offerAndWait(wakeResult);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...wakeNotification,
+            task_id: SECOND_TASK_ID,
+            tool_use_id: SECOND_TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000142",
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000143" }),
+        );
+        assert.lengthOf(harness.continuationRequests, 1);
+
+        yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+        yield* harness.offerAndWait(
+          claudeSdkFrame({ ...wakeAssistant, uuid: "00000000-0000-4000-8000-000000000144" }),
+        );
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000145", result: "Done." }),
+        );
+        assert.lengthOf(
+          harness.continuationRequests,
+          2,
+          "the wake that opened before the cancelled wake's release must get its own continuation",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("does not offer a wake again when it is cancelled before its first root frame", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-early-cancel"),
+            text: "Start an agent in the background.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({ ...wakeTaskStarted, task_type: "local_agent" }),
+        );
+        yield* harness.offerAndWait(turnOneResult);
+        yield* harness.awaitTerminal(1);
+
+        yield* harness.offerAndWait(wakeNotification);
+        assert.lengthOf(harness.continuationRequests, 1);
+        yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+        yield* harness.offerAndWait(wakeTurnInit);
+        yield* harness.offerAndWait(wakeAssistant);
+        yield* harness.offerAndWait(wakeResult);
+        assert.lengthOf(
+          harness.continuationRequests,
+          1,
+          "the cancelled wake must not be offered again",
+        );
+
+        yield* harness.offerAndWait(
+          claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000146" }),
+        );
+        assert.lengthOf(harness.continuationRequests, 2, "the next wake must be offered");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
