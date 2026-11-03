@@ -2714,11 +2714,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("reads range patches from source without running textconv", () =>
+    it.effect("reads range patches from source without textconv or color", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         yield* git(cwd, ["config", "diff.probe.textconv", "touch textconv-ran; echo converted"]);
+        yield* git(cwd, ["config", "color.ui", "always"]);
         yield* git(cwd, ["checkout", "-b", "feature/range"]);
         yield* writeTextFile(cwd, ".gitattributes", "*.doc diff=probe\n");
         yield* writeTextFile(cwd, "notes.doc", "source line\n");
@@ -2736,12 +2737,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.include(context.diffPatch, "+plain line");
         assert.include(context.diffPatch, "Binary files /dev/null and b/binary.dat differ");
         assert.include(context.diffSummary, "notes.doc");
+        for (const output of [context.commitSummary, context.diffSummary, context.diffPatch]) {
+          assert.notInclude(output, "\u001b[");
+        }
         assert.isFalse(yield* fileSystem.exists(`${cwd}/textconv-ran`));
 
         yield* writeTextFile(cwd, "notes.doc", "updated source line\n");
         const staged = yield* driver.prepareCommitContext(cwd, ["notes.doc"]);
         assert.include(staged?.stagedPatch ?? "", "+updated source line");
         assert.notInclude(staged?.stagedPatch ?? "", "converted");
+        assert.notInclude(staged?.stagedPatch ?? "", "\u001b[");
         assert.include(staged?.stagedSummary ?? "", "notes.doc");
         assert.isFalse(yield* fileSystem.exists(`${cwd}/textconv-ran`));
       }),
@@ -2959,6 +2964,70 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("does not guess a Changes base for a branch renamed during the status read", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const fork = yield* makeTmpDir();
+        const upstream = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(fork, ["init", "--bare"]);
+        yield* git(upstream, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", fork]);
+        yield* git(cwd, ["remote", "add", "upstream", upstream]);
+        yield* git(cwd, ["push", "origin", "main"]);
+        yield* writeTextFile(cwd, "upstream.txt", "work missing from the fork\n");
+        yield* git(cwd, ["add", "upstream.txt"]);
+        yield* git(cwd, ["commit", "-m", "upstream work"]);
+        yield* git(cwd, ["push", "upstream", "main"]);
+        yield* git(cwd, ["fetch", "origin"]);
+        yield* git(cwd, ["fetch", "upstream"]);
+        yield* git(cwd, ["checkout", "-b", "t3/temporary"]);
+        yield* git(cwd, ["config", "branch.t3/temporary.t3-merge-base", "main"]);
+        yield* git(cwd, [
+          "config",
+          "branch.t3/temporary.t3-merge-base-ref",
+          "refs/remotes/upstream/main",
+        ]);
+        yield* writeTextFile(cwd, "feature.txt", "thread work\n");
+
+        const outer = yield* GitVcsDriver.GitVcsDriver;
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const renameClaimed = yield* Ref.make(false);
+        const renamed = yield* Deferred.make<void>();
+        // Rename after `git status` has read HEAD, as the thread launcher does after the first turn.
+        // Base config reads start only after status completes; hold every one until the rename lands.
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (ChildProcess.isStandardCommand(command) && command.args[0] === "config") {
+              if (!(yield* Ref.getAndSet(renameClaimed, true))) {
+                yield* git(cwd, ["branch", "-m", "t3/temporary", "feature/named"]).pipe(
+                  Effect.provideService(GitVcsDriver.GitVcsDriver, outer),
+                  Effect.orDie,
+                );
+                yield* Deferred.succeed(renamed, undefined);
+              }
+              yield* Deferred.await(renamed);
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+
+        const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+
+        assert.strictEqual(status.branch, "t3/temporary");
+        assert.deepStrictEqual(status.branchChanges, {
+          baseRef: null,
+          insertions: 1,
+          deletions: 0,
+        });
+      }),
+    );
+
     it.effect("keeps local branch bases consistent when tags share their names", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -3105,16 +3174,24 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("repository status", () => {
-    it.effect("reads the current branch by name when a tag shares it", () =>
+    it.effect("reads the current branch and upstream by name when other refs share them", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
         yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
         yield* git(cwd, ["checkout", "-b", "release"]);
+        yield* git(cwd, ["push", "-u", "origin", "release"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "unpushed"]);
+        yield* git(cwd, ["branch", "origin/release"]);
         yield* git(cwd, ["tag", "release"]);
         const driver = yield* GitVcsDriver.GitVcsDriver;
 
         const remoteStatus = yield* driver.statusDetailsRemote(cwd, { refreshUpstream: false });
         assert.equal(remoteStatus.branch, "release");
+        assert.equal(remoteStatus.upstreamRef, "origin/release");
+        assert.equal(remoteStatus.aheadCount, 1);
         const preview = yield* driver.getReviewDiffPreview({ cwd });
         const branchRange = preview.sources.find((source) => source.kind === "branch-range");
         assert.equal(branchRange?.headRef, "release");

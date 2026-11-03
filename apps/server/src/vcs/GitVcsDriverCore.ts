@@ -1293,13 +1293,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
+  // `--abbrev-ref` prints `remotes/origin/<name>` when a local `origin/<name>` branch exists.
   const readCurrentUpstreamRef = Effect.fn("readCurrentUpstreamRef")(function* (cwd: string) {
     const upstreamRef = yield* runGitStdout(
       "GitVcsDriver.resolveCurrentUpstream",
       cwd,
-      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+      ["rev-parse", "--symbolic-full-name", "@{upstream}"],
       true,
-    ).pipe(Effect.map((stdout) => stdout.trim()));
+    ).pipe(Effect.map((stdout) => stdout.trim().replace(/^refs\/(?:remotes|heads)\//, "")));
 
     if (upstreamRef.length === 0 || upstreamRef === "@{upstream}") {
       return null;
@@ -2032,7 +2033,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const divergence = yield* executeGit(
         "GitVcsDriver.statusDetailsRemote.divergence",
         cwd,
-        ["rev-list", "--left-right", "--count", `HEAD...${upstreamRef}`],
+        ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
         { allowNonZeroExit: true },
       );
       if (divergence.exitCode === 0) {
@@ -2529,7 +2530,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           const stagedPatch = yield* runGitStdoutWithOptions(
             "GitVcsDriver.prepareCommitContext.stagedPatch",
             cwd,
-            ["diff", "--no-ext-diff", "--no-textconv", "--cached", "--patch", "--minimal"],
+            [
+              "diff",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
+              "--cached",
+              "--patch",
+              "--minimal",
+            ],
             {
               env,
               maxOutputBytes: PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES,
@@ -2922,7 +2931,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         runGitStdoutWithOptions(
           "GitVcsDriver.readRangeContext.log",
           cwd,
-          ["log", "--oneline", "--end-of-options", commitRange],
+          ["log", "--oneline", "--no-color", "--end-of-options", commitRange],
           {
             maxOutputBytes: RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES,
             appendTruncationMarker: true,
@@ -2931,7 +2940,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         runGitStdoutWithOptions(
           "GitVcsDriver.readRangeContext.diffStat",
           cwd,
-          ["diff", "--stat", "--end-of-options", diffRange],
+          ["diff", "--stat", "--no-color", "--end-of-options", diffRange],
           {
             maxOutputBytes: RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES,
             appendTruncationMarker: true,
@@ -2942,6 +2951,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           cwd,
           [
             "diff",
+            "--no-color",
             "--no-ext-diff",
             "--no-textconv",
             "--patch",
@@ -3144,12 +3154,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       readonly untrackedRoots: ReadonlyArray<string>;
     },
   ) {
-    const { baseRef, mergeBase } = yield* resolveReviewMergeBase(
+    const resolved = yield* resolveReviewMergeBase(
       cwd,
       branch,
       undefined,
       options?.knownOriginDefaultBranch ?? null,
     );
+    // A rename after `git status` read HEAD moves the base config away, so the base was guessed.
+    const { baseRef, mergeBase } =
+      branch === null || (yield* branchExists(cwd, branch))
+        ? resolved
+        : { baseRef: null, mergeBase: "HEAD" };
     const roots = options?.untrackedRoots ?? [];
     // Bound pathspec matching work and stay below Windows' command-line limit.
     const pathspecs =
