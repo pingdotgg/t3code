@@ -1330,6 +1330,20 @@ const make = Effect.gen(function* () {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
     const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+    const requestedModel = input.target?.model;
+    // Replays read visibility too, so they resolve the model the accepted request validated.
+    const settings =
+      requestedModel === undefined
+        ? yield* serverSettings.getSettings.pipe(
+            Effect.mapError(() =>
+              failure("orchestration_error", "Unable to read server settings."),
+            ),
+          )
+        : undefined;
+    const visibleFallbackModel = (provider: ServerProvider) => {
+      const hiddenModels = settings?.providerModelPreferences?.[provider.instanceId]?.hiddenModels;
+      return provider.models.find((candidate) => !hiddenModels?.includes(candidate.slug))?.slug;
+    };
     let instanceId = requestedInstanceId;
 
     if (instanceId === undefined && requestedDriver !== undefined) {
@@ -1355,6 +1369,13 @@ const make = Effect.gen(function* () {
         ...healthyCandidates.filter((candidate) => candidate !== inheritedCandidate),
       ];
       for (const candidate of orderedCandidates) {
+        if (
+          requestedModel === undefined &&
+          candidate !== inheritedCandidate &&
+          visibleFallbackModel(candidate) === undefined
+        ) {
+          continue;
+        }
         const enabledForProject =
           input.skipProjectEnablementFilter === true ||
           (yield* threadManagement.isProviderInstanceEnabledForProject({
@@ -1402,18 +1423,11 @@ const make = Effect.gen(function* () {
     }
 
     const inheritedSelection = input.parent.thread.modelSelection;
-    const requestedModel = input.target?.model;
-    let model =
+    const model =
       requestedModel ??
-      (instanceId === inheritedSelection.instanceId ? inheritedSelection.model : undefined);
-    if (model === undefined) {
-      // Replays read visibility too, so they resolve the model the accepted request validated.
-      const settings = yield* serverSettings.getSettings.pipe(
-        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
-      );
-      const hiddenModels = settings.providerModelPreferences?.[instanceId]?.hiddenModels;
-      model = provider.models.find((candidate) => !hiddenModels?.includes(candidate.slug))?.slug;
-    }
+      (instanceId === inheritedSelection.instanceId
+        ? inheritedSelection.model
+        : visibleFallbackModel(provider));
     if (model === undefined) {
       return yield* failure(
         "model_unavailable",

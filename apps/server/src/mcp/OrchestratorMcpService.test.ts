@@ -1757,7 +1757,7 @@ describe("OrchestratorMcpService provider resolution", () => {
 
   it.effect.each([
     {
-      name: "driver-only delegation skips an instance the project turned off",
+      name: "driver-only delegation skips instances the project turned off or fully hid",
       accepted: false,
       target: { driverKind: ProviderDriverKind.make("codex") },
     },
@@ -1769,6 +1769,7 @@ describe("OrchestratorMcpService provider resolution", () => {
   ])("$name", ({ accepted, target }) =>
     Effect.gen(function* () {
       const altInstanceId = ProviderInstanceId.make("codex-alt");
+      const allHiddenInstanceId = ProviderInstanceId.make("codex-all-hidden");
       const alternateProvider = providerSnapshot({
         instanceId: altInstanceId,
         driver: ProviderDriverKind.make("codex"),
@@ -1842,6 +1843,11 @@ describe("OrchestratorMcpService provider resolution", () => {
             driver: ProviderDriverKind.make("codex"),
             model: "gpt-5.4",
           }),
+          providerSnapshot({
+            instanceId: allHiddenInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
           {
             ...alternateProvider,
             models: [
@@ -1855,7 +1861,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             ],
           },
         ]),
-        adapterRegistryLayer([codexInstanceId, altInstanceId]),
+        adapterRegistryLayer([codexInstanceId, allHiddenInstanceId, altInstanceId]),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
@@ -1863,6 +1869,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         ServerSettings.layerTest({
           providerModelPreferences: {
             [altInstanceId]: { hiddenModels: ["hidden-custom"], modelOrder: [] },
+            [allHiddenInstanceId]: { hiddenModels: ["gpt-5.4"], modelOrder: [] },
           },
         }),
       );
