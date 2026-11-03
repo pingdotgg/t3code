@@ -228,6 +228,7 @@ interface LiveSessionEntry {
   readonly eventSubscribers: Ref.Ref<
     ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
   >;
+  readonly eventPumpAlive: Ref.Ref<boolean>;
   readonly latestThreadUpdates: Map<ProviderThreadId, ProviderThreadUpdateDelivery>;
   readonly threadUpdateDeliveries: WeakMap<
     ProviderAdapter.ProviderAdapterV2Event,
@@ -1071,7 +1072,7 @@ export const layerWithOptions = (
         Effect.acquireUseRelease(
           removeLiveEntry(input).pipe(
             Effect.flatMap(([entry, releasedAt, persistFailed]) =>
-              persistFailed && input.onlyIfIdleGeneration === undefined
+              persistFailed
                 ? Effect.fail(
                     new ProviderSessionReleaseError({
                       providerSessionId: input.providerSessionId,
@@ -1247,7 +1248,10 @@ export const layerWithOptions = (
               Effect.logWarning("orchestration-v2.driver-session.idle-release-failed", {
                 providerSessionId: input.providerSessionId,
                 cause,
-              }),
+              }).pipe(
+                Effect.andThen(Effect.sleep(Duration.millis(idleTimeoutMs))),
+                Effect.andThen(Effect.suspend(() => releaseIfStillIdle(input))),
+              ),
             ),
           );
         },
@@ -1497,6 +1501,8 @@ export const layerWithOptions = (
           providerSessionId,
           Effect.gen(function* () {
             const key = sessionKey(providerSessionId);
+            const live = (yield* Ref.get(sessions)).get(key);
+            if (live === undefined || !(yield* Ref.get(live.eventPumpAlive))) return false;
             const marked = yield* Ref.modify(sessions, (current) => {
               const entry = current.get(key);
               if (entry === undefined || entry.runtime !== runtime) {
@@ -2331,6 +2337,7 @@ export const layerWithOptions = (
           Effect.exit,
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
+              yield* Ref.set(entry.eventPumpAlive, false);
               if (shutdownSignal.received) return;
               const current = (yield* Ref.get(sessions)).get(
                 sessionKey(entry.runtime.providerSessionId),
@@ -2428,6 +2435,14 @@ export const layerWithOptions = (
               const key = sessionKey(input.providerSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
+                if (!(yield* Ref.get(existing.eventPumpAlive))) {
+                  return yield* new ProviderSessionOpenError({
+                    instanceId: input.modelSelection.instanceId,
+                    providerSessionId: input.providerSessionId,
+                    cause:
+                      "The provider event stream stopped; pending session updates must be saved before reopening.",
+                  });
+                }
                 const attached = existing.attachedThreadIds.has(input.threadId);
                 if (!attached && !existing.supportsMultipleProviderThreads) {
                   return yield* new ProviderSessionOpenError({
@@ -2537,6 +2552,7 @@ export const layerWithOptions = (
                 runtime,
                 exposedRuntime,
                 eventSubscribers,
+                eventPumpAlive: yield* Ref.make(true),
                 latestThreadUpdates: new Map(),
                 threadUpdateDeliveries: new WeakMap(),
                 pendingRewinds: new Map(),
@@ -2594,6 +2610,14 @@ export const layerWithOptions = (
             const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
             if (entry === undefined) {
               return Option.none<ProviderAdapter.ProviderAdapterV2SessionRuntime>();
+            }
+            if (!(yield* Ref.get(entry.eventPumpAlive))) {
+              return yield* new ProviderSessionOpenError({
+                instanceId: entry.runtime.instanceId,
+                providerSessionId,
+                cause:
+                  "The provider event stream stopped; pending session updates must be saved before reopening.",
+              });
             }
             yield* touchActivity(providerSessionId);
             return Option.some(entry.exposedRuntime);

@@ -3633,6 +3633,8 @@ it.effect.each([
   "rejected write",
   "transient release failure",
   "persistent release failure",
+  "idle release retry",
+  "stopped pump release failure",
   "released rewind",
   "replacement owner",
   "concurrent owner switch",
@@ -3758,6 +3760,46 @@ it.effect.each([
       if (scenario === "coalesced updates")
         yield* Queue.offer(adapterEvents, update("newer-session"));
       yield* routed;
+      if (scenario === "idle release retry" || scenario === "stopped pump release failure") {
+        const failedWrites = yield* Queue.unbounded<void>();
+        let attempts = 0;
+        const failWrite: Effect.Effect<void> = Effect.suspend(() => {
+          attempts++;
+          return Ref.set(beforeUnchangedWrite, failWrite).pipe(
+            Effect.andThen(Queue.offer(failedWrites, undefined)),
+            Effect.andThen(Effect.die("simulated pending snapshot failure")),
+          );
+        });
+        yield* Ref.set(beforeUnchangedWrite, failWrite);
+        if (scenario === "idle release retry") yield* TestClock.adjust("60 seconds");
+        else yield* Queue.end(adapterEvents);
+        for (let attempt = 0; attempt < 3; attempt++) yield* Queue.take(failedWrites);
+        assert.equal(attempts, 3);
+        assert.isTrue(yield* manager.isLive(providerSessionId));
+        if (scenario === "stopped pump release failure") {
+          const openError = yield* manager
+            .open({
+              threadId,
+              providerSessionId,
+              modelSelection,
+              runtimePolicy,
+            })
+            .pipe(Effect.flip);
+          assert.equal(openError._tag, "ProviderSessionOpenError");
+          const lookupError = yield* manager.get(providerSessionId).pipe(Effect.flip);
+          assert.equal(lookupError._tag, "ProviderSessionLookupError");
+        }
+        yield* Ref.set(beforeUnchangedWrite, Effect.void);
+        if (scenario === "idle release retry") yield* TestClock.adjust("60 seconds");
+        else yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+        assert.isFalse(yield* manager.isLive(providerSessionId));
+        assert.equal(
+          (yield* projectionStore.getThreadProjection(threadId)).providerThreads[0]?.nativeThreadRef
+            ?.nativeId,
+          "cleared-session",
+        );
+        return;
+      }
       if (scenario === "runtime failure" || scenario === "released rewind") {
         const released = yield* eventSink.stream({ threadId, afterSequence }).pipe(
           Stream.filter(
