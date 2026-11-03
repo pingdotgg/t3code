@@ -356,6 +356,9 @@ export function ActivityPanel(props: {
     runActive,
   );
 
+  // Before the thread loads there are no items, which would read as "Nothing to show yet".
+  if (structure === null) return null;
+
   const isEmpty =
     summary.phase === "idle" &&
     summary.now === null &&
