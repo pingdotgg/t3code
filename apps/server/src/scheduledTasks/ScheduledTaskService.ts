@@ -833,6 +833,7 @@ export const layer = Layer.effect(
       sql`
         UPDATE scheduled_tasks SET thread_id = ${threadId}
         WHERE task_id = ${task.id} AND created_at = ${task.createdAt}
+          AND project_id = ${task.projectId}
           AND thread_id IS NULL AND thread_mode != 'new_thread'
       `.pipe(
         Effect.andThen(threadManagement.getThreadShell(threadId)),

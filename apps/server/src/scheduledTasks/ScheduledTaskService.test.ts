@@ -617,63 +617,69 @@ it.effect("a first run whose thread was deleted before it bound removes the task
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("a first run never binds its thread to a task recreated under the same id", () =>
-  Effect.gen(function* () {
-    const launching = yield* Deferred.make<void>();
-    const proceed = yield* Deferred.make<void>();
-    const layer = ScheduledTaskService.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          ManagedPolicy.layerTest(),
-          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-            launch: () =>
-              Deferred.succeed(launching, undefined).pipe(
-                Effect.andThen(Deferred.await(proceed)),
-                Effect.as({
-                  threadId: ThreadId.make("thread:old-generation"),
-                  resumed: false,
-                } as never),
-              ),
-          }),
-          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
-          Layer.mock(SecretRequests.SecretRequests)({}),
-          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-            namedProjectsRoot: "/projects",
-            isScratchProject: () => Effect.succeed(false),
-          }),
-          NodeCrypto.layer,
-          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+it.effect.each(["recreated under the same id", "moved to another project"] as const)(
+  "a first run never binds its thread to a task %s",
+  (change) =>
+    Effect.gen(function* () {
+      const launching = yield* Deferred.make<void>();
+      const proceed = yield* Deferred.make<void>();
+      const layer = ScheduledTaskService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            ManagedPolicy.layerTest(),
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+              launch: () =>
+                Deferred.succeed(launching, undefined).pipe(
+                  Effect.andThen(Deferred.await(proceed)),
+                  Effect.as({
+                    threadId: ThreadId.make("thread:old-generation"),
+                    resumed: false,
+                  } as never),
+                ),
+            }),
+            Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/projects",
+              isScratchProject: () => Effect.succeed(false),
+            }),
+            NodeCrypto.layer,
+            Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+          ),
         ),
-      ),
-    );
-    yield* Effect.gen(function* () {
-      const service = yield* ScheduledTaskService.ScheduledTaskService;
-      const input = {
-        id: ScheduledTaskId.make("task:recreated-mid-launch"),
-        title: "Triage",
-        prompt: "Triage new issues",
-        enabled: true,
-        schedule: { type: "interval", everyMs: 60_000 },
-        projectId: ProjectId.make("project:test"),
-        threadMode: "fresh_session",
-        workspaceStrategy: { type: "root" },
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-      } as const;
-      yield* service.upsert(input);
-      const run = yield* Effect.forkChild(service.runNow({ id: input.id }));
-      yield* Deferred.await(launching);
-      yield* service.delete({ id: input.id });
-      yield* TestClock.adjust("1 second");
-      yield* service.upsert(input);
-      yield* Deferred.succeed(proceed, undefined);
-      yield* Fiber.await(run);
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const input = {
+          id: ScheduledTaskId.make("task:recreated-mid-launch"),
+          title: "Triage",
+          prompt: "Triage new issues",
+          enabled: true,
+          schedule: { type: "interval", everyMs: 60_000 },
+          projectId: ProjectId.make("project:test"),
+          threadMode: "fresh_session",
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        } as const;
+        yield* service.upsert(input);
+        const run = yield* Effect.forkChild(service.runNow({ id: input.id }));
+        yield* Deferred.await(launching);
+        if (change === "recreated under the same id") {
+          yield* service.delete({ id: input.id });
+          yield* TestClock.adjust("1 second");
+          yield* service.upsert(input);
+        } else {
+          yield* service.upsert({ ...input, projectId: ProjectId.make("project:moved") });
+        }
+        yield* Deferred.succeed(proceed, undefined);
+        yield* Fiber.await(run);
 
-      const replacement = (yield* service.list()).tasks.find((task) => task.id === input.id);
-      assert.equal(replacement?.threadId, null);
-    }).pipe(Effect.provide(layer));
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+        const replacement = (yield* service.list()).tasks.find((task) => task.id === input.id);
+        assert.equal(replacement?.threadId, null);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("refuses saving an enabled task above the policy ceiling", () =>
