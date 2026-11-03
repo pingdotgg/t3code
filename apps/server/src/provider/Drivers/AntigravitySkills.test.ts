@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverAntigravitySkills } from "./AntigravitySkills.ts";
+import { discoverAntigravitySkills, prepareAntigravityPluginSkills } from "./AntigravitySkills.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const writeSkill = Effect.fn("writeSkill")(function* (directory: string, contents: string) {
@@ -91,6 +91,68 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
 
       assert.deepEqual(yield* discoverAntigravitySkills(input), expected);
     }),
+  );
+
+  it.effect(
+    "reads enabled plugin skills without merging same-name skills from different plugins",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = yield* makeWorkspace();
+        const config = path.join(input.userHome, ".gemini", "config");
+        const expected = [];
+        for (const name of ["alpha", "beta", "off", "disabled", "unregistered"]) {
+          const plugin = path.join(config, "plugins", name);
+          const skillPath = yield* writeSkill(
+            path.join(plugin, "skills", "review"),
+            "---\nname: review\ndescription: Review changes.\n---\n",
+          );
+          if (name !== "unregistered") {
+            yield* fileSystem.writeFileString(
+              path.join(plugin, "plugin.json"),
+              JSON.stringify({
+                name: `Display ${name}`,
+                disabled: name === "beta" || name === "disabled",
+              }),
+            );
+          }
+          if (name === "alpha" || name === "beta") {
+            expected.push({
+              name: `${name}:review`,
+              description: "Review changes.",
+              path: skillPath,
+              scope: "user",
+              enabled: true,
+            });
+          }
+        }
+        yield* fileSystem.writeFileString(
+          path.join(config, "config.json"),
+          JSON.stringify({ plugins: { beta: { enabled: true }, off: { enabled: false } } }),
+        );
+        assert.deepEqual(yield* discoverAntigravitySkills(input), expected);
+        const directories = yield* prepareAntigravityPluginSkills({
+          userHome: input.userHome,
+          runtimeTempDirectory: yield* fileSystem.makeTempDirectoryScoped(),
+        });
+        const nativeSkills = yield* discoverAntigravitySkills({
+          cwd: directories[0]!,
+          userHome: path.join(input.userHome, "empty"),
+        });
+        assert.deepEqual(
+          nativeSkills.map((skill) => skill.name),
+          ["alpha:review", "beta:review"],
+        );
+        for (const [index, skill] of nativeSkills.entries()) {
+          assert.include(yield* fileSystem.readFileString(skill.path), expected[index]!.path);
+          assert.equal(
+            directories[index + 1],
+            path.dirname(path.dirname(path.dirname(expected[index]!.path))),
+          );
+          assert.include(yield* fileSystem.readFileString(expected[index]!.path), "name: review\n");
+        }
+      }),
   );
 
   it.effect("uses native root order for duplicate names", () =>

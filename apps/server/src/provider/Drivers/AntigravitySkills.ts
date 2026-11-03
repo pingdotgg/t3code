@@ -47,7 +47,7 @@ const decodeSkillFrontmatter = Schema.decodeUnknownSync(SkillFrontmatter);
 export class AntigravitySkillsProbeError extends Schema.TaggedError<AntigravitySkillsProbeError>()(
   "AntigravitySkillsProbeError",
   {
-    reason: Schema.Literals(["scan-budget-exhausted", "filesystem-error"]),
+    reason: Schema.Literals(["scan-budget-exhausted", "filesystem-error", "invalid-config"]),
     path: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -55,7 +55,9 @@ export class AntigravitySkillsProbeError extends Schema.TaggedError<AntigravityS
   override get message(): string {
     return this.reason === "scan-budget-exhausted"
       ? `Antigravity skill discovery exceeded its scan limit at '${this.path}'.`
-      : `Antigravity could not read skills at '${this.path}'.`;
+      : this.reason === "invalid-config"
+        ? `Antigravity could not parse plugin configuration at '${this.path}'.`
+        : `Antigravity could not read skills at '${this.path}'.`;
   }
 }
 
@@ -137,32 +139,17 @@ const readSkill = Effect.fn("readAntigravitySkill")(function* (
   return bytes.toString("utf8");
 });
 
-/** Keep read errors typed so workspace snapshots cannot cache partial results. */
-export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(function* (input: {
-  readonly cwd: string;
-  readonly userHome: string;
-}): Effect.fn.Return<
-  ReadonlyArray<ServerProviderSkill>,
-  AntigravitySkillsProbeError,
-  FileSystem.FileSystem | Path.Path
-> {
+interface SkillRoot {
+  readonly directory: string;
+  readonly scope: string;
+}
+
+const scanSkillDirectories = Effect.fn("scanAntigravitySkillDirectories")(function* (
+  roots: ReadonlyArray<SkillRoot>,
+  budget: ScanBudget,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const [configSkills, cliSkills] = antigravityUserSkillDirectories(
-    path,
-    path.join(input.userHome, ".gemini"),
-  );
-  const roots = [
-    { directory: configSkills, scope: "user" },
-    { directory: path.resolve(input.cwd, ".gemini", "skills"), scope: "project" },
-    { directory: cliSkills, scope: "user" },
-    { directory: path.resolve(input.cwd, ".agents", "skills"), scope: "project" },
-    { directory: path.resolve(input.cwd, ".agent", "skills"), scope: "project" },
-  ];
-  const budget: ScanBudget = {
-    remainingBytes: MAX_SCAN_BYTES,
-    remainingEntries: MAX_SCAN_ENTRIES,
-  };
   const skillsByName = new Map<string, ServerProviderSkill>();
 
   const scanDirectory = Effect.fn("scanAntigravitySkillDirectory")(function* (
@@ -216,3 +203,142 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
   }
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 });
+
+const PluginManifest = Schema.fromJsonString(
+  Schema.Struct({ disabled: Schema.optional(Schema.Boolean) }),
+);
+const PluginPreferences = Schema.fromJsonString(
+  Schema.Struct({
+    plugins: Schema.optional(
+      Schema.Record(Schema.String, Schema.Struct({ enabled: Schema.optional(Schema.Boolean) })),
+    ),
+  }),
+);
+
+const decodePluginManifest = Schema.decodeEffect(PluginManifest);
+const decodePluginPreferences = Schema.decodeEffect(PluginPreferences);
+const encodeString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+
+const discoverAntigravityPlugins = Effect.fn("discoverAntigravityPlugins")(function* (
+  userHome: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const config = path.join(userHome, ".gemini", "config");
+  const directory = path.join(config, "plugins");
+  const entries = yield* readIfPresent(fileSystem.readDirectory(directory), directory);
+  if (entries === undefined) return [];
+  const budget: ScanBudget = {
+    remainingBytes: MAX_SCAN_BYTES,
+    remainingEntries: MAX_SCAN_ENTRIES,
+  };
+  if (entries.length > budget.remainingEntries) {
+    return yield* new AntigravitySkillsProbeError({
+      reason: "scan-budget-exhausted",
+      path: directory,
+    });
+  }
+  budget.remainingEntries -= entries.length;
+  const preferencesPath = path.join(config, "config.json");
+  const preferencesContents = yield* readSkill(preferencesPath, budget);
+  const preferences =
+    preferencesContents === undefined
+      ? { plugins: {} }
+      : yield* decodePluginPreferences(preferencesContents).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AntigravitySkillsProbeError({
+                reason: "invalid-config",
+                path: preferencesPath,
+                cause,
+              }),
+          ),
+        );
+  const plugins = [];
+  for (const entry of entries.toSorted()) {
+    const pluginDirectory = path.join(directory, entry);
+    if (
+      (yield* readIfPresent(fileSystem.stat(pluginDirectory), pluginDirectory))?.type !==
+      "Directory"
+    )
+      continue;
+    const manifestPath = path.join(pluginDirectory, "plugin.json");
+    const contents = yield* readSkill(manifestPath, budget);
+    if (contents === undefined) continue;
+    const manifest = yield* decodePluginManifest(contents).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AntigravitySkillsProbeError({ reason: "invalid-config", path: manifestPath, cause }),
+      ),
+    );
+    if (!(preferences.plugins?.[entry]?.enabled ?? !manifest.disabled)) continue;
+    const skills = yield* scanSkillDirectories(
+      [{ directory: path.join(pluginDirectory, "skills"), scope: "user" }],
+      budget,
+    );
+    if (skills.length === 0) continue;
+    const namespace = /^[a-zA-Z0-9]/.test(entry) ? entry : `plugin${entry}`;
+    plugins.push({
+      directory: pluginDirectory,
+      skills: skills.map((skill) => ({ ...skill, name: `${namespace}:${skill.name}` })),
+    });
+  }
+  return plugins;
+});
+
+/** Keep read errors typed so workspace snapshots cannot cache partial results. */
+export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(function* (input: {
+  readonly cwd: string;
+  readonly userHome: string;
+}): Effect.fn.Return<
+  ReadonlyArray<ServerProviderSkill>,
+  AntigravitySkillsProbeError,
+  FileSystem.FileSystem | Path.Path
+> {
+  const path = yield* Path.Path;
+  const [configSkills, cliSkills] = antigravityUserSkillDirectories(
+    path,
+    path.join(input.userHome, ".gemini"),
+  );
+  const skills = yield* scanSkillDirectories(
+    [
+      { directory: configSkills, scope: "user" },
+      { directory: path.resolve(input.cwd, ".gemini", "skills"), scope: "project" },
+      { directory: cliSkills, scope: "user" },
+      { directory: path.resolve(input.cwd, ".agents", "skills"), scope: "project" },
+      { directory: path.resolve(input.cwd, ".agent", "skills"), scope: "project" },
+    ],
+    { remainingBytes: MAX_SCAN_BYTES, remainingEntries: MAX_SCAN_ENTRIES },
+  );
+  const plugins = yield* discoverAntigravityPlugins(input.userHome);
+  return [...skills, ...plugins.flatMap((plugin) => plugin.skills)].sort((left, right) =>
+    left.name.localeCompare(right.name),
+  );
+});
+
+// ACP accepts standalone skills, so plugin entries use a process-owned native catalog.
+export const prepareAntigravityPluginSkills = Effect.fn("prepareAntigravityPluginSkills")(
+  function* (input: { readonly userHome: string; readonly runtimeTempDirectory: string }) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const plugins = yield* discoverAntigravityPlugins(input.userHome);
+    if (plugins.length === 0) return [];
+    const directory = path.join(input.runtimeTempDirectory, "plugin-skills");
+    yield* Effect.forEach(
+      plugins.flatMap((plugin) =>
+        plugin.skills.map((skill) => ({ pluginDirectory: plugin.directory, skill })),
+      ),
+      ({ pluginDirectory, skill }, index) =>
+        Effect.gen(function* () {
+          const skillDirectory = path.join(directory, ".agents", "skills", String(index));
+          yield* fileSystem.makeDirectory(skillDirectory, { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(skillDirectory, "SKILL.md"),
+            `---\nname: ${encodeString(skill.name)}\ndescription: ${encodeString(skill.description ?? "")}\n---\n\nRead and follow the skill at ${encodeString(skill.path)}. Resolve its relative paths from ${encodeString(path.dirname(skill.path))}. The plugin root is ${encodeString(pluginDirectory)}.\n`,
+          );
+        }),
+      { concurrency: 8, discard: true },
+    );
+    return [directory, ...plugins.map((plugin) => plugin.directory)];
+  },
+);
