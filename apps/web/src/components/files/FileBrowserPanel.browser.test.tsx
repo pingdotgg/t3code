@@ -82,6 +82,40 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect((row.getRootNode() as ShadowRoot).activeElement).toBe(row));
   });
 
+  it("offers Open preview for markdown files and opens them rendered", async () => {
+    const onOpenFilePreview = vi.fn();
+    await using _screen = await render(
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        onOpenFilePreview={onOpenFilePreview}
+        workspaceMutationId={null}
+      />,
+    );
+    using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
+    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
+    const action = page.getByRole("menuitem", { name: "Open preview", exact: true });
+
+    findTreeRow("src/")!.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, composed: true, button: 2 }),
+    );
+    await expect
+      .element(page.getByRole("menuitem", { name: "Copy mention", exact: true }))
+      .toBeVisible();
+    await expect.element(action).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+
+    findTreeRow("README.md")!.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, composed: true, button: 2 }),
+    );
+    await userEvent.click(action);
+    expect(onOpenFilePreview).toHaveBeenCalledWith("README.md");
+  });
+
   it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {
     const onOpenFile = vi.fn();
     await using _screen = await render(
