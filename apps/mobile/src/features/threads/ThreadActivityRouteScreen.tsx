@@ -1,8 +1,8 @@
 import {
   deriveActivitySummary,
-  isActivityItem,
   type ActivitySummary,
 } from "@t3tools/client-runtime/work-log/activity-summary";
+import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import { deriveThreadStructureRuntime } from "@t3tools/client-runtime/state/thread-execution";
@@ -198,7 +198,9 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
   const runActive =
     structure !== null && threadRuntimeIsActive(deriveThreadStructureRuntime(structure.projection));
   const summary = deriveActivitySummary(
-    visibleItems.map((visible) => visible.item).filter(isActivityItem),
+    visibleItems
+      .map((visible) => visible.item)
+      .filter((item) => !turnItemIsWorkspacePreparation(item)),
     selectedThreadCwd ?? selectedThreadProject?.workspaceRoot ?? null,
     runActive,
   );

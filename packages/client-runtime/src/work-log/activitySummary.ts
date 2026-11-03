@@ -1,5 +1,4 @@
 import type { ThreadStructureVisibleTurnItem } from "../state/models.ts";
-import { turnItemIsWorkspacePreparation } from "../state/turnItemPresentation.ts";
 import { isAbsolutePath, workspaceRelativeFilePath } from "@t3tools/shared/path";
 import * as DateTime from "effect/DateTime";
 
@@ -12,7 +11,7 @@ type Timed = Base | "updatedAt";
 /** Only the fields the panel reads, so a real turn item fits and tests stay small. */
 export type ActivityItem =
   | Pick<ItemOf<"command_execution">, Timed | "type" | "input">
-  | Pick<ItemOf<"file_change">, Timed | "type" | "fileName" | "additions" | "deletions">
+  | Pick<ItemOf<"file_change">, Timed | "type" | "fileName" | "additions" | "deletions" | "changes">
   | Pick<ItemOf<"file_search">, Timed | "type" | "pattern">
   | Pick<ItemOf<"web_search">, Timed | "type">
   | Pick<ItemOf<"dynamic_tool">, Timed | "type">
@@ -20,9 +19,13 @@ export type ActivityItem =
   | Pick<ItemOf<"approval_request">, Timed | "type">
   | Pick<ItemOf<"user_input_request">, Timed | "type">
   | Pick<ItemOf<"todo_list">, Timed | "type" | "steps">
-  | Pick<ItemOf<"assistant_message">, Base | "type">;
+  | Pick<ItemOf<"assistant_message">, Base | "type">
+  | Pick<ItemOf<"error">, Timed | "type" | "failure" | "retry">;
 
-const ACTIVITY_ITEM_TYPES: ReadonlySet<TurnItem["type"]> = new Set<ActivityItem["type"]>([
+/** Items that still mark which run is latest, but are not shown as activity. */
+type OtherItem = Pick<Exclude<TurnItem, { readonly type: ActivityItem["type"] }>, "type" | "runId">;
+
+const ACTIVITY_ITEM_TYPES: ReadonlySet<string> = new Set<ActivityItem["type"]>([
   "command_execution",
   "file_change",
   "file_search",
@@ -33,14 +36,11 @@ const ACTIVITY_ITEM_TYPES: ReadonlySet<TurnItem["type"]> = new Set<ActivityItem[
   "user_input_request",
   "todo_list",
   "assistant_message",
+  "error",
 ]);
 
-export function isActivityItem<T extends TurnItem>(
-  item: T,
-): item is Extract<T, { readonly type: ActivityItem["type"] }> {
-  // Setup the app does before the agent starts is not the agent's progress.
-  return ACTIVITY_ITEM_TYPES.has(item.type) && !turnItemIsWorkspacePreparation(item);
-}
+const isActivityItem = (item: ActivityItem | OtherItem): item is ActivityItem =>
+  ACTIVITY_ITEM_TYPES.has(item.type);
 
 export interface ActivityStep {
   readonly id: string;
@@ -154,6 +154,9 @@ function labelFor(item: ActivityItem, workspaceRoot: string | null): string | nu
       return "Waiting for your approval";
     case "user_input_request":
       return "Waiting for your answer";
+    // An error the provider is retrying is not the end of the run.
+    case "error":
+      return item.retry === undefined ? trimLabel(item.failure.message) || "Run failed" : null;
     case "todo_list":
     case "assistant_message":
       return null;
@@ -172,15 +175,22 @@ function workspacePath(fileName: string, workspaceRoot: string | null) {
     : { path: relative, openable: true };
 }
 
-/** What the agent is doing and has done in the latest run, from items every provider produces. */
+/**
+ * What the agent is doing and has done in the latest run, from items every provider produces.
+ * Pass every item, not only the ones shown: a new run is latest even before it does any work.
+ * Setup the app does before the agent starts is not the agent's progress; drop it first.
+ */
 export function deriveActivitySummary(
-  items: ReadonlyArray<ActivityItem>,
+  items: ReadonlyArray<ActivityItem | OtherItem>,
   workspaceRoot: string | null,
   /** The run has not ended, even when no item is running: the agent may be thinking or replying. */
   runActive: boolean,
 ): ActivitySummary {
   const latestRunId = items.findLast((item) => item.runId !== null)?.runId ?? null;
-  const runItems = latestRunId === null ? [] : items.filter((item) => item.runId === latestRunId);
+  const runItems =
+    latestRunId === null
+      ? []
+      : items.filter((item) => item.runId === latestRunId).filter(isActivityItem);
 
   let runningLabel: string | null = null;
   let waitingLabel: string | null = null;
@@ -191,16 +201,24 @@ export function deriveActivitySummary(
 
   for (const item of runItems) {
     if (item.type === "todo_list") latestTodo = item;
-    if ("updatedAt" in item) lastActivityAt = DateTime.formatIso(item.updatedAt);
+    if ("updatedAt" in item) {
+      const updatedAt = DateTime.formatIso(item.updatedAt);
+      if (lastActivityAt === null || updatedAt > lastActivityAt) lastActivityAt = updatedAt;
+    }
     // An edit still waiting for approval, or one that failed, has not changed the file.
     if (item.type === "file_change" && (item.status === "completed" || item.status === "running")) {
-      const { path, openable } = workspacePath(item.fileName, workspaceRoot);
-      const current = filesByPath.get(path) ?? { openable, additions: null, deletions: null };
-      filesByPath.set(path, {
-        openable,
-        additions: addCount(current.additions, item.additions),
-        deletions: addCount(current.deletions, item.deletions),
-      });
+      const paths = item.changes?.map((change) => change.path) ?? [item.fileName];
+      for (const fileName of paths) {
+        const { path, openable } = workspacePath(fileName, workspaceRoot);
+        const current = filesByPath.get(path) ?? { openable, additions: null, deletions: null };
+        // The item's counts cover all its files, so they cannot be pinned on one of several.
+        const counted = paths.length === 1;
+        filesByPath.set(path, {
+          openable,
+          additions: addCount(current.additions, counted ? item.additions : undefined),
+          deletions: addCount(current.deletions, counted ? item.deletions : undefined),
+        });
+      }
     }
 
     const label = labelFor(item, workspaceRoot);

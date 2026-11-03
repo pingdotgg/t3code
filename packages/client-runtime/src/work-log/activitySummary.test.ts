@@ -36,7 +36,7 @@ const edit = (
 });
 
 const summarize = (
-  items: ReadonlyArray<ActivityItem>,
+  items: Parameters<typeof deriveActivitySummary>[0],
   workspaceRoot: string | null = null,
   runActive = false,
 ) => deriveActivitySummary(items, workspaceRoot, runActive);
@@ -189,6 +189,69 @@ describe("deriveActivitySummary", () => {
         files: [{ path: "/elsewhere/notes.md", openable: false, additions: 1, deletions: 0 }],
       },
     ]);
+  });
+
+  it("lists every file of a multi-file edit, without guessing per-file line counts", () => {
+    const summary = summarize([
+      {
+        ...base(run1, "completed"),
+        type: "file_change",
+        fileName: "src/a.ts",
+        additions: 4,
+        deletions: 2,
+        changes: [
+          { operation: "update", path: "src/a.ts" },
+          { operation: "add", path: "src/b.ts" },
+        ],
+      },
+    ]);
+
+    expect(summary.touched).toEqual([
+      {
+        folder: "src",
+        files: [
+          { path: "src/a.ts", openable: true, additions: null, deletions: null },
+          { path: "src/b.ts", openable: true, additions: null, deletions: null },
+        ],
+      },
+    ]);
+  });
+
+  it("reports the newest update as last activity, whatever order items arrive in", () => {
+    const at = (updatedAt: string) => ({
+      ...command("ls", "completed"),
+      updatedAt: DateTime.makeUnsafe(updatedAt),
+    });
+
+    expect(summarize([at("2026-01-01T00:05:00Z"), at("2026-01-01T00:01:00Z")]).lastActivityAt).toBe(
+      "2026-01-01T00:05:00.000Z",
+    );
+  });
+
+  it("counts a run that ended in an error as failed, but not an error the agent is retrying", () => {
+    const error = (status: ActivityItem["status"], retry?: { attempt: number }): ActivityItem => ({
+      ...base(run1, status),
+      type: "error",
+      failure: { class: "unknown", message: "Provider crashed", code: null, retryable: false },
+      ...(retry === undefined ? {} : { retry: { ...retry, maxAttempts: 3, retryDelayMs: 1000 } }),
+    });
+
+    const failed = summarize([command("bun test", "completed"), error("failed")]);
+    expect(failed.outcome).toBe("failed");
+    expect(failed.done.map((step) => step.label)).toEqual(["bun test", "Provider crashed"]);
+
+    expect(
+      summarize([command("bun test", "completed"), error("failed", { attempt: 1 })]).outcome,
+    ).toBe("finished");
+  });
+
+  it("treats a run that only produced non-activity items as the latest run", () => {
+    const summary = summarize([
+      command("old command", "completed", run1),
+      { ...base(run2, "completed"), type: "system_notice" },
+    ]);
+
+    expect(summary.done).toEqual([]);
   });
 
   it("shows the plan only when the provider sent a todo list, with a completed count", () => {
