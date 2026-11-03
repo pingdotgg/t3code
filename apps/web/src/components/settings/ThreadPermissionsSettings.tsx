@@ -1,4 +1,5 @@
 import { DEFAULT_SERVER_SETTINGS, managedRuntimeModeDenial } from "@t3tools/contracts";
+import { GitForkIcon } from "lucide-react";
 
 import { firstManagedDenial } from "../../state/managedPolicy";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
@@ -27,6 +28,15 @@ const PERMISSION_SETTINGS = [
   },
 ] as const;
 
+const sideChatRuntimeModeConfig = {
+  ...runtimeModeConfig,
+  "inherit-parent": {
+    label: "Inherit parent",
+    description: "Use the parent’s current permissions, within administrator limits.",
+    icon: GitForkIcon,
+  },
+};
+
 /** Permission defaults apply to new threads and side chats, not existing conversations. */
 export function ThreadPermissionsSettings() {
   return (
@@ -44,7 +54,11 @@ function ThreadPermissionRow({ setting }: { setting: (typeof PERMISSION_SETTINGS
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed([setting.key]);
   const mode = settings[setting.key];
-  const PermissionIcon = runtimeModeConfig[mode].icon;
+  const PermissionIcon = sideChatRuntimeModeConfig[mode].icon;
+  const options =
+    setting.key === "sideChatRuntimeMode"
+      ? [...runtimeModeOptions, "inherit-parent" as const]
+      : runtimeModeOptions;
   return (
     <SettingsRow
       serverScoped
@@ -70,15 +84,18 @@ function ThreadPermissionRow({ setting }: { setting: (typeof PERMISSION_SETTINGS
         >
           <SelectTrigger size="sm" aria-label={`${setting.label} permissions`}>
             {!mixed && <PermissionIcon className="size-3.5 shrink-0 text-muted-foreground" />}
-            <SelectValue>{mixed ? "Mixed" : runtimeModeConfig[mode].label}</SelectValue>
+            <SelectValue>{mixed ? "Mixed" : sideChatRuntimeModeConfig[mode].label}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
-            {runtimeModeOptions.map((optionMode) => {
-              const option = runtimeModeConfig[optionMode];
+            {options.map((optionMode) => {
+              const option = sideChatRuntimeModeConfig[optionMode];
               const Icon = option.icon;
               const managedReason = firstManagedDenial(
                 connectedEnvironments.map((environment) => environment.serverConfig?.managedPolicy),
-                (policy) => managedRuntimeModeDenial(policy, optionMode),
+                (policy) =>
+                  optionMode === "inherit-parent"
+                    ? undefined
+                    : managedRuntimeModeDenial(policy, optionMode),
               );
               return (
                 <SelectItem
