@@ -127,8 +127,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
   );
 
   it.effect.each([
-    { label: "another home's service", installed: true, expected: "runs another T3 home" },
-    { label: "no service", installed: false, expected: "T3 Code service is not installed." },
+    {
+      label: "another home's service",
+      installed: true,
+      installedBaseDir: "/other/t3",
+      expected: "runs another T3 home",
+    },
+    {
+      label: "an unknown service home",
+      installed: true,
+      installedBaseDir: undefined,
+      expected: "T3 home could not be determined",
+    },
+    {
+      label: "no service",
+      installed: false,
+      installedBaseDir: undefined,
+      expected: "T3 Code service is not installed.",
+    },
   ])("restart explains why it skipped $label", (input) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -136,7 +152,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
       vi.spyOn(BootService, "layer").mockReturnValue(
         Layer.succeed(
           BootService.BootService,
-          makeTestService({ ...status, installed: input.installed }, "skipped").service,
+          makeTestService(
+            {
+              ...status,
+              installed: input.installed,
+              ...(input.installedBaseDir === undefined
+                ? {}
+                : { installedBaseDir: input.installedBaseDir }),
+            },
+            "skipped",
+          ).service,
         ),
       );
 

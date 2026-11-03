@@ -265,7 +265,9 @@ const serviceRestartCommand = Command.make("restart", projectLocationFlags).pipe
             : outcome === "queued"
               ? `Queued a restart of the T3 Code service${onVersion}. This session runs inside the service and disconnects when it goes down.\nLogs: ${status.logPath}`
               : status.installed
-                ? "The installed service runs another T3 home, so it was not restarted. Pass its --base-dir."
+                ? status.installedBaseDir === undefined
+                  ? `The installed service's T3 home could not be determined, so it was not restarted. Check ${status.unitPath}.`
+                  : "The installed service runs another T3 home, so it was not restarted. Pass its --base-dir."
                 : "T3 Code service is not installed.",
         );
       }),
