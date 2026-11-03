@@ -18,11 +18,16 @@ raw request, including the hook token in the path, in a Durable Object with
 SQLite storage. There is one object per managed link, keyed by its endpoint
 key: each account that links the environment gets its own held requests,
 order, and caps. The object pushes held requests back through the tunnel from
-its alarm, oldest first, and backs off while the environment stays away. When
+its alarm, oldest first within each hook, and backs off while the environment
+stays away. A hook that answers busy is skipped for the rest of that run, so
+other hooks on the link can overtake it. When
 the tunnel reconnects, the environment asks the relay to deliver right away to
 each of its links. Requests are deleted once the environment answers, after 24
 hours, when their link is unlinked, or when the environment turns holding off,
-which clears every link it proved. The relay still never checks the token;
+which clears every link it proved. Both clears are best effort: unlinking logs a
+failed clear and continues, and turning holding off stops at the first link it
+cannot clear, so those requests wait for the 24-hour expiry. The relay still
+never checks the token;
 delivery goes through the same environment route.
 Every forward carries `x-t3-relay-delivery-id`, so a request that reached the
 environment before a timeout and is delivered again later runs once
