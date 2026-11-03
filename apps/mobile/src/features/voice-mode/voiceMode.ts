@@ -71,7 +71,7 @@ voiceMode.subscribe(({ phase }) => {
   if (phase === "active" && !routedAudio) {
     routedAudio = true;
     // WebRTC resets iOS routing when its audio unit starts, so route after activation.
-    setVoiceAudioActive(true).catch(() => undefined);
+    setVoiceAudioActive(true, () => voiceMode.stop()).catch(() => undefined);
   }
   if (phase !== "idle" && !keepAwake) {
     // A hands-free conversation must not auto-lock: backgrounding ends it.

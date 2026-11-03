@@ -4879,6 +4879,61 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             if (payload.item.type === "userMessage") {
+              const handoff = readRealtimeDelegationFromItem(payload.item);
+              const voiceThread = yield* Ref.get(voiceProviderThread);
+              if (
+                handoff !== undefined &&
+                context.subagent === null &&
+                voiceThread?.nativeThreadRef?.nativeId === payload.threadId
+              ) {
+                const { ordinal, startedAt } = yield* resolveItemPosition(
+                  context,
+                  payload.item.id,
+                  DateTime.makeUnsafe(payload.startedAtMs),
+                );
+                const artifacts = makeSubagentConversationArtifacts({
+                  messageId: idAllocator.derive.messageFromProviderItem({
+                    driver: CODEX_PROVIDER,
+                    nativeItemId: payload.item.id,
+                  }),
+                  turnItemId: idAllocator.derive.turnItemFromProviderItem({
+                    driver: CODEX_PROVIDER,
+                    nativeItemId: payload.item.id,
+                  }),
+                  threadId: context.projectionThreadId,
+                  rootNodeId: context.providerNodeId,
+                  providerThreadId: context.providerThread.id,
+                  providerTurnId: context.providerTurnId,
+                  nativeItemRef: codexNativeItemRef(payload.item.id),
+                  role: "user",
+                  text: handoff,
+                  ordinal,
+                  now: startedAt,
+                });
+                yield* emitProviderEvent({
+                  type: "message.updated",
+                  driver: CODEX_PROVIDER,
+                  message: {
+                    ...artifacts.message,
+                    runId: context.projectionRunId,
+                    createdBy: "user",
+                  },
+                });
+                if (artifacts.turnItem.type === "user_message")
+                  yield* emitProviderEvent({
+                    type: "turn_item.updated",
+                    driver: CODEX_PROVIDER,
+                    turnItem: {
+                      ...artifacts.turnItem,
+                      runId: context.projectionRunId,
+                      createdBy: "user",
+                      inputIntent: "steer",
+                    },
+                  });
+                yield* voice.expectSpokenTurn(context.input.message.messageId);
+                yield* voice.registerTurn(context.input.message.messageId, payload.turnId);
+                return;
+              }
               yield* emitSubagentUserMessage(
                 context,
                 payload.item,

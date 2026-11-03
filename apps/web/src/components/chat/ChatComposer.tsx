@@ -958,6 +958,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     provider: providerStatuses.find((provider) => provider.instanceId === voiceProviderInstanceId),
     hasMessages: voiceThread?.latestUserMessageAt != null,
     hasSession: voiceThread?.activeProviderThreadId != null,
+    canOperateThread,
   });
   const voicePhase = useVoicePhaseFor(routeThreadRef);
   const voiceEngaged = voicePhase !== "idle";

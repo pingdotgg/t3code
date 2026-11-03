@@ -1481,7 +1481,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           }
         }).pipe(
           Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
       ),
@@ -1605,9 +1610,86 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.equal(request?.delivery, "message_text");
           assert.equal(request?.detail, "run the tests");
           assert.equal(request?.providerThreadId, harness.providerThread.id);
+          const preamble = codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId: "active",
+            prompt: "work",
+          });
+          const voiceStarted = yield* Deferred.make<void>();
+          const activeHarness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: "voice-active-steer",
+              entries: [
+                ...preamble.slice(0, 5),
+                {
+                  type: "expect_outbound",
+                  label: "thread/realtime/start",
+                  frame: {
+                    id: 3,
+                    method: "thread/realtime/start",
+                    params: {
+                      threadId: nativeThreadId,
+                      outputModality: "audio",
+                      transport: { type: "webrtc", sdp: "v=offer\r\n" },
+                      version: "v3",
+                      clientManagedHandoffs: true,
+                      includeStartupContext: false,
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "thread/realtime/start",
+                  frame: { id: 3, result: {} },
+                },
+                ...preamble.slice(5).map((entry) => withReplayRequestId(entry, 4)),
+                ...voiceTurn("active", "also check types", 5, "completed").filter(
+                  (entry) =>
+                    entry.label === "item/started/active" ||
+                    entry.label === "turn/completed/active",
+                ),
+              ],
+            }),
+            undefined,
+            undefined,
+            undefined,
+            (entry) =>
+              entry.label === "thread/realtime/start"
+                ? Deferred.succeed(voiceStarted, undefined)
+                : Effect.void,
+          );
+          yield* activeHarness.runtime.startVoiceSession!({
+            providerThread: activeHarness.providerThread,
+            offerSdp: "v=offer\r\n",
+          }).pipe(Stream.runDrain, Effect.forkScoped);
+          yield* Deferred.await(voiceStarted);
+          const activeInput = makeCodexTestTurnInput({
+            threadId: activeHarness.threadId,
+            providerThread: activeHarness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("voice-active"),
+            text: "work",
+          });
+          yield* activeHarness.runtime.startTurn(activeInput);
+          yield* activeHarness.firstTerminal;
+          const spoken = activeHarness.events.find(
+            (event) =>
+              event.type === "message.updated" && event.message.text === "also check types",
+          );
+          assert.equal(spoken?.type, "message.updated");
+          if (spoken?.type === "message.updated") {
+            assert.equal(spoken.message.runId, activeInput.runId);
+            assert.equal(spoken.message.createdBy, "user");
+          }
+          assert.equal(activeHarness.continuationRequests.length, 0);
         }).pipe(
           Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
       ),

@@ -1459,6 +1459,10 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  const canStartVoice = useEnvironmentScope(
+    activeThread?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
   const voiceEngaged = voiceState.phase !== "idle";
   const voiceTarget = activeThread
     ? scopeThreadRef(activeThread.environmentId, activeThread.id)
@@ -1468,6 +1472,7 @@ function OpenCommandPaletteDialog(props: {
     const voiceAvailability = resolveThreadVoiceAvailability(
       activeThread,
       providersByEnvironment.get(activeThread.environmentId) ?? [],
+      canStartVoice,
     );
     if (voiceAvailability.kind !== "unsupported") {
       actionItems.push({
