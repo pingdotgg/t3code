@@ -51,9 +51,9 @@ describe("ghosttyCellText", () => {
 describe("GhosttyTerminalCore snapshots", () => {
   const cores = new Set<GhosttyTerminalCore>();
 
-  async function createCore(onData: (data: string) => void = () => {}) {
+  async function createCore(onData: (data: string) => void = () => {}, cols = 12) {
     const core = await GhosttyTerminalCore.create(
-      12,
+      cols,
       3,
       8,
       16,
@@ -144,6 +144,13 @@ describe("GhosttyTerminalCore snapshots", () => {
     } as unknown as KeyboardEvent;
 
     expect(core.encodeKey(event)).toBe(expected);
+  });
+
+  it("keeps thousands of rows of scrollback at a normal width", async () => {
+    const core = await createCore(undefined, 80);
+    core.write(Array.from({ length: 12_000 }, (_, index) => `${index}`).join("\r\n"));
+
+    expect(core.scrollbarState()?.total).toBeGreaterThanOrEqual(9_000);
   });
 
   it("preserves styles, wide cells, and selection after shared memory grows", async () => {
