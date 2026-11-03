@@ -12,7 +12,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 
 // Pi is the only producer: its text generation launches without extensions.
 const TEXT_GENERATION_UNSUPPORTED_REASON =
-  "Pi text generation runs without extensions, so it can't use this model. Choose a built-in Pi model or one from Pi's models.json.";
+  "Pi text generation runs without extensions, so it can't use this model. Choose a built-in Pi model or one from Pi's models.json, and keep extension providers out of Pi's launch arguments.";
 
 export function useScopedModelDisabledReason(
   settings: UnifiedSettings,
