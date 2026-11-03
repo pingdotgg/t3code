@@ -17,6 +17,7 @@ import type {
   PullRequestLabel,
   PullRequestMergeCapabilities,
   PullRequestMergeMethod,
+  PullRequestMergeQueueRemoval,
   PullRequestOmittedFileStat,
   PullRequestMergeability,
   PullRequestReaction,
@@ -955,6 +956,11 @@ const stateCounts = (counts: StateCounts) =>
     .toSorted()
     .join(",");
 
+function latestRemovalId(timeline: WatchedPullRequest["mergeQueueRemovals"]): string {
+  const removal = nodesOf(timeline).at(-1);
+  return removal?.__typename === "RemovedFromMergeQueueEvent" ? removal.id : "";
+}
+
 export function toPullRequestWatchFingerprint(
   pr: WatchedPullRequest,
 ): GitHubPullRequestWatchFingerprint {
@@ -964,6 +970,7 @@ export function toPullRequestWatchFingerprint(
       pr.state,
       pr.mergeable,
       pr.headRefOid,
+      latestRemovalId(pr.mergeQueueRemovals),
       stateCounts(contexts?.checkRunCountsByState ?? null),
       stateCounts(contexts?.statusContextCountsByState ?? null),
     ].join(" "),
@@ -984,6 +991,22 @@ export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
   readonly viewerAccess: GitHubViewerAccess & GitHubRepositoryAccess;
   readonly comparison: GitHubBaseComparison | null;
   readonly checksTruncated: boolean;
+  readonly mergeCommitSha?: string | null;
+  /** Absent where the read did not ask, as on Enterprise Server. */
+  readonly mergeQueueRemoval?: PullRequestMergeQueueRemoval | null;
+}
+
+// A queue that merges the pull request records a removal too, a second before the merge itself.
+function toMergeQueueRemoval(
+  timeline: NonNullable<
+    NonNullable<PullRequestCore.Result["repository"]>["pullRequest"]
+  >["mergeQueueRemovals"],
+): PullRequestMergeQueueRemoval | null {
+  const removal = nodesOf(timeline).at(-1);
+  if (removal?.__typename !== "RemovedFromMergeQueueEvent" || removal.reason === "merged") {
+    return null;
+  }
+  return { id: removal.id, removedAt: removal.createdAt, reason: trimmed(removal.reason) };
 }
 
 type CoreRequestedReviewer = NonNullable<
@@ -1054,6 +1077,10 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
             viewerCanUpdate: pr.viewerCanUpdateBranch,
           },
     checksTruncated: contexts?.pageInfo.hasNextPage === true,
+    mergeCommitSha: trimmed(pr.mergeCommit?.oid),
+    ...(pr.mergeQueueRemovals === undefined
+      ? {}
+      : { mergeQueueRemoval: toMergeQueueRemoval(pr.mergeQueueRemovals) }),
   };
 }
 

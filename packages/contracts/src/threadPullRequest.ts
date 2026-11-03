@@ -100,6 +100,8 @@ export const ThreadPullRequestWatch = Schema.Struct({
    * none did. Null once either happened; absent on watches saved before it existed.
    */
   checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /** The latest merge queue removal this watch has seen, so each one wakes the agent once. */
+  mergeQueueRemovalId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 

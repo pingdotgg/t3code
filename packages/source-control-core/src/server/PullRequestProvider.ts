@@ -19,6 +19,7 @@ import type {
   PullRequestListState,
   PullRequestMergeCapabilities,
   PullRequestMergeMethod,
+  PullRequestMergeQueueRemoval,
   PullRequestMergeability,
   PullRequestOmittedFileStat,
   PullRequestReaction,
@@ -195,6 +196,8 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly changedFiles: number;
   readonly mergedAt: string | null;
   readonly closedAt: string | null;
+  readonly mergeCommitSha?: string | null;
+  readonly mergeQueueRemoval?: PullRequestMergeQueueRemoval | null;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly checks: ReadonlyArray<PullRequestCheck>;
   readonly mergeCapabilities: PullRequestMergeCapabilities;

@@ -52,6 +52,7 @@ fragment CheckContext on StatusCheckRollupContext {
 
 # The detail of a pull request with the viewer's standing on it. Pull refs let the comparison
 # (`$headRef` is `refs/pull/<number>/head`) share this read without first resolving a fork branch.
+# `$mergeQueue` is asked for on GitHub's cloud hosts only, as `$required` is on github.com.
 query PullRequestCore(
   $owner: String!
   $name: String!
@@ -59,6 +60,7 @@ query PullRequestCore(
   $headRef: String!
   $required: Boolean!
   $requestedReviewers: Int!
+  $mergeQueue: Boolean!
 ) {
   repository(owner: $owner, name: $name) {
     mergeCommitAllowed
@@ -83,6 +85,9 @@ query PullRequestCore(
       updatedAt
       mergedAt
       closedAt
+      mergeCommit {
+        oid
+      }
       headRefName
       baseRefName
       headRefOid
@@ -110,6 +115,17 @@ query PullRequestCore(
       }
       autoMergeRequest {
         mergeMethod
+      }
+      # Only the latest removal: one queue run's outcome replaces the last one's.
+      mergeQueueRemovals: timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT])
+        @include(if: $mergeQueue) {
+        nodes {
+          ... on RemovedFromMergeQueueEvent {
+            id
+            createdAt
+            reason
+          }
+        }
       }
       viewerCanUpdate
       viewerDidAuthor
