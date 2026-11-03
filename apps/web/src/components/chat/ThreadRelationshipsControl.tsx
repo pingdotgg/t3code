@@ -1022,7 +1022,7 @@ export function ThreadRelationshipsPanel(props: {
             ))}
           {currentThread ? (
             <div
-              className="mx-0.5 flex min-h-9 items-center gap-2.5 rounded-lg bg-foreground/4 ps-2.5 pe-1"
+              className="flex min-h-9 items-center gap-2.5 rounded-md bg-foreground/4 ps-2.5 pe-1"
               aria-current="true"
             >
               <MessageSquareIcon className="size-4 shrink-0 text-muted-foreground" />
