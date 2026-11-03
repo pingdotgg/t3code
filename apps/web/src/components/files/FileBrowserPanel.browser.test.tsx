@@ -52,6 +52,15 @@ function findTreeRow(path: string): HTMLElement | null {
   return null;
 }
 
+function withDirectoryListing(listing: readonly ProjectEntry[]): Disposable {
+  directory.entries = listing;
+  return {
+    [Symbol.dispose]: () => {
+      directory.entries = entries;
+    },
+  };
+}
+
 describe("FileBrowserPanel", () => {
   it("copies with the pointer and returns to the row after keyboard dismissal", async () => {
     await using _screen = await render(
@@ -125,6 +134,7 @@ describe("FileBrowserPanel", () => {
   });
 
   it("applies a very large folder listing quickly and keeps the expanded folder open", async () => {
+    using _listing = withDirectoryListing(entries);
     const renderPanel = () => (
       <FileBrowserPanel
         environmentId={EnvironmentId.make("env-files")}
@@ -149,15 +159,40 @@ describe("FileBrowserPanel", () => {
         return { path: `src/generated-${name}`, kind: "directory" };
       }),
     ];
-    using _restoreEntries = {
-      [Symbol.dispose]: () => {
-        directory.entries = entries;
-      },
-    };
     await screen.rerender(renderPanel());
 
     await vi.waitFor(() => expect(findTreeRow("src/generated-00000/")).not.toBeNull());
     expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("applies the removal of a very large number of sibling folders quickly", async () => {
+    const renderPanel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    using _listing = withDirectoryListing([
+      ...entries,
+      ...Array.from({ length: 100_000 }, (_, index): ProjectEntry => {
+        return { path: `src/generated-${String(index).padStart(6, "0")}`, kind: "directory" };
+      }),
+    ]);
+    await using screen = await render(renderPanel());
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    findTreeRow("src/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("src/generated-000000/")).not.toBeNull());
+
+    directory.entries = entries;
+    await screen.rerender(renderPanel());
+
+    await vi.waitFor(() => expect(findTreeRow("src/generated-000000/")).toBeNull());
+    expect(findTreeRow("README.md")).not.toBeNull();
   });
 
   it("keeps the selected file through a very large listing without reopening it", async () => {
@@ -173,12 +208,7 @@ describe("FileBrowserPanel", () => {
         workspaceMutationId={null}
       />
     );
-    directory.entries = [...entries, { path: "src/aaa.ts", kind: "file" }];
-    using _restoreEntries = {
-      [Symbol.dispose]: () => {
-        directory.entries = entries;
-      },
-    };
+    using _listing = withDirectoryListing([...entries, { path: "src/aaa.ts", kind: "file" }]);
     await using screen = await render(renderPanel());
     await vi.waitFor(() =>
       expect(findTreeRow("src/aaa.ts")?.getAttribute("aria-selected")).toBe("true"),
@@ -211,16 +241,11 @@ describe("FileBrowserPanel", () => {
         workspaceMutationId={null}
       />
     );
-    directory.entries = [
+    using _listing = withDirectoryListing([
       ...entries,
       { path: "lib", kind: "directory" },
       { path: "lib/generated-existing.ts", kind: "file" },
-    ];
-    using _restoreEntries = {
-      [Symbol.dispose]: () => {
-        directory.entries = entries;
-      },
-    };
+    ]);
     await using screen = await render(renderPanel());
     const search = page.getByRole("searchbox", { name: "Search repo files" });
     await userEvent.fill(search, "generated-");
