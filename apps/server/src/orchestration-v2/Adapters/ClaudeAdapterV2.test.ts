@@ -4870,24 +4870,27 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     "mcp_call_result_not_for_model_v1",
   ];
 
+  const PROBE_SERVER_STATUS = {
+    name: "probe.server",
+    status: "connected",
+    tools: [
+      { name: "show_weather", _meta: { ui: { resourceUri: "ui://probe/weather.html" } } },
+      { name: "refresh_weather", _meta: { ui: { visibility: ["app"] } } },
+    ],
+  } satisfies ClaudeSdk.McpServerStatus;
+
   const runClaudeMcpAppToolTurn = Effect.fnUntraced(function* (
     capabilities: ReadonlyArray<string>,
+    overrides?: Partial<
+      Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "mcpServerStatus" | "readMcpResource">
+    >,
   ) {
     const mcpRequests: Array<unknown> = [];
     const harness = yield* makeWakeHarnessWithOptions({
       mcp: {
         mcpServerStatus: Effect.sync(() => {
           mcpRequests.push("mcpServerStatus");
-          return [
-            {
-              name: "probe.server",
-              status: "connected",
-              tools: [
-                { name: "show_weather", _meta: { ui: { resourceUri: "ui://probe/weather.html" } } },
-                { name: "refresh_weather", _meta: { ui: { visibility: ["app"] } } },
-              ],
-            },
-          ];
+          return [PROBE_SERVER_STATUS];
         }),
         readMcpResource: ({ server, uri }) =>
           Effect.sync(() => {
@@ -4907,6 +4910,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             mcpRequests.push(call);
             return { content: [{ type: "text", text: "refreshed" }] };
           }),
+        ...overrides,
       },
     });
     yield* harness.runtime.startTurn(
@@ -5002,6 +5006,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
       const mcpApps = harness.runtime.mcpApps;
       if (mcpApps === undefined) throw new Error("Claude runtime must expose MCP Apps.");
+      const [tool] = yield* mcpApps.listTools({
+        providerThread: harness.providerThread,
+        server: "probe.server",
+      });
+      assert.deepInclude(tool, { name: "show_weather", inputSchema: { type: "object" } });
       const result = yield* mcpApps.callTool({
         providerThread: harness.providerThread,
         server: "probe.server",
@@ -5013,6 +5022,45 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         tool: "mcp__probe_server__refresh_weather",
         arguments: {},
       });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    {
+      name: "its ui:// resource cannot be read",
+      overrides: {
+        readMcpResource: () =>
+          Effect.fail(
+            new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+              method: "readMcpResource",
+              cause: new Error("resource unavailable"),
+            }),
+          ),
+      },
+    },
+    {
+      name: "two Claude MCP servers share its tool name",
+      overrides: {
+        mcpServerStatus: Effect.succeed([
+          PROBE_SERVER_STATUS,
+          { ...PROBE_SERVER_STATUS, name: "probe_server" },
+        ]),
+      },
+    },
+  ])("keeps a plain MCP tool row when $name", ({ overrides }) =>
+    Effect.gen(function* () {
+      const { item } = yield* runClaudeMcpAppToolTurn(MCP_APP_CAPABILITIES, overrides);
+      assert.isUndefined(mcpAppFromToolItem(item));
     }).pipe(
       Effect.scoped,
       Effect.provide(

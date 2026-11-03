@@ -536,6 +536,8 @@ export interface ProviderAdapterV2HistoricalContext {
 
 export interface ProviderAdapterV2McpTool {
   readonly name: string;
+  // Apps reject a `hostContext.toolInfo.tool` without one.
+  readonly inputSchema: unknown;
   readonly _meta?: unknown;
   readonly annotations?: unknown;
 }

@@ -137,8 +137,12 @@ describe("McpAppRequests", () => {
   const mcpApps: ProviderAdapter.ProviderAdapterV2McpApps = {
     listTools: () =>
       Effect.succeed([
-        { name: "refresh", annotations: { readOnlyHint: true } },
-        { name: "model_only", _meta: { ui: { visibility: ["model"] } } },
+        { name: "refresh", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+        {
+          name: "model_only",
+          inputSchema: { type: "object" },
+          _meta: { ui: { visibility: ["model"] } },
+        },
       ]),
     callTool: (input) =>
       Effect.sync(() => {
@@ -162,7 +166,11 @@ describe("McpAppRequests", () => {
       assert.deepEqual(yield* requests.toolInfo({ threadId, itemId, name: "refresh" }), {
         callable: true,
         readOnly: true,
-        tool: { name: "refresh", annotations: { readOnlyHint: true } },
+        tool: {
+          name: "refresh",
+          inputSchema: { type: "object" },
+          annotations: { readOnlyHint: true },
+        },
       });
     }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps }))),
   );

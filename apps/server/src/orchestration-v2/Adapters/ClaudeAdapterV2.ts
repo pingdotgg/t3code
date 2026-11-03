@@ -70,6 +70,8 @@ import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
   claudeMcpToolName,
+  claudeMcpToolNamePart,
+  claudeMcpToolPrefix,
   MCP_APP_OUTPUT_KEY,
   mcpAppToolResourceUri,
 } from "@t3tools/shared/mcpApp";
@@ -732,23 +734,26 @@ function findClaudeMcpTool(
 ):
   | { readonly server: string; readonly tool: NonNullable<ClaudeMcpServerStatus["tools"]>[number] }
   | undefined {
-  for (const status of statuses) {
-    if (status.status !== "connected") continue;
-    const tool = status.tools?.find(
-      (candidate) => claudeMcpToolName(status.name, candidate.name) === toolName,
-    );
-    if (tool !== undefined) return { server: status.name, tool };
-  }
-  return undefined;
+  const matches = statuses.flatMap((status) => {
+    if (status.status !== "connected") return [];
+    const prefix = claudeMcpToolPrefix(status.name);
+    if (!toolName.startsWith(prefix)) return [];
+    return (status.tools ?? [])
+      .filter((tool) => `${prefix}${claudeMcpToolNamePart(tool.name)}` === toolName)
+      .map((tool) => ({ server: status.name, tool }));
+  });
+  // Distinct servers can normalise to one name; the CLI may have run the other one.
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 /** Claude reports `annotations` as `readOnly`/`destructive`/`openWorld`; apps expect MCP's `*Hint` names. */
-function claudeMcpToolForApps(
-  tool: NonNullable<ClaudeMcpServerStatus["tools"]>[number],
-): ProviderAdapter.ProviderAdapterV2McpTool {
+function claudeMcpToolForApps(tool: NonNullable<ClaudeMcpServerStatus["tools"]>[number]) {
   const annotations = tool.annotations ?? {};
   return {
     name: tool.name,
+    ...(tool.description === undefined ? {} : { description: tool.description }),
+    // The CLI reports no input schemas; apps require one in `hostContext.toolInfo.tool`.
+    inputSchema: { type: "object" },
     ...(tool._meta === undefined ? {} : { _meta: tool._meta }),
     annotations: {
       ...(annotations.readOnly === undefined ? {} : { readOnlyHint: annotations.readOnly }),
