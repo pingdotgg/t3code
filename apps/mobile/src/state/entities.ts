@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import { deriveReportedModelSelection } from "@t3tools/client-runtime/state/thread-execution";
 
+import { selectEnvironmentQueryData } from "@t3tools/client-runtime/state/runtime";
+
 import { appAtomRegistry } from "./atom-registry";
 import type {
   EnvironmentProject,
@@ -34,7 +36,7 @@ import { projectGlyphImageAtom, projectGlyphKey } from "../native/ProjectChipIco
 import { projectFaviconUrlAtom } from "./assets";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
-import { environmentThreadDetails, environmentThreadShells } from "./threads";
+import { environmentThreadDetails, environmentThreadShells, threadFamilies } from "./threads";
 
 const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
   Atom.withLabel("mobile-project:empty"),
@@ -58,9 +60,14 @@ const threadKey = (ref: ScopedThreadRef) => JSON.stringify([ref.environmentId, r
 // Null when this client doesn't know the thread. Keyed, so a link never walks an environment's threads.
 const threadTitleAtom = Atom.family((key: string) => {
   const ref = scopeThreadRef(...decodeThreadKey(JSON.parse(key)));
-  return Atom.make((get) => get(environmentThreadShells.threadShellAtom(ref))?.title ?? null).pipe(
-    Atom.withLabel(`mobile-thread-title:${key}`),
-  );
+  return Atom.make((get) => {
+    const shell = get(environmentThreadShells.threadShellAtom(ref));
+    if (shell) return shell.title;
+    const family = selectEnvironmentQueryData(
+      get(threadFamilies.familyAtom(ref.environmentId, ref.threadId)),
+    );
+    return family?.threads.find((thread) => thread.id === ref.threadId)?.title ?? null;
+  }).pipe(Atom.withLabel(`mobile-thread-title:${key}`));
 });
 
 const decodeThreadKeys = Schema.decodeUnknownSync(Schema.Array(Schema.String));
@@ -71,7 +78,16 @@ const threadLinkTitlesAtom = Atom.family((key: string) => {
     const titles = new Map<string, string>();
     for (const refKey of refKeys) {
       const title = get(threadTitleAtom(refKey));
-      if (title !== null) titles.set(refKey, title);
+      if (title !== null) {
+        titles.set(refKey, title);
+        continue;
+      }
+      const ref = scopeThreadRef(...decodeThreadKey(JSON.parse(refKey)));
+      const family = selectEnvironmentQueryData(
+        get(threadFamilies.familyAtom(ref.environmentId, ref.threadId)),
+      );
+      // Shell omission is not deletion; pending or failed reads keep the link unresolved.
+      if (family === null) titles.set(refKey, "");
     }
     return titles;
   }).pipe(Atom.withLabel(`mobile-thread-link-titles:${key}`));
