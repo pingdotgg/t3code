@@ -10,8 +10,10 @@ import {
   DeviceHostUnavailableError,
   DeviceOperationError,
   type DevicePlatform,
+  type DevicePlatformAvailability,
   type SimlockDeviceHostConfig,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -22,7 +24,7 @@ import * as Path from "effect/Path";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
@@ -83,6 +85,85 @@ const parseCatalogId = (id: string) => {
 const platformVersion = (platform: DevicePlatform, runtime: string | undefined) =>
   `${platform === "ios" ? "iOS" : "Android"}${runtime ? ` ${runtime}` : ""}`;
 
+const AGENT_DEVICE_PATH = "/v1/agent-device";
+const sameOrigin = (left: string, right: string) => {
+  try {
+    return new URL(left).origin === new URL(right).origin;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The gateway and token this machine's agent-device uses, from agent-device's own remote-daemon
+ * variables, which Simlock tells its clients to set. Null unless they point at a Simlock gateway.
+ */
+export const machineSimlockToken = (environment: NodeJS.ProcessEnv) => {
+  const base = environment.AGENT_DEVICE_DAEMON_BASE_URL?.trim().replace(/\/+$/, "");
+  const agentToken = environment.AGENT_DEVICE_DAEMON_AUTH_TOKEN?.trim();
+  if (!base?.endsWith(AGENT_DEVICE_PATH) || !agentToken) return null;
+  const gatewayUrl = base.slice(0, -AGENT_DEVICE_PATH.length);
+  return URL.canParse(gatewayUrl) ? { gatewayUrl, agentToken } : null;
+};
+
+/**
+ * The saved token, else this machine's agent-device token; each only for the gateway it belongs to,
+ * so a URL being edited never receives either.
+ */
+export const resolveSimlockToken = (
+  gatewayUrl: string,
+  saved: { readonly gatewayUrl: string; readonly agentToken: string } | undefined,
+  environment: NodeJS.ProcessEnv,
+) => {
+  if (saved?.agentToken && sameOrigin(saved.gatewayUrl, gatewayUrl))
+    return { agentToken: saved.agentToken, source: "settings" as const };
+  const machine = machineSimlockToken(environment);
+  return machine && sameOrigin(machine.gatewayUrl, gatewayUrl)
+    ? { agentToken: machine.agentToken, source: "env" as const }
+    : null;
+};
+
+/** What went wrong talking to a gateway, without the gateway's own text. */
+export const describeGatewayFailure = (cause: unknown, gatewayUrl: string, tokenOwner: string) => {
+  if (Cause.isTimeoutError(cause)) return `Could not reach the Simlock gateway at ${gatewayUrl}.`;
+  if (!HttpClientError.isHttpClientError(cause))
+    return `The Simlock gateway at ${gatewayUrl} sent an answer T3 could not read.`;
+  if (cause.reason._tag === "StatusCodeError") {
+    const status = cause.reason.response.status;
+    return status === 401 || status === 403
+      ? `The Simlock gateway refused the agent token for ${tokenOwner}.`
+      : `The Simlock gateway at ${gatewayUrl} answered HTTP ${status}.`;
+  }
+  return cause.reason._tag === "TransportError"
+    ? `Could not reach the Simlock gateway at ${gatewayUrl}.`
+    : `The Simlock gateway at ${gatewayUrl} sent an answer T3 could not read.`;
+};
+
+const decodeIdentity = Schema.decodeUnknownEffect(
+  Schema.Struct({ name: Schema.String, role: Schema.String }),
+);
+
+/** Who the gateway says a token is, via GET /v1/identity. */
+export const simlockIdentity = Effect.fn("SimlockDeviceHost.identity")(function* (
+  gatewayUrl: string,
+  agentToken: string,
+) {
+  const http = yield* HttpClient.HttpClient;
+  return yield* http
+    .execute(
+      HttpClientRequest.get(`${gatewayUrl.replace(/\/$/, "")}/v1/identity`).pipe(
+        HttpClientRequest.bearerToken(agentToken),
+      ),
+    )
+    .pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap((response) => response.json),
+      Effect.flatMap(decodeIdentity),
+      Effect.scoped,
+      Effect.timeout(REQUEST_TIMEOUT),
+    );
+});
+
 /** T3's own agent-device CLI, installed on first use. */
 export type AgentDeviceCli = Effect.Effect<
   { readonly nodePath: string; readonly entryPath: string },
@@ -102,6 +183,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
   const environment = yield* HostProcess.Environment;
   const hostId = config.id;
   const gateway = config.gatewayUrl.replace(/\/$/, "");
+  const agentToken = resolveSimlockToken(config.gatewayUrl, config, environment)?.agentToken ?? "";
   const agentDeviceUrl = `${gateway}/v1/agent-device`;
   const hostDir = path.join(server.stateDir, "device", "simlock", hostId);
   const leases = new Map<string, Lease>();
@@ -114,6 +196,8 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
     readonly at: number;
     readonly devices: ReadonlyArray<DeviceHost.HostDevice>;
   } | null = null;
+  // The last answer from the gateway; empty until it gives one.
+  let platforms: ReadonlyArray<DevicePlatformAvailability> = [];
   let ready: DeviceHost.DeviceHostReady | null = null;
   let cli: { readonly nodePath: string; readonly entryPath: string } | null = null;
 
@@ -139,7 +223,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
                 HttpClientRequest.bodyJsonUnsafe(body ?? {}),
               )
             : HttpClientRequest.delete(`${gateway}${route}`)
-        ).pipe(HttpClientRequest.bearerToken(config.agentToken)),
+        ).pipe(HttpClientRequest.bearerToken(agentToken)),
       )
       .pipe(
         Effect.flatMap(HttpClientResponse.filterStatusOk),
@@ -197,23 +281,20 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
     return result.stdout;
   });
 
-  const loadCatalog = Effect.gen(function* () {
+  const fetchCatalog = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     if (catalog && now - catalog.at < CATALOG_TTL_MS) return catalog.devices;
-    if (!config.agentToken) {
+    if (!agentToken) {
       return yield* unavailable(`Add an agent token for ${config.label} in Settings.`);
     }
     const decoded = yield* request("GET", "/v1/catalog").pipe(
       Effect.flatMap(decodeCatalog),
       Effect.mapError((cause) =>
-        unavailable(
-          `Could not reach the Simlock gateway at ${gateway}, or it refused the agent token.`,
-          cause,
-        ),
+        unavailable(describeGatewayFailure(cause, gateway, config.label), cause),
       ),
     );
-    const devices = decoded.platforms.flatMap((entry) => {
-      if (entry.platform !== "ios" && entry.platform !== "android") return [];
+    const byPlatform = decoded.platforms.map((entry) => {
+      if (entry.platform !== "ios" && entry.platform !== "android") return null;
       const platform: DevicePlatform = entry.platform;
       return Object.entries(entry.modelRuntimes).flatMap(([model, runtimes]) => {
         const kind = entry.modelClasses?.[model];
@@ -232,9 +313,40 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
         ];
       });
     });
-    catalog = { at: now, devices };
+    const devices = byPlatform.flatMap((entry) => entry ?? []);
+    // A platform with nothing to offer is usually its workers reconnecting; caching that would
+    // hide it for the TTL, so only a catalog with devices on every platform is kept.
+    catalog =
+      devices.length > 0 && byPlatform.every((entry) => entry === null || entry.length > 0)
+        ? { at: now, devices }
+        : null;
     return devices;
   });
+
+  const loadCatalog = fetchCatalog.pipe(
+    Effect.tap((devices) =>
+      Effect.sync(() => {
+        platforms = (["ios", "android"] as const).map((platform) =>
+          devices.some((device) => device.platform === platform)
+            ? { platform, available: true }
+            : {
+                platform,
+                available: false,
+                reason: `The pool has no ${platform === "ios" ? "iOS" : "Android"} devices.`,
+              },
+        );
+      }),
+    ),
+    Effect.tapError((error) =>
+      Effect.sync(() => {
+        platforms = (["ios", "android"] as const).map((platform) => ({
+          platform,
+          available: false,
+          reason: error.reason,
+        }));
+      }),
+    ),
+  );
 
   const forget = (lease: Lease) =>
     Effect.suspend(() => {
@@ -319,7 +431,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
     const configPath = path.join(dir, "agent-device.json");
     yield* writeAgentDeviceConfig(configPath, {
       baseUrl: agentDeviceUrl,
-      token: config.agentToken,
+      token: agentToken,
       stateDir: dir,
     }).pipe(
       Effect.provide(services),
@@ -445,7 +557,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
         onSome: (lease) =>
           Effect.succeed({
             baseUrl: agentDeviceUrl,
-            token: config.agentToken,
+            token: agentToken,
             agentDeviceId: null,
             session: lease.session,
             stateDir: lease.dir,
@@ -476,7 +588,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       if (!lease) return null;
       return {
         url: `${gateway}/v1/leases/${encodeURIComponent(lease.leaseId)}/${stream ? "stream" : "input"}`,
-        headers: { authorization: `Bearer ${config.agentToken}` },
+        headers: { authorization: `Bearer ${agentToken}` },
         protocols: [],
       };
     });
@@ -515,19 +627,25 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
   yield* Effect.addFinalizer(() => stopAll);
 
   const platformAvailability = (platform: DevicePlatform) =>
-    Effect.succeed({ platform, available: true });
+    loadCatalog.pipe(
+      Effect.ignore,
+      Effect.map(
+        (): DevicePlatformAvailability =>
+          platforms.find((candidate) => candidate.platform === platform) ?? {
+            platform,
+            available: false,
+          },
+      ),
+    );
 
-  const summary: Effect.Effect<DeviceHostSummary> = Effect.succeed({
+  const summary: Effect.Effect<DeviceHostSummary> = Effect.sync(() => ({
     id: hostId,
     label: config.label,
     kind: "simlock" as const,
-    platforms: [
-      { platform: "ios" as const, available: true },
-      { platform: "android" as const, available: true },
-    ],
+    platforms,
     hubInstalled: true,
     agentDeviceInstalled: true,
-  });
+  }));
 
   return DeviceHost.DeviceHost.of({
     id: hostId,

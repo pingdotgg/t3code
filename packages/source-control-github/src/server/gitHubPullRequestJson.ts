@@ -978,6 +978,8 @@ export function toPullRequestWatchFingerprint(
 }
 
 export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
+  readonly maintainerCanModify: boolean;
+  readonly canEditMaintainerEdits: boolean;
   readonly reviewRequestTeams: ReadonlyArray<PullRequestActor>;
   readonly viewerAccess: GitHubViewerAccess & GitHubRepositoryAccess;
   readonly comparison: GitHubBaseComparison | null;
@@ -1023,6 +1025,14 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
       statusCheckRollup: toCheckContexts(nodesOf(contexts)),
     }),
     headRepositoryNameWithOwner: trimmed(pr.headRepository?.nameWithOwner),
+    maintainerCanModify: pr.maintainerCanModify,
+    canEditMaintainerEdits:
+      pr.state === "OPEN" &&
+      pr.isCrossRepository &&
+      pr.viewerDidAuthor &&
+      pr.headRepositoryOwner?.__typename === "User" &&
+      pr.headRepository !== null &&
+      pr.headRef !== null,
     viewerAccess: {
       canWrite: toCanWrite(repository.viewerPermission),
       canDeleteBranch: toCanWrite(pr.headRepository?.viewerPermission) && pr.headRef !== null,

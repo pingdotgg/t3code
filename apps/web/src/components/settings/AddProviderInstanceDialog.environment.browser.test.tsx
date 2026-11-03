@@ -170,6 +170,26 @@ describe("AddProviderInstanceDialog environment routing", () => {
     });
   });
 
+  it("includes the explicitly added default accent color when creating a provider", async () => {
+    setup();
+    await using _screen = await render(dialog());
+    await click("Show more");
+    await click("Use Kilo Code");
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>('button[aria-label="Add accent color for Kilo Code"]')!
+        .click(),
+    );
+    await click("Add color");
+    await click("Continue to sign-in");
+
+    expect(settingsHooks.mutate).toHaveBeenCalledWith({
+      operation: "create",
+      instanceId: "acpRegistry_kilo_code",
+      instance: expect.objectContaining({ accentColor: "#2563eb" }),
+    });
+  });
+
   it("keeps fx and the ACP Registry under Show more", async () => {
     setup();
     await using _screen = await render(dialog());

@@ -2,6 +2,9 @@ import { assert, it } from "@effect/vitest";
 import {
   NodeId,
   ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ProviderSetupError,
   ProviderThreadId,
   ProviderTurnId,
   RunId,
@@ -12,6 +15,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import {
+  knownProviderFailureMessage,
   makeProviderFailure,
   makeProviderFailureTurnItem,
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
@@ -39,6 +43,20 @@ it("redacts credentials and URL secrets from provider failures", () => {
   assert.notInclude(failure.message, "json-secret");
   assert.notInclude(failure.message, "key-secret");
   assert.notInclude(failure.message, "sk-abcdefghijklmnop");
+});
+
+it("redacts credentials whose key names end in a credential word", () => {
+  const failure = makeProviderFailure({
+    code: '{"refresh_token":"code value"}',
+    message:
+      'oauth refresh failed: client_secret=client-value refresh_token=refresh-value {"client_secret":"json-value"} clientSecret: camel-value X-Auth-Token: header-value max_tokens=4096',
+  });
+
+  assert.equal(failure.code, '{"refresh_token":"[REDACTED]"}');
+  assert.equal(
+    failure.message,
+    'oauth refresh failed: client_secret=[REDACTED] refresh_token=[REDACTED] {"client_secret":"[REDACTED]"} clientSecret: [REDACTED] X-Auth-Token: [REDACTED] max_tokens=4096',
+  );
 });
 
 it("does not split a surrogate pair at the truncation boundary", () => {
@@ -69,8 +87,16 @@ it("does not expose arbitrary cause messages and preserves explicit messages", (
   }
 });
 
-it("preserves actionable handoff errors wrapped by turn startup", () => {
-  for (const error of [new ContextHandoffBudgetError(), new ContextHandoffBackgroundWorkError()]) {
+it("preserves actionable T3 errors wrapped by turn startup", () => {
+  for (const error of [
+    new ContextHandoffBudgetError(),
+    new ContextHandoffBackgroundWorkError(),
+    new ProviderSetupError({
+      instanceId: ProviderInstanceId.make("codex"),
+      operation: "runtime",
+      detail: "Codex 0.144.3 does not work with this T3 Code release.",
+    }),
+  ]) {
     const cause = new ProviderAdapter.ProviderAdapterTurnStartError({
       driver: ProviderDriverKind.make("codex"),
       threadId: ThreadId.make("thread:handoff-error"),
@@ -82,6 +108,37 @@ it("preserves actionable handoff errors wrapped by turn startup", () => {
   }
 });
 
+it("names how the provider process exited and the stage it failed in, without its output", () => {
+  for (const [exit, status] of [
+    [{ signal: "SIGILL" }, " after signal SIGILL"],
+    [{ code: 134 }, " with code 134"],
+    [{}, ""],
+    [{ signal: "SIGILL Bearer signal-secret" }, ""],
+  ] as const) {
+    const sessionOpenFailure = {
+      _tag: "ProviderSessionOpenError",
+      cause: new ProviderAdapter.ProviderAdapterOpenSessionError({
+        driver: ProviderDriverKind.make("antigravity"),
+        providerSessionId: ProviderSessionId.make("provider-session:private-id"),
+        cause: {
+          _tag: "AcpProcessExitedError",
+          ...exit,
+          pid: 4242,
+          stderr: "*** SIGILL *** token=stderr-secret",
+          cause: new Error("Process interrupted with private-detail"),
+        },
+      }),
+    };
+    const expected = `The provider session could not be opened: the provider process exited${status}. Check the server logs for the provider's output, then retry the turn.`;
+    assert.equal(knownProviderFailureMessage(sessionOpenFailure), expected);
+    assert.equal(makeProviderFailure({ cause: Cause.fail(sessionOpenFailure) }).message, expected);
+  }
+  assert.equal(
+    makeProviderFailure({ cause: { _tag: "AcpProcessExitedError", code: 1 } }).message,
+    "The provider process exited with code 1. Check the server logs for the provider's output, then retry the turn.",
+  );
+});
+
 it("keeps unrecognized reasons and provider text out of category messages", () => {
   for (const cause of [
     "Private launch command",
@@ -89,6 +146,16 @@ it("keeps unrecognized reasons and provider text out of category messages", () =
     { _tag: "ProviderAdapterProtocolError", reason: "private-config" },
     { _tag: "ProviderAdapterProtocolError", reason: "constructor" },
     { _tag: "constructor", cause: "private-config" },
+    {
+      _tag: "CodexAppServerRequestError",
+      method: "thread/goal/set",
+      message: "thread not found: private-thread",
+    },
+    {
+      _tag: "CodexAppServerRequestError",
+      method: "turn/start",
+      message: "goal objective must be at most 4000 characters",
+    },
   ]) {
     assert.equal(
       makeProviderFailure({ cause: { _tag: "ProviderAdapterTurnStartError", cause } }).message,

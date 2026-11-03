@@ -507,14 +507,8 @@ export function DeviceSourcesSettings(props: {
             label: member.label,
             added: true,
             platforms: hostPlatforms(member.state, host.id),
-            status:
-              held.agentToken === ""
-                ? ({
-                    tone: "warning",
-                    label: "No agent token",
-                    ...(disabled ? {} : { action: { label: "Add token", run: edit } }),
-                  } as const)
-                : hostStatus(member.state, host.id),
+            // A blank token can still resolve to the machine's own, so the host's answer decides.
+            status: hostStatus(member.state, host.id),
           };
         }),
         actions: rowActions(edit, () => removeSimlock(host)),
