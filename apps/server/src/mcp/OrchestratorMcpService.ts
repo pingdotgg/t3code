@@ -1331,7 +1331,7 @@ const make = Effect.gen(function* () {
     const requestedDriver = input.target?.driverKind;
     const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
     const requestedModel = input.target?.model;
-    // Replays read visibility too, so they resolve the model the accepted request validated.
+    // Replays prefer the visible model the accepted request chose, but never fail on visibility.
     const settings =
       requestedModel === undefined
         ? yield* serverSettings.getSettings.pipe(
@@ -1340,9 +1340,12 @@ const make = Effect.gen(function* () {
             ),
           )
         : undefined;
-    const visibleFallbackModel = (provider: ServerProvider) => {
+    const fallbackModel = (provider: ServerProvider) => {
       const hiddenModels = settings?.providerModelPreferences?.[provider.instanceId]?.hiddenModels;
-      return provider.models.find((candidate) => !hiddenModels?.includes(candidate.slug))?.slug;
+      return (
+        provider.models.find((candidate) => !hiddenModels?.includes(candidate.slug))?.slug ??
+        (input.skipProjectEnablementFilter ? provider.models[0]?.slug : undefined)
+      );
     };
     let instanceId = requestedInstanceId;
 
@@ -1372,7 +1375,7 @@ const make = Effect.gen(function* () {
         if (
           requestedModel === undefined &&
           candidate !== inheritedCandidate &&
-          visibleFallbackModel(candidate) === undefined
+          fallbackModel(candidate) === undefined
         ) {
           continue;
         }
@@ -1427,7 +1430,7 @@ const make = Effect.gen(function* () {
       requestedModel ??
       (instanceId === inheritedSelection.instanceId
         ? inheritedSelection.model
-        : visibleFallbackModel(provider));
+        : fallbackModel(provider));
     if (model === undefined) {
       return yield* failure(
         "model_unavailable",

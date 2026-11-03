@@ -1760,13 +1760,24 @@ describe("OrchestratorMcpService provider resolution", () => {
       name: "driver-only delegation skips instances the project turned off or fully hid",
       accepted: false,
       target: { driverKind: ProviderDriverKind.make("codex") },
+      altHiddenModels: ["hidden-custom"],
+      expectedModel: "gpt-5.4",
     },
     {
       name: "an accepted delegation replay skips hidden models like the original request",
       accepted: true,
       target: { providerInstanceId: ProviderInstanceId.make("codex-alt") },
+      altHiddenModels: ["hidden-custom"],
+      expectedModel: "gpt-5.4",
     },
-  ])("$name", ({ accepted, target }) =>
+    {
+      name: "an accepted delegation replay still reaches its receipt after every model is hidden",
+      accepted: true,
+      target: { providerInstanceId: ProviderInstanceId.make("codex-alt") },
+      altHiddenModels: ["hidden-custom", "gpt-5.4"],
+      expectedModel: "hidden-custom",
+    },
+  ])("$name", ({ accepted, target, altHiddenModels, expectedModel }) =>
     Effect.gen(function* () {
       const altInstanceId = ProviderInstanceId.make("codex-alt");
       const allHiddenInstanceId = ProviderInstanceId.make("codex-all-hidden");
@@ -1868,7 +1879,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         ServerSettings.layerTest({
           providerModelPreferences: {
-            [altInstanceId]: { hiddenModels: ["hidden-custom"], modelOrder: [] },
+            [altInstanceId]: { hiddenModels: altHiddenModels, modelOrder: [] },
             [allHiddenInstanceId]: { hiddenModels: ["gpt-5.4"], modelOrder: [] },
           },
         }),
@@ -1889,7 +1900,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           modelSelection: { instanceId: string; model: string };
         };
         assert.equal(request.modelSelection.instanceId, altInstanceId);
-        assert.equal(request.modelSelection.model, "gpt-5.4");
+        assert.equal(request.modelSelection.model, expectedModel);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );
