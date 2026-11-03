@@ -66,6 +66,8 @@ type ComposerAttachmentUploadRequest = {
 export function composerAttachmentUploadRequests(input: {
   readonly drafts: Readonly<Record<string, Pick<ComposerDraft, "attachments" | "project">>>;
   readonly queuedMessagesByThreadKey: Parameters<typeof flattenQueuedThreadMessages>[0];
+  /** Every environment the client knows, so a draft key never resolves to a shorter connected prefix. */
+  readonly knownEnvironmentIds: Iterable<EnvironmentId>;
   readonly connectedEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly operableEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly serverConfigs: ReadonlyMap<
@@ -75,7 +77,7 @@ export function composerAttachmentUploadRequests(input: {
 }): ReadonlyArray<ComposerAttachmentUploadRequest> {
   const queued = flattenQueuedThreadMessages(input.queuedMessagesByThreadKey);
   return Object.entries(input.drafts).flatMap(([key, draft]) => {
-    const environmentId = composerDraftEnvironmentId(key, queued, draft);
+    const environmentId = composerDraftEnvironmentId(key, input.knownEnvironmentIds, queued, draft);
     if (
       environmentId === null ||
       !input.connectedEnvironmentIds.has(environmentId) ||
@@ -93,7 +95,8 @@ export function composerAttachmentUploadRequests(input: {
 // Each connected environment's session is read here so a granted or revoked
 // operate scope re-syncs the queue.
 const composerAttachmentUploadRequestsAtom = Atom.make((get) => {
-  const connected = get(workspaceConnections.environmentsAtom).filter(
+  const environments = get(workspaceConnections.environmentsAtom);
+  const connected = environments.filter(
     (environment) => environment.connectionState === "connected",
   );
   const operableEnvironmentIds = new Set<EnvironmentId>();
@@ -110,6 +113,7 @@ const composerAttachmentUploadRequestsAtom = Atom.make((get) => {
   return composerAttachmentUploadRequests({
     drafts: get(composerDraftUploadSourcesAtom),
     queuedMessagesByThreadKey: get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
+    knownEnvironmentIds: environments.map((environment) => environment.environmentId),
     connectedEnvironmentIds: new Set(connected.map((environment) => environment.environmentId)),
     operableEnvironmentIds,
     serverConfigs: get(environmentServerConfigsAtom),
@@ -144,10 +148,14 @@ export function createComposerAttachmentUploadWorker(
             const queued = flattenQueuedThreadMessages(
               appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
             );
+            const knownEnvironmentIds = appAtomRegistry
+              .get(workspaceConnections.environmentsAtom)
+              .map((environment) => environment.environmentId);
             let retained = false;
             for (const [key, draft] of Object.entries(appAtomRegistry.get(composerDraftsAtom))) {
               if (
-                composerDraftEnvironmentId(key, queued, draft) === environmentId &&
+                composerDraftEnvironmentId(key, knownEnvironmentIds, queued, draft) ===
+                  environmentId &&
                 draft.attachments.some((candidate) => candidate.id === attachment.id)
               ) {
                 retained = setComposerDraftAttachmentUpload(key, uploaded) || retained;
