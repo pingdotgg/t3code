@@ -7031,7 +7031,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : null;
     const providerThread: OrchestrationV2ProviderThread = {
       ...ensuredProviderThread,
-      status: "active",
+      status: ensuredProviderThread.status === "error" ? "error" : "active",
       firstRunOrdinal: ensuredProviderThread.firstRunOrdinal ?? ordinal,
       lastRunOrdinal: ordinal,
       handoffIds: [
