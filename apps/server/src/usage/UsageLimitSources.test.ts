@@ -85,7 +85,7 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
   ),
 );
 
-it.effect("reads routed sessions only from hubs that opted in", () =>
+it.effect("reads routed sessions from opted-in hubs, even with no client open", () =>
   Effect.gen(function* () {
     const queueReads: string[] = [];
     const http = HttpClient.make((request) =>
@@ -126,6 +126,25 @@ it.effect("reads routed sessions only from hubs that opted in", () =>
       ["routed", [["thread-session"]]],
       ["observed", [undefined]],
     ]);
+
+    // Switching Thread accounts off drops the routes on that refresh, not on the next queue read.
+    const settings = yield* ServerSettings.ServerSettingsService;
+    yield* settings.updateSettings({
+      usageLimitSources: {
+        [UsageLimitSourceId.make("routed")]: {
+          kind: "cliproxy",
+          url: "https://routed.test",
+          managementKey: "key",
+          enabled: true,
+          threadAccounts: false,
+        },
+      },
+    });
+    yield* sources.refresh;
+    const afterOff = yield* sources.current;
+    expect(afterOff.find((source) => source.id === "routed")?.accounts[0]?.sessionIds).toBe(
+      undefined,
+    );
   }).pipe(
     Effect.provide([
       ServerSettings.layerTest({
@@ -145,8 +164,9 @@ it.effect("reads routed sessions only from hubs that opted in", () =>
           },
         },
       }),
+      // No client lease: a turn that ends while nobody watches must still keep its route.
       Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-        shouldRunScopeWork: () => Effect.succeed(true),
+        shouldRunScopeWork: () => Effect.succeed(false),
       }),
       NodeCrypto.layer,
     ]),

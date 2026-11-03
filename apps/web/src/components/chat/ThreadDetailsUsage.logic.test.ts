@@ -182,6 +182,24 @@ describe("thread details limits", () => {
     });
   });
 
+  it("keeps the notice when two hubs both routed the session", () => {
+    const routed = (label: string, usedPercent: number) =>
+      hub(label, [
+        { id: "claude-a.json", limits: limitsAt(usedPercent), sessionIds: ["thread-session"] },
+        { id: "claude-b.json", email: "b@example.com", limits: limitsAt(5) },
+      ]);
+
+    expect(
+      resolveThreadDetailsLimits(
+        instanceId,
+        [claudeInstance(unsupported)],
+        [routed("hub-a", 19), routed("hub-b", 60)],
+        now,
+        "thread-session",
+      ),
+    ).toEqual({ limits: unsupported, sourceLabel: null });
+  });
+
   it("does not take a routed session from another driver's account", () => {
     const sources = [
       hub("hub", [

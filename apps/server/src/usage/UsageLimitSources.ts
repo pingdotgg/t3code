@@ -104,8 +104,10 @@ export const make = Effect.gen(function* () {
     return { ...base, accounts: accounts.success };
   });
 
+  // Its own lock, so a route read never waits on a slow quota refresh yet never publishes stale reads.
+  const publishLock = yield* Semaphore.make(1);
   const publish = Effect.fn("UsageLimitSources.publish")(function* (
-    reads?: ReadonlyArray<UsageLimitSourceSnapshot>,
+    reads: ReadonlyArray<UsageLimitSourceSnapshot> | undefined,
   ) {
     if (reads) yield* Ref.set(readsRef, reads);
     const next = withSessionIds(yield* Ref.get(readsRef), yield* Ref.get(routesRef));
@@ -113,7 +115,7 @@ export const make = Effect.gen(function* () {
       Equal.equals(previous, next) ? [false, previous] : [true, next],
     );
     if (changed) yield* PubSub.publish(changes, next);
-  });
+  }, publishLock.withPermits(1));
 
   // Serialize refreshes so slow old-settings reads cannot resurrect removed sources after newer refreshes.
   const refreshLock = yield* Semaphore.make(1);
@@ -128,6 +130,12 @@ export const make = Effect.gen(function* () {
       entries,
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
       { concurrency: 4 },
+    );
+    // A hub switched out of Thread accounts stops naming routed accounts now, not on the next read.
+    yield* Ref.update(
+      routesRef,
+      (routes) =>
+        new Map([...routes].filter(([id]) => settings?.usageLimitSources[id]?.threadAccounts)),
     );
     yield* publish(snapshots);
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
@@ -181,8 +189,8 @@ export const make = Effect.gen(function* () {
       }
       return next;
     });
-    yield* publish();
-  }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
+    yield* publish(undefined);
+  }).pipe(Effect.ignoreCause({ log: true }));
 
   yield* settingsService.streamChanges.pipe(
     Stream.map((settings) => settings.usageLimitSources),
@@ -211,13 +219,11 @@ export const make = Effect.gen(function* () {
     ),
   ).pipe(Effect.forkScoped);
 
-  // CLIProxyAPI keeps queued usage for 60 seconds by default.
-  yield* Effect.forever(
-    Effect.sleep(ROUTE_READ_INTERVAL).pipe(
-      Effect.andThen(backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })),
-      Effect.flatMap((shouldRun) => (shouldRun ? readRoutes : Effect.void)),
-    ),
-  ).pipe(Effect.forkScoped);
+  // CLIProxyAPI keeps queued usage for 60 seconds by default. Not gated on client activity:
+  // a turn that ends while no client is open would otherwise lose its route for good.
+  yield* Effect.forever(Effect.sleep(ROUTE_READ_INTERVAL).pipe(Effect.andThen(readRoutes))).pipe(
+    Effect.forkScoped,
+  );
 
   yield* refresh.pipe(Effect.forkScoped);
 

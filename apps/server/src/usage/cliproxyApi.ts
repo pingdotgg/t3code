@@ -378,14 +378,14 @@ export const makeCliproxyApi = Effect.gen(function* () {
   const readSessionAccounts = Effect.fn("CliproxyApi.readSessionAccounts")(function* (
     config: UsageLimitSourceConfig,
   ) {
+    // Accounts first: a failed lookup after the pop would lose those records for good.
+    const accountIds = new Map(
+      (yield* authFiles(config)).map((account) => [account.auth_index, account.id]),
+    );
     // Records without a session or account, or not JSON objects, carry nothing to match.
     const records = (yield* decodeUsageQueue(
       yield* management(config, "usage-queue?count=1000"),
     )).flatMap((record) => Option.toArray(decodeUsageQueueRecord(record)));
-    if (records.length === 0) return [];
-    const accountIds = new Map(
-      (yield* authFiles(config)).map((account) => [account.auth_index, account.id]),
-    );
     return records.flatMap(({ session_id, auth_index }) => {
       const accountId = accountIds.get(auth_index);
       return accountId ? [{ sessionId: session_id, accountId }] : [];

@@ -67,12 +67,14 @@ function routedHubAccount(
   sources: UsageLimitSourceSnapshots,
   providerSessionId: string,
 ): HubAccount | undefined {
-  return sources
+  const matches = sources
     .flatMap((source) => source.accounts.map((account) => ({ source, account })))
-    .find(
+    .filter(
       ({ account }) =>
         account.driver === provider.driver && account.sessionIds?.includes(providerSessionId),
     );
+  // Two hubs both routed it (a moved base URL, chained hubs): nothing says which is current.
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 /**
