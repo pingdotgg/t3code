@@ -407,6 +407,27 @@ it.effect.each(forkCases)(
         createdBy: "user",
         creationSource: "web",
       });
+      yield* TestClock.adjust("1 second");
+      const rewoundAt = yield* DateTime.now;
+      for (const [threadId, runId] of [
+        [sourceThreadId, sourceRunId],
+        [grandparentThreadId, grandparentRunId],
+      ] as const) {
+        const source = yield* orchestrator.getThreadProjection(threadId);
+        const run = source.runs.find((candidate) => candidate.id === runId)!;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`rewind-after-fork:${runId}`),
+              type: "run.updated",
+              threadId,
+              runId,
+              occurredAt: rewoundAt,
+              payload: { ...run, status: "rolled_back", completedAt: rewoundAt },
+            },
+          ],
+        });
+      }
       yield* orchestrator.dispatch({
         type: "message.dispatch",
         commandId: CommandId.make("continue-fork"),
@@ -725,7 +746,8 @@ const writeParentRun = (input: {
             queuePosition: null,
             requestedAt: now,
             startedAt: now,
-            completedAt: input.status === "completed" ? now : null,
+            completedAt:
+              input.status === "completed" || input.status === "rolled_back" ? now : null,
             checkpointId: input.stable ? CheckpointId.make(`${input.runId}:checkpoint`) : null,
             contextHandoffId: null,
             ...(input.status === "preparing" ||

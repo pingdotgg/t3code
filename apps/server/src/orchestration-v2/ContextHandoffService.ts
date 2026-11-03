@@ -151,6 +151,7 @@ const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHis
     projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">,
     source: ForkHistorySource,
     throughRun: Pick<OrchestrationV2Run, "ordinal">,
+    forkCreatedAt: DateTime.Utc,
   ) {
     const { turnItems } = yield* projectionStore.getThreadRecords(source.thread.id, ["turnItems"], {
       turnItemRunIds: [
@@ -158,7 +159,19 @@ const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHis
         ...(source.thread.historyOrigin === "v1_import" ? [null] : []),
       ],
     });
-    return visibleConversationItems(source, turnItems);
+    return visibleConversationItems(
+      {
+        ...source,
+        runs: source.runs.map((run) =>
+          run.status === "rolled_back" &&
+          (run.completedAt === null ||
+            DateTime.toEpochMillis(run.completedAt) > DateTime.toEpochMillis(forkCreatedAt))
+            ? { ...run, status: "completed" as const }
+            : run,
+        ),
+      },
+      turnItems,
+    );
   },
 );
 
@@ -184,7 +197,9 @@ export const readInheritedHandoffItems = Effect.fn(
       .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
     const forkRun = source?.runs.find((run) => run.id === runId);
     if (source === null || forkRun === undefined) break;
-    segments.unshift(yield* readOwnHistoryItems(projectionStore, source, forkRun));
+    segments.unshift(
+      yield* readOwnHistoryItems(projectionStore, source, forkRun, current.createdAt),
+    );
     current = source.thread;
   }
   return segments.flat();
@@ -197,10 +212,11 @@ export const readForkHistoryItems = Effect.fn(
   projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">,
   source: ForkHistorySource,
   throughRun: Pick<OrchestrationV2Run, "ordinal">,
+  forkCreatedAt: DateTime.Utc,
 ) {
   return [
     ...(yield* readInheritedHandoffItems(projectionStore, source.thread)),
-    ...(yield* readOwnHistoryItems(projectionStore, source, throughRun)),
+    ...(yield* readOwnHistoryItems(projectionStore, source, throughRun, forkCreatedAt)),
   ];
 });
 
