@@ -440,7 +440,7 @@ const shellSyntax = (command: string): string => {
   return out;
 };
 const WRITE_CALL_TEXT =
-  /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|write_text|write_bytes)\b|\b(?:fd)?open\([^)]*,\s*["'][wax]b?\+?["']|\bFile\.write\b|\b(?:mkstemp|NamedTemporaryFile|mkdtemp)\(/;
+  /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|write_text|write_bytes)\b|\b(?:fd)?open\([^)]*,\s*(?:mode\s*=\s*)?["'](?=[rwxabt]*[wxa+])[rwxabt+]+["']|\.open\(\s*(?:mode\s*=\s*)?["'](?=[rwxabt]*[wxa+])[rwxabt+]+["']|\bFile\.write\b|\b(?:mkstemp|NamedTemporaryFile|mkdtemp)\(/;
 const encodings = (value: string) =>
   [
     value,
