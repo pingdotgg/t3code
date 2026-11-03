@@ -1349,7 +1349,8 @@ export const layer: Layer.Layer<
         if (replacement === undefined) return undefined;
         if (
           replacement.nativeThreadRef?.nativeId != null &&
-          replacement.nativeThreadRef.nativeId === providerThread.nativeThreadRef?.nativeId
+          replacement.nativeThreadRef.driver === providerThread.nativeThreadRef?.driver &&
+          replacement.nativeThreadRef.nativeId === providerThread.nativeThreadRef.nativeId
         ) {
           // Never retried: the reused session is now marked loaded, so a retry would skip resume
           // and start the turn without this error or the recovery handoff.
