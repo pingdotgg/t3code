@@ -581,6 +581,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const xdgConfigHome = yield* Config.String("XDG_CONFIG_HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
   const xdgRuntimeDir = yield* Config.String("XDG_RUNTIME_DIR").pipe(Config.withDefault(""));
+  const sudoUser = yield* Config.String("SUDO_USER").pipe(Config.withDefault(""));
   const runningInsideService =
     (yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
     BOOT_SERVICE_UNIT_FILE;
@@ -772,8 +773,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const firstProblem = problems[0];
     if (firstProblem === undefined) return;
     // Logind reports a user without a session, whose manager is not running yet, as linger-unavailable.
+    // Root under sudo has no session either, but must not get a separate root service.
     const withoutSession =
-      problems.includes("linger-unavailable") && problems.includes("user-manager-unavailable");
+      problems.includes("linger-unavailable") &&
+      problems.includes("user-manager-unavailable") &&
+      !(uid === 0 && sudoUser !== "");
     const lingerDisabled = problems.includes("linger-disabled");
     if (!lingerDisabled && !withoutSession) {
       return yield* new BootServicePrerequisiteError({ problem: firstProblem });

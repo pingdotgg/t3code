@@ -140,7 +140,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       invocations.push(input);
       timeouts.set(command, input.timeout);
       const failed = command === control.failCommand;
-      if (!failed && command === "loginctl enable-linger --no-ask-password 501") {
+      if (!failed && command.startsWith("loginctl enable-linger --no-ask-password ")) {
         control.linger = "yes";
         control.managerReachable ||= control.lingerStartsManager;
       }
@@ -209,6 +209,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     serviceBaseDir = baseDir,
     insideService = false,
     hostExecPath = "/usr/bin/t3",
+    underSudo = false,
   ) =>
     Effect.gen(function* () {
       const paths = pinnedRuntimePaths(path, serviceBaseDir, cliVersion, platform);
@@ -226,7 +227,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(HostProcess.Platform, platform),
-          Layer.succeed(HostProcess.UserId, 501),
+          Layer.succeed(HostProcess.UserId, underSudo ? 0 : 501),
           Layer.succeed(HostProcess.ExecutablePath, hostExecPath),
           Layer.succeed(
             HttpClient.HttpClient,
@@ -241,6 +242,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                   ? {}
                   : { PATH: environmentPath }),
                 ...(insideService ? { T3_BOOT_SERVICE_UNIT: "t3code.service" } : {}),
+                ...(underSudo ? { SUDO_USER: "julius" } : {}),
               },
             }),
           ),
@@ -372,6 +374,21 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         problem: "user-manager-unavailable",
       });
       expect(yield* fs.exists(statePath)).toBe(false);
+    }),
+  );
+
+  it.effect("does not enable lingering for root under sudo", () =>
+    Effect.gen(function* () {
+      const { makeService, commands, control } = yield* makeHarness();
+      control.linger = undefined;
+      control.managerReachable = false;
+      const service = yield* makeService(undefined, "1.2.3", undefined, false, undefined, true);
+
+      expect(yield* service.install().pipe(Effect.flip)).toMatchObject({
+        _tag: "BootServicePrerequisiteError",
+        problem: "user-manager-unavailable",
+      });
+      expect(commands.filter((command) => command.includes("enable-linger"))).toEqual([]);
     }),
   );
 
