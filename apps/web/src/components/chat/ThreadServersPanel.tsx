@@ -146,7 +146,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                   </span>
                   {/* The end padding keeps text clear of the stop button. */}
                   <span className={cn("flex min-w-0 flex-1 flex-col gap-0.5", stoppable && "pe-6")}>
-                    <span className="truncate text-meta text-foreground">
+                    <span className="truncate text-label text-foreground">
                       localhost:{server.port}
                     </span>
                     <span className="truncate text-caption text-dim-foreground">
