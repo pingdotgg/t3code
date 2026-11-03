@@ -7,7 +7,7 @@ import { resolveExplicitDiffOpenOnActivate } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type ScopedThreadRef, type RunId } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { useEffect } from "react";
+import { use, useEffect } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -26,6 +26,7 @@ import { BrowserSettingsReadError } from "../../browser/openFileInPreview";
 import { addBrowserSurface } from "../preview/addBrowserSurface";
 import { focusActivePanelTerminal, focusTerminal } from "../../lib/terminalFocus";
 import { subscribePreviewAction } from "../preview/previewActionBus";
+import { BackgroundThreadContext } from "./backgroundThread";
 import { floatDeviceSurface } from "../preview/agentOpenedPreviews";
 import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../../previewMiniPlayerStore";
 import type { threadPullRequestPanelTarget } from "../pullRequest/pullRequestDetail.logic";
@@ -316,15 +317,17 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     onDiffPanelOpen?.();
   });
   const onOpenTurnDiffStable = useStableCallback(onOpenTurnDiff);
+  // The bus broadcasts on window; an unfocused split pane would toggle its preview too.
+  const backgroundThread = use(BackgroundThreadContext);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the preview action bus to toggle the preview panel
   useEffect(
     () =>
-      embedded
+      embedded || backgroundThread
         ? undefined
         : subscribePreviewAction((action) => {
             if (action === "toggle-panel") togglePreviewPanelStable();
           }),
-    [embedded, togglePreviewPanelStable],
+    [backgroundThread, embedded, togglePreviewPanelStable],
   );
 
   const shortcuts = {
