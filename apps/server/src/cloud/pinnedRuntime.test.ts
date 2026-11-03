@@ -162,27 +162,31 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const path = yield* Path.Path;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-archive-missing-" });
       const checksums = yield* validChecksums;
-      const error = yield* ensurePinnedRuntimeInstalled({
-        baseDir,
-        version,
-        fs,
-        path,
-        platform: "linux",
-        arch: "x64",
-        httpClient: HttpClient.make((request) =>
-          Effect.succeed(
-            HttpClientResponse.fromWeb(
-              request,
-              request.url.endsWith("/SHA256SUMS")
-                ? new Response(checksums)
-                : new Response("", { status: 404 }),
+      const failsWith = (status: number) =>
+        ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          httpClient: HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                request.url.endsWith("/SHA256SUMS")
+                  ? new Response(checksums)
+                  : new Response("", { status }),
+              ),
             ),
           ),
-        ),
-        runner: extractingRunner(fs, path),
-        validate: () => Effect.die("must not validate a missing archive"),
-      }).pipe(Effect.flip);
-      assert.isTrue(isUnpublishedRelease(error));
+          // "404" in the mirror's path must not read a server error as a missing release.
+          releaseBaseUrl: "https://updates.example.com/404/t3code",
+          runner: extractingRunner(fs, path),
+          validate: () => Effect.die("must not validate a missing archive"),
+        }).pipe(Effect.flip);
+      assert.isTrue(isUnpublishedRelease(yield* failsWith(404)));
+      assert.isFalse(isUnpublishedRelease(yield* failsWith(500)));
     }),
   );
 
