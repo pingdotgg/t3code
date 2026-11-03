@@ -3,8 +3,12 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
@@ -98,6 +102,10 @@ export const layerObserver = Layer.effect(
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const pullRequestLookups = yield* FiberMap.make<string>();
+    const projects = yield* ProjectService.ProjectService;
+    const enrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+    const identities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+    const identityRefreshes = yield* FiberMap.make<ProjectId>();
     return {
       refreshAfterTurn: pullRequests.refreshAfterTurn,
       refresh: Effect.fn("RunFinalizationService.refresh")(
@@ -106,9 +114,25 @@ export const layerObserver = Layer.effect(
             [workspaceEntries.refresh(cwd), vcsStatus.refreshLocalStatus(cwd)],
             { concurrency: "unbounded" },
           );
-          if (local.refName === null || local.isDefaultRef) return;
+          if (!local.sourceControlProvider && (local.refName === null || local.isDefaultRef))
+            return;
           const thread = yield* projections.getThreadShell(threadId);
-          if (!thread || thread.branch !== local.refName) return;
+          if (!thread) return;
+          if (local.sourceControlProvider) {
+            const project = yield* projects.getById(thread.projectId);
+            if (Option.isSome(project) && project.value.repositoryIdentity === null) {
+              const root = project.value.workspaceRoot;
+              yield* Effect.gen(function* () {
+                if ((yield* identities.resolve(root)) !== null) return;
+                // Local status saw a remote while the resolver still has a cached miss.
+                yield* identities.resolve(root, { refresh: true });
+                yield* enrichment.invalidate([root]);
+                yield* enrichment.request(root);
+              }).pipe(FiberMap.run(identityRefreshes, thread.projectId, { onlyIfMissing: true }));
+            }
+          }
+          if (local.refName === null || local.isDefaultRef || thread.branch !== local.refName)
+            return;
           if (thread.activeRunId !== null && thread.activeRunId !== runId) return;
           // The forge CLI can take minutes, so the next turn must not wait for it. A newer
           // turn's lookup replaces a running one instead of queueing behind the cwd's lock.

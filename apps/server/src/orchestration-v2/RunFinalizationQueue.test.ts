@@ -5,6 +5,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectEnrichment from "../project/ProjectEnrichmentService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
@@ -48,6 +51,9 @@ it.effect.each([
     Layer.provide(
       Layer.mergeAll(
         projections,
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ProjectEnrichment.ProjectEnrichmentService)({}),
+        Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
         Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
         Layer.mock(PullRequestService.PullRequestService)({ refreshAfterTurn: () => Effect.void }),
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
