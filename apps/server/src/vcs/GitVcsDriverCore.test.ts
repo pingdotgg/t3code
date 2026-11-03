@@ -4243,6 +4243,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           "#!/bin/sh\ngit config checkout.workers > checkout-workers\nexit 0\n",
         );
         yield* fs.chmod(path.join(cwd, ".git/hooks/post-checkout"), 0o755);
+        yield* git(cwd, ["config", "--local", "checkout.workers", ""]);
         const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "parallel");
 
         yield* driver.createWorktree({
