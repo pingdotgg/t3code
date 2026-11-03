@@ -2070,7 +2070,8 @@ const resolveClaudeForkUpToMessageId = Effect.fn("ClaudeAdapterV2.resolveForkUpT
       .slice(boundaryIndex + 1)
       .filter(isTerminalProviderTurn);
     if (terminalTurnsAfterBoundary.length === 0) {
-      return undefined;
+      // Rollback pins the head but leaves the rolled-back turns in Claude's transcript.
+      return yield* getNativeConversationHeadId(input.sourceProviderThread);
     }
 
     return yield* new ProviderAdapter.ProviderAdapterForkThreadError({
