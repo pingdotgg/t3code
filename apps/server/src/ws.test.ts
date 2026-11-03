@@ -1204,6 +1204,8 @@ it.effect("server.getSettings returns redacted settings to installed native clie
           },
           {},
           yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: false },
         ).pipe(
           Layer.provide(
             Layer.mergeAll(
@@ -1217,6 +1219,7 @@ it.effect("server.getSettings returns redacted settings to installed native clie
                 scratchRoot: Effect.succeedNone,
                 namedProjectsRoot: process.cwd(),
               }),
+              Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
               Layer.mock(ServerEnvironment.ServerEnvironment)({}),
               Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
             ),
@@ -1235,7 +1238,10 @@ it.effect("server.getSettings returns redacted settings to installed native clie
     const result = yield* Deferred.await(exit);
     if (!Exit.isSuccess(result)) return yield* Effect.die(result.cause);
     const value = result.value as typeof saved;
-    assert.deepEqual(value, ServerSettings.redactServerSettingsForClient(saved));
+    assert.deepEqual(
+      value,
+      ServerSettings.redactServerSettingsForClient(saved, { secretReferences: false }),
+    );
     assert.deepEqual(value.defaultModelSelection, saved.defaultModelSelection);
     assert.deepEqual(value.favorites, favorites);
     assert.deepEqual(value.providerModelPreferences, providerModelPreferences);
