@@ -1628,11 +1628,11 @@ it.effect("promotes a queued goal by stopping the running turn", () =>
 );
 
 it.effect.each(["next", "/goal ship it"])(
-  "promoting %s into a compaction stops it and sends it next",
+  "promoting %s, moved ahead of a completion, into a compaction stops it",
   (promoted) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { events, layer, send, read, started, steered, startFirstTurn } = yield* goalHarness(
+        const { events, layer, send, started, steered, startFirstTurn } = yield* goalHarness(
           `compaction-promote-${promoted.length}`,
         );
         yield* Effect.gen(function* () {
@@ -1688,14 +1688,62 @@ it.effect.each(["next", "/goal ship it"])(
           const compactRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
             (run) => run.userMessageId === MessageId.make("message:compact"),
           )!;
-          const nextRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
-            (run) => run.userMessageId === MessageId.make("message:next"),
+          const firstRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.id === started[0]!.runId,
           )!;
+          const taskIds = [NodeId.make("task:compaction-promote")];
+          yield* (yield* EventSink.EventSinkV2).write({
+            events: [
+              {
+                id: EventId.make("event:compaction-promote-completion"),
+                type: "run.updated",
+                threadId,
+                runId: firstRun.id,
+                occurredAt: yield* DateTime.now,
+                payload: {
+                  ...firstRun,
+                  delegatedCompletion: {
+                    disposition: "open",
+                    nextGeneration: 2,
+                    delivery: {
+                      messageId: MessageId.make("message:completion"),
+                      generation: 1,
+                      taskIds,
+                    },
+                  },
+                },
+              },
+            ],
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("completion"),
+            threadId,
+            messageId: MessageId.make("message:completion"),
+            text: "Completion",
+            attachments: [],
+            modelSelection: runSelection,
+            dispatchMode: { type: "queue_after_active" },
+            delegatedCompletion: { parentRunId: firstRun.id, generation: 1, taskIds },
+            createdBy: "agent",
+            creationSource: "server",
+          });
+          const runFor = (key: string) =>
+            Effect.map(orchestrator.getThreadProjection(threadId), ({ runs }) =>
+              runs.find((run) => run.userMessageId === MessageId.make(`message:${key}`))!,
+            );
+          yield* orchestrator.dispatch({
+            type: "queued-run.reorder",
+            commandId: CommandId.make("reorder"),
+            threadId,
+            runId: (yield* runFor("next")).id,
+            beforeRunId: (yield* runFor("completion")).id,
+          });
           yield* orchestrator.dispatch({
             type: "queued-message.promote-to-steer",
             commandId: CommandId.make("promote"),
             threadId,
-            queuedRunId: nextRun.id,
+            queuedRunId: (yield* runFor("next")).id,
             targetRunId: compactRun.id,
           });
           yield* worker.drain();
@@ -1707,10 +1755,14 @@ it.effect.each(["next", "/goal ship it"])(
               (item) => item.type === "run_interrupt_request" && item.runId === compactRun.id,
             ),
           );
-          assert.deepEqual((yield* read(threadId)).queue, ["queued"]);
+          // Like any queued goal, a goal keeps automatic completions ahead of it.
           assert.deepEqual(
-            started.map((turn) => turn.message.text),
-            ["first", "/compact", promoted],
+            started.map((turn) => turn.runId),
+            [
+              started[0]!.runId,
+              compactRun.id,
+              (yield* runFor(promoted === "next" ? "next" : "completion")).id,
+            ],
           );
         }).pipe(Effect.provide(layer));
       }),
