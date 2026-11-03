@@ -403,7 +403,7 @@ describe("AntigravityAdapterV2 multi-repo files", () => {
         yield* fileSystem.writeFileString(spec, "spec");
         const files = makeAntigravityAcpAdapterFlavor({
           instanceId: ProviderInstanceId.make("antigravity-multi-repo-test"),
-          crypto: yield* Crypto.Crypto,
+          random: yield* SecureRandom.SecureRandom,
           fileSystem,
           path,
           host: yield* ProviderHost.ProviderHost,

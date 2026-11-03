@@ -357,6 +357,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             id: thread.projectId,
             title: "Project",
             workspaceRoot: "/workspace/project",
+            trackedFolders: [],
             defaultModelSelection: null,
             scripts: [],
             createdAt: "2026-08-01T00:00:00.000Z",

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { EventId, ProjectId, type ProjectTrackedFolder } from "@t3tools/contracts";
@@ -21,7 +22,7 @@ const layerTest = WorkspaceRepositories.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(ProjectStore.layer, TaskFolders.layer)),
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-workspace-repos-test-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const git = Effect.fn("WorkspaceRepositoriesTest.git")(function* (

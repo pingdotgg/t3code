@@ -1342,9 +1342,8 @@ const layerCheckpointServiceTest = CheckpointService.layer.pipe(
         Layer.provide(NodeServices.layer),
       ),
       IdAllocator.layer,
-      NodeCrypto.layer,
       NodeServices.layer,
-    ),
+    ).pipe(Layer.provideMerge(NodeCrypto.layer)),
   ),
 );
 const layerMultiRepoTest = Layer.mergeAll(
@@ -1352,9 +1351,8 @@ const layerMultiRepoTest = Layer.mergeAll(
   layerCheckpointServiceTest,
   layerVcsProcessTest,
   IdAllocator.layer,
-  NodeCrypto.layer,
   NodeServices.layer,
-);
+).pipe(Layer.provideMerge(NodeCrypto.layer));
 
 /**
  * A run in a plain home folder that tracks two child repos (`api`, `web`), with an untracked

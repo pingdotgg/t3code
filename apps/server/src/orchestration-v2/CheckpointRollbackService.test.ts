@@ -759,9 +759,8 @@ const layerRealCheckpoints = CheckpointService.layer.pipe(
         Layer.provide(NodeServices.layer),
       ),
       IdAllocator.layer,
-      NodeCrypto.layer,
       NodeServices.layer,
-    ),
+    ).pipe(Layer.provideMerge(NodeCrypto.layer)),
   ),
 );
 

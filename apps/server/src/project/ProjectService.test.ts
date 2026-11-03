@@ -621,6 +621,12 @@ it.layer(layerTest)("ProjectService", (it) => {
         title: "Delete retry",
         workspaceRoot: "/work/delete-retry",
       });
+      // A resolve still in flight would land between the two deletes.
+      yield* waitForProject(
+        service,
+        projectId,
+        (project) => project.faviconPath !== null && project.repositoryIdentity !== null,
+      );
       const input = { commandId: CommandId.make("command:delete-retry:delete"), projectId };
       const deleted = yield* service.delete(input);
       assert.deepEqual(yield* service.delete(input), deleted);
