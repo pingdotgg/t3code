@@ -39,7 +39,7 @@ const validChecksums = archiveHex(archiveBytes).pipe(
 const releaseHttpClient = (checksums: string, requests: string[] = []) =>
   HttpClient.make((request) => {
     requests.push(request.url);
-    const body = request.url.endsWith("/SHA256SUMS") ? checksums : archiveBytes;
+    const body = new URL(request.url).pathname.endsWith("/SHA256SUMS") ? checksums : archiveBytes;
     return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body)));
   });
 const extractingRunner = (fs: FileSystem.FileSystem, path: Path.Path, commands: string[] = []) =>
@@ -285,7 +285,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
           platform: "linux",
           arch: "x64",
           httpClient: releaseHttpClient(checksums, requests),
-          releaseBaseUrl: "https://updates.example.com/t3code",
+          // A signed mirror URL keeps its query on every file it serves.
+          releaseBaseUrl: "https://updates.example.com/t3code/?token=abc",
           requirePublishedRelease: true,
           runner: extractingRunner(fs, path),
           validate: () => Effect.void,
@@ -296,7 +297,9 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const requests: string[] = [];
       assert.equal((yield* install(yield* validChecksums, requests)).entryPath, cached.entryPath);
       // Listed, so the cached runtime is used without downloading it again.
-      assert.deepEqual(requests, [`https://updates.example.com/t3code/v${version}/SHA256SUMS`]);
+      assert.deepEqual(requests, [
+        `https://updates.example.com/t3code/v${version}/SHA256SUMS?token=abc`,
+      ]);
     }),
   );
 

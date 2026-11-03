@@ -221,11 +221,15 @@ it.layer(NodeServices.layer)("server self update", (it) => {
           .reason,
       ).toBe("Example Corp manages T3 Code updates. Only stable releases can be installed.");
       expect(order).toEqual([]);
+      // The mirror lists only 1.1.0's archive.
+      expect((yield* selfUpdate.update({ targetVersion: "1.2.0" }).pipe(Effect.flip)).reason).toBe(
+        "Example Corp's update mirror has no t3@1.2.0 for this machine.",
+      );
       expect((yield* selfUpdate.update({ targetVersion: "1.1.0" })).updateId).toBe("launcher-id");
       // The release comes from the policy's mirror, not GitHub.
       expect(urls.length).toBeGreaterThan(0);
       for (const url of urls)
-        expect(url).toMatch(/^https:\/\/updates\.example\.com\/t3code\/v1\.1\.0\//);
+        expect(url).toMatch(/^https:\/\/updates\.example\.com\/t3code\/v1\.[12]\.0\//);
     }),
   );
 

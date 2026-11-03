@@ -69,7 +69,10 @@ it.effect("authenticates each release page until the requested channel is found"
 it.effect("reads the newest version from the update feed file a mirror publishes", () =>
   Effect.gen(function* () {
     const requested: string[] = [];
-    const mirror = { organization: "Example Corp", feedUrl: "https://updates.example.com/t3code/" };
+    const mirror = {
+      organization: "Example Corp",
+      feedUrl: "https://updates.example.com/t3code/?token=abc",
+    };
     const resolve = (
       channel: "stable" | "nightly" | "preview",
       platform: NodeJS.Platform,
@@ -99,8 +102,8 @@ it.effect("reads the newest version from the update feed file a mirror publishes
       "1.5.0-nightly.20261101.2",
     );
     assert.deepStrictEqual(requested, [
-      "https://updates.example.com/t3code/latest-mac.yml",
-      "https://updates.example.com/t3code/nightly-linux-arm64.yml",
+      "https://updates.example.com/t3code/latest-mac.yml?token=abc",
+      "https://updates.example.com/t3code/nightly-linux-arm64.yml?token=abc",
     ]);
     // A feed for the wrong track is not trusted to mean the requested one.
     assert.include(

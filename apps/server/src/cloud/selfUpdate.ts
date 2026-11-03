@@ -35,6 +35,7 @@ import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpda
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  isUnpublishedRelease,
   pinnedRuntimeCommand,
   PinnedRuntimeInstallError,
   pinnedRuntimePaths,
@@ -284,7 +285,12 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         Effect.mapError((error) =>
           error._tag === "PinnedRuntimePreflightBlockedError"
             ? failWith(error.reason, error)
-            : failWith(`Could not prepare t3@${targetVersion}.`, error),
+            : mirror !== undefined && isUnpublishedRelease(error)
+              ? failWith(
+                  `${mirror.organization}'s update mirror has no t3@${targetVersion} for this machine.`,
+                  error,
+                )
+              : failWith(`Could not prepare t3@${targetVersion}.`, error),
         ),
       );
 

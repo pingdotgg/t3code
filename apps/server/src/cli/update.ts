@@ -5,6 +5,7 @@ import {
   cliReleaseIndexPageUrl,
   cliReleaseChannelOf,
   newestCliReleaseVersion,
+  releaseAssetUrl,
   updateFeedFileName,
   type CliReleaseChannel,
 } from "@t3tools/shared/cliRelease";
@@ -25,6 +26,7 @@ import {
   ensurePinnedRuntimeInstalled,
   launcherOwnsVersionsDir,
   pinnedRuntimeCommand,
+  isUnpublishedRelease,
   PinnedRuntimeInstallError,
   pinnedRuntimePaths,
   pinnedRuntimeVersionsDir,
@@ -106,11 +108,14 @@ export const resolveMirrorVersion = Effect.fn("cli.update.resolve_mirror")(funct
     });
   }
   const httpClient = yield* HttpClient.HttpClient;
-  const url = `${mirror.feedUrl.replace(/\/+$/, "")}/${updateFeedFileName(
-    channel === "nightly" ? "nightly" : "latest",
-    yield* HostProcess.Platform,
-    yield* HostProcess.Architecture,
-  )}`;
+  const url = releaseAssetUrl(
+    mirror.feedUrl,
+    updateFeedFileName(
+      channel === "nightly" ? "nightly" : "latest",
+      yield* HostProcess.Platform,
+      yield* HostProcess.Architecture,
+    ),
+  );
   const unreadable = new CliUpdateError({
     reason: `Could not read ${url} from ${mirror.organization}'s update mirror.`,
   });
@@ -525,20 +530,15 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
         ),
   }).pipe(
     Effect.ensuring(Effect.sync(progress.finish)),
-    Effect.catchIf(
-      (error): error is PinnedRuntimeInstallError =>
-        error._tag === "PinnedRuntimeInstallError" &&
-        error.step.startsWith("downloading the t3 release checksums") &&
-        String(error.cause).includes("404"),
-      () =>
-        Effect.fail(
-          new CliUpdateError({
-            reason:
-              mirror === undefined
-                ? `No release archive was published for t3@${targetVersion}.`
-                : `${mirror.organization}'s update mirror has no t3@${targetVersion} for this machine.`,
-          }),
-        ),
+    Effect.catchIf(isUnpublishedRelease, () =>
+      Effect.fail(
+        new CliUpdateError({
+          reason:
+            mirror === undefined
+              ? `No release archive was published for t3@${targetVersion}.`
+              : `${mirror.organization}'s update mirror has no t3@${targetVersion} for this machine.`,
+        }),
+      ),
     ),
   );
 
