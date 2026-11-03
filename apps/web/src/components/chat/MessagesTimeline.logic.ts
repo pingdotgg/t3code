@@ -29,6 +29,7 @@ import {
   contextCompactionTokenCounts,
   type ToolGroupSummaryKind,
   liveThoughtLine,
+  workEntryHiddenByToolCallVisibility,
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   deriveRevertTurnCountByUserMessageId,
@@ -1363,26 +1364,6 @@ function settleSupersededReasoning(entries: ReadonlyArray<TimelineEntry>) {
   });
 }
 
-const HIDEABLE_TOOL_CALL_ITEM_TYPES: ReadonlySet<WorkLogEntry["itemType"]> = new Set([
-  "command_execution",
-  "file_change",
-  "file_search",
-  "web_search",
-  "dynamic_tool",
-]);
-
-function toolCallIsHidden(entry: TimelineEntry, visibility: ToolCallVisibility): boolean {
-  if (entry.kind !== "work" || !HIDEABLE_TOOL_CALL_ITEM_TYPES.has(entry.entry.itemType)) {
-    return false;
-  }
-  if (visibility === "hideAll") return true;
-  return (
-    visibility === "hideSuccessful" &&
-    entry.entry.toolLifecycleStatus === "completed" &&
-    !workEntryDisplayIndicatesToolFailure(entry.entry)
-  );
-}
-
 function workShownAsFinalAnswerOnly(
   entry: TimelineEntry,
   pendingApprovalRequestIds: ReadonlySet<RuntimeRequestId> | undefined,
@@ -1477,7 +1458,10 @@ function timelineRowEntries(
       );
     });
   } else if (visibility !== "showAll") {
-    shown = entries.filter((entry) => !toolCallIsHidden(entry, visibility));
+    shown = entries.filter(
+      (entry) =>
+        entry.kind !== "work" || !workEntryHiddenByToolCallVisibility(entry.entry, visibility),
+    );
   }
   return withoutSubagentDelegationRows(settleSupersededReasoning(shown));
 }
