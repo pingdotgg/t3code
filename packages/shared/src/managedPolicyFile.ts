@@ -537,7 +537,15 @@ const readPlatformPolicy = Effect.fnUntraced(function* (
     if (root === undefined) return undefined;
     const json = root.values.find((value) => value.name.toLowerCase() === "policy");
     if (json !== undefined) {
-      if (root.values.length > 1 || root.subkeys.length > 0) {
+      // Not Configured clears a list policy's values but can leave its empty subkey behind.
+      let templateSettings = root.values.length > 1;
+      for (const subkey of root.subkeys) {
+        if (templateSettings) break;
+        const child = yield* readKey(`${WINDOWS_POLICY_SUBKEY}\\${subkey}`);
+        templateSettings =
+          child !== undefined && (child.values.length > 0 || child.subkeys.length > 0);
+      }
+      if (templateSettings) {
         return yield* refuse(
           "it holds both a Policy value and Group Policy settings; deploy the policy one way",
         );

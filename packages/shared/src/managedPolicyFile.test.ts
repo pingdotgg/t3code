@@ -197,9 +197,16 @@ describe("readManagedPolicy", () => {
           yield* win32({}, policyKey([text("Policy", "{ not json")])),
           "does not match the policy schema",
         );
-        assert.include(
-          yield* win32({}, policyKey([text("Policy", policy), text("Organization", "Example")])),
-          "both a Policy value and Group Policy settings",
+        for (const both of [
+          policyKey([text("Policy", policy), text("Organization", "Example")]),
+          policyKey([text("Policy", policy)], { Clients: { desktop: 1 } }),
+        ]) {
+          assert.include(yield* win32({}, both), "both a Policy value and Group Policy settings");
+        }
+        // Not Configured clears a list policy's values but can leave its empty subkey behind.
+        assert.equal(
+          yield* win32({}, policyKey([text("Policy", policy)], { Clients: {} })),
+          WINDOWS_POLICY_KEY,
         );
       }),
   );
