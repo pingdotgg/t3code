@@ -160,6 +160,45 @@ describe("FileBrowserPanel", () => {
     expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true");
   });
 
+  it("keeps the selected file through a very large listing without reopening it", async () => {
+    const onOpenFile = vi.fn();
+    const renderPanel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath="src/aaa.ts"
+        selectedPathRevealId={1}
+        onOpenFile={onOpenFile}
+        workspaceMutationId={null}
+      />
+    );
+    directory.entries = [...entries, { path: "src/aaa.ts", kind: "file" }];
+    using _restoreEntries = {
+      [Symbol.dispose]: () => {
+        directory.entries = entries;
+      },
+    };
+    await using screen = await render(renderPanel());
+    await vi.waitFor(() =>
+      expect(findTreeRow("src/aaa.ts")?.getAttribute("aria-selected")).toBe("true"),
+    );
+
+    directory.entries = [
+      ...directory.entries,
+      ...Array.from({ length: 2_000 }, (_, index): ProjectEntry => {
+        const name = String((index * 7_919) % 2_000).padStart(4, "0");
+        return { path: `src/generated-${name}.ts`, kind: "file" };
+      }),
+    ];
+    await screen.rerender(renderPanel());
+
+    await vi.waitFor(() => expect(findTreeRow("src/generated-0000.ts")).not.toBeNull());
+    expect(findTreeRow("src/aaa.ts")?.getAttribute("aria-selected")).toBe("true");
+    expect(findTreeRow("src/")?.getAttribute("aria-expanded")).toBe("true");
+    expect(onOpenFile).not.toHaveBeenCalled();
+  });
+
   it("keeps an open search accurate when a very large folder listing arrives", async () => {
     const renderPanel = () => (
       <FileBrowserPanel
