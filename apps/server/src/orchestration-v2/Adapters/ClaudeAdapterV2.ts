@@ -347,7 +347,10 @@ const CLAUDE_STDERR_DRAIN_TIMEOUT = Duration.seconds(1);
 const CLAUDE_ROOT_REFUSAL =
   "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
 
+// The shell enters the cwd: a native cwd blocks the server while a hung mount stalls chdir.
 const CLAUDE_GROUP_WATCH_SCRIPT = [
+  'cd -P -- "$1" || exit 125',
+  "shift",
   "{ trap '' TERM; read -r _ <&3; kill -TERM 0; sleep 5; kill -KILL 0; } </dev/null >/dev/null 2>&1 &",
   'exec "$@" 3<&-',
 ].join("\n");
@@ -363,11 +366,19 @@ export function spawnClaudeProcessGroup(
   onStderr: (text: string) => void = () => {},
   onStderrClose: () => void = () => {},
 ): ClaudeSpawnedProcess {
+  // Relative to the server's cwd, as a native cwd is; `./` keeps CDPATH out of it.
+  const cwd = options.cwd ?? ".";
   const child = NodeChildProcess.spawn(
     "/bin/sh",
-    ["-c", CLAUDE_GROUP_WATCH_SCRIPT, "t3-claude", options.command, ...options.args],
+    [
+      "-c",
+      CLAUDE_GROUP_WATCH_SCRIPT,
+      "t3-claude",
+      cwd.startsWith("/") ? cwd : `./${cwd}`,
+      options.command,
+      ...options.args,
+    ],
     {
-      cwd: options.cwd,
       env: options.env,
       signal: options.signal,
       stdio: ["pipe", "pipe", "pipe", "pipe"],

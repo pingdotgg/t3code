@@ -588,6 +588,38 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
     }).pipe(Effect.provide(realQueryRunner)),
   );
 
+  it.effect("starts the CLI in its cwd, and fails a missing cwd from inside the child", () =>
+    Effect.gen(function* () {
+      const cli = fakeClaudeCli("pwd -P");
+      const dir = NodeFS.realpathSync(NodePath.dirname(cli));
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
+      );
+      const run = (cwd: string) =>
+        Effect.promise(() => {
+          const child = spawnClaudeProcessGroup({
+            command: cli,
+            args: [],
+            cwd,
+            env: process.env,
+            signal: new AbortController().signal,
+          }) as NodeChildProcess.ChildProcess;
+          child.stdin?.end();
+          let stdout = "";
+          child.stdout?.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+          return new Promise<{ code: number | null; stdout: string }>((resolve) =>
+            child.once("close", (code) => resolve({ code, stdout })),
+          );
+        });
+      assert.deepEqual(yield* run(dir), { code: 0, stdout: `${dir}\n` });
+      assert.equal((yield* run(NodePath.join(dir, "missing"))).code, 125);
+      // `..` after a symlink leaves the link's target, as the kernel's chdir does.
+      NodeFS.mkdirSync(NodePath.join(dir, "target", "sub"), { recursive: true });
+      NodeFS.symlinkSync(NodePath.join(dir, "target", "sub"), NodePath.join(dir, "link"));
+      assert.deepEqual(yield* run(`${dir}/link/..`), { code: 0, stdout: `${dir}/target\n` });
+    }),
+  );
+
   // The CLI keeps running its turn after its pipes close, so a server that
   // crashed would leave it working next to the session it resumes.
   it.effect("stops the CLI when the server that started it goes away", () =>

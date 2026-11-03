@@ -212,10 +212,27 @@ export const createMuseSdkHostEffect = Effect.fn("createMuseSdkHostEffect")(func
   options: Omit<MuseSdkHostOptions, "signal">,
   createHost: typeof createMuseSdkHost = createMuseSdkHost,
 ) {
-  const launch = options.launch ?? (yield* museLaunch(options.binaryPath, options.environment));
+  const native = options.launch ?? (yield* museLaunch(options.binaryPath, options.environment));
+  // libuv blocks the server while the child runs chdir and the PATH search, which a hung
+  // mount stalls. GNU env does both in the child and, unlike dash, keeps every environment
+  // entry, including exported bash functions. It reads a command containing `=`, or a lone
+  // `-`, as an assignment or option even after `--`, so those keep the native launch.
+  const { cwd, ...childEntered } = options;
+  const hostOptions: Omit<MuseSdkHostOptions, "signal"> =
+    (yield* HostProcess.Platform) === "linux" &&
+    native.command !== "-" &&
+    !native.command.includes("=")
+      ? {
+          ...childEntered,
+          launch: {
+            command: "/usr/bin/env",
+            args: [...(cwd === undefined ? [] : ["-C", cwd]), "--", native.command, ...native.args],
+          },
+        }
+      : { ...options, launch: native };
   let startup: Promise<MuseSdkHost> | undefined;
   return yield* Effect.tryPromise((signal) => {
-    startup = createHost({ ...options, launch, signal });
+    startup = createHost({ ...hostOptions, signal });
     return startup;
   }).pipe(
     Effect.onInterrupt(() =>

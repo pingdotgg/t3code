@@ -21,6 +21,7 @@ import {
   museVerbatimPath,
   museWorkspaceRoot,
   type MuseSdkHost,
+  type MuseSdkHostOptions,
 } from "./sdk.ts";
 
 vi.mock("node:fs/promises", { spy: true });
@@ -254,6 +255,66 @@ describe("Muse SDK host", () => {
       yield* Fiber.join(interrupted);
       expect(released).toBe(true);
       expect(host.close).toHaveBeenCalledOnce();
+    }),
+  );
+});
+
+describe("Muse startup on Linux", () => {
+  it.effect(
+    "starts Muse in its cwd and environment without handing libuv the cwd or PATH search",
+    () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) !== "linux") return;
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
+        const sdk = yield* Effect.promise(() =>
+          vi.importActual<typeof import("@muse-code/sdk")>("@muse-code/sdk"),
+        );
+        const fixture = `
+        require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
+          const frame = JSON.parse(line);
+          if (!("id" in frame)) return;
+          const result = frame.method === "fixture/cwd"
+            ? { cwd: process.cwd(), fn: process.env["BASH_FUNC_x%%"] }
+            : { schema: { version: 1, fingerprint: "t3-cwd-fixture" }, grantedCapabilities: [] };
+          process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result }) + "\\n");
+        });
+      `;
+        const spawned: Array<Parameters<typeof sdk.spawnMspConnection>[0]> = [];
+        const host = yield* createMuseSdkHostEffect(
+          {
+            binaryPath: "node",
+            launch: { command: "node", args: ["-e", fixture] },
+            cwd: directory,
+            environment: { PATH: process.env.PATH, "BASH_FUNC_x%%": "() {  echo x\n}" },
+          },
+          (options) =>
+            createMuseSdkHost(options, (spawnOptions) => {
+              spawned.push(spawnOptions);
+              return sdk.spawnMspConnection(spawnOptions);
+            }),
+        );
+        const response = yield* Effect.promise(() => host.connection.request("fixture/cwd", {}));
+        yield* Effect.promise(() => host.close());
+        expect(response).toEqual({ cwd: directory, fn: "() {  echo x\n}" });
+        expect(spawned[0]?.command).toBe("/usr/bin/env");
+        expect(spawned[0]?.cwd).toBeUndefined();
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("Muse startup with a command env cannot run", () => {
+  it.effect("keeps the native launch for a binary path containing =", () =>
+    Effect.gen(function* () {
+      const launches: Array<MuseSdkHostOptions["launch"]> = [];
+      yield* createMuseSdkHostEffect(
+        { binaryPath: "/opt/muse=stable/bin/muse", cwd: "/w" },
+        (options) => {
+          launches.push(options.launch);
+          return Promise.resolve({ close: async () => {} } as unknown as MuseSdkHost);
+        },
+      ).pipe(Effect.provideService(HostProcess.Platform, "linux"));
+      expect(launches).toEqual([{ command: "/opt/muse=stable/bin/muse", args: [] }]);
     }),
   );
 });
