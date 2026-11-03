@@ -65,7 +65,7 @@ describe("getLocalVoiceTranscriber", () => {
     });
     const controller = new AbortController();
     const options = { signal: controller.signal };
-    const prepared = await getLocalVoiceTranscriber()!.prepare(options);
+    const prepared = await (await getLocalVoiceTranscriber())!.prepare(options);
     const result = prepared
       .transcribe("file:///voice.m4a", options)
       .catch((error: unknown) => error);
