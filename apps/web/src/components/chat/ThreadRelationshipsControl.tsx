@@ -523,7 +523,7 @@ export function ThreadRelationshipsPanel(props: {
   const groups = [
     { id: "related", label: null, rows: related, expanded: true },
     { id: "active", label: null, rows: active, expanded: true },
-    { id: "previous", label: "Previous agents", rows: previous, expanded: false },
+    { id: "previous", label: t("chat.lineage.previousAgents"), rows: previous, expanded: false },
   ];
   // Tasks running in a linked environment have no thread here; they get their own rows.
   const remoteSubagents = (projection?.subagents ?? []).filter(
@@ -583,7 +583,7 @@ export function ThreadRelationshipsPanel(props: {
     if (result._tag === "Failure") {
       mergeErrorToastId.current = toastManager.add({
         type: "error",
-        title: "Could not merge back",
+        title: t("chat.lineage.mergeBackFailed"),
       });
       return;
     }
@@ -605,7 +605,7 @@ export function ThreadRelationshipsPanel(props: {
     if (result._tag === "Failure") {
       detachErrorToastId.current = toastManager.add({
         type: "error",
-        title: "Could not disconnect agent session",
+        title: t("chat.lineage.disconnectFailed"),
       });
     }
   };
@@ -622,7 +622,7 @@ export function ThreadRelationshipsPanel(props: {
     });
     setStoppingId(null);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not stop subagent" });
+      toastManager.add({ type: "error", title: t("chat.lineage.stopSubagentFailed") });
     }
   };
 
@@ -635,7 +635,7 @@ export function ThreadRelationshipsPanel(props: {
     });
     setStoppingId(null);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not stop workflow" });
+      toastManager.add({ type: "error", title: t("chat.lineage.stopWorkflowFailed") });
     }
   };
 

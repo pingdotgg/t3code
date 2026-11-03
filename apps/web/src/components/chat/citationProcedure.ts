@@ -6,6 +6,7 @@ import { environmentThreadDetails, threadEnvironment } from "../../state/threads
 import { toastManager } from "../ui/toast";
 import type { AssistantCitationRequest } from "./AssistantCitationSource";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
+import { translateNow } from "../media/translateNow";
 
 /** Whether the cited response is in the loaded history, after paging toward it. */
 export type CitedHistory =
@@ -36,18 +37,19 @@ type HistoryPageResult = AtomCommandSuccess<
 
 const MAX_CITATION_PAGES = 20;
 
-const COULD_NOT_LOAD = {
-  _tag: "failed",
-  title: "Could not load the cited response",
-  description:
-    "Load earlier turns, then click the citation to try again. Your saved quote is unchanged.",
-} as const;
+const COULD_NOT_LOAD = () =>
+  ({
+    _tag: "failed",
+    title: translateNow("chat.citation.couldNotLoadTitle"),
+    description: translateNow("chat.citation.couldNotLoadDesc"),
+  }) as const;
 
-const UNAVAILABLE = {
-  _tag: "failed",
-  title: "The cited response is unavailable",
-  description: "It may have been removed. The selected text is still saved in your citation.",
-} as const;
+const UNAVAILABLE = () =>
+  ({
+    _tag: "failed",
+    title: translateNow("chat.citation.unavailableTitle"),
+    description: translateNow("chat.citation.unavailableDesc"),
+  }) as const;
 
 /**
  * Pages history toward the cited message until it is loaded, the thread runs
@@ -63,23 +65,23 @@ export async function loadCitedHistory(input: {
   for (let attempts = 0; ; attempts += 1) {
     const thread = await input.readThread();
     if (thread === null || input.signal.aborted) return { _tag: "aborted" };
-    if (thread.loadFailed) return COULD_NOT_LOAD;
+    if (thread.loadFailed) return COULD_NOT_LOAD();
     if (thread.message === "assistant") return { _tag: "found" };
     if (thread.message === "other") {
       return {
         _tag: "failed",
-        title: "The citation does not refer to an assistant response",
-        description: "The selected text is still saved in your citation.",
+        title: translateNow("chat.citation.notAssistantTitle"),
+        description: translateNow("chat.citation.notAssistantDesc"),
       };
     }
-    if (!thread.hasMoreHistory) return UNAVAILABLE;
-    if (attempts >= MAX_CITATION_PAGES) return COULD_NOT_LOAD;
+    if (!thread.hasMoreHistory) return UNAVAILABLE();
+    if (attempts >= MAX_CITATION_PAGES) return COULD_NOT_LOAD();
     const result = await input.loadThrough();
     if (input.signal.aborted) return { _tag: "aborted" };
-    if (result._tag === "error") return COULD_NOT_LOAD;
+    if (result._tag === "error") return COULD_NOT_LOAD();
     // A noop page means the store has nothing older to load (no cursor, or the
     // thread is gone), so re-reading would only spin on the same snapshot.
-    if (result._tag === "noop") return UNAVAILABLE;
+    if (result._tag === "noop") return UNAVAILABLE();
   }
 }
 

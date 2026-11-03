@@ -160,6 +160,7 @@ import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
 
 import { translateNow } from "~/components/media/translateNow";
 import { useT } from "~/hooks/useI18n";
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 const actionFailureLabels = (term: string): Record<PullRequestAction, string> => ({
   merge: translateNow("review.pr.couldNotMerge", { term }),
   ready: translateNow("review.extra.could.not.mark.this.ready.for.review"),
@@ -191,11 +192,11 @@ const actionFailureHints = (term: string): Record<PullRequestAction, string> => 
 const UPDATE_BRANCH_REBASE_FAILURE_HINT = () =>
   translateNow("review.extra.the.host.refused.it.a.rebase.stops.at");
 
-const TABS: ReadonlyArray<{ value: PullRequestDetailTab; label: string }> = [
-  { value: "summary", label: "Summary" },
-  { value: "guide", label: "Guide" },
-  { value: "timeline", label: "Timeline" },
-  { value: "code", label: "Code" },
+const TABS: ReadonlyArray<{ value: PullRequestDetailTab; labelKey: MessageKey }> = [
+  { value: "summary", labelKey: "review.tabs.summary" },
+  { value: "guide", labelKey: "review.tabs.guide" },
+  { value: "timeline", labelKey: "review.tabs.timeline" },
+  { value: "code", labelKey: "review.tabs.code" },
 ];
 
 // Defer the diff viewer's worker pool until Code is approached.
@@ -1145,7 +1146,10 @@ export function PullRequestDetailPanel({
   const workflowApprovalsRequired =
     detail?.state === "open" ? (detail.workflowApprovalsRequired ?? 0) : 0;
   const freshness = detail === null ? null : resolveBaseFreshness(detail);
-  const visibleTabs = TABS.filter((item) => isTabAvailable(item.value));
+  const visibleTabs = TABS.filter((item) => isTabAvailable(item.value)).map((item) => ({
+    value: item.value,
+    label: t(item.labelKey),
+  }));
   const can = (action: PullRequestAction) =>
     detail?.capabilities.actions.includes(action) === true &&
     detail.viewerPermissions.actions.includes(action);
@@ -1470,7 +1474,7 @@ export function PullRequestDetailPanel({
                       iconClassName="size-3"
                     />
                     <ArrowLeftIcon
-                      aria-label="receives changes from"
+                      aria-label={t("review.prReceivesChanges")}
                       className="size-3 shrink-0 opacity-60"
                     />
                     <Tooltip>

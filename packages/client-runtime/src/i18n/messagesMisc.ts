@@ -724,6 +724,13 @@ export const enMessages = {
   "misc.usage.newModelId": "New model ID",
   "misc.usage.per1m": "Per 1M tokens",
   "misc.usage.setPrice": "Set price",
+  "misc.sourceControl.init": "Initializing repository",
+  "misc.sourceControl.pulling": "Pulling latest changes...",
+  "misc.sourceControl.running": "Running source control action",
+  "misc.sourceControl.publishing": "Publishing repository",
+  "misc.sourceControl.preparingPr": "Preparing pull request thread",
+  "misc.sourceControl.noPermission": "This connection cannot change source control.",
+  "misc.sourceControl.noThreadPermission": "This connection cannot change threads.",
 } as const;
 
 export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = {
@@ -1411,4 +1418,11 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "misc.usage.newModelId": "新模型 ID",
   "misc.usage.per1m": "每百万令牌",
   "misc.usage.setPrice": "设置价格",
+  "misc.sourceControl.init": "正在初始化仓库",
+  "misc.sourceControl.pulling": "正在拉取最新改动…",
+  "misc.sourceControl.running": "正在执行源代码管理操作",
+  "misc.sourceControl.publishing": "正在发布仓库",
+  "misc.sourceControl.preparingPr": "正在准备 Pull Request 会话",
+  "misc.sourceControl.noPermission": "此连接无法更改源代码管理。",
+  "misc.sourceControl.noThreadPermission": "此连接无法更改会话。",
 };
