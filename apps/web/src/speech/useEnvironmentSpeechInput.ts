@@ -63,6 +63,7 @@ function createSpeechController(
   getPostProcess: () => VoiceInputControllerDependencies<true>["postProcess"],
 ) {
   return new VoiceInputController<true>({
+    retryFailedRecording: true,
     ...dependencies,
     // Read the preferences captured when recording starts, rather than at controller creation.
     get postProcess() {

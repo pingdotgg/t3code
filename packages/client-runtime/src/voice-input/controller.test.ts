@@ -95,6 +95,7 @@ describe("streaming voice input", () => {
       .mockRejectedValueOnce(new Error("inference failed"))
       .mockResolvedValueOnce("recovered text");
     const harness = createHarness({
+      retryFailedRecording: true,
       getTranscriber: () => ({ prepare: async () => preparedTranscription(transcribe) }),
     });
     await harness.controller.start();
@@ -114,6 +115,7 @@ describe("streaming voice input", () => {
 
   it("deletes retained failed audio when the user cancels", async () => {
     const harness = createHarness({
+      retryFailedRecording: true,
       getTranscriber: () => ({
         prepare: async () =>
           preparedTranscription(async () => {

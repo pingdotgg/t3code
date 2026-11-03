@@ -76,6 +76,7 @@ export type VoiceInputControllerDependencies<WithPostProcessing extends boolean 
   readonly configureRecording: () => Promise<void>;
   readonly releaseRecording: () => Promise<void>;
   readonly deleteRecording: (uri: string) => void;
+  readonly retryFailedRecording?: boolean;
   readonly postProcess?: WithPostProcessing extends true
     ?
         | ((
@@ -224,7 +225,7 @@ function preparationErrorMessage(error: unknown): string {
   if (errorCode(error) === "unsupported-locale") {
     return "Voice transcription is not available for this language.";
   }
-  return error instanceof VoiceTranscriptionError
+  return error instanceof VoiceTranscriptionError && error.message.trim()
     ? error.message
     : "Could not prepare voice transcription.";
 }
@@ -508,7 +509,7 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
         );
       } catch (error) {
         if (this.isCurrent(operationToken)) {
-          if (!transcription.streaming && recordingUri) {
+          if (this.dependencies.retryFailedRecording && !transcription.streaming && recordingUri) {
             this.retryRecording = { uri: recordingUri, draft: capturedDraft, transcription };
           }
           this.setError(transcriptionErrorMessage(error), "retry");

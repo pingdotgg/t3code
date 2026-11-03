@@ -41,6 +41,9 @@ it.each([
   ["preparation", "quota", /quota|limit/i],
   ["transcription", "storage", /disk|storage|space/i],
   ["transcription", "quota", /quota|limit/i],
+  ["transcription", "no-speech", /speak again/i],
+  ["transcription", "audio-overflow", /complete/i],
+  ["transcription", "incomplete-audio", /complete|interrupt/i],
 ] as const)("preserves an actionable %s error: %s", async (phase, code, expected) => {
   vi.resetAllMocks();
   resetVoiceInputGlobalsForTests();
@@ -58,11 +61,12 @@ it.each([
     selection: { start: 16, end: 16 },
     revision: 1,
   };
+  const record = vi.fn();
   const controller = new VoiceInputController({
     recorder: {
       uri: "file:///acceptance.m4a",
       prepareToRecordAsync: async () => {},
-      record: () => {},
+      record,
       stop: async () => {},
     },
     getTranscriber: () => transcriber,
@@ -81,4 +85,11 @@ it.each([
   expect(commit).not.toHaveBeenCalled();
   expect(draft.text).toBe("Preserved draft.");
   expect(controller.currentState.error).toMatch(expected);
+
+  mocks.prepare.mockResolvedValue({ locale: "en-US", mode: 0 });
+  mocks.transcribe.mockResolvedValue("Complete transcript.");
+  await controller.start();
+  expect(controller.currentState.phase).toBe("recording");
+  expect(record).toHaveBeenCalledTimes(phase === "transcription" ? 2 : 1);
+  await controller.cancel();
 });

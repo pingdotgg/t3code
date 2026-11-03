@@ -80,6 +80,7 @@ export function TranscriptionTest({
       },
     });
     const instance = new VoiceInputController<true>({
+      retryFailedRecording: true,
       recorder: createTestRecorder(platform.recorder),
       getTranscriber: () => platform.transcriber,
       requestPermission: async () => ({ granted: true, canAskAgain: true }),
