@@ -58,4 +58,16 @@ describe("HistorySwipeNavigation", () => {
 
     expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
   });
+
+  it("navigates once the swipe passes the trigger distance, without waiting for the fingers to lift", async () => {
+    navigateHistory.mockReset();
+    await using screen = await render(<HistorySwipeNavigation />);
+    const panel = screen.container.appendChild(document.createElement("div"));
+    for (let step = 0; step < 20; step++) {
+      panel.dispatchEvent(new WheelEvent("wheel", { deltaX: -10, bubbles: true, composed: true }));
+    }
+
+    expect(navigateHistory).toHaveBeenCalledTimes(1);
+    expect(navigateHistory).toHaveBeenCalledWith("back");
+  });
 });
