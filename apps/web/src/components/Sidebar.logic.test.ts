@@ -6,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
+  buildBulkCopyContextMenuItem,
   bulkThreadCopyText,
   shouldCreateNewThreadInCurrentProject,
   deleteSelectedThreadEntries,
@@ -63,7 +64,7 @@ const localEnvironmentId = EnvironmentId.make("environment-local");
 describe("bulkThreadCopyText", () => {
   const entries = [
     { id: "t1", title: "Lead gen", branch: "t3/ops", path: "/repo/.t3/ops" },
-    { id: "t2", title: "Sales calls", branch: "t3/ops", path: "/repo/.t3/ops" },
+    { id: "t2", title: "Sales\ncalls", branch: "t3/ops", path: "/repo/.t3/ops" },
     { id: "t3", title: "Lead gen", branch: null, path: "/repo" },
   ];
 
@@ -78,6 +79,14 @@ describe("bulkThreadCopyText", () => {
       expect(bulkThreadCopyText(entries, action)).toEqual({ text, count, noun });
     },
   );
+
+  it("disables thread chips past the paste limit", () => {
+    const many = Array.from({ length: 201 }, (_, index) => ({ ...entries[2]!, id: `t${index}` }));
+    const threads = (selection: typeof entries) =>
+      buildBulkCopyContextMenuItem(selection).children?.find((item) => item.id === "copy-thread");
+    expect(threads(entries)?.disabled).toBeUndefined();
+    expect(threads(many)).toMatchObject({ disabled: true, label: "Threads (up to 200)" });
+  });
 
   it("copies nothing when no selected thread has the value", () => {
     expect(bulkThreadCopyText([entries[2]!], "copy-branch")).toBeNull();

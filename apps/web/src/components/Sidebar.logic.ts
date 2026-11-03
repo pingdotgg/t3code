@@ -17,6 +17,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-search";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 import {
+  COMPOSER_CONTEXT_MAX_RECORDS,
   isListedThreadLineage,
   type ContextMenuItem,
   type EnvironmentId,
@@ -666,7 +667,14 @@ export function buildBulkCopyContextMenuItem(
       ...(entries.some((entry) => entry.branch)
         ? [{ id: "copy-branch" as const, label: "Branches" }]
         : []),
-      { id: "copy-thread", label: "Threads" },
+      // More records than this fail to decode on paste, so they would not come back as chips.
+      entries.length > COMPOSER_CONTEXT_MAX_RECORDS
+        ? {
+            id: "copy-thread" as const,
+            label: `Threads (up to ${COMPOSER_CONTEXT_MAX_RECORDS})`,
+            disabled: true,
+          }
+        : { id: "copy-thread" as const, label: "Threads" },
       { id: "copy-title", label: "Titles" },
       { id: "copy-thread-id", label: "Thread IDs" },
     ],
@@ -686,7 +694,9 @@ export function bulkThreadCopyText(
   action: keyof typeof BULK_COPY_FIELDS,
 ): { text: string; count: number; noun: string } | null {
   const { field, noun } = BULK_COPY_FIELDS[action];
-  const values = entries.flatMap((entry) => entry[field] ?? []);
+  const values = entries.flatMap((entry) =>
+    field === "title" ? entry.title.replace(/\s*[\r\n]+\s*/g, " ") : (entry[field] ?? []),
+  );
   const lines = field === "branch" || field === "path" ? [...new Set(values)] : values;
   return lines.length === 0 ? null : { text: lines.join("\n"), count: lines.length, noun };
 }
