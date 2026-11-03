@@ -5,6 +5,7 @@ import {
   type ServerProviderCompatibilityAdvisory,
 } from "@t3tools/contracts";
 import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
@@ -655,14 +656,12 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         }
         const operationId = yield* random.uuidV4();
         const next: ProviderInstallState = {
-          driver: DRIVER,
+          ...current,
           operationId,
           phase: "downloading",
           downloadedBytes: 0,
           totalBytes: asset.archiveBytes,
           version: asset.version,
-          installedVersion: current.installedVersion,
-          canRemove: current.canRemove,
           message: "Downloading Codex.",
         };
         yield* SubscriptionRef.set(state, next);
@@ -807,6 +806,9 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
           source: "managed",
         }) satisfies ProviderInstallState,
     );
+    // A supported older runtime still resolves, so a raised pin needs its own update.
+    if (asset && compareSemverVersions(installed.version, asset.version) < 0)
+      yield* start.pipe(Effect.ignore);
   }).pipe(
     Effect.catch(() =>
       SubscriptionRef.update(
