@@ -12,7 +12,7 @@ import { OpenCode2OrchestratorReplayHarness } from "../Adapters/OpenCode2Adapter
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { findReplayFixture, runReplayFixture } from "./ProviderReplayFixtures.ts";
 
-// Evidence driver for #19228: replays recorded OpenCode 2 fixtures through
+// Evidence driver: replays recorded OpenCode 2 fixtures through
 // OrchestratorV2 and records the adapter's own event stream, because the
 // `pendingBackgroundWork` flag is dropped before it reaches domain events.
 // Set EV_TRANSCRIPT to a file path to append the transcript there.
