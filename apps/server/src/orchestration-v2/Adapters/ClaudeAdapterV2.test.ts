@@ -1046,6 +1046,39 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
   );
 });
 
+describe("claudeScratchProjectLookup", () => {
+  it.effect("matches only the project rooted at the scratch folder itself", () =>
+    Effect.gen(function* () {
+      const scratchRoot = "/home/t3/scratch";
+      const roots: Record<string, string> = {
+        scratch: "/home/t3/./scratch/",
+        inside: "/home/t3/scratch/my-app",
+        elsewhere: "/home/t3/code",
+      };
+      const lookup = ClaudeAdapterV2.claudeScratchProjectLookup(
+        {
+          get: (projectId) =>
+            projectId === "broken"
+              ? Effect.fail("store unavailable")
+              : Effect.succeed(
+                  roots[projectId] === undefined
+                    ? Option.none()
+                    : Option.some({ workspaceRoot: roots[projectId] }),
+                ),
+        },
+        yield* Path.Path,
+        scratchRoot,
+      );
+      const isScratch = (id: string) => lookup(ProjectId.make(id));
+      assert.isTrue(yield* isScratch("scratch"));
+      assert.isFalse(yield* isScratch("inside"));
+      assert.isFalse(yield* isScratch("elsewhere"));
+      assert.isFalse(yield* isScratch("missing"));
+      assert.isFalse(yield* isScratch("broken"));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
 describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
   const startTurnWithLaunchArgs = Effect.fnUntraced(function* (
     launchArgs: string,

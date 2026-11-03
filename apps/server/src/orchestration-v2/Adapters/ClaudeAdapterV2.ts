@@ -11868,6 +11868,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   });
 });
 
+/** The Scratch project is the one rooted at the scratch folder itself. */
+export const claudeScratchProjectLookup =
+  <E>(
+    projects: {
+      readonly get: (
+        projectId: OrchestrationV2AppThread["projectId"],
+      ) => Effect.Effect<Option.Option<{ readonly workspaceRoot: string }>, E>;
+    },
+    path: Path.Path,
+    scratchRoot: string,
+  ) =>
+  (projectId: OrchestrationV2AppThread["projectId"]): Effect.Effect<boolean> =>
+    projects.get(projectId).pipe(
+      Effect.map(
+        Option.exists(
+          (project) => path.resolve(project.workspaceRoot) === path.resolve(scratchRoot),
+        ),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+
 export type ClaudeAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | ClaudeAgentSdkQueryRunner
@@ -11899,6 +11920,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     );
     const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
     const path = yield* Path.Path;
+    const scratchRoot = path.resolve(serverConfig.baseDir, "scratch");
     const random = yield* SecureRandom.SecureRandom;
     const binaryPath = yield* resolveClaudeSdkExecutablePath(
       expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
@@ -11909,18 +11931,8 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       settings: { ...config, enabled, binaryPath },
       environment: claudeEnvironment,
       attachmentsDir: serverConfig.attachmentsDir,
-      scratchRoot: path.resolve(serverConfig.baseDir, "scratch"),
-      isScratchProject: (projectId) =>
-        projects.get(projectId).pipe(
-          Effect.map(
-            Option.exists(
-              (project) =>
-                path.resolve(project.workspaceRoot) ===
-                path.resolve(serverConfig.baseDir, "scratch"),
-            ),
-          ),
-          Effect.orElseSucceed(() => false),
-        ),
+      scratchRoot,
+      isScratchProject: claudeScratchProjectLookup(projects, path, scratchRoot),
       fileSystem,
       path,
       random,
