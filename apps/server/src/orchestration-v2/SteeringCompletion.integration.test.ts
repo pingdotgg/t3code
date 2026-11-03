@@ -1649,6 +1649,7 @@ it.effect.each(["next", "/goal ship it"])(
                 (event) =>
                   event.type === "provider-turn.updated" &&
                   event.payload.status === "running" &&
+                  event.payload.runAttemptId !== null &&
                   !known.includes(event.payload.runAttemptId),
               ),
               Stream.take(1),
