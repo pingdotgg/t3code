@@ -241,7 +241,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
 
       const settings = yield* service.getSettings;
       const clientSettings = yield* decodeClientConfigSettings(
-        ServerSettingsModule.redactServerSettingsForClient(settings),
+        ServerSettingsModule.redactServerSettingsForClient(settings, { secretReferences: true }),
       );
       assert.deepEqual(clientSettings.layout, legacyLayout);
       const projectSettingsOverrides: unknown = settings.projectSettingsOverrides;
@@ -274,7 +274,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       );
       assert.deepEqual(
         (yield* decodeClientConfigSettings(
-          ServerSettingsModule.redactServerSettingsForClient(restarted),
+          ServerSettingsModule.redactServerSettingsForClient(restarted, { secretReferences: true }),
         )).layout,
         legacyLayout,
       );
