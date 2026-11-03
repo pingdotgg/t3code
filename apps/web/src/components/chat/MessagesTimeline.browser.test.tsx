@@ -388,17 +388,18 @@ describe("MessagesTimeline work rows", () => {
     const barElement = bar.element();
     const barTop = barElement.getBoundingClientRect().top;
     const viewport = history.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
-    expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
-    expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThanOrEqual(
-      2,
-    );
+    const fullHeight = viewport.scrollHeight;
+    expect(fullHeight).toBeGreaterThan(2000 * 20);
+    expect(fullHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThanOrEqual(2);
+    const tailSources = mountedSources();
     await act(() => {
-      viewport.scrollTop = 0;
+      viewport.scrollTop = fullHeight - viewport.clientHeight - 400;
       viewport.dispatchEvent(new Event("scroll"));
     });
     await expect.element(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
+    await vi.waitFor(() => expect(mountedSources()).toBeGreaterThan(tailSources));
     await expect.element(bar).toHaveAttribute("aria-expanded", "false");
-    expect(viewport.scrollTop).toBeGreaterThan(0);
+    expect(Math.abs(viewport.scrollHeight - fullHeight)).toBeLessThan(fullHeight / 10);
     expect(mountedSources()).toBeLessThan(70);
     expect(barElement.getBoundingClientRect().top).toBe(barTop);
     await screen.getByRole("button", { name: "Jump to latest" }).click();
