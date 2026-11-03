@@ -7,6 +7,7 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -53,10 +54,15 @@ const LIVE_SHELL_SNAPSHOT: OrchestrationV2ShellSnapshot = {
   snapshotSequence: 1,
 };
 
+const SERVER_VERSION = "1.0.0";
+
 function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
   return {
     client,
-    initialConfig: Effect.succeed({ shellResumeCompletionMarker: true } as never),
+    initialConfig: Effect.succeed({
+      shellResumeCompletionMarker: true,
+      environment: { serverVersion: SERVER_VERSION },
+    } as never),
     subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
@@ -831,6 +837,7 @@ describe("environment shell synchronization", () => {
           shellResumeCompletionMarker: true,
           shellThreadFamilies: true,
           shellOlderSettled: true,
+          environment: { serverVersion: SERVER_VERSION },
         } as never),
       };
       const activeSession = yield* SubscriptionRef.make(Option.some(familySession));
@@ -1091,7 +1098,10 @@ describe("environment shell synchronization", () => {
         activeSession,
         Option.some({
           ...session(client),
-          initialConfig: Effect.succeed({ shellThreadFamilies: true } as never),
+          initialConfig: Effect.succeed({
+            shellThreadFamilies: true,
+            environment: { serverVersion: SERVER_VERSION },
+          } as never),
         }),
       );
       yield* SubscriptionRef.changes(shellState).pipe(
@@ -1110,6 +1120,210 @@ describe("environment shell synchronization", () => {
         Effect.map(Option.getOrThrow),
       );
       expect(filled).toEqual([link(2)]);
+    }),
+  );
+});
+
+describe("environment shell cold start from a vouched cache", () => {
+  const CACHED_SEQUENCE = 7;
+  const HTTP_SEQUENCE = 9;
+  const VOUCHED_AT = 1_800_000_000_000;
+  const HOUR_MS = 60 * 60 * 1000;
+  const VOUCH: Persistence.ShellCacheVouch = {
+    omissionKey: "false:false",
+    serverVersion: SERVER_VERSION,
+    authoritativeAt: VOUCHED_AT,
+  };
+
+  const makeColdStart = Effect.fn("test.makeColdStartShell")(function* (input: {
+    readonly vouch: Persistence.ShellCacheVouch | undefined;
+    readonly serverVersion?: string;
+    readonly ageMs?: number;
+  }) {
+    yield* TestClock.setTime(VOUCHED_AT + (input.ageMs ?? HOUR_MS));
+    const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
+    const subscribeInputs = yield* Queue.unbounded<unknown>();
+    const saved = yield* Queue.unbounded<{
+      readonly snapshot: OrchestrationV2ShellSnapshot;
+      readonly vouch: Persistence.ShellCacheVouch | undefined;
+    }>();
+    const httpLoads = yield* Ref.make(0);
+    const client = {
+      [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (subscribeInput: unknown) =>
+        Stream.unwrap(
+          Queue.offer(subscribeInputs, subscribeInput).pipe(Effect.as(Stream.fromQueue(events))),
+        ),
+    } as unknown as WsRpcProtocolClient;
+    const newSession = (): RpcSession.RpcSession => ({
+      ...session(client),
+      initialConfig: Effect.succeed({
+        shellResumeCompletionMarker: true,
+        environment: { serverVersion: input.serverVersion ?? SERVER_VERSION },
+      } as never),
+    });
+    const activeSession = yield* SubscriptionRef.make(Option.some(newSession()));
+    const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+      target: TARGET,
+      state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+      session: activeSession,
+      prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
+      connect: Effect.void,
+      disconnect: Effect.void,
+      retryNow: Effect.void,
+    } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+    const cache = Persistence.EnvironmentCacheStore.of({
+      loadShell: () =>
+        Effect.succeedSome({
+          ...v2ShellSnapshot,
+          snapshotSequence: CACHED_SEQUENCE,
+          ...(input.vouch === undefined ? {} : { vouch: input.vouch }),
+        }),
+      saveShell: (_id, snapshot, vouch) =>
+        Queue.offer(saved, { snapshot, vouch }).pipe(Effect.asVoid),
+      loadThread: () => Effect.succeedNone,
+      saveThread: () => Effect.void,
+      removeThread: () => Effect.void,
+      loadServerConfig: () => Effect.succeedNone,
+      saveServerConfig: () => Effect.void,
+      loadVcsRefs: () => Effect.succeedNone,
+      saveVcsRefs: () => Effect.void,
+      removeVcsRefs: () => Effect.void,
+      clearVcsRefs: () => Effect.void,
+      clear: () => Effect.void,
+    });
+    const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
+      load: () =>
+        Ref.update(httpLoads, (count) => count + 1).pipe(
+          Effect.as(Option.some({ ...v2ShellSnapshot, snapshotSequence: HTTP_SEQUENCE })),
+        ),
+    });
+    const shellState = yield* makeEnvironmentShellState().pipe(
+      Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+      Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
+    );
+    return {
+      events,
+      subscribeInputs,
+      saved,
+      httpLoads,
+      shellState,
+      resubscribe: SubscriptionRef.set(activeSession, Option.some(newSession())),
+      stateWhere: (predicate: (state: EnvironmentShellState) => boolean) =>
+        SubscriptionRef.changes(shellState).pipe(
+          Stream.filter(predicate),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        ),
+    };
+  });
+
+  it.effect.each([
+    { label: "a matching vouch", vouch: VOUCH, resumes: true },
+    {
+      label: "a vouch just inside the age cap",
+      ageMs: 12 * HOUR_MS - 1,
+      vouch: VOUCH,
+      resumes: true,
+    },
+    { label: "a legacy cache without a vouch", vouch: undefined, resumes: false },
+    {
+      label: "another omission key",
+      vouch: { ...VOUCH, omissionKey: "true:false" },
+      resumes: false,
+    },
+    {
+      label: "another server version",
+      vouch: { ...VOUCH, serverVersion: "0.9.0" },
+      resumes: false,
+    },
+    { label: "a vouch at the age cap", ageMs: 12 * HOUR_MS, vouch: VOUCH, resumes: false },
+    { label: "a vouch from the future", ageMs: -HOUR_MS, vouch: VOUCH, resumes: false },
+  ])("resumes the first subscription from the cache only with $label", (input) =>
+    Effect.gen(function* () {
+      const h = yield* makeColdStart(input);
+
+      expect(yield* Queue.take(h.subscribeInputs)).toMatchObject({
+        afterSequence: input.resumes ? CACHED_SEQUENCE : HTTP_SEQUENCE,
+      });
+      expect(yield* Ref.get(h.httpLoads)).toBe(input.resumes ? 0 : 1);
+    }),
+  );
+
+  it.effect("reloads over HTTP when the first resume is retried or only enriched", () =>
+    Effect.gen(function* () {
+      const h = yield* makeColdStart({ vouch: VOUCH });
+      expect(yield* Queue.take(h.subscribeInputs)).toMatchObject({
+        afterSequence: CACHED_SEQUENCE,
+      });
+
+      // Project identities fill in without proving the cached rows are current.
+      const before = yield* SubscriptionRef.get(h.shellState);
+      yield* Queue.offer(h.events, {
+        kind: "snapshot",
+        snapshot: { ...v2ShellSnapshot, snapshotSequence: CACHED_SEQUENCE },
+        resolvedRepositoryIdentityRoots: [],
+      });
+      yield* h.stateWhere((state) => state !== before);
+      yield* h.resubscribe;
+
+      expect(yield* Queue.take(h.subscribeInputs)).toMatchObject({ afterSequence: HTTP_SEQUENCE });
+      expect(yield* Ref.get(h.httpLoads)).toBe(1);
+    }),
+  );
+
+  it.effect("keeps the original vouch time through chained resumes until a server snapshot", () =>
+    Effect.gen(function* () {
+      const h = yield* makeColdStart({ vouch: VOUCH });
+      expect(yield* Queue.take(h.subscribeInputs)).toMatchObject({
+        afterSequence: CACHED_SEQUENCE,
+      });
+
+      yield* Queue.offerAll(h.events, [
+        {
+          kind: "thread.updated",
+          sequence: CACHED_SEQUENCE + 1,
+          location: "active",
+          thread: { ...v2ThreadShell, title: "Replayed" },
+        },
+        { kind: "synchronized" },
+      ]);
+      yield* h.stateWhere((state) => state.status === "live");
+      yield* TestClock.adjust("500 millis");
+      const replayed = yield* Queue.take(h.saved);
+      expect(replayed.snapshot.snapshotSequence).toBe(CACHED_SEQUENCE + 1);
+      expect(replayed.vouch).toEqual(VOUCH);
+
+      // The completed resume lets a reconnect continue from memory, with no HTTP load.
+      yield* h.resubscribe;
+      expect(yield* Queue.take(h.subscribeInputs)).toMatchObject({
+        afterSequence: CACHED_SEQUENCE + 1,
+      });
+      expect(yield* Ref.get(h.httpLoads)).toBe(0);
+
+      yield* TestClock.adjust("2 hours");
+      const refreshedAt = yield* Clock.currentTimeMillis;
+      yield* Queue.offer(h.events, {
+        kind: "snapshot",
+        snapshot: { ...v2ShellSnapshot, snapshotSequence: 20 },
+      });
+      yield* h.stateWhere((state) => state.generation > 0);
+      yield* TestClock.adjust("500 millis");
+      const refreshed = yield* Queue.take(h.saved);
+      expect(refreshed.snapshot.snapshotSequence).toBe(20);
+      expect(refreshed.vouch).toEqual({ ...VOUCH, authoritativeAt: refreshedAt });
+    }),
+  );
+
+  it.effect("saves a vouch stamped at the HTTP snapshot", () =>
+    Effect.gen(function* () {
+      const h = yield* makeColdStart({ vouch: undefined });
+      yield* h.stateWhere((state) => state.generation > 0);
+      yield* TestClock.adjust("500 millis");
+      expect(yield* Queue.take(h.saved)).toMatchObject({
+        snapshot: { snapshotSequence: HTTP_SEQUENCE },
+        vouch: { ...VOUCH, authoritativeAt: VOUCHED_AT + HOUR_MS },
+      });
     }),
   );
 });
