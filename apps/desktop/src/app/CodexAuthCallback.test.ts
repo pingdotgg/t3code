@@ -40,7 +40,7 @@ describe("desktop Codex callback helper", () => {
   it("binds before opening sign-in, ignores a foreign response, and returns only the code callback", async () => {
     const authorizationUrl = request(await freePort());
     const expected = callback(authorizationUrl);
-    const received = await receiveCodexAuthCallback(authorizationUrl, async () => {
+    const openBrowser = async () => {
       const invalid = new URL(expected);
       invalid.searchParams.set("state", "foreign");
       expect((await fetch(invalid)).status).toBe(400);
@@ -48,7 +48,13 @@ describe("desktop Codex callback helper", () => {
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(await response.text()).not.toContain("test-code");
       return true;
-    });
+    };
+    let opening!: Promise<boolean>;
+    const received = await receiveCodexAuthCallback(
+      authorizationUrl,
+      () => (opening = openBrowser()),
+    );
+    await opening;
     expect(received).toBe(expected);
   });
   it("returns hosted web to the exact instance and environment without putting the code in its query", async () => {
@@ -61,19 +67,22 @@ describe("desktop Codex callback helper", () => {
       instanceId: ProviderInstanceId.make("work"),
       flowId: "flow-one",
     };
+    const openBrowser = async () => {
+      const response = await fetch(expected, { redirect: "manual" });
+      expect(response.status).toBe(303);
+      const delivery = response.headers.get("location")!;
+      expect(new URL(delivery).searchParams.has("code")).toBe(false);
+      expect(readCodexAuthDelivery(delivery)?.callbackUrl).toBe(expected);
+      expect(readCodexAuthDelivery(delivery)?.returnUrl).toBe(input.returnUrl);
+      return true;
+    };
+    let opening!: Promise<boolean>;
     await receiveCodexAuthCallback(
       authorizationUrl,
-      async () => {
-        const response = await fetch(expected, { redirect: "manual" });
-        expect(response.status).toBe(303);
-        const delivery = response.headers.get("location")!;
-        expect(new URL(delivery).searchParams.has("code")).toBe(false);
-        expect(readCodexAuthDelivery(delivery)?.callbackUrl).toBe(expected);
-        expect(readCodexAuthDelivery(delivery)?.returnUrl).toBe(input.returnUrl);
-        return true;
-      },
+      () => (opening = openBrowser()),
       (url) => codexAuthDeliveryUrl(input, url),
     );
+    await opening;
   });
   it("cancels and releases its listener so exact-port reauthorization can run again", async ({
     onTestFinished,
