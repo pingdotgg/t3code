@@ -1096,7 +1096,10 @@ export const layer: Layer.Layer<
               (item) =>
                 item.runId === null ||
                 projection.runs.some(
-                  (source) => source.id === item.runId && source.ordinal < run.ordinal,
+                  (source) =>
+                    source.id === item.runId &&
+                    source.ordinal < run.ordinal &&
+                    source.status !== "rolled_back",
                 ),
             ),
             createdAt,
@@ -1249,15 +1252,46 @@ export const layer: Layer.Layer<
             handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
             handoff.delivery?.status === "pending",
         );
+        // A provider that cannot truncate rolls back into a fresh native session holding none of the kept turns.
+        const nativeId = providerThread.nativeThreadRef.nativeId;
+        const providerTurnAttemptIds = new Set(
+          projection.providerTurns.map((turn) => turn.runAttemptId),
+        );
+        const keptAttempts = projection.attempts.filter(
+          (attempt) =>
+            attempt.providerThreadId === providerThread.id &&
+            providerTurnAttemptIds.has(attempt.id) &&
+            projection.runs.some(
+              (source) =>
+                source.id === attempt.runId &&
+                source.ordinal < run.ordinal &&
+                source.status !== "rolled_back",
+            ),
+        );
+        const nativeSessionLacksKeptTurns =
+          !session.providerSession.capabilities.checkpointing.providerCanRollbackConversation &&
+          keptAttempts.length > 0 &&
+          !keptAttempts.some(
+            (attempt) =>
+              attempt.nativeThreadId === undefined || attempt.nativeThreadId === nativeId,
+          ) &&
+          !projection.contextHandoffs.some(
+            (handoff) =>
+              handoff.toProviderThreadId === providerThread.id &&
+              handoff.delivery?.nativeThreadId === nativeId &&
+              handoff.delivery.status !== "pending",
+          );
         const resumed = yield* Effect.result(
-          uncertainDelivery
+          uncertainDelivery || nativeSessionLacksKeptTurns
             ? Effect.fail(
                 new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: session.driver,
                   threadId: projection.thread.id,
                   providerThreadId: providerThread.id,
                   runId,
-                  cause: "Uncertain native history injection",
+                  cause: uncertainDelivery
+                    ? "Uncertain native history injection"
+                    : "Native session holds none of the kept conversation",
                 }),
               )
             : session.resumeThread({
@@ -1329,9 +1363,11 @@ export const layer: Layer.Layer<
           runId,
           reason: uncertainDelivery
             ? "uncertain_history_delivery"
-            : resumed._tag === "Success"
-              ? "handoff_budget_exhausted"
-              : "resume_failed",
+            : nativeSessionLacksKeptTurns
+              ? "native_session_lacks_kept_turns"
+              : resumed._tag === "Success"
+                ? "handoff_budget_exhausted"
+                : "resume_failed",
           errorTag: resumed._tag === "Failure" ? resumed.failure._tag : "ContextHandoffBudgetError",
         });
         const replacement = yield* loadFromProvider(

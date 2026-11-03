@@ -1505,6 +1505,7 @@ describe("orchestration v2 provider switching", () => {
       modelSelection: GROK_MODEL_SELECTION,
       rollback: "replaces_native_thread",
       failResumeAfterRollback: false,
+      replaysKeptTurn: true,
     },
     {
       name: "a native rollback whose next resume fails",
@@ -1514,6 +1515,18 @@ describe("orchestration v2 provider switching", () => {
       modelSelection: CLAUDE_MODEL_SELECTION,
       rollback: "truncates",
       failResumeAfterRollback: true,
+      replaysKeptTurn: true,
+    },
+    {
+      // Pi forks into a new native thread that still holds the kept turns.
+      name: "a native rollback that forks a new native thread",
+      instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+      driver: CLAUDE_DRIVER,
+      capabilities: ClaudeProviderCapabilitiesV2,
+      modelSelection: CLAUDE_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      replaysKeptTurn: false,
     },
   ] as const)(
     "gives the agent the kept conversation and not the rewound turn after $name",
@@ -1644,11 +1657,19 @@ describe("orchestration v2 provider switching", () => {
             const delivered =
               (run3?.text ?? "") +
               (yield* encodeJson((yield* Ref.get(injectedHistory)).slice(historyBeforeRun3)));
-            assert.include(
-              delivered,
-              "favourite colour is teal",
-              "the agent's session no longer holds the kept turn, so the next turn must carry it",
-            );
+            if (scenario.replaysKeptTurn) {
+              assert.include(
+                delivered,
+                "favourite colour is teal",
+                "the agent's session no longer holds the kept turn, so the next turn must carry it",
+              );
+            } else {
+              assert.notInclude(
+                delivered,
+                "favourite colour is teal",
+                "the agent's session still holds the kept turn, so no handoff replays it",
+              );
+            }
             assert.notInclude(
               delivered,
               "favourite animal is an otter",
