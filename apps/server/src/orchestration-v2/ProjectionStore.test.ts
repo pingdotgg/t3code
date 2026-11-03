@@ -5547,7 +5547,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
-  it.effect("does not freshly arm limit recovery for a subagent of a settled parent", () =>
+  it.effect("does not arm or resume limit recovery for a subagent of a settled parent", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
@@ -5555,7 +5555,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const threadPayload = (
         threadId: ThreadId,
         parentThreadId: ThreadId | null,
-        settledOverride: "settled" | null,
+        settledOverride: "settled" | "active" | null,
       ) =>
         ({
           createdBy: "user",
@@ -5580,7 +5580,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           updatedAt: now,
           archivedAt: null,
           settledOverride,
-          settledAt: settledOverride === null ? null : now,
+          settledAt: settledOverride === "settled" ? now : null,
           lastVisitedAt: null,
           deletedAt: null,
         }) as const;
@@ -5687,39 +5687,56 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           `only the child of the unsettled parent is armed (${JSON.stringify(options)})`,
         );
       }
-      // A recovery armed before the parent settled still resumes at its reset.
+      const activeParentId = ThreadId.make("thread:settled-parent-limit:active:parent");
+      const activeRunId = RunId.make("run:settled-parent-limit:active");
       yield* store.apply({
-        id: EventId.make("event:settled-parent-limit:settled:armed"),
+        id: EventId.make("event:settled-parent-limit:active:armed"),
         type: "thread.metadata-updated",
-        threadId: settledParentChild,
+        threadId: activeParentChild,
         occurredAt: now,
         payload: {
-          ...threadPayload(
-            settledParentChild,
-            ThreadId.make("thread:settled-parent-limit:settled:parent"),
-            null,
-          ),
-          limitRecovery: {
-            runId: RunId.make("run:settled-parent-limit:settled"),
-            resetAt,
-            autoResume: true,
-          },
+          ...threadPayload(activeParentChild, activeParentId, null),
+          limitRecovery: { runId: activeRunId, resetAt, autoResume: true },
         },
       });
       const afterReset = DateTime.add(now, { hours: 2 });
-      const resumed = (yield* store.getLimitRecoveryCandidates({
-        now: afterReset,
-        autoResume: true,
-        snooze: false,
-      })).find((row) => row.id === settledParentChild);
-      assert.isDefined(resumed);
-      assert.isTrue(
-        limitRecoveryCommand(
-          resumed,
-          true,
-          DateTime.toEpochMillis(afterReset),
-          false,
-        )?.commandId.startsWith("limit-resume:"),
+      const resumeCommandIds = Effect.fnUntraced(function* () {
+        const candidates = yield* store.getLimitRecoveryCandidates({
+          now: afterReset,
+          autoResume: true,
+          snooze: false,
+        });
+        return candidates
+          .filter((row) => row.id === activeParentChild)
+          .map(
+            (row) =>
+              limitRecoveryCommand(row, true, DateTime.toEpochMillis(afterReset), false)?.commandId,
+          )
+          .filter((commandId) => commandId?.startsWith("limit-resume:"));
+      });
+      yield* store.apply({
+        id: EventId.make("event:settled-parent-limit:active:parent-settled"),
+        type: "thread.settled",
+        threadId: activeParentId,
+        occurredAt: now,
+        payload: threadPayload(activeParentId, null, "settled"),
+      });
+      assert.deepEqual(
+        yield* resumeCommandIds(),
+        [],
+        "a subagent armed while its parent was open does not resume after the parent settles",
+      );
+      yield* store.apply({
+        id: EventId.make("event:settled-parent-limit:active:parent-unsettled"),
+        type: "thread.unsettled",
+        threadId: activeParentId,
+        occurredAt: now,
+        payload: threadPayload(activeParentId, null, "active"),
+      });
+      assert.lengthOf(
+        yield* resumeCommandIds(),
+        1,
+        "the armed subagent resumes once its parent is unsettled",
       );
     }),
   );
