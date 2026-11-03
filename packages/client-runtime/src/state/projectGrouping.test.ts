@@ -416,8 +416,23 @@ describe("sortProjectsByGroupOrder", () => {
   it("tells the same project id on two environments apart", () => {
     const sorted = sortProjectsByGroupOrder(
       [project("shared"), project("shared", remote)],
-      [{ memberProjectRefs: [ref("shared", remote)] }, { memberProjectRefs: [ref("shared")] }],
+      [
+        { memberProjectRefs: [ref("shared", remote)], pinned: false, archived: false },
+        { memberProjectRefs: [ref("shared")], pinned: false, archived: false },
+      ],
     );
     expect(sorted.map((entry) => entry.environmentId)).toEqual([remote, environmentId]);
+  });
+
+  it("lists pinned projects first and archived ones last, like the sidebar's project menu", () => {
+    const sorted = sortProjectsByGroupOrder(
+      [project("archived"), project("recent"), project("pinned"), project("unlisted")],
+      [
+        { memberProjectRefs: [ref("archived")], pinned: false, archived: true },
+        { memberProjectRefs: [ref("recent")], pinned: false, archived: false },
+        { memberProjectRefs: [ref("pinned")], pinned: true, archived: false },
+      ],
+    );
+    expect(sorted.map((entry) => entry.id)).toEqual(["pinned", "recent", "archived", "unlisted"]);
   });
 });
