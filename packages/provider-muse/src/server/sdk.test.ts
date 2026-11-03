@@ -21,6 +21,7 @@ import {
   museVerbatimPath,
   museWorkspaceRoot,
   type MuseSdkHost,
+  type MuseSdkHostOptions,
 } from "./sdk.ts";
 
 vi.mock("node:fs/promises", { spy: true });
@@ -299,6 +300,22 @@ describe("Muse startup on Linux", () => {
         expect(spawned[0]?.command).toBe("/usr/bin/env");
         expect(spawned[0]?.cwd).toBeUndefined();
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("Muse startup with a command env cannot run", () => {
+  it.effect("keeps the native launch for a binary path containing =", () =>
+    Effect.gen(function* () {
+      const launches: Array<MuseSdkHostOptions["launch"]> = [];
+      yield* createMuseSdkHostEffect(
+        { binaryPath: "/opt/muse=stable/bin/muse", cwd: "/w" },
+        (options) => {
+          launches.push(options.launch);
+          return Promise.resolve({ close: async () => {} } as unknown as MuseSdkHost);
+        },
+      ).pipe(Effect.provideService(HostProcess.Platform, "linux"));
+      expect(launches).toEqual([{ command: "/opt/muse=stable/bin/muse", args: [] }]);
+    }),
   );
 });
 
