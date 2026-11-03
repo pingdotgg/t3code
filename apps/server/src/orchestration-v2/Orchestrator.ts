@@ -13069,6 +13069,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} changed before automatic settlement.`,
           });
         }
+        // The next queued run is promoted after the previous one's completion commits.
+        const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
+        if (runs.some((run) => run.status === "queued" && run.queueHeld !== true)) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} has queued work that will start.`,
+          });
+        }
         yield* dispatchThreadMutation(
           {
             type: "thread.settle",
