@@ -59,6 +59,10 @@ describe("labels and reference links", () => {
       collectComposerContextReferences(`[${"x".repeat(300)}](t3-context://v1/file/ctx_1)`)[0]
         ?.label,
     ).toHaveLength(200);
+    expect(
+      collectComposerContextReferences(`[${"x".repeat(199)}😀tail](t3-context://v1/file/ctx_1)`)[0]
+        ?.label,
+    ).toBe("x".repeat(199));
   });
 
   it("collects occurrences in document order with offsets, sharing a payload", () => {
@@ -219,6 +223,29 @@ describe("provider projection", () => {
     expect(project("a\nb\n")).toContain("3 | a\n4 | b\n</context>");
     expect(project("a\nb\n")).not.toContain("5 |");
     expect(project("a\n")).toContain("3 | a\n4 | \n</context>");
+  });
+
+  it("keeps a review excerpt's trailing blank line and whitespace", () => {
+    const projected = projectComposerContextForProvider({
+      text: "[Comment](t3-context://v1/review-comment/ctx_r)",
+      records: [
+        {
+          version: 1,
+          contextId: ctx("ctx_r"),
+          kind: "review-comment",
+          label: "Comment",
+          sectionId: "turn:1",
+          sectionTitle: "Turn 1",
+          filePath: "src/app.ts",
+          startIndex: 1,
+          endIndex: 2,
+          rangeLabel: "2 to 3",
+          text: "Insert here.",
+          diff: "@@ -3,1 +2,2 @@\n+two\t\n \n",
+        },
+      ],
+    });
+    expect(projected).toContain("diff:\n  @@ -3,1 +2,2 @@\n  +two\t\n   \n</context>");
   });
 
   it("emits no terminal lines when the captured range is inverted", () => {
