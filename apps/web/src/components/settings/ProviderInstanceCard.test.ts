@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ServerProviderModel } from "@t3tools/contracts";
+import { SecretProviderId, type ServerProviderModel } from "@t3tools/contracts";
 
 import {
   deriveProviderModelsForDisplay,
+  nextProviderEnvironmentWithFieldSecret,
   nextProviderEnvironmentWithFieldValue,
 } from "./ProviderInstanceCard";
 
@@ -73,6 +74,20 @@ describe("provider environment helpers", () => {
         "new-key",
       ),
     ).toEqual([{ name: "CURSOR_API_KEY", value: "new-key", sensitive: true }]);
+  });
+
+  it("points a stored provider secret at a secret provider and drops the stored value", () => {
+    const secret = {
+      provider: SecretProviderId.make("personal"),
+      reference: "op://Private/Cursor/credential",
+    };
+    const stored = [{ name: "CURSOR_API_KEY", value: "", sensitive: true, valueRedacted: true }];
+    const referenced = nextProviderEnvironmentWithFieldSecret(stored, cursorApiKeyField, secret);
+
+    expect(referenced).toEqual([{ name: "CURSOR_API_KEY", value: secret, sensitive: true }]);
+    expect(
+      nextProviderEnvironmentWithFieldSecret(referenced, cursorApiKeyField, undefined),
+    ).toEqual([]);
   });
 
   it("applies the secure field default when replacing an existing non-sensitive value", () => {
