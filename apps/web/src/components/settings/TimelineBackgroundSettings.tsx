@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { type CSSProperties, useRef, useState } from "react";
 import { IMAGE_ATTACHMENT_MAX_EDGE } from "@t3tools/client-runtime/image-attachment-size";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import {
@@ -141,6 +141,12 @@ export function TimelineBackgroundSettings() {
                 min={0}
                 max={100}
                 value={shownOpacity}
+                style={
+                  {
+                    "--settings-slider-progress": `${shownOpacity}%`,
+                    "--settings-slider-fill-offset": `${0.5 - shownOpacity / 100}rem`,
+                  } as CSSProperties
+                }
                 onChange={(event) => setOpacityDraft(Number(event.currentTarget.value))}
                 onPointerUp={settleOpacity}
                 onKeyUp={settleOpacity}
@@ -158,6 +164,12 @@ export function TimelineBackgroundSettings() {
                 min={0}
                 max={30}
                 value={shownBlur}
+                style={
+                  {
+                    "--settings-slider-progress": `${(shownBlur / 30) * 100}%`,
+                    "--settings-slider-fill-offset": `${0.5 - shownBlur / 30}rem`,
+                  } as CSSProperties
+                }
                 onChange={(event) => setBlurDraft(Number(event.currentTarget.value))}
                 onPointerUp={settleBlur}
                 onKeyUp={settleBlur}
