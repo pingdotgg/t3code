@@ -25,6 +25,7 @@ import {
   shouldRenderThreadScopedToast,
 } from "./toast.logic";
 import { backgroundChatPaneThreadRefs, useChatPanesStore } from "../../chatPanesStore";
+import { useShallow } from "zustand/react/shallow";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./tooltip";
 import { useThreadRouteTarget } from "~/hooks/useThreadRouteTarget";
 
@@ -450,8 +451,9 @@ function useVisibleThreadRefsFromRoute(): ReadonlyArray<ScopedThreadRef> {
   const activeDraftSession = useComposerDraftStore((store) =>
     routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,
   );
-  const chatPanesLayout = useChatPanesStore((state) => state.layout);
-  const backgroundRefs = backgroundChatPaneThreadRefs(chatPanesLayout, routeTarget);
+  const backgroundRefs = useChatPanesStore(
+    useShallow((state) => backgroundChatPaneThreadRefs(state.layout, routeTarget)),
+  );
 
   if (routeTarget?.kind === "server") {
     return [routeTarget.threadRef, ...backgroundRefs];

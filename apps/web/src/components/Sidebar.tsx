@@ -258,6 +258,7 @@ import { TooltipProvider } from "./ui/tooltip";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { useChatPaneCommands } from "../hooks/useChatPaneCommands";
+import { useShallow } from "zustand/react/shallow";
 import { backgroundChatPaneThreadRefs, useChatPanesStore } from "../chatPanesStore";
 import {
   SidebarSearchResultRow,
@@ -1086,9 +1087,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const routeThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
   const { openInSplit } = useChatPaneCommands();
-  const chatPanesLayout = useChatPanesStore((state) => state.layout);
+  // Derived and shallow-compared: the layout also changes on every focus switch.
   const backgroundPaneThreadKeys = new Set(
-    backgroundChatPaneThreadRefs(chatPanesLayout, routeTarget).map(scopedThreadKey),
+    useChatPanesStore(
+      useShallow((state) =>
+        backgroundChatPaneThreadRefs(state.layout, routeTarget).map(scopedThreadKey),
+      ),
+    ),
   );
 
   // A selection made under one scope can hold threads the next scope hides.

@@ -15,11 +15,13 @@ import {
   resolveChatPanes,
   SINGLE_CHAT_PANE_LAYOUT,
   useChatPanesStore,
+  type ChatPaneDirection,
   type ResolvedChatPane,
 } from "../chatPanesStore";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import { useResizeDrag } from "../hooks/useResizeDrag";
+import { useStableCallback } from "../hooks/useStableCallback";
 import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
 import {
@@ -41,7 +43,6 @@ const CHAT_PANE_MIN_HEIGHT = 240;
 const CHAT_PANE_KEYBOARD_STEP = 0.05;
 /** Room for the chat column and the right panel beside it at their 360px minimums. */
 const CHAT_PANE_INLINE_RIGHT_PANEL_MIN_WIDTH = 720;
-const NO_THREAD_KEYS: ReadonlySet<string> = new Set();
 const KEYBOARD_FOCUS = "keyboard";
 
 interface WindowEdges {
@@ -62,8 +63,6 @@ export function ChatPanes({
   const router = useRouter();
   const navigate = useNavigate();
   const layout = useChatPanesStore((state) => state.layout);
-  const swap = useChatPanesStore((state) => state.swap);
-  const setDirection = useChatPanesStore((state) => state.setDirection);
   const panes = resolveChatPanes(layout, routeTarget);
   const paneThreadKeys = useComposerDraftStore(
     useShallow((store) => panes.map((pane) => paneThreadKey(pane.target, store))),
@@ -169,22 +168,16 @@ export function ChatPanes({
                 background={background}
                 onFocus={() => focusPane(pane.target)}
                 focusIntentRef={focusIntentRef}
-                chatPane={{
-                  direction: layout.direction,
-                  element: null,
-                  narrow: false,
-                  hostsHiddenTerminals: alone || index === 0,
-                  otherPaneThreadKeys: alone
-                    ? NO_THREAD_KEYS
-                    : new Set(
-                        paneThreadKeys.filter(
-                          (key, keyIndex): key is string => keyIndex !== index && key !== null,
-                        ),
-                      ),
-                  swap,
-                  setDirection,
-                  close: () => closePane(pane.id),
-                }}
+                direction={layout.direction}
+                hostsHiddenTerminals={alone || index === 0}
+                otherPaneThreadKeys={
+                  alone
+                    ? ""
+                    : paneThreadKeys
+                        .filter((key, keyIndex) => keyIndex !== index && key !== null)
+                        .join("\n")
+                }
+                onClose={() => closePane(pane.id)}
               />
             </Fragment>
           );
@@ -305,7 +298,10 @@ function ChatPane({
   alone,
   edges,
   background,
-  chatPane,
+  direction,
+  hostsHiddenTerminals,
+  otherPaneThreadKeys,
+  onClose,
   onFocus,
   focusIntentRef,
 }: {
@@ -317,11 +313,18 @@ function ChatPane({
   alone: boolean;
   edges: WindowEdges;
   background: boolean;
-  chatPane: ChatPaneContextValue;
+  direction: ChatPaneDirection;
+  hostsHiddenTerminals: boolean;
+  /** Newline-joined, so an unchanged set keeps the context value and spares ChatView a render. */
+  otherPaneThreadKeys: string;
+  onClose: () => void;
   onFocus: () => void;
   focusIntentRef: RefObject<string | null>;
 }) {
   const composerHandle = useComposerHandleContext();
+  const swap = useChatPanesStore((state) => state.swap);
+  const setDirection = useChatPanesStore((state) => state.setDirection);
+  const close = useStableCallback(onClose);
   // Code can focus a pane after it lost focus (an async editor focus, a dialog restoring focus);
   // that is not the user switching panes, so the focused pane's composer takes it instead.
   const onFocusIn = (event: FocusEvent<HTMLDivElement>) => {
@@ -341,6 +344,16 @@ function ChatPane({
     const measure = () => setNarrow(node.clientWidth < CHAT_PANE_INLINE_RIGHT_PANEL_MIN_WIDTH);
     measure();
     return observeResize(node, measure);
+  };
+  const chatPaneValue: ChatPaneContextValue = {
+    direction,
+    element: alone ? null : element,
+    narrow: !alone && narrow,
+    hostsHiddenTerminals,
+    otherPaneThreadKeys: new Set(otherPaneThreadKeys === "" ? [] : otherPaneThreadKeys.split("\n")),
+    swap,
+    setDirection,
+    close,
   };
   return (
     <div
@@ -365,14 +378,12 @@ function ChatPane({
     >
       {/* The app-wide composer handle belongs to the focused pane's composer. */}
       <ComposerHandleContext value={passive ? null : composerHandle}>
-        <ChatPaneContext
-          value={{ ...chatPane, element: alone ? null : element, narrow: !alone && narrow }}
-        >
+        <ChatPaneContext value={chatPaneValue}>
           <ThreadRouteContent
             target={pane.target}
             background={background}
             passive={passive}
-            unavailable={<UnavailablePane onClose={chatPane.close} />}
+            unavailable={<UnavailablePane onClose={close} />}
           />
         </ChatPaneContext>
       </ComposerHandleContext>
