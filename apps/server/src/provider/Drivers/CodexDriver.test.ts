@@ -106,7 +106,7 @@ const noSpawn = ChildProcessSpawner.make(() =>
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(layerTest)("CodexDriver", (it) => {
-  it.effect.skipIf(!windowsHost || !symlinksSupported)(
+  it.effect.skipIf(!symlinksSupported)(
     "surfaces managed SQLite recovery while preserving authenticated provider state",
     () =>
       Effect.gen(function* () {
