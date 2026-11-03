@@ -397,7 +397,7 @@ it("checks changed source paths through the Windows launcher", () => {
   expect(result.status, result.stdout + result.stderr).toBe(0);
   const calls = project.calls();
   expect(calls.find(({ args }) => args[0] === "lint")).toEqual({
-    args: ["lint", project.source],
+    args: ["lint", "--no-error-on-unmatched-pattern", project.source],
     cwd: project.root,
   });
   expect(calls.some(({ args }) => args[0] === "fmt" && args.includes(project.source))).toBe(true);
@@ -405,6 +405,17 @@ it("checks changed source paths through the Windows launcher", () => {
   expect(calls.some(({ args }) => args[0] === "install")).toBe(false);
   expect(result.stdout).toContain("fixture stdout: lint");
   expect(result.stdout).toContain("fixture stderr: lint");
+});
+
+it("lints an Astro component and runs knip when only it changed", () => {
+  using project = launcherFixture();
+  const page = "packages/example/Page.astro";
+  project.write(page, "---\nconst title = 1;\n---\n<h1>{title}</h1>\n");
+  const result = project.run();
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+  const calls = project.calls();
+  expect(calls.find(({ args }) => args[0] === "lint")?.args).toEqual(["lint", page]);
+  expect(calls.some(({ args }) => args[0] === "exec" && args[1] === "knip")).toBe(true);
 });
 
 it.each(["install", "lint"])("reports a failing %s step with its output", (step) => {
