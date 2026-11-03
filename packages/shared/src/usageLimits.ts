@@ -868,7 +868,10 @@ export function collectProviderUsageLimits(
       accounts.push({
         id: `${source.id}:${account.id}`,
         driver: account.driver,
-        label: account.email?.trim() || `${driverLabel} account ${proxyAccountNumber}`,
+        label:
+          account.email?.trim() ||
+          hubAccountName(account) ||
+          `${driverLabel} account ${proxyAccountNumber}`,
         sourceLabel: source.label,
         ...(account.usageLimits.resetCredits?.nextCreditId
           ? {
