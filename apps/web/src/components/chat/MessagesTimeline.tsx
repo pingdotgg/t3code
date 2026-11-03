@@ -679,7 +679,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const workingHistoryOpen = rows.some(
     (row) => row.kind === "working" && row.window?.historyOpen === true,
   );
-  // A history open when its turn ends stays open as the turn's fold.
   if (rows.some((row) => row.kind === "working")) {
     const historyRunId = workingHistoryOpen ? (latestRun?.runId ?? null) : null;
     if (historyRunId !== openHistoryRunId) setOpenHistoryRunId(historyRunId);

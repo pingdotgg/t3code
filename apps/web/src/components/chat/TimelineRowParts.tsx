@@ -118,7 +118,6 @@ export function WorkFoldCaret({
   );
 }
 
-/** A bar label that folds the work under it, inert until there is something to reveal. */
 export function WorkFoldToggle({
   togglable,
   expanded,
