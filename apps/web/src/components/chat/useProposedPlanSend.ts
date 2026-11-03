@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  OrchestrationV2DispatchCommandError,
   type ModelSelection,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -19,6 +20,7 @@ import type {
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { truncate } from "@t3tools/shared/String";
 import { useNavigate } from "@tanstack/react-router";
+import * as Schema from "effect/Schema";
 import type { Dispatch, SetStateAction } from "react";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -44,6 +46,9 @@ import type { useLocalDispatchState } from "./useLocalDispatchState";
 import type { useTimelineFollow } from "./useTimelineFollow";
 
 type LocalDispatchState = ReturnType<typeof useLocalDispatchState>;
+
+// The server answered and committed nothing; a transport failure may still have started the turn.
+const isDispatchRefusal = Schema.is(OrchestrationV2DispatchCommandError);
 
 interface PlanSendBase {
   readonly environmentId: EnvironmentId;
@@ -98,6 +103,9 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
     reportFailure: false,
   });
+  const setThreadInteractionMode = useOrchestrationCommand(threadEnvironment.setInteractionMode, {
+    reportFailure: false,
+  });
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
   );
@@ -133,6 +141,11 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
     }
 
     const threadIdForSend = activeThread.id;
+    const threadRefForSend = scopeThreadRef(activeThread.environmentId, threadIdForSend);
+    const previousInteractionMode = activeThread.interactionMode;
+    const previousDraftInteractionMode = useComposerDraftStore
+      .getState()
+      .getComposerDraft(threadRefForSend)?.interactionMode;
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingPrompt({
@@ -177,10 +190,7 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
       settingsResult._tag === "Failure" ? settingsResult : null;
 
     if (failure === null) {
-      setComposerDraftInteractionMode(
-        scopeThreadRef(activeThread.environmentId, threadIdForSend),
-        nextInteractionMode,
-      );
+      setComposerDraftInteractionMode(threadRefForSend, nextInteractionMode);
 
       const startResult = await startThreadTurn({
         environmentId,
@@ -209,6 +219,21 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
         },
       });
       failure = startResult._tag === "Failure" ? startResult : null;
+
+      // A thread left out of plan without a turn would hide Implement when the plan mode setting is off.
+      if (failure !== null && isDispatchRefusal(squashAtomCommandFailure(failure))) {
+        setComposerDraftInteractionMode(threadRefForSend, previousDraftInteractionMode);
+        if (previousInteractionMode !== nextInteractionMode) {
+          await setThreadInteractionMode({
+            environmentId,
+            input: {
+              threadId: threadIdForSend,
+              interactionMode: previousInteractionMode,
+              createdAt: new Date().toISOString(),
+            },
+          });
+        }
+      }
     }
 
     if (failure === null) {
