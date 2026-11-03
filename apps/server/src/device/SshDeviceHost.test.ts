@@ -375,7 +375,10 @@ it.effect(
 
       // A hub that keeps missing probes is still replaced.
       hubAnswers = false;
-      yield* TestClock.adjust("1 minute");
+      // Recovery reset the miss count, so two new misses do not reconnect yet.
+      yield* TestClock.adjust("30 seconds");
+      expect(forwardSpawns).toBe(1);
+      yield* TestClock.adjust("30 seconds");
       expect(forwardSpawns).toBe(2);
       yield* host.stop;
     }).pipe(
