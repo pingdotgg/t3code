@@ -335,8 +335,16 @@ it.effect.each(forkCases)(
         status: "rolled_back",
         text: "SOURCE_ROLLED_BACK_MARKER",
       });
-      for (const ordinal of [2, 3]) {
-        const runId = ordinal === 2 ? sourceRunId : RunId.make("later-run");
+      const cancelledRunId = RunId.make("fork-boundary-cancelled-queue");
+      yield* writeParentRun({
+        threadId: sourceThreadId,
+        runId: cancelledRunId,
+        ordinal: 2,
+        status: "cancelled",
+        text: "CANCELLED_QUEUE_MARKER",
+      });
+      for (const ordinal of [3, 4]) {
+        const runId = ordinal === 3 ? sourceRunId : RunId.make("later-run");
         const messageId = MessageId.make(`source-message-${ordinal}`);
         yield* eventSink.write({
           events: [
@@ -355,8 +363,8 @@ it.effect.each(forkCases)(
                 providerThreadId,
                 userMessageId: messageId,
                 rootNodeId: null,
-                activeAttemptId: ordinal === 2 && status === "interrupted" ? attemptId : null,
-                status: ordinal === 2 ? status : "completed",
+                activeAttemptId: ordinal === 3 && status === "interrupted" ? attemptId : null,
+                status: ordinal === 3 ? status : "completed",
                 queuePosition: null,
                 requestedAt: now,
                 startedAt: now,
@@ -391,7 +399,7 @@ it.effect.each(forkCases)(
                 creationSource: "web",
                 inputIntent: "turn_start",
                 messageId,
-                text: ordinal === 2 ? "INCLUDED_SOURCE_MARKER" : "EXCLUDED_LATER_MARKER",
+                text: ordinal === 3 ? "INCLUDED_SOURCE_MARKER" : "EXCLUDED_LATER_MARKER",
                 attachments: [],
               },
             },
@@ -411,6 +419,7 @@ it.effect.each(forkCases)(
       const rewoundAt = yield* DateTime.now;
       for (const [threadId, runId] of [
         [sourceThreadId, sourceRunId],
+        [sourceThreadId, cancelledRunId],
         [grandparentThreadId, grandparentRunId],
       ] as const) {
         const source = yield* orchestrator.getThreadProjection(threadId);
@@ -447,6 +456,7 @@ it.effect.each(forkCases)(
       const history = handoff.history?.messages.map((message) => message.text).join("\n") ?? "";
       assert.include(`${handoff.summaryText}\n${history}`, "GRANDPARENT_MARKER");
       assert.notInclude(`${handoff.summaryText}\n${history}`, "SOURCE_ROLLED_BACK_MARKER");
+      assert.notInclude(`${handoff.summaryText}\n${history}`, "CANCELLED_QUEUE_MARKER");
       assert.notInclude(`${handoff.summaryText}\n${history}`, "ROLLED_BACK_MARKER");
       assert.include(`${handoff.summaryText}\n${history}`, "INCLUDED_SOURCE_MARKER");
       assert.notInclude(`${handoff.summaryText}\n${history}`, "EXCLUDED_LATER_MARKER");
@@ -677,6 +687,7 @@ const writeParentRun = (input: {
     | "preparing"
     | "running"
     | "queued"
+    | "cancelled"
     | "completed"
     | "rolled_back"
     | "failed"
@@ -745,7 +756,7 @@ const writeParentRun = (input: {
             status: input.status,
             queuePosition: null,
             requestedAt: now,
-            startedAt: now,
+            startedAt: input.status === "cancelled" ? null : now,
             completedAt:
               input.status === "completed" || input.status === "rolled_back" ? now : null,
             checkpointId: input.stable ? CheckpointId.make(`${input.runId}:checkpoint`) : null,
@@ -781,7 +792,7 @@ const writeParentRun = (input: {
             type: "user_message",
             createdBy: "user",
             creationSource: "web",
-            inputIntent: "turn_start",
+            inputIntent: input.status === "cancelled" ? "queued_turn" : "turn_start",
             messageId,
             text: input.text,
             attachments: [],

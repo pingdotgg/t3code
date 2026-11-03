@@ -166,7 +166,10 @@ const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHis
           run.status === "rolled_back" &&
           (run.completedAt === null ||
             DateTime.toEpochMillis(run.completedAt) > DateTime.toEpochMillis(forkCreatedAt))
-            ? { ...run, status: "completed" as const }
+            ? {
+                ...run,
+                status: run.startedAt === null ? ("cancelled" as const) : ("completed" as const),
+              }
             : run,
         ),
       },
