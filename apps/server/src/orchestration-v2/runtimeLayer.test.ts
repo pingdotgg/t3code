@@ -2908,6 +2908,84 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("deleting a source releases the files it added after its fork's run", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const { sourceThreadId, attachmentId } = yield* seedImagePromptRunFork("after-fork-run");
+      const laterRunId = RunId.make("image-fork-later-run");
+      const laterMessageId = MessageId.make("image-fork-later-message");
+      const laterAttachmentId = createAttachmentId(sourceThreadId, "png")!;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("image-fork-later-run"),
+            type: "run.created",
+            threadId: sourceThreadId,
+            runId: laterRunId,
+            occurredAt: now,
+            payload: {
+              id: laterRunId,
+              threadId: sourceThreadId,
+              ordinal: 2,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: laterMessageId,
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "completed",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+          {
+            id: EventId.make("image-fork-later-message"),
+            type: "message.updated",
+            threadId: sourceThreadId,
+            runId: laterRunId,
+            occurredAt: now,
+            payload: {
+              id: laterMessageId,
+              threadId: sourceThreadId,
+              runId: laterRunId,
+              nodeId: null,
+              role: "user",
+              text: "And this one?",
+              attachments: [
+                {
+                  type: "image",
+                  id: laterAttachmentId,
+                  name: "later.png",
+                  mimeType: "image/png",
+                  sizeBytes: 8,
+                },
+              ],
+              streaming: false,
+              createdBy: "user",
+              creationSource: "web",
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+        ],
+      });
+      const deleteCommandId = CommandId.make("image-fork-after-fork-run-delete");
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: deleteCommandId,
+        threadId: sourceThreadId,
+      });
+      const cleaned = yield* queuedAttachmentCleanup(deleteCommandId);
+      assert.include(cleaned, laterAttachmentId);
+      assert.notInclude(cleaned, attachmentId);
+    }),
+  );
+
   it.effect("keeps the branch pull request when linking another pull request", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
