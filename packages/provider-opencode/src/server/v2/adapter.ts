@@ -3143,8 +3143,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   status,
                 }).pipe(Effect.as("unavailable" as const)),
           ),
+          // A server still connecting would join mid-turn, so it is withdrawn until the next turn.
           Effect.catchCause((cause) =>
             Effect.logWarning("OpenCode did not connect T3 Code's MCP server.", cause).pipe(
+              Effect.andThen(removeMcp(wanted)),
+              Effect.andThen(
+                Effect.sync(() => {
+                  state.mcp = undefined;
+                }),
+              ),
               Effect.as("unavailable" as const),
             ),
           ),

@@ -174,7 +174,7 @@ const withInstructions = (
       typeof entry.frame === "object" &&
       entry.frame !== null &&
       "operation" in entry.frame &&
-      (entry.frame.operation === "mcp.add" || entry.frame.operation === "mcp.list"),
+      ["mcp.add", "mcp.list", "mcp.remove"].includes(String(entry.frame.operation)),
   );
   const at = after < 0 ? first : after + 1;
   return first < 0
@@ -2886,6 +2886,67 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         assert.equal(settles.count(), 1);
       }),
     ).pipe(Effect.scoped),
+  );
+
+  it.effect("withdraws T3 MCP that is still connecting when the turn starts without it", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+        threadId,
+        providerSessionId: "mcp:opencode2-adapter",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:3773/mcp",
+        authorizationHeader: "Bearer thread-credential",
+        browserToolsAvailable: false,
+      });
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+      const server = "t3-code-thread_opencode2-adapter";
+      const { runtime, thread } = yield* resumed([
+        out("mcp.add", {
+          server,
+          "location[directory]": WORK,
+          config: {
+            type: "remote",
+            url: "http://127.0.0.1:3773/mcp",
+            headers: { Authorization: "Bearer thread-credential" },
+            oauth: false,
+          },
+        }),
+        reply("mcp.add", null),
+        out("mcp.list", { "location[directory]": WORK }),
+        reply("mcp.list", {
+          location: { directory: WORK },
+          data: [{ name: server, status: { status: "pending" } }],
+        }),
+        // A connection that completes after the prompt would add T3's tools mid-turn.
+        out("mcp.remove", { server, "location[directory]": WORK }),
+        reply("mcp.remove", null),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const clock = yield* Clock.Clock;
+      const sleeps = yield* Queue.unbounded<number>();
+      const sleep = (duration: Duration.Duration) =>
+        Queue.offer(sleeps, Duration.toMillis(duration)).pipe(
+          Effect.andThen(clock.sleep(duration)),
+        );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const started = yield* runtime
+        .startTurn(turnInput(thread))
+        .pipe(Effect.provideService(Clock.Clock, { ...clock, sleep }), Effect.forkScoped);
+      // The add's own timeout is the first 5 s sleep; the connected wait's is the second.
+      yield* Queue.take(sleeps).pipe(
+        Effect.repeat({ until: (millis) => millis === 5000, times: 100 }),
+      );
+      yield* Queue.take(sleeps).pipe(
+        Effect.repeat({ until: (millis) => millis === 5000, times: 100 }),
+      );
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(started);
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
   );
 
   it.effect("waits for OpenCode to connect T3 MCP before prompting", () =>
