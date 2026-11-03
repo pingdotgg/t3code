@@ -37,24 +37,27 @@ function callback(authorizationUrl: string) {
 }
 
 describe("desktop Codex callback helper", () => {
-  it("binds before opening sign-in, ignores a foreign response, and returns only the code callback", async () => {
+  it("binds before opening sign-in, ignores a foreign response, and returns only the code callback", async ({
+    onTestFinished,
+  }) => {
     const authorizationUrl = request(await freePort());
     const expected = callback(authorizationUrl);
-    const openBrowser = async () => {
+    const opening = Promise.withResolvers<boolean>();
+    onTestFinished(() => opening.resolve(true));
+    const checkResponse = async () => {
       const invalid = new URL(expected);
       invalid.searchParams.set("state", "foreign");
       expect((await fetch(invalid)).status).toBe(400);
       const response = await fetch(expected);
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(await response.text()).not.toContain("test-code");
-      return true;
     };
-    let opening!: Promise<boolean>;
-    const received = await receiveCodexAuthCallback(
-      authorizationUrl,
-      () => (opening = openBrowser()),
-    );
-    await opening;
+    let responseChecked!: Promise<void>;
+    const received = await receiveCodexAuthCallback(authorizationUrl, () => {
+      responseChecked = checkResponse();
+      return responseChecked.then(() => opening.promise);
+    });
+    await responseChecked;
     expect(received).toBe(expected);
   });
   it("returns hosted web to the exact instance and environment without putting the code in its query", async () => {
