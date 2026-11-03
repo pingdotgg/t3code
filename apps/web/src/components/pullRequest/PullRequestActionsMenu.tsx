@@ -513,7 +513,7 @@ export function PullRequestActionsMenu({
                 <span>
                   {pendingAction === "delete-branch" ? "Deleting branch..." : "Delete branch"}
                 </span>
-                <span className="truncate text-caption text-muted-foreground">
+                <span className="truncate text-meta text-muted-foreground">
                   {environmentConnected ? detail.headBranch : "Reconnect to delete this branch"}
                 </span>
               </span>
