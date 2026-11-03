@@ -897,7 +897,14 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           yield* fileSystem.makeDirectory(bareGitDir);
           yield* fileSystem.writeFileString(
             path.join(bareGitDir, "config"),
-            '[core] bare = "true" ; bare repository\n[remote "origin"]\nurl = git@github.com:pingdotgg/t3code.git\n',
+            [
+              "[core] bare = false # ignored backslash \\",
+              'bare = "tr\\',
+              'ue"',
+              '[remote "origin"]',
+              "url = git@github.com:pingdotgg/t3code.git",
+              "",
+            ].join("\n"),
           );
           const dev = path.join(bare, "dev");
           const prod = path.join(bare, "prod");
