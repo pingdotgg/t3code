@@ -7481,8 +7481,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ): Effect.fn.Return<void> {
           if (context.finalized) return;
           const settledStatus = context.interrupted ? "interrupted" : status;
-          const threadDisposition =
-            settledStatus === "failed" ? (options?.threadDisposition ?? "reusable") : "reusable";
+          const threadDisposition = options?.threadDisposition ?? "reusable";
           context.finalizedStatus = settledStatus;
           context.finalized = true;
           const directStopQuarantine = yield* Ref.get(stoppedRunQuarantine);
@@ -7615,7 +7614,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   runOrdinal: context.input.runOrdinal,
                   status: settledStatus,
                   failure: null,
-                  threadDisposition: "reusable",
+                  threadDisposition,
                 },
           );
           const subagentsRequiringCarryover = [...context.subagents.values()].filter(

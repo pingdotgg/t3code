@@ -733,139 +733,173 @@ describe("AcpAdapterV2", () => {
       assert.equal(promptOrdinal, 2, "continuation turn must not dispatch session/prompt");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
-  it.live("fails an end_turn the outcome check rejects and restarts before the next turn", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const instanceId = ProviderInstanceId.make("acp-test-prompt-outcome");
-      const threadId = ThreadId.make("thread-acp-prompt-outcome");
-      const quota = {
-        class: "usage_limit",
-        message: "Quota reached.",
-        code: "RESOURCE_EXHAUSTED",
-        retryable: true,
-        resetAt: "2030-01-01T00:00:00.000Z",
-      } as const;
-      const poisoned = {
-        class: "provider_error",
-        message: "Saved history is unusable.",
-        code: "INVALID_THINKING_SIGNATURE",
-        retryable: true,
-      } as const;
-      // The runtime ordinal of each prompt, and the session each check watched.
-      const promptRuntimes: Array<number> = [];
-      const watchedSessions: Array<string> = [];
-      const adapter = yield* makeAcpAdapterV2({
-        instanceId,
-        selfInvocation: yield* resolveSelfInvocation(),
-        flavor: {
-          driver: ACP_TEST_DRIVER,
-          capabilities: AcpProviderCapabilitiesV2,
-          watchPromptOutcome: (sessionId) =>
-            Effect.sync(() => {
-              watchedSessions.push(sessionId);
-              const outcome =
-                watchedSessions.length === 1
-                  ? { failure: quota, threadDisposition: "reusable" as const }
-                  : watchedSessions.length === 3
-                    ? { failure: poisoned, threadDisposition: "broken" as const }
-                    : undefined;
-              return () => Effect.succeed(outcome);
+  it.live.each([false, true])(
+    "fails a rejected outcome and preserves broken history with stop=%s",
+    (interrupt) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const checking = yield* Deferred.make<void>();
+        const releaseCheck = yield* Deferred.make<void>();
+        const cancelled = yield* Deferred.make<void>();
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const instanceId = ProviderInstanceId.make("acp-test-prompt-outcome");
+        const threadId = ThreadId.make("thread-acp-prompt-outcome");
+        const quota = {
+          class: "usage_limit",
+          message: "Quota reached.",
+          code: "RESOURCE_EXHAUSTED",
+          retryable: true,
+          resetAt: "2030-01-01T00:00:00.000Z",
+        } as const;
+        const poisoned = {
+          class: "provider_error",
+          message: "Saved history is unusable.",
+          code: "INVALID_THINKING_SIGNATURE",
+          retryable: true,
+        } as const;
+        // The runtime ordinal of each prompt, and the session each check watched.
+        const promptRuntimes: Array<number> = [];
+        const watchedSessions: Array<string> = [];
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            watchPromptOutcome: (sessionId) =>
+              Effect.sync(() => {
+                watchedSessions.push(sessionId);
+                const outcome =
+                  watchedSessions.length === 1
+                    ? { failure: quota, threadDisposition: "reusable" as const }
+                    : watchedSessions.length === 3
+                      ? { failure: poisoned, threadDisposition: "broken" as const }
+                      : undefined;
+                return () =>
+                  interrupt && outcome?.threadDisposition === "broken"
+                    ? Deferred.succeed(checking, undefined).pipe(
+                        Effect.andThen(Deferred.await(releaseCheck)),
+                        Effect.as(outcome),
+                      )
+                    : Effect.succeed(outcome);
+              }),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* path.fromFileUrl(
+                new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+              ),
+              wrapRuntime: (runtime, runtimeOrdinal) => ({
+                ...runtime,
+                cancel: Deferred.succeed(cancelled, undefined).pipe(Effect.asVoid),
+                prompt: () =>
+                  Effect.sync(() => {
+                    promptRuntimes.push(runtimeOrdinal);
+                    return { stopReason: "end_turn" as const };
+                  }),
+              }),
             }),
-          makeRuntime: makeMockRuntime({
-            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-            mockAgentPath: yield* path.fromFileUrl(
-              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-            ),
-            wrapRuntime: (runtime, runtimeOrdinal) => ({
-              ...runtime,
-              prompt: () =>
-                Effect.sync(() => {
-                  promptRuntimes.push(runtimeOrdinal);
-                  return { stopReason: "end_turn" as const };
-                }),
-            }),
-          }),
-        },
-      });
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const modelSelection = { instanceId, model: "default" } as const;
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-outcome"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const runTurn = (ordinal: number) =>
-        Effect.gen(function* () {
-          yield* runtime.startTurn(
-            makeTurnInput({
-              threadId,
-              providerThread,
-              instanceId,
-              runtimePolicy,
-              now: yield* DateTime.now,
-              ordinal,
-            }),
-          );
-          return Array.from(
-            yield* runtime.events.pipe(
-              Stream.takeUntil((event) => event.type === "turn.terminal"),
-              Stream.runCollect,
-            ),
-          );
+          },
         });
-
-      const failed = (yield* runTurn(1)).at(-1);
-      if (failed?.type !== "turn.terminal" || failed.status !== "failed") {
-        return assert.fail("expected a failed terminal");
-      }
-      assert.deepEqual(failed.failure, quota);
-      assert.equal(failed.threadDisposition, "reusable");
-      const completed = (yield* runTurn(2)).at(-1);
-      assert.equal(completed?.type === "turn.terminal" ? completed.status : null, "completed");
-      assert.deepEqual(promptRuntimes, [1, 2], "the next turn runs on a fresh runtime");
-      assert.equal(watchedSessions.length, 2);
-      assert.equal(watchedSessions[0], watchedSessions[1]);
-
-      // Poisoned native history marks the thread broken; its persisted error row is never resumed.
-      const poisonedEvents = yield* runTurn(3);
-      const broken = poisonedEvents.at(-1);
-      if (broken?.type !== "turn.terminal" || broken.status !== "failed") {
-        return assert.fail("expected a failed terminal");
-      }
-      assert.deepEqual(broken.failure, poisoned);
-      assert.equal(broken.threadDisposition, "broken");
-      const brokenThread = poisonedEvents.findLast(
-        (event) => event.type === "provider_thread.updated",
-      );
-      assert.equal(
-        brokenThread?.type === "provider_thread.updated"
-          ? brokenThread.providerThread.status
-          : null,
-        "error",
-      );
-      const resumed = yield* Effect.result(
-        runtime.resumeThread({
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
           threadId,
-          providerThread: { ...providerThread, status: "error" },
+          providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-outcome"),
           modelSelection,
           runtimePolicy,
-        }),
-      );
-      assert.equal(
-        resumed._tag === "Failure" ? resumed.failure._tag : null,
-        "ProviderAdapterResumeThreadError",
-      );
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const runTurn = (ordinal: number) =>
+          Effect.gen(function* () {
+            yield* runtime.startTurn(
+              makeTurnInput({
+                threadId,
+                providerThread,
+                instanceId,
+                runtimePolicy,
+                now: yield* DateTime.now,
+                ordinal,
+              }),
+            );
+            return Array.from(
+              yield* runtime.events.pipe(
+                Stream.takeUntil((event) => event.type === "turn.terminal"),
+                Stream.runCollect,
+              ),
+            );
+          });
+
+        const failed = (yield* runTurn(1)).at(-1);
+        if (failed?.type !== "turn.terminal" || failed.status !== "failed") {
+          return assert.fail("expected a failed terminal");
+        }
+        assert.deepEqual(failed.failure, quota);
+        assert.equal(failed.threadDisposition, "reusable");
+        const completed = (yield* runTurn(2)).at(-1);
+        assert.equal(completed?.type === "turn.terminal" ? completed.status : null, "completed");
+        assert.deepEqual(promptRuntimes, [1, 2], "the next turn runs on a fresh runtime");
+        assert.equal(watchedSessions.length, 2);
+        assert.equal(watchedSessions[0], watchedSessions[1]);
+
+        // Poisoned native history marks the thread broken; its persisted error row is never resumed.
+        const poisonedEvents = yield* Effect.gen(function* () {
+          if (!interrupt) return yield* runTurn(3);
+          const turn = yield* Effect.forkChild(runTurn(3));
+          yield* Deferred.await(checking);
+          const stop = yield* Effect.forkChild(
+            runtime.interruptTurn({
+              providerThread,
+              providerTurnId: idAllocator.derive.providerTurn({
+                driver: ACP_TEST_DRIVER,
+                nativeTurnId: acpScopedNativeId(instanceId, `${watchedSessions[2]}:turn:3`),
+              }),
+            }),
+          );
+          yield* Deferred.await(cancelled);
+          yield* Deferred.succeed(releaseCheck, undefined);
+          const events = yield* Fiber.join(turn);
+          yield* Fiber.join(stop);
+          return events;
+        });
+        const broken = poisonedEvents.at(-1);
+        if (
+          broken?.type !== "turn.terminal" ||
+          broken.status !== (interrupt ? "interrupted" : "failed")
+        ) {
+          return assert.fail("expected a failed terminal");
+        }
+        assert.deepEqual(broken.failure, interrupt ? null : poisoned);
+        assert.equal(broken.threadDisposition, "broken");
+        const brokenThread = poisonedEvents.findLast(
+          (event) => event.type === "provider_thread.updated",
+        );
+        assert.equal(
+          brokenThread?.type === "provider_thread.updated"
+            ? brokenThread.providerThread.status
+            : null,
+          "error",
+        );
+        const resumed = yield* Effect.result(
+          runtime.resumeThread({
+            threadId,
+            providerThread: { ...providerThread, status: "error" },
+            modelSelection,
+            runtimePolicy,
+          }),
+        );
+        assert.equal(
+          resumed._tag === "Failure" ? resumed.failure._tag : null,
+          "ProviderAdapterResumeThreadError",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
   it.live("retains returned usage when Stop finalizes before the prompt callback", () =>
     Effect.gen(function* () {
