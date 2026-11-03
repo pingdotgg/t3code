@@ -367,9 +367,28 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
   );
 });
 
+// Without terminals, update skips its restart prompt whatever runs the test.
+const withoutTerminals = Effect.acquireRelease(
+  Effect.sync(() =>
+    [process.stdin, process.stdout].map((stream) => {
+      const descriptor = Object.getOwnPropertyDescriptor(stream, "isTTY");
+      Object.defineProperty(stream, "isTTY", { configurable: true, value: false });
+      return { stream, descriptor };
+    }),
+  ),
+  (saved) =>
+    Effect.sync(() => {
+      for (const { stream, descriptor } of saved) {
+        if (descriptor === undefined) Reflect.deleteProperty(stream, "isTTY");
+        else Object.defineProperty(stream, "isTTY", descriptor);
+      }
+    }),
+);
+
 it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
   it.effect("names the version a service with a pending restart still runs", () =>
     Effect.gen(function* () {
+      yield* withoutTerminals;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
