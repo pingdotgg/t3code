@@ -63,6 +63,7 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(
     Layer.mock(CodexManagedTokenBroker.CodexManagedTokenBroker)({
       endpoint: Effect.succeed("unused-private-pipe"),
+      launch: Effect.succeed("00000000-0000-4000-8000-000000000002"),
       awaitIdle: Effect.void,
     }),
   ),

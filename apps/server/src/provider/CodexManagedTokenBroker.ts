@@ -36,13 +36,19 @@ export class CodexManagedTokenBroker extends Context.Service<
   CodexManagedTokenBroker,
   {
     readonly endpoint: Effect.Effect<string, BrokerStartError>;
+    /** Registers one Codex process for its scope; pass the id to its token helper. */
+    readonly launch: Effect.Effect<string, never, Scope.Scope>;
     readonly awaitIdle: Effect.Effect<void>;
   }
 >()("t3/provider/CodexManagedTokenBroker") {}
 
 const io = <A>(f: () => Promise<A>) =>
   Effect.tryPromise({ try: f, catch: (cause) => new BrokerStartError({ cause }) });
-const acquireListener = Effect.gen(function* () {
+// Launch id -> the access token last served to that Codex process, if any.
+type Launches = Map<string, string | undefined>;
+const acquireListener = Effect.fn("CodexManagedTokenBroker.acquireListener")(function* (
+  launches: Launches,
+) {
   const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const environmentId = yield* identity.getEnvironmentId;
   const platform = yield* HostProcess.Platform;
@@ -153,15 +159,20 @@ const acquireListener = Effect.gen(function* () {
                 instanceId: request.instanceId,
                 expectedProfileKey: request.profileKey,
               });
+              // Codex caches its token and asks again only after a 401, so a launch asking
+              // twice reports the token it was served as rejected.
+              const served = launches.get(request.launchId);
               // Retire abandoned permit waits; access saves a started rotation before honoring interruption.
-              const credentials = yield* auth.access.pipe(
-                Effect.timeout(Protocol.COMMAND_TIMEOUT_MS),
-              );
+              const credentials = yield* (
+                served === undefined ? auth.access : auth.renewRejected(served)
+              ).pipe(Effect.timeout(Protocol.COMMAND_TIMEOUT_MS));
               yield* Protocol.writeFrame(
                 socket,
                 encodeResponse({ token: credentials.accessToken }),
                 Protocol.RESPONSE_BYTES,
               );
+              if (launches.has(request.launchId))
+                launches.set(request.launchId, credentials.accessToken);
             }),
           ).pipe(
             Effect.ignoreCause,
@@ -208,17 +219,28 @@ const acquireListener = Effect.gen(function* () {
   return { endpoint: owned.endpoint, awaitIdle: FiberSet.awaitEmpty(jobs) };
 });
 const make = Effect.gen(function* () {
+  const launches: Launches = new Map();
+  const launch = Effect.acquireRelease(
+    Effect.sync(() => {
+      const launchId = NodeCrypto.randomUUID();
+      launches.set(launchId, undefined);
+      return launchId;
+    }),
+    (launchId) => Effect.sync(() => launches.delete(launchId)),
+  );
   const scope = yield* Scope.fork(yield* Effect.scope);
-  const acquired = yield* acquireListener.pipe(Scope.provide(scope), Effect.result);
+  const acquired = yield* acquireListener(launches).pipe(Scope.provide(scope), Effect.result);
   if (acquired._tag === "Failure") {
     yield* Scope.close(scope, Exit.fail(acquired.failure));
     return CodexManagedTokenBroker.of({
       endpoint: Effect.fail(acquired.failure),
+      launch,
       awaitIdle: Effect.void,
     });
   }
   return CodexManagedTokenBroker.of({
     endpoint: Effect.succeed(acquired.success.endpoint),
+    launch,
     awaitIdle: acquired.success.awaitIdle,
   });
 });
