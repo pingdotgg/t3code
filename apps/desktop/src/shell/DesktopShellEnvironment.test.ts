@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -14,6 +15,7 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeOS from "node:os";
 import { vi } from "vite-plus/test";
 
@@ -53,6 +55,22 @@ function makeProcess(output: string, exitCode = 0): ChildProcessSpawner.ChildPro
     exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
+    stdin: Sink.drain,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+}
+
+function makeHungProcess(): ChildProcessSpawner.ChildProcessHandle {
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(124),
+    stdout: Stream.never,
+    stderr: Stream.never,
+    all: Stream.never,
+    exitCode: Effect.never,
+    isRunning: Effect.succeed(true),
+    kill: () => Effect.never,
     stdin: Sink.drain,
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
@@ -671,6 +689,25 @@ describe("DesktopShellEnvironment", () => {
         assert.include(env.PATH, "C:\\Working");
         assert.include(env.PATH, "C:\\Windows\\System32");
       }),
+  );
+
+  it.effect("gives up on a Windows shell that survives the kill", () =>
+    Effect.gen(function* () {
+      const commands: Array<string> = [];
+      const fiber = yield* runShellEnvironment({
+        env: { PATH: "C:\\Windows", APPDATA: "C:\\Roaming" },
+        platform: "win32",
+        handler: () => "",
+        processSpawner: ChildProcessSpawner.make((command) => {
+          commands.push(command._tag === "StandardCommand" ? command.command : "");
+          return Effect.acquireRelease(Effect.succeed(makeHungProcess()), () => Effect.never);
+        }),
+      }).pipe(Effect.forkChild({ startImmediately: true }));
+
+      for (let probe = 0; probe < 4; probe++) yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(fiber);
+      assert.deepEqual([...new Set(commands)], ["pwsh.exe", "powershell.exe"]);
+    }),
   );
 
   it.effect("replaces a Path-spelled Windows PATH instead of adding a second key", () =>
