@@ -6,6 +6,7 @@ import {
   type MarkdownFileLinkMeta,
 } from "../../markdown-links";
 import type { RemoteOpenMode } from "../../remoteOpen";
+import { translateNow } from "../media/translateNow";
 
 export function canUseMarkdownFileShellActions(
   environmentId: EnvironmentId | null,
@@ -34,15 +35,20 @@ export function markdownFileCopyMenuItems({
   workspaceRelativePath,
 }: Pick<MarkdownFileLinkMeta, "targetPath" | "workspaceRelativePath">) {
   const items = [
-    { id: "copy-full", label: "Copy full path", value: targetPath, title: "Full path" },
+    {
+      id: "copy-full",
+      label: translateNow("chat.fileLink.copyFullPath"),
+      value: targetPath,
+      title: translateNow("chat.fileLink.fullPath"),
+    },
   ];
   if (workspaceRelativePath !== null) {
     const position = targetPath.slice(splitFilePathPosition(targetPath).path.length);
     items.unshift({
       id: "copy-relative",
-      label: "Copy relative path",
+      label: translateNow("chat.fileLink.copyRelativePath"),
       value: `${workspaceRelativePath}${position}`,
-      title: "Relative path",
+      title: translateNow("chat.fileLink.relativePath"),
     });
   }
   return items;

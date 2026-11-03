@@ -41,6 +41,8 @@ import { toastManager } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
 import { observeResize } from "~/lib/observeResize";
+import { useT } from "../hooks/useI18n";
+import { translateNow } from "../components/media/translateNow";
 
 export interface ServerBrowserHandle {
   readonly navigate: (url: string) => void;
@@ -110,9 +112,9 @@ async function copyPageText(text: string) {
   } catch {
     const id = toastManager.add({
       type: "info",
-      title: "The page copied text",
+      title: translateNow("browser.pageCopiedText"),
       actionProps: {
-        children: "Copy",
+        children: translateNow("browser.copy"),
         onClick: () => {
           toastManager.close(id);
           void navigator.clipboard.writeText(text).catch(() => undefined);
@@ -154,6 +156,7 @@ export function ServerBrowserSurface(props: {
   readonly pdfUrl?: string | null;
   readonly ref?: Ref<ServerBrowserHandle>;
 }) {
+  const t = useT();
   const {
     environmentId,
     threadId,
@@ -189,7 +192,7 @@ export function ServerBrowserSurface(props: {
     void uploadPreviewStreamFiles(chooser, files).catch((cause: unknown) =>
       toastManager.add({
         type: "error",
-        title: "Could not send the files to the page",
+        title: t("browser.sendFilesFailed"),
         description: cause instanceof Error ? cause.message : undefined,
       }),
     );
@@ -773,7 +776,7 @@ export function ServerBrowserSurface(props: {
           <embed
             src={pdfUrl}
             type="application/pdf"
-            title="PDF document"
+            title={t("browser.pdfDocument")}
             className="absolute inset-0 z-10 size-full border-0"
           />
         ) : null}
@@ -796,8 +799,8 @@ export function ServerBrowserSurface(props: {
         {/* Pin top-left to avoid focus scrolling; 16px prevents iOS focus zoom. */}
         <textarea
           ref={inputRef}
-          aria-label="Browser page"
-          aria-description="Press Shift+Escape to leave the browser page."
+          aria-label={t("browser.page")}
+          aria-description={t("browser.leavePageHint")}
           autoCapitalize="off"
           autoComplete="off"
           autoCorrect="off"
@@ -826,7 +829,7 @@ export function ServerBrowserSurface(props: {
           <div
             className="absolute inset-x-2 top-2 z-10 flex flex-col gap-2 rounded-lg border border-border bg-background p-3 shadow-lg"
             role="dialog"
-            aria-label="Choose files for the page"
+            aria-label={t("browser.chooseFiles")}
           >
             <p className="text-sm">
               The page asks for {fileChooser.multiple ? "files" : "a file"}.
@@ -857,14 +860,14 @@ export function ServerBrowserSurface(props: {
           <div
             className="absolute inset-x-2 top-2 z-10 flex flex-col gap-2 rounded-lg border border-border bg-background p-3 shadow-lg"
             role="dialog"
-            aria-label="Browser dialog"
+            aria-label={t("browser.dialog")}
           >
             <p className="break-words text-sm">{control.dialog.message}</p>
             {control.controller === "you" ? (
               <>
                 {control.dialog.type === "prompt" ? (
                   <Input
-                    aria-label="Dialog response"
+                    aria-label={t("browser.dialogResponse")}
                     value={promptText}
                     onChange={(event) => setPromptText(event.target.value)}
                   />
@@ -892,7 +895,7 @@ export function ServerBrowserSurface(props: {
                 </div>
               </>
             ) : (
-              <p className="text-xs text-muted-foreground">Take control to respond.</p>
+              <p className="text-xs text-muted-foreground">{t("browser.takeControl")}</p>
             )}
           </div>
         ) : null}

@@ -20,6 +20,7 @@ import { enMessages as chatUiEn, zhHansMessages as chatUiZh } from "./messagesCh
 import { enMessages as appAEn, zhHansMessages as appAZh } from "./messagesAppA.ts";
 import { enMessages as appBEn, zhHansMessages as appBZh } from "./messagesAppB.ts";
 import { enMessages as reviewEn, zhHansMessages as reviewZh } from "./messagesReview.ts";
+import { enMessages as deviceEn, zhHansMessages as deviceZh } from "./messagesDevice.ts";
 import { enMessages as miscEn, zhHansMessages as miscZh } from "./messagesMisc.ts";
 import { enMessages as runtimeEn, zhHansMessages as runtimeZh } from "./messagesRuntime.ts";
 import { enMessages as interfaceEn, zhHansMessages as interfaceZh } from "./messages.ts";
@@ -48,6 +49,7 @@ const enCatalog = {
   ...appAEn,
   ...appBEn,
   ...reviewEn,
+  ...deviceEn,
   ...miscEn,
   ...navEn,
   ...typographyEn,
@@ -69,6 +71,7 @@ const zhCatalog: Partial<Record<MessageKey, string>> = {
   ...appAZh,
   ...appBZh,
   ...reviewZh,
+  ...deviceZh,
   ...miscZh,
   ...navZh,
   ...typographyZh,

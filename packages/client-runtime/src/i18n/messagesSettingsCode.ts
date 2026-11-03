@@ -907,6 +907,20 @@ export const enMessages = {
   "settings.code.activity.configure": "Configure background activity",
   "settings.code.activity.hostActiveLabel": "Active host power interval",
   "settings.code.activity.hostIdleLabel": "Idle host power interval",
+  "settings.code.addEnv.failed": "Failed to add backend.",
+  "settings.code.addEnv.failedTitle": "Could not add backend",
+  "settings.code.addEnv.routeAdded": "Route added",
+  "settings.code.addEnv.backendAdded": "Backend added",
+  "settings.code.addEnv.backendAddedDesc":
+    "The environment is saved and will reconnect on app startup.",
+  "settings.code.addEnv.pairingCode": "Pairing code",
+  "settings.code.addEnv.routeFailed": "Could not add the route.",
+  "settings.code.addEnv.searchHosts": "Search hosts or type devbox",
+  "settings.code.addEnv.loadingHosts": "Loading hosts…",
+  "settings.code.addEnv.addEnvironment": "Add environment",
+  "settings.code.addEnv.remoteLink": "Remote link",
+  "settings.code.addEnv.remoteLinkDesc": "Enter a backend host and pairing code.",
+  "settings.code.addEnv.sshDesc": "Use local SSH config, agent, and tunnels for the backend.",
 } as const;
 
 export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = {
@@ -1764,4 +1778,17 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.code.activity.configure": "配置后台活动",
   "settings.code.activity.hostActiveLabel": "活跃时主机电源监测间隔",
   "settings.code.activity.hostIdleLabel": "空闲时主机电源监测间隔",
+  "settings.code.addEnv.failed": "无法添加后端。",
+  "settings.code.addEnv.failedTitle": "无法添加后端",
+  "settings.code.addEnv.routeAdded": "路由已添加",
+  "settings.code.addEnv.backendAdded": "已添加后端",
+  "settings.code.addEnv.backendAddedDesc": "环境已保存，应用启动时会重新连接。",
+  "settings.code.addEnv.pairingCode": "配对码",
+  "settings.code.addEnv.routeFailed": "无法添加路由。",
+  "settings.code.addEnv.searchHosts": "搜索主机或输入 devbox",
+  "settings.code.addEnv.loadingHosts": "正在加载主机…",
+  "settings.code.addEnv.addEnvironment": "添加环境",
+  "settings.code.addEnv.remoteLink": "远程链接",
+  "settings.code.addEnv.remoteLinkDesc": "输入后端主机和配对码。",
+  "settings.code.addEnv.sshDesc": "使用本地 SSH 配置、代理和隧道连接后端。",
 };

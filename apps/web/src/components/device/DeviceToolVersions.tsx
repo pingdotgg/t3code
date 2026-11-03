@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { DeviceToolVersions as ToolVersions } from "@t3tools/contracts";
 import { InlineButton } from "~/components/ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
+import { useT } from "../../hooks/useI18n";
 
 export function DeviceToolVersions({
   tools,
@@ -16,6 +17,7 @@ export function DeviceToolVersions({
   owner?: string | undefined;
   error?: string | undefined;
 }) {
+  const t = useT();
   const selected = kind ? tools?.[kind] : undefined;
   const version =
     selected?.runningVersion ??
@@ -46,7 +48,7 @@ export function DeviceToolVersions({
             : "Versions"}
       </PopoverTrigger>
       <PopoverPopup align="end" width="md">
-        <PopoverTitle>{kind ? label : "Device tools"}</PopoverTitle>
+        <PopoverTitle>{kind ? label : t("device.tools")}</PopoverTitle>
         {tools ? (
           <div className="mt-4 divide-y divide-border/50">
             {(
@@ -73,7 +75,7 @@ export function DeviceToolVersions({
               ))}
           </div>
         ) : (
-          <p className="mt-3 text-xs text-muted-foreground">Versions have not been checked.</p>
+          <p className="mt-3 text-xs text-muted-foreground">{t("device.tools.unchecked")}</p>
         )}
         <p className="mt-4 border-t border-border/50 pt-3 text-xs text-muted-foreground">
           {owner ? `Managed by ${owner}. ` : ""}Tools update automatically on this host when needed.
