@@ -219,6 +219,50 @@ describe("getRenderablePatch", () => {
     if (parsed?.kind !== "files") return;
     expect(parsed.files[0]?.hunks[0]?.unifiedLineStart).toBe(47);
   });
+
+  it("keeps whitespace at the end of the last hunk", () => {
+    const patch = (lastLines: string[]) =>
+      [
+        "diff --git a/example.ts b/example.ts",
+        "--- a/example.ts",
+        "+++ b/example.ts",
+        ...lastLines,
+        "",
+      ].join("\n");
+
+    const trailing = getRenderablePatch(patch(["@@ -1 +1 @@", "-a", "+  b \t"]), "review");
+    expect(trailing?.kind).toBe("files");
+    if (trailing?.kind !== "files") return;
+    expect(trailing.files[0]?.additionLines).toEqual(["  b \t\n"]);
+
+    const blankContext = getRenderablePatch(patch(["@@ -1,2 +1,2 @@", "-a", "+b", " "]), "review");
+    expect(blankContext?.kind).toBe("files");
+    if (blankContext?.kind !== "files") return;
+    expect(blankContext.files[0]?.additionLines).toEqual(["b\n", "\n"]);
+    expect(blankContext.files[0]?.hunks[0]?.unifiedLineCount).toBe(3);
+
+    expect(getRenderablePatch(" \n\t\n", "review")).toBeNull();
+  });
+
+  it("caches patches that differ only in trailing whitespace separately", () => {
+    const patch = (added: string) =>
+      [
+        "diff --git a/example.ts b/example.ts",
+        "--- a/example.ts",
+        "+++ b/example.ts",
+        "@@ -1 +1 @@",
+        "-a",
+        `+${added}`,
+        "",
+      ].join("\n");
+
+    const plain = getRenderablePatch(patch("b"), "review");
+    const tabbed = getRenderablePatch(patch("b\t"), "review");
+    expect(plain?.kind).toBe("files");
+    expect(tabbed?.kind).toBe("files");
+    if (plain?.kind !== "files" || tabbed?.kind !== "files") return;
+    expect(tabbed.files[0]?.cacheKey).not.toBe(plain.files[0]?.cacheKey);
+  });
 });
 
 describe("diff file reconciliation", () => {
