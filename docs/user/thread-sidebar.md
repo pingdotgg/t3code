@@ -302,7 +302,7 @@ That setting is not used in a narrow window, and a panel you open or close yours
 is left alone.
 
 On iOS, open **Activity** from the thread's git menu. On Android, use **Open activity**
-in the thread's top bar.
+in the thread header's actions.
 
 ## Side chats
 
