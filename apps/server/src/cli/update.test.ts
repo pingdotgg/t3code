@@ -15,10 +15,10 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { afterEach, vi } from "vite-plus/test";
 
 import * as BootService from "../cloud/bootService.ts";
-import { prunePinnedRuntimes } from "../cloud/pinnedRuntime.ts";
+import { prunePinnedRuntimes, resolveLauncherPath } from "../cloud/pinnedRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { repointLauncher, resolveLauncherPath, resolveNewestVersion, runUpdate } from "./update.ts";
+import { repointLauncher, resolveNewestVersion, runUpdate } from "./update.ts";
 
 // lsof listing one process, so prune sees a process list in which no runtime is running.
 const unrelatedLsof = ProcessRunner.ProcessRunner.of({
@@ -338,7 +338,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
       const launcher = path.join(root, "bin/t3");
       yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
-      yield* fs.writeFileString(launcher, "");
+      yield* fs.writeFileString(launcher, "", { mode: 0o755 });
 
       const bare = yield* resolveLauncherPath.pipe(
         Effect.provideService(HostProcess.InvokedAs, "t3"),
