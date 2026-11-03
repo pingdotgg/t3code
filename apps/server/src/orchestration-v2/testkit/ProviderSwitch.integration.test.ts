@@ -119,6 +119,8 @@ function makeTestAdapter(input: {
   readonly subagentOnlyBackgroundWork?: boolean;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
+  readonly backgroundWork?: Ref.Ref<boolean>;
+  readonly closedSessions?: Ref.Ref<ReadonlyArray<string>>;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
@@ -128,6 +130,12 @@ function makeTestAdapter(input: {
     openSession: (sessionInput) =>
       Effect.gen(function* () {
         const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        if (input.closedSessions !== undefined) {
+          const closedSessions = input.closedSessions;
+          yield* Effect.addFinalizer(() =>
+            Ref.update(closedSessions, (ids) => [...ids, sessionInput.providerSessionId]),
+          );
+        }
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
@@ -162,6 +170,14 @@ function makeTestAdapter(input: {
           ...(input.canReuseContextUsage === undefined
             ? {}
             : { canReuseContextUsage: input.canReuseContextUsage }),
+          ...(input.backgroundWork === undefined
+            ? {}
+            : {
+                // Like Claude: native subagents are visible only to the session-wide
+                // probe, never to the per-thread roster probe.
+                hasPendingBackgroundWork: Ref.get(input.backgroundWork),
+                hasPendingBackgroundWorkForThread: () => Effect.succeed(false),
+              }),
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
               const createdAt = yield* DateTime.now;
@@ -748,16 +764,7 @@ describe("orchestration v2 provider switching", () => {
             yield* wait(3);
           }
           if (replaceNative) {
-            const target = (yield* orchestrator.getThreadProjection(threadId)).providerThreads.find(
-              (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
-            )!;
-            yield* orchestrator.dispatch({
-              type: "provider-session.detach",
-              commandId: CommandId.make("detach-for-native-replacement"),
-              threadId,
-              providerSessionId: target.providerSessionId!,
-            });
-            yield* worker.drain();
+            // Switching back to Codex already released Claude's session.
             yield* Ref.set(failResumeOnce, true);
           }
           if (scenario.includes("retry")) yield* Ref.set(failStartOnce, true);
@@ -2516,6 +2523,141 @@ describe("orchestration v2 provider switching", () => {
         assert.include(turns[3]?.text ?? "", "Codex current turn complete");
         assert.include(turns[3]?.text ?? "", "Codex first queued turn complete");
         assert.include(turns[3]?.text ?? "", "Codex second queued turn complete");
+      }),
+    ),
+  );
+
+  // regression: #20343 sending to an instance with separate history must release the old session
+  it.live.each([
+    ["detaches the previous instance's session when a send hands off to another instance", false],
+    ["refuses the hand-off while the previous instance still runs background work", true],
+  ] as const)("%s", ([, backgroundRunning]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("handoff-releases-session");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const backgroundWork = yield* Ref.make(backgroundRunning);
+        const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
+        const secondSelection: ModelSelection = {
+          ...CLAUDE_MODEL_SELECTION,
+          instanceId: ProviderInstanceId.make("claude-second-account"),
+        };
+        // No shared continuation key: each Claude instance owns its own native history.
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: { 1: "First account complete" },
+            capturedTurns,
+            backgroundWork,
+            closedSessions,
+          }),
+          makeTestAdapter({
+            instanceId: secondSelection.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: secondSelection,
+            responseByRunOrdinal: { 2: "Second account complete" },
+            capturedTurns,
+          }),
+        ]);
+        const handoffThreadId = ThreadId.make("thread:handoff-releases-session");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const send = (ordinal: number, modelSelection: ModelSelection, attempt = "") =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:handoff-releases-session:${ordinal}${attempt}`),
+              threadId: handoffThreadId,
+              messageId: MessageId.make(`message:handoff-releases-session:${ordinal}${attempt}`),
+              text: `Prompt ${ordinal}`,
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:handoff-releases-session:create"),
+            threadId: handoffThreadId,
+            projectId: ProjectId.make("project:handoff-releases-session"),
+            title: "Handoff releases session",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* send(1, CLAUDE_MODEL_SELECTION);
+          yield* worker.drain();
+          const afterFirst = yield* waitForIdle(handoffThreadId);
+          const firstSession = afterFirst.providerSessions.find(
+            (session) => session.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
+          );
+          assert.equal(firstSession?.status, "ready");
+
+          if (backgroundRunning) {
+            // Native subagents live only in the adapter's roster, so the projection's
+            // pendingBackgroundTasks stays empty while the probe still reports work.
+            assert.deepEqual(afterFirst.providerThreads[0]?.pendingBackgroundTasks ?? [], []);
+            const refused = yield* send(2, secondSelection, ":refused").pipe(Effect.flip);
+            assert.include(String(refused.cause), "still running background agents or commands");
+            const unchanged = yield* orchestrator.getThreadProjection(handoffThreadId);
+            assert.lengthOf(unchanged.runs, 1);
+            assert.deepEqual(yield* Ref.get(closedSessions), []);
+            assert.equal(unchanged.thread.providerInstanceId, CLAUDE_MODEL_SELECTION.instanceId);
+            assert.deepEqual(
+              unchanged.providerSessions.map((session) => [session.id, session.status]),
+              [[firstSession!.id, "ready"]],
+            );
+            yield* Ref.set(backgroundWork, false);
+          }
+
+          yield* send(2, secondSelection);
+          yield* worker.drain();
+          const afterSecond = yield* waitForIdle(handoffThreadId);
+          yield* worker.drain();
+          const projection = yield* orchestrator.getThreadProjection(handoffThreadId);
+
+          assert.deepEqual(
+            projection.runs.map((run) => [run.providerInstanceId, run.status]),
+            [
+              [CLAUDE_MODEL_SELECTION.instanceId, "completed"],
+              [secondSelection.instanceId, "completed"],
+            ],
+          );
+          assert.lengthOf(afterSecond.contextHandoffs, 1);
+          assert.deepEqual(
+            projection.providerSessions.map((session) => session.providerInstanceId),
+            [secondSelection.instanceId],
+          );
+          // The detached event alone hides the session; the runtime must also close.
+          assert.deepEqual(yield* Ref.get(closedSessions), [firstSession!.id]);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "handoff-releases-session",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
       }),
     ),
   );
