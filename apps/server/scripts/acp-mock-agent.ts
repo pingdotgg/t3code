@@ -72,6 +72,7 @@ const advertisedAuthMethodId = process.env.T3_ACP_AUTH_METHOD_ID?.trim();
 const initializeAuthMethodId =
   advertisedAuthMethodId ?? (supportsSessionLifecycle ? "test" : undefined);
 const requiresAuthentication = process.env.T3_ACP_REQUIRE_AUTH === "1";
+const postSessionWorkMarkerPath = process.env.T3_ACP_POST_SESSION_WORK_MARKER_PATH;
 const permissionOptionIds = {
   allowOnce: "allow-once",
   allowAlways: "allow-always",
@@ -587,6 +588,15 @@ const program = Effect.gen(function* () {
       yield* requireAuthentication();
       if (antigravityProfile) {
         yield* publishAntigravityCommands(sessionId);
+      }
+      if (postSessionWorkMarkerPath) {
+        // Background work that outlives session/new, like Kimi's OAuth token rotation.
+        yield* Effect.sleep("1500 millis").pipe(
+          Effect.andThen(
+            Effect.sync(() => NodeFS.writeFileSync(postSessionWorkMarkerPath, "done")),
+          ),
+          Effect.forkDetach,
+        );
       }
       return {
         sessionId,

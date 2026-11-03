@@ -15,10 +15,12 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -46,6 +48,9 @@ const MAX_COMMAND_LINE_LENGTH = 2_048;
 const PROBE_TIMEOUT_SECONDS = 60;
 const PROBE_TIMEOUT = `${PROBE_TIMEOUT_SECONDS} seconds`;
 const COMMAND_ADVERTISEMENT_GRACE = "500 millis";
+// Agents keep working after session/new: Kimi rotates its single-use OAuth refresh token then,
+// and killing it mid-request loses the new token and signs the user out.
+const PROBE_AGENT_SETTLE_GRACE = "10 seconds";
 
 const boundedText = (value: string, maximumLength: number): string =>
   value.trim().slice(0, maximumLength);
@@ -328,6 +333,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const random = yield* SecureRandom.SecureRandom;
     const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
+    const probeScope = yield* Scope.make();
 
     const result = yield* Effect.gen(function* () {
       // Resolution may install packages; bound it by the probe deadline.
@@ -428,7 +434,16 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       );
       return { resolved, started, commands: yield* Ref.get(commandsRef) };
     }).pipe(
-      Effect.scoped,
+      Scope.provide(probeScope),
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.sleep(PROBE_AGENT_SETTLE_GRACE).pipe(
+              Effect.andThen(Scope.close(probeScope, Exit.void)),
+              Effect.forkDetach,
+              Effect.asVoid,
+            )
+          : Scope.close(probeScope, exit),
+      ),
       Effect.timeoutOrElse({
         duration: PROBE_TIMEOUT,
         orElse: () =>
