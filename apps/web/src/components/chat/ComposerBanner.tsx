@@ -89,12 +89,14 @@ function Column({ className, ...props }: ComponentProps<"div">) {
 function Root({
   className,
   density = "default",
+  textSize = "compact",
   variant = "default",
   width = "fill",
   surface = "tint",
   ...props
 }: ComponentProps<typeof Surface> & {
   density?: "default" | "comfortable" | "spacious";
+  textSize?: "compact" | "body";
   width?: "fill" | "content";
   surface?: "tint" | "popover" | "panel" | "card";
 }) {
@@ -102,7 +104,8 @@ function Root({
   return (
     <Surface
       className={cn(
-        "min-w-0 ps-3.5 pe-2 py-(--composer-banner-padding-block) text-xs/4 font-medium [--composer-banner-icon-column:--spacing(3)] [--composer-banner-padding-block:--spacing(2.5)]",
+        "min-w-0 ps-3.5 pe-2 py-(--composer-banner-padding-block) [--composer-banner-icon-column:--spacing(3)] [--composer-banner-padding-block:--spacing(2.5)]",
+        textSize === "body" ? "text-body font-medium" : "text-xs/4 font-medium",
         density === "comfortable" && "[--composer-banner-padding-block:--spacing(2.5)]",
         density === "spacious" && "[--composer-banner-padding-block:--spacing(3)]",
         width === "content" ? "w-fit max-w-full flex-none" : "@container",
@@ -230,7 +233,7 @@ function Count({ className, ...props }: ComponentProps<"span">) {
   return (
     <span
       className={cn(
-        "inline-flex flex-none justify-center font-medium text-muted-foreground tabular-nums",
+        "inline-flex flex-none justify-center text-meta text-muted-foreground tabular-nums",
         className,
       )}
       {...props}
