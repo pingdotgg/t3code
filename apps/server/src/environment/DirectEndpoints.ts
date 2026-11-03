@@ -150,14 +150,10 @@ export const make = Effect.gen(function* () {
     const directUrl = buildTailscaleDirectBaseUrl({
       status: yield* Ref.get(cachedStatus),
       port: config.port,
-      boundAddresses: endpoints.flatMap((endpoint) => {
-        const address = new URL(endpoint.httpBaseUrl).hostname;
-        return Object.values(interfaces).some((entries) =>
-          entries?.some((entry) => !entry.internal && entry.address === address),
-        )
-          ? [address]
-          : [];
-      }),
+      host: config.host,
+      localAddresses: Object.values(interfaces).flatMap((entries) =>
+        (entries ?? []).filter((entry) => !entry.internal).map((entry) => entry.address),
+      ),
     });
     if (directUrl !== null) endpoints.push({ kind: "tailnet", httpBaseUrl: directUrl });
     return endpoints;
@@ -166,7 +162,9 @@ export const make = Effect.gen(function* () {
   const resolve = Effect.gen(function* () {
     if (isLoopbackHost(config.host) && !config.tailscaleServeEnabled)
       return yield* resolveAvailable();
+    const observedStatus = yield* Ref.make<TailscaleStatus | null>(null);
     const discovered = yield* readTailscaleStatus.pipe(
+      Effect.tap((status) => Ref.set(observedStatus, status)),
       Effect.flatMap((status) =>
         Effect.gen(function* () {
           let servedUrl: string | null = null;
@@ -177,7 +175,7 @@ export const make = Effect.gen(function* () {
             });
             if (yield* probeTailscaleHttpsEndpoint({ baseUrl: url })) servedUrl = url;
           }
-          return { status, servedUrl };
+          return servedUrl;
         }),
       ),
       Effect.timeoutOption(TAILSCALE_ENDPOINT_TIMEOUT),
@@ -185,11 +183,8 @@ export const make = Effect.gen(function* () {
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
-    yield* Ref.set(cachedStatus, Option.isSome(discovered) ? discovered.value.status : null);
-    yield* Ref.set(
-      servedEndpoint,
-      Option.flatMap(discovered, (value) => Option.fromNullishOr(value.servedUrl)),
-    );
+    yield* Ref.set(cachedStatus, yield* Ref.get(observedStatus));
+    yield* Ref.set(servedEndpoint, Option.flatMap(discovered, Option.fromNullishOr));
     return yield* resolveAvailable();
   });
 

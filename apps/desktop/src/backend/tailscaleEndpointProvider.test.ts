@@ -69,6 +69,7 @@ describe("tailscale endpoint provider", () => {
             utun4: [
               { address: "100.74.126.34", family: "IPv4", internal: false },
               { address: "fd7a:115c:a1e0::1234", family: "IPv6", internal: false },
+              { address: "fd7a:115c:a1e0::9999", family: "IPv6", internal: false },
             ],
           },
           statusJson: null,
@@ -87,6 +88,15 @@ it.effect("advertises direct MagicDNS only for a running Self on the listener in
       for (const [bindHost, backendState, ip, expected] of [
         ["0.0.0.0", "Running", "100.74.126.34", true],
         ["100.74.126.34", "Running", "100.74.126.34", true],
+        ["::ffff:100.74.126.34", "Running", "100.74.126.34", true],
+        ["::ffff:644a:7e22", "Running", "100.74.126.34", true],
+        ["fd7a:115c:a1e0::1234", "Running", "fd7a:115c:a1e0::1234", true],
+        ["::", "Running", "fd7a:115c:a1e0::1234", true],
+        ["::ffff:127.0.0.1", "Running", "100.74.126.34", false],
+        ["fd7a:115c:a1e0:0:0:0:0:1234", "Running", "fd7a:115c:a1e0::1234", true],
+        ["fd7a:115c:a1e0::9999", "Running", "fd7a:115c:a1e0::1234", false],
+        ["2001:db8::1", "Running", "fd7a:115c:a1e0::1234", false],
+        ["0.0.0.0", "Running", "fd7a:115c:a1e0::1234", false],
         ["127.0.0.1", "Running", "100.74.126.34", false],
         ["192.168.1.2", "Running", "100.74.126.34", false],
         ["0.0.0.0", "Stopped", "100.74.126.34", false],
@@ -99,7 +109,13 @@ it.effect("advertises direct MagicDNS only for a running Self on the listener in
           bindHost,
           serveEnabled,
           probe: () => Effect.succeed(true),
-          networkInterfaces: { tailscale0: protonAndTailscaleInterfaces.tailscale0 },
+          networkInterfaces: {
+            tailscale0: [
+              ...protonAndTailscaleInterfaces.tailscale0,
+              { address: "fd7a:115c:a1e0::1234", family: "IPv6", internal: false },
+              { address: "fd7a:115c:a1e0::9999", family: "IPv6", internal: false },
+            ],
+          },
           statusJson: JSON.stringify({
             BackendState: backendState,
             Self: { DNSName: "desktop.tail.ts.net.", TailscaleIPs: [ip] },

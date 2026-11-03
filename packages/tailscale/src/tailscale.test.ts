@@ -197,6 +197,7 @@ describe("tailscale", () => {
         running: false,
         magicDnsName: "desktop.tail.ts.net",
         tailnetIpv4Addresses: ["100.100.100.100"],
+        tailnetIpv6Addresses: ["fd7a:115c:a1e0::1"],
         httpsServeEnabled: null,
       });
     }),

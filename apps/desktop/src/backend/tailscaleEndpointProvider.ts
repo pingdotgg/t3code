@@ -147,19 +147,14 @@ export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAd
       ...(input.probe === undefined ? {} : { probe: input.probe }),
     });
 
-    const boundAddresses = Object.values(input.networkInterfaces).flatMap((entries) =>
-      (entries ?? [])
-        .filter(
-          (entry) =>
-            !entry.internal &&
-            entry.family === "IPv4" &&
-            (input.bindHost === "0.0.0.0" ||
-              input.bindHost === "::" ||
-              input.bindHost === entry.address),
-        )
-        .map((entry) => entry.address),
-    );
-    const directUrl = buildTailscaleDirectBaseUrl({ status, boundAddresses, port: input.port });
+    const directUrl = buildTailscaleDirectBaseUrl({
+      status,
+      host: input.bindHost ?? "127.0.0.1",
+      localAddresses: Object.values(input.networkInterfaces).flatMap((entries) =>
+        (entries ?? []).filter((entry) => !entry.internal).map((entry) => entry.address),
+      ),
+      port: input.port,
+    });
     const directEndpoints =
       directUrl === null
         ? []
