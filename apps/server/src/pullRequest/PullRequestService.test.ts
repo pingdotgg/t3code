@@ -234,6 +234,40 @@ it.effect("shows a listed pull request's preview without asking the host again",
   }),
 );
 
+it.effect("a list read under a pinned account leaves the shared preview to the host", () =>
+  Effect.gen(function* () {
+    let previewReads = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getRoutingIdentity: () => Effect.succeed({ accountId: "101", viewer: "octocat" }),
+          withVerifiedCredential: (_, use) =>
+            use({ accountId: "101", viewer: "octocat", credentialFingerprint: "pinned" }),
+          listChangeRequests: () =>
+            Effect.succeed({
+              items: [{ ...changeRequest(1, "2026-07-02T00:00:00Z"), title: "Pinned view" }],
+              truncated: false,
+              continues: false,
+            }),
+          getChangeRequestPreview: () =>
+            Effect.sync(() => {
+              previewReads++;
+              return changeRequest(1, "2026-07-02T00:00:00Z");
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    yield* service.withRoutingCredential(
+      { ...ref, host: "github.com", expectedAccountId: "101" },
+      service.list({ state: "open" }),
+    );
+    assert.strictEqual((yield* service.preview(ref)).title, "Change request 1");
+    assert.strictEqual(previewReads, 1);
+  }),
+);
+
 function unusable(provider: SourceControlProviderKind, reason: "missing-tool" | "unauthenticated") {
   return new PullRequestProviderError({
     provider,
