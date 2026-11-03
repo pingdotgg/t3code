@@ -2,10 +2,12 @@ import type { ComposerFileAttachment } from "../composerDraftStore";
 import { formatInlineContextReference } from "../lib/composerContextReferences";
 import { fileContextReference } from "../lib/composerContextRecords";
 import {
+  heldContextIds,
   reconcileAttachmentContextReferences,
   type RetainedContextPayloads,
   useRetainedContextPayloads,
 } from "./chat/composerContextUndo";
+import { importPastedComposerText } from "./composerInlineTokenPaste";
 
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
@@ -268,17 +270,24 @@ describe("composer context undo lifetime", () => {
         current = draft;
         retained = payloads;
       });
+      const contextRecords = new Map(
+        draft.files.map((entry) => [
+          fileContextReference(entry).contextId,
+          { kind: "file" as const, record: entry },
+        ]),
+      );
       const editorProps = {
         draftKey: targetKey,
         editorRef,
         value: draft.value,
         cursor: 0,
-        contextRecords: new Map(
-          draft.files.map((entry) => [
-            fileContextReference(entry).contextId,
-            { kind: "file" as const, record: entry },
-          ]),
-        ),
+        contextRecords,
+        importPastedText: (clipboardData) =>
+          importPastedComposerText(
+            clipboardData,
+            () => new Map(),
+            heldContextIds(contextRecords, new Set(), payloads),
+          ),
         skills: [],
         disabled: false,
         placeholder: "",
@@ -349,6 +358,22 @@ describe("composer context undo lifetime", () => {
     await composer.deleteDraft();
     await composer.unmount();
     expect(retained.files.size).toBe(0);
+  });
+
+  // A plain-text paste carries no record, so the cut chip used to come back as its label.
+  it("restores a cut chip and its file bytes when its text is pasted back as plain text", async () => {
+    await using composer = await mountComposer();
+    await composer.deleteDraft();
+    expect(composer.draft()).toEqual({ value: "", files: [] });
+    await act(async () => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", composer.initialValue);
+      composer
+        .editor()
+        .view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+    });
+    expect(composer.draft().value.trimEnd()).toBe(composer.initialValue);
+    expect(composer.draft().files[0]?.file).toBe(file.file);
   });
 
   it.each(["", "Draft B"])(

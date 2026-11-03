@@ -1,11 +1,18 @@
 import { useEffect } from "react";
-import { type ComposerContextRecord, ComposerContextId, EnvironmentId } from "@t3tools/contracts";
+import {
+  type ComposerContextRecord,
+  ComposerContextId,
+  EnvironmentId,
+  ThreadId,
+} from "@t3tools/contracts";
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render, stubGlobal } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
 import { rememberCopiedComposerAttachments } from "../../lib/copiedComposerAttachments";
+import { importPastedComposerText } from "../composerInlineTokenPaste";
 import { pendingDraftWork } from "./pendingDraftWork";
 import { useComposerContextImport } from "./useComposerContextImport";
 
@@ -31,6 +38,28 @@ function Harness({ input, ready }: { input: ImportInput; ready: (value: Importer
   return null;
 }
 
+function importInput(target: DraftId, promptRef: { current: string }) {
+  const store = useComposerDraftStore.getState();
+  return {
+    environmentId: EnvironmentId.make("clipboard-target"),
+    activeThread: undefined,
+    activeThreadId: null,
+    composerDraftTarget: target,
+    attachmentDraftTarget: target,
+    attachmentTargetKey: target,
+    attachmentTargetKeyRef: { current: target },
+    questionAttachmentTarget: null,
+    pendingUserInputs: [],
+    composerContextRecords: new Map(),
+    composerImages: [],
+    composerFilesRef: { current: [] },
+    pendingThreadImportsRef: { current: new Map() },
+    promptRef,
+    addComposerFilesToDraft: (files: Parameters<typeof store.addFiles>[1]) =>
+      store.addFiles(target, files),
+  } satisfies ImportInput;
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((fulfill) => {
@@ -50,6 +79,8 @@ it.each([
   { kind: "image", edit: "question" },
   { kind: "image", edit: "annotation" },
   { kind: "image", edit: "delete-annotation" },
+  // Copying a pending chip carries no record; pasting it over itself must keep its link.
+  { kind: "file", edit: "repaste" },
 ] as const)("settles a delayed $kind import after $edit", async ({ kind, edit }) => {
   const target = DraftId.make(`clipboard-${kind}-${edit}`);
   const store = useComposerDraftStore.getState();
@@ -69,24 +100,11 @@ it.each([
   const requested = deferred<void>();
   const settled = deferred<void>();
   const input = {
-    environmentId: EnvironmentId.make("clipboard-target"),
-    linkedEnvironments: new Map(),
-    activeThread: undefined,
-    activeThreadId: null,
-    composerDraftTarget: target,
-    attachmentDraftTarget: target,
-    attachmentTargetKey: target,
-    attachmentTargetKeyRef: { current: target },
+    ...importInput(target, promptRef),
     questionAttachmentTarget: edit === "question" ? target : null,
-    pendingUserInputs: [],
-    composerContextRecords: new Map(),
-    composerImages: [],
-    composerFilesRef: { current: [] },
-    pendingThreadImportsRef: { current: new Map() },
-    promptRef,
     addComposerFilesToDraft: (files: Parameters<typeof store.addFiles>[1]) =>
       store.addFiles(target, files, { appendReference: edit !== "question" }),
-  } satisfies ImportInput & { promptRef: { current: string } };
+  } satisfies ImportInput;
   let importer!: Importer;
   await using _screen = await render(
     <Harness
@@ -152,12 +170,21 @@ it.each([
   });
   if (edit !== "cached") expect(pendingDraftWork.has(target)).toBe(true);
   await act(() => {
+    if (edit === "repaste") {
+      promptRef.current = importPastedComposerText(
+        { getData: (format) => (format === "text/plain" ? pastedPrompt : "") },
+        importer.importContextFragment,
+        importer.importingContextIdsRef.current,
+      );
+      store.setPrompt(target, promptRef.current);
+    }
     if (
       edit !== "annotation" &&
       edit !== "retain" &&
       edit !== "cached" &&
       edit !== "question" &&
-      edit !== "switch"
+      edit !== "switch" &&
+      edit !== "repaste"
     ) {
       promptRef.current = "Keep this edit";
       store.setPrompt(target, promptRef.current);
@@ -179,10 +206,37 @@ it.each([
   expect(attachments.map((file) => file.name)).toEqual(
     edit === "undo" ||
       edit === "retain" ||
+      edit === "repaste" ||
       edit === "annotation" ||
       edit === "cached" ||
       edit === "question"
       ? ["notes.txt"]
       : [],
   );
+});
+
+// Dropping it left the pasted chip resolving to nothing, so the agent saw an unavailable thread.
+it("keeps a pasted thread from a machine this one does not link to", async () => {
+  const target = DraftId.make("clipboard-unlinked-thread");
+  const store = useComposerDraftStore.getState();
+  using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+  const record = threadContextRecord(
+    { environmentId: EnvironmentId.make("unlinked-machine"), threadId: ThreadId.make("remote") },
+    "Remote thread",
+  );
+  let importer!: Importer;
+  await using _screen = await render(
+    <Harness
+      input={importInput(target, { current: "" })}
+      ready={(value) => {
+        importer = value;
+      }}
+    />,
+  );
+  let rewritten = new Map<string, string>();
+  await act(() => {
+    rewritten = new Map(importer.importContextRecords([record], record.environmentId));
+  });
+  expect(rewritten.get(record.contextId)).toBe(record.contextId);
+  expect(store.getComposerDraft(target)?.threadContexts).toEqual([record]);
 });

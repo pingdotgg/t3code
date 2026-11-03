@@ -113,6 +113,7 @@ import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
+  heldContextIds,
   reconcileAttachmentContextReferences,
   useRetainedContextPayloads,
 } from "./composerContextUndo";
@@ -1376,10 +1377,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     countReservedAttachmentsStable,
     importContextRecords,
     importContextFragment,
-    importContextFragmentStable,
+    importingContextIdsRef,
   } = useComposerContextImport({
     environmentId,
-    linkedEnvironments,
     activeThread,
     activeThreadId,
     composerDraftTarget,
@@ -2401,6 +2401,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       )
     : bannerItems;
 
+  const importPastedText = (clipboardData: DataTransfer) =>
+    importPastedComposerText(
+      clipboardData,
+      importContextFragment,
+      heldContextIds(
+        composerContextRecords,
+        importingContextIdsRef.current,
+        retainedContextPayloads,
+      ),
+    );
+  const importPastedTextStable = useStableCallback(importPastedText);
+
   const insertComposerText = (
     text: string,
     position: "cursor" | "end",
@@ -2419,12 +2431,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ) {
       return false;
     }
-    if (options?.clipboardData) {
-      text = importPastedComposerText(
-        options.clipboardData,
-        importContextFragment,
-        composerContextRecords,
-      );
+    if (options?.clipboardData && !isLiteralPendingAnswer) {
+      text = importPastedText(options.clipboardData);
     }
     const prompt = promptRef.current;
     const cursor = position === "cursor" ? readComposerSnapshot().expandedCursor : prompt.length;
@@ -3408,7 +3416,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     cursor={composerCursor}
                     contextRecords={composerContextRecords}
                     buildContextClipboardFragment={buildContextClipboardFragmentStable}
-                    importContextFragment={importContextFragmentStable}
+                    importPastedText={importPastedTextStable}
                     skills={selectedProviderSkills}
                     className={cn(showMobilePendingAnswerActions && "max-sm:pb-12")}
                     onChange={onPromptChangeStable}
