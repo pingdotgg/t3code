@@ -106,6 +106,8 @@ import {
   type ProviderInstanceEntry,
 } from "../providerInstances";
 
+import { translateNow } from "./media/translateNow";
+
 type ThreadProjection = EnvironmentThread["projection"];
 type ThreadStructureRow = ThreadStructure["visibleTurnItems"][number];
 
@@ -454,7 +456,7 @@ export function buildLocalDraftThread(
   return presentThreadShell(draftThread.environmentId, {
     id: threadId,
     projectId: draftThread.projectId,
-    title: "New thread",
+    title: translateNow("appB.sidebar.menu.newThread"),
     providerInstanceId: fallbackModelSelection.instanceId,
     modelSelection: fallbackModelSelection,
     runtimeMode: draftThread.runtimeMode,

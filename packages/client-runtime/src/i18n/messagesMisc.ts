@@ -710,6 +710,10 @@ export const enMessages = {
   "misc.usage.resetCreditDescription":
     "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
   "misc.usage.plan": "Plan",
+  "misc.usage.window.session": "Session",
+  "misc.usage.window.weekly": "Weekly",
+  "misc.usage.window.monthly": "Monthly",
+  "misc.usage.window.subscription": "Subscription",
   "misc.usage.left": "Left",
   "misc.usage.resets": "Resets",
   "misc.usage.evenPace": "Even pace",
@@ -1404,6 +1408,10 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "misc.usage.resetCreditDescription":
     "这会消耗你账号上的一次额度，并清除当前速率限制窗口。此操作无法撤销。",
   "misc.usage.plan": "套餐",
+  "misc.usage.window.session": "会话",
+  "misc.usage.window.weekly": "每周",
+  "misc.usage.window.monthly": "每月",
+  "misc.usage.window.subscription": "订阅",
   "misc.usage.left": "剩余",
   "misc.usage.resets": "重置",
   "misc.usage.evenPace": "匀速进度",

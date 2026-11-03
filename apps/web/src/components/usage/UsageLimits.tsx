@@ -50,6 +50,19 @@ const PACE: Record<LimitPace, { readonly label: MessageKey; readonly icon: typeo
   under: { label: "misc.usage.pace.under", icon: TrendingDownIcon },
 };
 
+const USAGE_WINDOW_LABEL_KEYS: Record<string, MessageKey> = {
+  Session: "misc.usage.window.session",
+  Weekly: "misc.usage.window.weekly",
+  Monthly: "misc.usage.window.monthly",
+  Subscription: "misc.usage.window.subscription",
+};
+
+/** Provider window names arrive as English data; translate the known ones. */
+export function usageWindowLabel(label: string, t: (key: MessageKey) => string): string {
+  const key = USAGE_WINDOW_LABEL_KEYS[label];
+  return key === undefined ? label : t(key);
+}
+
 export function barColor(driver: ServerProvider["driver"]): string {
   const presentation = Object.values(PROVIDER_PRESENTATION).find(
     (entry) => entry.driverKind === driver,
@@ -136,9 +149,12 @@ function WindowBar({
     : null;
   const summary = `${
     timeLeft === null
-      ? t("misc.usage.remainingSummary", { label: window.label, remaining })
+      ? t("misc.usage.remainingSummary", {
+          label: usageWindowLabel(window.label, t),
+          remaining,
+        })
       : t("misc.usage.remainingSummaryWithWindow", {
-          label: window.label,
+          label: usageWindowLabel(window.label, t),
           remaining,
           window: timeLeft,
         })
@@ -210,6 +226,7 @@ export function LimitWindows({
   readonly now: number;
   readonly compact?: boolean;
 }) {
+  const t = useT();
   const color = normalizeProviderAccentColor(accentColor) ?? barColor(driver);
   return (
     <div
@@ -225,9 +242,11 @@ export function LimitWindows({
         return (
           <Fragment key={window.id}>
             <span className="flex min-w-0 items-center gap-2 text-xs">
-              <span className="truncate text-muted-foreground">{window.label}</span>
+              <span className="truncate text-muted-foreground">
+                {usageWindowLabel(window.label, t)}
+              </span>
               <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
-                {remainingPercent(window)}% left
+                {t("misc.usage.percentLeft", { percent: remainingPercent(window) })}
               </span>
             </span>
             <WindowBar color={color} window={window} now={now} />

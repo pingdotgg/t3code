@@ -22,6 +22,8 @@ import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { formatContextWindowCompactionMessage } from "./ContextWindowMeter.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
+import { useT } from "../../hooks/useI18n";
+import { usageWindowLabel } from "../usage/UsageLimits";
 
 const PACE_LABEL: Record<LimitPace, string> = {
   ahead: "Ahead of pace",
@@ -144,13 +146,14 @@ function LimitRow({
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
 }) {
+  const t = useT();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const left = remainingPercent(window);
   const pace = paceOf(window, now);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
   return (
     <UsageRow
-      label={window.label}
+      label={usageWindowLabel(window.label, t)}
       fill={left}
       tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
       value={`${left}%`}
@@ -158,7 +161,7 @@ function LimitRow({
       tooltip={
         <>
           <span className="text-foreground">
-            {window.label}: {left}% left
+            {usageWindowLabel(window.label, t)}：剩余 {left}%
           </span>
           {window.resetsAt && resetsAt > now ? (
             <span className="text-muted-foreground">

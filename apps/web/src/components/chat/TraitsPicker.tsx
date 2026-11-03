@@ -41,6 +41,7 @@ import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
 import { useComposerMenuState } from "./useComposerMenuState";
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -49,6 +50,26 @@ type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
  * the prompt keeps the picker from re-rendering on every keystroke.
  */
 export type PromptUltrathink = "none" | "prefix" | "body";
+
+const TRAIT_LABEL_KEYS: Record<string, MessageKey> = {
+  Reasoning: "chat.traits.reasoning",
+  "Service Tier": "chat.traits.serviceTier",
+  Low: "chat.traits.low",
+  Medium: "chat.traits.medium",
+  High: "chat.traits.high",
+  "Extra High": "chat.traits.extraHigh",
+  Max: "chat.traits.max",
+  Ultra: "chat.traits.ultra",
+  Standard: "chat.traits.standard",
+  Fast: "chat.traits.fast",
+  Normal: "chat.traits.normal",
+};
+
+/** Provider option labels arrive in English; translate the known ones. */
+function traitLabel(label: string, t: (key: MessageKey) => string): string {
+  const key = TRAIT_LABEL_KEYS[label];
+  return key === undefined ? label : t(key);
+}
 
 export function readPromptUltrathink(prompt: string): PromptUltrathink {
   if (!isClaudeUltrathinkPrompt(prompt)) return "none";
@@ -402,7 +423,7 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
               {index > 0 ? <MenuDivider /> : null}
               <MenuGroup>
                 <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">
-                  {descriptor.label}
+                  {traitLabel(descriptor.label, t)}
                 </div>
                 <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">{value}</div>
               </MenuGroup>
@@ -420,7 +441,7 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
           {index > 0 ? <MenuDivider /> : null}
           <MenuGroup>
             <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">
-              {descriptor.label}
+              {traitLabel(descriptor.label, t)}
             </div>
             {ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id ? (
               <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
@@ -441,7 +462,7 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
                 >
                   <span className="flex w-full min-w-0 flex-col">
                     <span className="flex min-w-0 items-center gap-1">
-                      <span className="min-w-0 truncate">{option.label}</span>
+                      <span className="min-w-0 truncate">{traitLabel(option.label, t)}</span>
                       {option.isDefault ? <DefaultBadge /> : null}
                     </span>
                     {option.description ? (
@@ -461,7 +482,7 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
           {index > 0 || selectDescriptors.length > 0 ? <MenuDivider /> : null}
           <MenuGroup>
             <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
-              {descriptor.label}
+              {traitLabel(descriptor.label, t)}
             </div>
             <MenuRadioGroup
               value={descriptor.currentValue === true ? "on" : "off"}
