@@ -232,8 +232,15 @@ it.effect.each(["interrupt", "timeout", "success"] as const)(
         .captureCheckpoint({ cwd, checkpointRef })
         .pipe(Effect.exit, Effect.forkScoped);
       const socket = yield* Effect.promise(() => connected.promise).pipe(
-        Effect.timeout("4 seconds"),
-        TestClock.withLive,
+        Effect.raceFirst(
+          Fiber.join(fiber).pipe(
+            Effect.flatMap((result) =>
+              Exit.isFailure(result)
+                ? Effect.failCause(result.cause)
+                : Effect.die("capture ended before the filter connected"),
+            ),
+          ),
+        ),
       );
       const packs = (yield* fs.readDirectory(path.join(objectDirectory, "pack"))).filter(
         (name) => name.startsWith("tmp_pack_") && name !== "tmp_pack_other_operation",
