@@ -30,6 +30,13 @@ describe("shouldRebuildFileTree", () => {
     expect(decide(existing, [...existing, ...addTo("big", 301)])).toBe(true);
   });
 
+  it("counts a folder's subfolders as siblings, whose paths end in a slash", () => {
+    const existing = folder("big", 50_000).map((path) => `${path}/`);
+    const added = addTo("big", 301).map((path) => `${path}/`);
+    expect(decide(existing, [...existing, ...added])).toBe(true);
+    expect(decide(existing, existing.slice(301))).toBe(true);
+  });
+
   it("rebuilds when many paths leave a folder that dominates the tree", () => {
     const existing = folder("big", 50_000);
     expect(decide(existing, existing.slice(301))).toBe(true);
