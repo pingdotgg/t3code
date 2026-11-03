@@ -132,7 +132,7 @@ function eraseLine(line: Line, col: number, mode: number): Line {
     for (const run of sliceLine(line, col + 1, length)) pushRun(runs, run);
     return runs;
   }
-  return [];
+  return mode === 2 ? [] : line;
 }
 
 function serializeLine(line: Line): string {
@@ -443,7 +443,7 @@ class Terminal {
           if (this.settledHead !== "" || this.settledTail !== "") this.dropped = true;
           this.settledHead = "";
           this.settledTail = "";
-        } else {
+        } else if (mode === 2) {
           this.lines = [[]];
           this.row = 0;
           this.col = 0;
