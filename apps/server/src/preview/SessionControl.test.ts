@@ -3,6 +3,193 @@ import { describe, expect, it } from "vite-plus/test";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 
 describe("SessionControl", () => {
+  it("replaces waiting hover work without changing the running action or delaying the following click", async () => {
+    const control = new SessionControl("agent");
+    await control.take("viewer");
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const events: Array<number | string> = [];
+    const running = control.humanLatest("viewer", "hover:0", async () => {
+      events.push("running");
+      started.resolve();
+      await finish.promise;
+    });
+    await started.promise;
+    const moves = Array.from({ length: 120 }, (_, position) =>
+      control.humanLatest("viewer", "hover:0", async () => {
+        events.push(position);
+      }),
+    );
+    const click = control.human("viewer", async () => {
+      events.push("click");
+    });
+    finish.resolve();
+    await Promise.all([running, ...moves, click]);
+    expect(events).toEqual(["running", 119, "click"]);
+  });
+
+  it.each(["human", "system", "modifiers"] as const)(
+    "does not merge waiting hover work across a %s action",
+    async (barrier) => {
+      const control = new SessionControl("agent");
+      await control.take("viewer");
+      const finish = Promise.withResolvers<void>();
+      const events: string[] = [];
+      const running = control.human("viewer", () => finish.promise);
+      const before = control.humanLatest("viewer", "hover:0", async () => {
+        events.push("before");
+      });
+      const recordBarrier = async () => {
+        events.push("barrier");
+      };
+      const between =
+        barrier === "modifiers"
+          ? control.humanLatest("viewer", "hover:2", recordBarrier)
+          : barrier === "system"
+            ? control.system(recordBarrier)
+            : control.human("viewer", recordBarrier);
+      const after = control.humanLatest("viewer", "hover:0", async () => {
+        events.push("after");
+      });
+      finish.resolve();
+      await Promise.all([running, before, between, after]);
+      expect(events).toEqual(["before", "barrier", "after"]);
+    },
+  );
+
+  it("does not let another viewer replace or split the owner's waiting hover", async () => {
+    const control = new SessionControl("agent");
+    await control.take("viewer");
+    const finish = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const running = control.human("viewer", () => finish.promise);
+    const stale = control.humanLatest("viewer", "hover", async () => {
+      events.push("stale");
+    });
+    await expect(
+      control.humanLatest("other", "hover", async () => {
+        events.push("other");
+      }),
+    ).rejects.toThrow(BrowserControlInterrupted);
+    const latest = control.humanLatest("viewer", "hover", async () => {
+      events.push("latest");
+    });
+    finish.resolve();
+    await Promise.all([running, stale, latest]);
+    expect(events).toEqual(["latest"]);
+  });
+
+  it.each(["release", "disconnect"] as const)(
+    "does not revive waiting hover work after %s and retaking control",
+    async (handoff) => {
+      const control = new SessionControl("agent");
+      await control.take("viewer");
+      const started = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      const events: string[] = [];
+      const running = control.human("viewer", () => {
+        started.resolve();
+        return finish.promise;
+      });
+      await started.promise;
+      const stale = expect(
+        control.humanLatest("viewer", "hover", async () => {
+          events.push("stale");
+        }),
+      ).rejects.toThrow(BrowserControlInterrupted);
+      const released = control[handoff]("viewer");
+      const retaken = control.take("viewer");
+      const fresh = control.humanLatest("viewer", "hover", async () => {
+        events.push("fresh");
+      });
+      const latest = control.humanLatest("viewer", "hover", async () => {
+        events.push("latest");
+      });
+      finish.resolve();
+      await Promise.all([running, stale, released, retaken, fresh, latest]);
+      expect(events).toEqual(["latest"]);
+    },
+  );
+
+  it("rejects every caller of a merged hover when the tab closes", async () => {
+    const control = new SessionControl("agent");
+    await control.take("viewer");
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const running = control.human("viewer", () => {
+      started.resolve();
+      return finish.promise;
+    });
+    await started.promise;
+    const waiting = [1, 2].map((position) =>
+      expect(
+        control.humanLatest("viewer", "hover", async () => {
+          events.push(`hover ${position}`);
+        }),
+      ).rejects.toThrow("closed"),
+    );
+    const closed = control.close();
+    await expect(
+      control.humanLatest("viewer", "hover", async () => {
+        events.push("after close");
+      }),
+    ).rejects.toThrow("closed");
+    finish.resolve();
+    await Promise.all([running, ...waiting, closed]);
+    expect(events).toEqual([]);
+  });
+
+  it("shares a merged dispatch failure and accepts fresh hover work afterwards", async () => {
+    const control = new SessionControl("agent");
+    await control.take("viewer");
+    const finish = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const running = control.human("viewer", () => finish.promise);
+    const first = expect(
+      control.humanLatest("viewer", "hover", async () => {
+        events.push("superseded");
+      }),
+    ).rejects.toThrow("dispatch failed");
+    const last = expect(
+      control.humanLatest("viewer", "hover", async () => {
+        throw new Error("dispatch failed");
+      }),
+    ).rejects.toThrow("dispatch failed");
+    finish.resolve();
+    await Promise.all([running, first, last]);
+    await control.humanLatest("viewer", "hover", async () => {
+      events.push("recovered");
+    });
+    expect(events).toEqual(["recovered"]);
+  });
+
+  it("waits for tracked navigation before dispatching the latest human hover", async () => {
+    const control = new SessionControl("agent");
+    await control.take("viewer");
+    const committed = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const navigation = control.human("viewer", async () => {
+      control.track(
+        committed.promise.then(() => {
+          events.push("navigation committed");
+        }),
+      );
+      return "started";
+    });
+    const first = control.humanLatest("viewer", "hover", async () => {
+      events.push("superseded");
+    });
+    const latest = control.humanLatest("viewer", "hover", async () => {
+      events.push("latest");
+    });
+    await expect(navigation).resolves.toBe("started");
+    expect(events).toEqual([]);
+    committed.resolve();
+    await Promise.all([first, latest]);
+    expect(events).toEqual(["navigation committed", "latest"]);
+  });
+
   it("returns an action result before tracked navigation but drains it before already queued actions", async () => {
     const control = new SessionControl("agent");
     const committed = Promise.withResolvers<void>();
