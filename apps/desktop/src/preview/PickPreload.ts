@@ -358,17 +358,19 @@ function topViewportMapper(view: Window): RectMapper {
   const frame = enclosingFrame(view);
   if (!frame) return (rect) => rect;
   const transform = topTransform(view);
-  const clip = visibleElementRect(frame);
-  return (rect) =>
-    intersectRects(
-      {
-        x: transform.originX + rect.x * transform.scaleX,
-        y: transform.originY + rect.y * transform.scaleY,
-        width: rect.width * transform.scaleX,
-        height: rect.height * transform.scaleY,
-      },
-      clip,
-    );
+  const toTop = (rect: PreviewAnnotationRect): PreviewAnnotationRect => ({
+    x: transform.originX + rect.x * transform.scaleX,
+    y: transform.originY + rect.y * transform.scaleY,
+    width: rect.width * transform.scaleX,
+    height: rect.height * transform.scaleY,
+  });
+  // The frame's viewport excludes its border and padding, which its visible box includes.
+  const viewport = view.document.documentElement;
+  const clip = intersectRects(
+    toTop({ x: 0, y: 0, width: viewport.clientWidth, height: viewport.clientHeight }),
+    visibleElementRect(frame),
+  );
+  return (rect) => intersectRects(toTop(rect), clip);
 }
 
 const inTopViewport = (view: Window, rect: PreviewAnnotationRect): PreviewAnnotationRect =>
@@ -538,8 +540,8 @@ const HTML_PREVIEW_MAX_CHARS = 500;
 /** Preserve the tag, HTML, and crop rect when React context lookup fails or stalls. */
 async function captureElement(element: Element): Promise<PickedElementPayload> {
   const base = {
-    pageUrl: location.href,
-    pageTitle: document.title?.trim() || null,
+    pageUrl: element.ownerDocument.location?.href ?? location.href,
+    pageTitle: element.ownerDocument.title?.trim() || null,
     tagName: element.tagName.toLowerCase(),
     pickedAt: new Date().toISOString(),
   };
@@ -1486,7 +1488,6 @@ function startAnnotation(sendEnabled: boolean): void {
     }
     frames.clear();
     window.removeEventListener("blur", onWindowBlur);
-    window.removeEventListener("resize", repaint);
     dragHandle.removeEventListener("pointerdown", onEditorPointerDown);
     dragHandle.removeEventListener("pointermove", onEditorPointerMove);
     dragHandle.removeEventListener("pointerup", onEditorPointerUp);
@@ -1606,6 +1607,7 @@ function startAnnotation(sendEnabled: boolean): void {
     view.addEventListener("click", onClick, { capture: true, passive: false });
     view.addEventListener("keydown", onKeyDown, { capture: true });
     view.addEventListener("scroll", repaint, { capture: true, passive: true });
+    view.addEventListener("resize", repaint, { passive: true });
   }
 
   function unlisten(root: Document): void {
@@ -1619,6 +1621,7 @@ function startAnnotation(sendEnabled: boolean): void {
     view.removeEventListener("click", onClick, true);
     view.removeEventListener("keydown", onKeyDown, true);
     view.removeEventListener("scroll", repaint, true);
+    view.removeEventListener("resize", repaint);
   }
 
   // The preload runs only in the top frame, so input over a same-origin frame needs listeners there.
@@ -1650,7 +1653,6 @@ function startAnnotation(sendEnabled: boolean): void {
   listen(document);
   attachFrames();
   window.addEventListener("blur", onWindowBlur);
-  window.addEventListener("resize", repaint, { passive: true });
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
   if (inputLayer) {
