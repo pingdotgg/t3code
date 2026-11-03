@@ -716,11 +716,15 @@ it.effect(
       yield* Ref.set(discoveryErrors, [{ message: simctlMessage }]);
       const failed = yield* service.list;
       expect(failed.devices.map((device) => device.id)).toEqual(["iphone", "Pixel_API_35"]);
-      expect(failed.hostStatuses.local).toEqual({ status: "ready", detail: simctlMessage });
+      expect(failed.hostStatuses.local).toEqual({
+        status: "ready",
+        detail: simctlMessage,
+        incompletePlatforms: ["ios"],
+      });
       yield* Ref.set(discoveryErrors, []);
       const recovered = yield* service.list;
       expect(recovered.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
-      expect(recovered.hostStatuses.local).toEqual({ status: "ready" });
+      expect(recovered.hostStatuses.local).toEqual({ status: "ready", incompletePlatforms: [] });
     }).pipe(Effect.scoped),
 );
 
@@ -745,6 +749,7 @@ it.effect("keeps every device when the hub does not answer the listing within 40
     expect(timedOut.hostStatuses.local).toEqual({
       status: "ready",
       detail: "The device hub did not answer within 40 seconds.",
+      incompletePlatforms: ["ios", "android"],
     });
   }).pipe(Effect.scoped),
 );
@@ -1273,6 +1278,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
       expect(incomplete.hostStatuses[hostId]).toEqual({
         status: "ready",
         androidDiscoveryIncomplete: true,
+        incompletePlatforms: [],
         detail:
           "Could not list Android virtual devices (emulator -list-avds, exit code 1). Discovered devices remain available.",
       });
@@ -1294,7 +1300,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
           physical: false,
         },
       ]);
-      expect(recovered.hostStatuses[hostId]).toEqual({ status: "ready" });
+      expect(recovered.hostStatuses[hostId]).toEqual({ status: "ready", incompletePlatforms: [] });
       if (hostId === LOCAL_DEVICE_HOST_ID) expect(recovered.hostStatusDetail).toBeUndefined();
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );

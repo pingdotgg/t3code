@@ -579,6 +579,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             ...state.hostStatuses,
             [ready.hostId]: {
               status: "ready",
+              incompletePlatforms,
               ...(detail ? { detail } : {}),
               ...(androidDiscoveryIncomplete ? { androidDiscoveryIncomplete } : {}),
             },

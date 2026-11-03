@@ -179,7 +179,14 @@ export function DevicePanel(props: {
     const status = state.hostStatuses[host.id];
     const detail = status?.detail ?? (host.kind === "local" ? state.hostStatusDetail : undefined);
     return detail && (status?.status ?? state.hostStatus) === "ready"
-      ? [{ hostId: host.id, label: host.label, detail }]
+      ? [
+          {
+            hostId: host.id,
+            label: host.label,
+            detail,
+            incompletePlatforms: status?.incompletePlatforms,
+          },
+        ]
       : [];
   });
   const unavailablePlatforms = state.hosts.flatMap((host) =>
@@ -218,6 +225,7 @@ export function DevicePanel(props: {
                 key={`${environmentId}\u0000${diagnostic.hostId}\u0000${diagnostic.detail}`}
                 label={diagnostic.label}
                 detail={diagnostic.detail}
+                incomplete={!!diagnostic.incompletePlatforms?.length}
               />
             ))}
           </div>
@@ -408,7 +416,11 @@ function DeviceNotice(props: {
   );
 }
 
-function DeviceDiscoveryWarning(props: { readonly label: string; readonly detail: string }) {
+function DeviceDiscoveryWarning(props: {
+  readonly label: string;
+  readonly detail: string;
+  readonly incomplete: boolean;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -418,7 +430,9 @@ function DeviceDiscoveryWarning(props: { readonly label: string; readonly detail
       >
         <CircleAlert className="size-3.5 shrink-0" />
         <span className="min-w-0 flex-1 truncate">
-          Some devices on {props.label} could not be listed.
+          {props.incomplete
+            ? `Some devices on ${props.label} could not be listed.`
+            : `Device discovery reported a warning on ${props.label}.`}
         </span>
         <CollapsibleTrigger aria-label={`Details for ${props.label}`}>Details</CollapsibleTrigger>
       </div>
