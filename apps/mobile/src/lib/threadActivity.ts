@@ -1152,6 +1152,9 @@ function deriveThreadFeedRunFolds(
       group.entries
         .filter(
           (entry) =>
+            // Assistant prose stays visible; only tool/reasoning work folds.
+            // A short closing note must not hide earlier answers.
+            entry.type !== "message" &&
             entry.id !== terminalAssistantId &&
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
