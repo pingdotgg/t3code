@@ -400,9 +400,7 @@ export const make = Effect.gen(function* () {
             status: "cancelled",
             queuePosition: null,
             completedAt: now,
-            ...(run.status === "queued" || restartHeldRunIds.length === 0
-              ? {}
-              : { restartHeldRunIds }),
+            ...(restartHeldRunIds.length > 0 ? { restartHeldRunIds } : {}),
           },
         });
         for (const attempt of projection.attempts.filter(

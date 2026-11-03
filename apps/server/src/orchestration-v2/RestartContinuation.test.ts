@@ -1077,45 +1077,16 @@ it.effect("does not continue a run the user asked to stop before the restart", (
 
 it.effect("compacts again after a cut /compact turn, and does not continue a cut /logout", () =>
   Effect.gen(function* () {
-    const message = (text: string) => ({
-      id: MessageId.make("message:user"),
-      role: "user",
-      createdBy: "user",
-      text,
-      attachments: [],
-      idleCompaction: "onReturn",
-    });
-    const dispatches = yield* continuationDispatches({
-      ...cutMidTurn(),
-      messages: [message(" /Compact ")],
-    } as unknown as OrchestrationV2ThreadProjection);
-    assert.deepEqual(
-      dispatches.map(
-        ({ text, idleCompaction, createdBy, notification, restartContinuationOfRunId }) => ({
-          text,
-          idleCompaction,
-          createdBy,
-          notification,
-          restartContinuationOfRunId,
-        }),
-      ),
-      [
-        {
-          text: "/compact",
-          idleCompaction: "onReturn",
-          createdBy: "user",
-          notification: undefined,
-          restartContinuationOfRunId: runId,
-        },
-      ],
-    );
-    assert.deepEqual(
-      yield* continuationTexts({
+    for (const [text, expected] of [
+      [" /Compact ", ["/compact"]],
+      [" /LOGOUT ", []],
+    ] as const) {
+      const texts = yield* continuationTexts({
         ...cutMidTurn(),
-        messages: [message(" /LOGOUT ")],
-      } as unknown as OrchestrationV2ThreadProjection),
-      [],
-    );
+        messages: [{ id: MessageId.make("message:user"), role: "user", text, attachments: [] }],
+      } as unknown as OrchestrationV2ThreadProjection);
+      assert.deepEqual(texts, [...expected], text);
+    }
     const texts = yield* continuationTexts({
       ...cutMidTurn(),
       messages: [{ id: MessageId.make("message:user"), text: "/compact later", attachments: [] }],

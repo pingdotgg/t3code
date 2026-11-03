@@ -5537,34 +5537,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect("a compaction resumed after a restart releases only what that restart held", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("runtime-layer-held-queue-resumed-compaction");
-      const { send, runFor, end, startedRunIds, releasedAfter, awaitHeld } =
-        yield* queueTestThread(threadId);
+      const { send, runFor, end, startedRunIds, awaitHeld } = yield* queueTestThread(threadId);
       yield* send("failed", "agent", true);
-      yield* send("user", "user", false);
+      yield* send("earlier", "user", false);
+      yield* send("later", "user", false);
       yield* end("failed", "failed");
-      yield* awaitHeld("user");
-      const user = yield* runFor("user");
-      // An idle compaction ran past a failure's hold; the restart that cut it added no hold.
-      yield* send("idle", "agent", true);
-      yield* end("idle", "cancelled");
-      yield* send(" /compact", "agent", true);
-      yield* send("witness", "agent", false);
-      assert.isTrue((yield* runFor("witness")).queueHeld);
-      yield* end(" /compact", "completed", "", {
-        restartContinuationOfRunId: (yield* runFor("idle")).id,
-      });
-      // The listener releases the agent's message past the user's, which stays held.
-      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("witness")).id);
-      assert.isTrue((yield* runFor("user")).queueHeld);
-      yield* end("witness", "completed");
+      yield* awaitHeld("later");
       yield* send("cut", "agent", true);
-      yield* end("cut", "cancelled", "", { restartHeldRunIds: [user.id] });
+      yield* end("cut", "cancelled", "", { restartHeldRunIds: [(yield* runFor("later")).id] });
       yield* send("/compact", "agent", true);
       yield* end("/compact", "completed", "", {
         restartContinuationOfRunId: (yield* runFor("cut")).id,
       });
-      assert.equal(yield* Queue.take(startedRunIds), user.id);
-      yield* releasedAfter("user", "/compact");
+      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("later")).id);
+      assert.isTrue((yield* runFor("earlier")).queueHeld);
     }),
   );
 

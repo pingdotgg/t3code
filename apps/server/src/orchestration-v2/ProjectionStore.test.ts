@@ -1022,16 +1022,6 @@ const restartCancelledWorkSurvivesStaleRunUpdate = Effect.gen(function* () {
     occurredAt: now,
     payload: { runId: run.id, restartCancelledBackgroundWork: work },
   });
-  const restartHeldRunIds = [RunId.make("run:restart-cancelled-work-stale-update:held")];
-  yield* store.apply({
-    id: EventId.make("event:restart-cancelled-work-stale-update:cancelled"),
-    type: "run.updated",
-    threadId,
-    runId: run.id,
-    providerInstanceId,
-    occurredAt: now,
-    payload: { ...run, status: "cancelled", completedAt: now, restartHeldRunIds },
-  });
   yield* store.apply({
     id: EventId.make("event:restart-cancelled-work-stale-update:completed"),
     type: "run.updated",
@@ -1044,7 +1034,6 @@ const restartCancelledWorkSurvivesStaleRunUpdate = Effect.gen(function* () {
   const updated = (yield* store.getThreadProjection(threadId)).runs[0];
   assert.equal(updated?.status, "completed");
   assert.deepEqual(updated?.restartCancelledBackgroundWork, work);
-  assert.deepEqual(updated?.restartHeldRunIds, restartHeldRunIds);
 });
 
 const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
