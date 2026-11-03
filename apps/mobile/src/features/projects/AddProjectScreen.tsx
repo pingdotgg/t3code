@@ -1308,9 +1308,10 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
     readonly environmentId: EnvironmentId;
     readonly confirmation: AddProjectCheckoutConfirmation;
   } | null>(null);
+  const environmentId = environment?.environmentId;
   const confirmation =
-    pendingCheckout?.environmentId === environment?.environmentId
-      ? (pendingCheckout?.confirmation ?? null)
+    pendingCheckout !== null && pendingCheckout.environmentId === environmentId
+      ? pendingCheckout.confirmation
       : null;
 
   const submitPath = async () => {
