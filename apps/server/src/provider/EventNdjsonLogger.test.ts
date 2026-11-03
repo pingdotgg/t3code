@@ -156,6 +156,50 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
     }),
   );
 
+  it.effect("writes each delegated sibling thread to its own log file", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const parentCommand =
+        "command%3Amcp%3A00000000-0000-4000-8000-000000000000%3Adelegate-task%3A";
+
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
+        const logger = store.logger("native");
+        yield* logger.write(
+          { id: "review" },
+          ThreadId.make(`thread:delegated-task:${parentCommand}review-the-diff`),
+        );
+        yield* logger.write(
+          { id: "tests" },
+          ThreadId.make(`thread:delegated-task:${parentCommand}write-the-tests`),
+        );
+        yield* logger.write({ id: "short" }, ThreadId.make("thread-short"));
+        yield* store.close();
+
+        const payloadsByFile = NodeFS.readdirSync(tempDir)
+          .toSorted()
+          .map((file) =>
+            NodeFS.readFileSync(NodePath.join(tempDir, file), "utf8")
+              .trim()
+              .split("\n")
+              .map((line) => parseLogLine(line).payload),
+          );
+        assert.sameDeepMembers(payloadsByFile, [
+          ['{"id":"review"}'],
+          ['{"id":"tests"}'],
+          ['{"id":"short"}'],
+        ]);
+        assert.include(
+          NodeFS.readFileSync(ownedLogPath(basePath, "thread-short"), "utf8"),
+          '{"id":"short"}',
+        );
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("keeps shared store views non-owning when one adapter closes", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
