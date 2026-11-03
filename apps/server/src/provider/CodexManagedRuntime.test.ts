@@ -388,7 +388,7 @@ it.live.skipIf(!symlinksSupported)(
       Effect.provide(
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-managed-runtime-sqlite-conflict-",
-        }).pipe(Layer.provideMerge(NodeServices.layer)),
+        }).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
       ),
     ),
 );
