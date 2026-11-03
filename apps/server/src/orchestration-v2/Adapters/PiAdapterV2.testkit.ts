@@ -1,7 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProviderReplayEntry,
-  type ProviderInstanceEnvironment,
+  ProviderInstanceId,
+  type ResolvedProviderInstanceEnvironment,
   type ProviderReplayTranscript,
   type ProviderReplayEntry as ProviderReplayEntryType,
 } from "@t3tools/contracts";
@@ -362,19 +363,21 @@ export function layer<E, R>(input: {
   readonly spawner: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner, E, R>;
   readonly binaryPath: string;
   readonly launchArgs: string;
-  readonly environment?: ProviderInstanceEnvironment;
+  readonly environment?: ResolvedProviderInstanceEnvironment;
 }) {
-  return ProviderAdapterRegistry.layerFromDrivers({
-    drivers: [PiAdapterV2Driver],
-    configMap: {
-      [PI_PROVIDER]: {
-        driver: PI_PROVIDER,
-        enabled: true,
-        config: { binaryPath: input.binaryPath, launchArgs: input.launchArgs },
-        ...(input.environment === undefined ? {} : { environment: input.environment }),
+  return ProviderAdapterRegistry.layerFromAdaptersEffect(
+    PiAdapterV2Driver.create({
+      instanceId: ProviderInstanceId.make(PI_PROVIDER),
+      environment: input.environment ?? [],
+      displayName: undefined,
+      enabled: true,
+      config: {
+        ...PiAdapterV2Driver.defaultConfig(),
+        binaryPath: input.binaryPath,
+        launchArgs: input.launchArgs,
       },
-    },
-  }).pipe(
+    }).pipe(Effect.map((adapter) => [adapter])),
+  ).pipe(
     Layer.provide(input.spawner),
     Layer.provide(
       Layer.mergeAll(

@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import { appAtomRegistry } from "../state/atom-registry";
 import { assetEnvironment } from "../state/assets";
 import { environmentSession } from "../state/session";
+import { workspaceConnections } from "../state/workspace";
 import { downloadAttachmentForPreview } from "./attachmentDownload";
 import {
   persistComposerAttachmentFile,
@@ -67,6 +68,8 @@ export async function importComposerContextClipboard(
   signal: AbortSignal,
   existingContextCount = 0,
   destinationEnvironmentId?: EnvironmentId,
+  /** The machines the destination links to, whose threads its agent can read too. */
+  linkedEnvironments: ReadonlyMap<EnvironmentId, string> = new Map(),
 ) {
   const fragment =
     decodeComposerContextFragment(input.fragment) ?? decodeComposerContextClipboardHtml(input.html);
@@ -80,6 +83,7 @@ export async function importComposerContextClipboard(
           text: imported.text,
           records: imported.context.records,
           environmentId: destinationEnvironmentId,
+          linkedEnvironments,
         });
   const skippedIds = new Set(skippedThreads.map((record) => record.contextId));
   const retained = imported.context.records.filter((record) => !skippedIds.has(record.contextId));
@@ -106,6 +110,8 @@ export async function importComposerContextClipboard(
         failures.push(record.name);
       }
     }
+    // The last copy can be cancelled after its own check; a cancelled import must not return files nobody will release.
+    checkAborted(signal);
     return {
       text: imported.text,
       context: { version: 1 as const, records },
@@ -132,7 +138,13 @@ async function importAttachment(
 ): Promise<DraftComposerAttachment> {
   await waitForComposerDraftsLoaded();
   checkAborted(signal);
-  const local = findLocalComposerClipboardAttachment(environmentId, record.attachmentId);
+  const local = findLocalComposerClipboardAttachment(
+    appAtomRegistry
+      .get(workspaceConnections.environmentsAtom)
+      .map((environment) => environment.environmentId),
+    environmentId,
+    record.attachmentId,
+  );
   if (local) {
     if (!local.fileUri && local.type === "image" && local.dataUrl)
       return {
