@@ -150,29 +150,33 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
         <InfoIcon />
         <AlertTitle>{title}</AlertTitle>
         <AlertDescription>
-          <Tooltip>
-            <TooltipTrigger render={<div className="line-clamp-3" />}>{message}</TooltipTrigger>
-            <TooltipPopup side="top" className="whitespace-pre-wrap">
-              {message}
-            </TooltipPopup>
-          </Tooltip>
-          {onOpenProviderSetup && hasProviderSetup(status) ? (
-            <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>
-              Open provider setup
-            </InlineButton>
-          ) : null}
+          <div className="flex flex-col gap-2">
+            <Tooltip>
+              <TooltipTrigger render={<div className="line-clamp-3" />}>{message}</TooltipTrigger>
+              <TooltipPopup side="top" className="whitespace-pre-wrap">
+                {message}
+              </TooltipPopup>
+            </Tooltip>
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              {onOpenProviderSetup && hasProviderSetup(status) ? (
+                <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>
+                  Open provider setup
+                </InlineButton>
+              ) : null}
+              <Button
+                aria-label={`Refresh ${providerName} provider status`}
+                disabled={!canRefresh || isRefreshing}
+                onClick={() => void refresh()}
+                size="xs"
+                variant="outline"
+              >
+                <RefreshIcon />
+                {isRefreshing ? "Refreshing..." : "Refresh"}
+              </Button>
+            </div>
+          </div>
         </AlertDescription>
         <AlertAction>
-          <Button
-            aria-label={`Refresh ${providerName} provider status`}
-            disabled={!canRefresh || isRefreshing}
-            onClick={() => void refresh()}
-            size="xs"
-            variant="ghost-muted"
-          >
-            <RefreshIcon />
-            {isRefreshing ? "Refreshing..." : "Refresh"}
-          </Button>
           <Button
             aria-label={`Dismiss ${providerName} provider ${status.status}`}
             onClick={onDismiss}
