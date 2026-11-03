@@ -5,7 +5,9 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   EventId,
+  ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -13,6 +15,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
   type PullRequestSummary,
@@ -735,6 +738,44 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   };
 });
 
+function rosterUpdated(
+  threadId: ThreadId,
+  pendingBackgroundTasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
+  occurredAt: DateTime.Utc,
+): OrchestrationV2DomainEvent {
+  return {
+    type: "provider-thread.updated",
+    id: EventId.make(`event:roster:${threadId}:${pendingBackgroundTasks.length}`),
+    threadId,
+    occurredAt,
+    payload: {
+      id: ProviderThreadId.make(`provider-thread:${threadId}`),
+      appThreadId: threadId,
+      ownerNodeId: null,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      providerSessionId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "idle",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+      pendingBackgroundTasks,
+    },
+  };
+}
+
+const awaitedCommand: OrchestrationV2PendingBackgroundTask = {
+  taskId: "tests",
+  kind: "command",
+  description: "Run the tests",
+  awaited: true,
+};
+
 const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
   reactor: ThreadSettlementService.ThreadSettlementServiceV2["Service"],
   activation: Deferred.Deferred<void>,
@@ -1108,6 +1149,118 @@ describe("ThreadSettlementServiceV2 worker", () => {
           yield* reactor.drain;
           // The startup sweep, the first per-thread sweep, and one coalesced rerun.
           assert.strictEqual(yield* Ref.get(branchLookupCount), 3);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("waits for the turn that reports awaited work before settling on merge", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const settled = yield* Deferred.make<void>();
+        const thread = makeThread("awaited-work", {
+          pullRequests: [
+            {
+              ...persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z")),
+              snapshot: {
+                state: "merged",
+                title: "Pull request",
+                headBranch: "feature",
+                baseBranch: "main",
+                isDraft: false,
+                updatedAt: NOW,
+                syncedAt: NOW,
+                mergedAt: NOW,
+              },
+            },
+          ],
+          pendingBackgroundTasks: [awaitedCommand],
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([thread]),
+          onDispatch: () => Deferred.succeed(settled, undefined),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(
+            rosterUpdated(thread.id, [awaitedCommand], DateTime.makeUnsafe(NOW)),
+          );
+          yield* Ref.set(
+            fixture.snapshots,
+            makeSnapshot([{ ...thread, pendingBackgroundTasks: [] }]),
+          );
+          yield* fixture.publishEvent(rosterUpdated(thread.id, [], DateTime.makeUnsafe(NOW)));
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+          const reportAt = DateTime.makeUnsafe(Date.parse(NOW) + 1_000);
+          yield* Ref.set(
+            fixture.snapshots,
+            makeSnapshot([
+              {
+                ...thread,
+                pendingBackgroundTasks: [],
+                latestRunId: RunId.make("run:report"),
+                latestUserMessageAt: reportAt,
+                latestRunRequestedAt: reportAt,
+                latestRunStartedAt: reportAt,
+                latestRunCompletedAt: DateTime.makeUnsafe(Date.parse(NOW) + 20_000),
+              },
+            ]),
+          );
+          // The next full sweep is within the hold's grace, so only the report turn releases it.
+          yield* TestClock.adjust("1 minute");
+          yield* Deferred.await(settled);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [thread.id],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("settles an idle thread whose awaited work ended once no report turn came", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const settled = yield* Deferred.make<void>();
+        const thread = makeThread("awaited-work-idle", {
+          pendingBackgroundTasks: [awaitedCommand],
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([thread]),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 3 },
+          onDispatch: () => Deferred.succeed(settled, undefined),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(
+            rosterUpdated(thread.id, [awaitedCommand], DateTime.makeUnsafe(NOW)),
+          );
+          yield* Ref.set(
+            fixture.snapshots,
+            makeSnapshot([{ ...thread, pendingBackgroundTasks: [] }]),
+          );
+          // Ended 90s ago, so the next full sweep, a minute later, falls past the hold's grace.
+          const endedAt = DateTime.makeUnsafe(Date.parse(NOW) - 90_000);
+          yield* fixture.publishEvent(rosterUpdated(thread.id, [], endedAt));
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+          yield* TestClock.adjust("1 minute");
+          yield* Deferred.await(settled);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [thread.id],
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
