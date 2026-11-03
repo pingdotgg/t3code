@@ -3,7 +3,11 @@ import { ConnectionTraceId } from "./ConnectionTraceId";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { hasSavedBearerRoute, hostFreezeNotice } from "@t3tools/client-runtime/connection";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  resolveEnvironmentMachineKind,
+  tailscaleServeFailureMessage,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -67,6 +71,9 @@ export function ConnectionEnvironmentRow(props: {
   const statusLabel = connectionStatusLabel(props.environment);
   const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
   const hasConnectionFailure = enabled && props.environment.connectionError !== null;
+  const tailscaleFailure = enabled
+    ? tailscaleServeFailureMessage(serverConfig?.tailscaleServeFailure)
+    : null;
   const freeze = enabled
     ? hostFreezeNotice(props.environment.environmentLabel, serverConfig?.lastEventLoopStall)
     : null;
@@ -152,6 +159,11 @@ export function ConnectionEnvironmentRow(props: {
                   activation="longPress"
                 />
               ) : null}
+            </Text>
+          ) : null}
+          {tailscaleFailure ? (
+            <Text className="text-xs text-warning-foreground" selectable>
+              {tailscaleFailure}
             </Text>
           ) : null}
           {freeze ? (
