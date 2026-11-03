@@ -5755,6 +5755,21 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           null,
         );
         assert.deepInclude(localUpstreamGone, { upstreamBranch: "origin/push" });
+
+        yield* git(cwd, ["push", "fork", "HEAD:refs/heads/release"]);
+        yield* git(cwd, ["branch", "-u", "fork/release"]);
+        yield* git(cwd, ["push", "fork", "--delete", "release"]);
+        yield* writeTextFile(cwd, "release.txt", "release\n");
+        yield* git(cwd, ["add", "-A"]);
+        yield* (yield* GitVcsDriver.GitVcsDriver).commit(cwd, "Add release change", "");
+        yield* (yield* GitVcsDriver.GitVcsDriver).pushCurrentBranch(cwd, null);
+        assert.equal(
+          yield* (yield* GitVcsDriver.GitVcsDriver).readConfigValue(
+            cwd,
+            "branch.feature/push.t3-merge-base",
+          ),
+          "release",
+        );
       }),
     );
 

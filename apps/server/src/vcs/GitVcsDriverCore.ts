@@ -2635,6 +2635,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ),
   );
 
+  // Publishing retargets the upstream, so preserve its comparison base first.
+  const preserveUpstreamBase = Effect.fn("preserveUpstreamBase")(function* (
+    cwd: string,
+    branch: string,
+    upstream: { readonly branchName: string; readonly upstreamRef: string },
+  ) {
+    if ((yield* readBranchBase(cwd, branch)) !== null) return;
+    yield* writeConfigValue({ cwd, key: branchBaseConfigKey(branch), value: upstream.branchName });
+    if (!(yield* readConfigValue(cwd, `branch.${branch}.t3-merge-base-ref`))) {
+      yield* writeConfigValue({
+        cwd,
+        key: `branch.${branch}.t3-merge-base-ref`,
+        value: `refs/remotes/${upstream.upstreamRef}`,
+      });
+    }
+  });
+
   const pushCurrentBranch: GitVcsDriver.GitVcsDriver["Service"]["pushCurrentBranch"] = Effect.fn(
     "pushCurrentBranch",
   )(function* (cwd, fallbackBranch, options) {
@@ -2668,21 +2685,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
-    // A deleted upstream keeps its config; republish to its remote when it was this branch's own.
+    // A deleted upstream keeps its config: republish to it when it was this branch's own,
+    // otherwise it was the base, so keep that before publishing.
     let goneUpstream: { remoteName: string; branchName: string } | null = null;
+    let goneBaseUpstream: { branchName: string; upstreamRef: string } | null = null;
     if (!details.hasUpstream) {
       const mergeRef = yield* readConfigValue(cwd, `branch.${branch}.merge`);
       const mergeBranch = mergeRef?.startsWith("refs/heads/")
         ? mergeRef.slice("refs/heads/".length)
         : null;
       const remoteName = yield* readConfigValue(cwd, `branch.${branch}.remote`);
-      if (
-        mergeBranch &&
-        remoteName &&
-        remoteName !== "." &&
-        (mergeBranch === branch || mergeBranch === (yield* resolvePublishBranchName(cwd, branch)))
-      ) {
-        goneUpstream = { remoteName, branchName: mergeBranch };
+      if (mergeBranch && remoteName && remoteName !== ".") {
+        if (
+          mergeBranch === branch ||
+          mergeBranch === (yield* resolvePublishBranchName(cwd, branch))
+        ) {
+          goneUpstream = { remoteName, branchName: mergeBranch };
+        } else {
+          goneBaseUpstream = {
+            branchName: mergeBranch,
+            upstreamRef: `${remoteName}/${mergeBranch}`,
+          };
+        }
       }
     }
 
@@ -2752,6 +2776,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       const publishBranch =
         goneUpstream?.branchName ?? (yield* resolvePublishBranchName(cwd, branch));
+      if (goneBaseUpstream) yield* preserveUpstreamBase(cwd, branch, goneBaseUpstream);
       yield* runGit(
         "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
         cwd,
@@ -2781,21 +2806,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         );
         const remoteName = publishRemoteName ?? currentUpstream.remoteName;
         const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-        // Publishing retargets the upstream, so preserve its comparison base first.
-        if ((yield* readBranchBase(cwd, branch)) === null) {
-          yield* writeConfigValue({
-            cwd,
-            key: branchBaseConfigKey(branch),
-            value: currentUpstream.branchName,
-          });
-          if (!(yield* readConfigValue(cwd, `branch.${branch}.t3-merge-base-ref`))) {
-            yield* writeConfigValue({
-              cwd,
-              key: `branch.${branch}.t3-merge-base-ref`,
-              value: `refs/remotes/${currentUpstream.upstreamRef}`,
-            });
-          }
-        }
+        yield* preserveUpstreamBase(cwd, branch, currentUpstream);
         yield* runGit(
           "GitVcsDriver.pushCurrentBranch.pushOwnBranch",
           cwd,
