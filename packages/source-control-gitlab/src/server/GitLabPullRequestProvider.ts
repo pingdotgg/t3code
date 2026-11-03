@@ -11,6 +11,7 @@ import type {
 } from "@t3tools/contracts";
 
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
+import type { GitLabDiffRefs } from "./gitLabMergeRequestJson.ts";
 import {
   PullRequestProviderError,
   type PullRequestProviderFailure,
@@ -95,6 +96,17 @@ function gitLabProviderFailure(
   if (error._tag === "GitLabMergeRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
 }
+
+// GitLab keeps a thread on the latest diff while its line survives, so older refs mean the code moved.
+const isOutdated = (
+  thread: GitLabDiffRefs | undefined,
+  current: GitLabDiffRefs | undefined,
+): boolean =>
+  thread !== undefined &&
+  current !== undefined &&
+  (thread.baseSha !== current.baseSha ||
+    thread.startSha !== current.startSha ||
+    thread.headSha !== current.headSha);
 
 export const make = Effect.gen(function* () {
   const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
@@ -324,32 +336,44 @@ export const make = Effect.gen(function* () {
         [
           recoverRead(cli.listNotes(input), { comments: [], truncated: true }),
           recoverRead(cli.listCommits(input), []),
-          recoverRead(cli.listDiscussions(input), { threads: [], truncated: true }),
+          recoverRead(cli.listDiscussions(input), {
+            threads: [],
+            diffRefsByThreadId: new Map(),
+            truncated: true,
+          }),
           recoverRead(cli.listReactions(input), {
             reactions: [] as ReadonlyArray<PullRequestReaction>,
             reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
           }),
+          // Usually cached by the detail read beside this one.
+          recoverRead(
+            mergeRequestDetail(input).pipe(Effect.map((mergeRequest) => mergeRequest.diffRefs)),
+            undefined,
+          ),
         ],
-        { concurrency: 4 },
+        { concurrency: 5 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => ({
-          reactions: awards.reactions,
-          comments: notes.comments.map((comment) => ({
-            ...comment,
-            reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-          })),
-          commentCount: notes.comments.length,
-          commentsTruncated: notes.truncated || discussions.truncated,
-          reviewThreads: discussions.threads.map((thread) => ({
-            ...thread,
-            comments: thread.comments.map((comment) => ({
+        Effect.map(
+          ([notes, commits, discussions, awards, diffRefs]): ProviderChangeRequestActivity => ({
+            reactions: awards.reactions,
+            comments: notes.comments.map((comment) => ({
               ...comment,
               reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
             })),
-          })),
-          commits,
-        })),
+            commentCount: notes.comments.length,
+            commentsTruncated: notes.truncated || discussions.truncated,
+            reviewThreads: discussions.threads.map((thread) => ({
+              ...thread,
+              isOutdated: isOutdated(discussions.diffRefsByThreadId.get(thread.id), diffRefs),
+              comments: thread.comments.map((comment) => ({
+                ...comment,
+                reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+              })),
+            })),
+            commits,
+          }),
+        ),
       ),
 
     // Straight from the host, never the shared read: this is what a write is refused or let

@@ -480,11 +480,40 @@ describe("optional activity reads", () => {
     messageHeadline: "Keep this commit",
     committedDate: "2026-07-01T00:00:00Z",
   };
+  const currentRefs = { baseSha: "base2", startSha: "start2", headSha: "head2" };
   const reads = {
     listNotes: () => Effect.succeed({ comments: [comment], truncated: false }),
     listCommits: () => Effect.succeed([commit]),
-    listDiscussions: () => Effect.succeed({ threads: [], truncated: false }),
+    listDiscussions: () =>
+      Effect.succeed({ threads: [], diffRefsByThreadId: new Map(), truncated: false }),
     listReactions: () => Effect.succeed({ reactions: [], reactionsByNoteId: new Map() }),
+    getMergeRequestDetail: () =>
+      Effect.succeed({
+        number: 7,
+        title: "Merge request 7",
+        url: "https://gitlab.com/acme/web/-/merge_requests/7",
+        author: null,
+        headBranch: "feat/page",
+        baseBranch: "main",
+        state: "open" as const,
+        isDraft: false,
+        mergeability: "mergeable" as const,
+        additions: 0,
+        deletions: 0,
+        createdAt: "2026-07-01T00:00:00Z",
+        updatedAt: "2026-07-02T00:00:00Z",
+        reviewRequestLogins: [],
+        labels: [],
+        body: "",
+        changedFiles: 1,
+        mergedAt: null,
+        closedAt: null,
+        reviewers: [],
+        checks: [],
+        viewerCanMerge: true,
+        reviewerIds: [],
+        diffRefs: currentRefs,
+      }),
   };
   const context = {
     operation: "execute" as const,
@@ -529,6 +558,43 @@ describe("optional activity reads", () => {
           },
         });
       }),
+  );
+
+  it.effect("marks a thread outdated once the merge request's diff moves past it", () =>
+    Effect.gen(function* () {
+      const thread = (id: string) => ({
+        id,
+        path: "src/a.ts",
+        line: 3,
+        side: "right" as const,
+        isResolved: false,
+        isOutdated: false,
+        comments: [],
+      });
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            listDiscussions: () =>
+              Effect.succeed({
+                threads: [thread("current"), thread("moved"), thread("unplaced")],
+                diffRefsByThreadId: new Map([
+                  ["current", currentRefs],
+                  ["moved", { ...currentRefs, headSha: "head1" }],
+                ]),
+                truncated: false,
+              }),
+          }),
+        ),
+      );
+
+      const { reviewThreads } = yield* provider.getChangeRequestActivity(reference);
+      expect(reviewThreads.map(({ id, isOutdated }) => [id, isOutdated])).toEqual([
+        ["current", false],
+        ["moved", true],
+        ["unplaced", false],
+      ]);
+    }),
   );
 
   it.effect("keeps comments and commits when optional discussions and reactions fail", () =>

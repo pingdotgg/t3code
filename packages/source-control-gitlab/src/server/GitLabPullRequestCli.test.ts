@@ -853,6 +853,9 @@ layer("GitLabPullRequestCli.layer", (it) => {
                       old_path: "src/a.ts",
                       new_line: 12,
                       old_line: null,
+                      base_sha: "base",
+                      start_sha: "start",
+                      head_sha: "head",
                     },
                   },
                   {
@@ -870,13 +873,16 @@ layer("GitLabPullRequestCli.layer", (it) => {
       );
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      const { threads } = yield* cli.listDiscussions({
+      const { threads, diffRefsByThreadId } = yield* cli.listDiscussions({
         cwd: "/w",
         repository: "acme/web",
         number: 7,
       });
 
       assert.strictEqual(threads.length, 1);
+      expect([...diffRefsByThreadId]).toEqual([
+        ["abc123", { baseSha: "base", startSha: "start", headSha: "head" }],
+      ]);
       expect(threads[0]).toMatchObject({
         id: "abc123",
         path: "src/a.ts",
