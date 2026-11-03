@@ -170,6 +170,29 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("SpawnHost", ()
         .spawn(ChildProcess.make("/bin/true", [], { cwd: "/dev/null" }))
         .pipe(Effect.result);
       expect(Result.isFailure(invalid)).toBe(true);
+      const fdCounts: number[] = [];
+      for (let pass = 0; pass < 2; pass++) {
+        if (pass === 1) {
+          for (let i = 0; i < 12; i++) {
+            for (const command of ["/t3-missing-command-30183", "/dev/null"]) {
+              expect(
+                Result.isFailure(
+                  yield* spawner.spawn(ChildProcess.make(command)).pipe(Effect.result),
+                ),
+              ).toBe(true);
+            }
+          }
+        }
+        const probe = yield* spawner.spawn(
+          ChildProcess.make(process.execPath, [
+            "-e",
+            "process.stdout.write(String(require('node:fs').readdirSync('/proc/' + process.ppid + '/fd').length))",
+          ]),
+        );
+        fdCounts.push(Number(yield* text(probe.stdout)));
+        expect(yield* probe.exitCode).toBe(0);
+      }
+      expect(fdCounts[1]).toBe(fdCounts[0]);
       const child = yield* spawner.spawn(ChildProcess.make("/bin/sh", ["-c", "exit 23"]));
       expect(yield* child.exitCode).toBe(23);
       const healthy = yield* spawner.spawn(ChildProcess.make("/bin/true"));
@@ -246,6 +269,37 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("SpawnHost", ()
         const healthy = yield* spawner.spawn(ChildProcess.make("/bin/true"));
         expect(yield* healthy.exitCode).toBe(0);
       }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("reports descriptor exhaustion without stopping another command in the same host", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const running = yield* spawner.spawn(
+        ChildProcess.make(process.execPath, [
+          "-e",
+          "process.stdout.write('ready');process.stdin.resume()",
+        ]),
+      );
+      yield* running.stdout.pipe(Stream.take(1), Stream.runDrain);
+      const failed = yield* spawner
+        .spawn(ChildProcess.make("/t3-exhausted-spawn"))
+        .pipe(Effect.result);
+      expect(Result.isFailure(failed)).toBe(true);
+      expect(yield* running.isRunning).toBe(true);
+      const healthy = yield* spawner.spawn(ChildProcess.make("/bin/true"));
+      expect(yield* healthy.exitCode).toBe(0);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        SpawnHost.layerHost("/bin/sh", [
+          "-c",
+          'ulimit -n 64; exec "$@"',
+          "sh",
+          process.execPath,
+          new URL("./spawnHost.test-fixture.ts", import.meta.url).pathname,
+        ]).pipe(Layer.provide(NodeServices.layer)),
+      ),
+    ),
   );
 
   it.live("fails launcher startup without retrying the target on the server", () =>
