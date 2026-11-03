@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -107,7 +108,7 @@ function layerElectronWindow(window: ReturnType<typeof makeTestWindow>["window"]
 function layer(window: ReturnType<typeof makeTestWindow>["window"]) {
   return DesktopSshPasswordPrompts.layer({ passwordPromptTimeoutMs: 1_000 }).pipe(
     Layer.provide(layerElectronWindow(window)),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(TestClock.layer()),
   );
 }
