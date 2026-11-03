@@ -70,7 +70,7 @@ const piDiscoverySpawner = (
     readonly noExtensionsInventory?: unknown;
   } = {},
 ) =>
-  Effect.gen(function* () {
+  Effect.sync(() => {
     const rpcProcess = (modelInventory: unknown) =>
       Effect.gen(function* () {
         const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
