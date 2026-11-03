@@ -11194,6 +11194,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
           // Any message in any transcript copy means Claude may still resume it.
           let found = false;
+          let unreadable = false;
           for (const project of yield* fileSystem.readDirectory(projectsDir)) {
             const transcriptPath = path.join(projectsDir, project, `${nativeThreadId}.jsonl`);
             // Stray files beside the project dirs fail with ENOTDIR.
@@ -11209,13 +11210,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 Stream.splitLines,
                 Stream.filter(isClaudeConversationLine),
                 Stream.runHead,
+                Effect.option,
               );
-            if (Option.isSome(conversationLine)) {
+            if (Option.isNone(conversationLine)) {
+              unreadable = true;
+              continue;
+            }
+            if (Option.isSome(conversationLine.value)) {
               return "conversation" as const;
             }
             found = true;
           }
-          return found ? ("empty" as const) : ("missing" as const);
+          return found && !unreadable ? ("empty" as const) : ("missing" as const);
         });
 
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {

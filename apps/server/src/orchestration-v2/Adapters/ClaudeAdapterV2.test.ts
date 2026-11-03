@@ -2729,6 +2729,11 @@ describe("ClaudeAdapterV2 native session identity", () => {
           prefix: "t3-claude-v2-session-identity-",
         });
         if (importedNativeThreadId !== undefined) {
+          // An unreadable copy in another project must not hide the readable one.
+          yield* fileSystem.makeDirectory(
+            path.join(attachmentsDir, "projects", "-other", `${importedNativeThreadId}.jsonl`),
+            { recursive: true },
+          );
           const projectDir = path.join(attachmentsDir, "projects", "-workspace");
           yield* fileSystem.makeDirectory(projectDir, { recursive: true });
           yield* fileSystem.writeFileString(
