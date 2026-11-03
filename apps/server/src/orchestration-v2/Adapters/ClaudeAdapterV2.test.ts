@@ -4939,7 +4939,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     status: "connected",
     tools: [
       { name: "show_weather", _meta: { ui: { resourceUri: "ui://probe/weather.html" } } },
-      { name: "refresh_weather", _meta: { ui: { visibility: ["app"] } } },
+      {
+        name: "refresh_weather",
+        annotations: { readOnly: true, destructive: false },
+        _meta: { ui: { visibility: ["app"] } },
+      },
     ],
   } satisfies ClaudeSdk.McpServerStatus;
 
@@ -5071,11 +5075,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
       const mcpApps = harness.runtime.mcpApps;
       if (mcpApps === undefined) throw new Error("Claude runtime must expose MCP Apps.");
-      const [tool] = yield* mcpApps.listTools({
+      const [tool, appOnlyTool] = yield* mcpApps.listTools({
         providerThread: harness.providerThread,
         server: "probe.server",
       });
       assert.deepInclude(tool, { name: "show_weather", inputSchema: { type: "object" } });
+      // T3 skips the app-call confirmation only for `readOnlyHint` tools.
+      assert.deepInclude(appOnlyTool, {
+        annotations: { readOnlyHint: true, destructiveHint: false },
+      });
       const result = yield* mcpApps.callTool({
         providerThread: harness.providerThread,
         server: "probe.server",
@@ -5139,7 +5147,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("refuses an app tool call Claude Code could route to an overlapping server", () =>
+  it.effect("refuses app requests Claude Code could route to an overlapping server", () =>
     Effect.gen(function* () {
       // Claude Code 2.1.303 runs `mcp__probe__server__refresh_weather` on `probe`.
       const { harness, item, mcpRequests } = yield* runClaudeMcpAppToolTurn(
@@ -5157,7 +5165,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         "mcp__probe__server__show_weather",
       );
       assert.isUndefined(mcpAppFromToolItem(item));
-      const exit = yield* Effect.exit(
+      const callExit = yield* Effect.exit(
         harness.runtime.mcpApps!.callTool({
           providerThread: harness.providerThread,
           server: "probe__server",
@@ -5165,7 +5173,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           arguments: {},
         }),
       );
-      assert.isTrue(Exit.isFailure(exit));
+      // A forged app reference may name either overlapping server.
+      const readExit = yield* Effect.exit(
+        harness.runtime.mcpApps!.readResource({
+          providerThread: harness.providerThread,
+          server: "probe",
+          uri: "ui://probe/weather.html",
+        }),
+      );
+      assert.isTrue(Exit.isFailure(callExit));
+      assert.isTrue(Exit.isFailure(readExit));
       assert.deepEqual(mcpRequests, []);
     }).pipe(
       Effect.scoped,

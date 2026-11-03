@@ -7300,6 +7300,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return liveQuery;
         });
 
+        // Servers can connect after capture, and a forged app reference can name a colliding server.
+        const mcpAppServerStatuses = Effect.fn("ClaudeAdapterV2.mcpAppServerStatuses")(function* (
+          providerThread: OrchestrationV2ProviderThread,
+          server: string,
+        ) {
+          const liveQuery = yield* mcpAppQuery(providerThread);
+          const statuses = yield* liveQuery.query.mcpServerStatus.pipe(
+            Effect.mapError(mcpAppError("Failed to list Claude MCP tools.")),
+          );
+          if (claudeMcpServerPrefixOverlaps(statuses, server)) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: CLAUDE_PROVIDER,
+              detail: "Another MCP server's tool names overlap this app's server.",
+            });
+          }
+          return { liveQuery, statuses };
+        });
+
         /** Reads an app tool's `ui://` document into an attachment; a plain tool row is the fallback. */
         const captureClaudeMcpApp = Effect.fn("ClaudeAdapterV2.captureMcpApp")(
           function* (input: {
@@ -11730,24 +11748,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               providerThread,
               server,
             }) {
-              const liveQuery = yield* mcpAppQuery(providerThread);
-              const status = (yield* liveQuery.query.mcpServerStatus.pipe(
-                Effect.mapError(mcpAppError("Failed to list Claude MCP tools.")),
-              )).find((candidate) => candidate.name === server);
+              const { statuses } = yield* mcpAppServerStatuses(providerThread, server);
+              const status = statuses.find((candidate) => candidate.name === server);
               return (status?.tools ?? []).map(claudeMcpToolForApps);
             }),
             callTool: Effect.fn("ClaudeAdapterV2.callMcpTool")(function* (call) {
-              const liveQuery = yield* mcpAppQuery(call.providerThread);
-              const statuses = yield* liveQuery.query.mcpServerStatus.pipe(
-                Effect.mapError(mcpAppError("Failed to list Claude MCP tools.")),
-              );
-              // Servers can connect after capture, so the routing check runs again per call.
-              if (claudeMcpServerPrefixOverlaps(statuses, call.server)) {
-                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                  driver: CLAUDE_PROVIDER,
-                  detail: "Another MCP server's tool names overlap this app's server.",
-                });
-              }
+              const { liveQuery } = yield* mcpAppServerStatuses(call.providerThread, call.server);
               return claudeMcpCallToolResult(
                 yield* liveQuery.query
                   .callMcpTool({
@@ -11758,7 +11764,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               );
             }),
             readResource: Effect.fn("ClaudeAdapterV2.readMcpResource")(function* (read) {
-              const liveQuery = yield* mcpAppQuery(read.providerThread);
+              const { liveQuery } = yield* mcpAppServerStatuses(read.providerThread, read.server);
               return yield* liveQuery.query
                 .readMcpResource({ server: read.server, uri: read.uri })
                 .pipe(Effect.mapError(mcpAppError("Claude MCP resource read failed.")));
