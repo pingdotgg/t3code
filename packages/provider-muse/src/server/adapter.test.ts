@@ -1704,12 +1704,36 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("clears reminder work when its session closes", () =>
+    Effect.gen(function* () {
+      const runtime = yield* Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const harness = yield* makeHarness(fake);
+        const { nativeId } = yield* startConversation(harness, fake);
+        yield* fake.emit("turn/foregroundCompleted", {
+          turnId: nativeId,
+          blockingAgents: ["goal-reminder"],
+        });
+        yield* harness.takeEvent("turn.terminal");
+        assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+        return harness.runtime;
+      }).pipe(Effect.scoped);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("keeps an intentionally interrupted compaction closed on ensureThread", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
       const recovery = yield* makeFakeMuse("replacement");
       const harness = yield* makeHarness(fake, INSTANCE_ID, undefined, recovery);
-      yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread));
+      const { nativeId } = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/foregroundCompleted", {
+        turnId: nativeId,
+        blockingAgents: ["verify-reminder"],
+      });
+      yield* harness.takeEvent("turn.terminal");
+      yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread, 2));
       const running = yield* harness.takeEvent("provider_turn.updated");
       yield* harness.runtime.interruptTurn({
         providerThread: harness.providerThread,
@@ -1719,6 +1743,7 @@ describe("MuseAdapterV2", () => {
       assert.strictEqual(terminal.status, "interrupted");
       assert.strictEqual(terminal.threadDisposition, "broken");
       assert.strictEqual((yield* Deferred.await(harness.eventsEnded))._tag, "Success");
+      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
 
       const result = yield* harness.runtime
         .ensureThread({
