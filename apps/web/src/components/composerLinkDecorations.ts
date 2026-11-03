@@ -54,6 +54,7 @@ export const ComposerLinkExtension = Extension.create({
               pos: link.from,
               key: `composer-link-favicon:${link.host}:${occurrence}`,
               props: { host: link.host },
+              className: "composer-link-icon",
               side: -1,
             }),
             Decoration.Inline(link.from, link.to, { class: "composer-link" }),

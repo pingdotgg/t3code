@@ -2441,7 +2441,8 @@ code {
   padding: 0.05em 0.25em;
 }
 
-.composer-tiptap .composer-link {
+.composer-tiptap .composer-link,
+.composer-tiptap .composer-link-icon {
   color: var(--info-foreground);
 }
 
