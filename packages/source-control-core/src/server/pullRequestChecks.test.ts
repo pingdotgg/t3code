@@ -6,16 +6,22 @@ import { dedupeChecks } from "./pullRequestChecks.ts";
 function entry(
   name: string,
   status: PullRequestCheckStatus,
-  extra: { readonly workflowName?: string | null; readonly at?: string | null } = {},
+  extra: {
+    readonly workflowName?: string | null;
+    readonly at?: string | null;
+    readonly sequence?: number;
+  } = {},
 ): {
   readonly check: PullRequestCheck;
   readonly workflowName: string | null;
   readonly at: string | null;
+  readonly sequence?: number;
 } {
   return {
     check: { name, status, description: null, url: null },
     workflowName: extra.workflowName ?? null,
     at: extra.at ?? null,
+    ...(extra.sequence === undefined ? {} : { sequence: extra.sequence }),
   };
 }
 
@@ -51,6 +57,39 @@ describe("dedupeChecks", () => {
     ]);
 
     expect([forward[0]?.status, reversed[0]?.status]).toEqual(["failure", "failure"]);
+  });
+
+  it("takes the higher sequence when instants tie, whichever is listed first", () => {
+    const final = entry("build", "success", { at: "2026-10-12T10:14:29Z", sequence: 15 });
+    const pending = entry("build", "pending", { at: "2026-10-12T10:14:29Z", sequence: 14 });
+
+    expect(
+      [
+        [final, pending],
+        [pending, final],
+      ].map((runs) => dedupeChecks(runs)[0]?.status),
+    ).toEqual(["success", "success"]);
+  });
+
+  it("lets a newer instant win over a higher sequence", () => {
+    const stale = entry("build", "success", { at: "2026-10-12T10:14:29Z", sequence: 15 });
+    const fresh = entry("build", "failure", { at: "2026-10-12T10:14:30Z", sequence: 14 });
+
+    expect(
+      [
+        [stale, fresh],
+        [fresh, stale],
+      ].map((runs) => dedupeChecks(runs)[0]?.status),
+    ).toEqual(["failure", "failure"]);
+  });
+
+  it("takes the last copy for equal instants when only one run has a sequence", () => {
+    const checks = dedupeChecks([
+      entry("build", "success", { at: "2026-10-12T10:14:29Z", sequence: 15 }),
+      entry("build", "failure", { at: "2026-10-12T10:14:29Z" }),
+    ]);
+
+    expect(checks.map((check) => check.status)).toEqual(["failure"]);
   });
 
   it.each([
