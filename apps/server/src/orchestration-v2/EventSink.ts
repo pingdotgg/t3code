@@ -13,6 +13,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -34,6 +35,7 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as ProviderCommitBatch from "./ProviderCommitBatch.ts";
 
 export class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>()(
   "EventSinkWriteError",
@@ -68,6 +70,8 @@ export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
 export interface EventSinkV2Shape {
   readonly write: (input: {
+    /** Group independent provider snapshots; return only after commit and publication. */
+    readonly batch?: boolean;
     /** Return no events if another thread owns this native session at commit time. */
     readonly unlessNativeThreadOwned?: Pick<
       OrchestrationV2ProviderThread,
@@ -256,7 +260,7 @@ const layerBase: Layer.Layer<
 
     // Serialize commit and publish; reordered publication makes clients drop earlier sequences.
     const publishLane = yield* Semaphore.make(1);
-    const commitThenPublish = <A, E, R>(
+    const commitThenPublishNow = <A, E, R>(
       transaction: Effect.Effect<A, E, R>,
       publish: (committed: A) => Effect.Effect<void>,
     ) =>
@@ -409,6 +413,7 @@ const layerBase: Layer.Layer<
 
     const writeEffect = Effect.fn("orchestrationV2.EventSink.write")(function* (
       input: Parameters<EventSinkV2Shape["writeWithEffects"]>[0],
+      grouped = false,
     ) {
       yield* Effect.annotateCurrentSpan({
         "orchestration_v2.command_id": input.commandId ?? null,
@@ -416,7 +421,7 @@ const layerBase: Layer.Layer<
         "orchestration_v2.thread_id": input.events[0]?.threadId ?? null,
       });
 
-      const { committed } = yield* commitThenPublish(
+      const { committed } = yield* (grouped ? commitThenPublishNow : commitThenPublish)(
         Effect.gen(function* () {
           // Check ownership in the same transaction that claims the native session.
           const imported = input.unlessNativeThreadOwned;
@@ -877,18 +882,64 @@ const layerBase: Layer.Layer<
       );
     };
 
-    return EventSinkV2.of({
-      write: (input) =>
-        writeEffect({ ...input, effects: [] }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new EventSinkWriteError({
-                eventCount: input.events.length,
-                ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-                cause,
-              }),
-          ),
+    const rawWindow = yield* Config.String("T3CODE_EXPERIMENTAL_COMMIT_WINDOW_MS").pipe(
+      Config.withDefault("0"),
+      Effect.orDie,
+    );
+    const window = Number(rawWindow);
+    const batch =
+      Number.isInteger(window) && window > 0
+        ? yield* ProviderCommitBatch.make(
+            (events) =>
+              writeEffect({ events, effects: [], guardPendingUserInputCancellations: true }, true),
+            Math.min(window, 25),
+          )
+        : undefined;
+
+    const commitThenPublish: typeof commitThenPublishNow = (transaction, publish) => {
+      const effect = commitThenPublishNow(transaction, publish);
+      if (batch === undefined) return effect;
+      // A caller holding the writer cannot wait for another fiber to acquire it.
+      return Effect.flatMap(Effect.serviceOption(sql.transactionService), (existing) =>
+        Option.isSome(existing) ? effect : batch.barrier(effect),
+      );
+    };
+
+    const write: EventSinkV2Shape["write"] = (input) => {
+      const immediate = writeEffect({ ...input, effects: [] });
+      const eligible =
+        batch !== undefined &&
+        input.batch === true &&
+        input.commandId === undefined &&
+        input.unlessNativeThreadOwned === undefined &&
+        input.events.length > 0 &&
+        input.events.every(
+          (event) =>
+            event.type === "node.updated" ||
+            event.type === "message.updated" ||
+            event.type === "turn-item.updated" ||
+            event.type === "plan.updated",
+        );
+      return (
+        eligible
+          ? Effect.flatMap(Effect.serviceOption(sql.transactionService), (existing) =>
+              Option.isSome(existing) ? immediate : batch.write(input.events),
+            )
+          : immediate
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new EventSinkWriteError({
+              eventCount: input.events.length,
+              ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+              cause,
+            }),
         ),
+      );
+    };
+
+    return EventSinkV2.of({
+      write,
       writeWithEffects: (input) =>
         writeEffect(input).pipe(
           Effect.mapError(

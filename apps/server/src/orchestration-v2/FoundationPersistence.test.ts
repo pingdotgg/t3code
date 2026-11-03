@@ -30,6 +30,8 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -323,6 +325,112 @@ it.effect("paces scheduled compaction while preserving retention state and fixed
       { command_id: "after-start" },
     ]);
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
+it.effect(
+  "group commits streaming writes atomically, preserves barriers and bypasses existing transactions",
+  () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const store = yield* EventStore.EventStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threads = [1, 2].map((id) =>
+        makeThread(ThreadId.make(`thread:group-commit:${id}`), now),
+      );
+      yield* sink.write({
+        events: threads.map((thread, id) =>
+          threadCreatedEvent({ id: `group-created:${id}`, thread, now }),
+        ),
+      });
+      const message = (index: number, id: string): OrchestrationV2DomainEvent => ({
+        id: EventId.make(id),
+        type: "message.updated",
+        threadId: threads[index]!.id,
+        occurredAt: now,
+        payload: {
+          id: MessageId.make(`group-message:${index}`),
+          threadId: threads[index]!.id,
+          runId: null,
+          nodeId: null,
+          createdBy: "agent",
+          creationSource: "web",
+          role: "assistant",
+          text: id,
+          streaming: true,
+          attachments: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      const highWater = yield* sink.latestSequence();
+      const first = yield* sink
+        .write({ batch: true, events: [message(0, "group-duplicate")] })
+        .pipe(Effect.exit, Effect.forkScoped({ startImmediately: true }));
+      const second = yield* sink
+        .write({ batch: true, events: [message(1, "group-duplicate")] })
+        .pipe(Effect.exit, Effect.forkScoped({ startImmediately: true }));
+      yield* TestClock.adjust(0);
+      assert.equal(yield* sink.latestSequence(), highWater);
+      yield* TestClock.adjust(25);
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(first)));
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(second)));
+      assert.equal(yield* sink.latestSequence(), highWater);
+      assert.equal(
+        (yield* projections.getThreadRecords(threads[0]!.id, ["messages"])).messages.length,
+        0,
+      );
+      assert.equal(
+        (yield* projections.getThreadRecords(threads[1]!.id, ["messages"])).messages.length,
+        0,
+      );
+
+      const live = yield* sink
+        .stream({ afterSequence: highWater })
+        .pipe(Stream.take(3), Stream.runCollect, Effect.forkScoped({ startImmediately: true }));
+      const pending = yield* sink
+        .write({ batch: true, events: [message(0, "group-first")] })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* TestClock.adjust(0);
+      const [control] = yield* sink.write({
+        events: [
+          {
+            id: EventId.make("group-control"),
+            threadId: threads[1]!.id,
+            occurredAt: now,
+            payload: threads[1]!,
+            type: "thread.metadata-updated",
+          },
+        ],
+      });
+      const [committed] = yield* Fiber.join(pending);
+      assert.isBelow(committed!.sequence, control!.sequence);
+      // Holding the writer must not wait for a batch worker to acquire that same connection.
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sink.write({ batch: true, events: [message(1, "group-nested")] });
+          assert.equal(
+            (yield* projections.getThreadRecords(threads[1]!.id, ["messages"])).messages[0]?.text,
+            "group-nested",
+          );
+        }),
+      );
+      const published = yield* Fiber.join(live);
+      const replayed = yield* store.read({ afterSequence: highWater }).pipe(Stream.runCollect);
+      assert.deepEqual(
+        published.map((stored) => stored.event.id),
+        ["group-first", "group-control", "group-nested"],
+      );
+      assert.deepEqual(replayed, published);
+    }).pipe(
+      Effect.provide(Layer.fresh(layerTest)),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown({ T3CODE_EXPERIMENTAL_COMMIT_WINDOW_MS: "25" }),
+      ),
+      Effect.scoped,
+    ),
 );
 
 it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
