@@ -31,11 +31,14 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -257,6 +260,48 @@ it.effect("routes full projection reads to readers and retains uncommitted write
     );
     assert.isAbove(queries.length, 1);
     assert.deepEqual([...new Set(queries.map((row) => row.connection))], ["reader"]);
+    const commitRequested = yield* Deferred.make<void>();
+    const writer = yield* Deferred.await(commitRequested).pipe(
+      Effect.andThen(
+        sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+          UPDATE orchestration_v2_projection_threads
+          SET payload_json = json_set(payload_json, '$.title', 'Committed title')
+          WHERE thread_id = ${threadId}
+        `;
+            yield* sql`
+          UPDATE orchestration_v2_projection_turn_items
+          SET payload_json = json_set(payload_json, '$.title', 'Committed command')
+          WHERE thread_id = ${parentId}
+        `;
+          }),
+        ),
+      ),
+      Effect.forkChild,
+    );
+    let commitInjected = false;
+    const duringCommit = yield* store.getThreadProjection(threadId).pipe(
+      Effect.provideService(Statement.CurrentTransformer, (statement) => {
+        const [query] = statement.compile();
+        if (!commitInjected && query.includes("FROM orchestration_v2_projection_turn_items")) {
+          commitInjected = true;
+          return Deferred.succeed(commitRequested, undefined).pipe(
+            Effect.andThen(Fiber.join(writer).pipe(Effect.orDie)),
+            Effect.as(statement),
+          );
+        }
+        return Effect.succeed(statement);
+      }),
+    );
+    assert.isTrue(commitInjected);
+    assert.deepEqual(duringCommit, projection);
+    const afterCommit = yield* store.getThreadProjection(threadId);
+    assert.equal(afterCommit.thread.title, "Committed title");
+    assert.equal(
+      afterCommit.visibleTurnItems.find((row) => row.visibility === "inherited")?.item.title,
+      "Committed command",
+    );
     yield* sql.withTransaction(
       Effect.gen(function* () {
         yield* sql`
