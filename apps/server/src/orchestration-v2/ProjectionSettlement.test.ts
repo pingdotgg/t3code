@@ -20,7 +20,7 @@ import * as Layer from "effect/Layer";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { isAutoSettlementCandidate, resolveAutoSettlementAt } from "./ThreadSettlementService.ts";
+import { isAutoSettlementCandidate, resolveAutoSettlement } from "./ThreadSettlementService.ts";
 
 const layerSql = ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
@@ -270,8 +270,8 @@ it.effect(
           autoSettleOnMerge: false,
         };
         assert.deepEqual(
-          resolveAutoSettlementAt({ ...settings, thread: candidate }),
-          resolveAutoSettlementAt({
+          resolveAutoSettlement({ ...settings, thread: candidate }),
+          resolveAutoSettlement({
             ...settings,
             thread: {
               ...expected,

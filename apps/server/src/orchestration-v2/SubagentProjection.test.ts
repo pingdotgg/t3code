@@ -30,7 +30,7 @@ import {
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { resolveAutoSettlementAt } from "./ThreadSettlementService.ts";
+import { resolveAutoSettlement } from "./ThreadSettlementService.ts";
 
 const parentThreadId = ThreadId.make("thread:subagent-snoozed-parent");
 const childThreadId = ThreadId.make("thread:subagent-awake-child");
@@ -173,14 +173,17 @@ it.effect.each(["provider", "mcp"] as const)(
         candidates.map((candidate) => candidate.id),
         [childThreadId],
       );
-      const settledAt = resolveAutoSettlementAt({
+      const settlement = resolveAutoSettlement({
         thread: candidates[0]!,
         pullRequest: null,
         nowMs: DateTime.toEpochMillis(DateTime.add(childCreatedAt, { days: 4 })),
         autoSettleAfterDays: 3,
         autoSettleOnMerge: false,
       });
-      assert.equal(settledAt && DateTime.formatIso(settledAt), DateTime.formatIso(childCreatedAt));
+      assert.equal(
+        settlement && DateTime.formatIso(settlement.settledAt),
+        DateTime.formatIso(childCreatedAt),
+      );
     }).pipe(
       Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
     ),

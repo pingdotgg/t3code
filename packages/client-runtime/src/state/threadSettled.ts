@@ -2,6 +2,8 @@
 import * as DateTime from "effect/DateTime";
 import { DEFAULT_SNOOZE_PRESETS, type SnoozePresetSetting } from "@t3tools/contracts/settings";
 
+import { sourceControlClients } from "../sourceControlClients.ts";
+import { resolveThreadCurrentPullRequestLink } from "../threadPullRequests.ts";
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 
 interface SettlementRunLike {
@@ -332,6 +334,44 @@ export function snoozeWakeLabel(snoozedUntil: string, options: { readonly now: s
   if (remainingMs < HOUR_MS) return `${Math.max(1, Math.ceil(remainingMs / 60_000))}m`;
   if (remainingMs < DAY_MS) return `${Math.ceil(remainingMs / HOUR_MS)}h`;
   return `${Math.ceil(remainingMs / DAY_MS)}d`;
+}
+
+/**
+ * A settled thread's status line, e.g. "Settled 49m ago: PR #12 merged". The timeline above can
+ * end on the watch's last update before the merge, so this says what ended it. `when` is the
+ * relative settledAt, or null where the line shows none. An idle settle omits it: its settledAt is
+ * the last activity, days before the settle.
+ */
+export function settledThreadLabel(
+  thread: Pick<EnvironmentThreadShell, "settleReason" | "pullRequests">,
+  when: string | null,
+): string {
+  const reason = thread.settleReason ?? null;
+  const link = resolveThreadCurrentPullRequestLink(thread.pullRequests);
+  const term =
+    (link && sourceControlClients.findByChangeRequestUrl(link.url)?.changeRequest.shortLabel) ??
+    "PR";
+  const state = link?.snapshot?.state;
+  const ended =
+    link !== null && (state === "merged" || state === "closed")
+      ? { state, text: `${term} #${link.number} ${state}` }
+      : null;
+  const cause =
+    reason?.type === "pull-request"
+      ? ended?.state === reason.state
+        ? ended.text
+        : `${term} ${reason.state}`
+      : null;
+  const head =
+    reason?.type === "inactive"
+      ? `Settled after ${reason.days} idle ${reason.days === 1 ? "day" : "days"}`
+      : [
+          "Settled",
+          reason?.type === "user" ? " by you" : reason?.type === "agent" ? " by an agent" : "",
+          when === null ? "" : ` ${when}`,
+          cause === null ? "" : `: ${cause}`,
+        ].join("");
+  return ended === null || cause === ended.text ? head : `${head} · ${ended.text}`;
 }
 
 export type CustomSnoozeInput =

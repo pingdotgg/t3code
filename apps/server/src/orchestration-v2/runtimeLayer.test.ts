@@ -2599,10 +2599,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         commandId: CommandId.make("runtime-layer-lifecycle-auto-settle"),
         threadId,
         snapshotAt: preAutoProjection.thread.updatedAt,
+        reason: { type: "pull-request", state: "merged" },
       });
       const autoSettledProjection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(autoSettledProjection.thread.settledOverride, "settled");
       assert.isNull(autoSettledProjection.thread.activeOrderKey);
+      assert.deepEqual(shellOf(yield* orchestrator.getShellSnapshot()).settleReason, {
+        type: "pull-request",
+        state: "merged",
+      });
       yield* orchestrator.dispatch({
         type: "thread.unsettle",
         commandId: CommandId.make("runtime-layer-lifecycle-auto-unsettle"),
@@ -2628,6 +2633,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const settledProjection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(settledProjection.thread.settledOverride, "settled");
       assert.isNotNull(settledProjection.thread.settledAt);
+      assert.deepEqual(settledProjection.thread.settleReason, { type: "user" });
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-lifecycle-resettle-by-agent"),
+        threadId,
+        reason: { type: "agent" },
+      });
+      assert.deepEqual((yield* orchestrator.getThreadProjection(threadId)).thread.settleReason, {
+        type: "user",
+      });
 
       yield* orchestrator.dispatch({
         type: "thread.unsettle",
@@ -2643,6 +2658,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         (thread) => thread.id === threadId,
       );
       assert.deepEqual(activeShell?.unsettledAt, activeProjection.thread.unsettledAt);
+      assert.isUndefined(activeShell?.settleReason);
 
       const archive = yield* orchestrator.dispatch({
         type: "thread.archive",

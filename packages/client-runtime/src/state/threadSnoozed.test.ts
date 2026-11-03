@@ -1,5 +1,6 @@
 // @effect-diagnostics globalDate:off -- Tests exercise local calendar snooze boundaries.
 import { ThreadId } from "@t3tools/contracts";
+import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import { TurnId } from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
@@ -10,6 +11,7 @@ import {
   hasQueuedTurnStart,
   pickSnoozePreset,
   resolveSnoozePresets,
+  settledThreadLabel,
   threadRaisedHandWhileSnoozed,
   threadWokeAt,
   isThreadWokeUnseen,
@@ -389,4 +391,93 @@ it("dismisses a wake at its timestamp without hiding a later wake", () => {
   expect(isThreadWokeUnseen(state)).toBe(true);
   expect(isThreadWokeUnseen({ ...state, lastVisitedAt: firstWake })).toBe(false);
   expect(isThreadWokeUnseen({ ...state, lastVisitedAt: firstWake, wokeAt: NOW })).toBe(true);
+});
+
+describe("settledThreadLabel", () => {
+  const link = (
+    state: "open" | "merged" | "closed",
+    url = "https://github.com/owner/repo/pull/12",
+  ): ThreadPullRequestLink => ({
+    host: new URL(url).host,
+    repository: "owner/repo",
+    number: Number(url.split("/").at(-1)),
+    url,
+    source: "agent",
+    linkedAt: SNOOZED_AT,
+    snapshot: {
+      state,
+      title: "Change",
+      headBranch: "feature",
+      baseBranch: "main",
+      isDraft: false,
+      updatedAt: NOW,
+      syncedAt: NOW,
+      mergedAt: state === "merged" ? NOW : null,
+      closedAt: state === "open" ? null : NOW,
+    },
+    stack: null,
+  });
+  const mergedByReason = { type: "pull-request", state: "merged" } as const;
+
+  it.each([
+    [
+      "an old settle without a reason, after the PR merged",
+      null,
+      [link("merged")],
+      "49m ago",
+      "Settled 49m ago · PR #12 merged",
+    ],
+    [
+      "the merge it settled on",
+      mergedByReason,
+      [link("merged")],
+      "49m ago",
+      "Settled 49m ago: PR #12 merged",
+    ],
+    [
+      "a merge found by branch, with no link",
+      mergedByReason,
+      [],
+      "49m ago",
+      "Settled 49m ago: PR merged",
+    ],
+    [
+      "a GitLab merge request",
+      mergedByReason,
+      [link("merged", "https://gitlab.com/owner/repo/-/merge_requests/7")],
+      null,
+      "Settled: MR #7 merged",
+    ],
+    ["an old settle without a reason or a PR", null, [], "49m ago", "Settled 49m ago"],
+    [
+      "inactivity",
+      { type: "inactive", days: 1 } as const,
+      [],
+      "2d ago",
+      "Settled after 1 idle day",
+    ],
+    [
+      "inactivity after the PR closed",
+      { type: "inactive", days: 3 } as const,
+      [link("closed")],
+      "4d ago",
+      "Settled after 3 idle days · PR #12 closed",
+    ],
+    [
+      "the user, with the PR still open",
+      { type: "user" } as const,
+      [link("open")],
+      "5m ago",
+      "Settled by you 5m ago",
+    ],
+    [
+      "an agent, after the PR closed",
+      { type: "agent" } as const,
+      [link("closed")],
+      null,
+      "Settled by an agent · PR #12 closed",
+    ],
+  ])("names %s", (_name, settleReason, pullRequests, when, expected) => {
+    expect(settledThreadLabel({ settleReason, pullRequests }, when)).toBe(expected);
+  });
 });

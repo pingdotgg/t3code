@@ -567,7 +567,7 @@ it.effect.each([
     const projectId = ProjectId.make("project:thread-management:settle-after-run");
     const threadId = ThreadId.make("thread:thread-management:settle-after-run");
     const runId = RunId.make("run:thread-management:settle-after-run");
-    const dispatched: Array<string> = [];
+    const dispatched: Array<unknown> = [];
     const layerTest = ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
@@ -581,7 +581,7 @@ it.effect.each([
             } as unknown as OrchestrationV2ThreadProjection),
           dispatch: (command) =>
             Effect.sync(() => {
-              dispatched.push(command.type);
+              dispatched.push(command);
               return { sequence: 1, storedEvents: [] } as never;
             }),
         }),
@@ -595,7 +595,11 @@ it.effect.each([
 
     yield* service.settleAfterRun({ projectId, threadId, runId });
 
-    expect(dispatched).toEqual(settles ? ["thread.settle"] : []);
+    expect(dispatched).toEqual(
+      settles
+        ? [expect.objectContaining({ type: "thread.settle", reason: { type: "agent" } })]
+        : [],
+    );
   }),
 );
 
