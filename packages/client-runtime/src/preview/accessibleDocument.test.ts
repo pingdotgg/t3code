@@ -6,9 +6,22 @@ import { planAccessibleNode, syncChildren } from "./accessibleDocument.ts";
 const plan = (node: PreviewAccessibilityNode, canAct = true) => planAccessibleNode(node, canAct);
 
 describe("planAccessibleNode", () => {
-  it("does not turn script URLs into live links in the viewer", () => {
+  it("clamps heading levels and only gives safe URLs a live link", () => {
+    expect(plan({ id: "1", role: "heading", name: "Cart", level: 9 })).toMatchObject({
+      tag: "h6",
+      text: "Cart",
+    });
+    expect(
+      plan({ id: "2", role: "link", name: "Docs", url: "https://t3.codes/docs" }),
+    ).toMatchObject({
+      tag: "a",
+      attributes: { href: "https://t3.codes/docs" },
+      control: "activate",
+    });
+    // Script URLs never become live links in the viewer's own document.
     const link = plan({ id: "3", role: "link", name: "Run", url: "javascript:alert(1)" });
     expect(link).toMatchObject({
+      tag: "a",
       attributes: { role: "link", tabindex: "0" },
     });
     expect(link).not.toHaveProperty("attributes.href");
@@ -62,6 +75,23 @@ describe("planAccessibleNode", () => {
         { id: "4", label: "Large", selected: true },
       ],
     });
+    const listbox = (multiselectable?: boolean) =>
+      plan({
+        id: "6",
+        role: "listbox",
+        name: "Windows",
+        ...(multiselectable === undefined ? {} : { multiselectable }),
+        children: [
+          { id: "7", role: "option", name: "Morning", selected: true },
+          { id: "8", role: "option", name: "Evening", selected: true },
+        ],
+      });
+    expect(listbox(true)).toMatchObject({
+      tag: "select",
+      attributes: { size: "2", multiple: "" },
+      options: [{ selected: true }, { selected: true }],
+    });
+    expect(listbox()).not.toHaveProperty("attributes.multiple");
     expect(plan({ id: "5", role: "checkbox", name: "All", checked: "mixed" })).toMatchObject({
       tag: "input",
       attributes: { type: "checkbox" },

@@ -25,6 +25,8 @@ export interface PreviewAccessibilityNode {
   readonly pressed?: "true" | "false" | "mixed";
   readonly expanded?: boolean;
   readonly selected?: boolean;
+  /** A listbox whose options toggle independently. */
+  readonly multiselectable?: boolean;
   readonly disabled?: boolean;
   readonly readonly?: boolean;
   readonly required?: boolean;
@@ -48,6 +50,7 @@ export const PreviewAccessibilityNode: Schema.Codec<PreviewAccessibilityNode> = 
   pressed: Schema.optionalKey(Tristate),
   expanded: Schema.optionalKey(Schema.Boolean),
   selected: Schema.optionalKey(Schema.Boolean),
+  multiselectable: Schema.optionalKey(Schema.Boolean),
   disabled: Schema.optionalKey(Schema.Boolean),
   readonly: Schema.optionalKey(Schema.Boolean),
   required: Schema.optionalKey(Schema.Boolean),

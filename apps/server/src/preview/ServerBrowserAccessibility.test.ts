@@ -139,7 +139,7 @@ describe("buildAccessibilityTree", () => {
       frame(
         "0",
         [
-          node("1", "RootWebArea", { childIds: ["2", "3", "4", "5"] }),
+          node("1", "RootWebArea", { childIds: ["2", "3", "4", "5", "6"] }),
           node("2", "textbox", {
             label: "Password",
             backendDOMNodeId: 2,
@@ -164,6 +164,15 @@ describe("buildAccessibilityTree", () => {
               { name: "disabled", value: { value: true } },
             ],
           }),
+          node("6", "listbox", {
+            label: "Windows",
+            childIds: ["7"],
+            properties: [{ name: "multiselectable", value: { value: true } }],
+          }),
+          node("7", "option", {
+            label: "Morning",
+            properties: [{ name: "selected", value: { value: true } }],
+          }),
         ],
         { secretNodes: new Set([2]) },
       ),
@@ -182,12 +191,19 @@ describe("buildAccessibilityTree", () => {
         editable: true,
       },
       { id: "0.5", role: "checkbox", name: "Remember", checked: "mixed", disabled: true },
+      {
+        id: "0.6",
+        role: "listbox",
+        name: "Windows",
+        multiselectable: true,
+        children: [{ id: "0.7", role: "option", name: "Morning", selected: true }],
+      },
     ]);
     expect(targets.get("0.4")).toMatchObject({ readonly: true, editable: true });
     expect(targets.get("0.5")).toMatchObject({ disabled: true });
   });
 
-  it("stops at the node budget, marks the document truncated, and stays a valid contract", () => {
+  it("stops at the node and depth budgets, marks the document truncated, and stays a valid contract", () => {
     const children = Array.from({ length: 10 }, (_, index) => `${index + 2}`);
     const built = buildAccessibilityTree(
       [
@@ -208,6 +224,20 @@ describe("buildAccessibilityTree", () => {
         root: built.root,
       }).root.children,
     ).toHaveLength(3);
+
+    // Hoisted wrappers still count toward depth, so a deep stack of them cuts the tree.
+    const wrappers = Array.from({ length: 300 }, (_, index) => `${index + 2}`);
+    const deep = buildAccessibilityTree([
+      frame("0", [
+        node("1", "RootWebArea", { childIds: ["2"] }),
+        ...wrappers.map((id, index) =>
+          node(id, "generic", { childIds: [wrappers[index + 1] ?? "button"] }),
+        ),
+        node("button", "button", { label: "Deep" }),
+      ]),
+    ]);
+    expect(deep.truncated).toBe(true);
+    expect(deep.root).toEqual({ id: "0.1", role: "document" });
   });
 });
 

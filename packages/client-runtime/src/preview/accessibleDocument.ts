@@ -195,21 +195,20 @@ export function planAccessibleNode(
   const options =
     node.role === "combobox" || node.role === "listbox" ? descendants(node, "option") : [];
   if (options.length > 0) {
-    return element(
-      "select",
-      node.role === "listbox" ? { size: String(Math.min(Math.max(options.length, 2), 8)) } : {},
-      {
-        label: node.name ?? "",
-        children: [],
-        control: "select",
-        options: options.map((option) => ({
-          id: option.id,
-          label: textOf(option) || option.value || "Option",
-          selected: option.selected === true,
-          disabled: option.disabled === true,
-        })),
-      },
-    );
+    const attributes: Record<string, string> =
+      node.role === "listbox" ? { size: String(Math.min(Math.max(options.length, 2), 8)) } : {};
+    if (node.role === "listbox" && node.multiselectable) attributes.multiple = "";
+    return element("select", attributes, {
+      label: node.name ?? "",
+      children: [],
+      control: "select",
+      options: options.map((option) => ({
+        id: option.id,
+        label: textOf(option) || option.value || "Option",
+        selected: option.selected === true,
+        disabled: option.disabled === true,
+      })),
+    });
   }
   if (FIELD_ROLES.has(node.role) || (node.editable && children.length === 0)) {
     const readOnly = inert || node.readonly === true;
@@ -392,6 +391,7 @@ export function createAccessibleDocumentView(
           if (item.textContent !== option.label) item.textContent = option.label;
           item.disabled = option.disabled;
           item.selected = option.selected;
+          item.dataset.selected = String(option.selected);
           return item;
         }),
         null,
@@ -458,8 +458,16 @@ export function createAccessibleDocumentView(
   const onChange = (event: Event) => {
     const target = event.target;
     if (target instanceof HTMLSelectElement) {
-      const chosen = target.selectedOptions[0]?.dataset.node;
-      if (chosen) act({ node: chosen, action: "activate" });
+      // Each activation toggles one remote option; a single select deselects the rest itself.
+      const toggled = [...target.options].filter(
+        (option) =>
+          option.selected !== (option.dataset.selected === "true") &&
+          (target.multiple || option.selected),
+      );
+      for (const option of target.options) option.dataset.selected = String(option.selected);
+      for (const option of toggled) {
+        if (option.dataset.node) act({ node: option.dataset.node, action: "activate" });
+      }
       return;
     }
     if (

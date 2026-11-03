@@ -179,7 +179,11 @@ export function buildAccessibilityTree(
   ): Array<PreviewAccessibilityNode> => {
     const id = `${frame.key}.${raw.nodeId}`;
     // In-process frames can appear in their parent's tree too.
-    if (visited.has(id) || depth > MAX_DEPTH) return [];
+    if (visited.has(id)) return [];
+    if (depth > MAX_DEPTH) {
+      truncated = true;
+      return [];
+    }
     visited.add(id);
     const role = roleOf(raw);
     if (SKIPPED_ROLES.has(role)) return [];
@@ -236,7 +240,14 @@ export function buildAccessibilityTree(
     if (pressed !== undefined) node.pressed = pressed;
     if (properties.has("expanded")) node.expanded = truthy(properties.get("expanded"));
     if (properties.has("selected")) node.selected = truthy(properties.get("selected"));
-    for (const flag of ["disabled", "readonly", "required", "focused", "multiline"] as const) {
+    for (const flag of [
+      "disabled",
+      "readonly",
+      "required",
+      "focused",
+      "multiline",
+      "multiselectable",
+    ] as const) {
       if (truthy(properties.get(flag))) node[flag] = true;
     }
     const invalid = properties.get("invalid");
