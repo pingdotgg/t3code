@@ -105,8 +105,14 @@ const decodeLogEntryAdded = Schema.decodeUnknownOption(
   }),
 );
 
-const clipConsoleText = (text: string) =>
-  text.length > MAX_CONSOLE_TEXT_CHARS ? `${text.slice(0, MAX_CONSOLE_TEXT_CHARS)}…` : text;
+const clipConsoleText = (text: string) => {
+  if (text.length <= MAX_CONSOLE_TEXT_CHARS) return text;
+  // Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
+  const last = text.charCodeAt(MAX_CONSOLE_TEXT_CHARS - 1);
+  const end =
+    last >= 0xd800 && last <= 0xdbff ? MAX_CONSOLE_TEXT_CHARS - 1 : MAX_CONSOLE_TEXT_CHARS;
+  return `${text.slice(0, end)}…`;
+};
 
 const remoteObjectText = (value: typeof RemoteObject.Type) =>
   typeof value.value === "string"
