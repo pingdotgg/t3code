@@ -11,17 +11,9 @@ import type { ThreadGitRepositoryTarget } from "./use-selected-thread-git-action
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
 
 export function useSelectedThreadGitState(repository?: ThreadGitRepositoryTarget) {
-  const { selectedThread, selectedThreadProject } = useThreadSelection();
+  const { selectedThread } = useThreadSelection();
   const worktree = useSelectedThreadWorktree();
   const selectedThreadCwd = repository?.cwd ?? worktree.selectedThreadCwd;
-  // Worktrees share their repo's branches, so home lists them from the project's checkout.
-  // Without an explicit repository, list from the selected checkout so its branch is marked current.
-  const branchCwd =
-    repository === undefined
-      ? selectedThreadCwd
-      : repository.home
-        ? (selectedThreadProject?.workspaceRoot ?? null)
-        : repository.cwd;
 
   const selectedThreadGitTarget = {
     environmentId: selectedThread?.environmentId ?? null,
@@ -39,7 +31,7 @@ export function useSelectedThreadGitState(repository?: ThreadGitRepositoryTarget
 
   const selectedThreadBranchTarget = {
     environmentId: selectedThread?.environmentId ?? null,
-    cwd: branchCwd,
+    cwd: selectedThreadCwd,
     query: null,
   };
   const selectedThreadBranchState = useBranches(selectedThreadBranchTarget);
