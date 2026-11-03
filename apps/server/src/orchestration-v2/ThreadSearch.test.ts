@@ -2,8 +2,10 @@ import { assert, it } from "@effect/vitest";
 import {
   EventId,
   MessageId,
+  NodeId,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   type OrchestrationV2DomainEvent,
   type ThreadLinkedPullRequest,
@@ -127,6 +129,7 @@ const message = (
     readonly minute?: number;
     readonly streaming?: boolean;
     readonly createdBy?: "user" | "agent";
+    readonly runId?: RunId;
   } = {},
 ): OrchestrationV2DomainEvent => ({
   id: EventId.make(`message:${id}`),
@@ -139,7 +142,7 @@ const message = (
     creationSource: role === "user" ? "web" : "provider",
     id: MessageId.make(id),
     threadId,
-    runId: null,
+    runId: options.runId ?? null,
     nodeId: null,
     role,
     text,
@@ -650,17 +653,49 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
     }),
   );
 
-  it.effect("leaves out answers to an agent's question, which show in its card", () =>
+  it.effect("leaves out answers in their question card and rolled-back turns", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const search = yield* ThreadSearch.ThreadSearch;
       const project = ProjectId.make("project:answers");
       const asked = ThreadId.make("thread:answers");
+      const rewound = ThreadId.make("thread:rewound");
+      const run = {
+        id: RunId.make("run:rewound"),
+        threadId: rewound,
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+        providerThreadId: null,
+        userMessageId: MessageId.make("rewound-prompt"),
+        rootNodeId: NodeId.make("node:rewound"),
+        activeAttemptId: null,
+        status: "rolled_back" as const,
+        requestedAt: at(1),
+        startedAt: at(1),
+        completedAt: at(2),
+        checkpointId: null,
+        contextHandoffId: null,
+      };
       yield* createProject(project);
       yield* Effect.forEach(
         [
           thread(asked, project),
           message(asked, "async-answer:request-1", "user", "use the albatross drive"),
+          thread(rewound, project),
+          {
+            id: EventId.make("run:rewound"),
+            type: "run.created",
+            threadId: rewound,
+            runId: run.id,
+            nodeId: run.rootNodeId,
+            providerInstanceId,
+            occurredAt: at(2),
+            payload: run,
+          } satisfies OrchestrationV2DomainEvent,
+          message(rewound, "rewound-reply", "assistant", "the albatross drive is ready", {
+            runId: run.id,
+          }),
         ],
         projections.apply,
         { discard: true },
