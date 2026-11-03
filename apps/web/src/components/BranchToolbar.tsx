@@ -126,6 +126,8 @@ interface BranchToolbarProps {
   environmentUnavailable?: boolean;
   /** Panel only: where the branch picker renders the thread's PR rows. */
   panelPrRowsContainer?: HTMLElement | null;
+  /** Panel-only actions that belong to the environment, such as opening its editor. */
+  panelEnvironmentActions?: ReactNode;
 }
 
 interface WorkspaceMenuProps {
@@ -544,6 +546,7 @@ function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string)
 
 interface RunContextSelectorProps {
   displayMode?: "toolbar" | "panel";
+  panelEnvironmentActions?: ReactNode;
   workspaceRoot?: string;
   forceNewWorktree: boolean;
   autoEnvironmentLabel?: string | undefined;
@@ -569,6 +572,7 @@ interface RunContextSelectorProps {
 
 const RunContextSelector = memo(function RunContextSelector({
   displayMode = "toolbar",
+  panelEnvironmentActions,
   workspaceRoot,
   forceNewWorktree,
   autoEnvironmentLabel,
@@ -857,6 +861,12 @@ const RunContextSelector = memo(function RunContextSelector({
             ) : null}
           </MenuRadioGroup>
         </MenuGroup>
+        {isPanel && panelEnvironmentActions ? (
+          <>
+            <MenuSeparator />
+            {panelEnvironmentActions}
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );
@@ -1074,6 +1084,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   afterBranch,
   environmentUnavailable = false,
   panelPrRowsContainer,
+  panelEnvironmentActions,
 }: BranchToolbarProps) {
   const branchSelectorRef = useRef<BranchToolbarBranchSelectorHandle>(null);
   const threadRef = scopeThreadRef(environmentId, threadId);
@@ -1143,6 +1154,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           // Without Git there is no worktree to make, so the row only names the folder.
           <RunContextSelector
             displayMode="panel"
+            panelEnvironmentActions={panelEnvironmentActions}
             workspaceRoot={activeProject.workspaceRoot}
             forceNewWorktree={forceNewWorktree}
             autoEnvironmentLabel={autoEnvironmentLabel}
