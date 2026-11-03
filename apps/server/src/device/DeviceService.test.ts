@@ -726,14 +726,22 @@ it.effect(
 
 it.effect("keeps every device when the hub does not answer the listing within 40 seconds", () =>
   Effect.gen(function* () {
-    const { service, listing } = yield* fixture();
+    const { service, devices, listing } = yield* fixture();
+    devices.push({
+      id: DeviceId.make("iphone"),
+      name: "iPhone",
+      platform: "ios",
+      version: "iOS 26",
+      booted: true,
+      physical: false,
+    });
     yield* service.configure({ enabled: true });
     listing.hangs = true;
     const listed = yield* service.list.pipe(Effect.forkScoped);
     yield* Deferred.await(listing.requested);
     yield* TestClock.adjust("40 seconds");
     const timedOut = yield* Fiber.join(listed);
-    expect(timedOut.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
+    expect(timedOut.devices.map((device) => device.id)).toEqual(["iphone", "Pixel_API_35"]);
     expect(timedOut.hostStatuses.local).toEqual({
       status: "ready",
       detail: "The device hub did not answer within 40 seconds.",
