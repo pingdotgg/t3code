@@ -227,6 +227,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     account: typeof AuthFile.Type,
     url: string,
     data?: unknown,
+    onRejected?: (status: number) => UsageLimitSourceError | undefined,
   ) {
     const header =
       account.provider === "codex"
@@ -256,9 +257,12 @@ export const makeCliproxyApi = Effect.gen(function* () {
     });
     const response = yield* decodeApiResponse(raw);
     if (response.status_code < 200 || response.status_code >= 300) {
-      return yield* new UsageLimitSourceError({
-        detail: `The provider refused the hub request (HTTP ${response.status_code}).`,
-      });
+      return yield* (
+        onRejected?.(response.status_code) ??
+          new UsageLimitSourceError({
+            detail: `The provider refused the hub request (HTTP ${response.status_code}).`,
+          })
+      );
     }
     return response.body;
   });
@@ -459,6 +463,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
     const coolingDown = new UsageLimitSourceError({
       detail: "Claude resets are cooling down. Try again later.",
     });
+    const signedOut = new UsageLimitSourceError({
+      detail: "The Claude hub account needs to sign in again.",
+    });
     return yield* resetCreditCoordinator.redeem(
       yield* encodeJson([config.url, organization, grantId]),
       (requestId) =>
@@ -468,6 +475,12 @@ export const makeCliproxyApi = Effect.gen(function* () {
             account,
             `${CLAUDE_BASE}/api/organizations/${encodeURIComponent(organization)}/reset_rate_limits`,
             { program: CLAUDE_RESET_PROGRAM, grant_id: grantId, request_id: requestId },
+            (status) =>
+              status === 429
+                ? coolingDown
+                : status === 401 || status === 403
+                  ? signedOut
+                  : undefined,
           );
           const claim = yield* decodeClaudeClaim(body);
           if (claim.result === "cooldown") return yield* coolingDown;
@@ -479,7 +492,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
           }
           return CLAUDE_CLAIM_OUTCOMES[claim.result];
         }),
-      (error) => error === coolingDown,
+      (error) => error === coolingDown || error === signedOut,
     );
   });
 

@@ -406,10 +406,23 @@ describe("CLIProxyAPI built-in management API", () => {
       ).toBe("Failure");
       result = "reset";
       expect(yield* api.consume(config, "first.json", "free_reset")).toEqual({ outcome: "reset" });
+      for (const rejectedStatus of [401, 403, 429]) {
+        status = rejectedStatus;
+        expect(
+          (yield* api.consume(config, "first.json", "free_reset").pipe(Effect.result))._tag,
+        ).toBe("Failure");
+        status = 200;
+        expect(yield* api.consume(config, "first.json", "free_reset")).toEqual({
+          outcome: "reset",
+        });
+      }
       const claims = test.requests.filter((request) =>
         request.body?.url?.endsWith("/api/organizations/org-1/reset_rate_limits"),
       );
-      expect(claims).toHaveLength(6);
+      expect(claims).toHaveLength(12);
+      for (const index of [6, 8, 10]) {
+        expect(claims[index]?.body?.data).not.toBe(claims[index + 1]?.body?.data);
+      }
       expect(claims[0]?.body?.data).not.toBe(claims[1]?.body?.data);
       expect(claims[1]?.body?.data).not.toBe(claims[2]?.body?.data);
       expect(claims[2]?.body?.data).toBe(claims[3]?.body?.data);
@@ -423,7 +436,7 @@ describe("CLIProxyAPI built-in management API", () => {
         test.requests
           .filter((request) => request.path.endsWith("/reset-quota"))
           .map((request) => request.body?.auth_index),
-      ).toEqual(["a", "a", "a"]);
+      ).toEqual(["a", "a", "a", "a", "a", "a"]);
     }),
   );
 
