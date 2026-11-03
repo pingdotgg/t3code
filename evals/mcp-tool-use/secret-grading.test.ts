@@ -949,6 +949,16 @@ const consumed = (calls: Run["calls"], consumers = ["\\badb\\s+pair\\b"]) =>
 
 it.each<[string, Run["calls"], boolean]>([
   [
+    "a consumer named only in a Python comment",
+    [
+      saved(),
+      bash(
+        `python3 -c "import subprocess; secret = open('${F}').read(); subprocess.run(['other-command'], input=secret) # adb pair"`,
+      ),
+    ],
+    false,
+  ],
+  [
     "a declared consumer after the card",
     [saved(), bash(`adb pair 192.168.1.42:37099 "$(cat ${F})"`)],
     true,

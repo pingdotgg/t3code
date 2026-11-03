@@ -726,7 +726,7 @@ const PROGRAM_COMMENT: Readonly<Record<Language, RegExp>> = {
  * The program with comments and the text of string literals blanked to spaces, so offsets line
  * up with the source: an f-string's `{…}` and a template's `${…}` stay code.
  */
-const maskProgram = (program: string, language: Language) => {
+const maskProgram = (program: string, language: Language, keepStrings = false) => {
   let out = "";
   let i = 0;
   while (i < program.length) {
@@ -752,7 +752,7 @@ const maskProgram = (program: string, language: Language) => {
     while (i < program.length && !program.startsWith(quote, i)) {
       if (quote === c && c !== "`" && program[i] === "\n") break;
       if (program[i] === "\\") {
-        out += "  ";
+        out += keepStrings ? program.slice(i, i + 2) : "  ";
         i += 2;
         continue;
       }
@@ -771,7 +771,7 @@ const maskProgram = (program: string, language: Language) => {
         out += program.slice(start, i);
         continue;
       }
-      out += program[i] === "\n" ? "\n" : " ";
+      out += keepStrings || program[i] === "\n" ? program[i] : " ";
       i++;
     }
     if (program.startsWith(quote, i)) {
@@ -1154,7 +1154,8 @@ export const inlineProgramUses = (
             values.has(match[0]) ? "value" : "maybe",
           ),
         );
-    const at = () => [statement.raw, ...new Set(definitions(code, index))].join("\n");
+    const at = () =>
+      maskProgram([statement.raw, ...new Set(definitions(code, index))].join("\n"), language, true);
     if (flows.includes("redacted")) redacts = true;
     if (flows.includes("print")) uses.push({ verdict: "print (program prints the value)" });
     if (flows.includes("stderr"))
@@ -1173,7 +1174,10 @@ export const inlineProgramUses = (
       uses.push({ verdict: "consume (program sends the value in a request)", at: at() });
     // A page method only runs inside a browser automation program: the whole program is the consumer.
     if (flows.includes("ui"))
-      uses.push({ verdict: "consume (program types the value into a page)", at: program });
+      uses.push({
+        verdict: "consume (program types the value into a page)",
+        at: maskProgram(program, language, true),
+      });
     if (flows.includes("env")) exported = true;
     for (const flow of flows) if (typeof flow === "object") values.add(flow.into);
     const holds = flows.includes("value") ? values : flows.includes("maybe") ? maybe : undefined;
