@@ -73,7 +73,10 @@ class T3SecretInputView(context: Context, appContext: AppContext) : ExpoView(con
     input.background = null
     input.setPadding(0, 0, 0, 0)
     input.gravity = Gravity.CENTER_VERTICAL or Gravity.START
-    input.importantForAutofill = IMPORTANT_FOR_AUTOFILL_NO
+    // The autofill APIs arrive with API 26; minSdk is 24.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      input.importantForAutofill = IMPORTANT_FOR_AUTOFILL_NO
+    }
     input.imeOptions = EditorInfo.IME_ACTION_DONE
     // Not setSingleLine(): that swaps out the password transformation. The password variation is
     // already single line, and the keyboard keeps typed text out of suggestions.
