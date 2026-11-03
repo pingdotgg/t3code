@@ -2524,7 +2524,10 @@ function OpenCommandPaletteDialog(props: {
         command === "chat.newLocal" ||
         command === "chat.newWithoutProject");
     const matchingItem =
-      isJump || isNewThread || command === "voice.toggle" || command === "voice.toggleMute"
+      isJump ||
+      isNewThread ||
+      (!(event.nativeEvent.isComposing || event.keyCode === 229) &&
+        (command === "voice.toggle" || command === "voice.toggleMute"))
         ? displayedGroups
             .flatMap((group) => group.items)
             .find((item) => item.shortcutCommand === command)

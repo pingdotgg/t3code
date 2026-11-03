@@ -47,10 +47,17 @@ it("finishes an old release before activating its successor", async () => {
   await setVoiceAudioActive(true);
   expect(recording).toBe(true);
   await setVoiceAudioActive(false);
-  expect(currentMode).toEqual({
+  expect.soft(currentMode).toEqual({
     allowsRecording: false,
     playsInSilentMode: true,
-    interruptionMode: "doNotMix",
+    interruptionMode: "mixWithOthers",
     shouldPlayInBackground: false,
   });
+  const onCancel = vi.fn();
+  audio.setMode.mockRejectedValueOnce(new Error("activation failed"));
+  await expect(setVoiceAudioActive(true, onCancel)).rejects.toThrow("activation failed");
+  expect.soft(onCancel).toHaveBeenCalled();
+  await playback.play();
+  expect.soft(player.play).toHaveBeenCalledOnce();
+  playback.pause();
 });

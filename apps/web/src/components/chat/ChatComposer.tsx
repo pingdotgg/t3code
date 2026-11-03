@@ -1141,7 +1141,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     if (backgroundThread) return;
     const handler = (event: globalThis.KeyboardEvent) => {
-      if (isCommandPaletteOpen()) return;
+      if (isCommandPaletteOpen() || event.isComposing || event.keyCode === 229) return;
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: getTerminalFocusOwner() !== null,
