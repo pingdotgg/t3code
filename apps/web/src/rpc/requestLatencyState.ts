@@ -54,7 +54,7 @@ function getSlowRpcAckRequestsValue(): ReadonlyArray<SlowRpcAckRequest> {
   return appAtomRegistry.get(slowRpcAckRequestsAtom);
 }
 
-// Opening a thread records the visit without waiting for its ack.
+// Thread visits are recorded without waiting for their ack.
 function isThreadVisitDispatch(method: string, input: unknown): boolean {
   return (
     method === ORCHESTRATION_V2_WS_METHODS.dispatchCommand &&
