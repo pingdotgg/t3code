@@ -74,7 +74,48 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("NonBlockingSpa
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("never hands the native spawner a cwd or a bare command name", () =>
+  it.live("fails a missing or non-executable explicit path like the native spawner", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped();
+      yield* fileSystem.writeFileString(`${directory}/plain`, "#!/bin/sh\n");
+      for (const executable of [`${directory}/missing`, `${directory}/plain`, "./missing"]) {
+        for (const options of [{}, { cwd: directory }]) {
+          const command = ChildProcess.make(executable, [], options);
+          const native = yield* spawnError(command).pipe(Effect.provide(NodeServices.layer));
+          const error = yield* spawnError(command).pipe(Effect.provide(wrapped));
+          expect(error.reason._tag).toBe(native.reason._tag);
+          expect(error.message).toBe(native.message);
+        }
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("searches PATH the way the native spawner does", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const root = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
+      const scripts = {
+        stale: "#!/t3code-missing-interpreter\n",
+        fresh: "#!/bin/sh\necho fresh\n",
+        "target/bin": "#!/bin/sh\necho target\n",
+      };
+      for (const [directory, body] of Object.entries(scripts)) {
+        yield* fileSystem.makeDirectory(`${root}/${directory}`, { recursive: true });
+        yield* fileSystem.writeFileString(`${root}/${directory}/tool`, body);
+        yield* fileSystem.chmod(`${root}/${directory}/tool`, 0o755);
+      }
+      yield* fileSystem.makeDirectory(`${root}/target/subdir`);
+      yield* fileSystem.symlink(`${root}/target/subdir`, `${root}/link`);
+      for (const PATH of [`${root}/stale:${root}/fresh`, `${root}/link/../bin`]) {
+        const command = ChildProcess.make("tool", [], { env: { PATH }, cwd: root });
+        const native = yield* run(command).pipe(Effect.provide(NodeServices.layer));
+        expect(yield* run(command).pipe(Effect.provide(wrapped))).toBe(native);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("only ever hands the native spawner /bin/sh, without a cwd", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const directory = yield* fileSystem.makeTempDirectoryScoped();
@@ -89,20 +130,22 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("NonBlockingSpa
       const piped = ChildProcess.make("true", [], { cwd: directory }).pipe(
         ChildProcess.pipeTo(ChildProcess.make("cat", [], { cwd: directory })),
       );
-      for (const command of [ChildProcess.make("git", ["status"], { cwd: directory }), piped]) {
+      for (const command of [
+        ChildProcess.make("git", ["status"], { cwd: directory }),
+        ChildProcess.make("git", ["status"]),
+        ChildProcess.make("/bin/true", []),
+        piped,
+      ]) {
         yield* spawnError(command).pipe(
           Effect.provide(NonBlockingSpawner.layer.pipe(Layer.provide(recording))),
         );
       }
 
       const legs = received.flatMap(standardCommands);
-      expect(legs).toHaveLength(3);
+      expect(legs).toHaveLength(5);
       for (const leg of legs) {
-        expect(leg.options.cwd).toBeUndefined();
         expect(leg.command).toBe("/bin/sh");
-        expect(leg.args[2]).toMatch(/^[^/]+$/);
-        expect(leg.args[3]).toBe(directory);
-        expect(leg.args[4]).toMatch(/^\//);
+        expect(leg.options.cwd).toBeUndefined();
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
