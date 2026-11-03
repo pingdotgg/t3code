@@ -1,6 +1,6 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import {
   createTerminalSession,
@@ -59,7 +59,9 @@ it("leaves the history a viewer was reading when operate is granted", () => {
 const environmentId = EnvironmentId.make("environment");
 const threadId = ThreadId.make("thread");
 
-function setup(options: { readonly initialInput?: string } = {}) {
+function setup(
+  options: { readonly initialInput?: string; readonly resizeSettleDelayMs?: number } = {},
+) {
   // Tests flush the registry's scheduled work to control when driver finalizers run.
   const scheduled: Array<() => void> = [];
   const registry = AtomRegistry.make({
@@ -101,6 +103,7 @@ function setup(options: { readonly initialInput?: string } = {}) {
       target: { environmentId, threadId, terminalId: "term-1" },
       gridSize: { cols: 120, rows: 40 },
       initialInput: options.initialInput,
+      resizeSettleDelayMs: options.resizeSettleDelayMs,
       canOperate: () => access.canOperate,
       onExit: () => exits.push(true),
       onLiveChange: (value) => live.push(value),
@@ -152,6 +155,58 @@ it("replays the measured grid on every new attachment generation", () => {
     { threadId, terminalId: "term-1", cols: 100, rows: 30 },
     { threadId, terminalId: "term-1", cols: 100, rows: 30 },
   ]);
+});
+
+it("sends only the settled grid and still resizes before launch input", () => {
+  vi.useFakeTimers();
+  try {
+    const { session, attached, emit, mount, calls, of } = setup({
+      initialInput: "top\r",
+      resizeSettleDelayMs: 120,
+    });
+    mount(attached);
+    emit({ status: "running", version: 1 });
+    expect(calls.map((call) => call.command)).toEqual(["resize", "write"]);
+    session.reportGridSize({ cols: 100, rows: 30 });
+    vi.advanceTimersByTime(100);
+    session.reportGridSize({ cols: 100, rows: 20 });
+    vi.advanceTimersByTime(119);
+    expect(of("resize")).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(of("resize")).toEqual([
+      { threadId, terminalId: "term-1", cols: 120, rows: 40 },
+      { threadId, terminalId: "term-1", cols: 100, rows: 20 },
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("cancels pending grids on detach or generation change and checks current permission", () => {
+  vi.useFakeTimers();
+  try {
+    const { session, attached, emit, mount, access, flush, of } = setup({
+      resizeSettleDelayMs: 120,
+    });
+    const unmount = mount(attached);
+    emit({ status: "running", version: 1 });
+    session.reportGridSize({ cols: 100, rows: 30 });
+    access.canOperate = false;
+    vi.advanceTimersByTime(120);
+    expect(of("resize")).toHaveLength(1);
+    access.canOperate = true;
+    session.reportGridSize({ cols: 100, rows: 20 });
+    emit({ status: "running", version: 2, generation: 2 });
+    vi.advanceTimersByTime(120);
+    expect(of("resize")).toHaveLength(2);
+    session.reportGridSize({ cols: 100, rows: 40 });
+    unmount();
+    flush();
+    vi.advanceTimersByTime(120);
+    expect(of("resize")).toHaveLength(2);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("writes the launch's initial input once the first snapshot lands", () => {

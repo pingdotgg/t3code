@@ -221,6 +221,7 @@ export interface TerminalSessionOptions {
     readonly terminalId: string;
   };
   readonly gridSize: TerminalGridSize;
+  readonly resizeSettleDelayMs?: number | undefined;
   /** Written once, as soon as the first attachment snapshot lands. */
   readonly initialInput?: string | undefined;
   /** Read right before every command, so revoking operate stops them at once. */
@@ -262,8 +263,11 @@ export function createTerminalSession(
   let lastStatus: TerminalBufferState["status"] | null = null;
   let loggedFirstOutput = false;
   let resizeRegistry: AtomRegistry.AtomRegistry | null = null;
+  let pendingResize: ReturnType<typeof setTimeout> | undefined;
 
   const sendResize = () => {
+    clearTimeout(pendingResize);
+    pendingResize = undefined;
     if (generation === null || resizeRegistry === null || !options.canOperate()) return;
     void runAtomCommand(resizeRegistry, atoms.resize, {
       environmentId,
@@ -385,6 +389,9 @@ export function createTerminalSession(
     Atom.make((get) => {
       const registry = get.registry;
       get.addFinalizer(() => {
+        clearTimeout(pendingResize);
+        pendingResize = undefined;
+        resizeRegistry = null;
         generation = null;
         lastStatus = null;
         setLive(null);
@@ -411,7 +418,14 @@ export function createTerminalSession(
     reportGridSize: (size) => {
       if (size.cols === gridSize.cols && size.rows === gridSize.rows) return;
       gridSize = size;
-      sendResize();
+      clearTimeout(pendingResize);
+      if (generation === null) return;
+      if (options.resizeSettleDelayMs) {
+        // @effect-diagnostics-next-line globalTimers:off - Grid reports run outside an Effect runtime.
+        pendingResize = setTimeout(sendResize, options.resizeSettleDelayMs);
+      } else {
+        sendResize();
+      }
     },
   };
 }
