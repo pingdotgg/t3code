@@ -43,8 +43,6 @@ function MenuPopup({
   anchor,
   keepMounted = false,
   width = "default",
-  // Every popup now uses the same padding; the prop stays until its last caller goes.
-  variant: _variant,
   spacing = "default",
   ...props
 }: MenuPrimitive.Popup.Props & {
@@ -56,7 +54,6 @@ function MenuPopup({
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
   keepMounted?: boolean;
   width?: "default" | "content" | "wide";
-  variant?: "default" | "scope";
   spacing?: "default" | "relaxed";
 }) {
   return (
@@ -272,13 +269,13 @@ function MenuRadioItem({
   return (
     <MenuPrimitive.RadioItem
       className={cn(
-        "flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center gap-2.5 rounded-[8px] px-2.5 py-1 text-control text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:surface-selected-soft data-highlighted:text-strong-foreground data-checked:surface-selected-soft data-checked:text-foreground data-disabled:opacity-45 sm:min-h-8 [&_svg:not([class*='size-'])]:size-[15px] [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        `flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center gap-2 rounded-[8px] px-2 py-1 ${MENU_ROW_TEXT_CLASS} text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:surface-selected-soft data-highlighted:text-strong-foreground data-checked:surface-selected-soft data-checked:text-foreground data-disabled:opacity-45 sm:min-h-7 [&>span:first-child_svg]:-mx-0.5 [&_svg:not([class*='size-'])]:size-[15px] [&_svg]:pointer-events-none [&_svg]:shrink-0`,
         className,
       )}
       data-slot="menu-radio-item"
       {...props}
     >
-      <span className="min-w-0 flex-1">
+      <span className="flex min-w-0 flex-1 items-center gap-2">
         <RadioItemIndicatorContext value={registerIndicator}>{children}</RadioItemIndicatorContext>
       </span>
       {!hideIndicator && (
@@ -399,7 +396,6 @@ function MenuSubPopup({
   align = "start",
   ...props
 }: MenuPrimitive.Popup.Props & {
-  variant?: "default" | "scope";
   align?: MenuPrimitive.Positioner.Props["align"];
   sideOffset?: MenuPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
