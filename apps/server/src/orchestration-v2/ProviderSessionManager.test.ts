@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   EnvironmentId,
   type ModelSelection,
@@ -31,7 +32,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { HttpServer } from "effect/http";
+import { FetchHttpClient, HttpServer } from "effect/http";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -42,6 +43,7 @@ import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
@@ -1482,6 +1484,203 @@ it.effect(
         ),
       );
     }),
+);
+
+const openDiscoveryTurn = Effect.fnUntraced(function* (threadId: ThreadId) {
+  const eventSink = yield* EventSink.EventSinkV2;
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
+  const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+  const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+  const now = yield* DateTime.now;
+  const providerSessionId = idAllocator.derive.providerSession({
+    providerInstanceId: modelSelection.instanceId,
+  });
+  yield* eventSink.write({
+    events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+  });
+  const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+  const runtime = yield* open;
+  const providerThread = makeProviderThread({ idAllocator, threadId, providerSessionId, now });
+  const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+  const input = {
+    appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+    threadId,
+    runId,
+    runOrdinal: 1,
+    providerTurnOrdinal: 1,
+    attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+    rootNodeId: idAllocator.derive.rootNode({ runId }),
+    providerThread,
+    message: {
+      createdBy: "user",
+      creationSource: "web",
+      messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+      text: "start a server",
+      attachments: [],
+    },
+    modelSelection,
+    runtimePolicy,
+  } satisfies Parameters<typeof runtime.startTurn>[0];
+  const terminal = {
+    type: "turn.terminal",
+    driver: CODEX_DRIVER,
+    providerThreadId: providerThread.id,
+    providerTurnId: idAllocator.derive.providerTurn({
+      driver: CODEX_DRIVER,
+      nativeTurnId: "discovery-turn",
+    }),
+    runOrdinal: 1,
+    status: "completed",
+    failure: null,
+    threadDisposition: "reusable",
+  } satisfies ProviderAdapter.ProviderAdapterV2Event;
+  return { manager, providerSessionId, runtime, open, input, terminal };
+});
+
+it.effect("ProviderSessionManagerV2 ignores idle signals from a replaced runtime", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const startHeld = yield* Deferred.make<void>();
+    const finishStart = yield* Deferred.make<void>();
+    const holdStart = yield* Ref.make(true);
+    const discoveryLeases = new Set<symbol>();
+    const portDiscoveryLayer = Layer.mock(PortScanner.PortDiscovery)({
+      trackAgent: () => {
+        const lease = Symbol();
+        discoveryLeases.add(lease);
+        return () => void discoveryLeases.delete(lease);
+      },
+    });
+    yield* Effect.gen(function* () {
+      const { manager, providerSessionId, runtime, open, input, terminal } =
+        yield* openDiscoveryTurn(ThreadId.make("discovery-replaced-runtime"));
+      const starting = yield* runtime.startTurn(input).pipe(Effect.forkChild);
+      yield* Deferred.await(startHeld);
+      assert.equal(discoveryLeases.size, 1);
+      const oldQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+      yield* manager.close(providerSessionId);
+      assert.equal(discoveryLeases.size, 0);
+      const replacement = yield* open;
+      yield* replacement.startTurn(input);
+      assert.equal(discoveryLeases.size, 1);
+
+      yield* Deferred.succeed(finishStart, undefined);
+      assert.isTrue(Exit.isFailure(yield* Fiber.await(starting)));
+      assert.equal(discoveryLeases.size, 1);
+
+      const staleSubscription = yield* runtime.subscribeEvents!;
+      const lateEvent = yield* staleSubscription.events.pipe(Stream.runHead, Effect.forkChild);
+      yield* Queue.offer(oldQueue, terminal);
+      assert.deepStrictEqual(yield* Fiber.join(lateEvent), Option.some(terminal));
+      assert.equal(discoveryLeases.size, 1);
+      yield* manager.close(providerSessionId);
+      assert.equal(discoveryLeases.size, 0);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          portDiscoveryLayer,
+          startTurn: Effect.gen(function* () {
+            if (!(yield* Ref.getAndSet(holdStart, false))) return;
+            yield* Deferred.succeed(startHeld, undefined);
+            yield* Deferred.await(finishStart);
+            return yield* Effect.die("The replaced runtime failed its start.");
+          }),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 discovers listeners started after a turn ends", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const pending = yield* Ref.make(true);
+    const threadId = ThreadId.make("discovery-background-work");
+    let listeners = "";
+    let scans = 0;
+    const portDiscoveryLayer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(HostProcess.Platform, "linux"),
+          FileSystem.layerNoop({
+            readFileString: () => Effect.succeed(`${PortScanner.AGENT_THREAD_ENV}=${threadId}\0`),
+          }),
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: () =>
+              Effect.sync(() => {
+                scans += 1;
+                return {
+                  stdout: listeners,
+                  stderr: "",
+                  code: null,
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                };
+              }),
+          }),
+          FetchHttpClient.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      const { manager, providerSessionId, runtime, input, terminal } =
+        yield* openDiscoveryTurn(threadId);
+      yield* runtime.startTurn(input);
+      const subscription = yield* runtime.subscribeEvents!;
+      const observed = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* subscription.events.pipe(
+        Stream.runForEach((event) => Queue.offer(observed, event)),
+        Effect.forkChild,
+      );
+      const events = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+      yield* Queue.offer(events, terminal);
+      assert.deepStrictEqual(yield* Queue.take(observed), terminal);
+      assert.deepStrictEqual(yield* scanner.scan(), []);
+
+      const backgroundEvent = {
+        type: "background_work.updated",
+        driver: CODEX_DRIVER,
+        providerTurnId: terminal.providerTurnId,
+        pending: true,
+      } satisfies ProviderAdapter.ProviderAdapterV2Event;
+      yield* Queue.offer(events, backgroundEvent);
+      yield* Queue.take(observed);
+      listeners = "p4242\ncnode\nn127.0.0.1:43171\n";
+      assert.deepStrictEqual(
+        (yield* scanner.scan()).map((server) => ({ port: server.port, agent: server.agent })),
+        [{ port: 43171, agent: { threadId } }],
+      );
+
+      yield* Ref.set(pending, false);
+      yield* Queue.offer(events, { ...backgroundEvent, pending: false });
+      yield* Queue.take(observed);
+      listeners = "";
+      assert.deepStrictEqual(yield* scanner.scan(), []);
+      const scansAfterWork = scans;
+      assert.deepStrictEqual(yield* scanner.scan(), []);
+      assert.equal(scans, scansAfterWork);
+      yield* manager.close(providerSessionId);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          portDiscoveryLayer,
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            portDiscoveryLayer,
+            hasPendingBackgroundWork: Ref.get(pending),
+            hasPendingBackgroundWorkForThread: Ref.get(pending),
+          }),
+        ),
+      ),
+    );
+  }),
 );
 
 it.effect("ProviderSessionManagerV2 gives up on a provider that never confirms a Stop", () =>

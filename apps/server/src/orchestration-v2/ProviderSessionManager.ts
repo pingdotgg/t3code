@@ -1455,31 +1455,60 @@ export const layerWithOptions = (
           }),
         );
 
+      // Rechecked on provider events, including streaming updates; avoid a span per event.
+      const releaseIdlePortDiscovery = Effect.fnUntraced(function* (
+        runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+      ) {
+        const key = sessionKey(runtime.providerSessionId);
+        const entry = (yield* Ref.get(sessions)).get(key);
+        if (
+          entry?.runtime !== runtime ||
+          entry.busyTurns.size > 0 ||
+          entry.releasePortDiscovery === null
+        ) {
+          return;
+        }
+        const pending =
+          runtime.hasPendingBackgroundWork === undefined
+            ? false
+            : yield* runtime.hasPendingBackgroundWork.pipe(
+                Effect.catchCause(() => Effect.succeed(true)),
+              );
+        if (pending) return;
+        yield* Ref.update(sessions, (current) => {
+          const latest = current.get(key);
+          if (latest?.runtime !== runtime || latest.busyTurns !== entry.busyTurns) return current;
+          latest.releasePortDiscovery?.();
+          return new Map(current).set(key, { ...latest, releasePortDiscovery: null });
+        });
+      });
+
       const markIdle = (
         providerSessionId: ProviderSessionId,
         providerThreadId: ProviderThreadId,
         runOrdinal: number,
+        runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
       ) =>
         withActivityError(
           providerSessionId,
           Effect.gen(function* () {
             const key = sessionKey(providerSessionId);
-            yield* Ref.update(sessions, (current) => {
+            const marked = yield* Ref.modify(sessions, (current) => {
               const entry = current.get(key);
-              if (entry === undefined) {
-                return current;
+              if (entry === undefined || entry.runtime !== runtime) {
+                return [false, current] as const;
               }
               const busyTurns = new Set(entry.busyTurns);
               busyTurns.delete(busyTurnKey(providerThreadId, runOrdinal));
-              if (busyTurns.size === 0) entry.releasePortDiscovery?.();
               const updated = new Map(current);
               updated.set(key, {
                 ...entry,
                 busyTurns,
-                releasePortDiscovery: busyTurns.size === 0 ? null : entry.releasePortDiscovery,
               });
-              return updated;
+              return [true, updated] as const;
             });
+            if (!marked) return;
+            yield* releaseIdlePortDiscovery(runtime);
             yield* scheduleIdleReleaseInternal(providerSessionId);
             yield* scheduleThreadUnload(providerSessionId, providerThreadId);
           }),
@@ -1872,7 +1901,12 @@ export const layerWithOptions = (
                     Exit.isFailure(exit)
                       ? observeActivity(
                           providerSessionId,
-                          markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
+                          markIdle(
+                            providerSessionId,
+                            input.providerThread.id,
+                            input.runOrdinal,
+                            runtime,
+                          ),
                         )
                       : Effect.void,
                 ),
@@ -1979,8 +2013,11 @@ export const layerWithOptions = (
                     entry.runtime.providerSessionId,
                     event.providerThreadId,
                     event.runOrdinal,
+                    entry.runtime,
                   )
-                : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
+                : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }).pipe(
+                    Effect.andThen(releaseIdlePortDiscovery(entry.runtime)),
+                  ),
             ).pipe(
               Effect.andThen(
                 event.type === "provider_session.updated"
