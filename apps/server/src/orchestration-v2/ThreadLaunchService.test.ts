@@ -2726,7 +2726,7 @@ it.effect("names every repo of a task folder after a requested branch that any o
       "/api": ["main", "jan/eng-1-fix-2"],
     };
     const harness = makeHarness({
-      git: { listLocalBranchNames: (cwd) => Effect.succeed(branchesByCwd[cwd] ?? []) },
+      git: { listLocalBranchNames: (cwd) => Effect.succeed([...(branchesByCwd[cwd] ?? [])]) },
       runSetup: () => Effect.succeed({ status: "no-script" as const }),
       taskFolders: {
         plan: () => Effect.succeed(taskFolderPlan),
