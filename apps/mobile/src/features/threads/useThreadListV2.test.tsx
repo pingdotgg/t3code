@@ -17,6 +17,11 @@ vi.mock("../../state/threads", () => ({
   threadFamilies: { mountRows: () => () => {} },
 }));
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: undefined }));
+vi.mock("../../state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const noPipelineRuns = Atom.make(undefined);
+  return { serverEnvironment: { pipelineLiveRunsAtom: () => noPipelineRuns } };
+});
 
 it("reuses a large thread list across tab renders and updates when its inputs change", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -59,6 +64,8 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
     workingShelfExpanded: false,
     snoozedShelfExpanded: false,
     settledShelfExpanded: true,
+    pipelineEnvironmentIds: environmentIds,
+    expandedPipelineKeys: [],
     selectedThreadKey: null,
   };
   const seen: Array<ReturnType<typeof useThreadListV2>> = [];
