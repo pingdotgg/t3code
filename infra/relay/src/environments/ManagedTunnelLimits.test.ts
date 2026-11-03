@@ -121,6 +121,27 @@ const reserve = (
     ),
   );
 
+const getOverride = (override?: number) =>
+  Effect.gen(function* () {
+    const limits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
+    return yield* limits.getOverride({ userId: "user-1" });
+  }).pipe(
+    Effect.provide(
+      ManagedTunnelLimits.layer.pipe(
+        Layer.provide(
+          Layer.succeed(
+            RelayDb.RelayDb,
+            makeFakeDb({
+              otherSlots: () => 0,
+              ...(override === undefined ? {} : { override }),
+            }),
+          ),
+        ),
+        Layer.provide(t3ChatLayer("free")),
+      ),
+    ),
+  );
+
 describe("ManagedTunnelLimits", () => {
   it.effect("rejects concurrent reservations past the limit", () => {
     const reserved: Array<string> = [];
@@ -383,7 +404,9 @@ describe("ManagedTunnelLimits", () => {
           reserve({ override, activeTunnels: override, plan: "premier", lookups }),
         );
         expect(error).toMatchObject({ _tag: "ManagedTunnelLimitExceeded", maxTunnels: override });
+        expect(yield* getOverride(override)).toBe(override);
       }
+      expect(yield* getOverride()).toBeNull();
       expect(lookups).toEqual([]);
     }),
   );
