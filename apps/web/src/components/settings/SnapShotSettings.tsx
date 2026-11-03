@@ -238,7 +238,7 @@ export function SnapShotSettings() {
   } = useSnapShotShortcutRecorder({
     shortcut: displayShortcut,
     shortcutLabel: !shortcutChanged ? state?.shortcutLabel : undefined,
-    disabled: setupBusy,
+    disabled: !captureAvailable || setupBusy,
     allowModifierPairs: state?.mode !== "portal",
     onRecord: (shortcut) => void checkShortcut(shortcut),
     onStart: () => {
@@ -357,7 +357,7 @@ export function SnapShotSettings() {
           <SettingsRow
             leading={<CameraIcon />}
             title="SnapShots run in the desktop app"
-            description="Capture any window with a shortcut and drop it into your draft."
+            description="Capture any window with a shortcut and drop it into your draft. These settings apply there."
           />
         </SettingsSection>
       ) : null}
@@ -366,9 +366,10 @@ export function SnapShotSettings() {
         title="Capture"
         warning={webOnly ? undefined : unavailableMessage}
       >
-        <SettingsUnavailableGroup unavailable={!webOnly && unavailableMessage !== undefined}>
+        <SettingsUnavailableGroup unavailable={webOnly || unavailableMessage !== undefined}>
           <SettingsRow
             {...searchableSetting("snap-shot-enabled")}
+            title="Enable snapshots"
             description={snapShotDescription(state)}
             status={
               bridge
@@ -405,16 +406,17 @@ export function SnapShotSettings() {
               </>
             }
           />
-          {settings.snapShotEnabled && captureAvailable ? (
+          {webOnly || (settings.snapShotEnabled && captureAvailable) ? (
             <>
               <SettingsRow
                 {...searchableSetting("snap-shot-shortcut")}
+                title="Shortcut"
                 description={
                   state?.linuxBackend === "picker"
                     ? "Choose a window to capture from any app."
                     : "Capture the window you're using without switching apps."
                 }
-                status={managedShortcut ? undefined : shortcutStatus}
+                status={webOnly || managedShortcut ? undefined : shortcutStatus}
                 control={
                   managedShortcut ? (
                     <Button
@@ -469,6 +471,7 @@ export function SnapShotSettings() {
               />
               <SettingsRow
                 {...searchableSetting("snap-shot-accessibility")}
+                title="Include app text in snapshots"
                 description="Include text and controls when the app makes them available."
                 status={snapShotAccessibilityUnavailableMessage(state)}
                 control={
@@ -489,56 +492,62 @@ export function SnapShotSettings() {
           ) : null}
         </SettingsUnavailableGroup>
       </SettingsSection>
-      {settings.snapShotEnabled && captureAvailable && unavailableMessage === undefined ? (
+      {webOnly ||
+      (settings.snapShotEnabled && captureAvailable && unavailableMessage === undefined) ? (
         <SettingsSection id="snap-shot-feedback" title="Feedback">
-          <SettingsRow
-            {...searchableSetting("snap-shot-sound")}
-            description="Choose the sound played when capture starts."
-            control={
-              <ToggleGroup
-                aria-label={"Snapshot sound: " + soundLabel}
-                value={[soundSelection]}
-                disabled={!captureAvailable}
-                onValueChange={(values) => {
-                  const next = values[0] as SnapShotSoundSelection | undefined;
-                  if (!next || next === soundSelection) return;
-                  // Choosing a sound previews it, replacing the old menu's play buttons.
-                  if (next !== "off") playSnapShotSound(next);
-                  void save(snapShotSoundPatch(next));
-                }}
-              >
-                <Toggle value="soft-pop">Whoosh</Toggle>
-                <Toggle value="camera-shutter">Click</Toggle>
-                <Toggle value="off">None</Toggle>
-              </ToggleGroup>
-            }
-          />
-          <SettingsRow
-            {...searchableSetting("snap-shot-flash")}
-            description="Show a gentle cue on the captured window."
-            status={feedbackUnavailable}
-            control={
-              <Switch
-                checked={!feedbackUnavailable && settings.snapShotFlash}
-                disabled={!captureAvailable || Boolean(feedbackUnavailable)}
-                aria-label="Flash captured window"
-                onCheckedChange={(checked) => void save({ snapShotFlash: checked })}
-              />
-            }
-          />
-          <SettingsRow
-            {...searchableSetting("snap-shot-animations")}
-            description="Animate captured windows into your draft."
-            status={feedbackUnavailable}
-            control={
-              <Switch
-                checked={!feedbackUnavailable && settings.snapShotAnimations}
-                disabled={!captureAvailable || Boolean(feedbackUnavailable)}
-                aria-label="Animate snapshots"
-                onCheckedChange={(checked) => void save({ snapShotAnimations: checked })}
-              />
-            }
-          />
+          <SettingsUnavailableGroup unavailable={webOnly}>
+            <SettingsRow
+              {...searchableSetting("snap-shot-sound")}
+              title="Sound"
+              description="Choose the sound played when capture starts."
+              control={
+                <ToggleGroup
+                  aria-label={"Snapshot sound: " + soundLabel}
+                  value={[soundSelection]}
+                  disabled={!captureAvailable}
+                  onValueChange={(values) => {
+                    const next = values[0] as SnapShotSoundSelection | undefined;
+                    if (!next || next === soundSelection) return;
+                    // Choosing a sound previews it, replacing the old menu's play buttons.
+                    if (next !== "off") playSnapShotSound(next);
+                    void save(snapShotSoundPatch(next));
+                  }}
+                >
+                  <Toggle value="soft-pop">Whoosh</Toggle>
+                  <Toggle value="camera-shutter">Click</Toggle>
+                  <Toggle value="off">None</Toggle>
+                </ToggleGroup>
+              }
+            />
+            <SettingsRow
+              {...searchableSetting("snap-shot-flash")}
+              title="Flash captured window"
+              description="Show a gentle cue on the captured window."
+              status={feedbackUnavailable}
+              control={
+                <Switch
+                  checked={!feedbackUnavailable && settings.snapShotFlash}
+                  disabled={!captureAvailable || Boolean(feedbackUnavailable)}
+                  aria-label="Flash captured window"
+                  onCheckedChange={(checked) => void save({ snapShotFlash: checked })}
+                />
+              }
+            />
+            <SettingsRow
+              {...searchableSetting("snap-shot-animations")}
+              title="Animate snapshots"
+              description="Animate captured windows into your draft."
+              status={feedbackUnavailable}
+              control={
+                <Switch
+                  checked={!feedbackUnavailable && settings.snapShotAnimations}
+                  disabled={!captureAvailable || Boolean(feedbackUnavailable)}
+                  aria-label="Animate snapshots"
+                  onCheckedChange={(checked) => void save({ snapShotAnimations: checked })}
+                />
+              }
+            />
+          </SettingsUnavailableGroup>
         </SettingsSection>
       ) : null}
       {settings.snapShotEnabled && captureHelper && unavailableMessage === undefined ? (
