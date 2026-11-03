@@ -880,13 +880,13 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
       const getThreadAttachmentIds = projectionStore.getThreadAttachmentIds;
       const readSpy = vi
         .spyOn(projectionStore, "getThreadAttachmentIds")
-        .mockImplementation((id) =>
+        .mockImplementation((id, deletedWith) =>
           id === projectThreadId
             ? Effect.sync(() => projectDeletePlannedAfterCommit.push(threadDeleteCommitted)).pipe(
                 Effect.andThen(Deferred.succeed(projectDeletePlanning, undefined)),
-                Effect.andThen(getThreadAttachmentIds(id)),
+                Effect.andThen(getThreadAttachmentIds(id, deletedWith)),
               )
-            : getThreadAttachmentIds(id),
+            : getThreadAttachmentIds(id, deletedWith),
         );
       const withDeletionLock = executor.withDeletionLock;
       let deletionLockRequests = 0;

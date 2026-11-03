@@ -13114,7 +13114,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               command: deletion,
               projection,
               attachmentIds: yield* projectionStore
-                .getThreadAttachmentIds(deletion.threadId)
+                .getThreadAttachmentIds(deletion.threadId, [command.threadId, ...sideChatIds])
                 .pipe(mapDispatchError(command)),
               now,
               idAllocator,

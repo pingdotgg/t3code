@@ -444,8 +444,10 @@ export interface ProjectionStoreV2Shape {
   readonly searchThread: (
     input: OrchestrationV2SearchThreadInput,
   ) => Effect.Effect<OrchestrationV2SearchThreadResult, ProjectionStoreV2Error>;
+  /** `deletedWith` are threads deleted in the same commit, so they keep no files. */
   readonly getThreadAttachmentIds: (
     threadId: ThreadId,
+    deletedWith?: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
   readonly getThreadHistoryPage: (
     threadId: ThreadId,
@@ -1248,6 +1250,7 @@ interface FamilyAttachment {
 /** Forks show their source's files without copying them, so a file outlives the thread that sent it. */
 function unreadThreadAttachmentIds(input: {
   readonly threadId: ThreadId;
+  readonly deletedWith: ReadonlyArray<ThreadId>;
   readonly threads: ReadonlyArray<FamilyThread>;
   readonly attachments: ReadonlyArray<FamilyAttachment>;
 }): Array<string> {
@@ -1279,7 +1282,9 @@ function unreadThreadAttachmentIds(input: {
   };
   const kept = new Set(
     input.threads.flatMap((thread) =>
-      thread.deleted || thread.id === input.threadId ? [] : [...shownBy(thread.id)],
+      thread.deleted || thread.id === input.threadId || input.deletedWith.includes(thread.id)
+        ? []
+        : [...shownBy(thread.id)],
     ),
   );
   return [...shownBy(input.threadId)].filter((id) => !kept.has(id));
@@ -5500,7 +5505,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
-    const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (threadId) => {
+    const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (
+      threadId,
+      deletedWith = [],
+    ) => {
       const family = sql`
         SELECT thread_id, deleted_at, payload_json
         FROM orchestration_v2_projection_threads
@@ -5517,6 +5525,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         run_ordinal: number | null;
         id: string;
       };
+      // CROSS JOIN keeps family as the outer loop; without planner stats SQLite scans every transcript.
       return Effect.all([
         sql<{
           thread_id: ThreadId;
@@ -5549,7 +5558,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             run.ordinal AS run_ordinal,
             json_extract(attachment.value, '$.id') AS id
           FROM family
-          JOIN orchestration_v2_projection_messages AS message
+          CROSS JOIN orchestration_v2_projection_messages AS message
             ON message.thread_id = family.thread_id
           JOIN json_each(message.payload_json, '$.attachments') AS attachment
           LEFT JOIN orchestration_v2_projection_runs AS run
@@ -5563,7 +5572,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             run.ordinal AS run_ordinal,
             json_extract(attachment.value, '$.id') AS id
           FROM family
-          JOIN orchestration_v2_projection_turn_items AS item
+          CROSS JOIN orchestration_v2_projection_turn_items AS item
             ON item.thread_id = family.thread_id
           JOIN json_each(item.payload_json, '$.questionAnswer.attachmentsByQuestionId') AS question
           JOIN json_each(question.value) AS attachment
@@ -5584,7 +5593,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             run.ordinal AS run_ordinal,
             item.payload_json
           FROM family
-          JOIN orchestration_v2_projection_turn_items AS item
+          CROSS JOIN orchestration_v2_projection_turn_items AS item
             ON item.thread_id = family.thread_id
           LEFT JOIN orchestration_v2_projection_runs AS run
             ON run.run_id = item.run_id AND run.thread_id = item.thread_id
@@ -5615,6 +5624,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ...new Set([
               ...unreadThreadAttachmentIds({
                 threadId,
+                deletedWith,
                 threads: threads.map((row) => ({
                   id: row.thread_id,
                   deleted: row.deleted_at !== null,

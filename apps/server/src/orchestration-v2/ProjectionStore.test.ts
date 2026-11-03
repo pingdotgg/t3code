@@ -64,7 +64,8 @@ const providerInstanceId = modelSelection.instanceId;
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 // Each "thread-n" key is that run's message file and question answer file; "source-queued" is a
-// runless message, which only forks of imported history show.
+// runless message, which only forks of imported history show. Deleting the source also deletes
+// its side chat in the same commit, and the side chat resends "source-2-file".
 it.effect.each([
   {
     order: ["source", "fork", "nested"],
@@ -97,7 +98,7 @@ it.effect.each([
         RunId.make(`run:fork-files:${name}:${ordinal}`);
       const filesOf = (key: string) =>
         key === "source-queued" ? [`${key}-file`] : [`${key}-file`, `${key}-answer`];
-      const createThread = (name: string, source?: string) =>
+      const createThread = (name: string, source?: string, sideChat?: true) =>
         store.apply({
           id: EventId.make(`event:fork-files:${name}:created`),
           type: "thread.created",
@@ -120,6 +121,7 @@ it.effect.each([
               parentThreadId: source === undefined ? null : id(source),
               relationshipToParent: source === undefined ? null : "fork",
               rootThreadId: id("source"),
+              ...(sideChat ? { sideChat } : {}),
             },
             forkedFrom:
               source === undefined
@@ -138,6 +140,7 @@ it.effect.each([
       const addMessage = Effect.fn("ForkFilesTest.addMessage")(function* (
         name: string,
         ordinal: number | null,
+        fileKey?: string,
       ) {
         const key = `${name}-${ordinal ?? "queued"}`;
         const messageId = MessageId.make(`message:fork-files:${key}`);
@@ -219,7 +222,7 @@ it.effect.each([
             nodeId: null,
             role: "user",
             text: "Read the attachment",
-            attachments: [file(`${key}-file`)],
+            attachments: [file(`${fileKey ?? key}-file`)],
             streaming: false,
             createdBy: "user",
             creationSource: "web",
@@ -242,7 +245,7 @@ it.effect.each([
             creationSource: "web",
             inputIntent: "turn_start",
             text: "Read the attachment",
-            attachments: [file(`${key}-file`)],
+            attachments: [file(`${fileKey ?? key}-file`)],
           },
         });
       });
@@ -254,9 +257,12 @@ it.effect.each([
       yield* addMessage("fork", 1);
       yield* addMessage("fork", 2);
       yield* createThread("nested", "fork");
+      yield* createThread("side", "source", true);
+      yield* addMessage("side", null, "source-2");
 
       const selected = [];
       for (const name of order) {
+        const deleted = name === "source" ? [id("source"), id("side")] : [id(name)];
         const projection = yield* store.getThreadProjection(id(name));
         if (name === "nested") {
           assert.deepEqual(
@@ -278,14 +284,20 @@ it.effect.each([
             ],
           );
         }
-        selected.push((yield* store.getThreadAttachmentIds(id(name))).toSorted());
-        yield* store.apply({
-          id: EventId.make(`event:fork-files:${name}:deleted`),
-          type: "thread.deleted",
-          threadId: id(name),
-          occurredAt: now,
-          payload: { ...projection.thread, deletedAt: now },
-        });
+        const plans = yield* Effect.forEach(deleted, (threadId) =>
+          store.getThreadAttachmentIds(threadId, deleted),
+        );
+        selected.push([...new Set(plans.flat())].toSorted());
+        for (const threadId of deleted) {
+          const { thread } = yield* store.getThreadProjection(threadId);
+          yield* store.apply({
+            id: EventId.make(`event:${threadId}:deleted`),
+            type: "thread.deleted",
+            threadId,
+            occurredAt: now,
+            payload: { ...thread, deletedAt: now },
+          });
+        }
       }
       assert.deepEqual(
         selected,
