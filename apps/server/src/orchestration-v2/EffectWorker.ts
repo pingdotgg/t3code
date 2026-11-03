@@ -68,6 +68,19 @@ export class OrchestrationEffectExecutorV2 extends Context.Service<
   OrchestrationEffectExecutorV2Shape
 >()("t3/orchestration-v2/EffectWorker/OrchestrationEffectExecutorV2") {}
 
+// Backstop for provider turn control effects. Each provider call carries its
+// own tighter deadline; this catches unbounded work between them so a provider
+// that stopped answering cannot hold a worker forever.
+const PROVIDER_TURN_CONTROL_EFFECT_TIMEOUT = Duration.minutes(12);
+const PROVIDER_TURN_CONTROL_EFFECT_TYPES = [
+  "provider-turn.start",
+  "provider-turn.interrupt",
+  "provider-turn.steer",
+  "provider-turn.restart",
+] as const satisfies ReadonlyArray<EffectOutbox.OrchestrationEffectV2["request"]["type"]>;
+const isProviderTurnControl = (effect: EffectOutbox.OrchestrationEffectV2) =>
+  PROVIDER_TURN_CONTROL_EFFECT_TYPES.some((type) => type === effect.request.type);
+
 export const layerExecutor: Layer.Layer<
   OrchestrationEffectExecutorV2,
   never,
@@ -94,7 +107,7 @@ export const layerExecutor: Layer.Layer<
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
-    return OrchestrationEffectExecutorV2.of({
+    const executor = OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
@@ -376,6 +389,19 @@ export const layerExecutor: Layer.Layer<
                     willRetry,
                   }),
                 ),
+                // The replacement run waits in "starting" for this effect.
+                // Once retries are spent, fail it instead of leaving it there.
+                Effect.tapError((cause) =>
+                  willRetry || effect.request.type !== "provider-turn.restart"
+                    ? Effect.void
+                    : providerTurnStart
+                        .start({
+                          threadId: effect.threadId,
+                          runId: effect.request.runId,
+                          failBeforeStart: cause,
+                        })
+                        .pipe(Effect.ignore({ log: true })),
+                ),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
@@ -574,6 +600,41 @@ export const layerExecutor: Layer.Layer<
         }
       }),
     });
+    return OrchestrationEffectExecutorV2.of({
+      execute: Effect.fn("OrchestrationEffectExecutorV2.executeBounded")((effect, options) => {
+        if (!isProviderTurnControl(effect)) return executor.execute(effect, options);
+        const request = effect.request;
+        return executor.execute(effect, options).pipe(
+          Effect.timeout(PROVIDER_TURN_CONTROL_EFFECT_TIMEOUT),
+          Effect.catchTags({
+            TimeoutError: (cause) =>
+              // The timeout interrupted the start before it could settle its
+              // run, so the final attempt fails the run that is still starting.
+              (options?.willRetry !== true &&
+              (request.type === "provider-turn.start" || request.type === "provider-turn.restart")
+                ? providerTurnStart
+                    .start({
+                      threadId: effect.threadId,
+                      runId: request.runId,
+                      failBeforeStart: cause,
+                    })
+                    .pipe(Effect.ignore({ log: true }))
+                : Effect.void
+              ).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: request.type,
+                      cause,
+                    }),
+                  ),
+                ),
+              ),
+          }),
+        );
+      }),
+    });
   }),
 );
 
@@ -626,6 +687,23 @@ export class OrchestrationEffectWorkerV2 extends Context.Service<
   OrchestrationEffectWorkerV2,
   OrchestrationEffectWorkerV2Shape
 >()("t3/orchestration-v2/EffectWorker/OrchestrationEffectWorkerV2") {}
+
+// A steer that timed out may still have been accepted, and providers do not
+// deduplicate steering input, so a retry could deliver the message twice.
+const uncertainSteer = (
+  effect: EffectOutbox.OrchestrationEffectV2,
+  cause: Cause.Cause<unknown>,
+) => {
+  if (effect.request.type !== "provider-turn.steer") return false;
+  const seen = new Set<object>();
+  let error: unknown = Cause.squash(cause);
+  while (typeof error === "object" && error !== null && !seen.has(error)) {
+    seen.add(error);
+    if (Cause.isTimeoutError(error)) return true;
+    error = "cause" in error ? error.cause : undefined;
+  }
+  return false;
+};
 
 export interface OrchestrationEffectWorkerOptions {
   readonly workerId?: string;
@@ -818,7 +896,7 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts
+            : effect.attemptCount >= maxAttempts || uncertainSteer(effect, exit.cause)
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
