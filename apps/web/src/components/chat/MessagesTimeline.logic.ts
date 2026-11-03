@@ -3041,6 +3041,8 @@ export function applyBackgroundActivityGroups(
   }
   for (const runId of excluded) notifications.delete(runId);
   if (notifications.size === 0) return rows;
+  const pendingRunId =
+    activeRunId !== null && ![...entryRuns.values()].includes(activeRunId) ? activeRunId : null;
   const previousGroupIds = new Map<RunId, string>();
   for (const row of previousRows) {
     if (row.kind !== "background-activity") continue;
@@ -3089,9 +3091,11 @@ export function applyBackgroundActivityGroups(
     while (index < rows.length) {
       const nextRow = rows[index]!;
       const nextRunId = rowRunId(nextRow);
-      if (nextRunId === null || !notifications.has(nextRunId)) break;
+      if (nextRunId === null || (!notifications.has(nextRunId) && nextRunId !== pendingRunId)) {
+        break;
+      }
       runIds.add(nextRunId);
-      const update = notifications.get(nextRunId)!.get(nextRow.id);
+      const update = notifications.get(nextRunId)?.get(nextRow.id);
       if (update) {
         updateIds.add(nextRow.id);
         updates.push(update);
@@ -3122,17 +3126,12 @@ export function applyBackgroundActivityGroups(
     if (expanded) {
       result.push(...groupRows);
     } else {
-      const lastRunId = [...runIds].at(-1);
-      const finalAnswer =
-        activeRunId === lastRunId
-          ? undefined
-          : groupRows.findLast(
-              (row) =>
-                row.kind === "message" &&
-                row.message.role === "assistant" &&
-                row.message.runId === lastRunId &&
-                !row.message.streaming,
-            );
+      const finalAnswer = groupRows.findLast(
+        (row) =>
+          row.kind === "message" &&
+          row.message.role === "assistant" &&
+          (row.message.runId === activeRunId || !row.message.streaming),
+      );
       if (finalAnswer?.kind === "message") {
         result.push(
           ...groupRows.filter(
