@@ -1933,6 +1933,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           closed = true;
           hostEpoch++;
           if (active) yield* finish(active, "cancelled", "Muse session closed", "broken");
+          for (const settling of settlingTurns.values())
+            yield* finish(settling, "cancelled", "Muse session closed", "broken");
           yield* settleObservedChildren("cancelled");
           yield* Queue.shutdown(inbox);
           yield* Queue.shutdown(events);
@@ -2429,6 +2431,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                   broken = true;
                   wake = undefined;
                   yield* finish(turn, "interrupted", undefined, "broken");
+                  for (const settling of settlingTurns.values())
+                    yield* finish(settling, "interrupted", undefined, "broken");
                   yield* settleObservedChildren("interrupted");
                   yield* updateSession("stopped");
                   yield* Queue.end(events);
