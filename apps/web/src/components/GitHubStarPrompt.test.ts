@@ -165,11 +165,12 @@ describe("recordPromptSent", () => {
     vi.unstubAllGlobals();
   });
   it("stars on click, opens GitHub when starring fails, and asks for a click once the click expired", async () => {
-    setup({ sent: 5 });
+    const store = setup({ sent: 5 });
     await (await startSession()).send();
     click(add.mock.lastCall?.[0].actionProps);
     await vi.advanceTimersByTimeAsync(0);
-    expect(add.mock.lastCall?.[0].title).toBe("Thanks for the star!");
+    expect(update.mock.lastCall?.[1]).toMatchObject({ title: "Thanks for the star!" });
+    expect(store.get("t3code:github-star-prompt:dismissed")).toBe("true");
     expect(openExternal).not.toHaveBeenCalled();
 
     setup({ sent: 5 });
