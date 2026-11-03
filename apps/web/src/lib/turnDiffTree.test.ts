@@ -86,6 +86,31 @@ describe("buildTurnDiffTree", () => {
     ]);
   });
 
+  it("gives binary files no line stat while their directory keeps summing text files", () => {
+    const tree = buildTurnDiffTree([
+      { path: "assets/logo.png", kind: "modified", additions: 0, deletions: 0, binary: true },
+      { path: "assets/notes.md", kind: "added", additions: 2, deletions: 0 },
+    ]);
+
+    expect(tree).toEqual([
+      {
+        kind: "directory",
+        name: "assets",
+        path: "assets",
+        stat: { additions: 2, deletions: 0 },
+        children: [
+          { kind: "file", name: "logo.png", path: "assets/logo.png", stat: null },
+          {
+            kind: "file",
+            name: "notes.md",
+            path: "assets/notes.md",
+            stat: { additions: 2, deletions: 0 },
+          },
+        ],
+      },
+    ]);
+  });
+
   it("compacts only single-directory chains and stops at branch points", () => {
     expect(
       buildTurnDiffTree([

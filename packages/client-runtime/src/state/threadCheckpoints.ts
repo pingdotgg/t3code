@@ -22,6 +22,7 @@ export interface ThreadCheckpointSummary {
     readonly kind: string;
     readonly additions: number;
     readonly deletions: number;
+    readonly binary?: boolean | undefined;
   }>;
   readonly filesTotal?: OrchestrationV2CheckpointFileTotals;
   readonly assistantMessageId: MessageId | null;
