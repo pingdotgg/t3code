@@ -663,6 +663,7 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
       const rewound = ThreadId.make("thread:rewound");
       const queued = ThreadId.make("thread:queued");
       const stopped = ThreadId.make("thread:stopped");
+      const recovered = ThreadId.make("thread:recovered");
       const run = (owner: ThreadId, status: "rolled_back" | "cancelled") =>
         ({
           id: EventId.make(`run:${owner}`),
@@ -690,6 +691,40 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
             contextHandoffId: null,
           },
         }) satisfies OrchestrationV2DomainEvent;
+      const shown = (owner: ThreadId, id: string, as: "turn_start" | "queued_turn" | "reply") =>
+        ({
+          id: EventId.make(`item:${id}`),
+          type: "turn-item.updated",
+          threadId: owner,
+          occurredAt: at(2),
+          payload: {
+            id: TurnItemId.make(id),
+            threadId: owner,
+            runId: RunId.make(`run:${owner}`),
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            title: null,
+            startedAt: at(1),
+            completedAt: at(1),
+            updatedAt: at(1),
+            messageId: MessageId.make(id),
+            text: "",
+            ...(as === "reply"
+              ? { type: "assistant_message", streaming: false }
+              : {
+                  type: "user_message",
+                  inputIntent: as,
+                  attachments: [],
+                  createdBy: "user",
+                  creationSource: "web",
+                }),
+          },
+        }) satisfies OrchestrationV2DomainEvent;
       yield* createProject(project);
       yield* Effect.forEach(
         [
@@ -705,48 +740,33 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
           message(queued, "queued-prompt", "user", "then mount the albatross drive", {
             runId: RunId.make(`run:${queued}`),
           }),
-          // A turn stopped while preparing still shows its prompt.
+          // A queued prompt usually has no item; an edited one has a queued item.
+          message(queued, "requeued-prompt", "user", "then eject the albatross drive", {
+            runId: RunId.make(`run:${queued}`),
+          }),
+          shown(queued, "requeued-prompt", "queued_turn"),
+          // A stopped turn keeps its prompt and whatever the agent already said.
           thread(stopped, project),
           run(stopped, "cancelled"),
           message(stopped, "stopped-prompt", "user", "format the albatross drive", {
             runId: RunId.make(`run:${stopped}`),
           }),
-          {
-            id: EventId.make("item:stopped-prompt"),
-            type: "turn-item.updated",
-            threadId: stopped,
-            occurredAt: at(2),
-            payload: {
-              id: TurnItemId.make("stopped-prompt"),
-              threadId: stopped,
-              runId: RunId.make(`run:${stopped}`),
-              nodeId: null,
-              providerThreadId: null,
-              providerTurnId: null,
-              nativeItemRef: null,
-              parentItemId: null,
-              ordinal: 1,
-              status: "completed",
-              title: null,
-              startedAt: at(1),
-              completedAt: at(1),
-              updatedAt: at(1),
-              type: "user_message",
-              messageId: MessageId.make("stopped-prompt"),
-              text: "format the albatross drive",
-              inputIntent: "turn_start",
-              attachments: [],
-              createdBy: "user",
-              creationSource: "web",
-            },
-          } satisfies OrchestrationV2DomainEvent,
+          shown(stopped, "stopped-prompt", "turn_start"),
+          thread(recovered, project),
+          run(recovered, "cancelled"),
+          message(recovered, "recovered-reply", "assistant", "the albatross drive is formatted", {
+            runId: RunId.make(`run:${recovered}`),
+          }),
+          shown(recovered, "recovered-reply", "reply"),
         ],
         projections.apply,
         { discard: true },
       );
       assert.deepEqual(
-        (yield* search.search({ query: "albatross" })).matches.map((match) => match.messageId),
-        [MessageId.make("stopped-prompt")],
+        (yield* search.search({ query: "albatross" })).matches
+          .map((match) => match.messageId)
+          .sort(),
+        [MessageId.make("recovered-reply"), MessageId.make("stopped-prompt")],
       );
     }),
   );
