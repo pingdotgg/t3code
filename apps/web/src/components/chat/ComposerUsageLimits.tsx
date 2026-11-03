@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   isProviderAvailable,
+  type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshots,
@@ -9,6 +10,7 @@ import {
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   collectLimitAccounts,
+  collectProviderUsageLimits,
   formatResetsIn,
   formatRunsOutIn,
   isLowLimit,
@@ -17,11 +19,13 @@ import {
   tightestSessionLimit,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon } from "lucide-react";
+import { useRef, useState } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { ensureLocalApi } from "../../localApi";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Button } from "../ui/button";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { providerClients } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { LimitWindows, ResetCredits } from "../usage/UsageLimits";
@@ -175,60 +179,74 @@ function UsageLimitsBannerBody({
   readonly report: UsageLimitsReport;
   readonly environmentId: EnvironmentId;
 }) {
-  const now = Date.parse(report.createdAt);
   return (
     <ComposerBanner.Scroll>
       <ComposerBanner.Body className="flex flex-col gap-3 ps-0 pt-0.5 pb-1.5 pe-2">
-        {report.accounts.map((account) => {
-          const resetCreditInput =
-            account.resetCreditInput ??
-            (account.instanceId ? { instanceId: account.instanceId } : undefined);
-          const notice = limitsNotice(account.limits);
-          const externalUsage = account.limits.externalUsage;
-          return (
-            <div key={account.id} className="flex min-w-0 flex-col gap-1">
-              <span className="truncate font-medium text-muted-foreground text-xs">
-                <AccountSummary account={account} />
-              </span>
-              {notice ? (
-                <span className="text-xs text-muted-foreground">{notice}</span>
-              ) : (
-                <LimitWindows
-                  compact
-                  driver={account.driver}
-                  accentColor={account.accentColor}
-                  windows={account.limits.windows}
-                  now={now}
-                />
-              )}
-              {externalUsage ? (
-                <Button
-                  size="sm"
-                  variant="link"
-                  className="self-start"
-                  onClick={() => void ensureLocalApi().shell.openExternal(externalUsage.url)}
-                >
-                  Manage usage
-                </Button>
-              ) : null}
-              {resetCreditInput && account.limits.resetCredits ? (
-                <ResetCredits
-                  environmentId={environmentId}
-                  input={resetCreditInput}
-                  credits={account.limits.resetCredits}
-                  now={now}
-                />
-              ) : null}
-            </div>
-          );
-        })}
-        {report.notices.map((notice) => (
-          <span key={notice} className="text-meta text-muted-foreground">
-            {notice}
-          </span>
-        ))}
+        <UsageLimitsAccounts report={report} environmentId={environmentId} />
       </ComposerBanner.Body>
     </ComposerBanner.Scroll>
+  );
+}
+
+function UsageLimitsAccounts({
+  report,
+  environmentId,
+}: {
+  readonly report: UsageLimitsReport;
+  readonly environmentId: EnvironmentId;
+}) {
+  const now = Date.parse(report.createdAt);
+  return (
+    <>
+      {report.accounts.map((account) => {
+        const resetCreditInput =
+          account.resetCreditInput ??
+          (account.instanceId ? { instanceId: account.instanceId } : undefined);
+        const notice = limitsNotice(account.limits);
+        const externalUsage = account.limits.externalUsage;
+        return (
+          <div key={account.id} className="flex min-w-0 flex-col gap-1">
+            <span className="truncate font-medium text-muted-foreground text-xs">
+              <AccountSummary account={account} />
+            </span>
+            {notice ? (
+              <span className="text-xs text-muted-foreground">{notice}</span>
+            ) : (
+              <LimitWindows
+                compact
+                driver={account.driver}
+                accentColor={account.accentColor}
+                windows={account.limits.windows}
+                now={now}
+              />
+            )}
+            {externalUsage ? (
+              <Button
+                size="sm"
+                variant="link"
+                className="self-start"
+                onClick={() => void ensureLocalApi().shell.openExternal(externalUsage.url)}
+              >
+                Manage usage
+              </Button>
+            ) : null}
+            {resetCreditInput && account.limits.resetCredits ? (
+              <ResetCredits
+                environmentId={environmentId}
+                input={resetCreditInput}
+                credits={account.limits.resetCredits}
+                now={now}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+      {report.notices.map((notice) => (
+        <span key={notice} className="text-meta text-muted-foreground">
+          {notice}
+        </span>
+      ))}
+    </>
   );
 }
 
@@ -360,18 +378,64 @@ function LowLimitTiming({ window }: { readonly window: ServerProviderUsageWindow
   );
 }
 
+export interface LimitsSource {
+  readonly environmentId: EnvironmentId;
+  readonly instanceId: ProviderInstanceId;
+  readonly providers: readonly ServerProvider[];
+  readonly sources: UsageLimitSourceSnapshots;
+}
+
+function LimitsPopover({ source }: { readonly source: LimitsSource }) {
+  const popupRef = useRef<HTMLDivElement>(null);
+  return (
+    <Popover>
+      <PopoverTrigger render={<Button size="xs" variant="ghost" />}>Limits</PopoverTrigger>
+      <PopoverPopup
+        ref={popupRef}
+        initialFocus={popupRef}
+        aria-label="Usage limits"
+        side="top"
+        align="end"
+        padding="compact"
+        className="w-[min(32rem,calc(100vw-2rem))]"
+      >
+        <LimitsPopoverReport source={source} />
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
+function LimitsPopoverReport({ source }: { readonly source: LimitsSource }) {
+  const [openedAt] = useState(Date.now);
+  const report = collectProviderUsageLimits(
+    source.instanceId,
+    source.providers,
+    source.sources,
+    openedAt,
+  );
+  return (
+    <div className="flex flex-col gap-3">
+      {report ? (
+        <UsageLimitsAccounts report={report} environmentId={source.environmentId} />
+      ) : (
+        <span className="text-meta text-muted-foreground">Usage limits are unavailable</span>
+      )}
+    </div>
+  );
+}
+
 /** The notice for a session under a quarter left, with a way over to another provider. */
 export function lowLimitBannerItem({
   signal,
   switchTarget,
   onSwitch,
-  onShowLimits,
+  limits,
   onDismissed,
 }: {
   readonly signal: LowLimitSignal;
   readonly switchTarget: ServerProvider | null;
   readonly onSwitch: (provider: ServerProvider) => void;
-  readonly onShowLimits: (() => void) | null;
+  readonly limits: LimitsSource | null;
   readonly onDismissed: () => void;
 }): ComposerBannerStackItem {
   return {
@@ -386,11 +450,7 @@ export function lowLimitBannerItem({
     ),
     actions: (
       <>
-        {onShowLimits ? (
-          <Button size="xs" variant="ghost" onClick={onShowLimits}>
-            Limits
-          </Button>
-        ) : null}
+        {limits ? <LimitsPopover source={limits} /> : null}
         {switchTarget ? (
           <Button size="xs" variant="secondary" onClick={() => onSwitch(switchTarget)}>
             Switch to {providerName(switchTarget.driver, switchTarget.displayName)}
