@@ -23,8 +23,8 @@ export const referenceRepos: ReadonlyArray<ReferenceRepo> = [
     prefix: ".repos/alchemy-effect",
     repository: "https://github.com/alchemy-run/alchemy-effect.git",
     latestRef: "main",
-    versionSourcePath: "infra/relay/package.json",
-    packageVersionPath: ["dependencies", "alchemy"],
+    versionSourcePath: "pnpm-workspace.yaml",
+    packageVersionPath: ["catalog", "alchemy"],
     versionTagPrefix: "v",
   },
 ];
