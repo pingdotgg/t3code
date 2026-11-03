@@ -16,8 +16,7 @@ const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
 // Let the hub's 30 s simctl timeout report its cause first.
 const LIST_TIMEOUT_SECONDS = 40;
-// simctl could not list simulators, so the empty iOS list says nothing. expo-device-hub 0.19.1
-// errors carry only text (their id is a hash), so this matches its listing messages.
+// expo-device-hub 0.19.1 reports a failed simulator listing only as text; its error ids are hashes.
 const SIMULATOR_LIST_FAILED =
   /^\[apple-utils\] (?:Failed to (?:run `xcrun simctl list devices|parse JSON output:|list devices:)|`xcrun simctl list devices --json` did not respond within )/;
 

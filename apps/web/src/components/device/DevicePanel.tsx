@@ -184,7 +184,7 @@ export function DevicePanel(props: {
             hostId: host.id,
             label: host.label,
             detail,
-            incompletePlatforms: status?.incompletePlatforms,
+            incomplete: (status?.incompletePlatforms?.length ?? 0) > 0,
           },
         ]
       : [];
@@ -225,7 +225,7 @@ export function DevicePanel(props: {
                 key={`${environmentId}\u0000${diagnostic.hostId}\u0000${diagnostic.detail}`}
                 label={diagnostic.label}
                 detail={diagnostic.detail}
-                incomplete={!!diagnostic.incompletePlatforms?.length}
+                incomplete={diagnostic.incomplete}
               />
             ))}
           </div>

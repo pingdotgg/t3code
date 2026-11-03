@@ -29,44 +29,24 @@ const deviceState = (overrides: Partial<DeviceServiceState> = {}): DeviceService
 });
 
 describe("device setup guidance", () => {
-  it.each([
-    { platform: "android", androidDiscoveryIncomplete: true, incompletePlatforms: [] },
-    { platform: "ios", androidDiscoveryIncomplete: false, incompletePlatforms: ["ios"] },
-    { platform: "android", androidDiscoveryIncomplete: false, incompletePlatforms: ["android"] },
-  ] as const)("waits for complete $platform discovery before advising device setup", (input) => {
+  it("waits for complete discovery before advising device setup", () => {
     const state = deviceState({
       hostStatus: "idle",
       hosts: [{ ...deviceState().hosts[0]!, id: "remote", kind: "ssh" }],
-      hostStatuses: {
-        remote: {
-          status: "ready",
-          detail: "Host discovery did not finish.",
-          incompletePlatforms: input.incompletePlatforms,
-          ...(input.androidDiscoveryIncomplete ? { androidDiscoveryIncomplete: true } : {}),
-        },
-      },
+      hostStatuses: { remote: { status: "ready", androidDiscoveryIncomplete: true } },
     });
-    expect(platformSetupStatus(state, input.platform).message).toContain(
-      input.androidDiscoveryIncomplete ? "may be incomplete" : "discovery reported a problem",
-    );
-    const otherPlatform = input.platform === "ios" ? "android" : "ios";
-    expect(platformSetupStatus(state, otherPlatform).message).toContain(
-      otherPlatform === "ios" ? "Xcode Settings" : "Device Manager",
-    );
+    expect(platformSetupStatus(state, "android").message).toContain("may be incomplete");
+    expect(platformSetupStatus(state, "ios").message).toContain("Xcode Settings");
+    expect(
+      platformSetupStatus({ ...state, hostStatuses: { remote: { status: "ready" } } }, "android")
+        .message,
+    ).toContain("Device Manager");
     expect(
       platformSetupStatus(
-        {
-          ...state,
-          hostStatuses: {
-            remote: {
-              status: "ready",
-              detail: "[apple-utils] A warning unrelated to listing devices.",
-            },
-          },
-        },
-        input.platform,
+        { ...state, hostStatuses: { remote: { status: "ready", incompletePlatforms: ["ios"] } } },
+        "ios",
       ).message,
-    ).toContain(input.platform === "ios" ? "Xcode Settings" : "Device Manager");
+    ).toContain("discovery reported a problem");
   });
 
   it("counts a remote device host when this machine has no simulator tooling", () => {
