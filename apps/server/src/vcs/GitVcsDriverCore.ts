@@ -548,6 +548,7 @@ function redactGitFailureText(text: string, args: readonly string[]): string {
   }
   for (const arg of args.slice(1)) {
     const values = arg.includes("=") ? [arg, arg.slice(arg.indexOf("=") + 1)] : [arg];
+    if (arg.startsWith("--")) values.push(arg.slice(2));
     for (const value of values) {
       if (value.length === 0) continue;
       let start = text.indexOf(value);

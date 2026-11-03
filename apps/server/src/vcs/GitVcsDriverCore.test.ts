@@ -1757,14 +1757,17 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   );
   describe("structured errors", () => {
     it.effect.each([
-      "secret-token-value",
-      "prefix123=private-secret",
-      "tiny",
-      "status=private-secret",
-      "prefix-status-private-secret",
-      "Bearer token=private-secret",
-      "private-secret\ncontinued",
-    ])("does not retain git argument %s in command failures", (secret) =>
+      ...[
+        "secret-token-value",
+        "prefix123=private-secret",
+        "tiny",
+        "status=private-secret",
+        "prefix-status-private-secret",
+        "Bearer token=private-secret",
+        "private-secret\ncontinued",
+      ].map((secret) => ({ secret, args: ["status", `--unknown-option=${secret}`] })),
+      { secret: "private-secret", args: ["status", "--private-secret"] },
+    ])("does not retain git argument $secret in command failures", ({ secret, args }) =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const driver = yield* GitVcsDriver.GitVcsDriver;
@@ -1774,7 +1777,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           .execute({
             operation: "GitVcsDriver.test.redactedFailure",
             cwd,
-            args: ["status", `--unknown-option=${secret}`],
+            args,
           })
           .pipe(Effect.flip);
 
