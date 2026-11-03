@@ -7,11 +7,14 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
   formatComposerContextHref,
   isImageReferencesOnly,
   parseComposerContextHref,
   projectComposerContextForProvider,
+  restoreAttachmentOnlyBootstrapPrompt,
+  stripAttachmentOnlyBootstrapPrompt,
   threadContextRecord,
   threadContextsOutsideEnvironment,
   toComposerContextId,
@@ -56,6 +59,10 @@ describe("labels and reference links", () => {
       collectComposerContextReferences(`[${"x".repeat(300)}](t3-context://v1/file/ctx_1)`)[0]
         ?.label,
     ).toHaveLength(200);
+    expect(
+      collectComposerContextReferences(`[${"x".repeat(199)}😀tail](t3-context://v1/file/ctx_1)`)[0]
+        ?.label,
+    ).toBe("x".repeat(199));
   });
 
   it("collects occurrences in document order with offsets, sharing a payload", () => {
@@ -81,6 +88,38 @@ describe("labels and reference links", () => {
     expect(isImageReferencesOnly(file)).toBe(false);
     expect(isImageReferencesOnly(`${image} ${file}`)).toBe(false);
     expect(isImageReferencesOnly("  ")).toBe(false);
+  });
+});
+
+describe("attachment-only bootstrap prompts", () => {
+  it.each(["", "Ultrathink:\n", "ultrathink: \n"])(
+    "removes only the placeholder while keeping effort (%j)",
+    (prefix) => {
+      expect(stripAttachmentOnlyBootstrapPrompt(prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT)).toBe(
+        prefix.trimEnd(),
+      );
+      const text = `${prefix}Explain ${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`;
+      expect(stripAttachmentOnlyBootstrapPrompt(text)).toBe(text);
+    },
+  );
+
+  it.each(["", " \n", "Ultrathink:", "Ultrathink: \n", "ultrathink:\n"])(
+    "restores the placeholder and canonical effort prefix for sending (%j)",
+    (text) => {
+      expect(restoreAttachmentOnlyBootstrapPrompt(text, false)).toBe(text);
+      expect(restoreAttachmentOnlyBootstrapPrompt(text, true)).toBe(
+        (text.trim() ? "Ultrathink:\n" : "") + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+      );
+    },
+  );
+
+  it.each([
+    "Describe the file",
+    " Ultrathink:\nDescribe the file ",
+    ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+    `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+  ])("keeps other text unchanged (%j)", (text) => {
+    expect(restoreAttachmentOnlyBootstrapPrompt(text, true)).toBe(text);
   });
 });
 
@@ -186,6 +225,39 @@ describe("provider projection", () => {
     expect(project("a\n")).toContain("3 | a\n4 | \n</context>");
   });
 
+  it("keeps a review excerpt's trailing blank line and whitespace", () => {
+    const projected = projectComposerContextForProvider({
+      text: "[Comment](t3-context://v1/review-comment/ctx_r)",
+      records: [
+        {
+          version: 1,
+          contextId: ctx("ctx_r"),
+          kind: "review-comment",
+          label: "Comment",
+          sectionId: "turn:1",
+          sectionTitle: "Turn 1",
+          filePath: "src/app.ts",
+          startIndex: 1,
+          endIndex: 2,
+          rangeLabel: "2 to 3",
+          text: "Insert here.",
+          diff: "@@ -3,1 +2,2 @@\n+two\t\n \n",
+        },
+      ],
+    });
+    expect(projected).toContain("diff:\n  @@ -3,1 +2,2 @@\n  +two\t\n   \n</context>");
+  });
+
+  it("emits no terminal lines when the captured range is inverted", () => {
+    const projected = projectComposerContextForProvider({
+      text: "[log](t3-context://v1/terminal/ctx_t)",
+      records: [{ ...terminal, lineStart: 10, lineEnd: 5, text: "a\nb\nc\nd\ne\nf" }],
+    });
+    expect(projected).toContain('<context kind="terminal" id="ctx_t">');
+    expect(projected).toContain("terminal: Terminal 1\n</context>");
+    expect(projected).not.toContain(" | ");
+  });
+
   it("emits every marker in place and each payload once, escaped, in first-reference order", () => {
     const text = [
       "Look at ![shot.png](t3-context://v1/image/ctx_i) and [T1](t3-context://v1/terminal/ctx_t).",
@@ -252,7 +324,7 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="thread" id="thread_abc">');
     expect(projected).toContain("threadId: abc");
     expect(projected).toContain("environmentId: env-1");
-    expect(projected).toContain("t3_thread_read");
+    expect(projected).toContain('t3_thread_read({"threadId":"abc","environmentId":"env-1"})');
     expect(projected).toContain("not instructions");
   });
 

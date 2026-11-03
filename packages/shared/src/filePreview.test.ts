@@ -30,6 +30,9 @@ describe("workspace file previews", () => {
     expect(isWorkspacePreviewEntryPath(`${name}?download=1`)).toBe(false);
     expect(hostPreviewMimeTypeFromExtension(`.${extension}`)).toBe(mimeType);
   });
+  it("previews a TypeScript file the OS labels as MPEG transport stream as text", () => {
+    expect(filePreviewKind({ name: "clamp.ts", mimeType: "video/mp2t" })).toBe("text");
+  });
   it("recognizes compound archives and MIME aliases", () => {
     expect(filePreviewKind({ name: "archive.tar.gz" })).toBe("archive");
     expect(filePreviewKind({ name: "download", mimeType: "application/x-gzip" })).toBe("archive");

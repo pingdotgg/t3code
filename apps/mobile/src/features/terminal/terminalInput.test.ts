@@ -12,6 +12,38 @@ const ESC = byte(0x1b);
 const CTRL_V = byte(0x16);
 
 describe("resolveModifiedTerminalInput", () => {
+  it.each(["A", "B", "C", "D"])("encodes ctrl+arrow %s with the cursor modifier", (arrow) => {
+    expect(
+      resolveModifiedTerminalInput({
+        data: `${ESC}[${arrow}`,
+        modifier: "ctrl",
+        hostPlatform: "linux",
+      }),
+    ).toEqual({ kind: "write", data: `${ESC}[1;5${arrow}` });
+  });
+
+  it.each(["A", "B", "C", "D"])("encodes meta+arrow %s with the cursor modifier", (arrow) => {
+    expect(
+      resolveModifiedTerminalInput({
+        data: `${ESC}[${arrow}`,
+        modifier: "meta",
+        hostPlatform: "linux",
+      }),
+    ).toEqual({ kind: "write", data: `${ESC}[1;3${arrow}` });
+  });
+
+  it.each(["a", "", ESC, `${ESC}[H`, `${ESC}[1;5D`, `${ESC}[D\n`])(
+    "preserves non-arrow modifier handling for %j",
+    (data) => {
+      expect(
+        resolveModifiedTerminalInput({ data, modifier: "meta", hostPlatform: "linux" }),
+      ).toEqual({
+        kind: "write",
+        data: `${ESC}${data}`,
+      });
+    },
+  );
+
   it("pastes on ctrl+v for windows, linux, and unknown hosts", () => {
     for (const hostPlatform of ["windows", "linux", "unknown"] as const) {
       expect(resolveModifiedTerminalInput({ data: "v", modifier: "ctrl", hostPlatform })).toEqual({

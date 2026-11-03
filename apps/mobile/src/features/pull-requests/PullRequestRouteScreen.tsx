@@ -74,7 +74,7 @@ import { useAndroidWorkspaceBack } from "../workspace/useAndroidWorkspaceNavigat
 import { EmptyState } from "../../components/ui/EmptyState";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { relativeTime } from "../../lib/time";
+import { RelativeTime } from "../../components/RelativeTime";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { usePullRequestLiveChecks } from "./usePullRequestLiveChecks";
@@ -213,7 +213,7 @@ function PullRequestIdentity(props: {
           {pr.author?.login ?? "Unknown author"}
         </Text>
         <Text className="shrink text-right text-2xs text-foreground-muted" numberOfLines={1}>
-          Updated {relativeTime(pr.updatedAt)} ago
+          Updated <RelativeTime timestamp={pr.updatedAt} /> ago
         </Text>
       </View>
       <View className="flex-row items-start gap-1.5">
@@ -423,6 +423,13 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     permissions.canEditMaintainerEdits,
   );
   const showsDeleteBranch = pr !== null && canPerformPullRequestAction(pr, "delete-branch");
+  const stateAction = action.available("close")
+    ? "close"
+    : action.available("reopen")
+      ? "reopen"
+      : null;
+  const runStateAction = () =>
+    stateAction === "close" ? action.confirmClose() : void action.perform("reopen");
   const confirmDeleteBranch = () =>
     pr &&
     action.confirm(
@@ -557,6 +564,17 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                     },
                   ]
                 : []),
+              ...(stateAction
+                ? [
+                    {
+                      accessibilityLabel: pullRequestActionLabel(stateAction, terminology),
+                      icon: PR_ACTION_ICONS[stateAction],
+                      destructive: stateAction === "close",
+                      overflowOnly: true,
+                      onPress: runStateAction,
+                    },
+                  ]
+                : []),
               ...(showsDeleteBranch
                 ? [
                     {
@@ -646,6 +664,15 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 onPress={() => sharePullRequestLink(identity)}
               >
                 <Toolbar.Label>Share…</Toolbar.Label>
+              </Toolbar.MenuAction>
+            ) : null}
+            {stateAction ? (
+              <Toolbar.MenuAction
+                icon={PR_ACTION_ICONS[stateAction]}
+                destructive={stateAction === "close"}
+                onPress={runStateAction}
+              >
+                <Toolbar.Label>{pullRequestActionLabel(stateAction, terminology)}</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
             {showsDeleteBranch ? (
@@ -794,7 +821,12 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                               </View>
                             </View>
                           ) : null}
-                          {tab === "guide" ? <PullRequestGuideContent params={params} /> : null}
+                          {tab === "guide" ? (
+                            <PullRequestGuideContent
+                              params={params}
+                              visible={section === "guide"}
+                            />
+                          ) : null}
                           {tab === "activity" ? (
                             <PullRequestActivityFilters
                               value={activityFilter}
@@ -868,19 +900,25 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                           }}
                         >
                           <PullRequestIdentity pr={identity} params={params} />
-                          <SegmentedControl
-                            options={[
-                              { value: "overview", label: "Overview" },
-                              ...(guidesEnabled
-                                ? [{ value: "guide" as const, label: "Guide" }]
-                                : []),
-                              { value: "activity", label: "Activity" },
-                            ]}
-                            selected={section}
-                            onSelect={selectSection}
-                            role="tab"
-                            size="compact"
-                          />
+                          {/* UIKit draws the tapped control's glass lens outside the hidden
+                              tab's opacity, so only the visible tab mounts the control. */}
+                          {Platform.OS !== "ios" || section === tab ? (
+                            <SegmentedControl
+                              options={[
+                                { value: "overview", label: "Overview" },
+                                ...(guidesEnabled
+                                  ? [{ value: "guide" as const, label: "Guide" }]
+                                  : []),
+                                { value: "activity", label: "Activity" },
+                              ]}
+                              selected={section}
+                              onSelect={selectSection}
+                              role="tab"
+                              size="compact"
+                            />
+                          ) : (
+                            <View style={{ height: 32 }} />
+                          )}
                         </View>
                       ) : null}
                     </>
