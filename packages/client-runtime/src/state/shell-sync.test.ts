@@ -1154,11 +1154,13 @@ describe("environment shell cold start from a vouched cache", () => {
           Queue.offer(subscribeInputs, subscribeInput).pipe(Effect.as(Stream.fromQueue(events))),
         ),
     } as unknown as WsRpcProtocolClient;
-    const newSession = (): RpcSession.RpcSession => ({
+    const newSession = (
+      serverVersion = input.serverVersion ?? SERVER_VERSION,
+    ): RpcSession.RpcSession => ({
       ...session(client),
       initialConfig: Effect.succeed({
         shellResumeCompletionMarker: true,
-        environment: { serverVersion: input.serverVersion ?? SERVER_VERSION },
+        environment: { serverVersion },
       } as never),
     });
     const activeSession = yield* SubscriptionRef.make(Option.some(newSession()));
@@ -1209,6 +1211,8 @@ describe("environment shell cold start from a vouched cache", () => {
       httpLoads,
       shellState,
       resubscribe: SubscriptionRef.set(activeSession, Option.some(newSession())),
+      reconnectToServer: (serverVersion: string) =>
+        SubscriptionRef.set(activeSession, Option.some(newSession(serverVersion))),
       stateWhere: (predicate: (state: EnvironmentShellState) => boolean) =>
         SubscriptionRef.changes(shellState).pipe(
           Stream.filter(predicate),
@@ -1312,6 +1316,18 @@ describe("environment shell cold start from a vouched cache", () => {
       const refreshed = yield* Queue.take(h.saved);
       expect(refreshed.snapshot.snapshotSequence).toBe(20);
       expect(refreshed.vouch).toEqual({ ...VOUCH, authoritativeAt: refreshedAt });
+    }),
+  );
+
+  it.effect("reloads over HTTP when a reconnect reaches an upgraded server", () =>
+    Effect.gen(function* () {
+      const h = yield* makeColdStart({ vouch: undefined });
+      expect(yield* Queue.take(h.subscribeInputs)).toMatchObject({ afterSequence: HTTP_SEQUENCE });
+
+      // An upgrade can rebuild projections that replay would not resend.
+      yield* h.reconnectToServer("2.0.0");
+      expect(yield* Queue.take(h.subscribeInputs)).toMatchObject({ afterSequence: HTTP_SEQUENCE });
+      expect(yield* Ref.get(h.httpLoads)).toBe(2);
     }),
   );
 

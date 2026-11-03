@@ -470,7 +470,10 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         // A shell from a server snapshot resumes from its in-memory cursor. Cached data, or a
         // snapshot taken with other omissions, reloads over HTTP so a valid cursor cannot
         // preserve incomplete data; only a matching cache vouch lets the first subscription resume.
-        const hasAuthoritativeSnapshot = (yield* Ref.get(authoritativeOmission)) === omissionKey;
+        // A server upgrade can rebuild projections that replay would not resend.
+        const hasAuthoritativeSnapshot =
+          (yield* Ref.get(authoritativeOmission)) === omissionKey &&
+          ((yield* Ref.get(lineageVouch))?.serverVersion ?? null) === serverVersion;
         const cacheVouch = yield* Ref.getAndSet(cacheResumeVouch, undefined);
         let canResume = hasAuthoritativeSnapshot;
         let current = yield* SubscriptionRef.get(state);
