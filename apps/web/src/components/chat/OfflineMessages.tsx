@@ -75,7 +75,7 @@ export function OfflineMessages({
               variant="ghost"
               disabled={sending}
               onClick={() => {
-                void offlineMessages.remove(id).catch(report);
+                void offlineMessages.remove(id).then(deliverOfflineMessages).catch(report);
               }}
             >
               Cancel

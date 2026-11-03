@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ProcessRunner from "../processRunner.ts";
 import * as HostScreen from "./HostScreen.ts";
@@ -104,6 +105,7 @@ it.effect("rejects concurrent captures and cleans up an interrupted capture", ()
     );
     const pending = yield* screen.capture().pipe(Effect.forkChild);
     const file = yield* Deferred.await(entered);
+    yield* TestClock.adjust("1 second");
     expect(yield* screen.capture().pipe(Effect.flip)).toMatchObject({ reason: "busy" });
     yield* Fiber.interrupt(pending);
     expect(yield* fs.exists(file.slice(0, file.lastIndexOf("/")))).toBe(false);

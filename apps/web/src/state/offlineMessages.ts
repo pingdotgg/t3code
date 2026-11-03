@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { Atom } from "effect/reactivity";
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, CommandId } from "@t3tools/contracts";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -15,9 +15,8 @@ import {
 import { toastManager } from "../components/ui/toast";
 import { environmentPresentations } from "./presentation";
 import { environmentSession, readEnvironmentScope } from "./session";
-import { threadEnvironment, environmentThreadShells } from "./threads";
+import { threadEnvironment } from "./threads";
 import { environmentShell } from "./shell";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { createOfflineOutbox } from "./offlineOutbox";
 import { offlineOutboxStorage } from "./offlineOutboxStorage";
 
@@ -46,20 +45,43 @@ export const offlineMessages = createOfflineOutbox({
       message.attachments,
       attachments,
     );
-    const existingThread = appAtomRegistry.get(
-      environmentThreadShells.threadShellAtom(
-        scopeThreadRef(message.environmentId, message.input.threadId),
-      ),
-    );
-    const { bootstrap, ...turnInput } = message.input;
+    if (!message.input.bootstrap) {
+      const runtimeResult = await runAtomCommand(
+        appAtomRegistry,
+        threadEnvironment.setRuntimeMode,
+        {
+          environmentId: message.environmentId,
+          input: {
+            threadId: message.input.threadId,
+            runtimeMode: message.input.runtimeMode,
+            commandId: CommandId.make(message.input.commandId + ":runtime-mode"),
+          },
+        },
+        { reportFailure: false },
+      );
+      if (runtimeResult._tag === "Failure") throw squashAtomCommandFailure(runtimeResult);
+      const interactionResult = await runAtomCommand(
+        appAtomRegistry,
+        threadEnvironment.setInteractionMode,
+        {
+          environmentId: message.environmentId,
+          input: {
+            threadId: message.input.threadId,
+            interactionMode: message.input.interactionMode,
+            commandId: CommandId.make(message.input.commandId + ":interaction-mode"),
+          },
+        },
+        { reportFailure: false },
+      );
+      if (interactionResult._tag === "Failure") throw squashAtomCommandFailure(interactionResult);
+    }
     const result = await runAtomCommand(
       appAtomRegistry,
       threadEnvironment.startTurn,
       {
         environmentId: message.environmentId,
         input: {
-          ...turnInput,
-          ...(bootstrap && !(bootstrap.createThread && existingThread) ? { bootstrap } : {}),
+          ...message.input,
           message: {
             ...message.input.message,
             attachments,
@@ -91,8 +113,8 @@ export function deliverOfflineMessages() {
   };
   draining = (
     navigator.locks
-      ? navigator.locks.request("t3code:offline-outbox", { ifAvailable: true }, async (lock) => {
-          if (lock) await drain();
+      ? navigator.locks.request("t3code:offline-outbox", async () => {
+          await drain();
         })
       : drain()
   )

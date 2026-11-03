@@ -1,3 +1,13 @@
+import * as Schema from "effect/Schema";
+import {
+  ChatImageAttachment,
+  ChatFileAttachment,
+  EnvironmentId,
+  ThreadId,
+  MessageId,
+  RuntimeMode,
+  ProviderInteractionMode,
+} from "@t3tools/contracts";
 import type { OfflineMessage } from "./offlineOutbox";
 
 let database: Promise<IDBDatabase> | undefined;
@@ -25,12 +35,44 @@ async function transact<T>(
     transaction.onerror = () => reject(transaction.error);
   });
 }
+const storedMessage = Schema.Struct({
+  environmentId: EnvironmentId,
+  input: Schema.Struct({
+    threadId: ThreadId,
+    createdAt: Schema.optional(Schema.String),
+    message: Schema.Struct({
+      messageId: MessageId,
+      role: Schema.Literal("user"),
+      text: Schema.String,
+      attachments: Schema.Array(Schema.Unknown),
+    }),
+    runtimeMode: RuntimeMode,
+    interactionMode: ProviderInteractionMode,
+  }),
+  attachments: Schema.Array(
+    Schema.Union([
+      ChatImageAttachment.mapFields((fields) => ({
+        ...fields,
+        previewUrl: Schema.String,
+        file: Schema.instanceOf(File),
+      })),
+      ChatFileAttachment.mapFields((fields) => ({
+        ...fields,
+        file: Schema.NullOr(Schema.instanceOf(File)),
+      })),
+    ]),
+  ),
+  error: Schema.optional(Schema.String),
+});
+const isOfflineMessage = (value: unknown): value is OfflineMessage =>
+  Schema.is(storedMessage)(value);
+
 export const offlineOutboxStorage = {
   load: async (): Promise<OfflineMessage[]> => {
-    const messages: OfflineMessage[] = await transact("readonly", (store) => store.getAll());
-    return messages.sort((a, b) =>
-      (a.input.createdAt ?? "").localeCompare(b.input.createdAt ?? ""),
-    );
+    const messages: unknown[] = await transact("readonly", (store) => store.getAll());
+    return messages
+      .filter(isOfflineMessage)
+      .sort((a, b) => (a.input.createdAt ?? "").localeCompare(b.input.createdAt ?? ""));
   },
   put: async (message: OfflineMessage) => {
     await transact("readwrite", (store) => store.put(message, message.input.message.messageId));

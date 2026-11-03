@@ -1253,7 +1253,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     : null;
   const showResumeAction =
-    canResume && !composerDraftHasUserContent(composerDraft) && !isEditingQueuedMessage;
+    canResume &&
+    !environmentUnavailable &&
+    !composerDraftHasUserContent(composerDraft) &&
+    !isEditingQueuedMessage;
   const collapsedComposerPrimaryActionDisabled =
     phase === "running" ||
     isSendBusy ||

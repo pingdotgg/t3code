@@ -923,6 +923,13 @@ export function useComposerSend(input: ComposerSendInput) {
         (message) =>
           message.environmentId === environmentId && message.input.threadId === threadIdForSend,
       );
+    if (hasOfflineMessages && multipleModelSelections !== null) {
+      toastManager.add({
+        type: "warning",
+        title: "Wait for offline messages to send before sending to multiple models.",
+      });
+      return;
+    }
     if (activeEnvironmentUnavailable || hasOfflineMessages) {
       sendInFlightRef.current = true;
       const queuedDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
@@ -944,7 +951,7 @@ export function useComposerSend(input: ComposerSendInput) {
             interactionMode: sendInteractionMode,
             dispatchMode: "queue",
             createdAt: messageCreatedAt,
-            ...(isLocalDraftThread || baseBranchForWorktree
+            ...(!hasOfflineMessages && (isLocalDraftThread || baseBranchForWorktree)
               ? {
                   bootstrap: {
                     ...(isLocalDraftThread
@@ -981,6 +988,8 @@ export function useComposerSend(input: ComposerSendInput) {
           },
           attachments: composerAttachmentsSnapshot,
         });
+        if (isLocalDraftThread)
+          markPromotedDraftThreadByRef(scopeThreadRef(environmentId, threadIdForSend));
         if (
           useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) === queuedDraft &&
           promptRef.current === promptForSend &&
