@@ -1591,6 +1591,9 @@ describe("PiAdapterV2", () => {
         arg === "--extension" ? [spawn.args[index + 1]] : [],
       );
       assert.isFalse(spawn.args.includes("--no-extensions"));
+      // A thread's long-lived process keeps Pi's startup model refresh unless the user opts out.
+      assert.notInclude(spawn.args, "--offline");
+      assert.isUndefined(spawn.env.PI_OFFLINE);
       assert.isTrue(extensions.some((path) => path?.endsWith("pi-t3-mcp-extension.ts")));
       assert.equal(spawn.env.T3_MCP_URL, "http://127.0.0.1:43123/mcp");
       assert.equal(spawn.env.T3_MCP_BEARER_TOKEN, "secret-pi-token");
@@ -1891,6 +1894,7 @@ describe("PiAdapterV2", () => {
       assert.equal(args[args.indexOf("--fork") + 1], FAKE_SESSION_FILE);
       assert.include(args, "--no-extensions");
       assert.include(args, "--no-tools");
+      assert.include(args, "--offline");
       assert.notInclude(args, "--no-session");
       assert.deepEqual(
         forkFake
