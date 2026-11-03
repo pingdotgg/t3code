@@ -431,13 +431,44 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+const isImage = (node: MarkdownNode) => node.type === "image" || node.type === "imageReference";
+const isSpace = (node: MarkdownNode) =>
+  node.type === "break" || (node.type === "text" && node.value.trim() === "");
+
+// Native Markdown sizes an image as a block only when it is its paragraph's only child.
+function markdownWithImageParagraphs(markdown: string): string {
+  // Skips the extra parse unless an image starts a line.
+  if (!/\n[ \t]*!\[/.test(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  for (const block of parser.parse(markdown).children) {
+    if (
+      block.type !== "paragraph" ||
+      !block.children.every((child) => isImage(child) || isSpace(child))
+    )
+      continue;
+    const images = block.children.filter(isImage);
+    const gaps = images.slice(1).map((image, index) => ({
+      start: images[index]!.position?.end.offset ?? -1,
+      end: image.position?.start.offset ?? -1,
+    }));
+    const lineEnds = gaps.map(({ start, end }) => /\r\n?|\n/.exec(markdown.slice(start, end)));
+    if (gaps.length === 0 || lineEnds.some((ending) => ending === null)) continue;
+    gaps.forEach((gap, index) => edits.push({ ...gap, content: lineEnds[index]![0].repeat(2) }));
+  }
+  return applyMarkdownEdits(markdown, edits);
+}
+
 // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
-export function markdownForNativeParsing(markdown: string): string {
+function normalizedMarkdown(markdown: string): string {
   return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
 }
 
+export function markdownForNativeParsing(markdown: string): string {
+  return markdownWithImageParagraphs(normalizedMarkdown(markdown));
+}
+
 export function parseMarkdownDocument(markdown: string): Root {
-  return parser.parse(markdownForNativeParsing(markdown));
+  return parser.parse(normalizedMarkdown(markdown));
 }
 
 export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
