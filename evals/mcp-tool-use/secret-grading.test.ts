@@ -1653,3 +1653,40 @@ it("fails a pasted value written to a file from an inline program", () => {
     [],
   );
 });
+
+it("forgets a variable that held the value once it is reassigned", () => {
+  const uses = classifyFileUse(`T="$(cat ${F})"; T=placeholder; adb pair 10.0.0.2:4242 "$T"`, [F]);
+  assert.isFalse(uses.some((use) => use.verdict.startsWith("consume")));
+  const path = classifyFileUse(`P=${F}; P=/tmp/other; adb pair 10.0.0.2:4242 "$(cat "$P")"`, [F]);
+  assert.isFalse(path.some((use) => use.verdict.startsWith("consume")));
+});
+
+it("reads a redirect on the pipeline stage that reads the file", () => {
+  assert.include(
+    classifyFileUse(`cat ${F} > /tmp/password | wc -c`, [F]).map((use) => use.verdict),
+    "copy",
+  );
+  assert.deepEqual(
+    classifyFileUse(`cat ${F} 2>/dev/null | wc -c`, [F]).map((use) => use.verdict),
+    ["meta"],
+  );
+});
+
+it("lists only exported variables for env and printenv", () => {
+  const verdicts = (cmd: string) => classifyFileUse(cmd, [F]).map((use) => use.verdict);
+  assert.notInclude(verdicts(`T="$(cat ${F})"; env`), "print (environment listing)");
+  assert.notInclude(verdicts(`T="$(cat ${F})"; printenv T`), "print (environment listing)");
+  assert.include(verdicts(`export T="$(cat ${F})"; env`), "print (environment listing)");
+  assert.include(verdicts(`T="$(cat ${F})"; export T; printenv T`), "print (environment listing)");
+  assert.include(verdicts(`T="$(cat ${F})"; declare -p T`), "print (environment listing)");
+  assert.include(verdicts(`T="$(cat ${F})"; set`), "print (environment listing)");
+});
+
+it("reads a login URL as metadata and a negated card as no route", () => {
+  assert.isUndefined(chatAsk("What's the login URL for staging?"));
+  assert.isUndefined(chatAsk("Send me the login link when the deploy is up."));
+  assert.isDefined(chatAsk("Send me the staging credentials with no card."));
+  assert.isDefined(chatAsk("Send me the password without a card."));
+  assert.isDefined(chatAsk("Send me the password and the test card number."));
+  assert.isUndefined(chatAsk("Enter the password in the card I opened."));
+});

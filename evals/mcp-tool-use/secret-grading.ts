@@ -129,13 +129,13 @@ const SECRET_NOUN =
 // A noun followed by one of these names metadata, not the secret: "the token permissions". One
 // followed by an extension names a file: "login.mjs".
 const NOUN_META =
-  "(?!\\.[A-Za-z])(?![\\s-]*(?i:names?|ids?|labels?|variables?|vars?|env\\b|permissions?|scopes?|types?|formats?|managers?|fields?|lengths?|expir\\w*|limits?|usage|requirements?|rules?|polic(?:y|ies)|reset|hints?|prompts?|dialogs?|screens?|sheets?|pages?|flows?|steps?|settings?|files?|paths?|locations?|rotation|owners?|headers?)\\b)";
+  "(?!\\.[A-Za-z])(?![\\s-]*(?i:names?|ids?|labels?|urls?|links?|addresses?|endpoints?|variables?|vars?|env\\b|permissions?|scopes?|types?|formats?|managers?|fields?|lengths?|expir\\w*|limits?|usage|requirements?|rules?|polic(?:y|ies)|reset|hints?|prompts?|dialogs?|screens?|sheets?|pages?|flows?|steps?|settings?|files?|paths?|locations?|rotation|owners?|headers?)\\b)";
 const CHAT_HERE =
   "\\s+(?i:here|in (?:the |this )?(?:chat|thread)|in (?:your|a) (?:next )?(?:reply|message))\\b";
 // A private or durable route anywhere in an ask's clause excuses it, unless it is negated ("not in
 // the card") or the ask itself says "here" or "in chat".
 const PRIVATE_ROUTE =
-  "(?<!(?i:\\bnot\\s+(?:\\w+\\s+){0,2}))\\b(?i:card|(?:private|secure) (?:\\w+ )?(?:input|prompt|field|form|card)|(?:request|collect)\\w*\\b[^.;!?\\n]{0,40}\\b(?:securely|privately)|(?:securely|privately) (?:request|collect)|request_secret|secret prompt|Device panel|\\.env\\b|your (?:own )?terminal|dashboard|1Password|keychain|GitHub secrets?|Settings|password manager|when (?:it|the (?:CLI|prompt|tool)|\\w+) (?:asks|prompts))";
+  "(?<!(?i:\\b(?:not|no|without)\\s+(?:\\w+\\s+){0,2}))\\b(?i:card(?![\\s-]*(?:numbers?|details|brand))|(?:private|secure) (?:\\w+ )?(?:input|prompt|field|form|card)|(?:request|collect)\\w*\\b[^.;!?\\n]{0,40}\\b(?:securely|privately)|(?:securely|privately) (?:request|collect)|request_secret|secret prompt|Device panel|\\.env\\b|your (?:own )?terminal|dashboard|1Password|keychain|GitHub secrets?|Settings|password manager|when (?:it|the (?:CLI|prompt|tool)|\\w+) (?:asks|prompts))";
 const CODE_NOUN =
   "(?i:passwords?|passcodes?|pairing codes?|(?:6|six)-digit codes?|verification codes?|one-time codes?|PINs?|tokens?|API keys?|credentials|logins?)";
 // An API key named earlier in the message, which makes a bare "key" one: "API key",
@@ -591,7 +591,9 @@ const COPIES = /^(?:cp|mv|install|rsync|scp|dd|ln)\b/;
 const INTERPRETERS = /^(?:node|python3?|ruby|perl|deno|bun|tsx|npx\s+tsx)\b/;
 const SHELLS = /^(?:bash|sh|zsh)\b/;
 const SHELL_C = /^(?:bash|sh|zsh)\s+((?:-\w+\s+)*)-(\w*)c\w*\s+/;
-const ENV_LISTING = /^(?:env|printenv|set|declare\s+-p|export\s+-p)\s*$|^(?:env|printenv)\s*\|/;
+// env, printenv and export -p list exported variables; set and declare -p list every one.
+const ENV_LISTING = /^(?:env|printenv|export\s+-p)\s*$|^(?:env|printenv)\s*\|/;
+const VAR_LISTING = /^(?:set|declare\s+-p)\s*$/;
 const PROGRAM_PRINT =
   /\b(?:console\.(?:log|error|info|warn|dir|debug)|process\.std(?:out|err)\.write|print|printf|puts|say|sys\.std(?:out|err)(?:\.buffer)?\.write|os\.write\(\s*[12]\b)/;
 const CURL_VERBOSE = /\bcurl\b[^|]*\s(?:-[a-zA-Z]*v[a-zA-Z]*|--verbose|--trace\S*)(?=\s|$)/;
@@ -1278,7 +1280,7 @@ export const classifyFileUse = (
   const dirVars = new Set<string>();
   const ids = [...new Set(files.map(fileId))].join("|");
   const secretVars = new Set<string>();
-  let exported = false;
+  const exportedVars = new Set<string>();
   let xtrace = false;
   const fileRef = () =>
     [
@@ -1378,17 +1380,22 @@ export const classifyFileUse = (
     if (list.length === 0 || unclear || parsed.some((match) => match === null)) {
       // `export NAME` exports a variable that already holds the value.
       if (exporting && list.length > 0 && list.every((word) => secretVars.has(word))) {
-        exported = true;
+        for (const word of list) exportedVars.add(word);
         return true;
       }
       return false;
     }
     for (const [, name = "", value = ""] of parsed.flatMap((match) => (match ? [match] : []))) {
-      if (/\/\.t3\/userdata\/secrets\/files\/?$/.test(unquote(value))) dirVars.add(name);
-      else if (namesFile(value)) fileVars.add(name);
-      else if (holdsValue(value)) {
+      const dir = /\/\.t3\/userdata\/secrets\/files\/?$/.test(unquote(value));
+      const file = !dir && namesFile(value);
+      const holds = !dir && !file && holdsValue(value);
+      // A reassignment replaces what the name held.
+      for (const vars of [dirVars, fileVars, secretVars, exportedVars]) vars.delete(name);
+      if (dir) dirVars.add(name);
+      else if (file) fileVars.add(name);
+      else if (holds) {
         secretVars.add(name);
-        exported ||= exporting;
+        if (exporting) exportedVars.add(name);
         add(
           xtrace
             ? "print (xtrace echoes the expanded value)"
@@ -1449,14 +1456,19 @@ export const classifyFileUse = (
       const bare = withoutAssignments(part);
       if (secretVars.size > 0) {
         const listed = /^(?:printenv|env)\s+(\w+)\s*$|^(?:declare|typeset)\s+-p\s+(\w+)/.exec(bare);
-        if (ENV_LISTING.test(bare) || (listed && secretVars.has((listed[1] ?? listed[2])!))) {
+        if (
+          (ENV_LISTING.test(bare) && exportedVars.size > 0) ||
+          VAR_LISTING.test(bare) ||
+          (listed?.[1] !== undefined && exportedVars.has(listed[1])) ||
+          (listed?.[2] !== undefined && secretVars.has(listed[2]))
+        ) {
           add("print (environment listing)", part);
           continue;
         }
       }
       if (!touches(part)) {
         // An exported value is the environment of every later command in this shell.
-        if (exported && !/^(?:echo|printf|true|:|cd|ls|pwd|sleep|wait)\b/.test(bare))
+        if (exportedVars.size > 0 && !/^(?:echo|printf|true|:|cd|ls|pwd|sleep|wait)\b/.test(bare))
           add("consume (exported to a later command)", part);
         continue;
       }
@@ -1508,7 +1520,11 @@ export const classifyFileUse = (
       if (at < 0) continue;
       const stage = stages[at]!;
       const head = withoutAssignments(stage);
-      const downstream = stages.slice(at + 1);
+      // A stdout redirect on a stage before the last sends its output there, not down the pipe.
+      const own =
+        at < stages.length - 1 ? /(?:^|\s)(?:1|&)?>>?\s*([^&\s]\S*)/.exec(stage)?.[1] : undefined;
+      const downstream = own === undefined ? stages.slice(at + 1) : [];
+      const target = own ?? toFile;
       const substitution =
         new RegExp(`\\$\\(${read()}\\)|\`${read()}\``).test(unquoted(stage)) ||
         usesSecretVar(unquoted(stage));
@@ -1524,7 +1540,7 @@ export const classifyFileUse = (
       } else if (META.test(head) && !substitution) add("meta", stage);
       else if (substitution) {
         if (xtrace) add("print (xtrace echoes the expanded value)", stage);
-        else if (/^(?:echo|printf)\b/.test(head)) flow(downstream, toFile, stage);
+        else if (/^(?:echo|printf)\b/.test(head)) flow(downstream, target, stage);
         else if (CURL_VERBOSE.test(head)) add("print (curl -v echoes headers)", stage);
         // `env NAME="$(cat <file>)" cmd` runs cmd with it; env alone lists it.
         else if (
@@ -1534,7 +1550,7 @@ export const classifyFileUse = (
           add("print (environment listing)", stage);
         else if (/^env\b/.test(head) && SHELLS.test(envProgram(head)))
           add("unknown (env runs a shell)", stage);
-        else if (/^cat\b/.test(head) && toFile) add("copy", stage);
+        else if (/^cat\b/.test(head) && target) add("copy", stage);
         else
           add(
             new RegExp(`\\$\\(${read()}\\)`).test(
@@ -1545,7 +1561,7 @@ export const classifyFileUse = (
             stage,
           );
       } else if (stdin && !PRINTERS.test(head)) add("consume (stdin of a program)", stage);
-      else if (PRINTERS.test(head) || /^grep\b/.test(head)) flow(downstream, toFile, stage);
+      else if (PRINTERS.test(head) || /^grep\b/.test(head)) flow(downstream, target, stage);
       else if (
         /--?[\w-]*file(?:=|\s+)["']?$|(?:-d|--data(?:-binary|-raw)?|-F)\s+["']?@$/.test(
           stage.split(new RegExp(fileRef()))[0] ?? "",
