@@ -183,17 +183,21 @@ describe("checkPack", () => {
 });
 
 describe("pack interface", () => {
-  it("omits gitignore metadata from delivery while verifying its upstream bytes", () => {
+  it("omits gitignore metadata and desktop-pruned fixtures from delivery while verifying upstream bytes", () => {
     using pack = fixture();
     pack.write("upstream/.gitignore", "node_modules/\n");
     pack.write("upstream/skills/.gitignore", "local/\n");
     pack.write("upstream/skills/bun.lock", "lockfile\n");
+    pack.write("upstream/skills/statechart/scripts/statechart.ts", "export {};\n");
+    pack.write("upstream/skills/statechart/scripts/test/chart.test.ts", "test\n");
     pack.seal();
     expect(checkPack(pack.root)).toEqual([]);
     const paths = pstackPackEntries(pack.root).map(({ packPath }) => packPath);
     expect(paths).not.toContain(".gitignore");
     expect(paths).not.toContain("skills/.gitignore");
     expect(paths).toContain("skills/bun.lock");
+    expect(paths).toContain("skills/statechart/scripts/statechart.ts");
+    expect(paths).not.toContain("skills/statechart/scripts/test/chart.test.ts");
     pack.write("upstream/.gitignore", "changed\n");
     expect(checkPack(pack.root)).toContain("Hash mismatch: .gitignore");
     NodeFS.rmSync(NodePath.join(pack.root, "upstream/.gitignore"));

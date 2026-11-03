@@ -417,6 +417,16 @@ export function claudeLaunchArgDirectories(launchArgs?: string): ReadonlyArray<s
   return directories;
 }
 
+/** Plugin enablement after Claude's settings-file precedence, keyed `name@marketplace`. */
+export const readClaudeEnabledPlugins = Effect.fn("readClaudeEnabledPlugins")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  cwd: string | undefined,
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<ReadonlyMap<string, boolean>, never, FileSystem.FileSystem | Path.Path> {
+  const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
+  return (yield* readSkillSettings(configDirPath, cwd, environment)).enabledPlugins;
+});
+
 /** First name wins, matching Claude Code's precedence of user skills over project skills. */
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath"> & Partial<Pick<ClaudeSettings, "launchArgs">>,

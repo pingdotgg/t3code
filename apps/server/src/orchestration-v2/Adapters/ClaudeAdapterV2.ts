@@ -143,7 +143,9 @@ import {
 import {
   claudeLaunchArgDirectories,
   discoverClaudeSkills,
+  readClaudeEnabledPlugins,
 } from "../../provider/Drivers/ClaudeSkills.ts";
+import { claudePstackPluginOverrides } from "../../pstack/nativePlugins.ts";
 import {
   compileClaudeModelSelection,
   type CompiledClaudeModelSelection,
@@ -10366,6 +10368,38 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 Effect.orElseSucceed(() => true),
               )
             : true;
+          // T3's pstack pack replaces a native install; two copies register conflicting skills.
+          const pstackPluginOverrides =
+            Option.isSome(serverSettings) &&
+            (yield* serverSettings.value.getSettings.pipe(
+              Effect.map((settings) => settings.pstackEnabled),
+              Effect.orElseSucceed(() => false),
+            ))
+              ? claudePstackPluginOverrides(
+                  yield* readClaudeEnabledPlugins(
+                    adapterOptions.settings,
+                    turnInput.runtimePolicy.cwd ?? undefined,
+                    adapterOptions.environment,
+                  ).pipe(
+                    Effect.provideService(FileSystem.FileSystem, fileSystem),
+                    Effect.provideService(Path.Path, path),
+                  ),
+                )
+              : undefined;
+          const launchSdkSettings =
+            launchArgSettings === undefined
+              ? undefined
+              : claudeSdkLaunchArgSettings(launchArgSettings);
+          const sdkSettings =
+            pstackPluginOverrides === undefined
+              ? launchSdkSettings
+              : ({
+                  ...launchSdkSettings,
+                  enabledPlugins: {
+                    ...launchSdkSettings?.enabledPlugins,
+                    ...pstackPluginOverrides,
+                  },
+                } as ClaudeSdkSettings);
           const queryOptions = makeClaudeQueryOptions({
             platform,
             modelSelection: turnInput.modelSelection,
@@ -10375,9 +10409,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
             settings: adapterOptions.settings,
-            ...(launchArgSettings === undefined
-              ? {}
-              : { sdkSettings: claudeSdkLaunchArgSettings(launchArgSettings) }),
+            ...(sdkSettings === undefined ? {} : { sdkSettings }),
             environment: claudeQueryEnvironment(
               adapterOptions.environment,
               turnInput.appThread,
