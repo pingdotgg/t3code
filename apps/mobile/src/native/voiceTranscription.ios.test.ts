@@ -24,7 +24,7 @@ vi.mock("expo-file-system", () => ({
   },
 }));
 
-import { getLocalVoiceTranscriber } from "./voiceTranscription.ios";
+import { getLocalVoiceTranscriber, getVoiceTranscriberForLocale } from "./voiceTranscription.ios";
 
 const audio = new ArrayBuffer(4);
 const nativeTranscript: TranscriptionResult = {
@@ -65,7 +65,7 @@ describe("getLocalVoiceTranscriber", () => {
     });
     const controller = new AbortController();
     const options = { signal: controller.signal };
-    const prepared = await getLocalVoiceTranscriber()!.prepare(options);
+    const prepared = await (await getLocalVoiceTranscriber())!.prepare(options);
     const result = prepared
       .transcribe("file:///voice.m4a", options)
       .catch((error: unknown) => error);
@@ -80,15 +80,33 @@ describe("getLocalVoiceTranscriber", () => {
     expect(mocks.transcribe).not.toHaveBeenCalled();
   });
 
-  it("prepares and transcribes the preferred locale instead of the device locale", async () => {
+  it("prepares and transcribes a chosen locale instead of the device locale", async () => {
     mocks.prepare.mockResolvedValue("pt-BR");
     const options = { signal: new AbortController().signal };
-    const prepared = await getLocalVoiceTranscriber("pt-BR")!.prepare(options);
+    const prepared = await getVoiceTranscriberForLocale("pt-BR")!.prepare(options);
     await prepared.transcribe("file:///voice.m4a", options);
 
-    expect(mocks.isAvailable).toHaveBeenCalledWith("pt-BR");
     expect(mocks.prepare).toHaveBeenCalledWith("pt-BR");
     expect(mocks.transcribe).toHaveBeenCalledWith(audio, "pt-BR");
     expect(prepared.locale).toBe("pt-BR");
+  });
+
+  it("fails on a chosen locale the device cannot transcribe instead of falling back", async () => {
+    mocks.prepare.mockRejectedValue(
+      Object.assign(new Error("unsupported"), { code: "AppleTranscriptionUnsupportedLocale" }),
+    );
+    const options = { signal: new AbortController().signal };
+
+    const error = await getVoiceTranscriberForLocale("de-DE")!
+      .prepare(options)
+      .catch((error: unknown) => error);
+
+    expect(error).toBeInstanceOf(VoiceTranscriptionError);
+    expect(error).toMatchObject({
+      code: "unsupported-locale",
+      message: "Voice transcription does not support this language.",
+    });
+    expect(mocks.prepare).toHaveBeenCalledTimes(1);
+    expect(mocks.prepare).toHaveBeenCalledWith("de-DE");
   });
 });

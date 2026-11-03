@@ -33,9 +33,14 @@ function getNativeErrorCode(error: unknown): string | undefined {
   return typeof error.code === "string" ? error.code : undefined;
 }
 
-export function getLocalVoiceTranscriber(preferredLocale?: string): VoiceTranscriber | null {
-  const locale = preferredLocale ?? getDeviceLocale();
+export async function getLocalVoiceTranscriber(): Promise<VoiceTranscriber | null> {
+  const locale = getDeviceLocale();
   if (!AppleTranscription.isAvailable(locale)) return null;
+  return getVoiceTranscriberForLocale(locale);
+}
+
+/** A chosen language stays fixed: one the device can't transcribe fails instead of falling back. */
+export function getVoiceTranscriberForLocale(locale: string): VoiceTranscriber | null {
   return { prepare: (options) => prepareVoiceTranscription(locale, options) };
 }
 
