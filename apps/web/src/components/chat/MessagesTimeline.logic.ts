@@ -28,6 +28,7 @@ import {
   toolGroupSummaryKind,
   contextCompactionTokenCounts,
   type ToolGroupSummaryKind,
+  liveThoughtLine,
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   deriveRevertTurnCountByUserMessageId,
@@ -1399,6 +1400,21 @@ function workShownAsFinalAnswerOnly(
     work.sourceActivityKind === "runtime.error" ||
     (work.itemType === "error" && work.toolLifecycleStatus !== "completed")
   );
+}
+
+export function liveAnswerPreview(entries: ReadonlyArray<TimelineEntry>): string | null {
+  for (let index = entries.length - 1; index > lastResponseBoundaryIndex(entries); index -= 1) {
+    const entry = entries[index]!;
+    const text =
+      entry.kind === "message" && entry.message.role === "assistant"
+        ? entry.message.text
+        : entry.kind === "work" && entry.entry.itemType === "reasoning"
+          ? (entry.entry.detail ?? "")
+          : "";
+    const line = liveThoughtLine(text);
+    if (line !== "") return line;
+  }
+  return null;
 }
 
 function timelineRowEntries(

@@ -27,6 +27,7 @@ import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
   timelineTurnFoldRunIdsByEntryId,
+  liveAnswerPreview,
   deriveMessagesTimelineRowsWithState,
   shouldCollapseUserMessage,
   resolveAssistantMessageCopyState,
@@ -2765,6 +2766,8 @@ describe("v2 run and attempt history", () => {
       toolCallVisibility: "finalAnswersOnly",
     });
     expect(answering.map((row) => row.kind)).toEqual(["message", "working", "thinking"]);
+    expect(liveAnswerPreview([user, commentary, passed])).toBe("commentary");
+    expect(liveAnswerPreview([commentary, user])).toBeNull();
     const zenRowIds = (
       timelineEntries: ReadonlyArray<TimelineEntry>,
       context: { isWorking?: boolean; runlessWorkActive?: boolean } = {},
