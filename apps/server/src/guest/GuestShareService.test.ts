@@ -50,6 +50,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
@@ -141,6 +142,7 @@ const layerTest = GuestShareService.layer.pipe(
   Layer.provide(layerConnect),
   Layer.provideMerge(layerAnalytics),
   Layer.provide(ServerSecretStore.layer),
+  Layer.provide(DocumentText.layer),
   Layer.provideMerge(layerConfig),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -724,6 +726,11 @@ it.effect("refuses too many files, too many bytes, and images that are not what 
           contentType: "text/html",
           bytes: new TextEncoder().encode("<b>"),
         },
+        {
+          name: "notes.rtf",
+          contentType: "application/rtf",
+          bytes: new TextEncoder().encode(String.raw`{\rtf1 Available}`),
+        },
       ]),
     );
     const [message] = yield* waitingMessages;
@@ -737,7 +744,18 @@ it.effect("refuses too many files, too many bytes, and images that are not what 
       [
         { type: "image", name: "screen.png", mimeType: "image/png", sizeBytes: PNG.length },
         { type: "file", name: "notes_fdp.html", mimeType: "text/html", sizeBytes: 3 },
+        { type: "file", name: "notes.rtf", mimeType: "application/rtf", sizeBytes: 17 },
       ],
+    );
+    // Agents read a guest's documents through the same extracted text as the owner's uploads.
+    const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+    const document = resolveAttachmentPath({
+      attachmentsDir,
+      attachment: message!.attachments![2]!,
+    });
+    assert.equal(
+      yield* (yield* FileSystem.FileSystem).readFileString(`${document}.txt`),
+      "Available",
     );
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
