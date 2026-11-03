@@ -838,7 +838,12 @@ describe("MessagesTimeline usage limit notice", () => {
     const resetAt = "2026-03-17T19:30:00.000Z";
     using _timers = fakeTimers({ now: new Date("2026-03-17T18:00:00.000Z") });
     await using screen = await renderTimeline(usageLimitEntries(resetAt), {
-      usageLimit: { runId: RunId.make("usage-limit-run"), resetAt, snoozed: false },
+      usageLimit: {
+        runId: RunId.make("usage-limit-run"),
+        resetAt,
+        snoozed: false,
+        onToggleSnooze: null,
+      },
     });
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     expect(screen.text()).toContain("resumes ");
@@ -853,12 +858,22 @@ describe("MessagesTimeline usage limit notice", () => {
     try {
       {
         await using _madrid = await renderTimeline(usageLimitEntries(resetAt), {
-          usageLimit: { runId: RunId.make("usage-limit-run"), resetAt, snoozed: false },
+          usageLimit: {
+            runId: RunId.make("usage-limit-run"),
+            resetAt,
+            snoozed: false,
+            onToggleSnooze: null,
+          },
         });
       }
       await session.send("Emulation.setTimezoneOverride", { timezoneId: "America/New_York" });
       await using screen = await renderTimeline(usageLimitEntries(resetAt), {
-        usageLimit: { runId: RunId.make("usage-limit-run"), resetAt, snoozed: false },
+        usageLimit: {
+          runId: RunId.make("usage-limit-run"),
+          resetAt,
+          snoozed: false,
+          onToggleSnooze: null,
+        },
       });
       const newYorkTime = new Date(resetAt).toLocaleTimeString(undefined, {
         hour: "numeric",
