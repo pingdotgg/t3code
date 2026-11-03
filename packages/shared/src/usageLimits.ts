@@ -214,6 +214,30 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
   usageLimits: provider.usageLimits,
 });
 
+/** Resolve the selected login across native duplicates and linked usage sources. */
+export function resolveProviderUsageLimits(
+  instanceId: ProviderInstanceId,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+): ServerProviderUsageLimits | undefined {
+  const selected = providers.find((provider) => provider.instanceId === instanceId);
+  if (!selected) return undefined;
+  const reports = [
+    ...providers.filter((provider) => provider.enabled).map(nativeReport),
+    ...sources.flatMap((source) => source.accounts),
+  ];
+  const resolveKey = accountKeyResolver(reports);
+  const key = resolveKey(nativeReport(selected));
+  const candidates = key === null ? [] : reports.filter((report) => resolveKey(report) === key);
+  return (
+    candidates
+      .flatMap((report) =>
+        report.usageLimits && limitsNotice(report.usageLimits) === null ? [report.usageLimits] : [],
+      )
+      .sort((a, b) => Date.parse(b.checkedAt) - Date.parse(a.checkedAt))[0] ?? selected.usageLimits
+  );
+}
+
 // Include every enabled login, even unreadable workspaces.
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
