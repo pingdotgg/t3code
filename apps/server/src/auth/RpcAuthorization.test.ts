@@ -62,6 +62,7 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.terminalClear,
       WS_METHODS.terminalClose,
       WS_METHODS.previewStopLocalServer,
+      WS_METHODS.hostScreenCapture,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }
@@ -91,7 +92,11 @@ it("requires operate permission for tool updates even alongside a read-only chec
 });
 
 describe("RPC scope middleware", () => {
-  const tested = [WS_METHODS.serverProbe, WS_METHODS.serverRetryResourceTelemetry] as const;
+  const tested = [
+    WS_METHODS.serverProbe,
+    WS_METHODS.serverRetryResourceTelemetry,
+    WS_METHODS.hostScreenCapture,
+  ] as const;
   const group = WsRpcGroup.omit(
     ...[...WsRpcGroup.requests.keys()].filter(
       (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
@@ -115,6 +120,9 @@ describe("RPC scope middleware", () => {
             group.toLayerHandler(WS_METHODS.serverRetryResourceTelemetry, () =>
               Effect.sync(() => handled.push("retry")).pipe(Effect.andThen(Effect.never)),
             ),
+            group.toLayerHandler(WS_METHODS.hostScreenCapture, () =>
+              Effect.sync(() => handled.push("capture")).pipe(Effect.andThen(Effect.never)),
+            ),
             RpcAuthorization.layer(scopes),
           ),
         ),
@@ -126,6 +134,10 @@ describe("RPC scope middleware", () => {
       ).toMatchObject({
         _tag: "EnvironmentAuthorizationError",
         requiredPermission: missing,
+      });
+      expect(yield* client[WS_METHODS.hostScreenCapture]({}).pipe(Effect.flip)).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthTerminalOperateScope,
       });
       expect(handled).toEqual([]);
     }).pipe(Effect.scoped),

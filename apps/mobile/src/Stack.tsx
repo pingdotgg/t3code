@@ -1,3 +1,4 @@
+import { HostScreenRouteScreen } from "./features/devices/HostScreenRouteScreen";
 import { isDraftThreadRoute } from "./features/threads/thread-route-state";
 import { ComponentCatalogScreen } from "./features/development/ComponentCatalogScreen";
 import { PullRequestGuideStopScreen } from "./features/pull-requests/guide/PullRequestGuideScreen";
@@ -807,6 +808,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
         ...THREAD_HEADER_OPTIONS,
         presentation: "fullScreenModal",
       },
+    }),
+    ThreadHostScreen: createNativeStackScreen({
+      screen: HostScreenRouteScreen,
+      linking: `${THREAD_LINKING_PREFIX}/screen`,
+      options: { presentation: "fullScreenModal", headerShown: false },
     }),
     ThreadDevicePreview: createNativeStackScreen({
       screen: DevicePreviewRouteScreen,

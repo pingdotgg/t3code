@@ -978,6 +978,15 @@ function ThreadRouteContent(
           header={
             props.inspectorPresentation ? null : (
               <ThreadHeader
+                onOpenHostScreen={
+                  serverConfig?.environment.platform.os === "darwin"
+                    ? () =>
+                        navigation.navigate("ThreadHostScreen", {
+                          environmentId: String(environmentId),
+                          threadId: String(threadId),
+                        })
+                    : undefined
+                }
                 title={selectedThread.title}
                 subtitle={headerSubtitle}
                 headerColor={headerColor}

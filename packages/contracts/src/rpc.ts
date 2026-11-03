@@ -1,3 +1,4 @@
+import { HostScreenFrame, HostScreenError } from "./hostScreen.ts";
 import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
@@ -484,6 +485,7 @@ export const WS_METHODS = {
   deviceClose: "device.close",
   deviceShutdown: "device.shutdown",
   deviceDetail: "device.detail",
+  hostScreenCapture: "hostScreen.capture",
   deviceAction: "device.action",
 
   serverProbe: "server.probe",
@@ -1660,6 +1662,12 @@ const WsDeviceShutdownRpc = Rpc.make(WS_METHODS.deviceShutdown, {
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
 });
 
+const WsHostScreenCaptureRpc = Rpc.make(WS_METHODS.hostScreenCapture, {
+  payload: Schema.Struct({}),
+  success: HostScreenFrame,
+  error: Schema.Union([HostScreenError, EnvironmentAuthorizationError]),
+});
+
 const WsDeviceDetailRpc = Rpc.make(WS_METHODS.deviceDetail, {
   payload: DeviceDetailInput,
   success: DeviceDetail,
@@ -2113,6 +2121,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceCloseRpc,
   WsDeviceShutdownRpc,
   WsDeviceDetailRpc,
+  WsHostScreenCaptureRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
   WsSubscribeServerConfigRpc,
