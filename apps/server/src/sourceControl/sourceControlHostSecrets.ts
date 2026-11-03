@@ -97,13 +97,23 @@ export const resolveSourceControlHostSecrets = Effect.fn("SourceControlHost.reso
   },
 );
 
+const collectUsageLimitSecretReferences = (
+  sources: ServerSettings["usageLimitSources"],
+): ReadonlyArray<SecretReference> =>
+  Object.values(sources).flatMap(({ managementKey }) =>
+    isSecretReference(managementKey) ? [managementKey] : [],
+  );
+
 /** Settings that cannot be read clear every cached secret, so a refresh never keeps a stale one. */
 export const invalidateSettingsSecrets = Effect.fn("SettingsSecrets.invalidate")(function* <E>(
   resolver: SecretResolver.SecretResolver["Service"],
-  settings: Effect.Effect<Pick<ServerSettings, "sourceControlHosts">, E>,
+  settings: Effect.Effect<Pick<ServerSettings, "sourceControlHosts" | "usageLimitSources">, E>,
 ) {
   const references = yield* settings.pipe(
-    Effect.map((current) => collectSourceControlHostSecretReferences(current.sourceControlHosts)),
+    Effect.map((current) => [
+      ...collectSourceControlHostSecretReferences(current.sourceControlHosts),
+      ...collectUsageLimitSecretReferences(current.usageLimitSources),
+    ]),
     Effect.orElseSucceed(() => undefined),
   );
   yield* resolver.invalidate(references);

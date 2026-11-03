@@ -394,6 +394,28 @@ it("replays earlier capability results with the model under test as the caller",
     .flatMap((message) => message.content)
     .find((block) => block.type === "tool_result" && String(block.content).includes("inherited"));
   assert.include(String(replayed?.content), '"inheritedModel":"claude-opus-5-5"');
+  const resumed = buildMessages(makeSample({ ...testCase, prompt: "" }, base));
+  assert.equal(resumed.at(-1)?.role, "user");
+  assert.equal(resumed.at(-1)?.content.at(-1)?.type, "tool_result");
+  for (const setup of [
+    {
+      ...testCase.setup,
+      sideChat: { parentThreadId: "thread-parent", digest: ["The permissions fix is committed."] },
+    },
+    { ...testCase.setup, role: "native-subagent" as const },
+    { ...testCase.setup, role: "delegated-child" as const },
+  ]) {
+    assert.throws(
+      () =>
+        buildMessages(
+          makeSample(
+            { ...testCase, prompt: "", setup },
+            { ...base, subagentContext: "Hook context" },
+          ),
+        ),
+      /Empty-prompt replay/,
+    );
+  }
 });
 
 it("gives each launched thread its own id, and reading it back shows that thread's brief", () => {
