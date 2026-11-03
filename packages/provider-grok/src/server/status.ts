@@ -17,10 +17,14 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { readGrokAccount, readGrokCredential } from "./usageLimits.ts";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
@@ -292,6 +296,80 @@ function displayNameFromGrokModelSlug(slug: string): string {
     .join(" ");
 }
 
+function readGrokCachedModels(
+  environment: NodeJS.ProcessEnv,
+): Effect.Effect<
+  ReadonlyArray<ServerProviderModel>,
+  never,
+  FileSystem.FileSystem | Path.Path | HostProcess.HomeDirectory
+> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home =
+      environment.GROK_HOME?.trim() ||
+      path.join(
+        environment.HOME || environment.USERPROFILE || (yield* HostProcess.HomeDirectory),
+        ".grok",
+      );
+    const cachePath = path.join(home, "models_cache.json");
+    const content = yield* fs.readFileString(cachePath).pipe(
+      Effect.catchTags({
+        PlatformError: () => Effect.succeed("{}"),
+      }),
+    );
+    let parsed: any;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      return [];
+    }
+    if (parsed && typeof parsed.models === "object" && parsed.models !== null) {
+      const models: ServerProviderModel[] = [];
+      const keys = Object.keys(parsed.models);
+      for (let i = 0; i < keys.length; i++) {
+        const slug = keys[i];
+        models.push({
+          slug,
+          name: displayNameFromGrokModelSlug(slug),
+          isCustom: false,
+          ...(i === 0 ? { isDefault: true } : {}),
+          capabilities: EMPTY_CAPABILITIES,
+        });
+      }
+      return models;
+    }
+    return [];
+  }).pipe(Effect.orElseSucceed(() => []));
+}
+
+function readGrokCachedVersion(
+  environment: NodeJS.ProcessEnv,
+): Effect.Effect<string | null, never, FileSystem.FileSystem | Path.Path | HostProcess.HomeDirectory> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home =
+      environment.GROK_HOME?.trim() ||
+      path.join(
+        environment.HOME || environment.USERPROFILE || (yield* HostProcess.HomeDirectory),
+        ".grok",
+      );
+    const cachePath = path.join(home, "models_cache.json");
+    const content = yield* fs.readFileString(cachePath).pipe(
+      Effect.catchTags({
+        PlatformError: () => Effect.succeed("{}"),
+      }),
+    );
+    try {
+      const parsed = JSON.parse(content);
+      return typeof parsed?.grok_version === "string" ? parsed.grok_version : null;
+    } catch {
+      return null;
+    }
+  }).pipe(Effect.orElseSucceed(() => null));
+}
+
 const runGrokCliCommand = Effect.fn("GrokProviderStatus.runGrokCliCommand")(function* (
   grokSettings: GrokSettings,
   args: ReadonlyArray<string>,
@@ -436,6 +514,54 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     yield* Effect.logWarning("Grok CLI health check failed.", {
       errorTag: error._tag,
     });
+
+    const credentialOption = yield* Effect.option(
+      readGrokCredential(probeEnvironment).pipe(Effect.timeout("5 seconds")),
+    );
+    const credential = Option.getOrUndefined(credentialOption);
+    const hasCachedAuth = Boolean(credential?.key);
+
+    if (hasCachedAuth || apiKey) {
+      const email = credential?.email?.trim() || undefined;
+      const auth: ServerProviderAuth = apiKey
+        ? { status: "authenticated", type: "api_key", label: "xAI API key" }
+        : {
+            status: "authenticated",
+            type: "cached_token",
+            label: "Grok account",
+            ...(email ? { email } : {}),
+          };
+
+      const cachedModelsList = yield* readGrokCachedModels(probeEnvironment);
+      const models =
+        cachedModelsList.length > 0
+          ? grokModelsFromSettings(grokSettings.customModels, cachedModelsList)
+          : fallbackModels;
+      const cachedVersion = yield* readGrokCachedVersion(probeEnvironment);
+
+      const accountOption = yield* Effect.option(
+        readGrokAccount(probeEnvironment).pipe(Effect.timeout("5 seconds")),
+      );
+      const account = Option.getOrUndefined(accountOption);
+
+      return buildServerProvider({
+        presentation: GROK_PRESENTATION,
+        enabled: grokSettings.enabled,
+        checkedAt,
+        models,
+        probe: {
+          installed: true,
+          version: cachedVersion,
+          status: "ready",
+          auth,
+          ...(account?.usageLimits ? { usageLimits: account.usageLimits } : {}),
+          message: isCommandMissingCause(error)
+            ? "Authenticated via Grok account."
+            : undefined,
+        },
+      });
+    }
+
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
@@ -503,13 +629,29 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     }
   }
 
-  const auth: ServerProviderAuth = apiKey
+  let auth: ServerProviderAuth = apiKey
     ? { status: "authenticated", type: "api_key", label: "xAI API key" }
     : cliModels.authenticated === true
       ? { status: "authenticated", type: "cached_token", label: "Grok account" }
       : cliModels.authenticated === false
         ? { status: "unauthenticated" }
         : { status: "unknown" };
+
+  if (auth.status !== "authenticated") {
+    const credentialOption = yield* Effect.option(
+      readGrokCredential(probeEnvironment).pipe(Effect.timeout("5 seconds")),
+    );
+    const credential = Option.getOrUndefined(credentialOption);
+    if (credential?.key) {
+      const email = credential.email?.trim() || undefined;
+      auth = {
+        status: "authenticated",
+        type: "cached_token",
+        label: "Grok account",
+        ...(email ? { email } : {}),
+      };
+    }
+  }
 
   const skills = yield* discoverGrokSkills(grokSettings, environment, cwd).pipe(
     Effect.tapError((cause) => Effect.logDebug("Grok skill discovery failed.", { cause })),

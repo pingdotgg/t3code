@@ -91,7 +91,7 @@ export function grokUsageResponseToLimits(
   return makeUsageLimits({ checkedAt, windows: [window] });
 }
 
-const readGrokCredential = Effect.fn("readGrokCredential")(function* (
+export const readGrokCredential = Effect.fn("readGrokCredential")(function* (
   environment: NodeJS.ProcessEnv,
 ) {
   // T3's ACP adapter explicitly selects API-key auth when this variable is set.

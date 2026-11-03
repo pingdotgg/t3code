@@ -72,6 +72,115 @@ export type SpawnExecutableResolver = (
   env: NodeJS.ProcessEnv,
 ) => string | undefined;
 
+function resolveWellKnownToolCandidate(
+  command: string,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+  isExecutable: (candidate: string) => boolean,
+): string | undefined {
+  const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
+  const baseName = path.basename(command).toLowerCase();
+  const normalizedCommand =
+    baseName.endsWith(".exe") || baseName.endsWith(".cmd")
+      ? baseName.slice(0, baseName.lastIndexOf("."))
+      : baseName;
+
+  if (normalizedCommand === "opencode" || normalizedCommand === "opencode-cli") {
+    if (platform === "win32") {
+      const localAppData = env.LOCALAPPDATA ?? "";
+      const appData = env.APPDATA ?? "";
+      const candidates = [
+        path.join(localAppData, "Programs", "@opencode-aidesktop", "resources", "opencode-cli.exe"),
+        path.join(localAppData, "OpenCode", "opencode-cli.exe"),
+        path.join(localAppData, "OpenCode", "opencode.exe"),
+        path.join(localAppData, "Programs", "OpenCode", "resources", "opencode-cli.exe"),
+        path.join(localAppData, "Programs", "OpenCode", "opencode-cli.exe"),
+        path.join(appData, "npm", "opencode.cmd"),
+        path.join(localAppData, "npm", "opencode.cmd"),
+      ];
+      const cliDir = path.join(appData, "ai.opencode.desktop", "cli");
+      try {
+        if (NodeFS.existsSync(cliDir)) {
+          for (const sub of NodeFS.readdirSync(cliDir)) {
+            candidates.push(path.join(cliDir, sub, "opencode-cli.exe"));
+          }
+        }
+      } catch {}
+
+      for (const candidate of candidates) {
+        if (isExecutable(candidate)) return candidate;
+      }
+    } else if (platform === "darwin") {
+      const home = env.HOME ?? "";
+      const candidates = [
+        "/Applications/OpenCode.app/Contents/Resources/opencode-cli",
+        "/Applications/OpenCode AI.app/Contents/Resources/opencode-cli",
+        path.join(home, "Applications", "OpenCode.app", "Contents", "Resources", "opencode-cli"),
+        path.join(home, ".local", "bin", "opencode"),
+        "/usr/local/bin/opencode",
+        "/opt/homebrew/bin/opencode",
+      ];
+      for (const candidate of candidates) {
+        if (isExecutable(candidate)) return candidate;
+      }
+    } else if (platform === "linux") {
+      const home = env.HOME ?? "";
+      const candidates = [
+        path.join(home, ".local", "bin", "opencode"),
+        "/usr/local/bin/opencode",
+        "/opt/OpenCode/resources/opencode-cli",
+      ];
+      for (const candidate of candidates) {
+        if (isExecutable(candidate)) return candidate;
+      }
+    }
+  }
+
+  if (normalizedCommand === "grok") {
+    if (platform === "win32") {
+      const localAppData = env.LOCALAPPDATA ?? "";
+      const appData = env.APPDATA ?? "";
+      const userProfile = env.USERPROFILE ?? env.HOME ?? "";
+      const candidates = [
+        path.join(localAppData, "Programs", "Grok Bot", "resources", "app.asar.unpacked", "dist", "native", "grok.exe"),
+        path.join(localAppData, "Programs", "grok", "grok.exe"),
+        path.join(appData, "npm", "grok.cmd"),
+        path.join(localAppData, "npm", "grok.cmd"),
+        path.join(userProfile, ".grok", "bin", "grok.exe"),
+        path.join(userProfile, ".local", "bin", "grok.exe"),
+      ];
+      for (const candidate of candidates) {
+        if (isExecutable(candidate)) return candidate;
+      }
+    } else if (platform === "darwin") {
+      const home = env.HOME ?? "";
+      const candidates = [
+        "/Applications/Grok.app/Contents/Resources/grok",
+        "/Applications/Grok Bot.app/Contents/Resources/grok",
+        path.join(home, ".grok", "bin", "grok"),
+        path.join(home, ".local", "bin", "grok"),
+        "/opt/homebrew/bin/grok",
+        "/usr/local/bin/grok",
+      ];
+      for (const candidate of candidates) {
+        if (isExecutable(candidate)) return candidate;
+      }
+    } else if (platform === "linux") {
+      const home = env.HOME ?? "";
+      const candidates = [
+        path.join(home, ".grok", "bin", "grok"),
+        path.join(home, ".local", "bin", "grok"),
+        "/usr/local/bin/grok",
+      ];
+      for (const candidate of candidates) {
+        if (isExecutable(candidate)) return candidate;
+      }
+    }
+  }
+
+  return undefined;
+}
+
 function resolveSpawnExecutableWithNode(
   command: string,
   platform: NodeJS.Platform,
@@ -109,7 +218,7 @@ function resolveSpawnExecutableWithNode(
       if (isExecutable(candidatePath)) return candidatePath;
     }
   }
-  return undefined;
+  return resolveWellKnownToolCandidate(command, platform, env, isExecutable);
 }
 
 export const SpawnExecutableResolution = Context.Reference<SpawnExecutableResolver>(
