@@ -4799,12 +4799,15 @@ it.each([
   };
   const original = applyWorkingWindow(deriveMessagesTimelineRows(input), input);
   const collapsed = applyBackgroundActivityGroups(original, input);
-  const finalAnswer = original.filter(
-    (row) =>
-      (row.kind === "message" || row.kind === "assistant-meta") &&
-      row.message.runId === fixture.runId &&
-      !row.message.streaming,
-  );
+  const answerRows = (runId: RunId) =>
+    original.filter(
+      (row) =>
+        (row.kind === "message" || row.kind === "assistant-meta") &&
+        row.message.runId === runId &&
+        !row.message.streaming,
+    );
+  const finalAnswer = answerRows(active ? fixture.historyRunId : fixture.runId);
+  expect(finalAnswer).not.toEqual([]);
   expect(collapsed.slice(1)).toEqual(finalAnswer);
   expect(collapsed[0]).toMatchObject({
     kind: "background-activity",
@@ -4813,6 +4816,31 @@ it.each([
     expanded: false,
     runIds: [fixture.historyRunId, fixture.runId],
   });
+  if (!active) {
+    const queuedRunId = RunId.make("queued-wake-run");
+    const queuedInput = {
+      ...input,
+      latestRun: {
+        runId: queuedRunId,
+        status: "queued" as const,
+        startedAt: fixture.time(9),
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: fixture.time(9),
+    };
+    const queued = applyBackgroundActivityGroups(
+      applyWorkingWindow(deriveMessagesTimelineRows(queuedInput), queuedInput),
+      queuedInput,
+    );
+    expect(queued.slice(1)).toEqual(answerRows(fixture.historyRunId));
+    expect(queued[0]).toMatchObject({
+      id: collapsed[0]!.id,
+      updateCount: 2,
+      active: true,
+      runIds: [fixture.historyRunId, fixture.runId, queuedRunId],
+    });
+  }
   const expanded = applyBackgroundActivityGroups(original, {
     ...input,
     expandedWorkGroupIds: new Set([collapsed[0]!.id]),
