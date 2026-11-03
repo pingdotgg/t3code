@@ -9,6 +9,7 @@ import * as NodeZlib from "node:zlib";
 
 import { assert, describe, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
@@ -30,6 +31,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -149,6 +151,7 @@ const layerService = (input: {
   readonly environment?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
   readonly hostname?: string;
+  readonly secretStore?: Partial<ServerSecretStore.ServerSecretStore["Service"]>;
 }) =>
   layerCursorUsageAccounts(
     CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer)),
@@ -158,11 +161,16 @@ const layerService = (input: {
     Layer.provideMerge(ProviderHostLive.layer),
     Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
-    Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
+    Layer.provideMerge(
+      Layer.mock(ServerSecretStore.ServerSecretStore)({
+        get: () => Effect.succeedNone,
+        ...input.secretStore,
+      }),
+    ),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), NodePath.join(input.home, input.prefix)),
     ),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(Layer.succeed(HostProcess.Platform, input.platform ?? "linux")),
     Layer.provideMerge(Layer.succeed(HostProcess.Hostname, input.hostname ?? "usage-test-host")),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
@@ -239,10 +247,12 @@ function makeFakeCursor() {
     error: null as string | null,
     gate: undefined as Deferred.Deferred<void> | undefined,
     calls: [] as { readonly sinceMs: number; readonly untilMs: number }[],
+    credentials: [] as unknown[],
   };
-  const read = (_credential: unknown, sinceMs: number, untilMs: number) =>
+  const read = (credential: unknown, sinceMs: number, untilMs: number) =>
     Effect.gen(function* () {
       state.calls.push({ sinceMs, untilMs });
+      state.credentials.push(credential);
       if (state.gate !== undefined) yield* Deferred.await(state.gate);
       const { accountKey, error } = state;
       if (error !== null) return { accountKey, records: [], missing: false, error };
@@ -284,6 +294,10 @@ const writeCursorLogin = (home: string) =>
 
 function cursorSource(summary: { readonly sources: readonly UsageSource[] }) {
   return summary.sources.find((source) => source.fingerprint.provider === "cursor");
+}
+
+function cursorSources(summary: { readonly sources: readonly UsageSource[] }) {
+  return summary.sources.filter((source) => source.fingerprint.provider === "cursor");
 }
 
 const seedCodexHistory = (input: {
@@ -1512,11 +1526,6 @@ describe("UsageService", () => {
           environment: { AGENT_CLI_CREDENTIAL_STORE: "memory" },
           authPath: ["config", "cursor", "auth.json"],
         },
-        {
-          platform: "linux" as const,
-          environment: { CURSOR_API_KEY: "different-account" },
-          authPath: ["config", "cursor", "auth.json"],
-        },
       ].entries()) {
         const authPath = NodePath.join(home, ...testCase.authPath);
         yield* Effect.promise(async () => {
@@ -1544,6 +1553,212 @@ describe("UsageService", () => {
         assert.isFalse(summary.buckets.some((bucket) => bucket.provider === "cursor"));
       }
     }).pipe(Effect.scoped),
+  );
+
+  it.live("reads the Cursor account of an API key or T3 sign-in instead of a CLI login", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const signIn = new TextEncoder().encode(
+        encodeUnknownJsonString({
+          version: 1,
+          backendUrl: "https://api2.cursor.sh",
+          apiKey: "signed-in-key",
+          createdAtMs: 0,
+        }),
+      );
+      for (const [index, testCase] of [
+        { environment: { CURSOR_API_KEY: "environment-key" }, stored: Option.none() },
+        { environment: {}, stored: Option.some(signIn) },
+      ].entries()) {
+        const cursor = makeFakeCursor();
+        const summary = yield* Effect.gen(function* () {
+          const service = yield* makeWithCursor(cursor.read);
+          return yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: `usage-service-cursor-api-key-${index}`,
+              home,
+              settings,
+              platform: "darwin",
+              environment: testCase.environment,
+              secretStore: { get: () => Effect.succeed(testCase.stored) },
+            }),
+          ),
+        );
+        assert.deepStrictEqual(cursor.state.credentials, [
+          { kind: "apiKey", apiKey: index === 0 ? "environment-key" : "signed-in-key" },
+        ]);
+        assert.strictEqual(cursorSource(summary)?.status, "ok");
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("does not show a previous Cursor account's history after the API key changes", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      let apiKey = "first-account-key";
+      const signIn = () =>
+        Option.some(
+          new TextEncoder().encode(
+            encodeUnknownJsonString({
+              version: 1,
+              backendUrl: "https://api2.cursor.sh",
+              apiKey,
+              createdAtMs: 0,
+            }),
+          ),
+        );
+      const cursor = makeFakeCursor();
+      cursor.state.events = [{ timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 7 }];
+      yield* Effect.gen(function* () {
+        const service = yield* makeWithCursor(cursor.read);
+        const first = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.isTrue(first.buckets.some((bucket) => bucket.provider === "cursor"));
+
+        apiKey = "second-account-key";
+        cursor.state.error = "Cursor account usage could not be read.";
+        const second = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.isFalse(second.buckets.some((bucket) => bucket.provider === "cursor"));
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-key-change",
+            home,
+            settings,
+            platform: "darwin",
+            environment: {},
+            secretStore: { get: () => Effect.sync(signIn) },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("keeps a new Cursor key's refresh visible beside a failing key", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const cursor = makeFakeCursor();
+      const started = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const context = yield* Layer.build(
+          layerCursorUsageAccounts(
+            Layer.succeed(CursorAccountReader.CursorAccountReader, {
+              read: (credential, sinceMs, untilMs) =>
+                (credential as { apiKey?: string }).apiKey === "failing-key"
+                  ? Effect.succeed({
+                      accountKey: null,
+                      records: [],
+                      missing: false,
+                      error: "Cursor account usage could not be read.",
+                    })
+                  : Deferred.succeed(started, undefined).pipe(
+                      Effect.andThen(Deferred.await(gate)),
+                      Effect.andThen(cursor.read(credential, sinceMs, untilMs)),
+                    ),
+            }),
+          ),
+        );
+        const accounts = Context.get(context, CursorUsageAccounts.CursorUsageAccounts);
+        const scan = (awaitRefresh: boolean) =>
+          accounts.scan({
+            instances: [
+              {
+                instanceId: ProviderInstanceId.make("cursor"),
+                environment: { CURSOR_API_KEY: "failing-key" },
+              },
+              {
+                instanceId: ProviderInstanceId.make("cursor-work"),
+                environment: { CURSOR_API_KEY: "new-key" },
+              },
+            ],
+            keychainUsageEnabled: false,
+            windowStartMs: 0,
+            retentionCutoffMs: 0,
+            awaitRefresh,
+          });
+        const first = yield* Effect.forkChild(scan(true));
+        yield* Deferred.await(started);
+        const sources = yield* scan(false);
+        assert.isTrue(sources.some((source) => source.refreshing === true));
+        yield* Deferred.succeed(gate, undefined);
+        yield* Fiber.join(first);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-new-key",
+            home,
+            settings,
+            platform: "linux",
+            environment: {},
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("reports one Cursor source when two API keys belong to the same account", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      const cursor = makeFakeCursor();
+      cursor.state.events = [{ timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 7 }];
+      let revoked = false;
+      yield* Effect.gen(function* () {
+        const service = yield* makeWithCursor((credential, sinceMs, untilMs) =>
+          revoked && (credential as { apiKey?: string }).apiKey === "second-key"
+            ? Effect.succeed({
+                accountKey: null,
+                records: [],
+                missing: false,
+                error: "Cursor account usage could not be read.",
+              })
+            : cursor.read(credential, sinceMs, untilMs),
+        );
+        const first = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.strictEqual(cursor.state.credentials.length, 2);
+        assert.deepStrictEqual(
+          cursorSources(first).map((source) => source.distinctSessions),
+          [1],
+        );
+
+        // The revoked key keeps its stale cache, which must not replace the working key's history.
+        revoked = true;
+        cursor.state.events.push({ timestampMs: CURSOR_NOW + 60 * 1000, outputTokens: 5 });
+        yield* TestClock.adjust(Duration.minutes(2));
+        const second = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.deepStrictEqual(
+          cursorSources(second).map((source) => source.status),
+          ["ok"],
+        );
+        assert.strictEqual(totalOutputTokens(second), 12);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-shared-account",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("cursor")]: {
+                  driver: ProviderDriverKind.make("cursor"),
+                  environment: [{ name: "CURSOR_API_KEY", value: "first-key", sensitive: true }],
+                },
+                [ProviderInstanceId.make("cursor-work")]: {
+                  driver: ProviderDriverKind.make("cursor"),
+                  environment: [{ name: "CURSOR_API_KEY", value: "second-key", sensitive: true }],
+                },
+              },
+            },
+            platform: "darwin",
+            environment: {},
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.live(
