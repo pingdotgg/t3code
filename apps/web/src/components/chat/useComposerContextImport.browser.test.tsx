@@ -5,12 +5,17 @@ import {
   EnvironmentId,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  encodeComposerContextFragment,
+} from "@t3tools/shared/composerContextClipboard";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render, stubGlobal } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
+import { threadContextReference } from "../../lib/composerContextRecords";
 import { rememberCopiedComposerAttachments } from "../../lib/copiedComposerAttachments";
 import { importPastedComposerText } from "../composerInlineTokenPaste";
 import { pendingDraftWork } from "./pendingDraftWork";
@@ -42,6 +47,7 @@ function importInput(target: DraftId, promptRef: { current: string }) {
   const store = useComposerDraftStore.getState();
   return {
     environmentId: EnvironmentId.make("clipboard-target"),
+    linkedEnvironments: new Map(),
     activeThread: undefined,
     activeThreadId: null,
     composerDraftTarget: target,
@@ -57,6 +63,7 @@ function importInput(target: DraftId, promptRef: { current: string }) {
     promptRef,
     addComposerFilesToDraft: (files: Parameters<typeof store.addFiles>[1]) =>
       store.addFiles(target, files),
+    importThreadTranscript: () => {},
   } satisfies ImportInput;
 }
 
@@ -81,6 +88,8 @@ it.each([
   { kind: "image", edit: "delete-annotation" },
   // Copying a pending chip carries no record; pasting it over itself must keep its link.
   { kind: "file", edit: "repaste" },
+  // The download outlives the composer that started it, so a remounted one must see it.
+  { kind: "file", edit: "remount-repaste" },
 ] as const)("settles a delayed $kind import after $edit", async ({ kind, edit }) => {
   const target = DraftId.make(`clipboard-${kind}-${edit}`);
   const store = useComposerDraftStore.getState();
@@ -106,17 +115,19 @@ it.each([
       store.addFiles(target, files, { appendReference: edit !== "question" }),
   } satisfies ImportInput;
   let importer!: Importer;
-  await using _screen = await render(
+  const harness = (key: string) => (
     <Harness
+      key={key}
       input={input}
       ready={(value) => {
         importer = value;
       }}
-    />,
+    />
   );
+  await using screen = await render(harness("first"));
   const end = pendingDraftWork.end.bind(pendingDraftWork);
-  using _settled = vi.spyOn(pendingDraftWork, "end").mockImplementation((key) => {
-    end(key);
+  using _settled = vi.spyOn(pendingDraftWork, "end").mockImplementation((...args) => {
+    end(...args);
     settled.resolve();
   });
   using _fetch = stubGlobal("fetch", () => {
@@ -169,12 +180,13 @@ it.each([
     if (edit !== "cached") await requested.promise;
   });
   if (edit !== "cached") expect(pendingDraftWork.has(target)).toBe(true);
+  if (edit === "remount-repaste") await screen.rerender(harness("second"));
   await act(() => {
-    if (edit === "repaste") {
+    if (edit === "repaste" || edit === "remount-repaste") {
       promptRef.current = importPastedComposerText(
         { getData: (format) => (format === "text/plain" ? pastedPrompt : "") },
         importer.importContextFragment,
-        importer.importingContextIdsRef.current,
+        pendingDraftWork.importingContextIds(target),
       );
       store.setPrompt(target, promptRef.current);
     }
@@ -184,7 +196,8 @@ it.each([
       edit !== "cached" &&
       edit !== "question" &&
       edit !== "switch" &&
-      edit !== "repaste"
+      edit !== "repaste" &&
+      edit !== "remount-repaste"
     ) {
       promptRef.current = "Keep this edit";
       store.setPrompt(target, promptRef.current);
@@ -207,6 +220,7 @@ it.each([
     edit === "undo" ||
       edit === "retain" ||
       edit === "repaste" ||
+      edit === "remount-repaste" ||
       edit === "annotation" ||
       edit === "cached" ||
       edit === "question"
@@ -215,28 +229,46 @@ it.each([
   );
 });
 
-// Dropping it left the pasted chip resolving to nothing, so the agent saw an unavailable thread.
-it("keeps a pasted thread from a machine this one does not link to", async () => {
+// Its chip used to resolve to nothing, or block the send; a dropped one comes in as its transcript.
+it("imports a pasted thread from a machine this one does not link to as its transcript", async () => {
   const target = DraftId.make("clipboard-unlinked-thread");
   const store = useComposerDraftStore.getState();
   using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
-  const record = threadContextRecord(
-    { environmentId: EnvironmentId.make("unlinked-machine"), threadId: ThreadId.make("remote") },
-    "Remote thread",
-  );
+  const ref = {
+    environmentId: EnvironmentId.make("unlinked-machine"),
+    threadId: ThreadId.make("remote"),
+  };
+  const record = threadContextRecord(ref, "Remote thread");
+  const importThreadTranscript = vi.fn();
   let importer!: Importer;
   await using _screen = await render(
     <Harness
-      input={importInput(target, { current: "" })}
+      input={{ ...importInput(target, { current: "" }), importThreadTranscript }}
       ready={(value) => {
         importer = value;
       }}
     />,
   );
-  let rewritten = new Map<string, string>();
+  const fragment = encodeComposerContextFragment({
+    version: 1,
+    source: { environmentId: ref.environmentId },
+    records: [record],
+  })!;
+  let pasted = "";
   await act(() => {
-    rewritten = new Map(importer.importContextRecords([record], record.environmentId));
+    pasted = importPastedComposerText(
+      {
+        getData: (format) =>
+          format === "text/plain"
+            ? `See ${formatInlineContextReference(threadContextReference(record))}`
+            : format === COMPOSER_CONTEXT_CLIPBOARD_MIME
+              ? fragment
+              : "",
+      },
+      importer.importContextFragment,
+    );
   });
-  expect(rewritten.get(record.contextId)).toBe(record.contextId);
-  expect(store.getComposerDraft(target)?.threadContexts).toEqual([record]);
+  expect(pasted).toBe("See Remote thread");
+  expect(importThreadTranscript).toHaveBeenCalledWith(ref);
+  expect(store.getComposerDraft(target)?.threadContexts ?? []).toEqual([]);
 });

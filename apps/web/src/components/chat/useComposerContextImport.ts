@@ -5,13 +5,14 @@ import {
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
-import { type RefObject, useRef } from "react";
+import type { RefObject } from "react";
 import type { ChatComposerProps } from "./ChatComposer";
 import {
   type ComposerContextClipboardFragment,
   type ComposerContextRecord,
   type EnvironmentId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
   type ComposerFileAttachment,
@@ -76,6 +77,7 @@ async function downloadAttachmentBlob(url: string): Promise<Blob | null> {
  */
 export function useComposerContextImport(input: {
   readonly environmentId: EnvironmentId;
+  readonly linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
   readonly activeThread: ChatComposerProps["activeThread"];
   readonly activeThreadId: ChatComposerProps["activeThreadId"];
   readonly composerDraftTarget: ChatComposerProps["composerDraftTarget"];
@@ -90,9 +92,12 @@ export function useComposerContextImport(input: {
   readonly promptRef: RefObject<string>;
   readonly pendingThreadImportsRef: RefObject<Map<string, number>>;
   readonly addComposerFilesToDraft: (files: ComposerFileAttachment[]) => string[];
+  /** Attaches a thread's transcript, as dropping it does. */
+  readonly importThreadTranscript: (ref: ScopedThreadRef) => void;
 }) {
   const {
     environmentId,
+    linkedEnvironments,
     activeThread,
     activeThreadId,
     composerDraftTarget,
@@ -107,6 +112,7 @@ export function useComposerContextImport(input: {
     promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
+    importThreadTranscript,
   } = input;
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
@@ -125,8 +131,6 @@ export function useComposerContextImport(input: {
   const loadThreadTranscript = useAtomCommand(orchestrationEnvironment.threadTranscript, {
     reportFailure: false,
   });
-  // Chips whose bytes are still downloading; a paste of one has no record yet but will.
-  const importingContextIdsRef = useRef(new Set<string>());
   const countReservedAttachments = () => {
     const questionRequest = pendingUserInputs[0];
     const otherQuestionKeys =
@@ -280,19 +284,18 @@ export function useComposerContextImport(input: {
     // attachment behind it, and so bytes for an abandoned draft never enter the next one.
     const importTargetKey = attachmentTargetKey;
     const contextId = toKindScopedComposerContextId(record.kind, localId);
-    pendingDraftWork.begin(importTargetKey);
-    importingContextIdsRef.current.add(contextId);
-    await runAttachmentImport(record, localId, sourceEnvironmentId, importTargetKey).finally(() => {
-      importingContextIdsRef.current.delete(contextId);
-      pendingDraftWork.end(importTargetKey);
-    });
+    pendingDraftWork.begin(importTargetKey, contextId);
+    await runAttachmentImport(record, localId, sourceEnvironmentId, importTargetKey).finally(() =>
+      pendingDraftWork.end(importTargetKey, contextId),
+    );
   };
   const importContextRecords = (
     records: ReadonlyArray<ComposerContextRecord>,
     sourceEnvironmentId: EnvironmentId | null,
     threadDraftTarget = attachmentDraftTarget,
-  ): ReadonlyMap<string, string> => {
-    const rewritten = new Map<string, string>();
+  ): ReadonlyMap<string, string | null> => {
+    // A null id means the reference becomes its plain label.
+    const rewritten = new Map<string, string | null>();
     const dependentAttachmentLocalIds = new Map<string, string>();
     const skippedDependentAttachmentIds = new Set<string>();
     // Resolve annotations before their dependent screenshot records even if a foreign
@@ -394,9 +397,19 @@ export function useComposerContextImport(input: {
           break;
         }
         case "thread": {
-          // A thread from a machine this one does not link to is kept so its chip and target
-          // survive: a send stops with guidance to remove it or switch machines, and an
-          // answer to an agent's question carries it as a link naming its machine.
+          // The agent reads threads on its own server and the machines it links to; any other
+          // machine's comes in as its transcript, as a dropped one does.
+          if (
+            record.environmentId !== environmentId &&
+            !linkedEnvironments.has(record.environmentId)
+          ) {
+            importThreadTranscript({
+              environmentId: record.environmentId,
+              threadId: record.threadId,
+            });
+            rewritten.set(record.contextId, null);
+            break;
+          }
           addComposerDraftThreadContexts(threadDraftTarget, [record], {
             appendReference: false,
           });
@@ -434,7 +447,7 @@ export function useComposerContextImport(input: {
   };
   const importContextFragment = (
     fragment: ComposerContextClipboardFragment,
-  ): ReadonlyMap<string, string> =>
+  ): ReadonlyMap<string, string | null> =>
     importContextRecords(fragment.records, fragment.source.environmentId);
 
   return {
@@ -443,6 +456,5 @@ export function useComposerContextImport(input: {
     countReservedAttachmentsStable,
     importContextRecords,
     importContextFragment,
-    importingContextIdsRef,
   };
 }

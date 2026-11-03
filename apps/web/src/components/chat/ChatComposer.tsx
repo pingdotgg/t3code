@@ -1377,9 +1377,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     countReservedAttachmentsStable,
     importContextRecords,
     importContextFragment,
-    importingContextIdsRef,
   } = useComposerContextImport({
     environmentId,
+    linkedEnvironments,
     activeThread,
     activeThreadId,
     composerDraftTarget,
@@ -1394,6 +1394,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
+    importThreadTranscript: (ref) => {
+      const targetKey = attachmentTargetKey;
+      void importDroppedThread(ref, () => attachmentTargetKeyRef.current === targetKey);
+    },
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the shared prompt ref in step with the committed draft prompt for imperative handlers
@@ -2407,7 +2411,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       importContextFragment,
       heldContextIds(
         composerContextRecords,
-        importingContextIdsRef.current,
+        pendingDraftWork.importingContextIds(attachmentTargetKey),
         retainedContextPayloads,
       ),
     );

@@ -95,7 +95,7 @@ export function useComposerStash(input: {
     records: ReadonlyArray<ComposerContextRecord>,
     sourceEnvironmentId: EnvironmentId | null,
     threadDraftTarget?: ChatComposerProps["composerDraftTarget"],
-  ) => ReadonlyMap<string, string>;
+  ) => ReadonlyMap<string, string | null>;
   readonly expandMobileComposer: () => void;
 }) {
   const {
@@ -206,9 +206,10 @@ export function useComposerStash(input: {
 
     const rewrittenContextIds = entry.records
       ? importContextRecords(entry.records, null, composerDraftTarget)
-      : new Map<string, string>();
+      : new Map<string, string | null>();
     const restoredPrompt = replaceComposerContextReferences(entry.prompt, (reference) => {
       const contextId = rewrittenContextIds.get(reference.contextId);
+      if (contextId === null) return reference.label;
       return contextId
         ? formatInlineContextReference({
             ...reference,

@@ -47,6 +47,14 @@ describe("importPastedComposerText", () => {
     ).toBe("Read this: Source Thread Ready and continue.");
   });
 
+  it("keeps context references inside pasted code as written", () => {
+    const reference = formatComposerContextReference(sourceThread);
+    const code = `\`\`\`md\n${reference}\n\`\`\`\nInline \`${reference}\` and ${reference}`;
+    expect(importPastedComposerText(clipboard({ "text/plain": code }), importNothing)).toBe(
+      `\`\`\`md\n${reference}\n\`\`\`\nInline \`${reference}\` and Source Thread Ready`,
+    );
+  });
+
   it("keeps a context reference whose record the draft already holds", () => {
     expect(
       importPastedComposerText(
