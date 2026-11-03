@@ -3115,14 +3115,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             />
                             <span className="min-w-0 truncate text-sm">{item.label}</span>
                             {project && showProjectEnvironments ? (
-                              // A checked row drops the badge visually but keeps its label for screen readers.
-                              <span className={cn("flex", isSelected && "opacity-0")}>
-                                <ProjectEnvironmentBadge
-                                  group={project}
-                                  primaryEnvironmentId={primaryEnvironmentId}
-                                  machineByEnvironmentId={environmentMachineById}
-                                />
-                              </span>
+                              <ProjectEnvironmentBadge
+                                group={project}
+                                primaryEnvironmentId={primaryEnvironmentId}
+                                machineByEnvironmentId={environmentMachineById}
+                              />
                             ) : null}
                             {project ? (
                               <ProjectRowActions
