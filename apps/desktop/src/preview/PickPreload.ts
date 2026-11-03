@@ -281,27 +281,57 @@ function frameDocuments(root: Document): Document[] {
   });
 }
 
-/** Where a frame's viewport origin sits in its parent's viewport. */
-function frameContentOffset(frame: Element): PreviewAnnotationPoint {
+/** A frame viewport point (x, y) sits at (originX + x * scaleX, originY + y * scaleY) outside. */
+interface FrameTransform {
+  originX: number;
+  originY: number;
+  scaleX: number;
+  scaleY: number;
+}
+
+const IDENTITY_TRANSFORM: FrameTransform = { originX: 0, originY: 0, scaleX: 1, scaleY: 1 };
+
+/** Maps a frame's viewport into its parent's, including CSS scale such as Storybook's zoom. */
+function frameTransform(frame: Element): FrameTransform {
   const rect = frame.getBoundingClientRect();
   const style = styleOf(frame);
+  const layoutWidth = "offsetWidth" in frame ? Number(frame.offsetWidth) : 0;
+  const layoutHeight = "offsetHeight" in frame ? Number(frame.offsetHeight) : 0;
+  const scaleX = layoutWidth > 0 ? rect.width / layoutWidth : 1;
+  const scaleY = layoutHeight > 0 ? rect.height / layoutHeight : 1;
   return {
-    x: rect.left + frame.clientLeft + (Number.parseFloat(style.paddingLeft) || 0),
-    y: rect.top + frame.clientTop + (Number.parseFloat(style.paddingTop) || 0),
+    originX: rect.left + (frame.clientLeft + (Number.parseFloat(style.paddingLeft) || 0)) * scaleX,
+    originY: rect.top + (frame.clientTop + (Number.parseFloat(style.paddingTop) || 0)) * scaleY,
+    scaleX,
+    scaleY,
   };
 }
 
 const enclosingFrame = (view: Window | null): Element | null => view?.frameElement ?? null;
 
-/** Translates a point in `view`'s viewport into the top viewport. */
-function topPoint(view: Window | null, x: number, y: number): PreviewAnnotationPoint {
+/** Maps `view`'s viewport into the top viewport through every enclosing frame. */
+function topTransform(view: Window | null): FrameTransform {
+  let result = IDENTITY_TRANSFORM;
   for (let frame = enclosingFrame(view); frame;) {
-    const offset = frameContentOffset(frame);
-    x += offset.x;
-    y += offset.y;
+    const outer = frameTransform(frame);
+    result = {
+      originX: outer.originX + result.originX * outer.scaleX,
+      originY: outer.originY + result.originY * outer.scaleY,
+      scaleX: result.scaleX * outer.scaleX,
+      scaleY: result.scaleY * outer.scaleY,
+    };
     frame = enclosingFrame(frame.ownerDocument.defaultView);
   }
-  return { x, y };
+  return result;
+}
+
+/** Translates a point in `view`'s viewport into the top viewport. */
+function topPoint(view: Window | null, x: number, y: number): PreviewAnnotationPoint {
+  const transform = topTransform(view);
+  return {
+    x: transform.originX + x * transform.scaleX,
+    y: transform.originY + y * transform.scaleY,
+  };
 }
 
 const eventPoint = (event: MouseEvent): PreviewAnnotationPoint =>
@@ -327,9 +357,18 @@ type RectMapper = (rect: PreviewAnnotationRect) => PreviewAnnotationRect;
 function topViewportMapper(view: Window): RectMapper {
   const frame = enclosingFrame(view);
   if (!frame) return (rect) => rect;
-  const offset = topPoint(view, 0, 0);
+  const transform = topTransform(view);
   const clip = visibleElementRect(frame);
-  return (rect) => intersectRects({ ...rect, x: rect.x + offset.x, y: rect.y + offset.y }, clip);
+  return (rect) =>
+    intersectRects(
+      {
+        x: transform.originX + rect.x * transform.scaleX,
+        y: transform.originY + rect.y * transform.scaleY,
+        width: rect.width * transform.scaleX,
+        height: rect.height * transform.scaleY,
+      },
+      clip,
+    );
 }
 
 const inTopViewport = (view: Window, rect: PreviewAnnotationRect): PreviewAnnotationRect =>
@@ -352,8 +391,10 @@ function pickFromPoint(x: number, y: number, root: Document = document): Element
     if (candidate === root.documentElement || candidate === root.body) continue;
     const inner = frameDocument(candidate);
     if (!inner) return candidate;
-    const offset = frameContentOffset(candidate);
-    return pickFromPoint(x - offset.x, y - offset.y, inner) ?? candidate;
+    const transform = frameTransform(candidate);
+    const innerX = (x - transform.originX) / transform.scaleX;
+    const innerY = (y - transform.originY) / transform.scaleY;
+    return pickFromPoint(innerX, innerY, inner) ?? candidate;
   }
   return null;
 }
