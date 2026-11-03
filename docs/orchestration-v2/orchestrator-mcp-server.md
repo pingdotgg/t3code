@@ -412,8 +412,9 @@ know renders as a label that opens nothing. Older `t3-thread://v1/<threadId>`
 links name no environment: clients resolve them in the message's environment,
 then by a unique match in another enabled environment. An outside OAuth client,
 one that is not a linked environment, cannot render `t3-thread://` links, so it
-gets a web URL on the origin it reached, `<origin>/<environmentId>/<threadId>`,
-for threads in this environment.
+gets the link Copy thread copies, `https://app.t3.codes/threads/<environmentId>/<threadId>`
+on the server's `T3CODE_HOSTED_APP_URL`, for threads in this environment. The
+hosted app offers the desktop app, the mobile app, or itself.
 
 List and read results report `snoozed` and `snoozedUntil`, and
 `t3_thread_list` filters on `snoozed`. The server's `isSnoozed` follows the

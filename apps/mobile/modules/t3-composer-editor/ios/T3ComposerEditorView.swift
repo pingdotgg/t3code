@@ -226,6 +226,12 @@ private final class ComposerTextView: UITextView {
       onPasteText?(text, selectedRange)
       return
     }
+    // read() sees only the first item; native paste keeps every item of a longer pasteboard.
+    if !bypassTextPasteInterception, pasteboard.numberOfItems == 1,
+       T3ComposerClipboard.hasThreadLink(context["text", default: ""]) {
+      onPasteContext?(context)
+      return
+    }
     super.paste(sender)
   }
 
