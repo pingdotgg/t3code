@@ -47,6 +47,11 @@ export const makePipelineWorkspace = Effect.fn("PipelineWorkspace.make")(functio
       // Each run has its own root scope; later ones already hold this step's own changes.
       const firstRun = context.runs[0];
       if (firstRun === undefined) return null;
+      // The snapshot covers only the root folder; restoring it would leave the other repos' files
+      // from the failed attempt behind, so a multi-repo workspace has no restorable start.
+      if (context.checkpointScopes.some((candidate) => candidate.kind === "repository")) {
+        return null;
+      }
       const scope = context.checkpointScopes.find(
         (candidate) => candidate.kind === "root_run" && candidate.runId === firstRun.id,
       );

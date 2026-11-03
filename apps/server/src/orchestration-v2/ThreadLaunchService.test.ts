@@ -2717,6 +2717,37 @@ it.effect("renames the task branch through the task folder", () =>
   }),
 );
 
+it.effect("names every repo of a task folder after a requested branch that any of them has", () =>
+  Effect.gen(function* () {
+    const created = yield* Deferred.make<string>();
+    const branchesByCwd: Record<string, ReadonlyArray<string>> = {
+      [taskFolderPlan.homePath]: ["main"],
+      "/repo/app": ["main", "jan/eng-1-fix"],
+      "/api": ["main", "jan/eng-1-fix-2"],
+    };
+    const harness = makeHarness({
+      git: { listLocalBranchNames: (cwd) => Effect.succeed(branchesByCwd[cwd] ?? []) },
+      runSetup: () => Effect.succeed({ status: "no-script" as const }),
+      taskFolders: {
+        plan: () => Effect.succeed(taskFolderPlan),
+        create: (input) =>
+          Deferred.succeed(created, input.branch).pipe(Effect.andThen(Effect.never)),
+      },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.launch(
+        launchInput({
+          command: "launch:task-folder-branch",
+          thread: "thread:task-folder-branch",
+          workspace: { type: "worktree", baseRef: "main", branch: "jan/eng-1-fix" },
+        }),
+      );
+      assert.equal(yield* Deferred.await(created), "jan/eng-1-fix-3");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("starts a scheduled worktree task in a task folder with its chosen repos", () =>
   Effect.gen(function* () {
     const planned = yield* Deferred.make<
@@ -2735,6 +2766,7 @@ it.effect("starts a scheduled worktree task in a task folder with its chosen rep
           Scheduler.layer,
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          ManagedPolicy.layerTest(),
         ),
       ),
     );

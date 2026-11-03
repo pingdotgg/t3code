@@ -321,6 +321,12 @@ it.effect.each([
                   id: otherThreadId,
                   projectId: otherProjectId,
                   worktreePath: null,
+                  activeRunId: null,
+                  lineage: {
+                    parentThreadId: null,
+                    relationshipToParent: null,
+                    rootThreadId: otherThreadId,
+                  },
                   deletedAt: null,
                 },
               ],

@@ -147,7 +147,19 @@ describe("Pi workspace prompt section", () => {
   });
 
   it("adds nothing for single-repo threads", async () => {
-    assert.isUndefined((await loadHooks()).get("before_agent_start"));
+    // The trust-notice hook is always registered; it must not touch the prompt.
+    const hook = (await loadHooks()).get("before_agent_start") as (
+      event: { systemPrompt: string; systemPromptOptions?: { sections: Record<string, string> } },
+      ctx: { isProjectTrusted: () => boolean },
+    ) => unknown;
+    const sections: Record<string, string> = {};
+    assert.isUndefined(
+      hook(
+        { systemPrompt: "base", systemPromptOptions: { sections } },
+        { isProjectTrusted: () => true },
+      ),
+    );
+    assert.deepEqual(sections, {});
   });
 });
 

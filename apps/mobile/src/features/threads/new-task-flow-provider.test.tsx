@@ -46,6 +46,9 @@ vi.mock("../../state/entities", () => ({
   useEnvironmentServerConfig: () => null,
   useServerConfigs: () => new Map(),
 }));
+vi.mock("../../state/use-thread-repositories", () => ({
+  useThreadRepositories: () => ({ repositories: [], multiRepository: false, loading: false }),
+}));
 vi.mock("../../state/vcs", () => ({
   vcsEnvironment: { status: mocks.status, listRefs: mocks.refs },
 }));

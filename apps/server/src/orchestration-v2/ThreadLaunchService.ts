@@ -479,6 +479,15 @@ const make = Effect.gen(function* () {
             .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
         }
         if (folderPlan !== null) {
+          // One name for the whole folder: the suffix must clear every repo, not just the home.
+          if (requestedBranch !== undefined && branch !== null) {
+            const taken = yield* Effect.forEach(
+              [folderPlan.homePath, ...plannedRepositories.map(({ originalPath }) => originalPath)],
+              (cwd) => git.listLocalBranchNames(cwd).pipe(Effect.orElseSucceed(() => [])),
+              { concurrency: "unbounded" },
+            );
+            branch = freeBranchName(branch, taken.flat());
+          }
           const created = yield* taskFolders
             .create(
               {

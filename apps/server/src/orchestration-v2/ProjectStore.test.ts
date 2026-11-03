@@ -72,6 +72,7 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
             workspaceRoot: "/tmp/project-organized",
             defaultModelSelection: null,
             scripts: [],
+            trackedFolders: [],
             createdAt: at,
             updatedAt: at,
           },

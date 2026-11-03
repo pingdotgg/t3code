@@ -1078,11 +1078,14 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         Layer.provide(
           Layer.mergeAll(
             IdAllocator.layer,
+            NodeServices.layer,
+            Layer.mock(ProjectStore.ProjectStoreV2)({}),
             CheckpointService.layer.pipe(
               Layer.provide(
                 Layer.mergeAll(
                   IdAllocator.layer,
                   NodeCrypto.layer,
+                  NodeServices.layer,
                   Layer.mock(CheckpointStore.CheckpointStore)({
                     isGitRepository: gitUnavailable,
                     captureCheckpoint: gitUnavailable,

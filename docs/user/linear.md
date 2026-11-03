@@ -22,7 +22,8 @@ links between issues and threads.
 Open an issue and choose **Start chat** or **Run pipeline**. T3 Code attaches the issue, its
 sub-issues and comments as context, and by default creates a new worktree on Linear's branch name
 so Linear links the pull request when you open it. If that branch already exists, T3 Code adds a
-suffix such as `-2`.
+suffix such as `-2`. In a project with several tracked repos, the worktree is a task folder with one
+worktree per repo, all on that one branch; the suffix is chosen so it is free in every repo.
 
 Under **Settings → Integrations → Linear**, map a Linear team or project to a T3 Code project so
 launches open in the right place. A project mapping wins over its team's mapping. Without a

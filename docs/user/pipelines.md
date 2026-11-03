@@ -100,6 +100,9 @@ in **Settings → Threads**; the run picks up the resumed turn's result.
   T3 Code worktree, you can choose **Retry from step start**: it first puts the files back to how
   they were when the step began, then runs the step again. **Retry with current files** keeps
   whatever the failed attempt left behind. Commits the step made stay on the branch either way.
+  In a project with several tracked repos, the run's worktree is a task folder with one worktree per
+  repo. Its starting files are not saved, so only **Retry with current files** is offered: restoring
+  one repo and not the others would leave the folder inconsistent.
 - **Skip** moves on without a step.
 - **Rerun from here** on an earlier step of a paused, cancelled or completed run starts that step
   and every step after it again. The steps before it keep their results.
@@ -145,7 +148,8 @@ bubble below an assistant message to send feedback.
 
 ### Shared workspace
 
-Every step works in the first step's workspace, including its worktree and branch. If you chat in
+Every step works in the first step's workspace, including its worktree and branch. In a project with
+several tracked repos, that is one task folder shared by all steps. If you chat in
 an earlier step while a later one is running, two agents edit the same files. Wait for the later
 step to finish before steering an earlier one. Sending feedback stops the running step first, which
 can leave its files half changed for the step you sent the feedback to.
