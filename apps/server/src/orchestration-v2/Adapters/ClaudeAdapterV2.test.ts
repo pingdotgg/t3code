@@ -7343,6 +7343,87 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("tells the user once when Claude Code runs a Fast turn at standard speed", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      const notices = () =>
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [event.turnItem.message]
+            : [],
+        );
+      const runTurn = (ordinal: number, fastMode: boolean) =>
+        Effect.gen(function* () {
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`claude-fast-mode-off-attempt:${ordinal}`),
+              text: `Request ${ordinal}`,
+              attachments: [],
+              providerTurnOrdinal: ordinal,
+              modelSelection: {
+                instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+                model: "claude-opus-5-5",
+                options: [{ id: "fastMode", value: fastMode }],
+              },
+            }),
+          );
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "system",
+              subtype: "init",
+              fast_mode_state: "off",
+              fast_mode_disabled_reason: "extra_usage_disabled",
+              session_id: WAKE_NATIVE_SESSION,
+              uuid: `00000000-0000-4000-8000-00000000041${ordinal}`,
+            }),
+          );
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "system",
+              subtype: "notification",
+              key: "fast-mode-overage-rejected",
+              text: "Fast mode disabled · Out of usage credits",
+              priority: "immediate",
+              session_id: WAKE_NATIVE_SESSION,
+              uuid: `00000000-0000-4000-8000-00000000042${ordinal}`,
+            }),
+          );
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({
+              uuid: `00000000-0000-4000-8000-00000000043${ordinal}`,
+              result: `Done ${ordinal}`,
+            }),
+          );
+          yield* Queue.take(harness.terminalReceipts);
+        });
+
+      yield* runTurn(1, false);
+      assert.deepEqual(notices(), []);
+      yield* runTurn(2, true);
+      yield* runTurn(3, true);
+      assert.deepEqual(notices(), [
+        "Fast mode is off (extra usage disabled), using standard speed",
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect(
     "runs native compaction and keeps its context watermark separate from billed usage",
     () =>

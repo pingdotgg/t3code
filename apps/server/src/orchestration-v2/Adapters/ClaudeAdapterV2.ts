@@ -2996,6 +2996,17 @@ function isClaudeBackgroundTasksChangedMessage(message: SDKMessage): boolean {
   return message.type === "system" && (message.subtype as string) === "background_tasks_changed";
 }
 
+// Claude Code drops a requested Fast mode to standard speed without failing the turn.
+function claudeFastModeNotice(message: SDKMessage): string | null {
+  if (message.type !== "system") return null;
+  if (message.subtype === "notification") {
+    return message.key.startsWith("fast-mode") ? message.text : null;
+  }
+  if (message.subtype !== "init" || message.fast_mode_state !== "off") return null;
+  const reason = message.fast_mode_disabled_reason?.replaceAll("_", " ");
+  return `Fast mode is off${reason === undefined ? "" : ` (${reason})`}, using standard speed`;
+}
+
 function isClaudeTurnStartMessage(message: SDKMessage): boolean {
   return message.type === "system" && message.subtype === "init";
 }
@@ -4190,6 +4201,7 @@ interface ClaudeLiveQueryContext {
   // The CLI may fall back from the requested mode on its first init frame.
   openedPermissionMode: PermissionMode;
   receivedInit: boolean;
+  announcedFastModeNotice: boolean;
   permissionMode: PermissionMode;
   stopping: boolean;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
@@ -8878,14 +8890,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
 
-          if (
+          const fastModeNotice =
+            liveQuery.selection.settings.fastMode === true && !liveQuery.announcedFastModeNotice
+              ? claudeFastModeNotice(message)
+              : null;
+          const notice =
             message.type === "system" &&
             (message.subtype === "model_refusal_fallback" ||
               (message.subtype === "informational" && message.level !== "info"))
-          ) {
+              ? message.content
+              : fastModeNotice;
+          if (notice !== null && message.type === "system") {
+            if (fastModeNotice !== null) liveQuery.announcedFastModeNotice = true;
             const now = yield* DateTime.now;
             const nativeItemId = message.uuid;
-            context.assistant.noticeTexts.add(message.content);
+            context.assistant.noticeTexts.add(notice);
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver: CLAUDE_PROVIDER,
@@ -8908,8 +8927,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ordinal: yield* resolveItemOrdinal(context, nativeItemId),
                 type: "system_notice",
                 status: "completed",
-                title: message.content,
-                message: message.content,
+                title: notice,
+                message: notice,
                 startedAt: now,
                 completedAt: now,
                 updatedAt: now,
@@ -10590,6 +10609,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
             receivedInit: false,
+            announcedFastModeNotice: false,
             permissionMode: queryOptions.permissionMode,
             stopping: false,
             handedOffSubagents: new Set(),
