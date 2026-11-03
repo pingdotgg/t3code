@@ -6,6 +6,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
@@ -16,6 +17,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
@@ -36,32 +38,34 @@ vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
 const FORK_SESSION_ID = "11111111-1111-4111-8111-111111111111";
 
-const writeClaudeSession = Effect.fnUntraced(function* (configDir: string) {
+const sessionEntry = (uuid: string, parentUuid: string | null, message: unknown) => ({
+  type: parentUuid === null ? "user" : "assistant",
+  uuid,
+  parentUuid,
+  sessionId: FORK_SESSION_ID,
+  cwd: "/repo",
+  isSidechain: false,
+  timestamp: "2026-10-01T00:00:00.000Z",
+  message,
+});
+
+const writeClaudeSession = Effect.fnUntraced(function* (
+  configDir: string,
+  entries: ReadonlyArray<unknown> = [
+    sessionEntry("aaaaaaaa-0000-4000-8000-000000000001", null, { role: "user", content: "hello" }),
+    sessionEntry("aaaaaaaa-0000-4000-8000-000000000002", "aaaaaaaa-0000-4000-8000-000000000001", {
+      role: "assistant",
+      content: [{ type: "text", text: "hi" }],
+    }),
+  ],
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const projectDir = path.join(configDir, "projects", "-repo");
-  const entry = (uuid: string, parentUuid: string | null, message: unknown) => ({
-    type: parentUuid === null ? "user" : "assistant",
-    uuid,
-    parentUuid,
-    sessionId: FORK_SESSION_ID,
-    cwd: "/repo",
-    isSidechain: false,
-    timestamp: "2026-10-01T00:00:00.000Z",
-    message,
-  });
   yield* fileSystem.makeDirectory(projectDir, { recursive: true });
   yield* fileSystem.writeFileString(
     path.join(projectDir, `${FORK_SESSION_ID}.jsonl`),
-    [
-      entry("aaaaaaaa-0000-4000-8000-000000000001", null, { role: "user", content: "hello" }),
-      entry("aaaaaaaa-0000-4000-8000-000000000002", "aaaaaaaa-0000-4000-8000-000000000001", {
-        role: "assistant",
-        content: [{ type: "text", text: "hi" }],
-      }),
-    ]
-      .map((line) => JSON.stringify(line))
-      .join("\n"),
+    entries.map((line) => JSON.stringify(line)).join("\n"),
   );
   return projectDir;
 });
@@ -109,8 +113,95 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
       assert.equal(process.env.CLAUDE_CONFIG_DIR, hostConfigDir);
       assert.equal(inProcessFork.mock.calls.length, 0);
     }).pipe(Effect.provide(forkRunnerLayer)),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
+it.effect("forked Claude sessions keep their compaction chain", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const configDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-claude-fork-compact-",
+      });
+      const uuid = (n: number) => `bbbbbbbb-0000-4000-8000-00000000000${n}`;
+      const turn = (id: number, parent: string | null, role: "user" | "assistant") => ({
+        ...sessionEntry(uuid(id), parent, {
+          role,
+          content: role === "user" ? `question ${id}` : [{ type: "text", text: `answer ${id}` }],
+        }),
+        type: role,
+      });
+      const projectDir = yield* writeClaudeSession(configDir, [
+        turn(1, null, "user"),
+        turn(2, uuid(1), "assistant"),
+        turn(3, uuid(2), "user"),
+        turn(4, uuid(3), "assistant"),
+        {
+          ...sessionEntry(uuid(5), null, undefined),
+          type: "system",
+          subtype: "compact_boundary",
+          content: "Conversation compacted",
+          logicalParentUuid: uuid(4),
+          compactMetadata: {
+            trigger: "manual",
+            preTokens: 19979,
+            preservedSegment: { headUuid: uuid(3), anchorUuid: uuid(6), tailUuid: uuid(4) },
+            preservedMessages: {
+              anchorUuid: uuid(6),
+              uuids: [uuid(3), uuid(4)],
+              allUuids: [uuid(3), uuid(4)],
+            },
+            postTokens: 3589,
+          },
+        },
+        {
+          ...turn(6, uuid(5), "user"),
+          isCompactSummary: true,
+          isVisibleInTranscriptOnly: true,
+        },
+        turn(7, uuid(4), "user"),
+        turn(8, uuid(7), "assistant"),
+      ]);
+
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const forked = yield* runner.forkSession({
+        sessionId: FORK_SESSION_ID,
+        options: { dir: "/repo" },
+        environment: { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+        threadId: ThreadId.make("thread-fork-compaction"),
+        providerSessionId: ProviderSessionId.make("session-fork-compaction"),
+      });
+
+      const entries: ReadonlyArray<{
+        readonly uuid?: string;
+        readonly subtype?: string;
+        readonly compactMetadata?: {
+          readonly preservedSegment: Record<"headUuid" | "anchorUuid" | "tailUuid", string>;
+          readonly preservedMessages: {
+            readonly anchorUuid: string;
+            readonly uuids: string[];
+            readonly allUuids: string[];
+          };
+        };
+      }> = (yield* fileSystem.readFileString(path.join(projectDir, `${forked.sessionId}.jsonl`)))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const forkedUuids = new Set(entries.map((entry) => entry.uuid));
+      const boundary = entries.find((entry) => entry.subtype === "compact_boundary");
+      assert.isDefined(boundary?.compactMetadata);
+      const { preservedSegment, preservedMessages } = boundary!.compactMetadata!;
+      const danglingRefs = [
+        ...Object.values(preservedSegment),
+        preservedMessages.anchorUuid,
+        ...preservedMessages.uuids,
+        ...preservedMessages.allUuids,
+      ].filter((ref) => !forkedUuids.has(ref));
+      assert.deepEqual(danglingRefs, [], "compaction refs missing from the forked transcript");
+    }).pipe(Effect.provide(forkRunnerLayer)),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 const realQueryRunner = layerQueryRunner.pipe(
   Layer.provide(PortScanner.layerTest),
   Layer.provide(
@@ -119,7 +210,7 @@ const realQueryRunner = layerQueryRunner.pipe(
       canonical: undefined,
     }),
   ),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const resumedMcpQueryInput = {
@@ -456,6 +547,47 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
     }),
   );
 
+  const rootRefusal =
+    "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
+
+  const startupFailureMessage = (stderr: string) =>
+    Effect.gen(function* () {
+      const cli = fakeClaudeCli(`printf '%s\\n' '${stderr}' >&2\nexit 1`);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(NodePath.dirname(cli), { recursive: true, force: true })),
+      );
+      const session = yield* openFakeCli(cli);
+      const exit = yield* Stream.runDrain(session.messages).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(exit));
+      return Exit.isFailure(exit)
+        ? makeProviderFailure({ cause: exit.cause, class: "transport_error" }).message
+        : "";
+    });
+
+  // Claude Code refuses bypassPermissions as root and explains why only on
+  // stderr, so the turn failure has to carry that line.
+  it.effect("reports the CLI's root refusal when it exits before answering", () =>
+    Effect.gen(function* () {
+      assert.include(yield* startupFailureMessage(rootRefusal), rootRefusal);
+    }).pipe(Effect.provide(realQueryRunner)),
+  );
+
+  // Startup stderr can carry paths, tokens, or settings, so only the known
+  // refusal reaches the failure the client shows.
+  it.effect("keeps other startup stderr out of the turn failure", () =>
+    Effect.gen(function* () {
+      const surrounded = yield* startupFailureMessage(
+        `token=sk-private-123\n${rootRefusal}\nat /home/private/settings.json`,
+      );
+      assert.include(surrounded, rootRefusal);
+      assert.notInclude(surrounded, "sk-private-123");
+      assert.notInclude(surrounded, "/home/private");
+
+      const unknown = yield* startupFailureMessage("token=sk-private-123");
+      assert.notInclude(unknown, "sk-private-123");
+    }).pipe(Effect.provide(realQueryRunner)),
+  );
+
   // The CLI keeps running its turn after its pipes close, so a server that
   // crashed would leave it working next to the session it resumes.
   it.effect("stops the CLI when the server that started it goes away", () =>
@@ -510,7 +642,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       Layer.provide(
         Layer.succeed(ProviderEventLoggers, { native: undefined, canonical: undefined }),
       ),
-      Layer.provide(NodeServices.layer),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
     return Effect.gen(function* () {
       const cli = fakeClaudeCli(
