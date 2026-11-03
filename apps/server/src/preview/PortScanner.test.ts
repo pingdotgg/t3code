@@ -556,9 +556,14 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
   }).pipe(Effect.provide(layer));
 });
 
-effectIt.effect.each(["native", "tasklist"] as const)(
-  "filters native Windows ownership without probes and caches %s names",
-  (nameSource) => {
+effectIt.effect.each([
+  ["native", "node"],
+  ["native error", "node"],
+  ["native null", "node"],
+  ["tasklist error", null],
+] as const)(
+  "filters native Windows ownership without probes and caches %s results",
+  ([lookup, expectedName]) => {
     const requests: string[] = [];
     const nameLookups: number[] = [];
     const commands: string[] = [];
@@ -570,9 +575,9 @@ effectIt.effect.each(["native", "tasklist"] as const)(
           Layer.succeed(ProcessRunner.ProcessRunner, {
             run: (input) => {
               commands.push(input.command);
-              return Effect.succeed(
-                processOutput('"node.exe","1234","Console","1","50,000 K"\r\n'),
-              );
+              return lookup === "tasklist error"
+                ? processProbeFailure(input)
+                : Effect.succeed(processOutput('"node.exe","1234","Console","1","50,000 K"\r\n'));
             },
           }),
           Layer.succeed(WindowsTcpListeners.WindowsTcpListeners, {
@@ -586,14 +591,16 @@ effectIt.effect.each(["native", "tasklist"] as const)(
             processName: (pid) =>
               Effect.suspend(() => {
                 nameLookups.push(pid);
-                return nameSource === "native"
-                  ? Effect.succeed("node")
-                  : Effect.fail(
-                      new WindowsTcpListeners.WindowsTcpProbeError({
-                        operation: "process-name",
-                        cause: new Error("Native process name lookup unavailable"),
-                      }),
-                    );
+                if (lookup === "native") return Effect.succeed("node");
+                if (lookup === "native error") {
+                  return Effect.fail(
+                    new WindowsTcpListeners.WindowsTcpProbeError({
+                      operation: "process-name",
+                      cause: new Error("Native process name lookup unavailable"),
+                    }),
+                  );
+                }
+                return Effect.succeed(null);
               }),
           }),
           FetchHttpClient.layer.pipe(
@@ -610,7 +617,7 @@ effectIt.effect.each(["native", "tasklist"] as const)(
     return Effect.gen(function* () {
       const scanner = yield* ownedScanner();
       const servers = yield* scanner.scan();
-      expect(servers).toMatchObject([{ port: 5173, pid: 1234, processName: "node" }]);
+      expect(servers).toMatchObject([{ port: 5173, pid: 1234, processName: expectedName }]);
       expect(servers).toHaveLength(1);
       expect(yield* scanner.scan()).toEqual(servers);
       expect(requests).toEqual([]);
@@ -618,7 +625,7 @@ effectIt.effect.each(["native", "tasklist"] as const)(
       expect(yield* scanner.scan([configuredUrl])).toMatchObject([{ url: configuredUrl }]);
       expect(requests).toEqual([configuredUrl]);
       expect(nameLookups).toEqual([1234]);
-      expect(commands).toEqual(nameSource === "native" ? [] : ["tasklist.exe"]);
+      expect(commands).toEqual(lookup === "native" ? [] : ["tasklist.exe"]);
     }).pipe(Effect.provide(layer));
   },
 );

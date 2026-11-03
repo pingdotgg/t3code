@@ -823,7 +823,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       (pid) =>
         (nameSource === "native"
           ? windowsTcpListeners.processName(pid).pipe(
-              Effect.map((name) => [name]),
+              Effect.flatMap((name) =>
+                name === null
+                  ? queryTasklistProcessName(pid).pipe(Effect.map((names) => [names[0] ?? null]))
+                  : Effect.succeed([name]),
+              ),
               Effect.catchTags({
                 WindowsTcpProbeError: (error) =>
                   Effect.logDebug("preview native process name lookup failed", {
