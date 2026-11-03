@@ -615,10 +615,12 @@ export class ClaudeCodeRootRefusalError extends Schema.TaggedError<ClaudeCodeRoo
 
 class ClaudeMcpRegistrationTimeoutError extends Schema.TaggedError<ClaudeMcpRegistrationTimeoutError>()(
   "ClaudeMcpRegistrationTimeoutError",
-  {},
+  { phase: Schema.Literals(["initialize", "setMcpServers"]) },
 ) {
   override get message(): string {
-    return "Claude timed out while registering its MCP tools. Retry the turn; if it keeps failing, check Claude and the server logs.";
+    return this.phase === "initialize"
+      ? "Claude timed out while starting up. Retry the turn; if it keeps failing, check Claude and the server logs."
+      : "Claude timed out while registering its MCP tools. Retry the turn; if it keeps failing, check Claude and the server logs.";
   }
 }
 
@@ -1287,15 +1289,18 @@ export const layerQueryRunner: Layer.Layer<
                 restore(
                   Effect.gen(function* () {
                     if (mcpServers !== undefined) {
-                      const timedOut = (method: string) => () =>
+                      const timedOut = (phase: ClaudeMcpRegistrationTimeoutError["phase"]) => () =>
                         Effect.logWarning("orchestration-v2.claude-mcp-registration-timeout", {
                           threadId: input.threadId,
                           providerSessionId: input.providerSessionId,
-                          method,
+                          phase,
                         }).pipe(
                           Effect.andThen(
                             Effect.fail(
-                              queryRunnerError(new ClaudeMcpRegistrationTimeoutError(), method),
+                              queryRunnerError(
+                                new ClaudeMcpRegistrationTimeoutError({ phase }),
+                                phase,
+                              ),
                             ),
                           ),
                         );
