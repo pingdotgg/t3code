@@ -506,9 +506,15 @@ export const make = Effect.gen(function* () {
         (entry) => entry.length > 0 && (input.includeDirectories === true || !entry.endsWith("/")),
       )
       .toSorted();
+    const selectedPaths = [
+      ...paths.filter((entry) => !entry.endsWith("/")),
+      ...paths.filter((entry) => entry.endsWith("/")),
+    ]
+      .slice(0, IGNORED_FILES_LIMIT)
+      .toSorted();
     const files = yield* Effect.promise(() =>
       Promise.all(
-        paths.slice(0, IGNORED_FILES_LIMIT).map(async (relativePath) => {
+        selectedPaths.map(async (relativePath) => {
           // lstat: a symlink usually points outside the workspace, where reads refuse to go.
           const stat = await NodeFSP.lstat(
             path.join(normalizedCwd, relativePath.replace(/\/$/, "")),

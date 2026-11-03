@@ -413,6 +413,33 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("listIgnoredFiles", () => {
+    it.effect("keeps ignored files selectable when folders fill the listing limit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", "node_modules/\n.env\n");
+        for (let index = 0; index < 200; index++) {
+          const packagePath = `packages/p${String(index).padStart(3, "0")}`;
+          yield* writeTextFile(cwd, `${packagePath}/package.json`, "{}");
+          yield* writeTextFile(cwd, `${packagePath}/node_modules/pkg/index.js`, "x");
+        }
+        yield* writeTextFile(cwd, "z-app/index.ts", "export {};");
+        yield* git(cwd, ["add", "packages", "z-app/index.ts"]);
+        yield* writeTextFile(cwd, "z-app/.env", "A=1");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const fileOnly = yield* workspaceEntries.listIgnoredFiles({ cwd });
+        const withFolders = yield* workspaceEntries.listIgnoredFiles({
+          cwd,
+          includeDirectories: true,
+        });
+
+        expect(fileOnly.files).toEqual([{ path: "z-app/.env", byteLength: 3 }]);
+        expect(withFolders.files).toContainEqual(fileOnly.files[0]);
+        expect(withFolders.files).toHaveLength(200);
+        expect(withFolders.truncated).toBe(true);
+      }),
+    );
+
     it.effect("keeps directory entries out of legacy file-only requests", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ git: true });
