@@ -56,7 +56,10 @@ import {
   PullRequestGlyph,
   type PullRequestGlyphIcon,
 } from "./pullRequest/pullRequestIcons";
-import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import {
+  pullRequestStateKey,
+  resolvePullRequestState,
+} from "./pullRequest/pullRequestPresentation";
 
 export interface PrStatusIndicator {
   label: string;
@@ -827,7 +830,7 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   );
 }
 
-function settledPrHoverColorClass(state: ThreadPullRequestBadge["state"] | "queued"): string {
+function settledPrHoverColorClass(state: keyof typeof PULL_REQUEST_STATE_PRESENTATION): string {
   switch (state) {
     case "draft":
       return "group-hover/sidebar-row:text-zinc-500 dark:group-hover/sidebar-row:text-zinc-400/80";
@@ -886,15 +889,7 @@ export function ThreadSearchPullRequestNumber({
   });
   if (presentation === null) return null;
   const aggregate = badge !== null && (badge.kind === "stack" || badge.others > 0);
-  const state = aggregate
-    ? badge.state
-    : pr === null
-      ? null
-      : pr.state === "open" && pr.isDraft
-        ? "draft"
-        : pr.state === "open" && pr.isInMergeQueue === true
-          ? "queued"
-          : pr.state;
+  const state = aggregate ? badge.state : pr === null ? null : pullRequestStateKey(pr);
   return (
     <span
       aria-label={presentation.label}

@@ -1148,6 +1148,7 @@ export function PullRequestDetailPanel({
         mergeability: detail.mergeability,
         checksState,
         autoMergeEnabled: detail.autoMergeEnabled,
+        isInMergeQueue: detail.isInMergeQueue,
         hasMergeMethod: allowedMergeMethods.length > 0,
         canMerge: !stackOwnsMerge && can("merge"),
         canMarkReady: can("ready"),

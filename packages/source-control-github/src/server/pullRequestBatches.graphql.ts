@@ -108,7 +108,7 @@ export const PullRequestSummaryRepositoryPullRequestPullRequest = Schema.Struct(
   /** Identifies if the pull request is a draft. */
   isDraft: Schema.Boolean,
   /** Indicates whether the pull request is in a merge queue */
-  isInMergeQueue: Schema.Boolean,
+  isInMergeQueue: Schema.optionalKey(Schema.Boolean),
   /** Whether or not the pull request can be merged based on the existence of merge conflicts. */
   mergeable: GraphQL.enumLiterals(Shared.MergeableState.literals),
   /** The current status of this pull request with respect to code review. */
@@ -159,10 +159,11 @@ export const PullRequestSummary = GraphQL.query("PullRequestSummary", {
       { name: "owner", body: "String!" },
       { name: "name", body: "String!" },
       { name: "number", body: "Int!" },
-      { name: "stacks", body: "Boolean!" }
+      { name: "stacks", body: "Boolean!" },
+      { name: "mergeQueue", body: "Boolean!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){number title url state isDraft isInMergeQueue mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author{__typename login avatarUrl...on User{name}}latestReviews(first:20){nodes{state author{__typename login}}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){number title url state isDraft isInMergeQueue@include(if:$", "mergeQueue", ")mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author{__typename login avatarUrl...on User{name}}latestReviews(first:20){nodes{state author{__typename login}}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}}}"] }
     ],
     fragments: []
   },
@@ -170,7 +171,8 @@ export const PullRequestSummary = GraphQL.query("PullRequestSummary", {
     owner: Schema.String,
     name: Schema.String,
     number: Shared.Int,
-    stacks: Schema.Boolean
+    stacks: Schema.Boolean,
+    mergeQueue: Schema.Boolean
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */

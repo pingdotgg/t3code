@@ -205,6 +205,10 @@ describe("pull request primary control", () => {
       }),
     ).toBe("merge");
   });
+
+  it("offers no merge for a pull request the merge queue already holds", () => {
+    expect(resolvePullRequestPrimaryControl({ ...open, isInMergeQueue: true })).toBeNull();
+  });
 });
 
 describe("stacked pull request classification", () => {
@@ -1221,7 +1225,7 @@ describe("the compact row's single action slot", () => {
       ...overrides,
     }) as NonNullable<Parameters<typeof resolveThreadPanelPullRequestAction>[0]>;
 
-  it("holds the slot while checks run rather than offering a merge that races them", () => {
+  it("holds the slot while checks run or the merge queue has it, rather than offering a merge that races them", () => {
     expect(
       resolveThreadPanelPullRequestAction(
         openDetail({ checks: [check("success"), check("pending")] }),
@@ -1230,6 +1234,7 @@ describe("the compact row's single action slot", () => {
     expect(
       resolveThreadPanelPullRequestAction(openDetail({ checks: [check("action-required")] })),
     ).toBeNull();
+    expect(resolveThreadPanelPullRequestAction(openDetail({ isInMergeQueue: true }))).toBeNull();
   });
 
   it("ranks conflicts above everything, then draft, then failing checks", () => {

@@ -504,8 +504,8 @@ describe("GitHubSourceControlProvider.getChangeRequest", () => {
       assert.deepStrictEqual(
         graphqlCalls.flatMap((call) => call.lookups),
         [
-          { owner: "acme", name: "web", number: 42 },
-          { owner: "other", name: "thing", number: 42 },
+          { owner: "acme", name: "web", number: 42, mergeQueue: true },
+          { owner: "other", name: "thing", number: 42, mergeQueue: true },
         ],
       );
     }).pipe(Effect.provide(layer));
@@ -1025,6 +1025,8 @@ it.live.each([
   const rest: GitHubRest.GitHubRestInput[] = [];
   const pr = {
     ...node(42, "feature", "team"),
+    // Not asked for off github.com.
+    isInMergeQueue: undefined,
     url: "https://code.example.test/team/project/pull/42",
     isCrossRepository: false,
     headRepository: { name: "project", nameWithOwner: "team/project" },
@@ -1091,11 +1093,11 @@ it.live.each([
     yield* provider.getRepositoryCloneUrls({ ...input, repository: "team/other" });
     yield* provider.getRepositoryCloneUrls({ ...input, repository: "github.com/team/explicit" });
     const lookups = graphqlCalls.flatMap((call) =>
-      call.lookups.map(({ owner, name }) => [call.host, owner, name]),
+      call.lookups.map(({ owner, name, mergeQueue }) => [call.host, owner, name, mergeQueue]),
     );
     assert.deepStrictEqual(
       lookups,
-      Array.from({ length: 5 }, () => ["code.example.test", "team", "project"]),
+      Array.from({ length: 5 }, () => ["code.example.test", "team", "project", false]),
     );
     assert.deepStrictEqual(
       rest.map(({ host, path }) => [host, path]),

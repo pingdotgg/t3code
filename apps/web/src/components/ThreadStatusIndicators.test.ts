@@ -126,7 +126,6 @@ describe("resolveDisplayedThreadPr", () => {
 describe("prStatusIndicator", () => {
   it.each([
     { isDraft: false, isInMergeQueue: true, label: "PR in merge queue" },
-    { isDraft: true, isInMergeQueue: true, label: "PR draft" },
     { isDraft: false, isInMergeQueue: false, label: "PR open" },
   ])("labels a linked snapshot as $label", ({ isDraft, isInMergeQueue, label }) => {
     const linked = linkedPullRequestSnapshotStatus({

@@ -1432,6 +1432,7 @@ export const make = Effect.gen(function* () {
         number: input.number,
         headRef: `refs/pull/${input.number}/head`,
         required: asksRequired(input.host),
+        mergeQueue: input.host.toLowerCase() === "github.com",
         requestedReviewers,
       });
     return SourceControlRateLimit.Interactive.pipe(
@@ -1670,7 +1671,11 @@ export const make = Effect.gen(function* () {
         });
       }
       const result = yield* GraphQLResolver.request(
-        { ...lookup, stacks: input.host.toLowerCase() === "github.com" },
+        {
+          ...lookup,
+          stacks: input.host.toLowerCase() === "github.com",
+          mergeQueue: input.host.toLowerCase() === "github.com",
+        },
         summaryResolver,
       );
       const pullRequest = result.repository?.pullRequest;

@@ -101,20 +101,22 @@ export function PullRequestReviewDecisionGlyph({
   );
 }
 
+export function pullRequestStateKey(input: {
+  readonly state: PullRequestState;
+  readonly isDraft?: boolean | undefined;
+  readonly isInMergeQueue?: boolean | undefined;
+}): keyof typeof PULL_REQUEST_STATE_PRESENTATION {
+  if (input.state !== "open") return input.state;
+  if (input.isDraft === true) return "draft";
+  return input.isInMergeQueue === true ? "queued" : "open";
+}
+
 export function resolvePullRequestState(input: {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
   readonly isInMergeQueue?: boolean | undefined;
 }): PullRequestStatePresentation {
-  const key =
-    input.state !== "open"
-      ? input.state
-      : input.isDraft
-        ? "draft"
-        : input.isInMergeQueue === true
-          ? "queued"
-          : "open";
-  return PULL_REQUEST_STATE_PRESENTATION[key];
+  return PULL_REQUEST_STATE_PRESENTATION[pullRequestStateKey(input)];
 }
 
 export interface PullRequestConflictPresentation {

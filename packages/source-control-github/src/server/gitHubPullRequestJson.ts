@@ -899,7 +899,8 @@ export interface GitHubPullRequestSummary {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
-  readonly isInMergeQueue: boolean;
+  /** Absent off github.com, which is not asked. */
+  readonly isInMergeQueue?: boolean;
   readonly closedAt: string | null;
   readonly mergedAt: string | null;
   readonly updatedAt: string;
@@ -923,7 +924,7 @@ export function toPullRequestSummary(pr: SummarizedPullRequest): GitHubPullReque
     baseBranch: pr.baseRefName,
     state: toState(pr),
     isDraft: pr.isDraft,
-    isInMergeQueue: pr.isInMergeQueue,
+    ...(pr.isInMergeQueue === undefined ? {} : { isInMergeQueue: pr.isInMergeQueue }),
     closedAt: trimmed(pr.closedAt),
     mergedAt: trimmed(pr.mergedAt),
     updatedAt: pr.updatedAt,
