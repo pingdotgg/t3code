@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildDiffReviewComment,
   buildFileReviewComment,
+  buildReviewCommentRenderablePatch,
   formatReviewCommentFence,
   resolveDiffReviewAnchor,
   resolveDiffReviewPosition,
@@ -72,6 +73,38 @@ describe("review comment context parsing", () => {
         diff: "@@ -2,1 +2,1 @@\n-two\n+TWO",
         fenceLanguage: "diff",
       }),
+    );
+  });
+
+  it("keeps a selection's trailing blank line and whitespace in the rendered excerpt", () => {
+    const fileDiff = parsePatchFiles(
+      [
+        "diff --git a/src/app.ts b/src/app.ts",
+        "--- a/src/app.ts",
+        "+++ b/src/app.ts",
+        "@@ -1,4 +1,4 @@",
+        " one",
+        "-two",
+        "+two\t",
+        " ",
+        " four",
+      ].join("\n"),
+      "review-comment-trailing-blank",
+    )[0]!.files[0]!;
+    const comment = (end: number) =>
+      buildDiffReviewComment({
+        id: "comment-blank",
+        sectionId: "turn:1",
+        sectionTitle: "Turn 1",
+        filePath: "src/app.ts",
+        fileDiff,
+        range: { start: 2, side: "additions", end, endSide: "additions" },
+        text: "Insert here.",
+      })!;
+
+    expect(buildReviewCommentRenderablePatch(comment(2))).toMatch(/\n\+two\t$/);
+    expect(buildReviewCommentRenderablePatch(comment(3))).toMatch(
+      /\n@@ -3,1 \+2,2 @@\n\+two\t\n $/,
     );
   });
 
