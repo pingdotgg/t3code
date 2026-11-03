@@ -3,12 +3,15 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as TestClock from "effect/testing/TestClock";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeFS from "effect/FileSystem";
+import * as NodePath from "effect/Path";
 
 import {
   makeAcpClientTerminals,
@@ -375,6 +378,66 @@ describe("AcpClientTerminals", () => {
         expect(results.every(Result.isFailure)).toBe(true);
         expect(terminals.readOutputSnapshot("foreign-session", created.terminalId)).toBeUndefined();
         expect(terminals.readOutputSnapshot("owner-session", created.terminalId)).toBeDefined();
+      }),
+    ),
+  );
+  // A daemonized grandchild holds the pipe write-ends past the direct child's
+  // exit, so the output pumps never see EOF and release would wedge behind
+  // them. Real agent terminals hit this with dev servers and ssh -f.
+  it.live("completes release when a daemonized grandchild holds the pipes", () =>
+    withTerminals((terminals) =>
+      Effect.gen(function* () {
+        const fs = yield* NodeFS.FileSystem;
+        const path = yield* NodePath.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-acp-daemon-" });
+        const pidFile = path.join(directory, "daemon.pid");
+        const daemonScript = path.join(directory, "daemon.js");
+        yield* fs.writeFileString(
+          daemonScript,
+          [
+            "const cp = require('child_process');",
+            "const holder = cp.spawn(process.execPath, ['-e', 'setInterval(() => { console.log(String(process.pid)); }, 250)'], {",
+            "  detached: true,",
+            "  windowsHide: true,",
+            "  stdio: ['ignore', process.stdout, process.stderr],",
+            "});",
+            "holder.unref();",
+            "require('fs').writeFileSync(process.env.DAEMON_PID_FILE, String(holder.pid));",
+            "console.log('daemonized');",
+          ].join("\n"),
+        );
+        // Kill the holder last so a failed assertion cannot wedge the suite on
+        // the same held pipes that wedge the real caller.
+        const cleanup = Effect.gen(function* () {
+          const text = yield* fs.readFileString(pidFile).pipe(Effect.orElseSucceed(() => ""));
+          const pid = Number.parseInt(text, 10);
+          if (Number.isInteger(pid)) {
+            yield* Effect.try(() => process.kill(pid)).pipe(Effect.ignore);
+          }
+        });
+        const created = yield* terminals.create({
+          sessionId: "session",
+          command: process.execPath,
+          args: ["-e", daemonScript],
+          env: [{ name: "DAEMON_PID_FILE", value: pidFile }],
+        });
+        const outcome = yield* Effect.gen(function* () {
+          yield* terminals.waitForExit({
+            sessionId: "session",
+            terminalId: created.terminalId,
+          });
+          yield* terminals.release({
+            sessionId: "session",
+            terminalId: created.terminalId,
+          });
+          return true;
+        }).pipe(
+          Effect.timeoutOption("10 seconds"),
+          Effect.map(Option.match({ onSome: () => true, onNone: () => false })),
+          Effect.result,
+          Effect.ensuring(cleanup),
+        );
+        expect(Result.isSuccess(outcome) && outcome.success === true).toBe(true);
       }),
     ),
   );

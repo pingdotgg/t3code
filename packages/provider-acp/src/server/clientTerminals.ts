@@ -18,6 +18,9 @@ const MAX_RETAINED_TERMINALS = 32;
 const MAX_RETAINED_OUTPUT_BYTES = 16 * 1024 * 1024;
 const DEFAULT_OUTPUT_BYTE_LIMIT = 4 * 1024 * 1024;
 const MAX_OUTPUT_BYTE_LIMIT = 8 * 1024 * 1024;
+// A daemonized grandchild can hold the pipe write-ends past the direct child's
+// exit; the drain wait is bounded so release cannot wedge behind it.
+const TERMINAL_OUTPUT_DRAIN_GRACE = Duration.seconds(1);
 
 const terminalRequestError = (message: string, cause?: unknown) =>
   EffectAcpErrors.AcpRequestError.internalError(
@@ -297,6 +300,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
                 Effect.all([Fiber.join(stdoutPump), Fiber.join(stderrPump)], {
                   discard: true,
                 }).pipe(
+                  Effect.timeoutOption(TERMINAL_OUTPUT_DRAIN_GRACE),
                   Effect.andThen(
                     Effect.sync(() => {
                       record.exitStatus = status;
