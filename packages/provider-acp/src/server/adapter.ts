@@ -6688,13 +6688,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     if ((yield* Ref.get(activeSessionId)) !== incoming.sessionId) return;
                     const context = yield* Ref.get(activeTurn);
                     let mutation = incoming;
-                    if (
-                      incoming.status !== "running" &&
-                      context !== null &&
-                      !context.finalized &&
-                      (incoming.report?.kind === "command" ||
-                        context.backgroundCommands.has(incoming.taskId))
-                    ) {
+                    if (incoming.status !== "running" && context !== null && !context.finalized) {
                       const previous = context.backgroundCommands.get(incoming.taskId);
                       const toolCallId = context.toolCallIdsByBackgroundTaskId.get(incoming.taskId);
                       const tool =
