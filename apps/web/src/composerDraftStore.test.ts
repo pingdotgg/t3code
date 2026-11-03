@@ -1754,6 +1754,7 @@ describe("composerDraftStore modelSelection", () => {
     ).toEqual(
       expect.objectContaining({
         instanceId: CODEX_SECONDARY_INSTANCE,
+        model: "gpt-5-codex",
         options: [{ id: "reasoningEffort", value: "low" }],
       }),
     );
@@ -1770,6 +1771,19 @@ describe("composerDraftStore modelSelection", () => {
         options: [{ id: "reasoningEffort", value: "low" }],
       }),
     );
+    expect(
+      useComposerDraftStore.getState().stickyOptionsByModelByProvider[CODEX_SECONDARY_INSTANCE],
+    ).toEqual({ "gpt-5-codex": [{ id: "reasoningEffort", value: "low" }] });
+
+    // A custom slug that matches a Codex alias stays exact; the picker already resolved it.
+    store.setModelSelection(threadRef, createModelSelection(CODEX_SECONDARY_INSTANCE, "gpt-5.3"), {
+      explicit: true,
+      replaceOptions: true,
+    });
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CODEX_SECONDARY_INSTANCE]
+        ?.model,
+    ).toBe("gpt-5.3");
   });
 });
 
