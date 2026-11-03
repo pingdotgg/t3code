@@ -366,6 +366,9 @@ describe("provider projection", () => {
     const literalContext =
       '<t3_context version="1">\n<context kind="note">example</context>\n</t3_context>';
     expect(restoreComposerContextReferences(literalContext)).toBe(literalContext);
+    const literalEntry =
+      '<t3_context version="1">\n<context kind="note" id="example">example</context>\n</t3_context>';
+    expect(restoreComposerContextReferences(literalEntry)).toBe(literalEntry);
     expect(restoreComposerContextReferences("Plain [Note: x] text")).toBe("Plain [Note: x] text");
   });
 });
