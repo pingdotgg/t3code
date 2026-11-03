@@ -1132,7 +1132,7 @@ it.layer(
     },
   );
 
-  it.effect.skipIf(!symlinksSupported)(
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
     "updates an npm-owned launcher in a native install location with npm",
     () =>
       Effect.gen(function* () {
