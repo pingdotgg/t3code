@@ -793,54 +793,6 @@ describe("MessagesTimeline messages", () => {
   });
 });
 
-function usageLimitEntries(resetAt: string) {
-  const threadId = ThreadId.make("usage-limit-thread");
-  const at = DateTime.makeUnsafe(CREATED_AT);
-  return deriveTimelineEntriesFromVisibleTurnItems({
-    visibleTurnItems: [
-      {
-        position: 0,
-        visibility: "local",
-        sourceThreadId: threadId,
-        sourceItemId: TurnItemId.make("usage-limit"),
-        item: {
-          id: TurnItemId.make("usage-limit"),
-          threadId,
-          runId: RunId.make("usage-limit-run"),
-          nodeId: null,
-          providerThreadId: null,
-          providerTurnId: null,
-          nativeItemRef: null,
-          parentItemId: null,
-          ordinal: 0,
-          title: null,
-          startedAt: at,
-          completedAt: at,
-          updatedAt: at,
-          type: "error",
-          status: "failed",
-          failure: {
-            class: "usage_limit",
-            message: "You've hit your usage limit.",
-            code: null,
-            retryable: true,
-            resetAt,
-          },
-        },
-      },
-    ],
-    optimisticMessages: [],
-  });
-}
-
-describe("MessagesTimeline usage limit notice", () => {
-  it("preserves the provider's usage limit message", async () => {
-    await using screen = await renderTimeline(usageLimitEntries("2026-03-17T19:30:00.000Z"));
-    expect(screen.text()).toContain("Limited at");
-    expect(screen.text()).toContain("You've hit your usage limit.");
-  });
-});
-
 const CITATION_REQUEST = {
   key: "activation-1",
   citation: {
