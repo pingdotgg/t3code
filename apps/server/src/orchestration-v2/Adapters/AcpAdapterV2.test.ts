@@ -101,6 +101,11 @@ import {
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factory-droid" });
+const OMP_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
+  source: "local",
+  commandPath: "/usr/local/bin/omp",
+  commandArgs: ["acp"],
+});
 
 const layerHost = TestProviderHost.layer().pipe(
   Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -1779,6 +1784,227 @@ describe("AcpAdapterV2", () => {
       yield* runtime.respondToRuntimeRequest({
         requestId: item.turnItem.requestId,
         ...(preparedAnswers === undefined ? {} : { answers: preparedAnswers }),
+      });
+      const terminal = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.equal(Option.getOrThrow(terminal).status, "completed");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  // omp askDialog pairs every `q{N}` choice field with a `q{N}__other`
+  // free-text companion, puts the question in `title`, the header in
+  // `description`, and uses the option labels as the oneOf consts.
+  const ompChoice = {
+    type: "string",
+    title: "Which reply format?",
+    description: "Format",
+    oneOf: [
+      { const: "JSON", title: "JSON" },
+      { const: "Plain text", title: "Plain text", description: "No markup" },
+    ],
+  };
+  const ompSchema = {
+    type: "object",
+    properties: {
+      q0: ompChoice,
+      q0__other: { type: "string", title: "Other (type your own)" },
+      q1: { type: "string", title: "Ship it?", oneOf: ompChoice.oneOf },
+      q1__other: { type: "string", title: "Other (type your own)" },
+    },
+  };
+  const ompQuestions = [
+    {
+      id: "q0",
+      header: "Format",
+      question: "Which reply format?",
+      options: [
+        { label: "JSON", description: "JSON", value: "JSON" },
+        { label: "Plain text", description: "No markup", value: "Plain text" },
+      ],
+    },
+    {
+      id: "q1",
+      header: "Question 2",
+      question: "Ship it?",
+      options: [
+        { label: "JSON", description: "JSON", value: "JSON" },
+        { label: "Plain text", description: "No markup", value: "Plain text" },
+      ],
+    },
+  ];
+
+  it.live.each([
+    {
+      scenario: "preserves option labels as the answer",
+      schema: ompSchema,
+      questions: ompQuestions,
+      answers: { q0: "Plain text", q1: "JSON" },
+      result: { action: "accept", content: { q0: "Plain text", q1: "JSON" } },
+    },
+    {
+      scenario: "routes custom answers to the __other companion",
+      schema: ompSchema,
+      questions: ompQuestions,
+      answers: { q0: "Markdown please", q1: "JSON" },
+      result: {
+        action: "accept",
+        content: { q0__other: "Markdown please", q1: "JSON" },
+      },
+    },
+    {
+      scenario: "cancels without accepting answers",
+      schema: ompSchema,
+      questions: ompQuestions,
+      answers: undefined,
+      result: { action: "cancel" },
+    },
+    {
+      scenario: "falls back for an unrelated form",
+      schema: { type: "object", properties: { name: { type: "string" } } },
+      questions: [{ id: "name", header: "Question 1", question: "Your answer?", options: [] }],
+      answers: { name: "Ada" },
+      result: { action: "accept", content: { name: "Ada" } },
+    },
+  ])("OMP elicitation $scenario", ({ schema, questions, answers, result }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-omp-form-" });
+      const statusPath = path.join(directory, "status.json");
+      const driver = ProviderDriverKind.make("acpRegistry");
+      const transcript = yield* decodeAcpReplayTranscript(
+        {
+          provider: driver,
+          protocol: "acp.ndjson-jsonrpc",
+          version: "1",
+          scenario: "omp-form",
+          entries: [
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "initialize", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "initialize",
+                result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/new", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/new",
+                result: { sessionId: "omp-session" },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/prompt", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "request",
+                method: "elicitation/create",
+                params: {
+                  mode: "form",
+                  sessionId: "omp-session",
+                  message: "Your answer?",
+                  requestedSchema: schema,
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: {
+                kind: "response",
+                method: "elicitation/create",
+                result,
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: { stopReason: "end_turn" },
+              },
+            },
+            { type: "runtime_exit", status: "success" },
+          ],
+        },
+        driver,
+      );
+      const instanceId = ProviderInstanceId.make("omp-form-test");
+      const adapter = yield* makeAcpRegistryAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        settings: OMP_SETTINGS,
+        environment: {},
+        makeRuntime: makeAcpReplayRuntime({
+          transcript,
+          statusPath,
+          fileSystem,
+          scriptPath: yield* path.fromFileUrl(
+            new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+          ),
+          childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        }),
+      }).pipe(
+        Effect.provide(
+          Layer.mock(AcpRegistryCatalog)({ resolve: () => Effect.die("runtime is injected") }),
+        ),
+      );
+      const threadId = ThreadId.make("omp-form-thread");
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: directory,
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+        providerSessionId: ProviderSessionId.make("omp-form-session"),
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const item = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (item.type !== "turn_item.updated" || item.turnItem.type !== "user_input_request")
+        return yield* Effect.die("Expected OMP question");
+      assert.deepEqual(item.turnItem.questions, questions);
+      yield* runtime.respondToRuntimeRequest({
+        requestId: item.turnItem.requestId,
+        ...(answers === undefined ? {} : { answers }),
       });
       const terminal = yield* runtime.events.pipe(
         Stream.filter((event) => event.type === "turn.terminal"),
