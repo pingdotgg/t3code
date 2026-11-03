@@ -113,6 +113,7 @@ function makeTestAdapter(input: {
   >;
   readonly failure?: ReturnType<typeof makeProviderFailure>;
   readonly failedRunOrdinals?: ReadonlySet<number>;
+  readonly brokenRunOrdinals?: ReadonlySet<number>;
   readonly interruptedRunOrdinals?: ReadonlySet<number>;
   readonly holdRunOrdinal?: number;
   readonly pendingBackgroundWork?: Ref.Ref<boolean>;
@@ -212,6 +213,7 @@ function makeTestAdapter(input: {
           resumeThread: ({ providerThread }) =>
             Effect.gen(function* () {
               if (
+                (input.brokenRunOrdinals !== undefined && providerThread.status === "error") ||
                 input.failResume ||
                 (input.failResumeOnce !== undefined &&
                   (yield* Ref.getAndSet(input.failResumeOnce, false)))
@@ -367,7 +369,9 @@ function makeTestAdapter(input: {
                           }),
                       }
                     : { status: terminalStatus, failure: null }),
-                  threadDisposition: "reusable",
+                  threadDisposition: input.brokenRunOrdinals?.has(turnInput.runOrdinal)
+                    ? "broken"
+                    : "reusable",
                 },
               ];
               const reportedUsage = input.tokenUsageByRunOrdinal?.[turnInput.runOrdinal];
@@ -380,6 +384,17 @@ function makeTestAdapter(input: {
                     status: "running",
                     completedAt: null,
                     tokenUsage: { ...reportedUsage, updatedAt: DateTime.formatIso(eventTime) },
+                  },
+                });
+              }
+              if (input.brokenRunOrdinals?.has(turnInput.runOrdinal)) {
+                yield* PubSub.publish(events, {
+                  type: "provider_thread.updated",
+                  driver: input.driver,
+                  providerThread: {
+                    ...turnInput.providerThread,
+                    status: "error",
+                    updatedAt: eventTime,
                   },
                 });
               }
@@ -1583,19 +1598,20 @@ describe("orchestration v2 provider switching", () => {
   it.live.each(
     (
       [
-        ["failed", false, false, false],
+        ["failed", false, false, false, false],
+        ["failed", false, false, false, true],
         ["failed", true, true, true],
         ["interrupted", false, true, false],
         ["interrupted", true, false, true],
       ] as const
     ).map(
-      ([status, queued, returning, native]) =>
+      ([status, queued, returning, native, broken]) =>
         [
-          `${status} context ${queued ? "through the queue" : "immediately"} to ${returning ? "a returning" : "a new"} provider via ${native ? "native history" : "text"}`,
-          { status, queued, returning, native },
+          `${status}${broken ? " broken" : ""} context ${queued ? "through the queue" : "immediately"} to ${returning ? "a returning" : "a new"} provider via ${native ? "native history" : "text"}`,
+          { status, queued, returning, native, broken },
         ] as const,
     ),
-  )("hands off %s", ([, { status, queued, returning, native }]) =>
+  )("hands off %s", ([, { status, queued, returning, native, broken }]) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace(`handoff-${status}-${queued}-${returning}`);
@@ -1606,6 +1622,7 @@ describe("orchestration v2 provider switching", () => {
         const sourceOrdinal = returning ? 2 : 1;
         const sourceSelection = returning ? CLAUDE_MODEL_SELECTION : CODEX_MODEL_SELECTION;
         const targetSelection = returning ? CODEX_MODEL_SELECTION : CLAUDE_MODEL_SELECTION;
+        const generation = yield* Ref.make(0);
         const originalPrompt = "Keep the release marker violet and preserve the existing API.";
         const partialResponse = "I checked the API and found the release configuration.";
         const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(
@@ -1628,6 +1645,12 @@ describe("orchestration v2 provider switching", () => {
               ...(modelSelection.instanceId === sourceSelection.instanceId
                 ? {
                     failedRunOrdinals: new Set(status === "failed" ? [sourceOrdinal] : []),
+                    ...(broken
+                      ? {
+                          brokenRunOrdinals: new Set([sourceOrdinal]),
+                          nativeThreadGeneration: generation,
+                        }
+                      : {}),
                     interruptedRunOrdinals: new Set(
                       status === "interrupted" ? [sourceOrdinal] : [],
                     ),
@@ -1742,8 +1765,17 @@ describe("orchestration v2 provider switching", () => {
           yield* dispatch("back", "Finish the remaining work", sourceSelection);
           yield* waitForRun(sourceOrdinal + 2, "completed");
           const back = (yield* Ref.get(capturedTurns)).at(-1)!;
-          assert.notInclude(back.text, originalPrompt);
-          assert.notInclude(back.text, partialResponse);
+          if (broken) {
+            const source = (yield* Ref.get(capturedTurns)).find(
+              (turn) => turn.modelSelection.instanceId === sourceSelection.instanceId,
+            )!;
+            assert.notEqual(back.nativeThreadId, source.nativeThreadId);
+            assert.include(back.text, originalPrompt);
+            assert.include(back.text, partialResponse);
+          } else {
+            assert.notInclude(back.text, originalPrompt);
+            assert.notInclude(back.text, partialResponse);
+          }
         }).pipe(
           Effect.provide(
             ProviderReplayHarness.layerWithRegistry(
@@ -2666,6 +2698,7 @@ describe("orchestration v2 provider switching", () => {
   it.live.each([
     ["automatic", "Claude"],
     ["queue.resume", "compatible Codex"],
+    ["queue.resume", "broken current provider"],
   ] as const)(
     "delivers a queued PR update on the current provider through %s (%s)",
     ([delivery, target]) =>
@@ -2676,10 +2709,17 @@ describe("orchestration v2 provider switching", () => {
           const started = yield* Deferred.make<void>();
           const release = yield* Deferred.make<void>();
           const compatible = target === "compatible Codex";
+          const broken = target === "broken current provider";
+          const generation = yield* Ref.make(0);
           const selection = {
-            ...(compatible
-              ? { ...CODEX_MODEL_SELECTION, instanceId: ProviderInstanceId.make("codex-alternate") }
-              : CLAUDE_MODEL_SELECTION),
+            ...(broken
+              ? CODEX_MODEL_SELECTION
+              : compatible
+                ? {
+                    ...CODEX_MODEL_SELECTION,
+                    instanceId: ProviderInstanceId.make("codex-alternate"),
+                  }
+                : CLAUDE_MODEL_SELECTION),
             options: [{ id: "reasoningEffort", value: "low" }],
           };
           const targetCapabilities = compatible
@@ -2702,10 +2742,13 @@ describe("orchestration v2 provider switching", () => {
               holdFirstTurn: started,
               releaseFirstTurn: release,
               failedRunOrdinals: new Set([1]),
+              ...(broken
+                ? { brokenRunOrdinals: new Set([1]), nativeThreadGeneration: generation }
+                : {}),
               failure: makeProviderFailure({
-                message: "Usage limit reached",
-                class: "usage_limit",
-                code: "usage_limit",
+                message: broken ? "Saved history is unusable" : "Usage limit reached",
+                class: broken ? "provider_error" : "usage_limit",
+                code: broken ? "INVALID_THINKING_SIGNATURE" : "usage_limit",
               }),
             }),
             makeTestAdapter({
@@ -2717,6 +2760,7 @@ describe("orchestration v2 provider switching", () => {
               capturedTurns,
             }),
           ];
+          if (broken) adapters.pop();
           const layerRegistry = compatible
             ? Layer.succeed(
                 ProviderAdapterRegistry.ProviderAdapterRegistryV2,
@@ -2840,7 +2884,7 @@ describe("orchestration v2 provider switching", () => {
             const turns = yield* Ref.get(capturedTurns);
             assert.lengthOf(turns, delivery === "automatic" ? 3 : 2);
             const executed = turns.at(-1)!;
-            assert.equal(executed.driver, compatible ? CODEX_DRIVER : CLAUDE_DRIVER);
+            assert.equal(executed.driver, compatible || broken ? CODEX_DRIVER : CLAUDE_DRIVER);
             assert.include(executed.text, "Review the new PR comments");
             assert.deepEqual(executed.modelSelection, selection);
             assert.deepEqual(after.thread.modelSelection, selection);
@@ -2853,6 +2897,11 @@ describe("orchestration v2 provider switching", () => {
             if (delivery === "automatic") {
               assert.equal(executed.providerThreadId, turns[1]!.providerThreadId);
               assert.equal(executed.nativeThreadId, turns[1]!.nativeThreadId);
+            }
+            if (broken) {
+              assert.notEqual(executed.nativeThreadId, turns[0]!.nativeThreadId);
+              assert.isFalse(executed.nativeThreadHasTurns);
+              assert.include(executed.text, "Original work");
             }
             if (compatible) {
               assert.equal(executed.nativeThreadId, turns[0]!.nativeThreadId);
