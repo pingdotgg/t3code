@@ -462,10 +462,16 @@ export const make = Effect.gen(function* () {
               (sending) =>
                 Option.isNone(socket)
                   ? sending
-                  : // Node's fetch takes the npm undici Dispatcher; its bundled undici-types lag it.
-                    Effect.provideService(sending, FetchHttpClient.RequestInit, {
-                      dispatcher: unixSocketDispatcher(socket.value),
-                    } as unknown as RequestInit),
+                  : // Keep fetch and its dispatcher on the same undici protocol version.
+                    sending.pipe(
+                      Effect.provideService(
+                        FetchHttpClient.Fetch,
+                        (requireUndici("undici") as typeof Undici).fetch as unknown as typeof fetch,
+                      ),
+                      Effect.provideService(FetchHttpClient.RequestInit, {
+                        dispatcher: unixSocketDispatcher(socket.value),
+                      } as unknown as RequestInit),
+                    ),
               Effect.timeoutOrElse({
                 duration: input.timeout ?? DEFAULT_TIMEOUT,
                 orElse: () =>
