@@ -84,7 +84,7 @@ function parseSource(doc: ProseMirrorNode, from: number, to: number): SourcePiec
   const groups: (Range & { char: string })[] = [];
   let index = 0;
   for (const formula of composerMathRanges(text)) {
-    groups.push(...units.slice(index, formula.start));
+    for (let at = index; at < formula.start; at += 1) groups.push(units[at]!);
     groups.push({
       from: units[formula.start]!.from,
       to: units[formula.end - 1]!.to,
@@ -92,7 +92,7 @@ function parseSource(doc: ProseMirrorNode, from: number, to: number): SourcePiec
     });
     index = formula.end;
   }
-  groups.push(...units.slice(index));
+  for (let at = index; at < units.length; at += 1) groups.push(units[at]!);
 
   const pieces: SourcePiece[] = groups.map((group) => ({ ...group, marks: null }));
   for (const span of parseInlineMarkdown(groups.map((group) => group.char).join(""), {
