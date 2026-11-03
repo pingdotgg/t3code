@@ -445,45 +445,94 @@ it("keeps the final report of a run that failed after its turn ended", () => {
   assert.include(result.text, "Review complete: no blocking issues.");
 });
 
-it("orders a task's assistant messages by turn item, not by timestamps", () => {
-  const { projection, run } = taskFixture();
-  const at = DateTime.makeUnsafe("2026-07-24T10:05:00.000Z");
-  const message = (id: string, text: string, ordinal: number) => {
-    const artifacts = makeSubagentConversationArtifacts({
-      messageId: MessageId.make(id),
-      turnItemId: TurnItemId.make(id),
-      threadId: parentThreadId,
-      rootNodeId: NodeId.make("root"),
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      role: "assistant",
-      text,
-      ordinal,
-      now: at,
-    });
-    return {
-      message: { ...artifacts.message, runId: run.id },
-      turnItem: { ...artifacts.turnItem, runId: run.id },
+it.each(["turn-item order", "timestamp fallback", "timestamp tie"] as const)(
+  "selects a task result using %s",
+  (ordering) => {
+    const { projection, run } = taskFixture();
+    const at = DateTime.makeUnsafe("2026-07-24T10:05:00.000Z");
+    const message = (id: string, text: string, ordinal: number) => {
+      const artifacts = makeSubagentConversationArtifacts({
+        messageId: MessageId.make(id),
+        turnItemId: TurnItemId.make(id),
+        threadId: parentThreadId,
+        rootNodeId: NodeId.make("root"),
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        role: "assistant",
+        text,
+        ordinal,
+        now: at,
+      });
+      return {
+        message: { ...artifacts.message, runId: run.id },
+        turnItem: { ...artifacts.turnItem, runId: run.id },
+      };
     };
-  };
-  const progress = message("progress", "Starting step 0.", 1);
-  const report = message("report", "All steps passed.", 2);
-  const result = subagentResultForRun(
-    {
-      ...projection,
-      messages: [progress.message, report.message],
-      turnItems: [report.turnItem, progress.turnItem],
-    },
-    run,
-  );
-  assert.equal(result.text, "All steps passed.");
-  assert.equal(result.messageId, report.message.id);
-  assert.equal(result.turnItemId, report.turnItem.id);
+    const progress = message("progress", "Starting step 0.", 1);
+    const report = message("report", "All steps passed.", 2);
+    const result = subagentResultForRun(
+      {
+        ...projection,
+        messages: [
+          progress.message,
+          {
+            ...report.message,
+            updatedAt: ordering === "timestamp fallback" ? DateTime.add(at, { seconds: 1 }) : at,
+          },
+          {
+            ...report.message,
+            id: MessageId.make("blank"),
+            text: " \n",
+            updatedAt: DateTime.add(at, { seconds: 2 }),
+          },
+          {
+            ...report.message,
+            id: MessageId.make("other-run"),
+            runId: RunId.make("other"),
+            text: "Unrelated result.",
+            updatedAt: DateTime.add(at, { seconds: 3 }),
+          },
+        ],
+        turnItems: ordering === "turn-item order" ? [report.turnItem, progress.turnItem] : [],
+      },
+      run,
+    );
+    assert.equal(
+      result.text,
+      ordering === "timestamp tie" ? "Starting step 0." : "All steps passed.",
+    );
+    assert.equal(
+      result.messageId,
+      ordering === "timestamp tie" ? progress.message.id : report.message.id,
+    );
+    assert.equal(result.turnItemId, ordering === "turn-item order" ? report.turnItem.id : null);
+  },
+);
+
+it("notes when the provider ran a different model than requested", () => {
+  const { projection, run } = taskFixture();
+  const artifacts = makeSubagentConversationArtifacts({
+    messageId: MessageId.make("report"),
+    turnItemId: TurnItemId.make("report"),
+    threadId: parentThreadId,
+    rootNodeId: NodeId.make("root"),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    role: "assistant",
+    text: "All steps passed.",
+    ordinal: 1,
+    now: childCreatedAt,
+  });
   const reported = { runAttemptId: run.activeAttemptId, ordinal: 1, model: "gpt-5.4-mini" };
   assert.equal(
     subagentResultForRun(
-      { ...projection, messages: [report.message], providerTurns: [reported as never] },
+      {
+        ...projection,
+        messages: [{ ...artifacts.message, runId: run.id }],
+        providerTurns: [reported as never],
+      },
       run,
     ).text,
     "Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\nAll steps passed.",
