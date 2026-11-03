@@ -24,6 +24,7 @@ import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import type { ProbedOpenCode } from "./versionProbe.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
+import { inferDefaultVariant } from "./modelVariants.ts";
 
 const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
@@ -177,22 +178,6 @@ function titleCaseSlug(value: string): string {
     }
   }
   return segments.join(" ");
-}
-
-function inferDefaultVariant(
-  providerID: string,
-  variants: ReadonlyArray<string>,
-): string | undefined {
-  if (variants.length === 1) {
-    return variants[0];
-  }
-  if (providerID === "anthropic" || providerID.startsWith("google")) {
-    return variants.includes("high") ? "high" : undefined;
-  }
-  if (providerID === "openai" || providerID === "opencode") {
-    return variants.includes("medium") ? "medium" : variants.includes("high") ? "high" : undefined;
-  }
-  return undefined;
 }
 
 function inferDefaultAgent(agents: ReadonlyArray<Agent>): string | undefined {
