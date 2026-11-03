@@ -41,7 +41,8 @@ export function evaluatePullRequestWatch(
   now: number,
 ): PullRequestWatchReport {
   const changes: Array<PullRequestWatchChange> = [];
-  const headSha = detail.headSha ?? null;
+  // Azure DevOps omits the head when its iteration read fails; that is not a push.
+  const headSha = detail.headSha ?? watch.headSha;
   const headMoved = headSha !== watch.headSha;
 
   // Hosts can return no checks on read failure; preserve prior state.
