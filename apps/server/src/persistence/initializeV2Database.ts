@@ -1,4 +1,4 @@
-import * as NodeSqlite from "node:sqlite";
+import * as NodeWorkerThreads from "node:worker_threads";
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -23,6 +23,20 @@ const isProcessAlive = (pid: number): boolean => {
     return error instanceof Error && "code" in error && error.code === "EPERM";
   }
 };
+
+// V1 files predate auto_vacuum, and a page backup would keep that. VACUUM INTO compacts the copy and
+// enables incremental mode, so the server can return freed pages; the worker keeps it off the event loop.
+const snapshotWorkerSource = `
+const { workerData } = require("node:worker_threads");
+const { DatabaseSync } = require("node:sqlite");
+const database = new DatabaseSync(workerData.sourcePath, { readOnly: true });
+try {
+  database.exec("PRAGMA auto_vacuum = INCREMENTAL");
+  database.prepare("VACUUM INTO ?").run(workerData.snapshotPath);
+} finally {
+  database.close();
+}
+`;
 
 // Legacy names have no PID; newer copies stay while their process is alive.
 const removeAbandonedCopies = Effect.fn("removeAbandonedCopies")(function* (directory: string) {
@@ -58,14 +72,20 @@ export const initializeV2Database = Effect.fn("initializeV2Database")(function* 
       prefix: `.v2-import-${process.pid}-`,
     });
     const snapshotPath = path.join(temporaryDirectory, "snapshot.sqlite");
-    yield* Effect.tryPromise(async () => {
-      const database = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
-      try {
-        await NodeSqlite.backup(database, snapshotPath);
-      } finally {
-        database.close();
-      }
-    });
+    yield* Effect.tryPromise(
+      (signal) =>
+        new Promise<void>((resolve, reject) => {
+          const worker = new NodeWorkerThreads.Worker(snapshotWorkerSource, {
+            eval: true,
+            workerData: { sourcePath, snapshotPath },
+          });
+          signal.addEventListener("abort", () => void worker.terminate(), { once: true });
+          worker.once("error", reject);
+          worker.once("exit", (code) =>
+            code === 0 ? resolve() : reject(new Error(`Snapshot worker exited with ${code}`)),
+          );
+        }),
+    );
     // Publish only a complete snapshot, without replacing an existing V2 database.
     yield* fs.link(snapshotPath, destinationPath).pipe(
       Effect.catchIf(
