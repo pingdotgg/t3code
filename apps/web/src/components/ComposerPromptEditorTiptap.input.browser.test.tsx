@@ -151,13 +151,16 @@ it.each([
 });
 
 it.each([
-  { word: "ship", prefix: "" },
-  { word: "path\\", prefix: "" },
-  { word: "2*3", prefix: "" },
-  { word: "b", prefix: "*" },
+  { word: "ship", prefix: "", source: ["**ship**"] },
+  { word: "path\\", prefix: "", source: [] },
+  { word: "2*3", prefix: "", source: [] },
+  { word: "b", prefix: "*", source: [] },
+  { word: "word", prefix: "\\", source: [] },
+  { word: "word", prefix: "\\\\", source: ["**word**"] },
+  { word: "word", prefix: "\\\\\\", source: [] },
 ])(
   "bolds $word after '$prefix' with Mod+B only when text is selected",
-  async ({ word, prefix }) => {
+  async ({ word, prefix, source }) => {
     const value = `${prefix}${word} it`;
     await using screen = await mountEditor(value);
     const { editor } = screen;
@@ -180,6 +183,7 @@ it.each([
     await vi.waitFor(() =>
       expect(serializeEditorDoc(editor.state.doc).value).toBe(`${prefix}**${word}** it`),
     );
+    expect(textWithMark(editor, "markdownSource")).toEqual(source);
     const depth = undoDepth(editor.state);
     await userEvent.keyboard("{End}");
     expect(serializeEditorDoc(editor.state.doc).value).toBe(`${prefix}**${word}** it`);
