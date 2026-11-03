@@ -856,6 +856,9 @@ it.effect.each(["shutdown", "close"] as const)(
       let capture: number | null = null;
       let generation = 0;
       let shutdownFails = false;
+      const secondDeviceId = DeviceId.make("22222222-2222-2222-2222-222222222222");
+      let secondDevice = false;
+      let secondShutdownFails = false;
       const http = HttpClient.make((request) =>
         Effect.sync(() => {
           const path = new URL(request.url).pathname;
@@ -865,6 +868,18 @@ it.effect.each(["shutdown", "close"] as const)(
               Response.json({
                 emulators: [],
                 simulators: [
+                  ...(secondDevice
+                    ? [
+                        {
+                          id: secondDeviceId,
+                          name: "Second iPhone",
+                          platform: "ios",
+                          version: "26",
+                          physical: false,
+                          booted: true,
+                        },
+                      ]
+                    : []),
                   {
                     id: deviceId,
                     name: "iPhone",
@@ -880,7 +895,15 @@ it.effect.each(["shutdown", "close"] as const)(
           if (path === "/vendor/serve-sim/grid/api/start") capture ??= ++generation;
           else if (path === "/vendor/serve-sim/grid/api/shutdown") {
             if (request.body._tag !== "Uint8Array") throw new Error("Missing shutdown body");
-            expect(decodeJson(new TextDecoder().decode(request.body.body))).toEqual({
+            const body = decodeJson(new TextDecoder().decode(request.body.body));
+            if (JSON.stringify(body) === JSON.stringify({ udid: secondDeviceId }))
+              return HttpClientResponse.fromWeb(
+                request,
+                secondShutdownFails
+                  ? Response.json({ error: "offline" }, { status: 500 })
+                  : Response.json({ ok: true }),
+              );
+            expect(body).toEqual({
               udid: deviceId,
             });
             if (shutdownFails)
@@ -1098,6 +1121,43 @@ it.effect.each(["shutdown", "close"] as const)(
       yield* bind(other);
       yield* service.close({ threadId: other.threadId });
       expect(launchers).toEqual(new Set());
+      if (operation === "close") {
+        pauseBind = null;
+        pauseRelease = null;
+        secondDevice = true;
+        const first = yield* bind(input);
+        const secondInput = { ...input, deviceId: secondDeviceId };
+        yield* service.open(secondInput);
+        const second = yield* agentDeviceSession(
+          threadId,
+          LOCAL_DEVICE_HOST_ID,
+          secondDeviceId,
+        ).pipe(Effect.provide(NodeCrypto.layer));
+        yield* service.agentLauncher({
+          ...target(threadId),
+          deviceId: secondDeviceId,
+          targetArgs: [],
+        });
+        claims.add(second);
+        secondShutdownFails = true;
+        expect((yield* Effect.result(service.close({ threadId, shutdown: true })))._tag).toBe(
+          "Failure",
+        );
+        expect((yield* service.state).sessions.map((entry) => entry.deviceId)).toEqual([
+          secondDeviceId,
+        ]);
+        expect(launchers).toEqual(new Set([second]));
+        failingLauncher = first;
+        releaseError = new DeviceOperationError({
+          operation: "close",
+          reason: "command_failed",
+          cause: new Error("Stopped device daemon"),
+        });
+        secondShutdownFails = false;
+        yield* service.close({ threadId, shutdown: true });
+        expect((yield* service.state).sessions).toEqual([]);
+        expect(launchers).toEqual(new Set());
+      }
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );
 

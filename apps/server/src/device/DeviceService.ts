@@ -918,37 +918,41 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               yield* ready.releaseAgentSession(name, session.deviceId);
             }
           }
-          yield* publish(
-            (current) => ({
-              ...current,
-              sessions: current.sessions.filter((session) => !ending.includes(session)),
-              devices: input.shutdown
-                ? current.devices.map((device) =>
-                    closing.some(
-                      (session) =>
-                        session.hostId === device.hostId && session.deviceId === device.id,
-                    )
-                      ? { ...device, booted: false }
-                      : device,
-                  )
-                : current.devices,
-            }),
-            (retired) =>
-              Effect.gen(function* () {
-                yield* releaseSessions(retired);
-                if (input.shutdown) {
-                  for (const session of closing) {
-                    const ready = yield* currentReadiness(session.hostId);
+          const batches = input.shutdown
+            ? Map.groupBy(ending, (session) =>
+                JSON.stringify([session.hostId, session.deviceId]),
+              ).values()
+            : [ending];
+          for (const batch of batches) {
+            const device = batch[0];
+            yield* publish(
+              (current) => ({
+                ...current,
+                sessions: current.sessions.filter((session) => !batch.includes(session)),
+                devices:
+                  input.shutdown && device
+                    ? current.devices.map((entry) =>
+                        entry.hostId === device.hostId && entry.id === device.deviceId
+                          ? { ...entry, booted: false }
+                          : entry,
+                      )
+                    : current.devices,
+              }),
+              (retired) =>
+                Effect.gen(function* () {
+                  yield* releaseSessions(retired);
+                  if (input.shutdown && device) {
+                    const ready = yield* currentReadiness(device.hostId);
                     if (!ready)
                       return yield* new DeviceHostUnavailableError({
-                        hostId: session.hostId,
+                        hostId: device.hostId,
                         reason: "Device host is not running. Reconnect before retrying close.",
                       });
-                    yield* shutdownDevice(ready, session.deviceId, session.platform);
+                    yield* shutdownDevice(ready, device.deviceId, device.platform);
                   }
-                }
-              }),
-          );
+                }),
+            );
+          }
           return closing;
         }),
       );
