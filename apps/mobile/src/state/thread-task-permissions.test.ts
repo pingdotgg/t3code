@@ -416,6 +416,31 @@ describe("mobile task permissions", () => {
     );
   });
 
+  it("queues a goal command without sending or clearing the composer draft", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState();
+    expect(await composer.onSendCommand("/goal clear")).toBe("message");
+    expect(state.enqueue).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        environmentId: "secondary",
+        threadId: "thread",
+        text: "/goal clear",
+        attachments: [],
+        modelSelection: state.thread.modelSelection,
+      }),
+    );
+    expect(state.clearDraft).not.toHaveBeenCalled();
+    expect(state.draft.text).toBe("Keep my draft");
+  });
+
+  it("rechecks the operate grant before queueing a command", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState();
+    state.grantedEnvironments.delete("secondary");
+    expect(await composer.onSendCommand("/goal clear")).toBeNull();
+    expect(state.enqueue).not.toHaveBeenCalled();
+  });
+
   it("rechecks the target environment before an approval response", async () => {
     state.grantedEnvironments.add("secondary");
     const requests = useSelectedThreadRequests();

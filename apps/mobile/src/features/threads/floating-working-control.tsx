@@ -1,7 +1,7 @@
 import type { SubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { GlassContainer, GlassView } from "expo-glass-effect";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   type LayoutChangeEvent,
   Pressable,
@@ -29,7 +29,7 @@ import { ControlPill } from "../../components/ui/ControlPill";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { BrowserPreviewButton } from "../browser/browser-preview-button";
 import { DevicePreviewButton } from "../devices/device-preview-button";
-import type { FloatingWorkingStatus } from "./floating-working-status";
+import type { FloatingStatusAction, FloatingWorkingStatus } from "./floating-working-status";
 import { ShimmeringWorkContent } from "./thread-work-log";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
@@ -89,12 +89,16 @@ export function FloatingWorkingControl(props: {
   const extensionStatus = props.extensionStatus ?? null;
   const extensionOnly = props.status?.kind === "extension";
   const useGlass = NATIVE_LIQUID_GLASS_SUPPORTED && !extensionOnly;
-  const action =
-    props.status?.kind === "background" ||
-    props.status?.kind === "lifecycle" ||
-    props.status?.kind === "stop"
-      ? props.status.action
-      : null;
+  const actions: ReadonlyArray<FloatingStatusAction> =
+    props.status?.kind === "goal"
+      ? props.status.actions
+      : props.status?.kind === "background" ||
+          props.status?.kind === "lifecycle" ||
+          props.status?.kind === "stop"
+        ? props.status.action === null
+          ? []
+          : [props.status.action]
+        : [];
   const [agentsWidth, setAgentsWidth] = useState(0);
   const hasQueue = props.queuedCount > 0;
   const hasPreview = props.devicePreview !== null || props.browserPreview !== null;
@@ -107,7 +111,7 @@ export function FloatingWorkingControl(props: {
     0,
     Math.min(overlayWidth, windowWidth) -
       reservedWidth -
-      (action !== null ? actionWidth : 0) -
+      (actions.length > 0 ? actionWidth : 0) -
       (hasQueue ? queueWidth : 0) -
       (hasAgents ? agentsWidth : 0) -
       (hasPreview ? previewWidth : 0),
@@ -179,7 +183,7 @@ export function FloatingWorkingControl(props: {
   const capsuleInteractive =
     statusInteractive ||
     extensionStatus !== null ||
-    action !== null ||
+    actions.length > 0 ||
     hasQueue ||
     hasAgents ||
     hasPreview;
@@ -229,24 +233,28 @@ export function FloatingWorkingControl(props: {
           </Text>
         </Pressable>
       ) : null}
-      {action !== null ? (
+      {actions.length > 0 ? (
         <View
           onLayout={(event) => setActionWidth(settleWidth(event.nativeEvent.layout.width))}
           className="h-11 flex-row items-center"
         >
-          <View className="h-4 w-px bg-border" />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={action.accessibilityLabel}
-            accessibilityState={{ disabled: action.disabled }}
-            disabled={action.disabled}
-            onPress={action.onPress}
-            className={`h-11 items-center justify-center px-3 active:opacity-70 ${action.disabled ? "opacity-50" : ""}`}
-          >
-            <Text className="font-t3-medium text-xs text-foreground" numberOfLines={1}>
-              {action.label}
-            </Text>
-          </Pressable>
+          {actions.map((action) => (
+            <Fragment key={action.label}>
+              <View className="h-4 w-px bg-border" />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={action.accessibilityLabel}
+                accessibilityState={{ disabled: action.disabled }}
+                disabled={action.disabled}
+                onPress={action.onPress}
+                className={`h-11 items-center justify-center px-3 active:opacity-70 ${action.disabled ? "opacity-50" : ""}`}
+              >
+                <Text className="font-t3-medium text-xs text-foreground" numberOfLines={1}>
+                  {action.label}
+                </Text>
+              </Pressable>
+            </Fragment>
+          ))}
         </View>
       ) : null}
       {hasPreview ? (
