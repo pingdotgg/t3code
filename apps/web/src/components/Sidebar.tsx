@@ -8,6 +8,7 @@ import {
   endThreadContextDrag,
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
+import { appearanceFontStack } from "../appearanceFonts";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useAtomValue } from "@effect/atom-react";
@@ -961,6 +962,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const sidebarFontFamily = useClientSettings((s) => s.fontFamilySans);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -3383,9 +3385,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 <SortableContext items={sortableIds} strategy={sidebarSortingStrategy}>
                   <ul
                     {...SIDEBAR_TREE_PROPS}
+                    style={{
+                      fontFamily: appearanceFontStack(
+                        sidebarFontFamily,
+                        '-apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif',
+                      ),
+                    }}
                     ref={attachTreeRef}
                     className={cn(
-                      "relative flex flex-col gap-0.5",
+                      "relative flex flex-col gap-px",
                       sidebarListItems.length > 0 && "flex-1",
                       actionSweep !== null && "**:pointer-events-none",
                     )}
