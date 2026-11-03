@@ -264,8 +264,7 @@ const isPinnedRuntimeInstallError = Schema.is(PinnedRuntimeInstallError);
 export const isUnpublishedRelease = (error: unknown): error is PinnedRuntimeInstallError =>
   isPinnedRuntimeInstallError(error) &&
   (error.step.startsWith("finding ") ||
-    (error.step.startsWith("downloading the t3 release checksums") &&
-      String(error.cause).includes("404")));
+    (error.step.startsWith("downloading the t3 release") && String(error.cause).includes("404")));
 
 const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(function* (
   input: PinnedRuntimeInstallInput,

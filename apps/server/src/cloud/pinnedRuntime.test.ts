@@ -16,6 +16,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  isUnpublishedRelease,
   pinnedRuntimeCommand,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
@@ -152,6 +153,36 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.isTrue(progress.every((event) => event.stage === "download"));
       assert.isTrue(cancelled);
       assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
+    }),
+  );
+
+  it.effect("reports a release that lists an archive it does not serve as unpublished", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-archive-missing-" });
+      const checksums = yield* validChecksums;
+      const error = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        httpClient: HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              request.url.endsWith("/SHA256SUMS")
+                ? new Response(checksums)
+                : new Response("", { status: 404 }),
+            ),
+          ),
+        ),
+        runner: extractingRunner(fs, path),
+        validate: () => Effect.die("must not validate a missing archive"),
+      }).pipe(Effect.flip);
+      assert.isTrue(isUnpublishedRelease(error));
     }),
   );
 
