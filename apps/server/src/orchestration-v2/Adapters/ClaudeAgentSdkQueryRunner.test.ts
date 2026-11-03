@@ -613,6 +613,10 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
         });
       assert.deepEqual(yield* run(dir), { code: 0, stdout: `${dir}\n` });
       assert.equal((yield* run(NodePath.join(dir, "missing"))).code, 125);
+      // `..` after a symlink leaves the link's target, as the kernel's chdir does.
+      NodeFS.mkdirSync(NodePath.join(dir, "target", "sub"), { recursive: true });
+      NodeFS.symlinkSync(NodePath.join(dir, "target", "sub"), NodePath.join(dir, "link"));
+      assert.deepEqual(yield* run(`${dir}/link/..`), { code: 0, stdout: `${dir}/target\n` });
     }),
   );
 

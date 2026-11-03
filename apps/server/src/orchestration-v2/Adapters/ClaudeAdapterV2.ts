@@ -349,7 +349,7 @@ const CLAUDE_ROOT_REFUSAL =
 
 // The shell enters the cwd: a native cwd blocks the server while a hung mount stalls chdir.
 const CLAUDE_GROUP_WATCH_SCRIPT = [
-  'cd -- "$1" || exit 125',
+  'cd -P -- "$1" || exit 125',
   "shift",
   "{ trap '' TERM; read -r _ <&3; kill -TERM 0; sleep 5; kill -KILL 0; } </dev/null >/dev/null 2>&1 &",
   'exec "$@" 3<&-',
