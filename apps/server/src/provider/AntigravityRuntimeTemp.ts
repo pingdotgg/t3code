@@ -4,7 +4,7 @@ import {
 } from "@t3tools/shared/nodeRuntime";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -52,7 +52,7 @@ export class AntigravityRuntimeTemp extends Context.Service<
 export const make = Effect.fn("AntigravityRuntimeTemp.make")(function* (directory: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const active = new Set<string>();
   const allocation = yield* Semaphore.make(1);
@@ -146,7 +146,7 @@ export const make = Effect.fn("AntigravityRuntimeTemp.make")(function* (director
         Effect.gen(function* () {
           if (!(yield* fs.exists(previous))) return;
           yield* fs.makeDirectory(directory, { recursive: true });
-          const id = yield* crypto.randomUUIDv4();
+          const id = yield* random.uuidV4();
           yield* fs.rename(previous, path.join(directory, `run-${id}`));
         }),
       );
