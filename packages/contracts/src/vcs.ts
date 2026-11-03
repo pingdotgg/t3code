@@ -122,6 +122,7 @@ export class VcsProcessExitError extends Schema.TaggedError<VcsProcessExitError>
     retryable: Schema.optional(Schema.Boolean),
     stderrLength: Schema.optional(NonNegativeInt),
     stderrTruncated: Schema.optional(Schema.Boolean),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

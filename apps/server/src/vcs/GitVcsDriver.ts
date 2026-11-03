@@ -906,13 +906,15 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           command: "git add",
           cwd,
           exitCode: 0,
-          detail: `Could not stage checkpoint objects: ${cause.message}`,
+          detail: "Could not stage checkpoint objects.",
+          cause,
         }),
     );
 
   // Git's own batch migration is also a rename; the durable update-ref flushes these renames.
   const publishStagedObjects = Effect.fn("GitVcsDriver.publishStagedObjects")(
     function* (cwd: string, from: string, to: string) {
+      // Per-directory moves share the enclosing publication span.
       const move = Effect.fnUntraced(function* (directory: string, names: ReadonlyArray<string>) {
         yield* fileSystem.makeDirectory(path.join(to, directory), { recursive: true });
         for (const name of names) {
@@ -960,9 +962,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const { gitCommonDir, indexPath, headExists } = yield* resolveCaptureRepository(input.cwd);
       const indexId = yield* random.uuidV4();
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
+      const objectsDir = path.join(gitCommonDir, "objects");
       const commitEnv: NodeJS.ProcessEnv = {
         ...process.env,
         GIT_INDEX_FILE: tempIndexPath,
+        GIT_OBJECT_DIRECTORY: objectsDir,
         GIT_AUTHOR_NAME: "T3 Code",
         GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
         GIT_COMMITTER_NAME: "T3 Code",
@@ -971,7 +975,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
       // Batch fsync stages objects in a tmp_objdir-bulk-fsync-* that a killed Git leaves behind.
       // Staging into a private object directory makes that leftover ours to delete.
-      const objectsDir = path.join(gitCommonDir, "objects");
       const stagingObjectsDir = path.join(objectsDir, `t3-checkpoint-objects-${indexId}`);
       const quotedObjectsDir = quoteGitPatchPath(objectsDir);
       const stageEnv: NodeJS.ProcessEnv = {
@@ -1348,6 +1351,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           operation,
           cwd: input.cwd,
           args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
+          env: commitEnv,
         });
       }).pipe(Effect.ensuring(cleanupScratch));
     }),
