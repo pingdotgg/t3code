@@ -24,6 +24,8 @@ const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
 const FAILED_CHECKPOINT = /\bcontext summarization: checkpoint step \d+ failed\b/;
 const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
 const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
+// google.rpc.RetryInfo, which plain rate limits carry instead of a quota reset.
+const RETRY_DELAY = /\bretryDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
 const GO_DURATION_PART = /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|h|m|s)/g;
 const GO_DURATION_UNIT_MS: Record<string, number> = {
   ns: 1e-6,
@@ -79,7 +81,7 @@ function resetAtFrom(text: string, now: DateTime.Utc): string | undefined {
   // makeProviderFailure drops a timestamp that does not parse, so fall back to the delay.
   const timestamp = RESET_TIMESTAMP.exec(text)?.[1];
   if (timestamp !== undefined && Option.isSome(DateTime.make(timestamp))) return timestamp;
-  const delay = RESET_DELAY.exec(text)?.[1];
+  const delay = RESET_DELAY.exec(text)?.[1] ?? RETRY_DELAY.exec(text)?.[1];
   if (delay === undefined) return undefined;
   let delayMs = 0;
   for (const [, amount, unit] of delay.matchAll(GO_DURATION_PART)) {
@@ -123,6 +125,7 @@ function turnFailure(
     message: message!.trim(),
     code: status ?? null,
     retryable: rateLimited || Number(httpStatus) >= 500,
+    resetAt: resetAtFrom(text, now) ?? null,
   });
 }
 
