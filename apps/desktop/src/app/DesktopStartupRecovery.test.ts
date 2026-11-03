@@ -74,13 +74,16 @@ describe("resolveStartupRecoveryOffer", () => {
     ).toEqual({ _tag: "Reinstall", version: "0.1.2" });
   });
 
-  it("blames the managed policy instead of offering another version", () => {
+  it("blames the managed policy unless a newer version can read it", () => {
     expect(
       resolveStartupRecoveryOffer(
         updateState({ status: "available", availableVersion: "0.1.4" }),
         "0.1.2",
         true,
       ),
+    ).toEqual({ _tag: "Update", version: "0.1.4" });
+    expect(
+      resolveStartupRecoveryOffer(updateState({ status: "up-to-date" }), "0.1.2", true),
     ).toEqual({ _tag: "ManagedPolicy" });
   });
 

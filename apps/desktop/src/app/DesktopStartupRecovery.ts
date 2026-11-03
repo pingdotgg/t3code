@@ -44,8 +44,6 @@ export function resolveStartupRecoveryOffer(
   lastStartedVersion: string | null,
   managedPolicy = false,
 ): StartupRecoveryOffer {
-  // Another version reads the same policy, so only an administrator can fix this.
-  if (managedPolicy) return { _tag: "ManagedPolicy" };
   if (update.status === "downloading" && update.availableVersion !== null) {
     return {
       _tag: "Downloading",
@@ -59,6 +57,8 @@ export function resolveStartupRecoveryOffer(
   if (updateVersion !== null && updateVersion !== update.notAppliedVersion) {
     return { _tag: "Update", version: updateVersion };
   }
+  // A newer release can know a key this one refuses; an older one or the releases page cannot help.
+  if (managedPolicy) return { _tag: "ManagedPolicy" };
   if (update.enabled && (update.status === "idle" || update.status === "checking")) {
     return { _tag: "Checking" };
   }
