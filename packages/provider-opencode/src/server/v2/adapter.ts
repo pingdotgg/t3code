@@ -3128,13 +3128,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           );
         if (!added) return "unavailable" as const;
+        // The status event can trail the list reply, so a first registration always settles.
+        const fresh = state.mcp === undefined;
         state.mcp = wanted;
         // An add to a fresh Location returns while OpenCode is still connecting.
         return yield* settledMcpStatus(wanted.name, wanted.directory, changedSinceAdd).pipe(
           Effect.timeout(INVENTORY_TIMEOUT),
           Effect.flatMap(({ status, reconnected }) =>
             status === "connected"
-              ? Effect.succeed(reconnected ? ("reconnected" as const) : ("connected" as const))
+              ? Effect.succeed(
+                  fresh || reconnected ? ("reconnected" as const) : ("connected" as const),
+                )
               : Effect.logWarning("OpenCode did not connect T3 Code's MCP server.", {
                   status,
                 }).pipe(Effect.as("unavailable" as const)),

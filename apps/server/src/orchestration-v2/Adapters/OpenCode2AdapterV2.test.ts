@@ -34,6 +34,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Exit from "effect/Exit";
@@ -2761,74 +2762,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("re-registers T3 MCP each turn and drops its instructions when it is unavailable", () =>
-    Effect.gen(function* () {
-      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
-        threadId,
-        providerSessionId: "mcp:opencode2-adapter",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:3773/mcp",
-        authorizationHeader: "Bearer thread-credential",
-        browserToolsAvailable: false,
-      });
-      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
-      const server = "t3-code-thread_opencode2-adapter";
-      const add = out("mcp.add", {
-        server,
-        "location[directory]": WORK,
-        config: {
-          type: "remote",
-          url: "http://127.0.0.1:3773/mcp",
-          headers: { Authorization: "Bearer thread-credential" },
-          oauth: false,
-        },
-      });
-      const turn = [
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.execution.succeeded", { sessionID: SESSION }),
-      ];
-      // Idle Location eviction drops OpenCode's runtime MCP servers without a reconnect.
-      const { runtime, thread } = yield* resumed([
-        add,
-        reply("mcp.add", null),
-        out("mcp.list", { "location[directory]": WORK }),
-        reply("mcp.list", {
-          location: { directory: WORK },
-          data: [{ name: server, status: { status: "connected" } }],
-        }),
-        ...turn,
-        add,
-        reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
-        out("session.instructions.entry.put", {
-          sessionID: SESSION,
-          key: "t3-code",
-          value: buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
-        }),
-        reply("session.instructions.entry.put", null),
-        ...turn,
-        // A server OpenCode cannot connect keeps the instructions without T3's tools.
-        add,
-        reply("mcp.add", null),
-        out("mcp.list", { "location[directory]": WORK }),
-        reply("mcp.list", {
-          location: { directory: WORK },
-          data: [{ name: server, status: { status: "failed", error: "unreachable" } }],
-        }),
-        ...turn,
-        out("mcp.remove", { server, "location[directory]": WORK }),
-        reply("mcp.remove", null),
-      ]);
-      for (let index = 0; index < 3; index++) {
-        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-        yield* runtime.startTurn(turnInput(thread));
-        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-      }
-    }).pipe(Effect.scoped),
-  );
-
   const mcpStatusChanged = (server: string): ProviderReplayEntry => ({
     type: "emit_inbound",
     frame: {
@@ -2846,19 +2779,19 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   // TestClock registers each one.
   const watchingSettles = <A, E, R>(
     use: (settles: {
-      readonly started: Deferred.Deferred<void>;
+      readonly started: Queue.Queue<void>;
       readonly count: () => number;
     }) => Effect.Effect<A, E, R>,
   ) =>
     Effect.gen(function* () {
       const clock = yield* Clock.Clock;
-      const started = yield* Deferred.make<void>();
+      const started = yield* Queue.unbounded<void>();
       let count = 0;
       const sleep = (duration: Duration.Duration) =>
         Duration.toMillis(duration) >= 1000
           ? clock.sleep(duration)
           : Effect.sync(() => count++).pipe(
-              Effect.andThen(Deferred.succeed(started, undefined)),
+              Effect.andThen(Queue.offer(started, undefined)),
               Effect.andThen(clock.sleep(duration)),
             );
       return yield* use({ started, count: () => count }).pipe(
@@ -2868,18 +2801,92 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   const startedAfterSettle = (
     runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
     thread: OrchestrationV2ProviderThread,
-    settle: Deferred.Deferred<void>,
+    settles: Queue.Queue<void>,
   ) =>
     Effect.gen(function* () {
       const started = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.forkScoped);
-      yield* Effect.raceFirst(Deferred.await(settle), Fiber.await(started));
+      const settled = yield* Effect.raceFirst(
+        Queue.take(settles).pipe(Effect.as(true)),
+        Fiber.await(started).pipe(Effect.as(false)),
+      );
       assert.isTrue(
-        yield* Deferred.isDone(settle),
+        settled,
         "the turn prompted before OpenCode loaded T3's newly connected MCP tools",
       );
       yield* TestClock.adjust("300 millis");
       yield* Fiber.join(started);
     });
+  it.effect("re-registers T3 MCP each turn and drops its instructions when it is unavailable", () =>
+    watchingSettles((settles) =>
+      Effect.gen(function* () {
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+          threadId,
+          providerSessionId: "mcp:opencode2-adapter",
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:3773/mcp",
+          authorizationHeader: "Bearer thread-credential",
+          browserToolsAvailable: false,
+        });
+        yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+        const server = "t3-code-thread_opencode2-adapter";
+        const add = out("mcp.add", {
+          server,
+          "location[directory]": WORK,
+          config: {
+            type: "remote",
+            url: "http://127.0.0.1:3773/mcp",
+            headers: { Authorization: "Bearer thread-credential" },
+            oauth: false,
+          },
+        });
+        const turn = [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ];
+        // Idle Location eviction drops OpenCode's runtime MCP servers without a reconnect.
+        const { runtime, thread } = yield* resumed([
+          add,
+          reply("mcp.add", null),
+          out("mcp.list", { "location[directory]": WORK }),
+          reply("mcp.list", {
+            location: { directory: WORK },
+            data: [{ name: server, status: { status: "connected" } }],
+          }),
+          ...turn,
+          add,
+          reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
+          out("session.instructions.entry.put", {
+            sessionID: SESSION,
+            key: "t3-code",
+            value: buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
+          }),
+          reply("session.instructions.entry.put", null),
+          ...turn,
+          // A server OpenCode cannot connect keeps the instructions without T3's tools.
+          add,
+          reply("mcp.add", null),
+          out("mcp.list", { "location[directory]": WORK }),
+          reply("mcp.list", {
+            location: { directory: WORK },
+            data: [{ name: server, status: { status: "failed", error: "unreachable" } }],
+          }),
+          ...turn,
+          out("mcp.remove", { server, "location[directory]": WORK }),
+          reply("mcp.remove", null),
+        ]);
+        for (let index = 0; index < 3; index++) {
+          const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+          if (index === 0) yield* startedAfterSettle(runtime, thread, settles.started);
+          else yield* runtime.startTurn(turnInput(thread));
+          assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+        }
+        assert.equal(settles.count(), 1);
+      }),
+    ).pipe(Effect.scoped),
+  );
 
   it.effect("waits for OpenCode to connect T3 MCP before prompting", () =>
     watchingSettles((settles) =>
@@ -2976,16 +2983,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           promptAccepted,
           event("session.execution.succeeded", { sessionID: SESSION }),
         ];
-        // OpenCode 2.2.5 holds an add that replaces a connection until it reconnects, so the list
-        // already reads connected; an unchanged re-add keeps the connection and reports nothing.
+        // A first registration settles even when its status event trails the list reply. OpenCode
+        // 2.2.5 holds an add that replaces a connection until it reconnects, so the list already
+        // reads connected; an unchanged re-add keeps the connection and reports nothing.
         const { runtime, thread } = yield* resumed([
           add,
+          reply("mcp.add", null),
+          ...connected,
           mcpStatusChanged(server),
-          mcpStatusChanged(server),
+          ...turn,
+          add,
           reply("mcp.add", null),
           ...connected,
           ...turn,
           add,
+          mcpStatusChanged(server),
+          mcpStatusChanged(server),
           reply("mcp.add", null),
           ...connected,
           ...turn,
@@ -2999,74 +3012,84 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         yield* runtime.startTurn(turnInput(thread));
         assert.equal((yield* Fiber.join(second))?.status, "completed");
         assert.equal(settles.count(), 1, "an unchanged re-add waited for OpenCode's tools");
+        const third = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* startedAfterSettle(runtime, thread, settles.started);
+        assert.equal((yield* Fiber.join(third))?.status, "completed");
       }),
     ).pipe(Effect.scoped),
   );
 
   it.effect("registers a long thread id's MCP server under a name OpenCode accepts", () =>
-    Effect.gen(function* () {
-      const child = ThreadId.make(
-        "thread:delegated-task:command%3Amcp%3A48bef2bf-6d0e-4f7a-9c3b-2e5d8a1f7c40%3Adelegate-task%3Asubproject-b-round1",
-      );
-      const server = "t3-code-aa73fa1e03099934";
-      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
-        threadId: child,
-        providerSessionId: "mcp:opencode2-adapter",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:3773/mcp",
-        authorizationHeader: "Bearer thread-credential",
-        browserToolsAvailable: false,
-      });
-      yield* Effect.addFinalizer(() => mcpSessions.clear(child));
-      const runtime = yield* openCode2ReplayRuntimeWithInstructions([
-        ...opening,
-        out("session.get", { sessionID: SESSION }),
-        replyData(
-          "session.get",
-          sessionInfo({
-            permissions: [
-              { action: "*", resource: "*", effect: "allow" },
-              { action: "t3-code-*", resource: "*", effect: "deny" },
-              { action: `${server}_*`, resource: "*", effect: "allow" },
-            ],
+    watchingSettles((settles) =>
+      Effect.gen(function* () {
+        const child = ThreadId.make(
+          "thread:delegated-task:command%3Amcp%3A48bef2bf-6d0e-4f7a-9c3b-2e5d8a1f7c40%3Adelegate-task%3Asubproject-b-round1",
+        );
+        const server = "t3-code-aa73fa1e03099934";
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+          threadId: child,
+          providerSessionId: "mcp:opencode2-adapter",
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:3773/mcp",
+          authorizationHeader: "Bearer thread-credential",
+          browserToolsAvailable: false,
+        });
+        yield* Effect.addFinalizer(() => mcpSessions.clear(child));
+        const runtime = yield* openCode2ReplayRuntimeWithInstructions([
+          ...opening,
+          out("session.get", { sessionID: SESSION }),
+          replyData(
+            "session.get",
+            sessionInfo({
+              permissions: [
+                { action: "*", resource: "*", effect: "allow" },
+                { action: "t3-code-*", resource: "*", effect: "deny" },
+                { action: `${server}_*`, resource: "*", effect: "allow" },
+              ],
+            }),
+          ),
+          ...noOpenRequests,
+          out("mcp.add", {
+            server,
+            "location[directory]": WORK,
+            config: {
+              type: "remote",
+              url: "http://127.0.0.1:3773/mcp",
+              headers: { Authorization: "Bearer thread-credential" },
+              oauth: false,
+            },
           }),
-        ),
-        ...noOpenRequests,
-        out("mcp.add", {
-          server,
-          "location[directory]": WORK,
-          config: {
-            type: "remote",
-            url: "http://127.0.0.1:3773/mcp",
-            headers: { Authorization: "Bearer thread-credential" },
-            oauth: false,
-          },
-        }),
-        reply("mcp.add", null),
-        out("mcp.list", { "location[directory]": WORK }),
-        reply("mcp.list", {
-          location: { directory: WORK },
-          data: [{ name: server, status: { status: "connected" } }],
-        }),
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        out("mcp.remove", { server, "location[directory]": WORK }),
-        reply("mcp.remove", null),
-      ]);
-      const thread = yield* runtime.resumeThread({
-        providerThread: { ...providerThread(yield* DateTime.now), appThreadId: child },
-        threadId: child,
-        modelSelection: bigPickle,
-        runtimePolicy: policy(),
-      });
-      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-      yield* runtime.startTurn({ ...turnInput(thread), threadId: child });
-      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-      yield* runtime.unloadThread!({ providerThread: thread });
-    }).pipe(Effect.scoped),
+          reply("mcp.add", null),
+          out("mcp.list", { "location[directory]": WORK }),
+          reply("mcp.list", {
+            location: { directory: WORK },
+            data: [{ name: server, status: { status: "connected" } }],
+          }),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("mcp.remove", { server, "location[directory]": WORK }),
+          reply("mcp.remove", null),
+        ]);
+        const thread = yield* runtime.resumeThread({
+          providerThread: { ...providerThread(yield* DateTime.now), appThreadId: child },
+          threadId: child,
+          modelSelection: bigPickle,
+          runtimePolicy: policy(),
+        });
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        const started = yield* runtime
+          .startTurn({ ...turnInput(thread), threadId: child })
+          .pipe(Effect.forkScoped);
+        yield* Queue.take(settles.started);
+        yield* TestClock.adjust("300 millis");
+        yield* Fiber.join(started);
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+        yield* runtime.unloadThread!({ providerThread: thread });
+      }),
+    ).pipe(Effect.scoped),
   );
 
   // regression: #16142 OpenCode 2 threads were missing T3 Code's MCP tools
