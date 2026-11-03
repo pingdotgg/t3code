@@ -23,6 +23,7 @@ interface Connection {
   sessionId: string | null;
   protocolVersion: string | null;
   nextRequestId: number;
+  retired: boolean;
 }
 
 export class AcpMcpOverAcpError extends Error {
@@ -104,6 +105,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
     sessionId: null,
     protocolVersion: null,
     nextRequestId: 0,
+    retired: false,
   }));
   // Current-draft agents address the declared server directly; each initialize opens a new MCP session.
   let serverConnection = yield* makeConnection;
@@ -136,6 +138,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
 
   const renewServerConnection = Effect.gen(function* () {
     const previous = serverConnection;
+    previous.retired = true;
     serverConnection = yield* makeConnection;
     yield* close(previous).pipe(Effect.ignore);
     return serverConnection;
@@ -215,6 +218,8 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         for (const payload of payloads) {
           connection.protocolVersion = protocolVersionOf(payload) ?? connection.protocolVersion;
         }
+        // An initialize that was replaced while in flight must not leave its new session behind.
+        if (connection.retired) yield* close(connection).pipe(Effect.ignore);
         return payloads;
       }).pipe(Effect.mapError(bridgeError)),
     );
@@ -244,6 +249,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         ),
       );
     }
+    connection.sessionId = null;
     yield* discardResponseBody(response);
   });
 

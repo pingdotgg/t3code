@@ -311,6 +311,52 @@ describe("AcpMcpOverAcpBridge", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("closes the session of an initialize that a newer initialize replaced in flight", () =>
+    Effect.gen(function* () {
+      const firstStarted = Promise.withResolvers<void>();
+      const firstResponse = Promise.withResolvers<void>();
+      const deleted: Array<string | null> = [];
+      let sessions = 0;
+      const bridge = yield* makeAcpMcpOverAcpBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        allocateConnectionId: Effect.succeed("connection-1"),
+        fetchImplementation: async (_url, init) => {
+          if (init?.method === "DELETE") {
+            deleted.push(new Headers(init.headers).get("mcp-session-id"));
+            return new Response(null, { status: 204 });
+          }
+          const request = JSON.parse(String(init?.body)) as { readonly id?: unknown };
+          const sessionId = `session-${++sessions}`;
+          if (sessionId === "session-1") {
+            firstStarted.resolve();
+            await firstResponse.promise;
+          }
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: request.id,
+              result: { protocolVersion: "2025-06-18" },
+            }),
+            { headers: { "content-type": "application/json", "mcp-session-id": sessionId } },
+          );
+        },
+      });
+      const initialize = (requestId: string) =>
+        bridge.message({ serverId: "t3-code", requestId, method: "initialize" });
+
+      const first = yield* initialize("mcp-1").pipe(Effect.forkChild);
+      yield* Effect.promise(() => firstStarted.promise);
+      yield* initialize("mcp-2");
+      firstResponse.resolve();
+      yield* Fiber.join(first);
+      expect(deleted).toEqual(["session-1"]);
+
+      yield* bridge.dispose;
+      expect(deleted).toEqual(["session-1", "session-2"]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("closes the current-draft session its notifications ride on when disposed", () =>
     Effect.gen(function* () {
       const requests: Array<{ readonly method: string; readonly headers: Headers }> = [];
@@ -377,6 +423,11 @@ describe("AcpMcpOverAcpBridge", () => {
         expect(yield* bridge.connect({ serverId: "other" }).pipe(Effect.flip)).toMatchObject({
           _tag: "AcpMcpOverAcpError",
         });
+        expect(
+          yield* bridge
+            .message({ serverId: "other", requestId: "mcp-1", method: "tools/list" })
+            .pipe(Effect.flip),
+        ).toMatchObject({ message: 'Unknown ACP MCP server "other".' });
         expect(
           yield* bridge
             .message({ connectionId: "missing", method: "tools/list" })
