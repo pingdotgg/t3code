@@ -629,8 +629,13 @@ it.effect("pages the guest back through turns older than the stream's snapshot",
           text: `![Old](${shot})`,
           streaming: false,
         }),
+        turnItem("item:old-edit", 2, {
+          type: "file_change",
+          fileName: "src/auth.ts",
+          diffStr: "@@ -1 +1 @@\n-before\n+after\n",
+        }),
         ...Array.from({ length: 30 }, (_, index) =>
-          turnItem(`item:ask-${index}`, index + 2, {
+          turnItem(`item:ask-${index}`, index + 3, {
             type: "user_message",
             text: `Ask ${index}`,
             createdBy: "user",
@@ -651,6 +656,7 @@ it.effect("pages the guest back through turns older than the stream's snapshot",
     const ids = (rows: ReadonlyArray<{ readonly sourceItemId: string }>) =>
       rows.map((row) => row.sourceItemId);
     assert.notInclude(ids(opening.item.projection.visibleTurnItems), "item:old-image");
+    assert.notInclude(ids(opening.item.projection.visibleTurnItems), "item:old-edit");
     let cursor = opening.item.historyCursor ?? null;
     assert.isNotNull(cursor);
     // The page has not shown the old reply yet, so its image does not load.
@@ -662,9 +668,15 @@ it.effect("pages the guest back through turns older than the stream's snapshot",
     while (cursor !== null) {
       const page: OrchestrationV2ThreadHistoryPage = yield* guestShares.history(session, cursor);
       older.push(...ids(page.items));
+      for (const row of page.items) {
+        if (row.item.type === "file_change") {
+          assert.doesNotHaveAnyKeys(row.item, ["diffOmitted", "diffStr", "oldStr", "newStr"]);
+        }
+      }
       cursor = page.hasMoreHistory ? page.nextCursor : null;
     }
     assert.include(older, "item:old-image");
+    assert.include(older, "item:old-edit");
     assert.deepStrictEqual(yield* guestShares.media(session, shot), {
       path: shot,
       mimeType: "image/png",

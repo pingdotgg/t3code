@@ -705,7 +705,10 @@ const make = Effect.gen(function* () {
       share.id,
       page.items.map((row) => row.item),
     );
-    return page;
+    return {
+      ...page,
+      items: page.items.map((row) => ({ ...row, item: withoutFileDiff(row.item) })),
+    };
   });
 
   const commandOutput = Effect.fn("GuestShareService.commandOutput")(function* (
