@@ -179,7 +179,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
           deviceStateLoaded ? deviceState : null,
         );
       }
-      useRightPanelStore.getState().setMaximized(activeThreadRef, false);
       useRightPanelStore.getState().close(activeThreadRef);
     }
   };
