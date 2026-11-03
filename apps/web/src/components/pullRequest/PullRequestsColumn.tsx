@@ -206,7 +206,7 @@ export function PullRequestsColumn({
         ref={scrollRef}
         data-surface-reaches-under-header=""
         className={cn(
-          "scrollbar-gutter-both min-h-0 flex-1 scroll-pt-[var(--surface-top-inset,0px)] overflow-y-auto",
+          "scrollbar-gutter-both min-h-0 flex-1 scroll-pt-[var(--surface-top-inset,0px)] overflow-x-hidden overflow-y-auto",
           PANE_BODY_UNDER_HEADER_CLASS,
         )}
       >
