@@ -1172,6 +1172,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     highlightedItemId: composerHighlightedItemId,
     currentSearchKey: composerMenuSearchKey,
     highlightedSearchKey: composerHighlightedSearchKey,
+    // A bare `&` also ends shell commands (`npm run dev &`), so Enter must still send.
+    explicitOnly: composerTrigger?.kind === "environment" && composerTrigger.query === "",
   });
   const activeComposerMenuItem =
     composerMenuItems.find((item) => item.id === activeComposerMenuItemId) ?? null;

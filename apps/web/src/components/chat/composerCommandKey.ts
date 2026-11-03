@@ -227,7 +227,9 @@ export function composerCommandKeyHandler(input: {
     }
     if (menuIsActive && (submissionIntent === null || submissionIntent === "foreground")) {
       const currentItems = composerMenuItemsRef.current;
-      const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
+      const bareMachineTrigger = trigger?.kind === "environment" && trigger.query === "";
+      const selectedItem =
+        activeComposerMenuItemRef.current ?? (bareMachineTrigger ? undefined : currentItems[0]);
       if (key === "ArrowDown" && currentItems.length > 0) {
         nudgeComposerMenuHighlight("ArrowDown");
         return true;

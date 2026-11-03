@@ -19,4 +19,17 @@ describe("resolveComposerMenuActiveItemId", () => {
       }),
     ).toBe("new-result");
   });
+
+  it("leaves a bare machine list without an active item until the user highlights one", () => {
+    const input = {
+      items: [{ id: "machine-a" }, { id: "machine-b" }],
+      currentSearchKey: "environment:",
+      highlightedSearchKey: "environment:",
+      explicitOnly: true,
+    };
+    expect(resolveComposerMenuActiveItemId({ ...input, highlightedItemId: null })).toBeNull();
+    expect(resolveComposerMenuActiveItemId({ ...input, highlightedItemId: "machine-b" })).toBe(
+      "machine-b",
+    );
+  });
 });
