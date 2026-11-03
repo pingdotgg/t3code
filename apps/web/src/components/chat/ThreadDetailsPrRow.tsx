@@ -53,6 +53,7 @@ import {
   usePullRequestActionRunner,
   usePullRequestDefaultMergeMethodResolver,
   usePullRequestHandoffs,
+  type PullRequestHandoffThread,
 } from "../pullRequest/usePullRequestActions";
 import {
   ChangeRequestStatusIcon,
@@ -93,7 +94,9 @@ export function ThreadDetailsPrRow({
   onOpen,
   onActed,
   onStopWatching,
+  currentThread,
 }: {
+  currentThread?: PullRequestHandoffThread | undefined;
   environmentId: EnvironmentId;
   pr: ThreadPr;
   number: number;
@@ -168,7 +171,11 @@ export function ThreadDetailsPrRow({
       onActed?.();
     },
   });
-  const { handoff, startHandoff } = usePullRequestHandoffs({ environmentId, detail });
+  const { handoff, startHandoff, handoffInCurrentThread } = usePullRequestHandoffs({
+    environmentId,
+    detail,
+    currentThread,
+  });
   const lastSelectedMergeMethod = useUiStateStore((state) => state.pullRequestMergeMethod);
   const resolveProjectDefaultMergeMethod = usePullRequestDefaultMergeMethodResolver(
     environmentId,
@@ -324,8 +331,12 @@ export function ThreadDetailsPrRow({
           pendingLabel: "Preparing...",
           pending: handoff === "conflicts",
           destructive: true,
-          suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
-          tooltip: "Check the branch out and resolve the conflicts in a new thread",
+          suffix: handoffInCurrentThread ? null : (
+            <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />
+          ),
+          tooltip: handoffInCurrentThread
+            ? "Resolve the conflicts in this thread"
+            : "Check the branch out and resolve the conflicts in a new thread",
           onClick: startResolveConflicts,
         }
       : rowAction === "ready"
@@ -344,8 +355,12 @@ export function ThreadDetailsPrRow({
               pendingLabel: "Preparing...",
               pending: handoff === "findings",
               destructive: true,
-              suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
-              tooltip: "Fix the failing checks in a new thread",
+              suffix: handoffInCurrentThread ? null : (
+                <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />
+              ),
+              tooltip: handoffInCurrentThread
+                ? "Fix the failing checks in this thread"
+                : "Fix the failing checks in a new thread",
               onClick: startFixChecks,
             }
           : rowAction === "merge"

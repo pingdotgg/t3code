@@ -1,10 +1,11 @@
 import { EnvironmentId, ProjectId, ThreadId, type PullRequestCheck } from "@t3tools/contracts";
-import { DraftId } from "~/composerDraftStore";
+import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   status: "success" as PullRequestCheck["status"],
+  conflicting: false,
   extraStatus: null as PullRequestCheck["status"] | null,
   mergeMethods: ["merge"] as Array<"merge" | "squash" | "rebase">,
   perform: vi.fn(),
@@ -34,7 +35,7 @@ const queryData = () => ({
   title: "Test PR",
   state: "open",
   isDraft: false,
-  mergeability: "mergeable",
+  mergeability: state.conflicting ? "conflicting" : "mergeable",
   headBranch: "feature",
   baseBranch: "main",
   changedFiles: 1,
@@ -177,6 +178,55 @@ it("requires a new merge click after passing checks become pending and pass agai
   expect(state.perform).not.toHaveBeenCalled();
 });
 
+it.each([
+  { matches: true, conflicting: false, draft: false },
+  { matches: false, conflicting: false, draft: false },
+  { matches: true, conflicting: true, draft: false },
+  { matches: true, conflicting: false, draft: true },
+])("uses the matching checkout for PR tasks: %j", async ({ matches, conflicting, draft }) => {
+  await using screen = await setup();
+  state.status = "failure";
+  state.conflicting = conflicting;
+  const threadRef = {
+    environmentId: EnvironmentId.make("environment"),
+    threadId: ThreadId.make("existing-thread"),
+  };
+  const target = draft ? DraftId.make("existing-draft") : threadRef;
+  useComposerDraftStore.getState().setPrompt(target, "Keep my notes");
+  await screen.rerender(
+    <ThreadDetailsPrRow
+      environmentId={threadRef.environmentId}
+      pr={null}
+      number={1}
+      status={null}
+      project={null}
+      label="Test PR"
+      openAriaLabel="Open PR"
+      onOpen={vi.fn()}
+      currentThread={{
+        target,
+        pullRequestUrl: `https://github.com/owner/repo/pull/${matches ? 1 : 2}`,
+      }}
+    />,
+  );
+  await screen.getByRole("button", { name: conflicting ? "Resolve" : "Fix", exact: true }).click();
+  if (matches) {
+    await vi.waitFor(() => {
+      expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toContain(
+        "https://github.com/owner/repo/pull/1",
+      );
+    });
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toContain(
+      "Keep my notes",
+    );
+    expect(state.newThread).not.toHaveBeenCalled();
+    expect(state.prepareThread).not.toHaveBeenCalled();
+  } else {
+    await vi.waitFor(() => expect(state.prepareThread).toHaveBeenCalled());
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toBe("Keep my notes");
+  }
+});
+
 async function setup() {
   state.perform.mockReset();
   state.checkoutError = null;
@@ -184,11 +234,15 @@ async function setup() {
     draftId: DraftId.make("new-draft"),
     threadId: ThreadId.make("new-thread"),
   });
-  state.prepareThread.mockReset();
+  state.prepareThread.mockReset().mockResolvedValue({
+    _tag: "Success",
+    value: { branch: "feature", worktreePath: "/workspace/pr", isOnPullRequestHead: true },
+  });
   state.addToast.mockReset().mockReturnValue("checkout-toast");
   state.updateToast.mockReset();
 
   state.status = "success";
+  state.conflicting = false;
   state.extraStatus = null;
   state.mergeMethods = ["merge"];
   useUiStateStore.getState().setPullRequestMergeMethod("merge");

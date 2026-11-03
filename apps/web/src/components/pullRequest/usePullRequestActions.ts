@@ -29,7 +29,12 @@ import { buildPhysicalToLogicalProjectKeyMap } from "~/sidebarProjectGrouping";
 import { useProjects } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 
-import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import {
+  composerTargetKey,
+  type ComposerThreadTarget,
+  type DraftId,
+  useComposerDraftStore,
+} from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { usePreparePullRequestThreadAction } from "~/state/sourceControlActions";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
@@ -246,14 +251,21 @@ export type PullRequestHandoffDetail = Pick<
   "projectId" | "workspaceRoot" | "url"
 >;
 
-const lastHandoffPromptByDraft = new Map<DraftId, string>();
+export interface PullRequestHandoffThread {
+  target: ComposerThreadTarget;
+  pullRequestUrl: string;
+}
+
+const lastHandoffPromptByTarget = new Map<string, string>();
 
 export function usePullRequestHandoffs({
   environmentId,
   detail,
+  currentThread,
 }: {
   environmentId: EnvironmentId;
   detail: PullRequestHandoffDetail | null;
+  currentThread?: PullRequestHandoffThread | undefined;
 }) {
   const newThread = useNewThreadHandler();
   const prepareThread = usePreparePullRequestThreadAction({
@@ -268,6 +280,27 @@ export function usePullRequestHandoffs({
     sourceControlClients.get(undefined)
   ).changeRequest;
 
+  const handoffInCurrentThread =
+    currentThread !== undefined && detail?.url === currentThread.pullRequestUrl;
+
+  const setTask = (target: ComposerThreadTarget, task: PullRequestThreadTask) => {
+    const store = useComposerDraftStore.getState();
+    const draft = store.getComposerDraft(target);
+    const key = composerTargetKey(target);
+    store.setPrompt(
+      target,
+      handoffPrompt(
+        { prompt: draft?.prompt ?? "", lastHandoffPrompt: lastHandoffPromptByTarget.get(key) },
+        task.prompt,
+      ),
+    );
+    lastHandoffPromptByTarget.set(key, task.prompt);
+    store.setReviewComments(
+      target,
+      handoffReviewComments(draft?.reviewComments ?? [], task.reviewComments ?? []),
+    );
+  };
+
   // Questions must not change checkouts or create worktrees.
   const openThreadWithTask = async (
     projectRef: ReturnType<typeof scopeProjectRef>,
@@ -281,24 +314,7 @@ export function usePullRequestHandoffs({
         () => null,
       ));
     if (session === null) return null;
-    const store = useComposerDraftStore.getState();
-    if (task === null) return session;
-    const draft = store.getComposerDraft(session.draftId);
-    const existingComments = draft?.reviewComments ?? [];
-    const prompt = handoffPrompt(
-      {
-        prompt: draft?.prompt ?? "",
-        lastHandoffPrompt: lastHandoffPromptByDraft.get(session.draftId),
-      },
-      task.prompt,
-    );
-    // Track only the handoff contribution so later handoffs preserve user text.
-    lastHandoffPromptByDraft.set(session.draftId, task.prompt);
-    store.setPrompt(session.draftId, prompt);
-    store.setReviewComments(
-      session.draftId,
-      handoffReviewComments(existingComments, task.reviewComments ?? []),
-    );
+    if (task !== null) setTask(session.draftId, task);
     return session;
   };
 
@@ -332,6 +348,15 @@ export function usePullRequestHandoffs({
     mode: "worktree" | "local" = "worktree",
   ) => {
     if (!detail || handoff !== null) return;
+    if (handoffInCurrentThread && currentThread !== undefined && task !== null) {
+      setTask(currentThread.target, task);
+      toastManager.add({
+        type: "success",
+        title: "Task ready",
+        description: "The task is in the composer. Read it over, then send.",
+      });
+      return;
+    }
     setHandoff(kind);
     // Explicit timeouts survive toast updates and would pin the result after loading.
     const toastId = toastManager.add({
@@ -416,5 +441,5 @@ export function usePullRequestHandoffs({
     );
   };
 
-  return { handoff, startAsk, startHandoff };
+  return { handoff, startAsk, startHandoff, handoffInCurrentThread };
 }

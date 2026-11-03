@@ -738,6 +738,11 @@ export function BranchToolbarBranchSelector({
         {displayMode === "panel" && prNumber !== undefined && prUrl !== undefined ? (
           <ThreadDetailsPrRows
             threadRef={threadRef}
+            currentThread={
+              branchPr && !isSelectingWorktreeBase
+                ? { target: draftId ?? threadRef, pullRequestUrl: branchPr.url }
+                : undefined
+            }
             links={serverThread?.pullRequests ?? []}
             currentLink={currentLinkedPr}
             onOpenLink={openPrLink}
