@@ -524,7 +524,8 @@ export const layer = Layer.effect(
           });
         }
         if (options?.publish !== false) {
-          yield* PubSub.publish(changesPubSub, providers);
+          // A newer upsert may have committed and published during the cache write; never republish an older array.
+          yield* PubSub.publish(changesPubSub, yield* Ref.get(providersRef));
         }
       }
 

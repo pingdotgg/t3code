@@ -66,6 +66,7 @@ const thread = (
     readonly archivedAt?: DateTime.Utc;
     readonly deletedAt?: DateTime.Utc;
     readonly subagentOf?: ThreadId;
+    readonly sideChatOf?: ThreadId;
     readonly title?: string;
     readonly settledAt?: DateTime.Utc;
     readonly linkedPullRequest?: ThreadLinkedPullRequest;
@@ -98,7 +99,14 @@ const thread = (
           relationshipToParent: "subagent",
           rootThreadId: overrides.subagentOf,
         }
-      : { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      : overrides.sideChatOf
+        ? {
+            parentThreadId: overrides.sideChatOf,
+            relationshipToParent: "fork",
+            rootThreadId: overrides.sideChatOf,
+            sideChat: true,
+          }
+        : { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     forkedFrom: null,
     createdAt: at(0),
     updatedAt: at(0),
@@ -366,13 +374,14 @@ it.layer(layerTest)("ThreadSearch", (it) => {
     }),
   );
 
-  it.effect("matches inside identifiers and skips subagent threads and short tokens", () =>
+  it.effect("matches inside identifiers and skips hidden threads and short tokens", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const search = yield* ThreadSearch.ThreadSearch;
       const project = ProjectId.make("project:search-tokens");
       const parent = ThreadId.make("thread:tokens-parent");
       const subagent = ThreadId.make("thread:tokens-subagent");
+      const sideChat = ThreadId.make("thread:tokens-side-chat");
       yield* createProject(project);
       yield* Effect.forEach(
         [
@@ -380,6 +389,8 @@ it.layer(layerTest)("ThreadSearch", (it) => {
           message(parent, "parent", "user", "Rename ThreadSearchService before shipping"),
           thread(subagent, project, { subagentOf: parent }),
           message(subagent, "subagent", "assistant", "ThreadSearchService renamed"),
+          thread(sideChat, project, { sideChatOf: parent, title: "ThreadSearchService question" }),
+          message(sideChat, "side-chat", "user", "Why rename ThreadSearchService?"),
         ],
         projections.apply,
         { discard: true },
