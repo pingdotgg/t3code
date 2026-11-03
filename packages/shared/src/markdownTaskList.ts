@@ -68,6 +68,8 @@ export function markdownTaskMarkerOffset(
   renderedText: string,
   checked: boolean,
 ): number | null {
+  // Native attachments replace their labels, so the remaining text could name another task.
+  if (renderedText.includes("\uFFFC")) return null;
   const tasks: ListItem[] = [];
   const collect = (node: Nodes) => {
     if (node.type === "listItem" && typeof node.checked === "boolean") tasks.push(node);
