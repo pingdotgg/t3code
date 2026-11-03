@@ -9,7 +9,7 @@ import {
 import * as Effect from "effect/Effect";
 import { AtomRegistry } from "effect/reactivity";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
-import { AppState, NativeModules } from "react-native";
+import { Alert, AppState, NativeModules } from "react-native";
 import type * as WebRTC from "react-native-webrtc";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
@@ -71,7 +71,14 @@ voiceMode.subscribe(({ phase }) => {
   if (phase === "active" && !routedAudio) {
     routedAudio = true;
     // WebRTC resets iOS routing when its audio unit starts, so route after activation.
-    setVoiceAudioActive(true, () => voiceMode.stop()).catch(() => undefined);
+    setVoiceAudioActive(true, (error) => {
+      voiceMode.stop();
+      if (error !== undefined)
+        Alert.alert(
+          "Voice audio failed",
+          error instanceof Error ? error.message : "Could not activate audio.",
+        );
+    }).catch(() => undefined);
   }
   if (phase !== "idle" && !keepAwake) {
     // A hands-free conversation must not auto-lock: backgrounding ends it.
