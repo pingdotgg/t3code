@@ -8569,6 +8569,201 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("finalizes the root turn when a Grok monitor completes before the prompt settles", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const extNotifications = new Map<
+        string,
+        (payload: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>
+      >();
+      const promptStarted = yield* Deferred.make<void>();
+      const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+      const promptHeld = yield* Deferred.make<void>();
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const grokFlavor = makeGrokAcpAdapterFlavor(
+        {
+          instanceId,
+          settings: DEFAULT_GROK_SETTINGS,
+          environment: {},
+          hostPlatform: yield* HostProcess.Platform,
+          selfInvocation,
+        },
+        yield* HostProcess.HomeDirectory,
+      );
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation,
+        testHooks: {
+          afterPromptSettledWithBackgroundWork: () =>
+            Deferred.succeed(promptHeld, undefined).pipe(Effect.asVoid),
+        },
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          enablePostSettleContinuation: true,
+          deferFinalizeForBackgroundWork: true,
+          normalizeToolCall: grokFlavor.normalizeToolCall!,
+          extractBackgroundTaskId: grokFlavor.extractBackgroundTaskId!,
+          isBackgroundCommandTool: grokFlavor.isBackgroundCommandTool!,
+          isPersistentBackgroundTool: grokFlavor.isPersistentBackgroundTool!,
+          registerExtensions: ({ runtime, applyBackgroundTaskMutation }) =>
+            registerXAiBackgroundTaskTracking(runtime, applyBackgroundTaskMutation),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              handleExtNotification: (method, schema, handler) =>
+                Effect.sync(() => {
+                  extNotifications.set(method, (payload) =>
+                    handler(Schema.decodeUnknownSync(schema)(payload)),
+                  );
+                }).pipe(Effect.andThen(runtime.handleExtNotification(method, schema, handler))),
+              prompt: () =>
+                Deferred.succeed(promptStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(promptGate)),
+                ),
+            }),
+          }),
+        },
+        continuationRequests: { offer: () => Effect.void },
+      });
+      const threadId = ThreadId.make("thread-acp-grok-monitor-completed-mid-turn");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-grok-monitor-mid-turn"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const monitorToolCallId = "call-monitor-job1";
+      const monitorStatuses: Array<string> = [];
+      const terminal = yield* Deferred.make<string>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) =>
+          Effect.gen(function* () {
+            if (
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === monitorToolCallId
+            ) {
+              monitorStatuses.push(event.turnItem.status);
+            }
+            if (event.type === "turn.terminal") {
+              yield* Deferred.succeed(terminal, event.status);
+            }
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime
+        .startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(promptStarted);
+      const update = (update: EffectAcpSchema.SessionUpdate) =>
+        sessionUpdateHandler!({ sessionId: "mock-session-1", update });
+      const ext = (method: string, update: Record<string, unknown>) =>
+        extNotifications.get(method)!({ sessionId: "mock-session-1", update });
+
+      // Frame order from Grok CLI 1.0.70; every monitor frame precedes the prompt response.
+      const taskId = "a9b6879f-acea-447f-8d25-e0d4bbb2f2a9";
+      const command = "while [ ! -f job1.done ]; do sleep 2; done; echo job1 finished";
+      const xAiMonitorMeta = {
+        "x.ai/tool": { version: 1, name: "monitor", kind: "monitor", label: "Monitor" },
+      };
+      yield* update({
+        sessionUpdate: "tool_call",
+        toolCallId: monitorToolCallId,
+        title: "monitor",
+        rawInput: { command, description: "Watch job1 done file" },
+        _meta: xAiMonitorMeta,
+      });
+      yield* update({
+        sessionUpdate: "tool_call_update",
+        toolCallId: monitorToolCallId,
+        kind: "other",
+        title: "Start monitor: Watch job1 done file",
+        rawInput: {
+          variant: "Monitor",
+          command,
+          description: "Watch job1 done file",
+          timeout_ms: 36000000,
+          persistent: false,
+        },
+        _meta: xAiMonitorMeta,
+      });
+      yield* ext("_x.ai/task_backgrounded", {
+        sessionUpdate: "task_backgrounded",
+        tool_call_id: monitorToolCallId,
+        task_id: taskId,
+        command,
+        monitor_description: "Watch job1 done file",
+        description: "Watch job1 done file",
+      });
+      yield* update({
+        sessionUpdate: "tool_call_update",
+        toolCallId: monitorToolCallId,
+        status: "completed",
+        rawOutput: { type: "Monitor", taskId, timeoutMs: 36000000, persistent: false },
+      });
+      yield* ext("_x.ai/task_completed", {
+        sessionUpdate: "task_completed",
+        task_snapshot: {
+          task_id: taskId,
+          command,
+          display_command: "[monitor] Watch job1 done file",
+          output: "job1 finished\n",
+        },
+      });
+      yield* update({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "ALL_JOBS_DONE" },
+      });
+      yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+
+      yield* Effect.raceFirst(Deferred.await(promptHeld), Deferred.await(terminal));
+      const settled = yield* Deferred.await(terminal).pipe(
+        Effect.timeoutOption("1 minute"),
+        Effect.forkScoped,
+      );
+      yield* TestClock.adjust("1 minute");
+      const terminalStatus = yield* Fiber.join(settled);
+      assert.equal(
+        monitorStatuses.at(-1),
+        "completed",
+        "a monitor whose task_completed arrived before the prompt settled must not stay running",
+      );
+      assert.deepEqual(
+        terminalStatus,
+        Option.some("completed"),
+        "the root turn must finalize after end_turn once its only monitor has completed",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("durably poisons start and resume when required hard teardown is unavailable", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
