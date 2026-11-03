@@ -8,7 +8,6 @@ import {
   endThreadContextDrag,
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
-import { appearanceFontStack } from "../appearanceFonts";
 import { selectLayoutThreadKeys } from "../layout/layoutModel";
 import { useLayoutStore } from "../layout/layoutStore";
 import {
@@ -19,6 +18,7 @@ import {
   openThreadToTheSide,
   withOpenThreadToTheSideItem,
 } from "../layout/layoutDrag";
+import { appearanceFontStack } from "../appearanceFonts";
 import { wasThreadSettledByUser } from "../layout/settledByUser";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
