@@ -35,6 +35,14 @@ type AgentStartHook = (
   },
   ctx: {
     model?: { api: string };
+    sessionManager?: {
+      buildSessionProjection: () => {
+        messages: ReadonlyArray<{
+          role: string;
+          content: ReadonlyArray<{ type: string; name?: string }>;
+        }>;
+      };
+    };
     ui: { notify: (message: string, severity: string) => void };
   },
 ) => Promise<{ systemPrompt: string } | undefined>;
@@ -47,6 +55,7 @@ export async function loadMcpBridge(
     readonly toolSearchDisabled?: boolean;
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
+    readonly gatewayTools?: string;
     readonly inputSchema?: Record<string, unknown>;
   } = {},
 ) {
@@ -92,6 +101,7 @@ export async function loadMcpBridge(
         T3_MCP_BEARER_TOKEN: "fixture-token",
         T3_PI_MCP_EXTENSION_PATH: "/fixture/pi-t3-extension.ts",
         T3_PI_RUNTIME_MODE: options.runtimeMode,
+        T3_PI_GATEWAY_TOOLS: options.gatewayTools,
       },
     },
     AbortSignal,
