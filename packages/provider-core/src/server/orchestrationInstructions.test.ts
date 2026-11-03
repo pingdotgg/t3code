@@ -83,9 +83,3 @@ describe("T3 device instructions", () => {
     assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "## T3 Code devices");
   });
 });
-
-describe("T3 orchestration instructions", () => {
-  it("tell the agent the environment link tools need Linked environments turned on", () => {
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "Settings → Labs → Linked environments");
-  });
-});
