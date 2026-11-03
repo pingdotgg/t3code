@@ -357,7 +357,12 @@ export function buildModelOptions(
     const hiddenModels = new Set(preferences?.hiddenModels ?? []);
     const order = new Map((preferences?.modelOrder ?? []).map((slug, index) => [slug, index]));
     const models = provider.models.filter(
-      (model) => includeHidden || !hiddenModels.has(model.slug),
+      (model) =>
+        includeHidden ||
+        !hiddenModels.has(model.slug) ||
+        (model.isCustom &&
+          fallbackModelSelection?.instanceId === provider.instanceId &&
+          fallbackModelSelection.model === model.slug),
     );
     if (order.size > 0)
       models.sort((a, b) => (order.get(a.slug) ?? Infinity) - (order.get(b.slug) ?? Infinity));
@@ -398,9 +403,12 @@ export function buildModelOptions(
     fallbackModelSelection &&
     (providerInstanceId === undefined ||
       fallbackModelSelection.instanceId === providerInstanceId) &&
-    !config?.settings?.providerModelPreferences?.[
+    (!config?.settings?.providerModelPreferences?.[
       fallbackModelSelection.instanceId
-    ]?.hiddenModels.includes(fallbackModelSelection.model)
+    ]?.hiddenModels.includes(fallbackModelSelection.model) ||
+      config?.providers
+        .find((provider) => provider.instanceId === fallbackModelSelection.instanceId)
+        ?.models.find((model) => model.slug === fallbackModelSelection.model)?.isCustom)
   ) {
     const key = `${fallbackModelSelection.instanceId}:${fallbackModelSelection.model}`;
     const existing = options.get(key);

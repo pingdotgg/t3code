@@ -129,10 +129,15 @@ function applyInstanceModelPreferences(
     readonly hiddenModels: ReadonlyArray<string>;
     readonly modelOrder: ReadonlyArray<string>;
   },
+  selectedModel?: string | null,
 ): AppModelOption[] {
   const hiddenModels = new Set(preferences.hiddenModels);
+  const selectedSlug = normalizeCustomModelSlug(selectedModel);
   return sortModelsForProviderInstance(
-    options.filter((option) => !hiddenModels.has(option.slug)),
+    options.filter(
+      (option) =>
+        !hiddenModels.has(option.slug) || (option.isCustom && option.slug === selectedSlug),
+    ),
     { modelOrder: preferences.modelOrder },
   );
 }
@@ -170,6 +175,7 @@ export function getAppModelOptionsForInstance(
     applyInstanceModelPreferences(
       getConfiguredAppModelOptionsForInstance(settings, entry),
       preferences,
+      selectedModel,
     ),
     entry.models,
     entry.driverKind,

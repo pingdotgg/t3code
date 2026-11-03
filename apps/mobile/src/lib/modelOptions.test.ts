@@ -717,7 +717,21 @@ describe("synchronized mobile model visibility", () => {
     { slug: "hidden", name: "Hidden", isCustom: false, capabilities: null },
     { slug: "first", name: "First", isCustom: false, capabilities: null },
     { slug: "second", name: "Second", isCustom: false, capabilities: null },
-    { slug: "custom", name: "Custom", isCustom: true, capabilities: null },
+    {
+      slug: "custom",
+      name: "Custom",
+      isCustom: true,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Effort",
+            type: "select",
+            options: [{ id: "high", label: "High" }],
+          },
+        ],
+      },
+    },
   ];
   const config = {
     settings: {
@@ -737,6 +751,7 @@ describe("synchronized mobile model visibility", () => {
       instanceId,
       continuation: { groupKey: instanceId },
       driver: "codex",
+      iconUrl: "https://example.com/provider.svg",
       enabled: true,
       installed: true,
       auth: { status: "authenticated" },
@@ -782,20 +797,28 @@ describe("synchronized mobile model visibility", () => {
     });
   });
 
-  it.each(["hidden", "custom", "missing"])("does not resurrect the hidden fallback %s", (model) => {
-    expect(
-      buildModelOptions(config, { instanceId: provider, model }, provider, null).map(
-        (option) => option.selection.model,
-      ),
-    ).toEqual(["second", "first"]);
-  });
+  it.each(["hidden", "custom", "missing"])(
+    "retains only configured custom fallback %s",
+    (model) => {
+      const options = buildModelOptions(config, { instanceId: provider, model }, provider, null);
+      expect(options.map((option) => option.selection.model)).toEqual(
+        model === "custom" ? ["second", "first", "custom"] : ["second", "first"],
+      );
+      if (model === "custom") {
+        expect(options.find((option) => option.selection.model === model)).toMatchObject({
+          label: "Custom",
+          isHidden: true,
+          providerIconUrl: "https://example.com/provider.svg",
+          capabilities: models[3]!.capabilities,
+        });
+      }
+    },
+  );
 
   // regression: #16816 sync model favorites and visibility across clients
   it("restores built-in and custom models when the server clears hidden models", () => {
     expect(
-      buildModelOptions(config, { instanceId: provider, model: "custom" }, provider, null).map(
-        (option) => option.selection.model,
-      ),
+      buildModelOptions(config, null, provider, null).map((option) => option.selection.model),
     ).not.toContain("custom");
     const cleared = { ...config, settings: { ...config.settings, providerModelPreferences: {} } };
     expect(

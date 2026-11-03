@@ -358,6 +358,13 @@ describe("instance-scoped model selection", () => {
         (option) => option.slug,
       ),
     ).not.toContain(hiddenModel);
+    expect(
+      getAppModelOptionsForInstance(
+        settings,
+        deriveProviderInstanceEntries(providers)[0]!,
+        ` ${hiddenModel} `,
+      ).some((option) => option.slug === hiddenModel),
+    ).toBe(hiddenModel === "openai/gpt-5.5");
 
     expect(
       resolveAppModelSelectionForInstance(
