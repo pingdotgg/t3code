@@ -53,12 +53,55 @@ const makeSignIn = Effect.gen(function* () {
   } satisfies SourceControlSignIn;
 });
 
+const starredPath = (repository: string) => {
+  const segments = repository.split("/");
+  // "." and ".." survive encoding and would normalize the URL out of user/starred.
+  return segments.length === 2 && segments.every((segment) => !["", ".", ".."].includes(segment))
+    ? `user/starred/${segments.map(encodeURIComponent).join("/")}`
+    : undefined;
+};
+
+// Only 204 means starred. Tokens without star access, a missing login, and 404 all read as false.
+export const makeIsRepositoryStarred = Effect.gen(function* () {
+  const api = yield* GitHubRest.GitHubRest;
+  return Effect.fn("GitHubDriver.isRepositoryStarred")(
+    function* (host: string, repository: string) {
+      const path = starredPath(repository);
+      if (path === undefined) return false;
+      const response = yield* api.rest({
+        host,
+        operation: "isRepositoryStarred",
+        path,
+        allowReserve: false,
+      });
+      return response.status === 204;
+    },
+    Effect.orElseSucceed(() => false),
+  );
+});
+
+// False on any failure, such as a token or app sign-in without permission to star.
+export const makeStarRepository = Effect.gen(function* () {
+  const api = yield* GitHubRest.GitHubRest;
+  return Effect.fn("GitHubDriver.starRepository")(
+    function* (host: string, repository: string) {
+      const path = starredPath(repository);
+      if (path === undefined) return false;
+      const response = yield* api.rest({ host, operation: "starRepository", method: "PUT", path });
+      return response.status === 204;
+    },
+    Effect.orElseSucceed(() => false),
+  );
+});
+
 const makeInstance = Effect.all({
   sourceControl: GitHubSourceControlProvider.make,
   discovery: GitHubSourceControlProvider.makeDiscovery,
   pullRequests: GitHubPullRequestProvider.make,
   fetchMedia: GitHubMediaFetch.make,
   signIn: makeSignIn,
+  isRepositoryStarred: makeIsRepositoryStarred,
+  starRepository: makeStarRepository,
 });
 
 export const driver = defineSourceControlDriver({
