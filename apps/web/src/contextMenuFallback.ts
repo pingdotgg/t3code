@@ -555,7 +555,7 @@ export function showContextMenuFallback<T extends string>(
 
         if (item.shortcut && !hasChildren) {
           const shortcut = document.createElement("span");
-          shortcut.className = "ms-auto shrink-0 ps-4 font-sans text-caption text-dim-foreground";
+          shortcut.className = "ms-auto shrink-0 font-sans text-meta text-dim-foreground";
           shortcut.textContent = item.shortcut;
           button.appendChild(shortcut);
         }
