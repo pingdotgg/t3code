@@ -283,6 +283,25 @@ layer("OrchestrationEventStore", (it) => {
         { prompt: event.payload.prompt, prompt_sequence: null },
         { prompt: "", prompt_sequence: appended[0]!.sequence },
       ]);
+      assert.deepEqual(yield* store.readAgentEventsById([]), []);
+      const byIds = yield* store.readAgentEventsById([
+        ...Array.from({ length: 510 }, (_, index) => EventId.make(`absent-live-event:${index}`)),
+        events[1]!.id,
+        events[0]!.id,
+        events[0]!.id,
+      ]);
+      assert.deepEqual(
+        new Map(byIds.map((row) => [row.event.id, row.event])),
+        new Map(events.map((event) => [event.id, event])),
+      );
+      yield* sql`UPDATE orchestration_events SET application_event_version = 1
+        WHERE event_id = ${events[0]!.id}`;
+      assert.deepEqual(yield* store.readAgentEventsById([events[0]!.id]), []);
+      yield* sql`UPDATE orchestration_events SET application_event_version = 2,
+        aggregate_kind = 'project' WHERE event_id = ${events[0]!.id}`;
+      assert.deepEqual(yield* store.readAgentEventsById([events[0]!.id]), []);
+      yield* sql`UPDATE orchestration_events SET aggregate_kind = 'thread'
+        WHERE event_id = ${events[0]!.id}`;
       const replayed = yield* store.readAgentEvents({ threadId }).pipe(Stream.runCollect);
       assert.deepEqual(replayed, appended);
       const applicationEvents = yield* store

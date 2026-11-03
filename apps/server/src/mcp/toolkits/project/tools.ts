@@ -1,5 +1,6 @@
 import { McpAttachmentInput } from "../attachment/input.ts";
 import {
+  ClaudeSessionAttachmentResult,
   NonNegativeInt,
   ModelSelection,
   TrimmedNonEmptyString,
@@ -14,6 +15,7 @@ import {
   ProjectCreatePayload,
   ProjectUpdatePayload,
   ProjectId,
+  ProviderInstanceId,
   OrchestratorMcpClientRequestId,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
@@ -178,7 +180,24 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const ThreadAttachTool = Tool.make("t3_thread_attach", {
+  ...shared,
+  description:
+    "Import a local Claude conversation and its subagent history into normal T3 controls. Attach prepares the transfer using an exact session name or ID; handoff completes it after the source CLI exits. A blocked result leaves the source running. Only with explicit user authorization, set interrupt to stop the source and its agents and resume work through T3.",
+  parameters: Schema.Struct({
+    action: Schema.Literals(["attach", "handoff"]),
+    projectId: Schema.optional(ProjectId),
+    session: Schema.optional(TrimmedNonEmptyString),
+    providerInstanceId: Schema.optional(ProviderInstanceId),
+    threadId: Schema.optional(ThreadId),
+    interrupt: Schema.optional(Schema.Boolean),
+  }),
+  success: ClaudeSessionAttachmentResult,
+  dependencies: shared.dependencies,
+}).annotate(Tool.Destructive, true);
+
 export const ProjectToolkit = Toolkit.make(
+  ThreadAttachTool,
   ThreadLaunchTool,
   ProjectListTool,
   ProjectReadTool,

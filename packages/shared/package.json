@@ -522,6 +522,10 @@
     "./cloneUrl": {
       "types": "./src/cloneUrl.ts",
       "import": "./src/cloneUrl.ts"
+    },
+    "./posixProcessTree": {
+      "types": "./src/posixProcessTree.ts",
+      "import": "./src/posixProcessTree.ts"
     }
   },
   "scripts": {

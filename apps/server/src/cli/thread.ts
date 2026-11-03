@@ -1,4 +1,5 @@
 import {
+  ClaudeSessionAttachmentResult,
   OrchestratorMcpFailure,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
@@ -24,7 +25,7 @@ import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
-import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
+import { Argument, Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
@@ -696,7 +697,7 @@ const threadSendCommand = Command.make("send", {
             { threadId, message, mode: "queue" },
             OrchestratorMcpThreadSendResult,
           );
-          if (flags.wait) {
+          if (flags.wait && sent.runId !== null) {
             return yield* finishRun(tools, { threadId, runId: sent.runId, json: flags.json });
           }
           yield* flags.json
@@ -762,9 +763,161 @@ const threadShowCommand = Command.make("show", {
   ),
 );
 
+type HandoffFlags = { readonly wait: boolean; readonly interrupt: boolean; readonly json: boolean };
+const handoffFlags = {
+  wait: Flag.Boolean("wait").pipe(
+    Flag.withDescription("Wait for the source CLI and its agents to exit."),
+    Flag.withDefault(false),
+  ),
+  interrupt: Flag.Boolean("interrupt").pipe(
+    Flag.withDescription("Stop the source CLI and its agents, then resume work in T3 (Linux)."),
+    Flag.withDefault(false),
+  ),
+};
+const validateHandoffFlags = (flags: HandoffFlags) =>
+  flags.wait && flags.interrupt
+    ? Effect.fail(new ThreadUsageError({ detail: "Choose --wait or --interrupt, not both." }))
+    : Effect.void;
+const runHandoff = Effect.fn("cli.thread.runHandoff")(function* (
+  tools: ThreadTools,
+  threadId: ThreadId,
+  flags: HandoffFlags,
+) {
+  yield* validateHandoffFlags(flags);
+  const choose = flags.interrupt
+    ? Effect.succeed("interrupt" as const)
+    : flags.wait
+      ? Effect.succeed("wait" as const)
+      : Effect.gen(function* () {
+          if (flags.json || !process.stdin.isTTY || !process.stdout.isTTY)
+            return yield* new ThreadUsageError({
+              detail:
+                "The source CLI is still running. Use --wait to wait for it and its agents to exit, or --interrupt to stop them and resume the conversation in T3.",
+            });
+          const interrupt = yield* Prompt.run(
+            Prompt.Confirm({
+              message:
+                "The source CLI is still running. Interrupt it and its agents, transfer the conversation, and resume work in T3? Choose No to wait for them to exit.",
+              initial: false,
+            }),
+          ).pipe(
+            Effect.mapError(
+              () =>
+                new ThreadUsageError({
+                  detail: "Handoff cancelled; the source was not interrupted.",
+                }),
+            ),
+          );
+          return interrupt ? ("interrupt" as const) : ("wait" as const);
+        });
+  const result = yield* handoffThread(
+    tools,
+    threadId,
+    choose.pipe(
+      Effect.tap((policy) =>
+        flags.json
+          ? Effect.void
+          : Console.error(
+              policy === "wait"
+                ? "Waiting for the source CLI and its agents to exit. Ctrl+C cancels this wait."
+                : "Stopping the source and its agents, then importing history and resuming in T3.",
+            ),
+      ),
+    ),
+  );
+  return result;
+});
+
+const threadAttachCommand = Command.make("attach", {
+  ...projectLocationFlags,
+  ...handoffFlags,
+  session: Argument.String("session"),
+  provider: Flag.String("provider").pipe(Flag.optional),
+  project: Flag.String("project").pipe(Flag.withDefault(".")),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "Move a local Claude conversation into T3, waiting or explicitly interrupting its source CLI.",
+  ),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.thread.attach")(function* (tools) {
+        yield* validateHandoffFlags(flags);
+        const project = yield* resolveProject(tools, flags.project);
+        const attached = yield* tools.call(
+          "t3_thread_attach",
+          {
+            action: "attach",
+            projectId: project.id,
+            session: flags.session,
+            ...Option.match(flags.provider, {
+              onNone: () => ({}),
+              onSome: (providerInstanceId) => ({ providerInstanceId }),
+            }),
+          },
+          ClaudeSessionAttachmentResult,
+        );
+        const result = yield* runHandoff(tools, attached.threadId, flags);
+        yield* flags.json
+          ? printJson(result)
+          : Console.log(`Handoff complete. Continue in ${result.link ?? result.threadId}.`);
+      }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+export const handoffThread = Effect.fn("cli.thread.handoffThread")(function* <R>(
+  tools: ThreadTools,
+  threadId: ThreadId,
+  choose: Effect.Effect<"wait" | "interrupt", ThreadUsageError, R>,
+  wait = Effect.sleep("1 second"),
+) {
+  let policy: "wait" | "interrupt" | undefined;
+  while (true) {
+    const result = yield* tools.call(
+      "t3_thread_attach",
+      { action: "handoff", threadId, ...(policy === "interrupt" ? { interrupt: true } : {}) },
+      ClaudeSessionAttachmentResult,
+    );
+    if (!result.blocked) return result;
+    if (policy === "interrupt") {
+      return yield* new ThreadUsageError({
+        detail: "The source did not stop; handoff was not completed.",
+      });
+    }
+    policy ??= yield* choose;
+    if (policy === "wait") yield* wait;
+  }
+});
+
+const threadHandoffCommand = Command.make("handoff", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  json: jsonFlag,
+  ...handoffFlags,
+}).pipe(
+  Command.withDescription(
+    "Continue an attached Claude conversation through T3 after Claude and its agents have exited.",
+  ),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.thread.handoff")(function* (tools) {
+        const threadId = yield* decodeThreadId(flags.thread);
+        const result = yield* runHandoff(tools, threadId, flags);
+        yield* flags.json
+          ? printJson(result)
+          : Console.log(`Handoff complete. Continue in ${result.link ?? result.threadId}.`);
+      }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+
 export const threadCommand = Command.make("thread").pipe(
   Command.withDescription("Start, message, and read threads on the running server."),
   Command.withSubcommands([
+    threadAttachCommand,
+    threadHandoffCommand,
     threadListCommand,
     threadStartCommand,
     threadSendCommand,

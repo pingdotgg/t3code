@@ -2,6 +2,7 @@ import {
   type ApplicationProjectEvent,
   type ApplicationStoredEvent,
   CommandId,
+  EventId,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
   ThreadId,
@@ -62,6 +63,9 @@ export interface EventStoreV2Shape {
     readonly eventType?: OrchestrationV2DomainEvent["type"];
     readonly limit?: number;
   }) => Stream.Stream<OrchestrationV2StoredEvent, EventStoreV2Error>;
+  readonly readByIds: (
+    ids: ReadonlyArray<EventId>,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventStoreV2Error>;
   readonly readByCommandId: (input: {
     readonly commandId: CommandId;
   }) => Stream.Stream<OrchestrationV2StoredEvent, EventStoreV2Error>;
@@ -126,6 +130,11 @@ const layerBase: Layer.Layer<EventStoreV2, never, OrchestrationEventStore.Orches
             );
         }),
         read,
+        readByIds: Effect.fn("EventStoreV2.readByIds")((ids) =>
+          applicationEvents
+            .readAgentEventsById(ids)
+            .pipe(Effect.mapError((cause) => new EventStoreReadEventsError({ cause }))),
+        ),
         readByCommandId: ({ commandId }) =>
           applicationEvents
             .readAgentEvents({ commandId })

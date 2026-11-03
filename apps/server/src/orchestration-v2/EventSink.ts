@@ -1,4 +1,5 @@
 import {
+  OrchestrationV2AppThread,
   CommandId,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
@@ -66,8 +67,15 @@ export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamErro
 export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStreamError]);
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
+const sameThread = Schema.toEquivalence(OrchestrationV2AppThread);
+
+const encodeEventIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+
 export interface EventSinkV2Shape {
   readonly write: (input: {
+    /** Idempotent ingestion of source records whose event IDs are deterministic. */
+    readonly expectedThread?: OrchestrationV2AppThread;
+    readonly skipExistingEventIds?: boolean;
     /** Return no events if another thread owns this native session at commit time. */
     readonly unlessNativeThreadOwned?: Pick<
       OrchestrationV2ProviderThread,
@@ -78,6 +86,8 @@ export interface EventSinkV2Shape {
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
   readonly writeWithEffects: (input: {
+    readonly expectedThread?: OrchestrationV2AppThread;
+    readonly skipExistingEventIds?: boolean;
     /**
      * Rebuilds each run.updated from the stored row with only its delegatedCompletion replaced.
      * The batch must not also change that run's lifecycle.
@@ -329,7 +339,9 @@ const layerBase: Layer.Layer<
         });
       });
 
-    const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
+    const normalizeEvents = Effect.fnUntraced(function* (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+    ) {
       const runOrdinals = new Map(
         events.flatMap((event) =>
           event.type === "run.created" || event.type === "run.updated"
@@ -337,7 +349,7 @@ const layerBase: Layer.Layer<
             : [],
         ),
       );
-      return Effect.forEach(
+      return yield* Effect.forEach(
         events,
         (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> =>
           event.type === "turn-item.updated"
@@ -350,7 +362,7 @@ const layerBase: Layer.Layer<
             : Effect.succeed(event),
         { concurrency: 1 },
       );
-    };
+    });
 
     const applyStoredEvents =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
@@ -418,6 +430,10 @@ const layerBase: Layer.Layer<
 
       const { committed } = yield* commitThenPublish(
         Effect.gen(function* () {
+          if (input.expectedThread) {
+            const current = yield* projectionStore.getThread(input.expectedThread.id);
+            if (!sameThread(current, input.expectedThread)) return { committed: [], outcomes: [] };
+          }
           // Check ownership in the same transaction that claims the native session.
           const imported = input.unlessNativeThreadOwned;
           if (imported?.nativeThreadRef != null) {
@@ -434,9 +450,22 @@ const layerBase: Layer.Layer<
           }
           // Checkpoint capture can finish after a cohort writer reads its parent run.
           // Merge in this transaction so the event log and projection keep that completion.
+          let incoming = input.events;
+          if (input.skipExistingEventIds && incoming.length > 0) {
+            const ids = encodeEventIds(incoming.map((event) => event.id));
+            const rows = yield* sql<{
+              event_id: string;
+            }>`SELECT event_id FROM orchestration_events WHERE event_id IN (SELECT value FROM json_each(${ids}))`;
+            const seen = new Set(rows.map((row) => row.event_id));
+            incoming = incoming.filter((event) => {
+              if (seen.has(event.id)) return false;
+              seen.add(event.id);
+              return true;
+            });
+          }
           const events = input.updateDelegatedCompletionOnly
-            ? yield* updateDelegatedCompletionOnly(input.events, () => true)
-            : input.events;
+            ? yield* updateDelegatedCompletionOnly(incoming, () => true)
+            : incoming;
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true
               ? yield* guardUserInputCancellations(events)

@@ -1,4 +1,4 @@
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, MessageId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -27,7 +27,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { continueRestartedRun } from "./RestartContinuation.ts";
+import { CONTINUE_PROMPT, continueRestartedRun } from "./RestartContinuation.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -98,6 +98,38 @@ export const layerExecutor: Layer.Layer<
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
+          case "thread.handoff-continue":
+            return Effect.gen(function* () {
+              const { thread } = yield* threads.getThreadRecords(effect.threadId, []);
+              if (thread.deletedAt !== null || thread.archivedAt !== null) return;
+              yield* threads.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`${effect.id}:continue`),
+                messageId: MessageId.make(`${effect.id}:continue`),
+                threadId: effect.threadId,
+                text: CONTINUE_PROMPT,
+                notification: {
+                  source: { kind: "system" },
+                  outcome: "updated",
+                  summary: "T3 Code resumed work after session handoff",
+                  detail: CONTINUE_PROMPT,
+                },
+                attachments: [],
+                modelSelection: thread.modelSelection,
+                dispatchMode: { type: "queue_after_active" },
+                createdBy: "agent",
+                creationSource: "server",
+              });
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
             return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(

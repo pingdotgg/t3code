@@ -119,3 +119,54 @@ result that always includes the thread id.
 Approved agents appear under **Settings → Sharing & access** like other clients.
 Revoke one there to cut off its access immediately. A sign-in lasts 30 days;
 after that the agent asks you to approve it again.
+
+## Bring a Claude CLI conversation into T3
+
+Run this on the machine hosting Claude and T3, using the session's exact live name
+or ID and a project already registered with T3:
+
+```sh
+t3 thread attach repair-session --project /path/to/project
+```
+
+The command imports the conversation and moves it into T3's normal Claude controls.
+If the source CLI is running, it asks whether to wait for the CLI and its agents
+to exit or interrupt them. Waiting is the default. An idle CLI still owns its
+conversation, so it must exit before transfer. Ctrl+C cancels the wait without
+stopping the source.
+
+For scripts, choose a policy explicitly:
+
+```sh
+t3 thread attach repair-session --project /path/to/project --wait
+t3 thread attach repair-session --project /path/to/project --interrupt
+```
+
+Interruption on Linux verifies the source process identity, stops its process tree,
+and imports the final complete history. T3 then sends its normal interrupted-turn
+continuation message: resume work, checking whether previous actions completed or
+are still running before repeating them. This continuation survives a T3 restart
+through the existing durable effect queue, with bounded retries and a deduplicated
+message command. Automatic interruption requires Linux; on other
+platforms, exit the source CLI and use `--wait`.
+
+The same T3 thread and native Claude conversation are retained. Once handoff
+completes, messages, streaming, approvals and controls use T3's normal integration.
+Previous subagents remain as history; their processes are not restored. The resumed
+agent must inspect and restart unfinished work, and newly spawned agents use T3's
+normal integration. If the source exited normally, your next message resumes it.
+
+To finish a transfer for a thread already attached to T3:
+
+```sh
+t3 thread handoff THREAD_ID
+```
+
+This command offers the same choice and accepts `--wait` or `--interrupt`.
+While waiting, Claude continues working. History is imported after the source exits;
+there is no live-follow mode. Cancelling the command leaves the source untouched.
+
+Handoff currently supports attached Claude sessions. Use `--provider INSTANCE_ID`
+on `attach` to select another configured Claude account; the default is `claudeAgent`.
+The original provider account must still be enabled when transferring. T3's managed
+permission ceiling applies after handoff.

@@ -1,3 +1,5 @@
+import * as ClaudeAttachment from "../project/ClaudeSessionAttachment.ts";
+import * as ClaudeAttachmentSource from "../project/ClaudeAttachmentSource.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -317,6 +319,8 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
   Layer.provide(
     Layer.mergeAll(
+      layerStores,
+      layerEventSink,
       layerRunFinalizationServiceProvided,
       layerCheckpointRollbackServiceProvided,
       layerProviderSessionManagerProvided,
@@ -389,6 +393,18 @@ export const layerProduction = Layer.mergeAll(
   ),
   layerProviderContinuationWorkerProvided,
   layerAgentSessionImporterProvided,
+  ClaudeAttachment.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ProviderSessionRuntime.layer,
+        ClaudeAttachmentSource.layer,
+        layerEventStoreProvided,
+        layerProjectService,
+        layerEventSink,
+        ProjectionStore.layer,
+      ),
+    ),
+  ),
   EffectOutbox.layerPruneWorker.pipe(Layer.provide(EffectOutbox.layer)),
 ).pipe(
   Layer.provide(ResourceCleanupService.layer.pipe(Layer.provide(layerScheduledTaskProvided))),

@@ -1,3 +1,4 @@
+import * as ClaudeAttachment from "../../../project/ClaudeSessionAttachment.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
@@ -662,5 +663,48 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     expect(discarded).toEqual([harness.projectId]);
+  }),
+);
+
+it.effect("captures the attachment service and links only after handoff", () =>
+  Effect.gen(function* () {
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      launched: [],
+    });
+    const threadId = ThreadId.make("attached-thread");
+    const requests: string[] = [];
+    const attachment = Layer.mock(ClaudeAttachment.ClaudeSessionAttachment)({
+      change: (input) =>
+        Effect.sync(() => {
+          requests.push(input.action);
+          return { threadId, attached: input.action === "attach", readOnly: false };
+        }),
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+          Layer.provide(Layer.merge(dependencies, attachment)),
+        ),
+      ),
+    );
+    const result = yield* toolkit
+      .handle("t3_thread_attach", { action: "attach", projectId, session: "repair-session" })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(result.at(-1)?.result).not.toHaveProperty("link");
+    const completed = yield* toolkit
+      .handle("t3_thread_attach", { action: "handoff", threadId })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(completed.at(-1)?.result).toMatchObject({
+      threadId,
+      attached: false,
+      link: expect.any(String),
+    });
+    expect(requests).toEqual(["attach", "handoff"]);
+    expect(result.at(-1)?.result).toMatchObject({
+      threadId,
+      attached: true,
+      readOnly: false,
+    });
   }),
 );

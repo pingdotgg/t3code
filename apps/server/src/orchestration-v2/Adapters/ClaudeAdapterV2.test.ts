@@ -2719,6 +2719,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
     providerTurnOrdinal: number,
     nativeThreadHasTurns?: boolean,
     importedNativeThreadId?: string,
+    exactTranscript = false,
   ) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2734,7 +2735,11 @@ describe("ClaudeAdapterV2 native session identity", () => {
             path.join(attachmentsDir, "projects", "-other", `${importedNativeThreadId}.jsonl`),
             { recursive: true },
           );
-          const projectDir = path.join(attachmentsDir, "projects", "-workspace");
+          const projectDir = path.join(
+            attachmentsDir,
+            "projects",
+            exactTranscript ? "-deleted-checkout" : "-workspace",
+          );
           yield* fileSystem.makeDirectory(projectDir, { recursive: true });
           yield* fileSystem.writeFileString(
             path.join(projectDir, `${importedNativeThreadId}.jsonl`),
@@ -2818,7 +2823,16 @@ describe("ClaudeAdapterV2 native session identity", () => {
                   handoffIds: [],
                   forkedFrom: null,
                   contextUsage: null,
-                  nativeMetadata: null,
+                  nativeMetadata: exactTranscript
+                    ? {
+                        claudeResumeTranscriptPath: path.join(
+                          attachmentsDir,
+                          "projects",
+                          "-deleted-checkout",
+                          `${importedNativeThreadId}.jsonl`,
+                        ),
+                      }
+                    : null,
                   goal: null,
                   createdAt: now,
                   updatedAt: now,
@@ -2870,13 +2884,25 @@ describe("ClaudeAdapterV2 native session identity", () => {
     }),
   );
 
-  it.effect("resumes an imported native session on its first T3 turn", () =>
-    Effect.gen(function* () {
-      const openedQueries = yield* openTurnWithOrdinal(1, false, "imported-native-session");
-      assert.equal(openedQueries.length, 1);
-      assert.equal(openedQueries[0]?.options.resume, "imported-native-session");
-      assert.equal(openedQueries[0]?.options.sessionId, undefined);
-    }),
+  it.effect.each([false, true])(
+    "resumes an imported native session on its first T3 turn (exact transcript: %s)",
+    (exactTranscript) =>
+      Effect.gen(function* () {
+        const openedQueries = yield* openTurnWithOrdinal(
+          1,
+          false,
+          "imported-native-session",
+          exactTranscript,
+        );
+        assert.equal(openedQueries.length, 1);
+        if (exactTranscript)
+          assert.match(
+            openedQueries[0]?.options.resume ?? "",
+            /-deleted-checkout[/\\]imported-native-session.jsonl$/,
+          );
+        else assert.equal(openedQueries[0]?.options.resume, "imported-native-session");
+        assert.equal(openedQueries[0]?.options.sessionId, undefined);
+      }),
   );
 });
 

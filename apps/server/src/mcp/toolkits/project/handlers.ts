@@ -1,4 +1,6 @@
+import * as ClaudeAttachment from "../../../project/ClaudeSessionAttachment.ts";
 import {
+  ClaudeSessionAttachmentInput,
   CommandId,
   MessageId,
   ThreadId,
@@ -81,7 +83,36 @@ const access = Effect.gen(function* () {
   yield* readCaller();
   return yield* Project.ProjectService;
 });
+const decodeAttachmentInput = Schema.decodeUnknownEffect(ClaudeSessionAttachmentInput);
+
 export const layer = McpToolAccess.toLayer(ProjectToolkit, {
+  t3_thread_attach: McpToolAccess.writesEnvironment((input) =>
+    Effect.gen(function* () {
+      const service = yield* Effect.serviceOption(ClaudeAttachment.ClaudeSessionAttachment);
+      if (Option.isNone(service)) return yield* unavailable();
+      const decoded = yield* decodeAttachmentInput(input).pipe(
+        Effect.mapError(
+          () =>
+            new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "Attach requires projectId and session; handoff requires threadId.",
+            }),
+        ),
+      );
+      const result = yield* service.value
+        .change(decoded)
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+          ),
+        );
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      return result.attached
+        ? result
+        : { ...result, link: McpInvocationContext.threadLinkFor(scope, result.threadId) };
+    }),
+  ),
   t3_thread_launch: McpToolAccess.startsThreads(
     (input) => input,
     (input, { runtimeMode, interactionMode, linkOrigin }) =>
