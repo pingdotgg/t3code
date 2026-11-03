@@ -153,12 +153,21 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
               ? `${input.subdirectory}/${read.relativePath}`
               : read.relativePath,
             contents: read.contents,
+            ...(read.mode !== undefined ? { mode: read.mode } : {}),
           },
         },
         { label: "Copy file to machine", reportFailure: false },
       );
       if (written._tag === "Failure")
         failed.push(`${read.relativePath}: ${failureMessage(written)}`);
+      else if (
+        read.mode !== undefined &&
+        (read.mode & 0o111) !== 0 &&
+        written.value.mode !== read.mode
+      )
+        failed.push(
+          `${read.relativePath}: The destination could not preserve executable permissions.`,
+        );
     }
     setFileCopy(
       copyKey,

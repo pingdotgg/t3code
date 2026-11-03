@@ -184,13 +184,25 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "src/index.ts", "export const answer = 42;\n");
+        const supportsMode = (yield* HostProcess.Platform) !== "win32";
+        if (supportsMode) {
+          yield* Effect.promise(() => NodeFSP.chmod(`${cwd}/src/index.ts`, 0o755));
+        }
 
         const result = yield* workspaceFileSystem.readFile({
           cwd,
           relativePath: "src/index.ts",
+          includeMode: true,
         });
 
         expect(result).toEqual({
+          relativePath: "src/index.ts",
+          contents: "export const answer = 42;\n",
+          byteLength: 26,
+          truncated: false,
+          ...(supportsMode ? { mode: 0o755 } : {}),
+        });
+        expect(yield* workspaceFileSystem.readFile({ cwd, relativePath: "src/index.ts" })).toEqual({
           relativePath: "src/index.ts",
           contents: "export const answer = 42;\n",
           byteLength: 26,
@@ -521,11 +533,21 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           false,
         );
 
-        yield* workspaceFileSystem.writeFile({
+        const supportsMode = (yield* HostProcess.Platform) !== "win32";
+        const written = yield* workspaceFileSystem.writeFile({
           cwd,
           relativePath: "plans/effect-rpc.md",
           contents: "# Plan\n",
+          mode: 0o755,
         });
+        expect(written).toEqual({
+          relativePath: "plans/effect-rpc.md",
+          ...(supportsMode ? { mode: 0o755 } : {}),
+        });
+        if (supportsMode) {
+          const stat = yield* Effect.promise(() => NodeFSP.stat(`${cwd}/plans/effect-rpc.md`));
+          expect(stat.mode & 0o777).toBe(0o755);
+        }
 
         const afterWrite = yield* workspaceEntries.list({ cwd });
         expect(afterWrite.entries).toEqual(
@@ -542,6 +564,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "src/main.ts", "export {};\n");
+        const supportsMode = (yield* HostProcess.Platform) !== "win32";
+        if (supportsMode) {
+          yield* Effect.promise(() => NodeFSP.chmod(path.join(cwd, "src/main.ts"), 0o755));
+        }
 
         yield* workspaceFileSystem.writeFile({
           cwd,
@@ -552,6 +578,20 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(yield* fileSystem.readFileString(path.join(cwd, "src/main.ts"))).toBe(
           "export const edited = true;\n",
         );
+        if (supportsMode) {
+          const stat = yield* Effect.promise(() => NodeFSP.stat(path.join(cwd, "src/main.ts")));
+          expect(stat.mode & 0o777).toBe(0o755);
+        }
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "src/main.ts",
+          contents: "export const edited = true;\n",
+          mode: 0o700,
+        });
+        if (supportsMode) {
+          const stat = yield* Effect.promise(() => NodeFSP.stat(path.join(cwd, "src/main.ts")));
+          expect(stat.mode & 0o777).toBe(0o700);
+        }
       }).pipe(
         Effect.provide(
           Layer.fresh(WorkspaceFileSystem.layer).pipe(
