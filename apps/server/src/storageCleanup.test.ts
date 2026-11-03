@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
@@ -580,7 +581,7 @@ const pausedMeasurementFixture = (storageCleanup?: StorageCleanupSettings) =>
   });
 const cleanupTestLayer = GitVcsDriver.layer.pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "storage-cleanup-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const runCleanupTest = <A, E>(
   effect: Effect.Effect<
@@ -2098,6 +2099,36 @@ describe("storage cleanup reports and local file policies", () => {
           expect(report.entries[0]?.reason).toContain(
             file === ".env" ? "ignored files (.env)" : "uncommitted changes (1 file)",
           );
+      }),
+    ),
+  );
+  it.live.each([
+    ["unchanged", "removed", "No commits beyond the project branch"],
+    ["unmerged", "kept", "Has commits beyond the project branch"],
+    ["detached", "kept", "Project branch is unavailable"],
+    ["merged-only", "kept", "No remote is configured for merged-worktree cleanup"],
+  ] as const)("cleans archived local-only worktrees: %s", ([state, outcome, reason]) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command, setThreads } = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeUnchanged: state !== "merged-only",
+          worktreeOnMerge: true,
+        });
+        yield* command(repo, ["branch", "-m", "main", "trunk"]);
+        setThreads([shell({ branch: "feature", worktreePath: worktree, archivedAt: at(-DAY_MS) })]);
+        if (state === "unmerged") {
+          yield* fs.writeFileString(`${worktree}/tracked.txt`, "unmerged work\n");
+          yield* command(worktree, ["commit", "-am", "unmerged work"]);
+        }
+        if (state === "detached") yield* command(repo, ["checkout", "--detach"]);
+
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({ outcome, reason });
+        expect(yield* fs.exists(worktree)).toBe(outcome === "kept");
+        expect(
+          (yield* command(repo, ["show-ref", "--verify", "refs/heads/feature"])).stdout,
+        ).not.toBe("");
       }),
     ),
   );

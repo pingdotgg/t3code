@@ -21,7 +21,7 @@ const spawner = ChildProcessSpawner.make((command) =>
   Effect.gen(function* () {
     if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
     expect(command.args).toContain("-G");
-    const target = command.args.at(-1);
+    const target = command.args.map(String).at(-1);
     const configs: Record<string, string> = {
       "mac-mini": "hostname 100.65.180.100\nport 22\n",
       remote: "hostname 192.0.2.1\nport 22\n",
