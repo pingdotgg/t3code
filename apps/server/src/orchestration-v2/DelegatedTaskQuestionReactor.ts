@@ -126,13 +126,16 @@ const make = Effect.gen(function* () {
         return;
       }
       const parent = yield* projections.getThreadRecords(parentThreadId, ["subagents", "runs"]);
-      const { runs } = yield* projections.getThreadRecords(child.id, ["runs"]);
+      const childRecords = yield* projections.getThreadRecords(child.id, ["runs", "messages"], {
+        messageRoles: ["user"],
+      });
+      const { runs } = childRecords;
       const run =
         runs.find((run) => run.id === event.runId) ??
         runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
       const taskId =
         run !== undefined && child.forkedFrom?.type === "node"
-          ? delegatedRunOwners(runs, child.forkedFrom.nodeId).get(run.id)
+          ? delegatedRunOwners(childRecords, child.forkedFrom.nodeId).get(run.id)
           : run?.delegatedTaskId;
       const task = parent.subagents.find(
         (candidate) => candidate.origin === "app_owned" && candidate.id === taskId,

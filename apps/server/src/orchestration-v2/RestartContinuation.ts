@@ -247,11 +247,15 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       });
       return;
     }
+    const { lineage, forkedFrom } = projection.thread;
     const sourceRecords = yield* threads.getThreadRecords(
       input.threadId,
       ["messages", "turnItems"],
       {
-        messageIds: [source.userMessageId],
+        // A delegated child's wakes name the run that caused them, which decides their task.
+        ...(forkedFrom?.type === "node"
+          ? { messageRoles: ["user"] }
+          : { messageIds: [source.userMessageId] }),
         turnItemRunIds: [source.id],
         turnItemTypes: ["run_interrupt_request"],
       },
@@ -263,10 +267,12 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     )
       return;
     // A parent's Stop reaches its open delegated tasks through an effect a restart can cut short.
-    const { lineage, forkedFrom } = projection.thread;
     const taskId =
       forkedFrom?.type === "node"
-        ? delegatedRunOwners(projection.runs, forkedFrom.nodeId).get(source.id)
+        ? delegatedRunOwners(
+            { runs: projection.runs, messages: sourceRecords.messages },
+            forkedFrom.nodeId,
+          ).get(source.id)
         : source.delegatedTaskId;
     if (
       lineage.relationshipToParent === "subagent" &&

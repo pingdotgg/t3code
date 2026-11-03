@@ -2325,12 +2325,14 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
     );
 
     it.effect.each([
-      { scenario: "while the child's own subagent still runs", queuedFollowup: false },
+      { scenario: "while the child's own subagent still runs", later: "none" },
       // The completion wake runs ahead of a later queued follow-up, yet belongs to the first.
-      { scenario: "for its completion wake ahead of a queued follow-up", queuedFollowup: true },
-    ])("holds a follow-up open $scenario", ({ queuedFollowup }) =>
+      { scenario: "for its completion wake ahead of a queued follow-up", later: "queued" },
+      // A later follow-up starts and finishes first; the wake still answers the one that caused it.
+      { scenario: "for its completion wake after a later follow-up finished", later: "finished" },
+    ] as const)("holds a follow-up open $scenario", ({ later }) =>
       Effect.gen(function* () {
-        const key = queuedFollowup ? "queued-followup-grandchild" : "followup-grandchild";
+        const key = `${later}-followup-grandchild`;
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const eventSink = yield* EventSink.EventSinkV2;
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
@@ -2404,7 +2406,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         )).runs.find((row) => row.userMessageId === followupMessageId)!;
         assert.isDefined(followupRun.delegatedTaskId);
         const laterMessageId = MessageId.make(`message:${key}-later`);
-        if (queuedFollowup) {
+        if (later !== "none") {
           yield* orchestrator.dispatch({
             type: "message.dispatch",
             createdBy: "agent",
@@ -2532,12 +2534,38 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               threadId: child.childThreadId,
               runId: followupRun.id,
               occurredAt: now,
-              payload: queuedFollowup
-                ? { ...followupRun, status: "running", startedAt: now }
-                : { ...followupRun, status: "completed", startedAt: now, completedAt: now },
+              payload:
+                later === "queued"
+                  ? { ...followupRun, status: "running", startedAt: now }
+                  : { ...followupRun, status: "completed", startedAt: now, completedAt: now },
             },
           ],
         });
+        if (later === "finished") {
+          yield* orchestrator.resumeQueuedRuns;
+          const laterRun = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+            (row) => row.userMessageId === laterMessageId,
+          )!;
+          yield* eventSink.write({
+            commandId: reconcileCommandId(`${key}-later-ended`),
+            events: [
+              assistantMessage(laterRun.id, "B_DONE"),
+              {
+                id: EventId.make(`event:${key}-later-ended`),
+                type: "run.updated",
+                threadId: child.childThreadId,
+                runId: laterRun.id,
+                occurredAt: now,
+                payload: {
+                  ...laterRun,
+                  status: "completed",
+                  startedAt: DateTime.add(now, { seconds: 1 }),
+                  completedAt: DateTime.add(now, { seconds: 1 }),
+                },
+              },
+            ],
+          });
+        }
         yield* orchestrator.recoverDelegatedTasks;
         const waiting = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
           (task) => task.id === followupRun.delegatedTaskId,
@@ -2589,7 +2617,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         const wakeRun = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
           (run) => run.userMessageId === delivery.messageId,
         )!;
-        if (queuedFollowup) {
+        if (later === "queued") {
           yield* eventSink.write({
             commandId: reconcileCommandId(`${key}-followup-completed`),
             events: [
@@ -2625,7 +2653,12 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               threadId: child.childThreadId,
               runId: wakeRun.id,
               occurredAt: now,
-              payload: { ...wakeRun, status: "completed", startedAt: now, completedAt: now },
+              payload: {
+                ...wakeRun,
+                status: "completed",
+                startedAt: DateTime.add(now, { seconds: 2 }),
+                completedAt: DateTime.add(now, { seconds: 2 }),
+              },
             },
           ],
         });
@@ -2637,20 +2670,35 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         )!;
         assert.equal(followup.status, "completed");
         assert.equal(followup.result, "CHILD_DONE");
+        const resolved = later === "finished" ? 3 : 2;
         assert.equal(
           finished.subagents.filter(
             (task) => task.childThreadId === child.childThreadId && task.result !== null,
           ).length,
-          2,
+          resolved,
         );
+        const transfers = finished.contextTransfers.filter(
+          (transfer) =>
+            transfer.type === "subagent_result" && transfer.sourceThreadId === child.childThreadId,
+        );
+        assert.equal(transfers.length, resolved);
         assert.equal(
-          finished.contextTransfers.filter(
-            (transfer) =>
-              transfer.type === "subagent_result" &&
-              transfer.sourceThreadId === child.childThreadId,
-          ).length,
-          2,
+          transfers.filter((transfer) => transfer.sourcePoint.runId === wakeRun.id).length,
+          1,
         );
+        if (later === "finished") {
+          const laterRun = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+            (row) => row.userMessageId === laterMessageId,
+          )!;
+          assert.equal(
+            finished.subagents.find((task) => task.id === laterRun.delegatedTaskId)?.result,
+            "B_DONE",
+          );
+          assert.equal(
+            transfers.filter((transfer) => transfer.sourcePoint.runId === laterRun.id).length,
+            1,
+          );
+        }
       }),
     );
 

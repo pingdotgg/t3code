@@ -8002,7 +8002,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // A wake or user turn joins the open task that owns it, which resolves with its result.
       const { runs } = yield* projectionStore.getThreadRecords(command.threadId, ["runs"]);
       const runOwner = delegatedRunOwners(
-        [...runs.filter((row) => row.id !== run.id), run],
+        { runs: [...runs.filter((row) => row.id !== run.id), run], messages: [message] },
         original.id,
       ).get(run.id);
       if (
@@ -12425,7 +12425,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       const taskRuns = delegatedTaskRuns(childControls.runs, options.task.id, options.owners);
       const taskRun = taskRuns.findLast((run) => run.delegatedTaskId === options.task.id);
-      // A task resolves once the work it owns settles, including subagents and background work its runs started.
+      // A task resolves with its own runs' result once no work in the child is still active.
       const { state, resultRun } = delegatedTaskProgress({ ...childControls, runs: taskRuns });
       const childRun =
         (taskRun !== undefined && delegatedTaskTerminalStatus(runOutcome(taskRun)) === null) ||
@@ -12723,7 +12723,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "subagents",
       "contextTransfers",
     ]);
-    const owners = delegatedRunOwners(childControls.runs, childControls.thread.forkedFrom.nodeId);
+    const owners = delegatedRunOwners(childControls, childControls.thread.forkedFrom.nodeId);
     for (const task of parent.subagents) {
       if (
         task.origin !== "app_owned" ||
@@ -13999,11 +13999,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const runs =
         taskId === undefined || forkedFrom?.type !== "node"
           ? child.runs
-          : delegatedTaskRuns(
-              child.runs,
-              taskId,
-              delegatedRunOwners(child.runs, forkedFrom.nodeId),
-            );
+          : delegatedTaskRuns(child.runs, taskId, delegatedRunOwners(child, forkedFrom.nodeId));
       const progress = delegatedTaskProgress({ ...child, runs });
       if (progress.state !== "result_available") return true;
       if (progress.resultRun === undefined) return false;

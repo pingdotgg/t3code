@@ -227,20 +227,37 @@ export function subagentResultForRun(
 type TaskRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "startedAt" | "delegatedTaskId">;
 
 /**
- * Each run's task: its bound task, or for an unbound run (a wake, a user turn) the task whose
- * bound run most recently started before it. A queued bound run owns nothing else yet.
+ * Each run's task: its bound task; for a delegated-completion wake, the task owning the run whose
+ * subagents woke it; otherwise (a user turn) the task whose bound run most recently started before
+ * it. A queued bound run owns nothing else yet.
  */
 export function delegatedRunOwners(
-  runs: ReadonlyArray<TaskRun>,
+  child: {
+    readonly runs: ReadonlyArray<TaskRun>;
+    readonly messages: ReadonlyArray<
+      Pick<OrchestrationV2ConversationMessage, "runId" | "delegatedCompletion">
+    >;
+  },
   originalTaskId: NodeId,
 ): ReadonlyMap<TaskRun["id"], NodeId> {
+  const wokenBy = new Map(
+    child.messages.flatMap((message) =>
+      message.runId === null || message.delegatedCompletion === undefined
+        ? []
+        : [[message.runId, message.delegatedCompletion.parentRunId] as const],
+    ),
+  );
   const start = (run: TaskRun) =>
     run.startedAt === null ? Number.POSITIVE_INFINITY : DateTime.toEpochMillis(run.startedAt);
   const owners = new Map<TaskRun["id"], NodeId>();
   let owner = originalTaskId;
-  for (const run of runs.toSorted((a, b) => start(a) - start(b) || a.ordinal - b.ordinal)) {
+  for (const run of child.runs.toSorted((a, b) => start(a) - start(b) || a.ordinal - b.ordinal)) {
     if (run.delegatedTaskId !== undefined && run.startedAt !== null) owner = run.delegatedTaskId;
-    owners.set(run.id, run.delegatedTaskId ?? owner);
+    const cause = wokenBy.get(run.id);
+    owners.set(
+      run.id,
+      run.delegatedTaskId ?? (cause === undefined ? undefined : owners.get(cause)) ?? owner,
+    );
   }
   return owners;
 }

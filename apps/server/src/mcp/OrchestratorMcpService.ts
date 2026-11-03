@@ -497,7 +497,10 @@ function endsTaskWait(result: OrchestratorMcpDelegateTaskResult): boolean {
 const isApprovalRequestKind = Schema.is(ProviderRequestKind);
 
 function pendingTaskApproval(
-  child: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "nodes" | "runtimeRequests">,
+  child: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "runs" | "messages" | "nodes" | "runtimeRequests"
+  >,
   taskId: NodeId,
   originalRun: OrchestrationV2Run | undefined,
 ) {
@@ -536,7 +539,7 @@ function pendingTaskApproval(
 
 /** Every task `directAppOwnedChildTasks` can return, so callers load only those. */
 function directChildTaskIds(
-  target: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+  target: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">,
   returnedRunIds: ReadonlySet<RunId | null>,
 ): ReadonlyArray<NodeId> {
   const ids = new Set<NodeId>();
@@ -550,17 +553,17 @@ function directChildTaskIds(
 }
 
 function runTaskIds(
-  child: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+  child: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">,
 ): ReadonlyMap<RunId, NodeId | undefined> {
   const { forkedFrom } = child.thread;
   return forkedFrom?.type === "node"
-    ? delegatedRunOwners(child.runs, forkedFrom.nodeId)
+    ? delegatedRunOwners(child, forkedFrom.nodeId)
     : new Map(child.runs.map((run) => [run.id, run.delegatedTaskId]));
 }
 
 function directAppOwnedChildTasks(
   parent: Pick<OrchestrationV2ThreadProjection, "thread" | "subagents">,
-  target: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+  target: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">,
   returnedRunIds: ReadonlySet<RunId | null>,
 ): ReadonlyArray<OrchestrationV2Subagent> {
   if (
@@ -583,7 +586,7 @@ function directAppOwnedChildTasks(
 
 function taskResultTransfer(
   parent: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers">,
-  child: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "contextTransfers">,
+  child: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages" | "contextTransfers">,
   task: OrchestrationV2Subagent,
 ) {
   const originalRun = delegatedTaskRun(child, task);
@@ -1270,17 +1273,17 @@ const make = Effect.gen(function* () {
       );
     }
     const input = { projectId: shell.projectId, threadId };
-    // Transfers are needed only to acknowledge a caller's child-task result.
+    // Transfers and a task child's wake messages are needed only to acknowledge a caller's child-task result.
     const records =
       parent === undefined
         ? threadManagement
             .getProjectThreadRecords(input, ["runs", "runtimeRequests"])
-            .pipe(Effect.map((target) => ({ ...target, contextTransfers: [] })))
-        : threadManagement.getProjectThreadRecords(input, [
-            "runs",
-            "runtimeRequests",
-            "contextTransfers",
-          ]);
+            .pipe(Effect.map((target) => ({ ...target, contextTransfers: [], messages: [] })))
+        : threadManagement.getProjectThreadRecords(
+            input,
+            ["runs", "runtimeRequests", "contextTransfers", "messages"],
+            { messageRoles: shell.forkedFrom?.type === "node" ? ["user"] : [] },
+          );
     const target = yield* records.pipe(Effect.mapError(threadManagementFailure));
     return { parent, target, shell } as const;
   });
@@ -1515,7 +1518,7 @@ const make = Effect.gen(function* () {
         ? delegatedTaskRuns(
             childControls.runs,
             task.id,
-            delegatedRunOwners(childControls.runs, forkedFrom.nodeId),
+            delegatedRunOwners(childControls, forkedFrom.nodeId),
           )
         : childControls.runs;
     const taskRun = taskRuns.findLast((run) => run.delegatedTaskId === task.id);
@@ -3048,7 +3051,11 @@ const make = Effect.gen(function* () {
               parent,
               page,
               task,
-              target: { ...target, ...resultRecords },
+              target: {
+                ...target,
+                ...resultRecords,
+                messages: [...target.messages, ...resultRecords.messages],
+              },
               maxChars,
             })
           ) {
