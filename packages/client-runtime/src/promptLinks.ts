@@ -18,8 +18,9 @@ import {
   visibleThreadPullRequests,
 } from "./threadPullRequests.ts";
 
-const repositoryKey = (repository: PromptLinkRepository) =>
-  `github.com/${repository.owner}/${repository.name}`.toLowerCase();
+// A link's `owner/name` is GitHub's. GitCafe syncs a repository two-way with GitHub under the
+// same path, so a checkout cloned from git.cafe counts as the linked repository.
+const PROMPT_LINK_REPOSITORY_HOSTS = ["github.com", "git.cafe", "staging.git.cafe"];
 
 /**
  * The repository's projects in the order given. Callers pass projects most recently active
@@ -28,11 +29,12 @@ const repositoryKey = (repository: PromptLinkRepository) =>
 export function findPromptLinkProjects<
   P extends { readonly repositoryIdentity?: RepositoryIdentity | null | undefined },
 >(projects: ReadonlyArray<P>, repository: PromptLinkRepository): P[] {
-  const key = repositoryKey(repository);
+  const path = `${repository.owner}/${repository.name}`.toLowerCase();
+  const keys = new Set(PROMPT_LINK_REPOSITORY_HOSTS.map((host) => `${host}/${path}`));
   return projects.filter(
     (project) =>
       project.repositoryIdentity != null &&
-      repositoryGroupingKeyOf(project.repositoryIdentity).toLowerCase() === key,
+      keys.has(repositoryGroupingKeyOf(project.repositoryIdentity).toLowerCase()),
   );
 }
 
@@ -41,6 +43,7 @@ export function findPromptLinkPullRequestThread<
     readonly updatedAt: string;
     readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
     readonly linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
+    readonly lineage?: { readonly sideChat?: boolean | undefined } | undefined;
   },
 >(threads: ReadonlyArray<T>, pullRequest: PromptLinkPullRequest): T | undefined {
   const key = threadPullRequestKeyOf({
@@ -51,6 +54,8 @@ export function findPromptLinkPullRequestThread<
   let latest: T | undefined;
   for (const thread of threads) {
     if (latest !== undefined && thread.updatedAt <= latest.updatedAt) continue;
+    // Side chats inherit their parent's links but stay hidden.
+    if (thread.lineage?.sideChat === true) continue;
     const linked = visibleThreadPullRequests(threadPullRequestsOf(thread)).some(
       (link) => threadPullRequestKeyOf(link) === key,
     );

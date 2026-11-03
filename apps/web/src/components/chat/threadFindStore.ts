@@ -49,6 +49,8 @@ export const useThreadFindStore = create<ThreadFindState>(() => CLOSED_THREAD_FI
 interface ThreadFindTimeline {
   readonly threadKey: string;
   readonly readPosition: ThreadFindPositionReader;
+  /** Opening find is manual navigation: it releases live follow. */
+  readonly navigate: () => void;
 }
 
 let attachedTimeline: ThreadFindTimeline | null = null;
@@ -69,12 +71,23 @@ function readThreadFindPosition(threadKey: string, query: string): ThreadFindSta
   return timelineFor(threadKey)?.readPosition(query);
 }
 
+/**
+ * Navigates the timeline showing the thread when find newly opens there. A
+ * timeline that starts showing the thread later (a search result opened find
+ * before the route switched or the thread painted) releases follow itself as
+ * it opens on the thread.
+ */
+function announceOpening(previous: ThreadFindState, threadKey: string): void {
+  if (previous.threadKey !== threadKey) timelineFor(threadKey)?.navigate();
+}
+
 /** Opens find, or refocuses it and restarts its search from the viewport when already open. */
 export function openThreadFind(threadKey: string): void {
   const previous = useThreadFindStore.getState();
   const current = previous.threadKey === threadKey ? previous : CLOSED_THREAD_FIND;
   const query = current.query.trim();
   const start = query ? readThreadFindPosition(threadKey, query) : undefined;
+  announceOpening(previous, threadKey);
   useThreadFindStore.setState({
     ...current,
     threadKey,
@@ -103,6 +116,7 @@ export interface PendingThreadFind {
  */
 export function openThreadFindOnQuery(threadKey: string, find: PendingThreadFind): void {
   const previous = useThreadFindStore.getState();
+  announceOpening(previous, threadKey);
   useThreadFindStore.setState({
     ...(previous.threadKey === threadKey ? previous : CLOSED_THREAD_FIND),
     threadKey,

@@ -64,6 +64,29 @@ describe("threadHistoryMerge", () => {
     expect(complete.visibleTurnItems[1]?.item).toBe(updated.item);
     expect(complete.visibleTurnItems.map((entry) => entry.position)).toEqual([0, 1, 2, 3, 4]);
     expect(new Set(complete.turnItems.map((item) => item.id)).size).toBe(5);
+    const anchorItem = {
+      ...updated.item,
+      deferredWork: { cursor: "work", itemCount: 4, lastOrdinal: 5 },
+    };
+    const deferred = {
+      ...live,
+      turnItems: live.turnItems.map((item) => (item.id === anchorItem.id ? anchorItem : item)),
+      visibleTurnItems: live.visibleTurnItems.map((entry) =>
+        entry.item.id === anchorItem.id ? { ...entry, item: anchorItem } : entry,
+      ),
+    };
+    const loadedWork = mergeOlderHistoryIntoProjection(deferred, [row(1), row(2), row(3)], {
+      anchorId: anchorItem.id,
+      nextCursor: null,
+    });
+    expect(loadedWork.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
+      "item-1",
+      "item-2",
+      "item-3",
+      "item-4",
+    ]);
+    expect(loadedWork.visibleTurnItems[0]?.item.title).toBe("newer live title");
+    expect(loadedWork.visibleTurnItems[0]?.item.deferredWork).toBeUndefined();
     const hidden = {
       ...partial,
       visibleTurnItems: partial.visibleTurnItems.filter(

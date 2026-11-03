@@ -1,3 +1,5 @@
+import { RegistryContext } from "@effect/atom-react";
+import { AtomRegistry } from "effect/reactivity";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { AppStateStatus } from "react-native";
@@ -117,6 +119,7 @@ import {
   PullRequestMediaContext,
   PullRequestMediaVisibleContext,
 } from "../features/pull-requests/PullRequestMedia";
+import { MediaVideoPlayer } from "../components/MediaVideoPlayer";
 
 function createPlayer() {
   let playing = false;
@@ -147,7 +150,7 @@ function createPlayer() {
   };
 }
 
-function setup(kind: "thread" | "PR", compact = false) {
+function setup(kind: "thread" | "PR" | "files", compact = false) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   mocks.focused = true;
   mocks.appState = "active";
@@ -158,38 +161,53 @@ function setup(kind: "thread" | "PR", compact = false) {
   mocks.thumbnail.mockReset().mockResolvedValue(null);
   const container = document.createElement("div");
   const root = createRoot(container);
+  // Configured like the app's registry: the React default keeps unmounted atoms for 400ms,
+  // which would hold thumbnail loads open across renders and tests.
+  const registry = AtomRegistry.make();
   const environmentId = EnvironmentId.make("test");
   return {
     render(visible = true) {
+      if (kind === "files") mocks.focused = visible;
       act(() =>
         root.render(
-          kind === "thread" ? (
-            <ThreadMediaVisibleContext value={visible}>
-              <ThreadMarkdownVideo
-                source={{
-                  type: "media",
-                  name: "clip.mp4",
-                  mimeType: "video/mp4",
-                  environmentId,
-                  resource: {
-                    _tag: "github-media",
-                    cwd: "/project",
-                    url: "https://github.com/user-attachments/assets/video",
-                  },
-                }}
+          <RegistryContext.Provider value={registry}>
+            {kind === "files" ? (
+              <MediaVideoPlayer
+                name="clip.mp4"
+                thumbnailKey="workspace-video:test"
+                uri="https://media.example/clip.mp4"
+                fitToVideo
+                visible={visible}
+                resolvePlaybackUri={mocks.refresh}
               />
-            </ThreadMediaVisibleContext>
-          ) : (
-            <PullRequestMediaContext value={{ environmentId, cwd: "/project" }}>
-              <PullRequestMediaVisibleContext value={visible}>
-                <PullRequestMedia
-                  url="https://github.com/user-attachments/assets/video"
-                  kind="video"
-                  compact={compact}
+            ) : kind === "thread" ? (
+              <ThreadMediaVisibleContext value={visible}>
+                <ThreadMarkdownVideo
+                  source={{
+                    type: "media",
+                    name: "clip.mp4",
+                    mimeType: "video/mp4",
+                    environmentId,
+                    resource: {
+                      _tag: "github-media",
+                      cwd: "/project",
+                      url: "https://github.com/user-attachments/assets/video",
+                    },
+                  }}
                 />
-              </PullRequestMediaVisibleContext>
-            </PullRequestMediaContext>
-          ),
+              </ThreadMediaVisibleContext>
+            ) : (
+              <PullRequestMediaContext value={{ environmentId, cwd: "/project" }}>
+                <PullRequestMediaVisibleContext value={visible}>
+                  <PullRequestMedia
+                    url="https://github.com/user-attachments/assets/video"
+                    kind="video"
+                    compact={compact}
+                  />
+                </PullRequestMediaVisibleContext>
+              </PullRequestMediaContext>
+            )}
+          </RegistryContext.Provider>,
         ),
       );
     },
@@ -215,6 +233,7 @@ function setup(kind: "thread" | "PR", compact = false) {
     },
     [Symbol.dispose]() {
       act(() => root.unmount());
+      registry.dispose();
     },
   };
 }
@@ -259,21 +278,31 @@ it.each(["thread", "PR"] as const)(
   },
 );
 
-it.each([false, true])(
-  "stops inactive PR thumbnail requests (compact: %s) and restarts on return",
-  async (compact) => {
-    using screen = setup("PR", compact);
+it.each([
+  ["PR", false],
+  ["PR", true],
+  ["files", false],
+] as const)(
+  "stops inactive %s thumbnail requests (compact: %s) and restarts on return",
+  async (kind, compact) => {
+    using screen = setup(kind, compact);
+    mocks.thumbnail.mockReturnValue(new Promise(() => {}));
     screen.render(false);
     expect(mocks.thumbnail).not.toHaveBeenCalled();
     await act(async () => screen.render(true));
-    expect(mocks.thumbnail).toHaveBeenCalledTimes(1);
-    const signal = mocks.thumbnail.mock.calls[0]![2];
-    expect(signal.aborted).toBe(false);
+    const requests = kind === "files" ? 2 : 1;
+    expect(mocks.thumbnail).toHaveBeenCalledTimes(requests);
+    const aborted = Promise.all(
+      mocks.thumbnail.mock.calls.map(([, , signal]) => {
+        expect(signal.aborted).toBe(false);
+        return new Promise((resolve) => signal.addEventListener("abort", resolve));
+      }),
+    );
     screen.render(false);
-    expect(signal.aborted).toBe(true);
-    expect(mocks.thumbnail).toHaveBeenCalledTimes(1);
+    await act(() => aborted);
+    expect(mocks.thumbnail).toHaveBeenCalledTimes(requests);
     await act(async () => screen.render(true));
-    expect(mocks.thumbnail).toHaveBeenCalledTimes(2);
+    expect(mocks.thumbnail).toHaveBeenCalledTimes(requests * 2);
   },
 );
 
