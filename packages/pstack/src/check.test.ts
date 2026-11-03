@@ -5,11 +5,12 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 import { checkPack } from "./check.ts";
-import { fileFingerprint, packFiles, type UpstreamManifest } from "./files.ts";
+import { fileFingerprint, packFiles, readManifest, type UpstreamManifest } from "./files.ts";
 import {
   parsePstackRoleDefaults,
   pstackContentHash,
   pstackPackEntries,
+  PSTACK_PACKAGED_PRUNED_DIR,
   PSTACK_SKILL_PREFIX,
   PSTACK_LAYOUT_VERSION,
 } from "./index.ts";
@@ -204,10 +205,10 @@ describe("pack interface", () => {
   it("delivers a complete pack when packaging pruned the statechart test corpus", () => {
     using pack = fixture();
     pack.write("upstream/skills/statechart/scripts/statechart.ts", "export {};\n");
-    pack.write("upstream/skills/statechart/scripts/test/corpus/Counter/chart.mmd", "chart\n");
+    pack.write(`upstream/${PSTACK_PACKAGED_PRUNED_DIR}/corpus/Counter/chart.mmd`, "chart\n");
     pack.seal();
     expect(checkPack(pack.root)).toEqual([]);
-    NodeFS.rmSync(NodePath.join(pack.root, "upstream/skills/statechart/scripts/test"), {
+    NodeFS.rmSync(NodePath.join(pack.root, "upstream", PSTACK_PACKAGED_PRUNED_DIR), {
       recursive: true,
     });
     const entries = pstackPackEntries(pack.root);
@@ -215,6 +216,12 @@ describe("pack interface", () => {
       "skills/statechart/scripts/statechart.ts",
     );
     expect(entries.filter(({ sourcePath }) => !NodeFS.existsSync(sourcePath))).toEqual([]);
+  });
+
+  it("prunes a corpus the shipped snapshot actually carries", () => {
+    const pruned = (packPath: string) => packPath.startsWith(`${PSTACK_PACKAGED_PRUNED_DIR}/`);
+    expect(Object.keys(readManifest(packageDir).files).some(pruned)).toBe(true);
+    expect(pstackPackEntries(packageDir).some(({ packPath }) => pruned(packPath))).toBe(false);
   });
 
   it("invalidates the delivery stamp from the adapter layout", () => {
