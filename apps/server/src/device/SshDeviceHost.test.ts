@@ -11,6 +11,7 @@ import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../config.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
@@ -308,4 +309,80 @@ it.effect("lists Android devices without probing the host again once it reports 
     expect(modes.splice(0)).toEqual([""]);
     yield* host.stop;
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect(
+  "keeps the SSH forward through slow health probes and reconnects once the hub stays down",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped();
+      let forwardSpawns = 0;
+      let hubAnswers = true;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
+          const forwarding = command.args.includes("-L");
+          // A fresh forward reaches a working hub again.
+          if (forwarding && ++forwardSpawns > 1) hubAnswers = true;
+          const output = JSON.stringify({
+            nodePath: "/node",
+            platforms: [{ platform: "ios", available: true }],
+            hubPort: 1234,
+            helpers: { serveSimAxSettings: null, serveSimCli: null },
+          });
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(123),
+            stdout: Stream.make(new TextEncoder().encode(output)),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            exitCode: forwarding ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(forwarding),
+            kill: () => Effect.void,
+            stdin: Sink.drain,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+            unref: Effect.succeed(Effect.void),
+          });
+        }),
+      );
+      const host = yield* SshDeviceHost.make({
+        kind: "ssh",
+        id: "test",
+        label: "Test",
+        target: "test.example",
+      }).pipe(
+        Effect.provide(Layer.mergeAll(ServerConfig.layerTest(home, home), Net.layer)),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            hubAnswers
+              ? Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok")))
+              : Effect.never,
+          ),
+        ),
+      );
+      yield* host.ensureReady(() => Effect.void);
+      expect(forwardSpawns).toBe(1);
+
+      // A loaded host can miss a probe or two without being gone; the forward stays up.
+      hubAnswers = false;
+      yield* TestClock.adjust("30 seconds");
+      hubAnswers = true;
+      yield* TestClock.adjust("2 minutes");
+      expect(forwardSpawns).toBe(1);
+
+      // A hub that keeps missing probes is still replaced.
+      hubAnswers = false;
+      // Recovery reset the miss count, so two new misses do not reconnect yet.
+      yield* TestClock.adjust("30 seconds");
+      expect(forwardSpawns).toBe(1);
+      yield* TestClock.adjust("30 seconds");
+      expect(forwardSpawns).toBe(2);
+      yield* host.stop;
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, TestClock.layer())),
+    ),
 );
