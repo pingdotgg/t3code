@@ -1167,7 +1167,7 @@ export function ProviderInstanceCard({
             </Text>
             {enabled && !updateProgress ? statusDotNode : null}
             {versionLabel ? (
-              <code className="shrink-0 font-mono text-caption text-dim-foreground">
+              <code className="shrink-0 font-mono text-meta text-dim-foreground">
                 {versionLabel}
               </code>
             ) : null}
