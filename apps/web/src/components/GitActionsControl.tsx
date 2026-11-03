@@ -1628,48 +1628,54 @@ export default function GitActionsControl({
       )}
 
       {showChanges && isRepo && !quietEmptyDraft ? (
-        <ThreadDetailsControl
-          type="button"
-          variant="ghost"
-          size="sm"
-          part="row"
-          multiline
-          disabled={!onOpenChanges}
-          onClick={onOpenChanges}
-        >
-          <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-          <span className="min-w-0 flex-1 text-left">
-            <span className={cn("block", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
-            <Tooltip>
-              <TooltipTrigger
-                render={<span className="block truncate text-xs text-muted-foreground" />}
-              >
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <ThreadDetailsControl
+                type="button"
+                variant="ghost"
+                size="sm"
+                part="row"
+                multiline
+                disabled={!onOpenChanges}
+                onClick={onOpenChanges}
+              />
+            }
+          >
+            <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+            <span className="min-w-0 flex-1 text-left">
+              <span className={cn("block", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
+              <span className="block truncate text-xs text-muted-foreground">
                 {changesTotals.baseRef ? `vs ${changesTotals.baseRef}` : "Uncommitted"}
-              </TooltipTrigger>
-              <TooltipPopup side="left">
-                {changesTotals.baseRef
-                  ? `Changes compared with ${changesTotals.baseRef}`
-                  : "Uncommitted changes"}
-              </TooltipPopup>
-            </Tooltip>
-          </span>
-          <span className="flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums">
-            <span
-              className={
-                changesTotals.insertions ? "text-diff-addition-foreground" : "text-muted-foreground"
-              }
-            >
-              +{formatDiffCount(changesTotals.insertions)}
+              </span>
             </span>
-            <span
-              className={
-                changesTotals.deletions ? "text-diff-deletion-foreground" : "text-muted-foreground"
-              }
-            >
-              -{formatDiffCount(changesTotals.deletions)}
+            <span className="flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums">
+              <span
+                className={
+                  changesTotals.insertions
+                    ? "text-diff-addition-foreground"
+                    : "text-muted-foreground"
+                }
+              >
+                +{formatDiffCount(changesTotals.insertions)}
+              </span>
+              <span
+                className={
+                  changesTotals.deletions
+                    ? "text-diff-deletion-foreground"
+                    : "text-muted-foreground"
+                }
+              >
+                -{formatDiffCount(changesTotals.deletions)}
+              </span>
             </span>
-          </span>
-        </ThreadDetailsControl>
+          </TooltipTrigger>
+          <TooltipPopup side="left">
+            {changesTotals.baseRef
+              ? `Changes compared with ${changesTotals.baseRef}`
+              : "Uncommitted changes"}
+          </TooltipPopup>
+        </Tooltip>
       ) : null}
 
       <Dialog
