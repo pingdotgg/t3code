@@ -49,7 +49,7 @@ export function ThreadDetailsControl({
         className: cn(
           parts[part],
           multiline && "h-auto min-h-9 py-0 disabled:opacity-100 sm:h-auto sm:min-h-9",
-          tone === "muted" && "text-dim-foreground hover:text-foreground",
+          tone === "muted" && "text-muted-foreground hover:text-foreground",
           tone === "primary" && "text-primary hover:text-primary",
           tone === "destructive" &&
             "text-destructive-foreground hover:text-destructive-foreground data-pressed:text-destructive-foreground",

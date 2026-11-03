@@ -1276,6 +1276,23 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     var(--surface-fill) border-box;
   box-shadow: var(--surface-shadow);
 }
+/* Keep details at least as readable as the pre-redesign 13px rows and 12px metadata. */
+@media (min-width: 640px) {
+  .thread-details-stack {
+    --type-meta: 0.8125rem;
+    --type-caption: 0.75rem;
+  }
+}
+
+/* Keep the default palette's contrast at least as strong as the pre-redesign cards. */
+:root:not([data-theme-id]:not([data-theme-id=""])) .thread-details-stack {
+  --foreground: #18181b;
+}
+:root.dark:not([data-theme-id]:not([data-theme-id=""])) .thread-details-stack {
+  --foreground: #f5f5f5;
+  --muted-foreground: #a3a3a3;
+}
+
 /* Details use the snapshot's lower raised surfaces without repainting the composer. */
 :root:not([data-theme-id]:not([data-theme-id=""])):is(
     :not([data-surface-style]),
@@ -1284,6 +1301,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   .thread-details-stack {
   --tray-fill: linear-gradient(180deg, #fefefe, #fafafa);
   --composer-fill: linear-gradient(180deg, #ffffff, #fafafa);
+  --tray-shadow: 0 1px 2px #00000010, 0 2px 8px #0000000e;
+  --composer-shadow: 0 1px 2px #00000010, 0 2px 5px #0000000b;
 }
 :root.dark:not([data-theme-id]:not([data-theme-id=""])):is(
     :not([data-surface-style]),
@@ -1292,6 +1311,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   .thread-details-stack {
   --tray-fill: linear-gradient(180deg, #1c1c1c, #191919);
   --composer-fill: linear-gradient(180deg, #202020, #1c1c1c);
+  --tray-shadow: 0 1px 2px #0000004d, 0 2px 8px #00000027;
+  --composer-shadow: 0 1px 2px #0000004d, 0 2px 5px #0000001f;
 }
 
 /* The composer: tray around it, text box inside, and the user's prompt. */
@@ -4535,6 +4556,7 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
 
 /* Recompute contrast wherever a subtree owns its own semantic color palette. */
 :root,
+.thread-details-stack,
 [data-app-sidebar],
 :root.black-chrome [data-chrome-scope] {
   --sidebar-icon-color: var(--contrast-sidebar-muted-foreground);
