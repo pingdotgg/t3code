@@ -1121,6 +1121,22 @@ function codexExhaustionHttpStatus(errorInfo: CodexErrorInfo | null | undefined)
     : null;
 }
 
+/**
+ * The upstream HTTP status on any error info that carries one. Codex reports
+ * each retry it schedules as `responseStreamDisconnected` with the failed
+ * attempt's status, so a retry on 429 is the same limit as exhaustion on 429.
+ */
+function codexErrorHttpStatus(errorInfo: CodexErrorInfo | null | undefined): number | null {
+  if (typeof errorInfo !== "object" || errorInfo === null) return null;
+  if ("responseStreamDisconnected" in errorInfo)
+    return errorInfo.responseStreamDisconnected.httpStatusCode ?? null;
+  if ("responseStreamConnectionFailed" in errorInfo)
+    return errorInfo.responseStreamConnectionFailed.httpStatusCode ?? null;
+  if ("httpConnectionFailed" in errorInfo)
+    return errorInfo.httpConnectionFailed.httpStatusCode ?? null;
+  return codexExhaustionHttpStatus(errorInfo);
+}
+
 function codexUsageLimitError(
   code: string | null,
   errorInfo: CodexErrorInfo | null | undefined,
@@ -1128,7 +1144,7 @@ function codexUsageLimitError(
   return (
     code === "usageLimitExceeded" ||
     code === "rateLimitExceeded" ||
-    codexExhaustionHttpStatus(errorInfo) === 429
+    codexErrorHttpStatus(errorInfo) === 429
   );
 }
 

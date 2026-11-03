@@ -3375,6 +3375,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.lengthOf(retryItems, 2);
         assert.equal(retryItems[0]?.status, "running");
         assert.equal(retryItems[0]?.failure.code, "responseStreamDisconnected");
+        assert.equal(retryItems[0]?.failure.class, "transport_error");
         assert.deepEqual(retryItems[0]?.retry, {
           attempt: 2,
           maxAttempts: 5,
@@ -3411,6 +3412,100 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ),
       ),
     ),
+  );
+
+  // regression: #28936 a Codex retry on HTTP 429 is a usage limit, like exhaustion on 429
+  it.effect.each([
+    { httpStatusCode: 429, expectedClass: "usage_limit" },
+    { httpStatusCode: 502, expectedClass: "transport_error" },
+  ] as const)(
+    "classifies a Codex retry on HTTP $httpStatusCode and the turn that fails on it",
+    ({ httpStatusCode, expectedClass }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = `codex-retry-status-${httpStatusCode}`;
+          const nativeThreadId = `native-${scenario}-thread`;
+          const nativeTurnId = `native-${scenario}-turn`;
+          const additionalDetails = `exceeded retry limit, last status: ${httpStatusCode}`;
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+              {
+                type: "emit_inbound",
+                label: "error/retry",
+                frame: {
+                  method: "error",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    willRetry: true,
+                    error: {
+                      message: "Reconnecting... 1/5",
+                      additionalDetails,
+                      codexErrorInfo: { responseStreamDisconnected: { httpStatusCode } },
+                    },
+                  },
+                },
+              },
+              // A turn that ends without evidence of its own keeps the pending retry's failure.
+              {
+                type: "emit_inbound",
+                label: "turn/completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`attempt-${scenario}`),
+              text: "Continue.",
+            }),
+          );
+          yield* harness.firstTerminal;
+
+          const runningRetry = harness.events.find(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "error" &&
+              event.turnItem.retry !== undefined &&
+              event.turnItem.status === "running",
+          );
+          assert.equal(
+            runningRetry?.type === "turn_item.updated" && runningRetry.turnItem.type === "error"
+              ? runningRetry.turnItem.failure.class
+              : undefined,
+            expectedClass,
+          );
+          const terminal = harness.terminalEvents()[0];
+          assert.equal(terminal?.status, "failed");
+          if (terminal?.status !== "failed") return;
+          assert.equal(terminal.failure.class, expectedClass);
+          assert.equal(terminal.failure.code, "responseStreamDisconnected");
+          assert.equal(terminal.failure.message, additionalDetails);
+          assert.equal(terminal.retry?.attempt, 1);
+          assert.equal(terminal.threadDisposition, "reusable");
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
   );
 
   it.effect.each(["completed", "interrupted"] as const)(
@@ -5471,6 +5566,34 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       name: "exhausted-500",
       code: "responseTooManyFailedAttempts",
       errorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 500 } },
+      notification: false,
+      expectedClass: "provider_error",
+    },
+    {
+      name: "disconnected-429",
+      code: "responseStreamDisconnected",
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "stream-connection-429",
+      code: "responseStreamConnectionFailed",
+      errorInfo: { responseStreamConnectionFailed: { httpStatusCode: 429 } },
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "http-connection-429",
+      code: "httpConnectionFailed",
+      errorInfo: { httpConnectionFailed: { httpStatusCode: 429 } },
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "http-connection-503",
+      code: "httpConnectionFailed",
+      errorInfo: { httpConnectionFailed: { httpStatusCode: 503 } },
       notification: false,
       expectedClass: "provider_error",
     },
