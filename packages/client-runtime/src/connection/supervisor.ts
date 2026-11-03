@@ -601,33 +601,23 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const waitForEstablishmentInterrupt = Effect.fnUntraced(function* (
     routeOpen: SubscriptionRef.SubscriptionRef<boolean>,
   ) {
-    // A primary attempt keeps running through an offline report, so the
-    // network returning restarts it in case it stalled meanwhile.
-    let deviceOffline =
-      target._tag === "PrimaryConnectionTarget" && (yield* connectivity.status) === "offline";
     for (;;) {
       const next = yield* Queue.take(signals);
       switch (next._tag) {
         case "DisconnectRequested":
         case "RetryRequested":
           return false;
-        case "NetworkChanged": {
-          if (next.network === "offline") {
-            if (target._tag !== "PrimaryConnectionTarget") {
-              return false;
-            }
-            deviceOffline = true;
-            break;
+        case "NetworkChanged":
+          // A primary attempt keeps running through an offline report.
+          if (next.network === "offline" && target._tag !== "PrimaryConnectionTarget") {
+            return false;
           }
           // An attempt started before the network came back can hang until
           // its setup timeout, so a recovery restarts it unless its socket is open.
-          const recovered = next.network === "online" || deviceOffline;
-          deviceOffline = false;
-          if (recovered && !(yield* SubscriptionRef.get(routeOpen))) {
+          if (next.network === "online" && !(yield* SubscriptionRef.get(routeOpen))) {
             return true;
           }
           break;
-        }
         case "ConnectRequested":
         case "BetterRouteAvailable":
           break;

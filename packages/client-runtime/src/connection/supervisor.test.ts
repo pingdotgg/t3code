@@ -374,16 +374,25 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
-  it.effect(
-    "keeps a primary attempt through an offline report and restarts it when the network returns",
-    () =>
+  it.effect.each([
+    { stall: "preparation", attempts: 2 },
+    { stall: "snapshot", attempts: 1 },
+  ] as const)(
+    "keeps a primary attempt stalled in $stall through an offline report, then online makes $attempts attempts",
+    ({ stall, attempts }) =>
       Effect.gen(function* () {
         const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const stallFirst = (attempt: number) =>
+          attempt === 1
+            ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)))
+            : Effect.void;
         const harness = yield* makeHarness({
           prepare: (attempt) =>
-            attempt === 1
-              ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
-              : Effect.succeed(PREPARED_CONNECTION),
+            (stall === "preparation" ? stallFirst(attempt) : Effect.void).pipe(
+              Effect.as(PREPARED_CONNECTION),
+            ),
+          ready: (attempt) => (stall === "snapshot" ? stallFirst(attempt) : Effect.void),
         });
         const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
           initiallyDesired: true,
@@ -395,8 +404,11 @@ describe("EnvironmentSupervisor", () => {
         expect(yield* Ref.get(harness.prepareCount)).toBe(1);
 
         yield* harness.setNetworkStatus("online");
+        yield* TestClock.adjust("0 millis");
+        expect(yield* Ref.get(harness.prepareCount)).toBe(attempts);
+        yield* Deferred.succeed(release, undefined);
         yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-        expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+        expect(yield* Ref.get(harness.prepareCount)).toBe(attempts);
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -600,6 +612,7 @@ describe("EnvironmentSupervisor", () => {
     { from: "backoff", stall: "preparation" },
     { from: "connected, then offline", stall: "preparation" },
     { from: "offline", stall: "handshake" },
+    { from: "connected, then primary reports offline", stall: "preparation" },
   ] as const)(
     "retries a $stall that stalls after a long resume from $from once, at 3 seconds",
     ({ from, stall }) =>
@@ -616,7 +629,8 @@ describe("EnvironmentSupervisor", () => {
           opened: (attempt) => (attempt === 2 && stall === "handshake" ? hang : Effect.void),
           probe: unansweredFirstProbe,
         });
-        const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        const primary = from === "connected, then primary reports offline";
+        const supervisor = yield* EnvironmentSupervisor.make(primary ? TARGET_ENTRY : RELAY_ENTRY, {
           initiallyDesired: true,
         }).pipe(Effect.provide(harness.dependencies));
         yield* awaitState(supervisor.state, (state) => state.phase === "connected");
@@ -634,13 +648,14 @@ describe("EnvironmentSupervisor", () => {
         if (from === "offline") yield* goOffline;
 
         yield* harness.wake("application-active-long");
-        if (from === "connected") yield* TestClock.adjust("3 seconds");
+        if (from === "connected" || primary) yield* TestClock.adjust("3 seconds");
         if (from === "connected, then offline" || from === "offline") {
           yield* TestClock.adjust("0 millis");
           if (from === "connected, then offline") yield* goOffline;
           yield* harness.setNetworkStatus("online");
         }
         yield* Deferred.await(stalled);
+        if (primary) yield* harness.setNetworkStatus("offline");
         yield* TestClock.adjust("2999 millis");
         expect(yield* Ref.get(harness.prepareCount)).toBe(2);
 
