@@ -1314,8 +1314,11 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
       ? pendingCheckout.confirmation
       : null;
 
+  // State lags a render behind, so a double tap could send a second create,
+  // which the server would reject as a conflict with the first.
+  const submittingRef = useRef(false);
   const submitPath = async () => {
-    if (!environment || isBrowseNavigating || isSubmitting) return;
+    if (!environment || isBrowseNavigating || submittingRef.current) return;
     setError(null);
     const resolved = resolveAddProjectPath({
       rawPath: pathInput,
@@ -1328,6 +1331,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
     }
 
     const originRoute = getActiveRoute(navigation);
+    submittingRef.current = true;
     setIsSubmitting(true);
     let plan: AddProjectPlan = { kind: "add" };
     if (environment.canInspectCheckout) {
@@ -1346,6 +1350,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
         environmentId: environment.environmentId,
         confirmation: plan.confirmation,
       });
+      submittingRef.current = false;
       setIsSubmitting(false);
       return;
     }
@@ -1356,11 +1361,13 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
     if (result && AsyncResult.isFailure(result)) {
       setError(errorMessage(Cause.squash(result.cause)));
     }
+    submittingRef.current = false;
     setIsSubmitting(false);
   };
 
   const submitCheckoutChoice = async (workspaceRoot: string) => {
-    if (isSubmitting) return;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setError(null);
     setIsSubmitting(true);
     // The folder was just seen on disk; if it has gone, say so rather than recreate it.
@@ -1368,6 +1375,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
     if (result && AsyncResult.isFailure(result)) {
       setError(errorMessage(Cause.squash(result.cause)));
     }
+    submittingRef.current = false;
     setIsSubmitting(false);
   };
 

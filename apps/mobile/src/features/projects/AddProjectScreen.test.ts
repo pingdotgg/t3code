@@ -833,6 +833,18 @@ describe("local folder checkout", () => {
     ]);
   });
 
+  it("sends one create when a checkout choice is tapped twice before rendering", async () => {
+    const flow = mountFlow(AsyncResult.success({ projectId: null, checkout }));
+    await flow.press("Add project");
+
+    const addRoot = flow.action("Add repository root");
+    await act(async () => {
+      await Promise.all([addRoot?.(), addRoot?.()]);
+    });
+
+    expect(state.createInputs).toHaveLength(1);
+  });
+
   it("goes back to the folder browser from the confirmation", async () => {
     const flow = mountFlow(AsyncResult.success({ projectId: null, checkout }));
 

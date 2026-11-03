@@ -530,6 +530,7 @@ function OpenCommandPaletteDialog(props: {
   const [isCreatingNewProject, setIsCreatingNewProject] = useState(false);
   // State lags a render behind, so a repeated Enter could start a second create.
   const newProjectSubmittingRef = useRef(false);
+  const checkoutChoiceSubmittingRef = useRef(false);
   const createNewProject = useNewProject();
   const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
@@ -1878,12 +1879,20 @@ function OpenCommandPaletteDialog(props: {
                 await openExistingProject(choice.project);
                 return;
               }
-              // The folder was just seen on disk; if it has gone, say so rather than recreate it.
-              await addFolderAsProject({
-                environmentId,
-                workspaceRoot: choice.workspaceRoot,
-                createWorkspaceRootIfMissing: false,
-              });
+              // The choice stays on screen while it runs, and a second create would be
+              // rejected as a conflict with the first.
+              if (checkoutChoiceSubmittingRef.current) return;
+              checkoutChoiceSubmittingRef.current = true;
+              try {
+                // The folder was just seen on disk; if it has gone, say so rather than recreate it.
+                await addFolderAsProject({
+                  environmentId,
+                  workspaceRoot: choice.workspaceRoot,
+                  createWorkspaceRootIfMissing: false,
+                });
+              } finally {
+                checkoutChoiceSubmittingRef.current = false;
+              }
             },
           })),
         },
