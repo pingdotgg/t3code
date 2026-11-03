@@ -3,6 +3,7 @@ import { ChevronDownIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 const tones = {
+  shelf: { label: "text-(--sidebar-shelf-foreground)", line: "bg-sidebar-border" },
   muted: { label: "text-dim-foreground", line: "bg-sidebar-border" },
   settled: { label: "text-(--sidebar-settled-label)", line: "bg-sidebar-border" },
   info: { label: "text-info-foreground", line: "bg-info/20 dark:bg-info/15" },
