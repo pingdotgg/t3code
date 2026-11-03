@@ -171,7 +171,7 @@ export function SourceControlAppSignInSettings({
           />
         </span>
       ) : tokenOverrides ? (
-        "Signed in, but the token saved below is used until you remove it."
+        "Signed in, but the token saved below is used while it can be read."
       ) : (
         "Signed in"
       );
