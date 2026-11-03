@@ -9,6 +9,7 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
@@ -60,6 +61,10 @@ class T3SecretInputView(context: Context, appContext: AppContext) : ExpoView(con
   private val onSubmit by EventDispatcher()
   private var applyingValue = false
 
+  // Values sent to JS that its state has not echoed back yet. An echo of an older value would
+  // otherwise overwrite characters typed in the meantime.
+  private val unechoed = ArrayDeque<String>()
+
   init {
     input.background = null
     input.setPadding(0, 0, 0, 0)
@@ -81,13 +86,17 @@ class T3SecretInputView(context: Context, appContext: AppContext) : ExpoView(con
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
         override fun afterTextChanged(s: Editable?) {
-          if (!applyingValue) onChangeText(mapOf("value" to (s?.toString() ?: "")))
+          if (applyingValue) return
+          val value = s?.toString() ?: ""
+          unechoed.addLast(value)
+          onChangeText(mapOf("value" to value))
         }
       }
     )
-    input.setOnEditorActionListener { _, actionId, _ ->
+    input.setOnEditorActionListener { _, actionId, event ->
       if (actionId == EditorInfo.IME_ACTION_DONE) {
-        onSubmit(emptyMap())
+        // A hardware Enter reports both key down and key up.
+        if (event == null || event.action == KeyEvent.ACTION_DOWN) onSubmit(emptyMap())
         true
       } else {
         false
@@ -101,6 +110,13 @@ class T3SecretInputView(context: Context, appContext: AppContext) : ExpoView(con
 
   /** Applies JS state without echoing it back, and without moving the caret on equal values. */
   fun setValue(value: String) {
+    val echoed = unechoed.indexOf(value)
+    if (echoed >= 0) {
+      repeat(echoed + 1) { unechoed.removeFirst() }
+      return
+    }
+    // A value JS chose itself, such as clearing after a save.
+    unechoed.clear()
     if (input.text.toString() == value) return
     applyingValue = true
     input.setText(value)
