@@ -1046,9 +1046,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     // Several emulators running one AVD: its name picks none of them.
     return Option.filter(
       located,
-      (device) =>
-        device.id === input.deviceId ||
-        byAvdName.filter((other) => other.hostId === device.hostId).length === 1,
+      (device) => byAvdName.filter((other) => other.hostId === device.hostId).length === 1,
     );
   });
 
