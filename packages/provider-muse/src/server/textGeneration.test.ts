@@ -226,20 +226,41 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
     }),
   );
 
-  it.effect("keeps Muse's reason when the turn fails", () =>
+  it.effect("explains a failed turn by Muse's error category", () =>
     Effect.gen(function* () {
-      const test = fixture((emit) =>
-        emit("turn/completed", {
-          terminal: "failed",
-          error: { message: "You've reached your usage limit." },
-        }),
-      );
-      const service = yield* test.make;
-      expect(yield* service.generateThreadTitle(titleInput).pipe(Effect.flip)).toMatchObject({
-        _tag: "TextGenerationError",
-        detail: "Muse Code text generation failed: You've reached your usage limit.",
-      });
-      expect(test.host.close).toHaveBeenCalledOnce();
+      const message = "API error 429: raw provider text";
+      const cases = [
+        {
+          error: { kind: "modelError", quota: { limitKind: "tierLimit", resetsAtMs: 1 } },
+          detail: "Muse Code usage limit reached. Try again after it resets.",
+        },
+        {
+          error: { kind: "authRequired" },
+          detail: "Muse Code is not signed in. Run `muse login` on this T3 server host.",
+        },
+        {
+          error: { kind: "modelError" },
+          detail: "Muse Code's model request failed. Try again or choose another Muse model.",
+        },
+        {
+          error: { kind: "stepLimit" },
+          detail:
+            "Muse Code text generation failed. Check Muse login and availability on this T3 server host.",
+        },
+      ];
+      for (const { error, detail } of cases) {
+        const test = fixture((emit) =>
+          emit("turn/completed", {
+            terminal: "failed",
+            error: { ...error, message, retryable: false },
+          }),
+        );
+        const service = yield* test.make;
+        const failure = yield* service.generateThreadTitle(titleInput).pipe(Effect.flip);
+        expect(failure).toMatchObject({ _tag: "TextGenerationError", detail });
+        expect(failure.detail).not.toContain(message);
+        expect(test.host.close).toHaveBeenCalledOnce();
+      }
     }),
   );
 
