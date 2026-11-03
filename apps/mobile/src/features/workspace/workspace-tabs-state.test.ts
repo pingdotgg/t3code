@@ -221,10 +221,6 @@ vi.mock("../../components/ui/useAndroidControlSizing", () => ({
   useAndroidControlSizing: () => ({ fabClearance: 64, scale: 1, fabSize: 56 }),
 }));
 vi.mock("../home/HomeRouteScreen", () => ({ HomeRouteScreen: () => null }));
-vi.mock("../pull-requests/PullRequestFilterMenuContext", () => ({
-  PullRequestFilterMenuProvider: ({ children }: { children: ReactNode }) =>
-    createElement("div", null, children),
-}));
 vi.mock("../pull-requests/PullRequestsScreen", () => ({ PullRequestsScreen: () => null }));
 vi.mock("../pull-requests/PullRequestToolbar.android", () => ({ PullRequestToolbar: () => null }));
 vi.mock("./AndroidWorkspaceNavigation", () => ({
