@@ -470,6 +470,7 @@ it.effect("shell groups read distinct threads once and keep each event's own seq
         ),
         Effect.provideService(ThreadManagement.ThreadManagementService, {
           listActiveSubagentThreadIds: () => Effect.succeed([]),
+          listActiveSideChatThreadIds: () => Effect.succeed([]),
           getShellSnapshot: (options?: { readonly threadIds?: ReadonlyArray<string> }) =>
             Effect.suspend(() => {
               shellReads.push(options?.threadIds);
