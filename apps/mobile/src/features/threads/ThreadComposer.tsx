@@ -86,7 +86,7 @@ import {
   composerStripAttachments,
   type DraftComposerFileAttachment,
 } from "../../lib/composerImages";
-import { buildModelOptions, isModelSelectionUnavailable } from "../../lib/modelOptions";
+import { getSelectedModelOption, isModelSelectionUnavailable } from "../../lib/modelOptions";
 import { useScaledTextRole, type ScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
@@ -703,21 +703,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     });
   };
 
-  const lockedProviderInstanceId = props.canSwitchProvider
-    ? undefined
-    : currentModelSelection.instanceId;
-  const modelOptions = buildModelOptions(
+  const currentModelOption = getSelectedModelOption(
     props.serverConfig,
     currentModelSelection,
-    lockedProviderInstanceId,
     props.selectedThread.projectId,
   );
-  const currentModelOption =
-    modelOptions.find(
-      (option) =>
-        option.selection.instanceId === currentModelSelection.instanceId &&
-        option.selection.model === currentModelSelection.model,
-    ) ?? null;
   const openSettings = () => {
     settingsSheetPresentation.open();
   };

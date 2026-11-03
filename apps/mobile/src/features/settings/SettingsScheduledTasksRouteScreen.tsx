@@ -56,7 +56,7 @@ import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { usePreparedConnection } from "../../state/session";
-import { buildModelOptions } from "../../lib/modelOptions";
+import { buildModelOptions, getSelectedModelOption } from "../../lib/modelOptions";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
@@ -693,6 +693,7 @@ function TaskForm({
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
   const config = useEnvironmentServerConfig(environmentId);
   const modelOptions = buildModelOptions(config, null, undefined, draft.projectId);
+  const selectedModelOption = getSelectedModelOption(config, draft.modelSelection, draft.projectId);
   // Existing webhook tasks keep the option so they can still switch to a timer.
   const webhookDenial = managedCapabilityDenial(config?.managedPolicy, "webhookTasks");
   const canOperate = useAtomValue(
@@ -919,11 +920,9 @@ function TaskForm({
             label="Model"
             borderTop
             value={
-              modelOptions.find(
-                (option) =>
-                  option.selection.instanceId === draft.modelSelection?.instanceId &&
-                  option.selection.model === draft.modelSelection?.model,
-              )?.label ??
+              (selectedModelOption
+                ? `${selectedModelOption.label}${selectedModelOption.isHidden ? " (Hidden)" : ""}`
+                : null) ??
               draft.modelSelection?.model ??
               (modelOptions.length ? "Choose model" : "No models available")
             }

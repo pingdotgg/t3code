@@ -458,6 +458,21 @@ export function buildModelOptions(
   return [...options.values()];
 }
 
+export function getSelectedModelOption(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection | null,
+  projectId: ProjectId | null,
+): ModelOption | null {
+  if (!selection) return null;
+  return (
+    buildModelOptions(config, selection, selection.instanceId, projectId, true).find(
+      (option) =>
+        option.selection.instanceId === selection.instanceId &&
+        option.selection.model === selection.model,
+    ) ?? null
+  );
+}
+
 export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {
   const groups = new Map<
     string,

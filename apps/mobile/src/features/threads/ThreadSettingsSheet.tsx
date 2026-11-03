@@ -68,6 +68,7 @@ import { cn } from "../../lib/cn";
 import { useReduceMotionEnabled } from "../../lib/appState";
 import {
   buildModelOptions,
+  getSelectedModelOption,
   groupByProvider,
   type ModelOption,
   type ProviderGroup,
@@ -311,6 +312,7 @@ type ThreadSettingsSessionValue = {
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly promptTraits: ReturnType<typeof getPromptControlledTraits>;
   readonly displayedModelSelection: ModelSelection | null;
+  readonly hiddenModelLabel: string | null;
   readonly reportedModelSelection: ModelSelection | null;
   readonly providerExpansionOverrides: ReadonlySet<string>;
   readonly hasLegacyModels: boolean;
@@ -512,6 +514,7 @@ function ThreadSettingsSessionProvider(
   const displayedModel =
     pendingModel ??
     props.providerGroups.flatMap((group) => group.models).find((option) => isApplied(option)) ??
+    getSelectedModelOption(config, props.selectedModel, props.projectId) ??
     null;
   const runtimeModeChoices = withManagedRuntimeModeLimits(
     runtimeModeChoicesForSupportedModes(displayedModel?.supportedRuntimeModes),
@@ -592,6 +595,7 @@ function ThreadSettingsSessionProvider(
   };
 
   const pressModel = (option: ModelOption) => {
+    if (option.isHidden) return;
     void Haptics.selectionAsync();
     if (isApplied(option) || option.key !== pendingModel?.key) {
       setPendingPrompt(null);
@@ -620,6 +624,15 @@ function ThreadSettingsSessionProvider(
     displayedDescriptors,
     promptTraits,
     displayedModelSelection: pendingModel?.selection ?? props.selectedModel,
+    hiddenModelLabel:
+      !pendingModel &&
+      props.selectedModel &&
+      settings?.providerModelPreferences?.[props.selectedModel.instanceId]?.hiddenModels.includes(
+        props.selectedModel.model,
+      )
+        ? (getSelectedModelOption(config, props.selectedModel, props.projectId)?.label ??
+          props.selectedModel.model)
+        : null,
     reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
     favoriteKeys,
     favoritesLoaded,
@@ -1030,6 +1043,12 @@ function ThreadSettingsMainContent(props: {
       maintainVisibleContentPosition={THREAD_SETTINGS_MAINTAIN_VISIBLE_CONTENT_POSITION}
       ListHeaderComponent={
         <>
+          {session.hiddenModelLabel ? (
+            <Text className="px-4 py-3 text-sm text-foreground-muted">
+              {session.hiddenModelLabel} is hidden from the picker. Your saved selection still uses
+              it.
+            </Text>
+          ) : null}
           {Platform.OS === "android" ? (
             <View className="px-4 pb-2 pt-3">
               <View
@@ -1540,12 +1559,11 @@ export function ExistingThreadSettingsRouteScreen({
     lockedProviderInstanceId,
     selectedThread.projectId,
   );
-  const currentModelOption =
-    modelOptions.find(
-      (option) =>
-        option.selection.instanceId === modelSelection.instanceId &&
-        option.selection.model === modelSelection.model,
-    ) ?? null;
+  const currentModelOption = getSelectedModelOption(
+    serverConfig,
+    modelSelection,
+    selectedThread.projectId,
+  );
   const updateModelSelection = (selection: ModelSelection) =>
     updateThreadDraftModelSelection(threadKey, selection, serverConfig?.providers ?? []);
 

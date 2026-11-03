@@ -25,6 +25,7 @@ import {
 import {
   defaultModelSelectionsAreMixed,
   getAppModelOptionsForInstance,
+  getCustomModelOptionsByInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
   resolveEffectiveDefaultModelSelection,
@@ -333,7 +334,7 @@ describe("instance-scoped model selection", () => {
     ).toEqual(["claude-sonnet-4-6", "openai/gpt-5.5"]);
   });
 
-  it("falls back when the selected model is hidden", () => {
+  it("offers only visible models and falls back when the selected model is hidden", () => {
     const providers = [
       provider({
         instanceId: "claudeAgent",
@@ -350,6 +351,16 @@ describe("instance-scoped model selection", () => {
       },
     };
 
+    expect(
+      getAppModelOptionsForInstance(settings, deriveProviderInstanceEntries(providers)[0]!).map(
+        (option) => option.slug,
+      ),
+    ).toEqual(["claude-sonnet-4-6"]);
+    expect(
+      getCustomModelOptionsByInstance(settings, providers)
+        .get(ProviderInstanceId.make("claudeAgent"))
+        ?.find((option) => option.slug === "claude-opus-4-6"),
+    ).toMatchObject({ isHidden: true });
     expect(
       resolveAppModelSelectionForInstance(
         ProviderInstanceId.make("claudeAgent"),

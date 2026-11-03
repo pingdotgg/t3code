@@ -110,7 +110,7 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
     [
       instanceId,
       [
-        { slug: "original", name: "Original model" },
+        { slug: "original", name: "Original model", isHidden: true },
         { slug: "second", name: "Second model" },
         { slug: "plain", name: "Plain model" },
       ],
@@ -152,7 +152,12 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
   }
 
   await using screen = await render(<Picker />);
+  await expect.element(screen.getByText("Original model", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("Hidden", { exact: true })).toBeVisible();
   await screen.getByRole("button", { name: "Choose model" }).click();
+  await expect
+    .element(page.getByRole("option", { name: /Original model/ }))
+    .not.toBeInTheDocument();
   const search = page.getByPlaceholder("Search models...");
   await expect.element(search).toHaveFocus();
   await userEvent.keyboard("{ArrowRight}");

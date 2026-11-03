@@ -43,6 +43,7 @@ export function ComposerModelControl(props: {
       accessibilityLabel={[
         "Model and reasoning settings",
         label,
+        props.modelOption?.isHidden ? "Hidden from picker" : null,
         badge?.showBadge ? badge.displayName : null,
         summary,
       ]
@@ -70,7 +71,7 @@ export function ComposerModelControl(props: {
           />
         )
       }
-      label={props.modelOption?.shortName ?? label}
+      label={`${props.modelOption?.shortName ?? label}${props.modelOption?.isHidden ? " (Hidden)" : ""}`}
       iconOnly={props.iconOnly}
       suffix={
         summary ? (
