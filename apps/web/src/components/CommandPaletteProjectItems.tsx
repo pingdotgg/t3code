@@ -115,8 +115,8 @@ function ProjectLocationDescription(props: {
 }) {
   const location = props.location ?? UNKNOWN_PROJECT_LOCATION;
   return (
-    <span className="flex min-w-0 flex-col gap-0.5">
-      <span className="inline-flex min-w-0 items-center gap-1">
+    <span className="flex min-w-0 items-center gap-2">
+      <span className="inline-flex min-w-0 max-w-1/2 shrink-0 items-center gap-1">
         {location.kind === "remote" ? (
           <EnvironmentMachineIcon
             aria-hidden
