@@ -148,6 +148,26 @@ const CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
     },
   ],
 });
+const ULTRACODE_CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
+  customModels: [
+    {
+      slug: "claude-custom-tuned",
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "high", label: "High", isDefault: true },
+              { id: "ultracode", label: "Ultracode" },
+            ],
+          },
+        ],
+      },
+    },
+  ],
+});
 const CLAUDE_TEST_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
   model: "claude-sonnet-4-6",
@@ -14115,6 +14135,46 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("sends Ultracode with any effort on a custom model", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          settings: ULTRACODE_CUSTOM_MODEL_CLAUDE_SETTINGS,
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-custom-ultracode"),
+            text: "Plan the work.",
+            attachments: [],
+            modelSelection: {
+              instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+              model: "claude-custom-tuned",
+              options: [
+                { id: "effort", value: "high" },
+                { id: "ultracode", value: true },
+              ],
+            },
+          }),
+        );
+        const options = harness.getOpenedOptions()!;
+        assert.equal(options.effort, "high");
+        assert.equal((options.settings as { ultracode?: boolean }).ultracode, true);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
   );
 
   it.effect("resolves a subagent's model and effort against the instance's custom models", () =>

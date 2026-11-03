@@ -61,7 +61,9 @@ function tryResolveClaudeModelCatalog(
 }
 
 // The manifest keeps Ultracode as an effort level because released servers read it from main.
-function withUltracodeToggle(capabilities: ModelCapabilities | null): ModelCapabilities | null {
+export function withUltracodeToggle(
+  capabilities: ModelCapabilities | null,
+): ModelCapabilities | null {
   const descriptors = capabilities?.optionDescriptors ?? [];
   const effortIndex = descriptors.findIndex(
     (descriptor) =>

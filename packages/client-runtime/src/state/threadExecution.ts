@@ -13,6 +13,7 @@ import {
   type OrchestrationV2NotificationSource,
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
+  type ServerProvider,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ThreadProjection,
@@ -25,8 +26,10 @@ import {
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
+  getModelSelectionStringOptionValue,
   getProviderOptionCurrentLabel,
   getProviderOptionStatedValue,
+  resolveSelectableModel,
   withLegacyUltracodeEffort,
 } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
@@ -185,6 +188,28 @@ export function formatModelSelectionEffort(
     if (label) return label;
   }
   return null;
+}
+
+/** A reported model the picker catalog does not know, such as `claude-opus-5[1m]`, keeps its raw effort. */
+export function formatSubagentEffort(input: {
+  readonly modelSlug: string | null;
+  readonly modelSelection: ModelSelection | undefined;
+  readonly provider: Pick<ServerProvider, "driver" | "models"> | undefined;
+}): string | null {
+  const { modelSlug, modelSelection: selection, provider } = input;
+  if (!provider || !selection || !modelSlug) return null;
+  const selectionSlug =
+    resolveSelectableModel(provider.driver, selection.model, provider.models) ??
+    selection.model.trim();
+  if (selectionSlug !== modelSlug) return null;
+  if (provider.models.some((model) => model.slug === modelSlug)) {
+    return formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models);
+  }
+  return (
+    REASONING_EFFORT_OPTION_IDS.map((id) => getModelSelectionStringOptionValue(selection, id)).find(
+      Boolean,
+    ) ?? null
+  );
 }
 
 const SUBAGENT_STATUS_LABELS: Record<OrchestrationV2ExecutionNode["status"], string> = {

@@ -5,9 +5,8 @@ import {
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
 import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
-import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
+import { formatSubagentEffort } from "@t3tools/client-runtime/state/thread-execution";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
-import { resolveSelectableModel } from "@t3tools/shared/model";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 
@@ -145,13 +144,7 @@ function SubagentMetadata(props: {
     parentProject,
     childProject,
   });
-  const effort =
-    provider &&
-    selection &&
-    modelSlug &&
-    resolveSelectableModel(provider.driver, selection.model, provider.models) === modelSlug
-      ? formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models)
-      : null;
+  const effort = formatSubagentEffort({ modelSlug, modelSelection: selection, provider });
   return (
     <View className="min-w-0 flex-row items-center gap-1.5">
       {showBadge ? (

@@ -16,6 +16,7 @@ import {
   workflowMemberModelSelection,
 } from "./subagentRuntime.ts";
 import { resolveSubagentMetadata } from "./subagentDisplay.ts";
+import { formatSubagentEffort } from "./threadExecution.ts";
 
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 
@@ -96,6 +97,19 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     expect(workflowMemberModelSelection({ model: null, effort: "xhigh" }, instanceId)).toBe(
       undefined,
     );
+    const provider = {
+      driver: ProviderDriverKind.make("claudeAgent"),
+      models: [
+        { slug: "claude-opus-5", name: "Claude Opus 5", isCustom: false, capabilities: null },
+      ],
+    };
+    const modelSelection = workflowMemberModelSelection(settled!, instanceId);
+    const { modelSlug } = resolveSubagentMetadata({
+      model: settled!.model,
+      modelSelection,
+      provider,
+    });
+    expect(formatSubagentEffort({ modelSlug, modelSelection, provider })).toBe("xhigh");
   });
 
   it("names a workflow by the model it runs on when the provider reports none", () => {
