@@ -298,40 +298,44 @@ describe("ServerBrowserContexts", () => {
     expect(browser.close).toHaveBeenCalledTimes(1);
     expect(browser.contexts[0]?.close).toHaveBeenCalled();
   });
+
   it("uploads a file over 50 MB to a desktop tab, which shares the server's filesystem", async () => {
     const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-upload-"));
     const userDataDir = NodePath.join(directory, "profile");
-    const desktop = await launchPersistentChromium(userDataDir, {
-      headless: true,
-      args: ["--remote-debugging-port=0"],
-    });
     const pool = new ServerBrowserContexts(options());
     try {
-      const [port] = NodeFS.readFileSync(
-        NodePath.join(userDataDir, "DevToolsActivePort"),
-        "utf8",
-      ).split("\n");
-      const { browser, page } = await pool.connectDesktopPage(`http://127.0.0.1:${port}`);
+      const desktop = await launchPersistentChromium(userDataDir, {
+        headless: true,
+        args: ["--remote-debugging-port=0"],
+      });
       try {
-        const file = NodePath.join(directory, "large.bin");
-        NodeFS.writeFileSync(file, "");
-        NodeFS.truncateSync(file, 51 * 1024 * 1024);
-        await page.setContent(`<input type="file">`);
-        await page.locator("input").setInputFiles(file);
-        expect(
-          await page.$eval("input", (input) =>
-            Array.from(
-              (input as unknown as { files: ArrayLike<{ name: string; size: number }> }).files,
-              ({ name, size }) => ({ name, size }),
+        const [port] = NodeFS.readFileSync(
+          NodePath.join(userDataDir, "DevToolsActivePort"),
+          "utf8",
+        ).split("\n");
+        const { browser, page } = await pool.connectDesktopPage(`http://127.0.0.1:${port}`);
+        try {
+          const file = NodePath.join(directory, "large.bin");
+          NodeFS.writeFileSync(file, "");
+          NodeFS.truncateSync(file, 51 * 1024 * 1024);
+          await page.setContent(`<input type="file">`);
+          await page.locator("input").setInputFiles(file);
+          expect(
+            await page.$eval("input", (input) =>
+              Array.from(
+                (input as unknown as { files: ArrayLike<{ name: string; size: number }> }).files,
+                ({ name, size }) => ({ name, size }),
+              ),
             ),
-          ),
-        ).toEqual([{ name: "large.bin", size: 51 * 1024 * 1024 }]);
+          ).toEqual([{ name: "large.bin", size: 51 * 1024 * 1024 }]);
+        } finally {
+          await browser.close();
+        }
       } finally {
-        await browser.close();
+        await pool.close();
+        await desktop.close();
       }
     } finally {
-      await pool.close();
-      await desktop.close();
       NodeFS.rmSync(directory, { recursive: true, force: true });
     }
   });
