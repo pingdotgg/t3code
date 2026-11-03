@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { SessionPermissions } from "./SessionPermissions";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
@@ -290,7 +291,7 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
   const canManageLocalBackend = !isLocalEnvironmentDisabled() && canMaintain;
   const showsAccess = view === "access";
   const authAccessChanges = useEnvironmentQuery(
-    showsAccess && canReadAccess && primaryEnvironmentId !== null
+    canReadAccess && primaryEnvironmentId !== null
       ? authEnvironment.accessChanges({
           environmentId: primaryEnvironmentId,
           input: null,
@@ -298,10 +299,10 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
       : null,
   );
   const desktopNetworkAccess = useEnvironmentQuery(
-    showsAccess && canManageLocalBackend && desktopBridge ? desktopNetworkAccessStateAtom : null,
+    canManageLocalBackend && desktopBridge ? desktopNetworkAccessStateAtom : null,
   );
   const desktopWsl = useEnvironmentQuery(
-    showsAccess && canManageLocalBackend && desktopBridge ? desktopWslStateAtom : null,
+    canManageLocalBackend && desktopBridge ? desktopWslStateAtom : null,
   );
   const desktopWslState = desktopWsl.data;
   const desktopWslError = desktopWslMutationError ?? desktopWsl.error;
@@ -1077,25 +1078,6 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
                 <ManagedByOrganization policy={primaryManagedPolicy} />
               </div>
             ) : null}
-            {canManageLocalBackend && desktopBridge ? (
-              <>
-                {renderReachableRow()}
-                {renderNetworkAccessRow()}
-                {renderEndpointRows()}
-                {renderTailscaleRow()}
-                {renderWslRow()}
-                {canReadRelay || canManageRelay ? (
-                  <CloudLinkRow canReadRelay={canReadRelay} canManageRelay={canManageRelay} />
-                ) : null}
-              </>
-            ) : canManageLocalBackend ? (
-              <>
-                {renderDisabledNetworkAccessRow()}
-                {canReadRelay || canManageRelay ? (
-                  <CloudLinkRow canReadRelay={canReadRelay} canManageRelay={canManageRelay} />
-                ) : null}
-              </>
-            ) : null}
             {canManageLocalBackend ? (
               <SettingsRow
                 title="Version"
@@ -1139,7 +1121,45 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
                 }
               />
             ) : null}
-            {primaryEnvironment ? (
+            {canManageLocalBackend && desktopBridge ? (
+              <>
+                {renderReachableRow()}
+                {renderNetworkAccessRow()}
+                {renderEndpointRows()}
+                {renderTailscaleRow()}
+                {renderWslRow()}
+                {canReadRelay || canManageRelay ? (
+                  <CloudLinkRow canReadRelay={canReadRelay} canManageRelay={canManageRelay} />
+                ) : null}
+              </>
+            ) : canManageLocalBackend ? (
+              <>
+                {renderDisabledNetworkAccessRow()}
+                {canReadRelay || canManageRelay ? (
+                  <CloudLinkRow canReadRelay={canReadRelay} canManageRelay={canManageRelay} />
+                ) : null}
+              </>
+            ) : null}
+            {!showsAccess && (canReadAccess || canWriteAccess) ? (
+              <SettingsRow
+                title="Authorized clients"
+                description={
+                  desktopAccessManagementError
+                    ? desktopAccessManagementError
+                    : isLoadingDesktopAccessManagement
+                      ? "Loading authorized clients…"
+                      : canReadAccess
+                        ? `${desktopClientSessions.length} authorized ${desktopClientSessions.length === 1 ? "client" : "clients"}`
+                        : "Manage pairing links and client access."
+                }
+                control={
+                  <Button variant="secondary" size="sm" render={<Link to="/settings/access" />}>
+                    Manage
+                  </Button>
+                }
+              />
+            ) : null}
+            {showsAccess && primaryEnvironment ? (
               <details className="group px-3 sm:px-4">
                 <summary className="flex min-h-11 cursor-pointer list-none items-center [&::-webkit-details-marker]:hidden">
                   <span className="text-label">Permissions</span>
@@ -1156,7 +1176,7 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
             ) : null}
           </SettingsSection>
 
-          {canReadAccess || canWriteAccess ? (
+          {showsAccess && (canReadAccess || canWriteAccess) ? (
             <>
               <SettingsSection
                 id="pairing"
@@ -1508,6 +1528,7 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
           <LocalEnvironmentSetting />
         </SettingsSection>
       ) : null}
+      {primarySettings}
       <SettingsSection
         {...searchableSetting("remote-environments")}
         title="Environments"
