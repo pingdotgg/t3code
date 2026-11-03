@@ -1375,7 +1375,7 @@ export const OrchestrationV2CheckpointFileSummary = Schema.Struct({
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
   /** Git reports no line counts for binary files, so `additions` and `deletions` are 0. */
-  binary: Schema.optional(Schema.Boolean),
+  binary: Schema.optionalKey(Schema.Literal(true)),
 });
 export type OrchestrationV2CheckpointFileSummary = typeof OrchestrationV2CheckpointFileSummary.Type;
 

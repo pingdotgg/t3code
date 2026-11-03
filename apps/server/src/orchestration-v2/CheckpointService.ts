@@ -465,7 +465,7 @@ export const layer: Layer.Layer<
                       kind: file.kind,
                       additions: file.additions,
                       deletions: file.deletions,
-                      ...(file.binary ? { binary: true } : {}),
+                      ...(file.binary ? { binary: true as const } : {}),
                     })),
                 ),
                 Effect.catch((cause) =>

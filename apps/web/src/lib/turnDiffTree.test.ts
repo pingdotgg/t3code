@@ -86,10 +86,11 @@ describe("buildTurnDiffTree", () => {
     ]);
   });
 
-  it("gives binary files no line stat while their directory keeps summing text files", () => {
+  it("marks created and deleted files and gives binary files no line stat", () => {
     const tree = buildTurnDiffTree([
       { path: "assets/logo.png", kind: "modified", additions: 0, deletions: 0, binary: true },
       { path: "assets/notes.md", kind: "added", additions: 2, deletions: 0 },
+      { path: "assets/old.md", kind: "deleted", additions: 0, deletions: 3 },
     ]);
 
     expect(tree).toEqual([
@@ -97,7 +98,7 @@ describe("buildTurnDiffTree", () => {
         kind: "directory",
         name: "assets",
         path: "assets",
-        stat: { additions: 2, deletions: 0 },
+        stat: { additions: 2, deletions: 3 },
         children: [
           { kind: "file", name: "logo.png", path: "assets/logo.png", stat: null },
           {
@@ -105,6 +106,14 @@ describe("buildTurnDiffTree", () => {
             name: "notes.md",
             path: "assets/notes.md",
             stat: { additions: 2, deletions: 0 },
+            change: "added",
+          },
+          {
+            kind: "file",
+            name: "old.md",
+            path: "assets/old.md",
+            stat: { additions: 0, deletions: 3 },
+            change: "deleted",
           },
         ],
       },
