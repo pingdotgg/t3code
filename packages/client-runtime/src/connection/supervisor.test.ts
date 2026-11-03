@@ -1049,6 +1049,45 @@ describe("EnvironmentSupervisor", () => {
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect(
+    "keeps a long-resume socket whose frame lands just before the replacement is ready",
+    () =>
+      Effect.gen(function* () {
+        const frames = yield* Ref.make(0);
+        const replacementRequested = yield* Deferred.make<void>();
+        const ready = yield* Deferred.make<void>();
+        const harness = yield* makeHarness({
+          prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+          initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
+          probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+          ready: (attempt) =>
+            attempt === 2
+              ? Deferred.succeed(replacementRequested, undefined).pipe(
+                  Effect.andThen(Deferred.await(ready)),
+                )
+              : Effect.void,
+          inboundFrames: Ref.get(frames),
+          checkHost: () => Effect.never,
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        yield* harness.wake("application-active-long");
+        yield* TestClock.adjust("500 millis");
+        expect(yield* Deferred.isDone(replacementRequested)).toBe(true);
+        // The frame lands between two frame checks, then the replacement becomes ready.
+        yield* Ref.update(frames, (count) => count + 1);
+        yield* Deferred.succeed(ready, undefined);
+        yield* TestClock.adjust("100 millis");
+
+        expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(1);
+        expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+        expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   const makeDeadRemoteSocketHarness = Effect.fn("test.makeDeadRemoteSocketHarness")(function* (
     replacementReady: (
       requested: Deferred.Deferred<void>,

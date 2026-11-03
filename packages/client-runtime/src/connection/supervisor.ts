@@ -848,6 +848,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const remoteRoute = routeKind !== undefined && !answersQuickly(routeKind);
       let replacementPlanned = false;
       let replacementDueAt: bigint | undefined;
+      let framesAtReplacement = 0;
       const planReplacement = Effect.gen(function* () {
         if (replacementPlanned || !longResume || !remoteRoute) return;
         replacementPlanned = true;
@@ -910,11 +911,18 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         ]);
         if (probeEvent._tag === "ReplacementDue") {
           replacementDueAt = undefined;
+          framesAtReplacement = yield* lease.session.inboundFrames;
           yield* startReplacement(generation);
           continue;
         }
         if (probeEvent._tag === "ReplacementSettled") {
-          if (Exit.isSuccess(probeEvent.exit) && Exit.isSuccess(probeEvent.exit.value)) {
+          // The frame check polls, so a frame can land just before the replacement is ready.
+          const framesArrived = (yield* lease.session.inboundFrames) !== framesAtReplacement;
+          if (
+            !framesArrived &&
+            Exit.isSuccess(probeEvent.exit) &&
+            Exit.isSuccess(probeEvent.exit.value)
+          ) {
             yield* stopProbe;
             handOffReplacement();
             return true;
