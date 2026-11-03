@@ -141,7 +141,8 @@ it.effect("keeps a link healthy when the peer refuses a call", () =>
 it.effect("renews a missing peer session once and reuses its replacement", () =>
   Effect.gen(function* () {
     const sessionHeaders: Array<string | undefined> = [];
-    const statuses = [200, 202, 404, 200, 202, 200, 200];
+    const statuses = [200, 202, 404, 200, 202, 200, 200, 200];
+    const outcomes: Array<string | null> = [];
     const http = HttpClient.make((request) =>
       Effect.sync(() => {
         const index = sessionHeaders.length;
@@ -151,13 +152,15 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
         return HttpClientResponse.fromWeb(
           request,
           new Response(
-            index >= 5
-              ? JSON.stringify({
-                  result: {
-                    content: [{ type: "text", text: '{"modes":"approval-required/plan"}' }],
-                  },
-                })
-              : "",
+            index === 7
+              ? "{}"
+              : index >= 5
+                ? JSON.stringify({
+                    result: {
+                      content: [{ type: "text", text: '{"modes":"approval-required/plan"}' }],
+                    },
+                  })
+                : "",
             {
               status,
               headers:
@@ -193,7 +196,7 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
                   url: "https://peer.example",
                   token: "fixture",
                 }),
-              recordOutcome: () => Effect.void,
+              recordOutcome: (_, outcome) => Effect.sync(() => outcomes.push(outcome.error)),
             }),
           ),
         ),
@@ -211,11 +214,23 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
         }),
       ).toEqual({ modes: "approval-required/plan" });
     }
+    // An answer with neither a result nor an error is the link's problem, not the call's.
+    const empty = yield* client
+      .call({
+        environmentId: box.environmentId,
+        tool: "probe",
+        arguments: {},
+        limits: { runtimeMode: "approval-required", interactionMode: "plan" },
+        success: Result,
+      })
+      .pipe(Effect.flip);
+    expect(outcomes).toEqual([null, null, empty.message]);
     expect(sessionHeaders).toEqual([
       undefined,
       "old",
       "old",
       undefined,
+      "renewed",
       "renewed",
       "renewed",
       "renewed",

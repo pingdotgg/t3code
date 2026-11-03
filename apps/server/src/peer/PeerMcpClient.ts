@@ -211,13 +211,16 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      if (body.error !== undefined || body.result === undefined) {
+      if (body.error !== undefined) {
         return Result.fail(
-          new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message: body.error?.message ?? "The linked environment returned no result.",
-          }),
+          new OrchestratorMcpFailure({ code: "invalid_request", message: body.error.message }),
         );
+      }
+      if (body.result === undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "The linked environment returned no result.",
+        });
       }
       const text = body.result.content.map((part) => part.text ?? "").join("");
       if (body.result.isError === true) {
