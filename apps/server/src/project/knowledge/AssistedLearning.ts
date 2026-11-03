@@ -7,7 +7,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -48,7 +48,7 @@ const decodeCandidate = Schema.decodeUnknownOption(Candidate);
 const isMutation = Schema.is(ProjectKnowledgeMutation);
 
 const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const sql = yield* SqlClient.SqlClient;
   const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -56,7 +56,7 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const digest = (text: string) =>
-    crypto.digest("SHA-256", new TextEncoder().encode(text)).pipe(Effect.map(Hex.encode));
+    crypto.digest(Digest.sha256, new TextEncoder().encode(text)).pipe(Effect.map(Hex.encode));
 
   const extractRun: AssistedLearningRunnerShape["extractRun"] = Effect.fn(
     "AssistedLearning.extractRun",

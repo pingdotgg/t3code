@@ -45,7 +45,7 @@ import {
 } from "./Drivers/ClaudeHome.ts";
 import { spawnClaudeProcess } from "./Drivers/ClaudeProcess.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { discoverClaudeSkills, readClaudeSettingsBaseUrl } from "./Drivers/ClaudeSkills.ts";
+import { discoverClaudeSkills, readClaudeSettingsEnv } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
@@ -635,7 +635,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 
   // First-party account fields cannot verify custom endpoint credentials.
   const baseUrl =
-    (yield* readClaudeSettingsBaseUrl(claudeSettings, cwd, resolvedEnvironment)) ??
+    (yield* readClaudeSettingsEnv(claudeSettings, cwd, resolvedEnvironment)).ANTHROPIC_BASE_URL ??
     resolvedEnvironment.ANTHROPIC_BASE_URL;
   const endpoint = URL.parse(baseUrl?.trim() ?? "");
   const customApiEndpoint =

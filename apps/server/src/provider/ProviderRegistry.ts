@@ -3,6 +3,7 @@ import {
   isProviderWorkspaceSnapshotCurrent,
   ProviderDriverKind,
   providerPoolDriver,
+  resolveActiveProviderPools,
   type IsoDateTime,
   type ProviderInstanceId,
   type ServerProvider,
@@ -99,6 +100,17 @@ export class ProviderRegistry extends Context.Service<
       readonly cwd: string;
       readonly fresh?: boolean;
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    /**
+     * Drop T3-owned model caches before an explicit model refresh. Pass the
+     * target of the refresh that follows. Background and ordinary refreshes
+     * keep their cache timers and must not call this.
+     */
+    readonly invalidateModelCaches: (input: {
+      readonly instanceId?: ProviderInstanceId | undefined;
+      readonly cwd?: string | undefined;
+      readonly fresh?: boolean | undefined;
+    }) => Effect.Effect<void>;
 
     readonly getProviderMaintenanceCapabilitiesForInstance: (
       instanceId: ProviderInstanceId,
@@ -564,7 +576,8 @@ export const layer = Layer.effect(
           });
         }
         if (options?.publish !== false) {
-          yield* PubSub.publish(changesPubSub, providers);
+          // A newer upsert may have committed and published during the cache write; never republish an older array.
+          yield* PubSub.publish(changesPubSub, yield* Ref.get(providersRef));
         }
       }
 
@@ -632,7 +645,9 @@ export const layer = Layer.effect(
     const refreshOneSource = Effect.fn("refreshOneSource")(function* (
       providerSource: ProviderSnapshotSource,
     ) {
+      // Enrichment can publish a newer snapshot before refresh returns its pre-enrichment probe.
       return yield* providerSource.refresh.pipe(
+        Effect.andThen(providerSource.getSnapshot),
         Effect.flatMap((nextProvider) =>
           correlateSnapshotWithSource(providerSource, nextProvider).pipe(
             Effect.flatMap(syncProvider),
@@ -974,111 +989,135 @@ export const layer = Layer.effect(
         Effect.map(([, nextProviders]) => nextProviders),
       );
 
-    const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
-      readonly instanceId: ProviderInstanceId;
-      readonly cwd: string;
-      readonly fresh?: boolean;
-    }) {
+    const refreshInstanceWorkspaceSnapshot = Effect.fn("refreshInstanceWorkspaceSnapshot")(
+      function* (input: {
+        readonly instanceId: ProviderInstanceId;
+        readonly cwd: string;
+        readonly fresh?: boolean;
+      }) {
+        const providers = yield* Ref.get(providersRef);
+        const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
+        const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
+          candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
+        const scannedFrom = workspaceSnapshotOf(provider);
+        const now = yield* DateTime.now;
+        if (
+          !provider ||
+          !provider.enabled ||
+          (!input.fresh &&
+            scannedFrom &&
+            !scannedFrom.slashCommandsPending &&
+            isProviderWorkspaceSnapshotCurrent(scannedFrom, DateTime.toEpochMillis(now)))
+        ) {
+          return providers;
+        }
+        // Use scan start for TTL, not checkedAt inherited from the machine health check.
+        const scannedAt = DateTime.formatIso(now);
+        const instance = yield* instanceRegistry.getInstance(input.instanceId);
+        if (!instance?.snapshotForCwd) return providers;
+        const token = yield* Deferred.make<void>();
+        const refreshMachineSnapshot = input.fresh
+          ? (instance.invalidateCaches ?? Effect.void).pipe(
+              Effect.andThen(refreshInstance(input.instanceId)),
+            )
+          : Effect.void;
+        const runScan = refreshMachineSnapshot.pipe(
+          Effect.andThen(instance.snapshotForCwd(input.cwd)),
+          // Scans fail on error; returned inventory remains valid even when provider health reports an error.
+          Effect.flatMap((scopedSnapshot) =>
+            instanceRegistry.getInstance(input.instanceId).pipe(
+              Effect.flatMap((currentInstance) => {
+                if (currentInstance !== instance) return Ref.get(providersRef);
+                return updateProviders((currentProviders) => {
+                  // Read ownership inside the update so a newer claim cannot race publication.
+                  if (
+                    Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== token
+                  ) {
+                    return currentProviders;
+                  }
+                  return currentProviders.map((candidate) =>
+                    candidate.instanceId === input.instanceId &&
+                    Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
+                      ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
+                          ...scopedSnapshot,
+                          checkedAt: scannedAt,
+                          // Without driver command discovery, retain previous commands after failed health checks and retry.
+                          slashCommandsPending:
+                            scopedSnapshot.slashCommandsPending ??
+                            scopedSnapshot.status === "error",
+                        })
+                      : candidate,
+                  );
+                });
+              }),
+            ),
+          ),
+          Effect.ensuring(
+            Ref.update(workspaceRefreshesRef, (refreshes) => {
+              const current = refreshes.get(instance);
+              if (current?.get(input.cwd) !== token) return refreshes;
+              const next = new Map(refreshes);
+              const nextCwds = new Map(current);
+              nextCwds.delete(input.cwd);
+              if (nextCwds.size) next.set(instance, nextCwds);
+              else next.delete(instance);
+              return next;
+            }).pipe(Effect.andThen(Deferred.succeed(token, undefined))),
+          ),
+        );
+        // The claim and the fork happen together, so the token is always completed. The scan is
+        // detached so a disconnecting owner cannot cancel the result its waiters depend on.
+        const claim = yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            const inFlight = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
+              const current = refreshes.get(instance);
+              const running = current?.get(input.cwd);
+              if (!input.fresh && running) return [running, refreshes] as const;
+              const next = new Map(refreshes);
+              next.set(instance, new Map(current).set(input.cwd, token));
+              return [undefined, next] as const;
+            });
+            if (inFlight) return { inFlight } as const;
+            return {
+              // Starting now attaches the scan's `ensuring` before anything can close the scope.
+              scan: yield* Effect.forkIn(runScan, serviceScope, { startImmediately: true }),
+            } as const;
+          }),
+        );
+        // Wait for the running scan: on-demand clients get its result only in this reply.
+        if ("inFlight" in claim) {
+          return yield* Deferred.await(claim.inFlight).pipe(Effect.andThen(Ref.get(providersRef)));
+        }
+        return yield* Fiber.join(claim.scan);
+      },
+    );
+
+    const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (
+      input: Parameters<ProviderRegistry["Service"]["refreshWorkspaceSnapshot"]>[0],
+    ) {
+      const instanceIds =
+        providerPoolDriver(input.instanceId) === null
+          ? [input.instanceId]
+          : (resolveActiveProviderPools({
+              providerPools: yield* providerPools,
+              instances: yield* Ref.get(providersRef),
+            }).find((pool) => pool.instanceId === input.instanceId)?.memberInstanceIds ?? []);
       if (input.fresh) {
+        // Clear other providers once: each member scan must retain the other pool members' results.
         yield* updateProviders((providers) =>
           providers.map((candidate) =>
-            candidate.instanceId === input.instanceId
+            instanceIds.includes(candidate.instanceId)
               ? candidate
               : dropProviderWorkspaceSnapshot(candidate, input.cwd),
           ),
         );
       }
-      const providers = yield* Ref.get(providersRef);
-      const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
-      const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
-        candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
-      const scannedFrom = workspaceSnapshotOf(provider);
-      const now = yield* DateTime.now;
-      if (
-        !provider ||
-        !provider.enabled ||
-        (!input.fresh &&
-          scannedFrom &&
-          !scannedFrom.slashCommandsPending &&
-          isProviderWorkspaceSnapshotCurrent(scannedFrom, DateTime.toEpochMillis(now)))
-      ) {
-        return providers;
-      }
-      // Use scan start for TTL, not checkedAt inherited from the machine health check.
-      const scannedAt = DateTime.formatIso(now);
-      const instance = yield* instanceRegistry.getInstance(input.instanceId);
-      if (!instance?.snapshotForCwd) return providers;
-      const token = yield* Deferred.make<void>();
-      const refreshMachineSnapshot = input.fresh
-        ? (instance.invalidateCaches ?? Effect.void).pipe(
-            Effect.andThen(refreshInstance(input.instanceId)),
-          )
-        : Effect.void;
-      const runScan = refreshMachineSnapshot.pipe(
-        Effect.andThen(instance.snapshotForCwd(input.cwd)),
-        // Scans fail on error; returned inventory remains valid even when provider health reports an error.
-        Effect.flatMap((scopedSnapshot) =>
-          instanceRegistry.getInstance(input.instanceId).pipe(
-            Effect.flatMap((currentInstance) => {
-              if (currentInstance !== instance) return Ref.get(providersRef);
-              return updateProviders((currentProviders) => {
-                // Read ownership inside the update so a newer claim cannot race publication.
-                if (Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== token) {
-                  return currentProviders;
-                }
-                return currentProviders.map((candidate) =>
-                  candidate.instanceId === input.instanceId &&
-                  Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
-                    ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
-                        ...scopedSnapshot,
-                        checkedAt: scannedAt,
-                        // Without driver command discovery, retain previous commands after failed health checks and retry.
-                        slashCommandsPending:
-                          scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
-                      })
-                    : candidate,
-                );
-              });
-            }),
-          ),
-        ),
-        Effect.ensuring(
-          Ref.update(workspaceRefreshesRef, (refreshes) => {
-            const current = refreshes.get(instance);
-            if (current?.get(input.cwd) !== token) return refreshes;
-            const next = new Map(refreshes);
-            const nextCwds = new Map(current);
-            nextCwds.delete(input.cwd);
-            if (nextCwds.size) next.set(instance, nextCwds);
-            else next.delete(instance);
-            return next;
-          }).pipe(Effect.andThen(Deferred.succeed(token, undefined))),
-        ),
+      yield* Effect.forEach(
+        instanceIds,
+        (instanceId) => refreshInstanceWorkspaceSnapshot({ ...input, instanceId }),
+        { concurrency: "unbounded", discard: true },
       );
-      // The claim and the fork happen together, so the token is always completed. The scan is
-      // detached so a disconnecting owner cannot cancel the result its waiters depend on.
-      const claim = yield* Effect.uninterruptible(
-        Effect.gen(function* () {
-          const inFlight = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
-            const current = refreshes.get(instance);
-            const running = current?.get(input.cwd);
-            if (!input.fresh && running) return [running, refreshes] as const;
-            const next = new Map(refreshes);
-            next.set(instance, new Map(current).set(input.cwd, token));
-            return [undefined, next] as const;
-          });
-          if (inFlight) return { inFlight } as const;
-          return {
-            // Starting now attaches the scan's `ensuring` before anything can close the scope.
-            scan: yield* Effect.forkIn(runScan, serviceScope, { startImmediately: true }),
-          } as const;
-        }),
-      );
-      // Wait for the running scan: on-demand clients get its result only in this reply.
-      if ("inFlight" in claim) {
-        return yield* Deferred.await(claim.inFlight).pipe(Effect.andThen(Ref.get(providersRef)));
-      }
-      return yield* Fiber.join(claim.scan);
+      return yield* Ref.get(providersRef);
     });
 
     const getPublishedProviders = Effect.all([Ref.get(providersRef), providerPools]).pipe(
@@ -1103,6 +1142,47 @@ export const layer = Layer.effect(
       }
     });
 
+    const invalidateModelCaches = Effect.fn("ProviderRegistry.invalidateModelCaches")(function* (
+      input: Parameters<ProviderRegistry["Service"]["invalidateModelCaches"]>[0],
+    ) {
+      yield* manifestService.forceRefresh;
+      const instances = yield* instanceRegistry.listInstances;
+      const instanceIds =
+        input.instanceId === undefined
+          ? undefined
+          : providerPoolDriver(input.instanceId) === null
+            ? [input.instanceId]
+            : (resolveActiveProviderPools({
+                providerPools: yield* providerPools,
+                instances: instances.map((instance) => ({
+                  instanceId: instance.instanceId,
+                  driver: instance.driverKind,
+                  enabled: instance.enabled,
+                })),
+              }).find((pool) => pool.instanceId === input.instanceId)?.memberInstanceIds ?? []);
+      yield* Effect.forEach(
+        instances.filter(
+          (instance) => instanceIds === undefined || instanceIds.includes(instance.instanceId),
+        ),
+        (instance) =>
+          Effect.gen(function* () {
+            yield* instance.invalidateCaches ?? Effect.void;
+            // Instance and full refreshes resolve installer metadata fresh
+            // themselves; a cached workspace refresh needs it resolved here.
+            const maintenance = yield* instance.snapshot.resolveMaintenance({
+              fresh:
+                input.instanceId !== undefined && input.cwd !== undefined && input.fresh !== true,
+            });
+            yield* Effect.forEach(
+              latestProviderVersionCacheKeys(maintenance),
+              latestVersions.invalidate,
+              { discard: true },
+            );
+          }),
+        { concurrency: "unbounded", discard: true },
+      );
+    });
+
     return {
       getProviders: Ref.get(providersRef),
       getPublishedProviders,
@@ -1117,6 +1197,7 @@ export const layer = Layer.effect(
       refreshWorkspaceSnapshot: (input) =>
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshAfterUpdate,
+      invalidateModelCaches,
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {

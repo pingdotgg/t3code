@@ -22,6 +22,7 @@ import {
   type OrchestrationV2DomainEvent,
   type ProjectKnowledgeMutation,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -79,7 +80,7 @@ const knowledgeTestLayer = (scoring: typeof HolographicMemory.layer = Holographi
         getEnvironmentId: Effect.succeed(environmentId),
       }),
     ),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 const layerTest = knowledgeTestLayer();
@@ -736,7 +737,7 @@ it.effect("reopens durable project facts without another content authority", () 
           getEnvironmentId: Effect.succeed(environmentId),
         }),
       ),
-      Layer.provide(NodeServices.layer),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
     const projectId = ProjectId.make("durable-project");
     const saved = yield* Effect.gen(function* () {
@@ -749,7 +750,7 @@ it.effect("reopens durable project facts without another content authority", () 
       return yield* knowledge.list({ projectId });
     }).pipe(Effect.provide(layerFile));
     assert.deepEqual(reopened.facts, [saved]);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect(
@@ -2588,7 +2589,7 @@ it.effect(
               getEnvironmentId: Effect.succeed(environmentId),
             }),
           ),
-          Layer.provide(NodeServices.layer),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         );
       const projectId = ProjectId.make("restart-delivery-project");
       const threadId = ThreadId.make("restart-delivery-thread");
@@ -2657,5 +2658,5 @@ it.effect(
           assert.equal(yield* knowledge.nativeDeliveryEstimate(receipt), 777);
         }).pipe(Effect.provide(reopened())),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { cursorClient } from "@t3tools/provider-cursor/client";
 import { fxClient } from "@t3tools/provider-fx/client";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -615,7 +616,7 @@ describe("ProviderAccountTransfer on the real settings layer", () => {
               readStaticCredential: () => Effect.succeedNone,
             }),
           ),
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
     ),

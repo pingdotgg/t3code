@@ -1,3 +1,5 @@
+// Hashes and sizes match the official ACP registry release. Like 1.4.2 through 1.4.4, it writes a
+// run-workflow skill into the workspace unless T3 disables the tool (antigravitySessionMeta).
 const ANTIGRAVITY_RELEASE_VERSION = "1.4.5";
 
 export interface AntigravityReleaseAsset {

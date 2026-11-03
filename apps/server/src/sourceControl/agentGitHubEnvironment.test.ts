@@ -2,6 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -10,7 +11,7 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { CommandResolutionCache } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -57,7 +58,7 @@ describe("managed GitHub CLI environment", () => {
           `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(entry)} "$@"\n`,
         );
         yield* fs.chmod(path.join(realDir, "gh"), 0o755);
-        const services = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const services = yield* Effect.context<FileSystem.FileSystem | Path.Path | Digest.Digest>();
         const prepared = yield* mergeProviderInstanceEnvironment(
           [{ name: "PATH", value: providerPath, sensitive: false }],
           { PATH: "/not-installed", CALLS: calls, CUSTOM: "kept" },
@@ -142,7 +143,11 @@ describe("managed GitHub CLI environment", () => {
         expect(disabled.T3_GH_SHIM_DIR).toBeUndefined();
       }).pipe(
         Effect.scoped,
-        Effect.provide(TestProviderHost.layer().pipe(Layer.provideMerge(NodeServices.layer))),
+        Effect.provide(
+          TestProviderHost.layer().pipe(
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ),
       ),
   );
 
@@ -163,7 +168,7 @@ describe("managed GitHub CLI environment", () => {
         }),
       ).toEqual(environment);
       expect(yield* fs.exists(path.join(stateDir, "github"))).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect.each([".EXE", ".CMD"])(
@@ -194,7 +199,7 @@ describe("managed GitHub CLI environment", () => {
         Effect.scoped,
         Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(CommandResolutionCache, new Map()),
-        Effect.provide(NodeServices.layer),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
   );
 });

@@ -58,8 +58,32 @@ describe("withProviderPools", () => {
   });
 
   it("publishes one pool entry with the model intersection and stamps the members", () => {
+    const commonSkill = { name: "shared", path: "/workspace/shared/SKILL.md", enabled: true };
+    const commonOption = { id: "fast", label: "Fast", type: "boolean" } as const;
+    const personalWorkspace = {
+      cwd: "/workspace",
+      checkedAt: "2026-10-19T00:00:00.000Z",
+      slashCommands: [{ name: "compact" }, { name: "personal" }],
+      skills: [commonSkill, { name: "personal", path: "/personal/SKILL.md", enabled: true }],
+      optionDescriptors: [commonOption],
+    };
+    const workWorkspace = {
+      ...personalWorkspace,
+      checkedAt: "2026-10-19T00:00:01.000Z",
+      slashCommands: [{ name: "compact" }, { name: "work" }],
+      slashCommandsPending: true,
+      skills: [commonSkill],
+      optionDescriptors: [commonOption, { id: "work", label: "Work", type: "boolean" as const }],
+    };
     const published = withProviderPools({
-      providers: [personal, work, provider("codex", codex)],
+      providers: [
+        { ...personal, workspaceSnapshots: [personalWorkspace] },
+        {
+          ...work,
+          workspaceSnapshots: [workWorkspace, { ...workWorkspace, cwd: "/work-only" }],
+        },
+        provider("codex", codex),
+      ],
       providerPools: pools({ claudeAgent: ["claudeAgent_work", "claudeAgent"] }),
     });
     const pool = published.find((entry) => entry.instanceId === "pool_claudeAgent");
@@ -77,6 +101,16 @@ describe("withProviderPools", () => {
       [["opus", "Opus (work)"]],
     );
     assert.deepEqual(pool?.slashCommands, [{ name: "compact" }]);
+    assert.deepEqual(pool?.workspaceSnapshots, [
+      {
+        cwd: "/workspace",
+        checkedAt: personalWorkspace.checkedAt,
+        slashCommands: [{ name: "compact" }],
+        slashCommandsPending: true,
+        skills: [commonSkill],
+        optionDescriptors: [commonOption],
+      },
+    ]);
     assert.deepEqual(
       published.map((entry) => [entry.instanceId, entry.pool]),
       [
@@ -135,13 +169,23 @@ describe("withProviderPools", () => {
   );
 
   it("keeps the pool and member identities when only one account remains enabled", () => {
-    const providers = [personal, provider("claudeAgent_work", claude, { enabled: false })];
+    const workspace = {
+      cwd: "/workspace",
+      checkedAt: personal.checkedAt,
+      slashCommands: [{ name: "compact" }],
+      skills: [],
+    };
+    const providers = [
+      { ...personal, workspaceSnapshots: [workspace] },
+      provider("claudeAgent_work", claude, { enabled: false }),
+    ];
     const published = withProviderPools({
       providers,
       providerPools: pools({ claudeAgent: ["claudeAgent", "claudeAgent_work", "missing"] }),
     });
     assert.equal(published.at(-1)?.instanceId, "pool_claudeAgent");
     assert.equal(published.at(-1)?.status, "ready");
+    assert.deepEqual(published.at(-1)?.workspaceSnapshots, [workspace]);
     assert.equal(published[1]?.pool?.role, "member");
   });
 

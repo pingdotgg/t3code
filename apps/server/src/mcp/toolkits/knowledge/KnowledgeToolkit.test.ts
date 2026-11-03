@@ -86,7 +86,7 @@ it.effect("registers knowledge tools and preserves the mutation and caller origi
       KnowledgeToolkit,
       KnowledgeHandlers.layer,
     ).pipe(
-      Layer.provideMerge(McpServer.McpServer.layer),
+      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
       Layer.provide(NodeCrypto.layer),
       Layer.provide(
         Layer.mock(ThreadManagement.ThreadManagementService)({

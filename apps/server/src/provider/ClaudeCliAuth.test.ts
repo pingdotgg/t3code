@@ -1,8 +1,10 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ClaudeSettings, ProviderInstanceId, type ProviderAuthState } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -148,7 +150,7 @@ it.effect("accepts a chunked native URL and verifies the private subscription", 
       false,
       false,
     ]);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect.each(["failure", "no-account", "api-key", "bad-status"])(
@@ -167,7 +169,7 @@ it.effect.each(["failure", "no-account", "api-key", "bad-status"])(
             : "Claude could not verify a subscription account. Start sign-in again.",
       );
       expect(yield* fixture.auth.withAccess!(Effect.succeed("available"))).toBe("available");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect.each(["no-url", "success"])("cancels the owned process %s", (mode) =>
@@ -179,7 +181,7 @@ it.effect.each(["no-url", "success"])("cancels the owned process %s", (mode) =>
     expect((yield* fixture.auth.cancel("owner", state.flowId!)).phase).toBe("cancelled");
     expect(yield* fixture.children[0]!.isRunning).toBe(false);
     expect(yield* fixture.auth.withAccess!(Effect.succeed("available"))).toBe("available");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("rejects malformed, stale, and other-client codes while keeping the login usable", () =>
@@ -207,7 +209,7 @@ it.effect("rejects malformed, stale, and other-client codes while keeping the lo
     }
     yield* fixture.auth.complete!("owner", { flowId: state.flowId!, callbackUrl: "fixture-code" });
     expect((yield* fixture.phase("succeeded")).phase).toBe("succeeded");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("expires sign-in and closes its native process", () =>
@@ -218,7 +220,7 @@ it.effect("expires sign-in and closes its native process", () =>
     yield* TestClock.adjust("6 minutes");
     expect((yield* fixture.phase("failed")).message).toBe("Sign-in expired. Start again.");
     expect(yield* fixture.children[0]!.isRunning).toBe(false);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("signs out one private account and accepts repeated sign-out requests", () =>
@@ -255,7 +257,7 @@ it.effect("signs out one private account and accepts repeated sign-out requests"
     expect(
       yield* fixture.fs.readFileString(fixture.path.join(fixture.existing, "account.json")),
     ).toBe('{"email":"existing@example.test"}');
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("does not claim logout when the CLI still has credentials", () =>
@@ -265,7 +267,7 @@ it.effect("does not claim logout when the CLI still has credentials", () =>
     expect((yield* fixture.auth.logout(Effect.void).pipe(Effect.flip)).detail).toBe(
       "Could not sign out of Claude. Try again.",
     );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("submits only one code to the owned login", () =>
@@ -282,5 +284,5 @@ it.effect("submits only one code to the owned login", () =>
     ).toBe("A sign-in code was already submitted.");
     expect((yield* fixture.auth.cancel("owner", state.flowId!)).phase).toBe("cancelled");
     expect(yield* fixture.children[0]!.isRunning).toBe(false);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

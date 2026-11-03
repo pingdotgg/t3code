@@ -418,7 +418,13 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
               ? Effect.die(new Error("Config is not used by registry tests."))
               : Effect.succeed({ directEndpoints: options.directEndpoints } as ServerConfig),
           subscribeServerConfig: () =>
-            Stream.die(new Error("Config is not used by registry tests.")),
+            options?.directEndpoints === undefined
+              ? Stream.never
+              : Stream.make({
+                  version: 1 as const,
+                  type: "snapshot" as const,
+                  config: { directEndpoints: options.directEndpoints } as ServerConfig,
+                }),
           ready: Effect.void,
           probe: Effect.void,
           inboundFrames: Effect.succeed(0),

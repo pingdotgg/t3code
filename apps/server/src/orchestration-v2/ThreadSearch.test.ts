@@ -8,6 +8,7 @@ import {
   type OrchestrationV2DomainEvent,
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -29,7 +30,10 @@ const layerTest = Layer.mergeAll(
   ThreadSearch.layer,
   ProjectionStore.layer,
   ProjectStore.layer,
-).pipe(Layer.provideMerge(SqlitePersistence.layerMemory), Layer.provide(NodeServices.layer));
+).pipe(
+  Layer.provideMerge(SqlitePersistence.layerMemory),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
 
 const providerInstanceId = ProviderInstanceId.make("codex");
 const at = (minute: number) => DateTime.makeUnsafe(Date.UTC(2026, 8, 27, 0, minute));
@@ -1202,7 +1206,7 @@ it.effect("searches on the reader worker while the writer is busy", () =>
       ProjectStore.layer,
     ).pipe(
       Layer.provideMerge(SqlitePersistence.layerFromPath(path.join(directory, "state.sqlite"))),
-      Layer.provide(NodeServices.layer),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
 
     yield* Effect.gen(function* () {
@@ -1237,5 +1241,5 @@ it.effect("searches on the reader worker while the writer is busy", () =>
         [threadId],
       );
     }).pipe(Effect.provide(layerFile));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

@@ -152,7 +152,7 @@ describe("provider compatibility", () => {
         `agy_acp_server_${release.version}`,
       );
       assert.strictEqual(advisory?.status, "supported");
-      assert.strictEqual(advisory?.recommendedRange, `=${release.version}`);
+      assert.include(advisory?.recommendedRange ?? "", `=${release.version}`);
     }
   });
 

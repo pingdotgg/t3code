@@ -60,7 +60,7 @@ const registration = Layer.mergeAll(
     ConversationSummaryHandlers.layer,
   ),
   McpHttpServer.toolkitRegistration(ProjectCodeToolkit, ProjectCodeHandlers.layer),
-).pipe(Layer.provideMerge(McpServer.McpServer.layer));
+).pipe(Layer.provideMerge(McpHttpServer.layerInProcessMcpServer));
 
 const server = (
   forwarded: Array<Forwarded>,
