@@ -19,6 +19,7 @@ export function MiddleTruncate({
   const split = splitForMiddleTruncate(value, tail);
   const headRef = useRef<HTMLSpanElement>(null);
   const head = split?.head;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fits the head span's DOM text and refits it through a ResizeObserver
   useLayoutEffect(() => {
     const element = headRef.current;
     // A new head can keep the same box size, so refit here, not only on resize.

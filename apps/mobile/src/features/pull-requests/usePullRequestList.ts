@@ -1,155 +1,198 @@
-import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomMount, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
 import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestDiffStat, PullRequestListInput } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/reactivity";
-import { use, useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
-import { composerPullRequests } from "../../state/pull-requests";
+import * as Effect from "effect/Effect";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
+import { use, useMemo, useState } from "react";
+import { environmentCatalog } from "../../connection/catalog";
+import {
+  composerPullRequests,
+  pullRequestListPagesFamily,
+  pullRequestListPagesKey,
+  pullRequestListStatsFamily,
+} from "../../state/pull-requests";
 import {
   appendPullRequestListPage,
   mergeEnvironmentPullRequestPages,
   nextPullRequestListInput,
+  patchPullRequestListEntry,
   pullRequestListHead,
-  pullRequestListKey,
+  shownPullRequestListPages,
+  pullRequestStatKey as statKey,
   scopedPullRequestListKey,
+  withShownPullRequestStats,
   type EnvironmentPullRequestListEntry,
   type PullRequestListPages,
 } from "./pullRequestList";
 
-const pagesFamily = Atom.family((_key: string) =>
-  Atom.make<PullRequestListPages | null>(null).pipe(Atom.setIdleTTL(5 * 60_000)),
-);
-const statsFamily = Atom.family((_environmentId: string) =>
-  Atom.make<ReadonlyMap<string, PullRequestDiffStat>>(new Map()).pipe(Atom.setIdleTTL(5 * 60_000)),
-);
-const statKey = (row: Pick<PullRequestDiffStat, "projectId" | "repository" | "number">) =>
-  `${row.projectId}:${row.repository}:${row.number}`;
-
 type ListTarget = { readonly environmentId: EnvironmentId; readonly input: PullRequestListInput };
+type Read = <A>(atom: Atom.Atom<A>) => A;
+
+/** The head the list query holds now, cached or answered. */
+function currentHead(read: Read, target: ListTarget) {
+  return AsyncResult.getOrElse(read(composerPullRequests.list(target)), () => null);
+}
+
+function currentPages(read: Read, target: ListTarget): PullRequestListPages | null {
+  return shownPullRequestListPages(
+    read(pullRequestListPagesFamily(pullRequestListPagesKey(target))),
+    currentHead(read, target),
+  );
+}
+
 const sourcesFamily = Atom.family((key: string) => {
   const targets: readonly ListTarget[] = JSON.parse(key);
   return Atom.make((get) =>
-    targets.map((target) => {
-      const result = get(composerPullRequests.list(target));
-      const head = Option.getOrNull(AsyncResult.value(result));
-      const cached = get(pagesFamily(JSON.stringify(target)));
-      return {
-        target,
-        result,
-        pages: head ? pullRequestListHead(cached, head) : cached,
-        stats: get(statsFamily(target.environmentId)),
-      };
-    }),
+    targets.map((target) => ({
+      target,
+      result: get(composerPullRequests.list(target)),
+      pages: currentPages(get, target),
+      stats: get(pullRequestListStatsFamily(target.environmentId)),
+    })),
   );
 });
+
+function continuations(registry: AtomRegistry.AtomRegistry, targets: readonly ListTarget[]) {
+  return targets.flatMap((target) => {
+    const pages = currentPages((atom) => registry.get(atom), target);
+    const input = pages && nextPullRequestListInput(pages, target.input);
+    return pages && input ? [{ target, pages, input }] : [];
+  });
+}
+
+async function loadNextPages(
+  registry: AtomRegistry.AtomRegistry,
+  targets: readonly ListTarget[],
+  retry: boolean,
+  signal: AbortSignal,
+) {
+  const responses = await Promise.allSettled(
+    continuations(registry, targets).map(async ({ target, pages, input }) => {
+      const response = await executeAtomQuery(
+        registry,
+        composerPullRequests.list({ ...target, input }),
+        {
+          signal,
+          refresh: retry,
+          reportFailure: false,
+        },
+      );
+      if (signal.aborted) return;
+      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+      if (response.value.errors.length)
+        throw new Error(response.value.errors.map((error) => error.message).join("\n"));
+      const pagesAtom = pullRequestListPagesFamily(pullRequestListPagesKey(target));
+      const next = appendPullRequestListPage(
+        currentPages((atom) => registry.get(atom), target) ?? pages,
+        response.value,
+        input,
+      );
+      registry.set(pagesAtom, next);
+      if (
+        input.cursors &&
+        Object.keys(next.nextCursors).length &&
+        JSON.stringify(Object.entries(input.cursors).sort()) ===
+          JSON.stringify(Object.entries(next.nextCursors).sort())
+      )
+        throw new Error("Couldn't advance the list. Try again.");
+    }),
+  );
+  return requestErrors(responses);
+}
+
+async function refreshHeads(
+  registry: AtomRegistry.AtomRegistry,
+  targets: readonly ListTarget[],
+  signal: AbortSignal,
+) {
+  const responses = await Promise.allSettled(
+    targets.map(async (target) => {
+      await composerPullRequests.invalidate.run(registry, {
+        environmentId: target.environmentId,
+        input: {},
+      });
+      if (signal.aborted) return;
+      const response = await executeAtomQuery(registry, composerPullRequests.list(target), {
+        refresh: true,
+        signal,
+        reportFailure: false,
+      });
+      if (signal.aborted) return;
+      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+      registry.set(
+        pullRequestListPagesFamily(pullRequestListPagesKey(target)),
+        pullRequestListHead(null, response.value),
+      );
+    }),
+  );
+  return requestErrors(responses);
+}
+
+// One load of each kind per list scope. The atoms are not kept alive, so leaving a scope (a
+// filter change, unmount) interrupts its load and aborts the requests.
+const pageLoadFamily = Atom.family((scopeKey: string) =>
+  Atom.fn((retry: boolean, get) =>
+    Effect.promise((signal) => loadNextPages(get.registry, JSON.parse(scopeKey), retry, signal)),
+  ),
+);
+const refreshLoadFamily = Atom.family((scopeKey: string) =>
+  Atom.fn((_: void, get) =>
+    Effect.promise((signal) => refreshHeads(get.registry, JSON.parse(scopeKey), signal)),
+  ),
+);
+
+// Changes when any of the scope's environments brings up a new session.
+const sessionsFamily = Atom.family((scopeKey: string) =>
+  Atom.make((get) =>
+    (JSON.parse(scopeKey) as readonly ListTarget[])
+      .map(({ environmentId }) => get(environmentCatalog.sessionGenerationAtom(environmentId)))
+      .join(),
+  ),
+);
+
+const settledError = (result: AsyncResult.AsyncResult<string | null, never>) =>
+  AsyncResult.isSuccess(result) && !result.waiting ? result.value : null;
 
 export function usePullRequestList(targets: readonly ListTarget[]) {
   const registry = use(RegistryContext);
   const scopeKey = JSON.stringify(targets);
-  const activeScope = useRef(scopeKey);
   const sources = useAtomValue(sourcesFamily(scopeKey));
-  const requests = useRef<{ page?: AbortController; refresh?: AbortController }>({});
-  const [loading, setLoading] = useState({
-    key: scopeKey,
-    page: false,
-    refresh: false,
-    error: null as string | null,
+  const pageAtom = pageLoadFamily(scopeKey);
+  const refreshAtom = refreshLoadFamily(scopeKey);
+  const page = useAtomValue(pageAtom);
+  const refresh = useAtomValue(refreshAtom);
+  const loadError = settledError(page);
+
+  // A page or refresh asked for while an environment was unreachable fails at once, and its
+  // error stops loading on scroll. Once it is back, ask for the page again; a refresh's error is
+  // stale by then because the list queries re-run on reconnect.
+  // A listener alone does not compute the atom, so nothing would follow the connections.
+  useAtomMount(sessionsFamily(scopeKey));
+  useAtomSubscribe(sessionsFamily(scopeKey), () => {
+    const pageResult = registry.get(pageAtom);
+    const refreshResult = registry.get(refreshAtom);
+    if (settledError(refreshResult) !== null) registry.set(refreshAtom, Atom.Reset);
+    else if (settledError(pageResult) !== null && !refreshResult.waiting)
+      registry.set(pageAtom, true);
   });
-  const state = loading.key === scopeKey ? loading : { page: false, refresh: false, error: null };
-  useLayoutEffect(() => {
-    activeScope.current = scopeKey;
-    return () => {
-      requests.current.page?.abort();
-      requests.current.refresh?.abort();
-      requests.current = {};
-    };
-  }, [scopeKey, activeScope]);
-  useEffect(() => {
-    for (const { target, pages } of sources)
-      if (pages) registry.set(pagesFamily(JSON.stringify(target)), pages);
-  }, [registry, sources]);
 
-  const loadMore = useCallback(
-    async (retry = false) => {
-      if (requests.current.page || requests.current.refresh || (!retry && state.error)) return;
-      const continuations = targets.flatMap((target) => {
-        const pagesAtom = pagesFamily(JSON.stringify(target));
-        const pages = registry.get(pagesAtom);
-        const input = pages && nextPullRequestListInput(pages, target.input);
-        return pages && input ? [{ target, pagesAtom, pages, input }] : [];
-      });
-      if (!continuations.length) return;
-      const controller = new AbortController();
-      requests.current.page = controller;
-      setLoading({ key: scopeKey, page: true, refresh: false, error: null });
-      const responses = await Promise.allSettled(
-        continuations.map(async ({ target, pagesAtom, pages, input }) => {
-          const response = await executeAtomQuery(
-            registry,
-            composerPullRequests.list({ ...target, input }),
-            {
-              signal: controller.signal,
-              refresh: retry,
-              reportFailure: false,
-            },
-          );
-          if (controller.signal.aborted || activeScope.current !== scopeKey) return;
-          if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-          if (response.value.errors.length)
-            throw new Error(response.value.errors.map((error) => error.message).join("\n"));
-          const next = appendPullRequestListPage(
-            registry.get(pagesAtom) ?? pages,
-            response.value,
-            input,
-          );
-          registry.set(pagesAtom, next);
-          if (
-            input.cursors &&
-            Object.keys(next.nextCursors).length &&
-            JSON.stringify(Object.entries(input.cursors).sort()) ===
-              JSON.stringify(Object.entries(next.nextCursors).sort())
-          )
-            throw new Error("Couldn't advance the list. Try again.");
-        }),
-      );
-      if (requests.current.page === controller) delete requests.current.page;
-      if (!controller.signal.aborted && activeScope.current === scopeKey)
-        setLoading({ key: scopeKey, page: false, refresh: false, error: requestErrors(responses) });
-    },
-    [targets, registry, scopeKey, state.error, activeScope],
-  );
+  // Read from the registry, not the render: a second onEndReached before React re-renders must
+  // see the load the first one started.
+  const loadMore = (retry = false) => {
+    const pageResult = registry.get(pageAtom);
+    const refreshResult = registry.get(refreshAtom);
+    if (pageResult.waiting || refreshResult.waiting) return;
+    if (!retry && settledError(pageResult)) return;
+    if (!continuations(registry, targets).length) return;
+    registry.set(refreshAtom, Atom.Reset);
+    registry.set(pageAtom, retry);
+  };
 
-  const onRefresh = async () => {
-    if (!targets.length || requests.current.refresh) return;
-    requests.current.page?.abort();
-    delete requests.current.page;
-    const controller = new AbortController();
-    requests.current.refresh = controller;
-    setLoading({ key: scopeKey, page: false, refresh: true, error: null });
-    const responses = await Promise.allSettled(
-      targets.map(async (target) => {
-        await composerPullRequests.invalidate.run(registry, {
-          environmentId: target.environmentId,
-          input: {},
-        });
-        if (controller.signal.aborted) return;
-        const response = await executeAtomQuery(registry, composerPullRequests.list(target), {
-          refresh: true,
-          signal: controller.signal,
-          reportFailure: false,
-        });
-        if (controller.signal.aborted || activeScope.current !== scopeKey) return;
-        if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-        registry.set(
-          pagesFamily(JSON.stringify(target)),
-          pullRequestListHead(null, response.value),
-        );
-      }),
-    );
-    if (requests.current.refresh === controller) delete requests.current.refresh;
-    if (!controller.signal.aborted && activeScope.current === scopeKey)
-      setLoading({ key: scopeKey, page: false, refresh: false, error: requestErrors(responses) });
+  const onRefresh = () => {
+    if (!targets.length || registry.get(refreshAtom).waiting) return;
+    registry.set(pageAtom, Atom.Reset);
+    registry.set(refreshAtom, undefined);
   };
 
   const data = useMemo(
@@ -163,7 +206,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
                   pages: {
                     ...pages,
                     entries: pages.entries.map((entry) => {
-                      const stat = stats.get(statKey(entry));
+                      const stat = stats.stats.get(statKey(entry));
                       return stat
                         ? { ...entry, additions: stat.additions, deletions: stat.deletions }
                         : entry;
@@ -180,29 +223,34 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
     key: string;
     rows: readonly EnvironmentPullRequestListEntry[];
   }>({ key: scopeKey, rows: [] });
-  const onViewableItemsChanged = useCallback(
-    ({
-      viewableItems,
-    }: {
-      viewableItems: readonly { item: EnvironmentPullRequestListEntry; isViewable: boolean }[];
-    }) => {
-      const rows = viewableItems.filter((token) => token.isViewable).map((token) => token.item);
-      setVisible((previous) =>
-        previous.key === scopeKey &&
-        previous.rows.map(scopedPullRequestListKey).join() ===
-          rows.map(scopedPullRequestListKey).join()
-          ? previous
-          : { key: scopeKey, rows },
-      );
-    },
-    [scopeKey],
-  );
+  const onViewableItemsChanged = ({
+    viewableItems,
+  }: {
+    viewableItems: readonly { item: EnvironmentPullRequestListEntry; isViewable: boolean }[];
+  }) => {
+    const rows = viewableItems.filter((token) => token.isViewable).map((token) => token.item);
+    setVisible((previous) =>
+      previous.key === scopeKey &&
+      previous.rows.map(scopedPullRequestListKey).join() ===
+        rows.map(scopedPullRequestListKey).join()
+        ? previous
+        : { key: scopeKey, rows },
+    );
+  };
   const visibleRows =
     visible.key === scopeKey && visible.rows.length ? visible.rows : data.entries.slice(0, 8);
+  // Visible rows carry the cached-answer overlay below. Decide which still need stats on the rows
+  // without it, so a cached answer shown offline does not unmount the query that holds it.
+  const withoutCachedOverlay = new Map(
+    data.entries.map((row) => [scopedPullRequestListKey(row), row]),
+  );
   const statsKey = JSON.stringify(
     targets.flatMap(({ environmentId }) => {
       const refs = visibleRows
-        .filter((row) => row.environmentId === environmentId && row.additions + row.deletions === 0)
+        .filter((row) => {
+          const base = withoutCachedOverlay.get(scopedPullRequestListKey(row)) ?? row;
+          return row.environmentId === environmentId && base.additions + base.deletions === 0;
+        })
         .map(({ projectId, host, repository, number }) => ({
           projectId,
           host,
@@ -223,37 +271,34 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
     );
   }, [statsKey]);
   const counts = useAtomValue(statsAtom);
-  useEffect(() => {
-    for (const { environmentId, result } of counts) {
-      if (result._tag !== "Success" || result.waiting) continue;
-      registry.update(statsFamily(environmentId), (previous) => {
-        const next = new Map(previous);
-        for (const row of result.value.stats) next.set(statKey(row), row);
-        return next;
-      });
-    }
-  }, [registry, counts]);
-
-  const updateEntry = useCallback(
-    (entry: EnvironmentPullRequestListEntry, patch: Partial<EnvironmentPullRequestListEntry>) => {
-      const target = targets.find((target) => target.environmentId === entry.environmentId);
-      if (!target) return;
-      registry.update(pagesFamily(JSON.stringify(target)), (previous) =>
-        previous
-          ? {
-              ...previous,
-              entries: previous.entries.map((row) =>
-                pullRequestListKey(row) === pullRequestListKey(entry)
-                  ? { ...row, ...patch, observedAt: Date.now() }
-                  : row,
-              ),
-            }
-          : previous,
-      );
-      registry.refresh(composerPullRequests.list(target));
-    },
-    [registry, targets],
+  // Server answers land in pullRequestListStatsFamily; these cover a cached answer, which is
+  // all an offline environment has. Scrolling makes a new stats query, which has no answer until
+  // its cached rows load, so each environment keeps the answer it showed until the new one lands.
+  const [shown, setShown] = useState({ counts, answers: answeredStats(counts, []) });
+  if (shown.counts !== counts) setShown({ counts, answers: answeredStats(counts, shown.answers) });
+  const entries = useMemo(
+    () => withShownPullRequestStats(data.entries, shown.answers),
+    [data.entries, shown.answers],
   );
+
+  const updateEntry = (
+    entry: EnvironmentPullRequestListEntry,
+    patch: Partial<EnvironmentPullRequestListEntry>,
+  ) => {
+    const target = targets.find((target) => target.environmentId === entry.environmentId);
+    if (!target) return;
+    const pagesAtom = pullRequestListPagesFamily(pullRequestListPagesKey(target));
+    const read = <A>(atom: Atom.Atom<A>) => registry.get(atom);
+    const patched = patchPullRequestListEntry(
+      read(pagesAtom),
+      currentHead(read, target),
+      entry,
+      patch,
+      Date.now(),
+    );
+    if (patched) registry.set(pagesAtom, patched);
+    registry.refresh(composerPullRequests.list(target));
+  };
   const errors = useMemo(
     () =>
       sources.flatMap(({ target, result }) => {
@@ -269,10 +314,13 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
       }),
     [sources],
   );
-  const listing = useMemo(() => ({ ...data, errors: [...data.errors, ...errors] }), [data, errors]);
+  const listing = useMemo(
+    () => ({ ...data, entries, errors: [...data.errors, ...errors] }),
+    [data, entries, errors],
+  );
   return {
     data: listing,
-    entries: data.entries,
+    entries,
     error: errors.map((error) => error.message).join("\n") || null,
     isPending: sources.some(({ result }) => result.waiting) && !data.entries.length,
     continued: data.continued,
@@ -280,9 +328,9 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
     onRefresh,
     onViewableItemsChanged,
     updateEntry,
-    refreshing: state.refresh,
-    loadingMore: state.page,
-    loadMoreError: state.error,
+    refreshing: refresh.waiting,
+    loadingMore: page.waiting,
+    loadMoreError: loadError,
     hasMore: sources.some(
       ({ pages, target }) => pages && nextPullRequestListInput(pages, target.input),
     ),
@@ -303,4 +351,33 @@ function requestErrors(results: readonly PromiseSettledResult<unknown>[]) {
       )
       .join("\n") || null
   );
+}
+
+type StatsAnswer = {
+  readonly environmentId: EnvironmentId;
+  readonly stats: readonly PullRequestDiffStat[];
+};
+
+/** Each environment's newest stats answer, or the one it had while its query has none. */
+function answeredStats(
+  counts: readonly {
+    readonly environmentId: EnvironmentId;
+    readonly result: AsyncResult.AsyncResult<
+      { readonly stats: readonly PullRequestDiffStat[] },
+      unknown
+    >;
+  }[],
+  previous: readonly StatsAnswer[],
+): readonly StatsAnswer[] {
+  const next = counts.flatMap(({ environmentId, result }) => {
+    const kept = previous.find((answer) => answer.environmentId === environmentId);
+    if (!AsyncResult.isSuccess(result)) return kept ? [kept] : [];
+    return kept?.stats === result.value.stats
+      ? [kept]
+      : [{ environmentId, stats: result.value.stats }];
+  });
+  return next.length === previous.length &&
+    next.every((answer, index) => answer === previous[index])
+    ? previous
+    : next;
 }

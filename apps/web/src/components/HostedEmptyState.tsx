@@ -49,7 +49,7 @@ export function HostedEmptyState() {
           <EmptyContent>
             {localEnvironmentOff ? (
               <Button render={<Link to="/settings/connections" />} size="sm">
-                Open Connections
+                Open Environments
               </Button>
             ) : (
               <ol className="w-full space-y-4 text-left">

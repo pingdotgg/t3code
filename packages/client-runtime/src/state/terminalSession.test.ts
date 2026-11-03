@@ -67,6 +67,30 @@ describe("terminal session reducers", () => {
     });
   });
 
+  it("follows the shared PTY grid from snapshots and activity without disturbing output", () => {
+    const attached = applyTerminalAttachStreamEvent(nextTerminalAttachSeedState(), {
+      type: "snapshot",
+      snapshot: { ...BASE_SNAPSHOT, cols: 130, rows: 15 },
+    });
+    const activity = {
+      type: "activity",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      hasRunningSubprocess: false,
+      label: "Terminal 1",
+    } as const;
+    const narrowed = applyTerminalAttachStreamEvent(attached, { ...activity, cols: 54, rows: 15 });
+    // Activity from a server without geometry, or a repeat, must not reset the renderer.
+    const unchanged = applyTerminalAttachStreamEvent(
+      applyTerminalAttachStreamEvent(narrowed, activity),
+      { ...activity, cols: 54, rows: 15 },
+    );
+
+    expect(attached.grid).toEqual({ cols: 130, rows: 15 });
+    expect(narrowed).toEqual({ ...attached, grid: { cols: 54, rows: 15 } });
+    expect(unchanged).toBe(narrowed);
+  });
+
   it("preserves a BOM code point at a new output chunk boundary", () => {
     const initial = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
       type: "snapshot",
@@ -140,6 +164,46 @@ describe("terminal session reducers", () => {
     const update = readTerminalOutputUpdate(state.output, cursor);
     expect(update).toMatchObject({ type: "append", data: " one two three" });
     expect(readTerminalOutputUpdate(state.output, update.cursor).type).toBe("none");
+  });
+
+  it("bounds historical chunk inspection when reading new tail output", () => {
+    let state = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "snapshot",
+      snapshot: { ...BASE_SNAPSHOT, history: "" },
+    });
+    for (let index = 0; index < 512; index += 1) {
+      state = applyTerminalAttachStreamEvent(state, {
+        type: "output",
+        threadId: TARGET.threadId,
+        terminalId: TARGET.terminalId,
+        data: "history\r\n",
+      });
+    }
+    const cursor = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR).cursor;
+    const next = applyTerminalAttachStreamEvent(state, {
+      type: "output",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      data: "latest\r\n",
+    });
+    let historicalChunkReads = 0;
+    const chunks = next.output.chunks.map((chunk, index) =>
+      index < state.output.chunks.length
+        ? {
+            ...chunk,
+            get startOffset() {
+              historicalChunkReads += 1;
+              return chunk.startOffset;
+            },
+          }
+        : chunk,
+    );
+
+    expect(readTerminalOutputUpdate({ ...next.output, chunks }, cursor)).toMatchObject({
+      type: "append",
+      data: "latest\r\n",
+    });
+    expect(historicalChunkReads).toBeLessThanOrEqual(2);
   });
 
   it("preserves the byte-limited tail and resets a cursor before a partially trimmed chunk", () => {

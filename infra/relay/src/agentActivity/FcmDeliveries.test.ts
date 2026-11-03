@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import type * as Cloudflare from "alchemy/Cloudflare";
+import type * as Cloudflare from "@alchemy.run/cloudflare";
 import * as FcmDeliveryQueueConsumer from "./FcmDeliveryQueueConsumer.ts";
 
 import * as RelayConfiguration from "../Config.ts";
@@ -126,8 +126,7 @@ function harness() {
           marked.push(input);
           current.target.last_aggregate_json = input.aggregate ? encodeJson(input.aggregate) : null;
         }),
-      markStartQueued: () => Effect.void,
-      clearStartQueued: () => Effect.void,
+
       invalidateDeliveryToken: () => Effect.void,
     }),
     Layer.succeed(AgentActivityRows.AgentActivityRows, {

@@ -6,9 +6,10 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, use, useEffect, useRef } from "react";
+import { memo, use, useRef } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
-import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
+import { shortcutLabelForCommand } from "../../keybindings";
+import { OPEN_FAVORITE_EDITOR_ATTRIBUTE } from "./OpenInPickerShortcut";
 import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
 import {
@@ -281,38 +282,6 @@ export const OpenInPicker = memo(function OpenInPicker({
   );
 
   const backgroundThread = use(BackgroundThreadContext);
-  useEffect(() => {
-    if (!enableShortcut || !canOpenEditor || backgroundThread) return;
-    const handler = (e: globalThis.KeyboardEvent) => {
-      if (e.defaultPrevented || !isOpenFavoriteEditorShortcut(e, keybindings)) return;
-      if (!openInCwd) return;
-      if (!preferredEditor) return;
-      if (
-        remote.mode === "local-exec" &&
-        !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
-      )
-        return;
-
-      e.preventDefault();
-      const label = editorLabelForPlatform(preferredEditor, navigator.platform);
-      void openInEditor(preferredEditor).then((opened) => {
-        if (opened) announce(`Opened in ${label}`);
-      });
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [
-    backgroundThread,
-    canOpenEditor,
-    enableShortcut,
-    environmentId,
-    keybindings,
-    openInCwd,
-    openInEditor,
-    preferredEditor,
-    remote.mode,
-  ]);
-  // Derive after the shortcut effect to preserve the editor list's compiler cache.
   const options = resolveOpenInOptions(navigator.platform, effectiveEditors);
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
   const primaryLabel = isPanel ? `Open in ${primaryOption?.label ?? "editor"}` : "Open";
@@ -402,7 +371,14 @@ export const OpenInPicker = memo(function OpenInPicker({
         part="primary"
         panel={isPanel}
         disabled={!preferredEditor || !openInCwd || !canOpenEditor}
-        onClick={() => openInEditor(preferredEditor)}
+        {...(enableShortcut && !backgroundThread ? { [OPEN_FAVORITE_EDITOR_ATTRIBUTE]: "" } : {})}
+        onClick={() => {
+          if (!preferredEditor) return;
+          const label = editorLabelForPlatform(preferredEditor, navigator.platform);
+          void openInEditor(preferredEditor).then((opened) => {
+            if (opened) announce(`Opened in ${label}`);
+          });
+        }}
       >
         {primaryOption?.Icon ? (
           <primaryOption.Icon

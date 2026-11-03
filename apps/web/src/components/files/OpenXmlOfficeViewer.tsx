@@ -45,7 +45,7 @@ export default function OfficeViewer(props: {
   const fail = useStableCallback((cause: unknown) =>
     setError(cause instanceof Error ? cause.message : "Could not render this Office document."),
   );
-  // oxlint-disable-next-line t3code/react-effect-budget -- Own the Open XML fetch, preparation worker, and timeout for this source and release them on cleanup.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the Open XML fetch, preparation worker, and timeout for this source and release them on cleanup.
   useEffect(() => {
     if ((props.sizeBytes ?? 0) > OFFICE_PREVIEW_MAX_BYTES) {
       // Metadata bounds are checked before fetching or starting an engine.

@@ -4,7 +4,7 @@ import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serve
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
@@ -74,7 +74,6 @@ const DESKTOP_BACKEND_ENV_NAMES = [
   "T3CODE_NO_BROWSER",
   "T3CODE_HOST",
   "T3CODE_DESKTOP_WS_URL",
-  "T3CODE_DESKTOP_LAN_ACCESS",
   "T3CODE_DESKTOP_LAN_HOST",
   "T3CODE_DESKTOP_HTTPS_ENDPOINTS",
   "T3CODE_TAILSCALE_SERVE",
@@ -86,6 +85,7 @@ const WSL_FORWARDED_ENV_NAMES = [
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "T3CODE_TELEMETRY_ENABLED",
+  "T3CODE_GITHUB_APP_CLIENT_ID",
   // Otherwise the WSL server keeps exporting to endpoints from the bootstrap.
   "T3CODE_OTEL_SDK_DISABLED",
   "OTEL_SDK_DISABLED",
@@ -532,6 +532,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       env: {
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
+        T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1",
         T3CODE_CLI_PATH: Option.getOrUndefined(input.cliPath),
       },
       extendEnv: true,
@@ -722,14 +723,14 @@ export const make = Effect.gen(function* () {
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
   const settings = yield* DesktopAppSettings.DesktopAppSettings;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   // Random generation yields; serialize it so concurrent backends cannot capture distinct bootstrap secrets.
   const secretRef = yield* SynchronizedRef.make(Option.none<string>());
   const getOrCreateBootstrapSecret = SynchronizedRef.modifyEffect(secretRef, (current) =>
     Option.match(current, {
       onSome: (secret) => Effect.succeed([secret, current] as const),
       onNone: () =>
-        crypto.randomBytes(32).pipe(
+        random.randomBytes(32).pipe(
           Effect.map((bytes) => {
             const secret = Hex.encode(bytes);
             return [secret, Option.some(secret)] as const;

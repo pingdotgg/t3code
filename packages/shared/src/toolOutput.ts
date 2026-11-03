@@ -43,6 +43,8 @@ interface CompactToolOutput {
   [MCP_APP_OUTPUT_KEY]?: McpAppReference;
   thread?: { threadId: string };
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
+  linkedCount?: number;
+  unlinkedCount?: number;
 }
 
 function readResult(value: unknown, budget: ResultReadBudget, depth = 0): ResultEnvelope {
@@ -123,6 +125,10 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       if (id !== undefined) output[key] = id;
     }
     if (data.status === "rolled_back") output.status = "rolled_back";
+    for (const key of ["linkedCount", "unlinkedCount"] as const) {
+      const count = data[key];
+      if (typeof count === "number" && Number.isSafeInteger(count)) output[key] = count;
+    }
     const htmlRender = readHtmlRenderReference(data.htmlRender);
     if (htmlRender !== undefined) output.htmlRender = htmlRender;
     const mcpApp = readMcpAppReference(data[MCP_APP_OUTPUT_KEY]);

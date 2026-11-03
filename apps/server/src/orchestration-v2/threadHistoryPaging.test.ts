@@ -12,12 +12,15 @@ import * as DateTime from "effect/DateTime";
 
 import {
   buildBoundedThreadProjection,
+  deferWorkHistoryRows,
   boundedTimelineEncodedBytes,
   computeLatestLocalTurnOrdinal,
+  decodeThreadHistoryCursor,
   encodeThreadHistoryCursor,
   projectedRowBoundedSnapshotEncodedBytes,
   projectedRowEncodedBytes,
   selectHistoryPageFromCursor,
+  selectDeferredWorkPage,
   selectRecentTimelineWindow,
   THREAD_HISTORY_PAGE_POLICY,
 } from "./threadHistoryPaging.ts";
@@ -61,6 +64,26 @@ function makeRow(
       updatedAt: NOW,
     },
   };
+}
+
+function makeTurnStart(
+  index: number,
+  createdBy: "user" | "agent",
+): OrchestrationV2ProjectedTurnItem {
+  const row = makeRow(index);
+  return {
+    ...row,
+    item: {
+      ...row.item,
+      type: "user_message",
+      createdBy,
+      creationSource: "provider",
+      inputIntent: "turn_start",
+      messageId: MessageId.make(`prompt-${index}`),
+      text: `Prompt ${index}`,
+      attachments: [],
+    },
+  } as OrchestrationV2ProjectedTurnItem;
 }
 
 function interruptItem(
@@ -155,6 +178,76 @@ function makeProjection(visibleTurnItems: OrchestrationV2ProjectedTurnItem[]) {
 }
 
 describe("threadHistoryPaging", () => {
+  it("defers completed work above 150 items and keeps conversation and persistent rows", () => {
+    const work = Array.from({ length: 151 }, (_, index) => {
+      const row = makeRow(index);
+      return { ...row, item: { ...row.item, runId: RUN, runStatus: "completed" } };
+    });
+    expect(deferWorkHistoryRows(work.slice(0, 150))).toHaveLength(150);
+    const deferredWork = deferWorkHistoryRows(work)[0]!.item.deferredWork!;
+    expect(deferredWork.itemCount).toBe(151);
+    expect(decodeThreadHistoryCursor(deferredWork.cursor).p).toBe(151);
+    const superseded = work.map((row) => ({
+      ...row,
+      item: { ...row.item, runStatus: "running", attemptId: "old", attemptStatus: "superseded" },
+    }));
+    const active = work.map((row, index) => ({
+      ...row,
+      sourceItemId: TurnItemId.make(`active-${index}`),
+      position: row.position + work.length,
+      item: { ...row.item, runStatus: "running", attemptId: "active", attemptStatus: "running" },
+    }));
+    const attempts = deferWorkHistoryRows([...superseded, ...active]);
+    expect(attempts[0]?.item.deferredWork?.itemCount).toBe(151);
+    expect(attempts.slice(1)).toEqual(active);
+    const compaction = {
+      ...work[0]!,
+      sourceItemId: TurnItemId.make("compaction"),
+      item: {
+        ...work[0]!.item,
+        type: "compaction" as const,
+      },
+    };
+    const persistent = {
+      ...work[0]!,
+      sourceItemId: TurnItemId.make("render"),
+      item: {
+        ...work[0]!.item,
+        type: "dynamic_tool" as const,
+        persistentOutput: true,
+      },
+    };
+    const deferred = deferWorkHistoryRows([
+      ...work.slice(0, 30),
+      compaction,
+      persistent,
+      ...work.slice(30),
+    ]);
+    expect(deferred.map((row) => row.sourceItemId)).toEqual(["item-0", "compaction", "render"]);
+    expect(deferred[0]?.item.deferredWork?.itemCount).toBe(151);
+    for (const runStatus of ["running", "failed", "interrupted", "cancelled"]) {
+      expect(
+        deferWorkHistoryRows(work.map((row) => ({ ...row, item: { ...row.item, runStatus } }))),
+      ).toHaveLength(151);
+    }
+    const interrupted = {
+      ...compaction,
+      item: { ...compaction.item, type: "run_interrupt_result" as const },
+    };
+    expect(deferWorkHistoryRows([...work, interrupted])).toHaveLength(152);
+    const failed = {
+      ...compaction,
+      item: {
+        ...compaction.item,
+        type: "error" as const,
+        status: "failed" as const,
+        nodeId: "root-node",
+        parentItemId: null,
+      },
+    };
+    expect(deferWorkHistoryRows([...work, failed])).toHaveLength(152);
+  });
+
   it("keeps a human turn whole up to the turn row budget and pages a longer one from inside", () => {
     const humanTurn = (length: number) => {
       const items = Array.from({ length }, (_, index) => makeRow(index));
@@ -377,6 +470,65 @@ describe("threadHistoryPaging", () => {
     }
   });
 
+  it.each([
+    {
+      name: "item ceiling",
+      items: Array.from({ length: 5 }, (_, index) => makeRow(index)),
+      policy: { maxItems: 3, maxEncodedBytes: 1_000 },
+      admitted: 3,
+      measured: 3,
+    },
+    {
+      name: "user turn ceiling",
+      items: [makeRow(0), makeTurnStart(1, "user"), makeRow(2)],
+      policy: { maxUserTurns: 1, maxItems: 100, maxEncodedBytes: 1_000 },
+      admitted: 2,
+      measured: 2,
+    },
+    {
+      name: "raw turn ceiling",
+      items: [
+        makeTurnStart(0, "user"),
+        ...Array.from({ length: 151 }, (_, index) => makeTurnStart(index + 1, "agent")),
+      ],
+      policy: { maxUserTurns: 10, maxItems: 1_000, maxEncodedBytes: 1_000_000 },
+      admitted: 150,
+      measured: 150,
+    },
+    {
+      name: "byte budget, which still admits an exact fit",
+      items: Array.from({ length: 5 }, (_, index) => makeRow(index)),
+      policy: { maxItems: 100, maxEncodedBytes: 20 },
+      admitted: 2,
+      measured: 3,
+    },
+    {
+      name: "byte budget, which still admits an oversized first row",
+      items: Array.from({ length: 5 }, (_, index) => makeRow(index)),
+      policy: { maxItems: 100, maxEncodedBytes: 5 },
+      admitted: 1,
+      measured: 2,
+    },
+  ])("measures only the rows needed to stop at the $name", (testCase) => {
+    const measured: OrchestrationV2ProjectedTurnItem[] = [];
+    const page = selectRecentTimelineWindow({
+      items: testCase.items,
+      snapshotSequence: 1,
+      policy: testCase.policy,
+      rowEncodedBytes: (row) => {
+        measured.push(row);
+        return 10;
+      },
+    });
+
+    expect(page.items.map((row) => row.sourceItemId)).toEqual(
+      testCase.items.slice(-testCase.admitted).map((row) => row.sourceItemId),
+    );
+    expect(measured).toHaveLength(testCase.measured);
+    expect(page.hasMoreHistory).toBe(true);
+    expect(decodeThreadHistoryCursor(page.nextCursor!).si).toBe(page.items[0]?.sourceItemId);
+  });
+
   it("recovers identity-miss cursors when position is past a shrunken timeline", () => {
     const items = Array.from({ length: 5 }, (_, index) => makeRow(index));
     const cursor = encodeThreadHistoryCursor({
@@ -394,6 +546,39 @@ describe("threadHistoryPaging", () => {
     expect(page.items.map((row) => row.sourceItemId)).toEqual(["item-3", "item-4"]);
     expect(page.hasMoreHistory).toBe(true);
     expect(page.nextCursor).not.toBeNull();
+    const sparse = [makeRow(0), makeRow(10), makeRow(20)];
+    const middle = selectHistoryPageFromCursor({
+      items: sparse,
+      cursor: encodeThreadHistoryCursor({
+        snapshotSequence: 3,
+        sourceThreadId: THREAD,
+        sourceItemId: "item-hidden",
+        position: 15,
+      }),
+      snapshotSequence: 3,
+    });
+    expect(middle.items.map((row) => row.sourceItemId)).toEqual(["item-0", "item-10"]);
+    const work = Array.from({ length: 80 }, (_, index) => {
+      const row = makeRow(index);
+      return { ...row, item: { ...row.item, runId: RUN, ordinal: index + 100 } };
+    });
+    const tail = work[75]!;
+    const deferred = selectDeferredWorkPage({
+      items: work.filter((row) => row !== tail).map((row, position) => ({ ...row, position })),
+      cursor: encodeThreadHistoryCursor({
+        snapshotSequence: 3,
+        sourceThreadId: THREAD,
+        sourceItemId: tail.sourceItemId,
+        position: tail.item.ordinal,
+        inclusive: true,
+      }),
+      throughEntryId: work[0]!.sourceItemId,
+      snapshotSequence: 3,
+    });
+    expect(deferred.items.map((row) => row.sourceItemId)).toEqual(
+      work.slice(0, 75).map((row) => row.sourceItemId),
+    );
+    expect(deferred.nextCursor).toBeNull();
   });
 
   it("keeps cursor resolution stable when newer items append", () => {

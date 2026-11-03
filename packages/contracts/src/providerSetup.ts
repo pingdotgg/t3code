@@ -14,22 +14,6 @@ export const ProviderSetupInput = Schema.Struct({
 });
 export type ProviderSetupInput = typeof ProviderSetupInput.Type;
 
-export const CodexAuthCallbackInput = Schema.Struct({
-  authorizationUrl: Schema.String.check(Schema.isMaxLength(16_384)),
-  returnUrl: Schema.String.check(Schema.isMaxLength(4_096)),
-  environmentId: EnvironmentId,
-  instanceId: ProviderInstanceId,
-  flowId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
-});
-export type CodexAuthCallbackInput = typeof CodexAuthCallbackInput.Type;
-export const CodexAuthCallbackState = Schema.Union([
-  Schema.Struct({ phase: Schema.Literal("ready") }),
-  Schema.Struct({
-    phase: Schema.Literal("finished"),
-    callbackUrl: Schema.String.check(Schema.isMaxLength(16_384)),
-  }),
-]);
-
 const SetupOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
 export const ProviderAuthMethod = Schema.Struct({
