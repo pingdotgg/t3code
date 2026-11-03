@@ -73,6 +73,13 @@ const claudeProvider: ServerProvider = {
   skills: [],
 };
 
+// A runtime mode change detaches a Claude session, failing its running turn in the
+// background; the stub keeps its session, so mode changes leave every turn running.
+const capabilities = {
+  ...ClaudeProviderCapabilitiesV2,
+  sessions: { ...ClaudeProviderCapabilitiesV2.sessions, supportsRuntimeModeSwitchInSession: true },
+};
+
 interface StartedTurn {
   readonly turn: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
@@ -86,7 +93,7 @@ const makeAdapter = (
 ): ProviderAdapter.ProviderAdapterV2["Service"] => ({
   instanceId,
   driver,
-  getCapabilities: () => Effect.succeed(ClaudeProviderCapabilitiesV2),
+  getCapabilities: () => Effect.succeed(capabilities),
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
   openSession: (input) =>
     Effect.gen(function* () {
@@ -103,7 +110,7 @@ const makeAdapter = (
           status: "ready",
           cwd,
           model: modelSelection.model,
-          capabilities: ClaudeProviderCapabilitiesV2,
+          capabilities,
           createdAt: now,
           updatedAt: now,
           lastError: null,
@@ -1169,6 +1176,87 @@ it.effect.each(["runtime", "interaction", "unchanged"] as const)(
         assert.notInclude(h.interrupts, outerThreadId, "nothing is stopped before the refusal");
         assert.equal(yield* latestStatus(outerThreadId), "running");
         assert.equal(yield* latestStatus(innerThreadId), "running");
+      }),
+    ),
+);
+
+it.effect.each([
+  ["root", "runtime"],
+  ["root", "interaction"],
+  ["root", "unchanged"],
+  ["native", "runtime"],
+  ["native", "interaction"],
+  ["native", "unchanged"],
+] as const)(
+  "cancelling a native subagent's task is limited by the root's current modes: %s caller, %s lowered",
+  ([caller, lowered]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* makeHarness(`cancel-native-listed-${caller}-${lowered}`);
+        const credential = "provider-session:cancel-native-listed";
+        const rootThreadId = ThreadId.make("thread:cancel-native-listed-root");
+        const root = yield* h.startRoot(rootThreadId, credential);
+        const native = h.nativeTask({
+          name: "lister",
+          listing: root.projection.thread,
+          parentNodeId: root.run.rootNodeId!,
+          execution: { threadId: rootThreadId, runId: root.run.id },
+        });
+        yield* h.project(root.turn, [native]);
+        yield* h.mcpSessions.bindNativeCaller({
+          threadId: rootThreadId,
+          providerSessionId: credential,
+          callId: "claude-tool:lister",
+          callerThreadId: native.thread.id,
+        });
+        const nativeScope = scopeFor(rootThreadId, credential, "claude-tool:lister");
+        const task = yield* h.delegate(nativeScope, "listed");
+        const taskThreadId = task.childThreadId!;
+        // The root's user lowers only the root; the native subagent and its task keep theirs.
+        if (lowered !== "unchanged") {
+          yield* h.orchestrator.dispatch(
+            lowered === "runtime"
+              ? {
+                  type: "thread.runtime-mode.set",
+                  commandId: CommandId.make("lower-root-runtime"),
+                  threadId: rootThreadId,
+                  runtimeMode: "approval-required",
+                }
+              : {
+                  type: "thread.interaction-mode.set",
+                  commandId: CommandId.make("lower-root-interaction"),
+                  threadId: rootThreadId,
+                  interactionMode: "plan",
+                },
+          );
+          yield* h.worker.drain();
+        }
+
+        const cancelled = yield* h.service
+          .cancelTask(caller === "root" ? scopeFor(rootThreadId, credential) : nativeScope, {
+            taskId: task.taskId,
+            clientRequestId: "cancel",
+          })
+          .pipe(
+            Effect.match({
+              onFailure: (error) => error.code,
+              onSuccess: (result) => result.status,
+            }),
+          );
+        yield* h.worker.drain();
+        const latestStatus = (threadId: ThreadId) =>
+          h.orchestrator
+            .getThreadProjection(threadId)
+            .pipe(Effect.map((projection) => projection.runs.at(-1)?.status));
+        if (lowered === "unchanged") {
+          assert.equal(cancelled, "cancel_requested");
+          assert.equal(yield* latestStatus(taskThreadId), "interrupted");
+          return;
+        }
+        assert.equal(cancelled, `${lowered}_mode_escalation_denied`);
+        assert.notInclude(h.interrupts, taskThreadId, "nothing is stopped before the refusal");
+        assert.equal(yield* latestStatus(taskThreadId), "running");
+        assert.equal(yield* latestStatus(rootThreadId), "running");
       }),
     ),
 );

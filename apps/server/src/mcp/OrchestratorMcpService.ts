@@ -1236,15 +1236,17 @@ const make = Effect.gen(function* () {
   /**
    * The thread listing a task the caller may control: its own, or for the session's root, the
    * native subagent thread listing a task one of its runs executes. Siblings never see each other's.
+   * `callerThreadId` is the agent that made the call, which the listing thread may not be.
    */
   const taskScope = Effect.fn("OrchestratorMcpService.taskScope")(function* (
     callerScope: McpThreadInvocationScope,
     taskId: NodeId,
   ) {
     const scope = yield* delegationScope(callerScope);
-    if (scope.thread.threadId !== callerScope.thread.threadId) return scope;
+    const callerThreadId = scope.thread.threadId;
+    if (callerThreadId !== callerScope.thread.threadId) return { scope, callerThreadId } as const;
     if ((yield* loadTasks(scope.thread.threadId, [taskId])).some((task) => task.id === taskId))
-      return scope;
+      return { scope, callerThreadId } as const;
     const { runs } = yield* threadManagement
       .getThreadRecords(scope.thread.threadId, ["runs"])
       .pipe(Effect.mapError(threadManagementFailure));
@@ -1254,12 +1256,39 @@ const make = Effect.gen(function* () {
         runIds: runs.map((run) => run.id),
       })
       .pipe(Effect.mapError(threadManagementFailure))).find((task) => task.id === taskId);
-    return listed === undefined
-      ? scope
-      : ({
-          ...scope,
-          thread: { ...scope.thread, threadId: listed.threadId },
-        } satisfies McpThreadInvocationScope);
+    return {
+      scope:
+        listed === undefined
+          ? scope
+          : ({
+              ...scope,
+              thread: { ...scope.thread, threadId: listed.threadId },
+            } satisfies McpThreadInvocationScope),
+      callerThreadId,
+    } as const;
+  });
+
+  /**
+   * The modes a caller acts within: its own, never above its session root's. A native
+   * subagent's thread, and the tasks it lists, keep their modes when the root's are lowered.
+   */
+  const callerLimits = Effect.fn("OrchestratorMcpService.callerLimits")(function* (
+    rootThreadId: ThreadId,
+    callerThreadId: ThreadId,
+  ) {
+    const { thread: root } = yield* loadThreadRecords(rootThreadId, []);
+    if (callerThreadId === rootThreadId) return root;
+    const { thread: caller } = yield* loadThreadRecords(callerThreadId, []);
+    return {
+      runtimeMode:
+        runtimeModeRank(caller.runtimeMode) < runtimeModeRank(root.runtimeMode)
+          ? caller.runtimeMode
+          : root.runtimeMode,
+      interactionMode:
+        interactionModeRank(caller.interactionMode) < interactionModeRank(root.interactionMode)
+          ? caller.interactionMode
+          : root.interactionMode,
+    };
   });
 
   const loadThreadCaller = Effect.fn("OrchestratorMcpService.loadThreadCaller")(function* (
@@ -2657,14 +2686,15 @@ const make = Effect.gen(function* () {
       return yield* readTask(scope, taskId, Option.isNone(waited), true);
     }),
     taskStatus: Effect.fn("OrchestratorMcpService.taskStatus")(function* (callerScope, taskId) {
-      const scope = yield* taskScope(yield* requireThreadScope(callerScope, "task_status"), taskId);
+      const { scope } = yield* taskScope(
+        yield* requireThreadScope(callerScope, "task_status"),
+        taskId,
+      );
       return yield* readTask(scope, taskId, false, true);
     }),
     cancelTask: Effect.fn("OrchestratorMcpService.cancelTask")(function* (callerScope, input) {
-      const scope = yield* taskScope(
-        yield* requireThreadScope(callerScope, "task_cancel"),
-        input.taskId,
-      );
+      const rootScope = yield* requireThreadScope(callerScope, "task_cancel");
+      const { scope, callerThreadId } = yield* taskScope(rootScope, input.taskId);
       const current = yield* readTask(scope, input.taskId);
       const childThreadId = current.childThreadId;
       if (childThreadId === null) {
@@ -2685,7 +2715,8 @@ const make = Effect.gen(function* () {
         return yield* remoteDelegation.cancel(scope, remoteTask, input);
       }
       const key = yield* requestKey(input.clientRequestId);
-      const parentProjection = yield* loadThreadRecords(scope.thread.threadId, []);
+      // The caller's modes, not the listing thread's: the session root's may be lower.
+      const limits = yield* callerLimits(rootScope.thread.threadId, callerThreadId);
       // Cancelling stops the child and every task under it, each a write to a
       // thread its user may have raised above the parent's modes since it was
       // delegated. All of them are checked before anything is stopped.
@@ -2696,11 +2727,8 @@ const make = Effect.gen(function* () {
           .getThreadShell(threadId)
           .pipe(Effect.mapError(threadManagementFailure));
         if (shell !== null && shell.deletedAt === null) {
-          yield* resolveRuntimeMode(parentProjection.thread.runtimeMode, shell.runtimeMode);
-          yield* resolveInteractionMode(
-            parentProjection.thread.interactionMode,
-            shell.interactionMode,
-          );
+          yield* resolveRuntimeMode(limits.runtimeMode, shell.runtimeMode);
+          yield* resolveInteractionMode(limits.interactionMode, shell.interactionMode);
         }
         const childThreadIds = yield* threadManagement
           .listAppOwnedChildThreadIds(threadId)
@@ -2795,8 +2823,8 @@ const make = Effect.gen(function* () {
       const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
       const stopWithinLimit = stopChild.pipe(
         Effect.provideService(DispatchModeLimit, {
-          runtimeMode: parentProjection.thread.runtimeMode,
-          interactionMode: parentProjection.thread.interactionMode,
+          runtimeMode: limits.runtimeMode,
+          interactionMode: limits.interactionMode,
           refused,
         }),
         Effect.catch((error) =>
