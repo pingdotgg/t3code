@@ -32,9 +32,8 @@ interface MutableDirectoryNode {
 
 let sortCollator: Intl.Collator | undefined;
 
-function normalizePathSegments(pathValue: string): string[] {
-  return pathValue
-    .replaceAll("\\", "/")
+function normalizePathSegments(pathValue: string, splitBackslashes: boolean): string[] {
+  return (splitBackslashes ? pathValue.replaceAll("\\", "/") : pathValue)
     .split("/")
     .filter((segment) => segment.length > 0);
 }
@@ -93,7 +92,11 @@ function toTreeNodes(directory: MutableDirectoryNode): TurnDiffTreeNode[] {
 
 export function buildTurnDiffTree<
   File extends Pick<TurnDiffFileChange, "path" | "additions" | "deletions">,
->(files: ReadonlyArray<File>): TurnDiffTreeNode[] {
+>(
+  files: ReadonlyArray<File>,
+  // Git paths only use `/`; a backslash there is part of a POSIX file name.
+  { splitBackslashes = true }: { splitBackslashes?: boolean } = {},
+): TurnDiffTreeNode[] {
   const root: MutableDirectoryNode = {
     name: "",
     path: "",
@@ -103,7 +106,7 @@ export function buildTurnDiffTree<
   };
 
   for (const file of files) {
-    const segments = normalizePathSegments(file.path);
+    const segments = normalizePathSegments(file.path, splitBackslashes);
     if (segments.length === 0) {
       continue;
     }

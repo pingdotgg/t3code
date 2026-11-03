@@ -1,4 +1,10 @@
-import { type TurnDiffTreeNode } from "~/lib/turnDiffTree";
+import { buildTurnDiffTree, type TurnDiffTreeNode } from "~/lib/turnDiffTree";
+
+export interface CommitFile {
+  path: string;
+  insertions: number;
+  deletions: number;
+}
 
 export interface CommitFileTreeRow {
   node: TurnDiffTreeNode;
@@ -6,6 +12,17 @@ export interface CommitFileTreeRow {
 }
 
 export type CommitFileTreeSelection = "all" | "some" | "none";
+
+export function buildCommitFileTree(files: ReadonlyArray<CommitFile>): TurnDiffTreeNode[] {
+  return buildTurnDiffTree(
+    files.map((file) => ({
+      path: file.path,
+      additions: file.insertions,
+      deletions: file.deletions,
+    })),
+    { splitBackslashes: false },
+  );
+}
 
 export function flattenCommitFileTree(
   nodes: ReadonlyArray<TurnDiffTreeNode>,

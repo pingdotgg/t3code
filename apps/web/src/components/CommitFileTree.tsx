@@ -1,20 +1,15 @@
 import { ChevronRightIcon, FolderIcon, FolderOpenIcon } from "lucide-react";
 import { useState } from "react";
 import { Checkbox } from "~/components/ui/checkbox";
-import { buildTurnDiffTree } from "~/lib/turnDiffTree";
 import { cn } from "~/lib/utils";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
+  buildCommitFileTree,
+  type CommitFile,
   flattenCommitFileTree,
   resolveCommitFileTreeSelection,
   toggleCommitFileTreeNode,
 } from "./CommitFileTree.logic";
-
-interface CommitFile {
-  path: string;
-  insertions: number;
-  deletions: number;
-}
 
 export function CommitFileTree(props: {
   files: ReadonlyArray<CommitFile>;
@@ -28,13 +23,7 @@ export function CommitFileTree(props: {
   const [collapsedDirectories, setCollapsedDirectories] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const tree = buildTurnDiffTree(
-    files.map((file) => ({
-      path: file.path,
-      additions: file.insertions,
-      deletions: file.deletions,
-    })),
-  );
+  const tree = buildCommitFileTree(files);
   const rows = flattenCommitFileTree(tree, collapsedDirectories);
 
   const toggleDirectory = (path: string) => {

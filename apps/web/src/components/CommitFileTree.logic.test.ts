@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildTurnDiffTree } from "~/lib/turnDiffTree";
 import {
+  buildCommitFileTree,
   flattenCommitFileTree,
   resolveCommitFileTreeSelection,
   toggleCommitFileTreeNode,
 } from "./CommitFileTree.logic";
 
-const tree = buildTurnDiffTree([
-  { path: "src/app/page.tsx", additions: 1, deletions: 0 },
-  { path: "src/app/layout.tsx", additions: 2, deletions: 1 },
-  { path: "src/lib/util.ts", additions: 3, deletions: 0 },
-  { path: "README.md", additions: 1, deletions: 1 },
+const tree = buildCommitFileTree([
+  { path: "src/app/page.tsx", insertions: 1, deletions: 0 },
+  { path: "src/app/layout.tsx", insertions: 2, deletions: 1 },
+  { path: "src/lib/util.ts", insertions: 3, deletions: 0 },
+  { path: "README.md", insertions: 1, deletions: 1 },
 ]);
 const src = tree[0]!;
 
@@ -49,5 +49,19 @@ describe("commit file tree", () => {
 
     const partial = new Set(["src/lib/util.ts", "README.md"]);
     expect([...toggleCommitFileTreeNode(src, partial)]).toEqual(["README.md"]);
+  });
+
+  it("keeps a backslash in a Git path as part of the file name", () => {
+    const [docs] = buildCommitFileTree([
+      { path: "docs/a\\b.md", insertions: 1, deletions: 0 },
+      { path: "docs/c.md", insertions: 1, deletions: 0 },
+    ]);
+
+    expect(flattenCommitFileTree([docs!], new Set()).map((row) => row.node.path)).toEqual([
+      "docs",
+      "docs/a\\b.md",
+      "docs/c.md",
+    ]);
+    expect([...toggleCommitFileTreeNode(docs!, new Set())]).toEqual(["docs/a\\b.md", "docs/c.md"]);
   });
 });
