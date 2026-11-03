@@ -1288,13 +1288,10 @@ it.effect("an accepted delivery queued behind a run still launches after a resta
     yield* withService(
       ({ launches }) =>
         Effect.gen(function* () {
-          const launched = yield* Effect.gen(function* () {
-            while ((yield* Queue.take(launches)).commandId !== commandId);
-          }).pipe(Effect.timeoutOption("1 minute"), Effect.forkChild);
-          yield* workers.get("webhook-coalescing")!;
-          yield* TestClock.adjust("1 minute");
-          assert.isTrue(
-            Option.isSome(yield* Fiber.join(launched)),
+          yield* drainPendingDispatch(workers);
+          assert.include(
+            (yield* Queue.clear(launches)).map((launch) => launch.commandId),
+            commandId,
             "the accepted delivery was never launched after the restart",
           );
         }),
