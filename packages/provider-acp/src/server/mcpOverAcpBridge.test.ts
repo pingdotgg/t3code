@@ -311,6 +311,52 @@ describe("AcpMcpOverAcpBridge", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("keeps each initialize on its own session while the replaced one is closing", () =>
+    Effect.gen(function* () {
+      const deleteStarted = Promise.withResolvers<void>();
+      const deleteResponse = Promise.withResolvers<void>();
+      let sessions = 0;
+      const bridge = yield* makeAcpMcpOverAcpBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        allocateConnectionId: Effect.succeed("connection-1"),
+        fetchImplementation: async (_url, init) => {
+          const sessionId = new Headers(init?.headers).get("mcp-session-id");
+          if (init?.method === "DELETE") {
+            if (sessionId === "session-1") {
+              deleteStarted.resolve();
+              await deleteResponse.promise;
+            }
+            return new Response(null, { status: 204 });
+          }
+          const request = JSON.parse(String(init?.body)) as { readonly id?: unknown };
+          // The MCP endpoint refuses an initialize that carries an existing session.
+          const outcome =
+            sessionId === null
+              ? { result: { protocolVersion: "2025-06-18" } }
+              : { error: { code: -32600, message: "initialize must not include a session" } };
+          return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, ...outcome }), {
+            status: sessionId === null ? 200 : 400,
+            headers: {
+              "content-type": "application/json",
+              ...(sessionId === null ? { "mcp-session-id": `session-${++sessions}` } : {}),
+            },
+          });
+        },
+      });
+      const initialize = (requestId: string) =>
+        bridge.message({ serverId: "t3-code", requestId, method: "initialize" });
+      const initialized = { result: { protocolVersion: "2025-06-18" } };
+
+      yield* initialize("mcp-1");
+      const waiting = yield* initialize("mcp-2").pipe(Effect.forkChild);
+      yield* Effect.promise(() => deleteStarted.promise);
+      expect(yield* initialize("mcp-3")).toEqual(initialized);
+      deleteResponse.resolve();
+      expect(yield* Fiber.join(waiting)).toEqual(initialized);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("closes the session of an initialize that a newer initialize replaced in flight", () =>
     Effect.gen(function* () {
       const firstStarted = Promise.withResolvers<void>();

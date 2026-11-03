@@ -139,9 +139,10 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
   const renewServerConnection = Effect.gen(function* () {
     const previous = serverConnection;
     previous.retired = true;
-    serverConnection = yield* makeConnection;
+    const connection = yield* makeConnection;
+    serverConnection = connection;
     yield* close(previous).pipe(Effect.ignore);
-    return serverConnection;
+    return connection;
   });
 
   // Only initialization needs ordering; negotiated calls may wait independently.
