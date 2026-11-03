@@ -199,6 +199,21 @@ selfhosted
   );
 });
 
+it.effect(
+  "looks up a branch's merge requests a full page at a time, past forks' same-named branches",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* makeProvider({});
+      assert.deepStrictEqual(
+        provider.headBranchProbe?.({
+          headSelectors: ["octocat:feature", "feature"],
+          state: "open",
+        }),
+        { headSelectors: ["feature"], limit: 100 },
+      );
+    }),
+);
+
 it.effect.each(["merge_requests", "issues"])(
   "resolves %s subjects on the linked host without using the checkout",
   (kind) =>
