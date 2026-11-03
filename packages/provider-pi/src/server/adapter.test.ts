@@ -4167,6 +4167,14 @@ describe("PiAdapterV2", () => {
 
       fake.setCompacting(true);
       yield* fake.emit({ type: "compaction_start", reason: "manual" });
+      // The dialog proves the pump observed compaction_start before the prompt.
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "detached-compaction-dialog",
+        method: "confirm",
+        title: "Continue?",
+      });
+      yield* takeEvent((event) => event.type === "runtime_request.updated");
       yield* startTurn(
         runtime,
         providerThread,
@@ -4178,6 +4186,14 @@ describe("PiAdapterV2", () => {
       );
       fake.setCompacting(false);
       const compactionEnded = fake.allRequests().length;
+      assert.isFalse(
+        fake
+          .allRequests()
+          .some(
+            (request) =>
+              request["type"] === "prompt" && request["message"] === "Sent during compaction",
+          ),
+      );
       yield* fake.emit({
         type: "compaction_end",
         reason: "manual",
