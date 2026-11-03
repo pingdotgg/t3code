@@ -56,6 +56,12 @@ describe("semver helpers", () => {
   it("supports comparison comparators", () => {
     expect(satisfiesSemverRange("24.9.0", ">=24.0 <24.10")).toBe(true);
     expect(satisfiesSemverRange("24.10.0", ">=24.0 <24.10")).toBe(false);
+    for (const gap of [" ", "\t", "\n"]) {
+      const range = `>=${gap}24.0 <${gap}24.10`;
+      expect(satisfiesSemverRange("24.9.0", range)).toBe(true);
+      expect(satisfiesSemverRange("24.10.0", range)).toBe(false);
+      expect(satisfiesSemverRange("22.16.0", `^${gap}22.16 || >=${gap}24.10`)).toBe(true);
+    }
   });
 
   it("honors caret range upper bounds for zero-major versions", () => {

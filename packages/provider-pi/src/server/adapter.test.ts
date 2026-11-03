@@ -4738,3 +4738,35 @@ describe("PiRpc early process exit", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
+
+describe("PiRpc teardown", () => {
+  // Like pi, quits once stdin ends; it survives SIGTERM, so teardown's SIGKILL ends it otherwise.
+  const recordShutdownCues = `
+const fs = require("node:fs");
+const note = (cue) => fs.appendFileSync(process.argv[1], cue + "\\n");
+process.on("SIGTERM", () => note("SIGTERM"));
+process.stdin.on("end", () => note("stdin end")).resume();
+process.stdout.write('{"type":"ready"}\\n');
+`;
+
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "signals pi before its stdin reaches EOF",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cuesPath = `${yield* fileSystem.makeTempDirectoryScoped()}/cues`;
+        yield* Effect.gen(function* () {
+          const connection = yield* makePiRpcConnection({
+            command: process.execPath,
+            args: ["-e", recordShutdownCues, cuesPath],
+            cwd: undefined,
+            env: {},
+          });
+          assert.equal((yield* Queue.take(connection.events))["type"], "ready");
+        }).pipe(Effect.scoped);
+
+        const cues = (yield* fileSystem.readFileString(cuesPath)).split("\n").filter(Boolean);
+        assert.deepEqual(cues, ["SIGTERM"]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
