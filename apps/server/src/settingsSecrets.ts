@@ -6,11 +6,13 @@ import {
   type ServerSettings,
   SimlockDeviceHostConfig,
   UsageLimitSourceConfig,
+  isSecretReference,
   secretSettingsFields,
 } from "@t3tools/contracts";
 import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
 import { cursorClient } from "@t3tools/provider-cursor/client";
 import { grokClient } from "@t3tools/provider-grok/client";
+import { kiroClient } from "@t3tools/provider-kiro/client";
 import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
@@ -27,7 +29,15 @@ const providerSecretFields = new Map([
   ["codex", secretSettingsFields(CodexSettings)],
   ["claudeAgent", secretSettingsFields(ClaudeSettings)],
   ["antigravity", secretSettingsFields(AntigravitySettings)],
-  ...[cursorClient, grokClient, museClient, openCodeClient, piClient, acpRegistryClient].map(
+  ...[
+    cursorClient,
+    grokClient,
+    kiroClient,
+    museClient,
+    openCodeClient,
+    piClient,
+    acpRegistryClient,
+  ].map(
     (definition) =>
       [definition.driverKind, secretSettingsFields(definition.settingsSchema)] as const,
   ),
@@ -60,7 +70,7 @@ export function mapSettingsSecrets(
   ) => {
     const next = { ...fields };
     for (const field of secretFields) {
-      if (!(field in next)) continue;
+      if (!(field in next) || isSecretReference(next[field])) continue;
       next[field] = writeSecretFieldValues(
         next[field],
         readSecretFieldValues(next[field]).map(([serverHost, value]) => {
@@ -99,16 +109,19 @@ export function mapSettingsSecrets(
           ...(instance.environment
             ? {
                 environment: instance.environment.map((variable) => {
+                  const { valueRedacted: _omit, ...rest } = variable;
+                  // A secret reference is not itself secret; storage sees the value cleared.
+                  const reference = typeof variable.value === "string" ? undefined : variable.value;
                   const result = map({
                     secretName: `provider-env-${encode(instanceId)}-${encode(variable.name)}`,
                     kind: "environment",
-                    value: variable.value,
-                    redacted: variable.valueRedacted === true,
+                    value: typeof variable.value === "string" ? variable.value : "",
+                    redacted: reference === undefined && variable.valueRedacted === true,
                     sensitive: variable.sensitive,
                     providerInstanceId: instanceId,
                     environmentVariable: variable.name,
                   });
-                  const { valueRedacted: _omit, ...rest } = variable;
+                  if (reference !== undefined) return { ...rest, value: reference };
                   return {
                     ...rest,
                     value: result.value,
