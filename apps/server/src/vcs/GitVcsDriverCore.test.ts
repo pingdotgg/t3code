@@ -1516,6 +1516,36 @@ it.effect("retries a fetch that lost a ref update to another Git process", () =>
   ),
 );
 
+it.effect("does not fetch for status when the branch tracks a local branch", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fetches: Array<ReadonlyArray<string>> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command) && command.args.includes("fetch")) {
+          fetches.push(command.args.map(String));
+        }
+        return delegate.spawn(command);
+      });
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+      yield* initRepoWithCommit(cwd);
+      yield* git(remote, ["init", "--bare"]);
+      yield* git(cwd, ["remote", "add", "feature", remote]);
+      yield* git(cwd, ["branch", "feature/base"]);
+      yield* git(cwd, ["checkout", "-b", "stacked", "--track", "feature/base"]);
+
+      const status = yield* driver.statusDetailsRemote(cwd);
+
+      assert.equal(status.upstreamRef, "feature/base");
+      assert.deepStrictEqual(fetches, []);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("lets a worktree checkout that is still working run past five minutes", () =>
   Effect.gen(function* () {
     const checkoutStarted = yield* Deferred.make<void>();
@@ -2515,33 +2545,40 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("keeps tracked changes visible when untracked discovery fails", () =>
-      Effect.gen(function* () {
-        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const failingLsFilesSpawner = ChildProcessSpawner.make((command) => {
-          if (!ChildProcess.isStandardCommand(command)) {
-            return Effect.die("expected a standard Git command");
-          }
-          return command.args[0] === "ls-files" && command.args[1] === "--others"
-            ? Effect.succeed(makeNonRepositoryHandle())
-            : delegate.spawn(command);
-        });
-        const driver = yield* makeGitVcsDriverCore().pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, failingLsFilesSpawner),
-          Effect.provide(layerServerConfig),
-        );
-        const cwd = yield* makeTmpDir();
-        yield* initRepoWithCommit(cwd).pipe(
-          Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
-        );
-        yield* writeTextFile(cwd, "README.md", "# tracked change\n");
+    it.effect.each(["fails", "exceeds the output limit"] as const)(
+      "keeps tracked changes visible when untracked discovery %s",
+      (scenario) =>
+        Effect.gen(function* () {
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const failingLsFilesSpawner = ChildProcessSpawner.make((command) => {
+            if (!ChildProcess.isStandardCommand(command)) {
+              return Effect.die("expected a standard Git command");
+            }
+            if (command.args[0] !== "ls-files" || command.args[1] !== "--others") {
+              return delegate.spawn(command);
+            }
+            return Effect.succeed(
+              scenario === "fails"
+                ? makeNonRepositoryHandle()
+                : makeSuccessfulHandle("a".repeat(16 * 1024 * 1024 + 1)),
+            );
+          });
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, failingLsFilesSpawner),
+            Effect.provide(layerServerConfig),
+          );
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd).pipe(
+            Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+          );
+          yield* writeTextFile(cwd, "README.md", "# tracked change\n");
 
-        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
-        const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
+          const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+          const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
 
-        assert.include(diff, "-# test");
-        assert.include(diff, "+# tracked change");
-      }),
+          assert.include(diff, "-# test");
+          assert.include(diff, "+# tracked change");
+        }),
     );
 
     it.effect.each([
