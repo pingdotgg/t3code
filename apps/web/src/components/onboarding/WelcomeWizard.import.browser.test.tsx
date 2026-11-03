@@ -2,6 +2,7 @@ import { RegistryContext } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProjectId,
@@ -524,4 +525,30 @@ it("can switch Codex back to ChatGPT sign-in after choosing the existing CLI", a
   await click("Continue with ChatGPT");
   await vi.waitFor(() => expect(state.startProviderAuth).toHaveBeenCalledOnce());
   expect(codexSetupMode()).toBe("managed");
+});
+
+it("keeps the Codex ChatGPT fallback disabled without permission to manage providers", async () => {
+  using _now = setup();
+  await using _screen = await mountCodexAgents();
+
+  await click("Use existing CLI");
+  await vi.waitFor(() => expect(codexSetupMode()).toBe("existing"));
+  await act(async () =>
+    appAtomRegistry.set(
+      sessionAtom(primaryId),
+      AsyncResult.success({
+        ...session([AuthOrchestrationOperateScope]),
+        permissions: [
+          AuthOrchestrationReadScope,
+          AuthOrchestrationOperateScope,
+          AuthSettingsWriteScope,
+        ],
+      }),
+    ),
+  );
+  await vi.waitFor(() => expect(button("Continue with ChatGPT").disabled).toBe(true));
+
+  await act(async () => button("Continue with ChatGPT").click());
+  expect(state.startProviderAuth).not.toHaveBeenCalled();
+  expect(codexSetupMode()).toBe("existing");
 });
