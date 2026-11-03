@@ -58,6 +58,7 @@ const RawMergeRequestSchema = Schema.Struct({
   state: Schema.optional(Schema.NullOr(Schema.String)),
   draft: Schema.optional(Schema.Boolean),
   work_in_progress: Schema.optional(Schema.Boolean),
+  detailed_merge_status: Schema.optional(Schema.NullOr(Schema.String)),
   merge_status: Schema.optional(Schema.NullOr(Schema.String)),
   has_conflicts: Schema.optional(Schema.NullOr(Schema.Boolean)),
   created_at: Schema.String,
@@ -185,6 +186,7 @@ export interface GitLabMergeRequestListItem {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
   readonly mergeability: PullRequestMergeability;
+  readonly rebaseRequired?: boolean | undefined;
   readonly additions: number;
   readonly deletions: number;
   readonly createdAt: string;
@@ -234,6 +236,15 @@ function toMergeability(
   raw: Schema.Schema.Type<typeof RawMergeRequestSchema>,
 ): PullRequestMergeability {
   if (raw.has_conflicts === true) return "conflicting";
+  switch (raw.detailed_merge_status?.trim().toLowerCase()) {
+    case "need_rebase":
+      // The branch needs updating; GitLab reports actual content conflicts separately.
+      return "unknown";
+    case "conflict":
+      return "conflicting";
+    case "mergeable":
+      return "mergeable";
+  }
   switch (raw.merge_status?.trim().toLowerCase()) {
     case "can_be_merged":
       return "mergeable";
@@ -292,6 +303,7 @@ function toChecks(
 function toListItem(
   raw: Schema.Schema.Type<typeof RawMergeRequestSchema>,
 ): GitLabMergeRequestListItem {
+  const detailedMergeStatus = raw.detailed_merge_status?.trim().toLowerCase();
   return {
     number: raw.iid,
     title: raw.title,
@@ -302,6 +314,12 @@ function toListItem(
     state: toState(raw),
     isDraft: raw.draft ?? raw.work_in_progress ?? false,
     mergeability: toMergeability(raw),
+    rebaseRequired:
+      detailedMergeStatus === "need_rebase"
+        ? true
+        : detailedMergeStatus === "mergeable"
+          ? false
+          : undefined,
     additions: 0,
     deletions: 0,
     createdAt: raw.created_at,
