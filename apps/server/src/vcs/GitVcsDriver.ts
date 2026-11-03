@@ -1124,6 +1124,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ...indexConfig,
               ...durableWrite,
               ...longPaths,
+              // safecrlf=true refuses LF files under CRLF conversion; capture them as Git's default does.
+              "-c",
+              "core.safecrlf=false",
               "add",
               ...(sparseCheckout ? ["--sparse"] : []),
               // add -A rejects ignored directories even when they contain tracked files.
