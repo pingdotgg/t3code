@@ -118,6 +118,13 @@ interface LatestReviewFields {
   readonly state?: string | null | undefined;
 }
 
+/** Run numbers count up per workflow file, whatever its name; database ids exceed int32. */
+interface WorkflowRunFields {
+  readonly event: string;
+  readonly runNumber: number;
+  readonly workflow: { readonly id: string };
+}
+
 /** Check runs use status/conclusion; commit statuses use a single state. */
 interface CheckFields {
   readonly name?: string | null | undefined;
@@ -130,8 +137,8 @@ interface CheckFields {
   readonly targetUrl?: string | null | undefined;
   /** Empty for app-owned runs; absent for commit statuses. */
   readonly workflowName?: string | null | undefined;
-  /** The workflow run's id, which GitHub assigns in creation order. */
-  readonly workflowRunId?: number | null | undefined;
+  /** Absent for commit statuses and app-owned runs. */
+  readonly workflowRun?: WorkflowRunFields | null | undefined;
   readonly startedAt?: string | null | undefined;
   readonly completedAt?: string | null | undefined;
   /** Branch protection requires this check; asked for on github.com only. */
@@ -574,33 +581,32 @@ function isNamelessCheck(raw: CheckFields): boolean {
 
 /**
  * Unfinished runs outrank finished runs of the same check across push/PR workflows. A newer run of
- * a workflow cancels the older one (concurrency cancel-in-progress), and the older run's job names
- * can differ (an unexpanded matrix), so its cancelled checks are dropped rather than deduped.
+ * the same workflow and event cancels the older one (concurrency cancel-in-progress), whose job
+ * names can differ (an unexpanded matrix), so its cancelled checks are dropped rather than deduped.
  */
 function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): ReadonlyArray<{
   readonly check: PullRequestCheck;
   readonly workflowName: string | null;
   readonly at: string | null;
 }> {
-  const newestRunByWorkflow = new Map<string, number>();
-  for (const check of raw ?? []) {
-    const workflowName = trimmed(check.workflowName);
-    if (workflowName === null || check.workflowRunId == null) continue;
-    const newest = newestRunByWorkflow.get(workflowName);
-    if (newest === undefined || check.workflowRunId > newest) {
-      newestRunByWorkflow.set(workflowName, check.workflowRunId);
+  const lineageOf = (run: WorkflowRunFields) => `${run.workflow.id} ${run.event}`;
+  const newestRunNumber = new Map<string, number>();
+  for (const { workflowRun: run } of raw ?? []) {
+    if (run == null) continue;
+    const newest = newestRunNumber.get(lineageOf(run));
+    if (newest === undefined || run.runNumber > newest) {
+      newestRunNumber.set(lineageOf(run), run.runNumber);
     }
   }
   return (raw ?? []).flatMap((check) => {
     const name = trimmed(check.name) ?? trimmed(check.context);
     if (name === null) return [];
     const status = toCheckStatus(check);
-    const workflowName = trimmed(check.workflowName);
+    const run = check.workflowRun;
     if (
       status === "cancelled" &&
-      workflowName !== null &&
-      check.workflowRunId != null &&
-      check.workflowRunId < (newestRunByWorkflow.get(workflowName) ?? check.workflowRunId)
+      run != null &&
+      run.runNumber < (newestRunNumber.get(lineageOf(run)) ?? run.runNumber)
     ) {
       return [];
     }
@@ -613,7 +619,7 @@ function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): Rea
           url: trimmed(check.detailsUrl) ?? trimmed(check.targetUrl),
           ...(typeof check.isRequired === "boolean" ? { required: check.isRequired } : {}),
         },
-        workflowName,
+        workflowName: trimmed(check.workflowName),
         at:
           status === "pending"
             ? STILL_RUNNING
@@ -1182,7 +1188,7 @@ function toCheckContexts(nodes: ReadonlyArray<CheckContext>): ReadonlyArray<GitH
       ? {
           ...check,
           workflowName: check.checkSuite.workflowRun?.workflow.name ?? null,
-          workflowRunId: check.checkSuite.workflowRun?.databaseId ?? null,
+          workflowRun: check.checkSuite.workflowRun,
         }
       : check,
   );

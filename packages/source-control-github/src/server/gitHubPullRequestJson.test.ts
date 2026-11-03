@@ -323,10 +323,18 @@ describe("pull request detail decoding", () => {
           checkSuite: { workflowRun: null },
           ...fields,
         };
-  const inWorkflow = ({ workflowName, runId, ...fields }: Record<string, unknown>) =>
+  const inWorkflow = ({
+    workflowName,
+    workflowId = `W_kwDORLtfbc4${String(workflowName)}`,
+    event = "pull_request",
+    runNumber = 95380,
+    ...fields
+  }: Record<string, unknown>) =>
     check({
       ...fields,
-      checkSuite: { workflowRun: { databaseId: runId ?? null, workflow: { name: workflowName } } },
+      checkSuite: {
+        workflowRun: { event, runNumber, workflow: { id: workflowId, name: workflowName } },
+      },
     });
 
   const coreJson = (
@@ -579,14 +587,16 @@ describe("pull request detail decoding", () => {
   it("drops a cancelled check whose workflow run was superseded by a newer run on the head", () => {
     const superseded = {
       workflowName: "CI",
-      runId: 100,
+      workflowId: "W_kwDORLtfbc4N00ni",
+      runNumber: 95379,
       status: "COMPLETED",
       startedAt: "2026-10-30T10:00:00Z",
       completedAt: "2026-10-30T10:00:05Z",
     };
     const replacement = {
       workflowName: "CI",
-      runId: 200,
+      workflowId: "W_kwDORLtfbc4N00ni",
+      runNumber: 95380,
       status: "COMPLETED",
       conclusion: "SUCCESS",
       startedAt: "2026-10-30T10:00:10Z",
@@ -622,12 +632,38 @@ describe("pull request detail decoding", () => {
         inWorkflow({
           ...superseded,
           workflowName: "Release",
-          runId: 300,
+          workflowId: "W_kwDORLtfbc4Onf3y",
+          runNumber: 92888,
           name: "publish",
           conclusion: "CANCELLED",
         }),
       ])[0],
     ).toContainEqual(["publish", "cancelled"]);
+  });
+
+  it("keeps a cancelled check when the newer run is another workflow with the same name", () => {
+    const detail = detailOf([
+      inWorkflow({
+        name: "test",
+        workflowName: "CI",
+        workflowId: "W_kwDORLtfbc4N00ni",
+        runNumber: 95379,
+        conclusion: "CANCELLED",
+      }),
+      inWorkflow({
+        name: "lint",
+        workflowName: "CI",
+        workflowId: "W_kwDORLtfbc4ToKTh",
+        runNumber: 95380,
+        conclusion: "SUCCESS",
+      }),
+    ]);
+
+    expect(detail.checks.map((check) => [check.name, check.status])).toContainEqual([
+      "test",
+      "cancelled",
+    ]);
+    expect(detail.checksState).toBe("failing");
   });
 
   it("merges reviews with comments in time order and keeps a bodyless approval", () => {
