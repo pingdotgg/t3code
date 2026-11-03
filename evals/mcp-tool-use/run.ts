@@ -883,12 +883,21 @@ export const buildMessages = (sample: Sample) => {
     else messages[messages.length - 1] = { role, content: [...last.content, ...blocks] };
   };
   const { role, context, delegateRole, priorTurns = [] } = testCase.setup;
+  const sideChat = testCase.setup.sideChat;
+  const sideChatContext =
+    sideChat === undefined
+      ? undefined
+      : makeSideChatContext({
+          parentThreadId: ThreadId.make(sideChat.parentThreadId),
+          digest: sideChat.digest,
+        });
   const native = role === "native-subagent";
   const notes = [
     native
       ? "You are a subagent started by the parent agent's Agent tool. Your final message goes to the parent agent, not to the user."
       : undefined,
     context,
+    testCase.prompt === "" ? sideChatContext : undefined,
   ];
   const reminders = base.reminders.toSpliced(base.gitStatusAt, 0, reminder(gitStatus(testCase)));
   push("user", ...reminders, ...notes.flatMap((note) => (note ? [reminder(note)] : [])));
@@ -929,19 +938,11 @@ export const buildMessages = (sample: Sample) => {
     testCase.promptContext === undefined
       ? testCase.prompt
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
-  const sideChat = testCase.setup.sideChat;
   const prompt =
-    sideChat === undefined
-      ? userText
-      : withInlineContext(
-          makeSideChatContext({
-            parentThreadId: ThreadId.make(sideChat.parentThreadId),
-            digest: sideChat.digest,
-          }),
-          userText,
-        );
+    sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
-  if (prompt !== "") push("user", text(role === "delegated-child" ? childPrompt() : prompt));
+  if (testCase.prompt !== "")
+    push("user", text(role === "delegated-child" ? childPrompt() : prompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
     push("user", reminder(`SubagentStart hook additional context: ${base.subagentContext}`));

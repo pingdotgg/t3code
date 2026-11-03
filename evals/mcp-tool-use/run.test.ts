@@ -397,6 +397,27 @@ it("replays earlier capability results with the model under test as the caller",
   const resumed = buildMessages(makeSample({ ...testCase, prompt: "" }, base));
   assert.equal(resumed.at(-1)?.role, "user");
   assert.equal(resumed.at(-1)?.content.at(-1)?.type, "tool_result");
+  const sideChatResume = buildMessages(
+    makeSample(
+      {
+        ...testCase,
+        prompt: "",
+        setup: {
+          ...testCase.setup,
+          sideChat: {
+            parentThreadId: "thread-parent",
+            digest: ["The permissions fix is committed."],
+          },
+        },
+      },
+      base,
+    ),
+  );
+  assert.include(
+    sideChatResume[0]?.content.map((block) => block.text).join("\n"),
+    "The permissions fix is committed.",
+  );
+  assert.equal(sideChatResume.at(-1)?.content.at(-1)?.type, "tool_result");
 });
 
 it("gives each launched thread its own id, and reading it back shows that thread's brief", () => {
