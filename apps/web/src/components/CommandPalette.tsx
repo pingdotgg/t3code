@@ -1368,7 +1368,7 @@ function OpenCommandPaletteDialog(props: {
       value: "action:copy-thread-reference",
       searchTerms:
         activeThreadReferenceCopyTarget.kind === "pull-request"
-          ? ["copy", "pull request", "link", "reference"]
+          ? ["copy", "pull request", changeRequestTerms.singular, "link", "reference"]
           : ["copy", "thread", "thread id", "reference"],
       title:
         activeThreadReferenceCopyTarget.kind === "pull-request"
