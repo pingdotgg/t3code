@@ -12,26 +12,34 @@ describe("MCP App snapshot", () => {
         "base64url",
       );
       const requested = `${uri}?__cf_mcp_server_id=${token}`;
-      let written = false;
+      let writtenHtml = "";
       const result = yield* snapshotMcpApp({
         attachmentsDir: "/tmp/attachments",
         threadId: ThreadId.make("thread-test"),
         server: "gateway",
         tool: "preview",
         resourceUri: requested,
-        contents: [{ uri, mimeType: "text/html;profile=mcp-app", text: "<html>preview</html>" }],
+        contents: [
+          {
+            uri: "ui://example/other.html",
+            mimeType: "text/html;profile=mcp-app",
+            text: "<html>decoy</html>",
+          },
+          { uri, mimeType: "text/html;profile=mcp-app", text: "<html>preview</html>" },
+        ],
       }).pipe(
         Effect.provide(
           FileSystem.layerNoop({
-            writeFileString: () =>
+            writeFileString: (_path, html) =>
               Effect.sync(() => {
-                written = true;
+                writtenHtml = html;
               }),
           }),
         ),
       );
       expect(result?.resourceUri).toBe(requested);
-      expect(written).toBe(true);
+      expect(writtenHtml).toContain("preview");
+      expect(writtenHtml).not.toContain("decoy");
     }),
   );
 });

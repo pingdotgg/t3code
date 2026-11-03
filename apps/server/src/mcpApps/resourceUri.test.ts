@@ -12,6 +12,19 @@ describe("MCP App resource URI matching", () => {
     expect(matchesResourceUri(route(envelope), uri)).toBe(true);
   });
 
+  it("preserves the original query encoding and fragment", () => {
+    for (const query of ["name=a%20b", "name=~", "name=a+b", "a=1&name=a%20b"]) {
+      const original = `${uri}?${query}#section`;
+      const routing = token({ ...envelope, uri: original });
+      expect(
+        matchesResourceUri(`${uri}?${query}&__cf_mcp_server_id=${routing}#section`, original),
+      ).toBe(true);
+      expect(
+        matchesResourceUri(`${uri}?__cf_mcp_server_id=${routing}&${query}#section`, original),
+      ).toBe(true);
+    }
+  });
+
   it("rejects unrelated resources and malformed or inconsistent routes", () => {
     expect(matchesResourceUri(route(envelope), "ui://other/preview.html")).toBe(false);
     expect(matchesResourceUri(route({ ...envelope, uri: "ui://other/preview.html" }), uri)).toBe(
