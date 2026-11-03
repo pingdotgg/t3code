@@ -70,6 +70,8 @@ export class SecretRequests extends Context.Service<
     /** Writes a secret the user pasted in chat to an owner-only file and returns its path. */
     readonly savePasted: (input: {
       readonly threadId: ThreadId;
+      /** The provider session's namespace, so two sessions' keys never share a file. */
+      readonly requestNamespace: string;
       readonly requestKey: string;
       readonly value: string;
     }) => Effect.Effect<string, SecretRequestError>;
@@ -299,11 +301,19 @@ const make = Effect.gen(function* () {
     "SecretRequests.savePasted",
   )(function* (input) {
     if (filesDir === undefined) return yield* new SecretRequestError({ reason: "store_failed" });
-    // A retry with the same clientRequestId writes the same file.
-    const ref = refFor(salt, input.threadId, `pasted\u0000${input.requestKey}`);
+    const ref = refFor(
+      salt,
+      input.threadId,
+      `pasted\u0000${input.requestNamespace}\u0000${input.requestKey}`,
+    );
     const file = path.join(filesDir, ref.slice(SECRET_REF_PREFIX.length));
-    yield* writeSecretFile(filesDir, file, input.value).pipe(consumeLock.withPermits(1));
-    return file;
+    // A retry with the same clientRequestId gets the file the first call wrote, unchanged, so a
+    // command already holding that path never reads another value.
+    return yield* Effect.gen(function* () {
+      if (yield* fileSystem.exists(file).pipe(Effect.orElseSucceed(() => false))) return file;
+      yield* writeSecretFile(filesDir, file, input.value);
+      return file;
+    }).pipe(consumeLock.withPermits(1));
   });
 
   const sweepExpired = Effect.gen(function* () {

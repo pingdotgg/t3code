@@ -17,7 +17,8 @@ export type SecretRequestAnswerInput = typeof SecretRequestAnswerInput.Type;
 export const SECRET_REQUEST_UNSAVED_NOTE = {
   declined:
     "The user declined. Don't ask for it in chat or another way; say what's blocked and go on without it.",
-  cancelled: "The card closed with the run. Ask again only if the secret is still needed.",
+  cancelled:
+    "The card closed with the run. Ask again with a new clientRequestId only if the secret is still needed.",
   timed_out:
     "No answer in time. Don't ask in chat; ask again with a new clientRequestId only if it is still needed.",
 } as const;

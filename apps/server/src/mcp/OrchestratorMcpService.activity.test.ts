@@ -675,7 +675,11 @@ it("requestSecret saves a pasted value to a file without opening a card", async 
     updatedAt: now,
   } as unknown as OrchestrationV2ThreadProjection;
   const dispatched: Array<unknown> = [];
-  const saved: Array<{ readonly requestKey: string; readonly value: string }> = [];
+  const saved: Array<{
+    readonly requestNamespace: string;
+    readonly requestKey: string;
+    readonly value: string;
+  }> = [];
   const file = "/home/user/.t3/userdata/secrets/files/0123456789abcdef0123456789abcdef";
 
   const layer = layerOrchestratorService.pipe(
@@ -702,7 +706,11 @@ it("requestSecret saves a pasted value to a file without opening a card", async 
         Layer.mock(SecretRequests.SecretRequests)({
           savePasted: (input) =>
             Effect.sync(() => {
-              saved.push({ requestKey: input.requestKey, value: input.value });
+              saved.push({
+                requestNamespace: input.requestNamespace,
+                requestKey: input.requestKey,
+                value: input.value,
+              });
               return file;
             }),
         }),
@@ -735,7 +743,13 @@ it("requestSecret saves a pasted value to a file without opening a card", async 
     });
     expect(result).toEqual({ status: "saved", file });
     expect(JSON.stringify(result)).not.toContain("482916");
-    expect(saved).toEqual([{ requestKey: "pin-1", value: "482916" }]);
+    expect(saved).toEqual([
+      {
+        requestNamespace: "provider-session-mcp-orchestrator-detail",
+        requestKey: "pin-1",
+        value: "482916",
+      },
+    ]);
     expect(dispatched).toEqual([]);
     expect((yield* counted) - before).toBe(1);
 

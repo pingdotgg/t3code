@@ -479,7 +479,12 @@ it.effect("a pasted secret goes straight to an owner-only file, with no card", (
     const file = yield* withService(
       ({ service, stored, dispatched }) =>
         Effect.gen(function* () {
-          const file = yield* service.savePasted({ threadId, requestKey: "key-1", value: pasted });
+          const file = yield* service.savePasted({
+            threadId,
+            requestNamespace: "session-a",
+            requestKey: "key-1",
+            value: pasted,
+          });
           assert.equal(path.dirname(file), path.join(directory, "files"));
           assert.match(path.basename(file), /^[0-9a-f]{32}$/);
           assert.equal(yield* fs.readFileString(file), pasted);
@@ -490,13 +495,33 @@ it.effect("a pasted secret goes straight to an owner-only file, with no card", (
           // No card and no stored copy: the thread never hears of it.
           assert.deepEqual(dispatched, []);
           assert.deepEqual(valuesOf(stored), []);
-          // A retry with the same key writes the same file; another key gets its own.
+          // A retry with the same key gets the same file, unchanged even if the value differs.
           assert.equal(
-            yield* service.savePasted({ threadId, requestKey: "key-1", value: pasted }),
+            yield* service.savePasted({
+              threadId,
+              requestNamespace: "session-a",
+              requestKey: "key-1",
+              value: "other",
+            }),
             file,
           );
-          const other = yield* service.savePasted({ threadId, requestKey: "key-2", value: "x" });
+          assert.equal(yield* fs.readFileString(file), pasted);
+          // Another key, or the same key from another provider session, gets its own file.
+          const other = yield* service.savePasted({
+            threadId,
+            requestNamespace: "session-a",
+            requestKey: "key-2",
+            value: "x",
+          });
           assert.notEqual(other, file);
+          const otherSession = yield* service.savePasted({
+            threadId,
+            requestNamespace: "session-b",
+            requestKey: "key-1",
+            value: "y",
+          });
+          assert.notEqual(otherSession, file);
+          assert.equal(yield* fs.readFileString(file), pasted);
           // Its name is not a ref to the value.
           const ref = SecretRef.make(`secret-ref:${path.basename(file)}`);
           const reused = yield* service.consume({ ref, projectId }).pipe(Effect.flip);
@@ -540,7 +565,13 @@ it.effect("a pasted secret keeps its exact bytes from the tool input to the file
     });
     assert.isTrue(Exit.isFailure(empty));
     const file = yield* withService(
-      ({ service }) => service.savePasted({ threadId, requestKey: "key-1", value: input.value! }),
+      ({ service }) =>
+        service.savePasted({
+          threadId,
+          requestNamespace: "session-a",
+          requestKey: "key-1",
+          value: input.value!,
+        }),
       { directory },
     );
     assert.equal(yield* fs.readFileString(file), pasted);
@@ -551,7 +582,7 @@ it.effect("a pasted secret is refused without a secrets directory", () =>
   withService(({ service }) =>
     Effect.gen(function* () {
       const failed = yield* service
-        .savePasted({ threadId, requestKey: "key-1", value: "4829" })
+        .savePasted({ threadId, requestNamespace: "session-a", requestKey: "key-1", value: "4829" })
         .pipe(Effect.flip);
       assert.equal(failed.reason, "store_failed");
     }),
