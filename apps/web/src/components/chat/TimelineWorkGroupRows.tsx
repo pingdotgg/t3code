@@ -68,6 +68,8 @@ import {
   ShieldQuestionMarkIcon,
   ArrowDownIcon,
 } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide";
+import { MorphIcon } from "../MorphIcon";
 import { Button } from "../ui/button";
 import { getVirtualizedScrollFadeClassName, ScrollArea } from "../ui/scroll-area";
 import {
@@ -381,7 +383,13 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
             {label}
             {isPreparingWorktree ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
           </span>
-          {foldable ? <span aria-hidden className="size-3 shrink-0" /> : null}
+          {foldable ? (
+            <MorphIcon
+              aria-hidden
+              className="size-3 shrink-0 text-dim-foreground"
+              icon={historyOpen ? ChevronDown : ChevronRight}
+            />
+          ) : null}
         </WorkingBarControl>
         {backgroundWorktreeSetup ? (
           <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
@@ -884,6 +892,12 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
   }
   const windowRef = useRef<HTMLDivElement>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
+  const [collapseClips, setCollapseClips] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the expanded height before the collapse transition paints its first frame
+  useLayoutEffect(() => {
+    if (open) return;
+    setCollapseClips((windowRef.current?.scrollHeight ?? 0) > WORKING_WINDOW_COLLAPSED_HEIGHT);
+  }, [open]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- older items stay mounted until the collapse transition finishes clipping them
   useEffect(() => {
     if (open || history === null) return;
@@ -957,6 +971,7 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
           open
             ? "[height:calc-size(auto,size)]"
             : "[height:calc-size(auto,min(size,220px))] not-supports-[height:calc-size(auto,size)]:max-h-[220px]",
+          !open && history !== null && collapseClips && "working-window-collapse-fade",
         )}
       >
         {history === null ? (
@@ -1020,6 +1035,7 @@ function CollapsedWorkingWindow({
     );
     const content = contentRef.current;
     if (!viewport || !content) return;
+    viewport.scrollTop = viewport.scrollHeight;
     return observeResize([content, viewport], () => {
       if (followRef.current) viewport.scrollTop = viewport.scrollHeight;
     });
@@ -1094,6 +1110,7 @@ function workingWindowItemIsLive(item: WorkingWindowItem | undefined): boolean {
 }
 
 const WORKING_WINDOW_TAIL = 12;
+const WORKING_WINDOW_COLLAPSED_HEIGHT = 220;
 
 const WORKING_HISTORY_BATCH = 50;
 
