@@ -465,7 +465,10 @@ it.layer(
 
   // Root ignores directory modes, and chmod does not stop writes on Windows.
   const readOnlyDirsUnenforced = windowsHost || process.getuid?.() === 0;
-  const resolveNpmInstallWithReadOnlyDir = (readOnlySegments: ReadonlyArray<string>) =>
+  const resolveNpmInstallWithReadOnlyDir = (
+    readOnlySegments: ReadonlyArray<string>,
+    options?: { readonly launchPackageExecutable?: boolean },
+  ) =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-npm-read-only");
       const link = linkIntoPackage(tempDir, "package-tool", [
@@ -487,7 +490,7 @@ it.layer(
       );
       const views: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
       const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
-        binaryPath: link,
+        binaryPath: options?.launchPackageExecutable ? NodeFS.realpathSync(link) : link,
         env: { PATH: [NodePath.dirname(providerNpm), NodePath.join(tempDir, "bin")].join(":") },
       }).pipe(
         Effect.provideService(HostProcess.Environment, { PATH: "" }),
@@ -541,6 +544,21 @@ it.layer(
         expect(capabilities.update).toBeNull();
         expect(capabilities.manualCommand).toBe(
           `sudo npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
+        );
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported || readOnlyDirsUnenforced)(
+    "keeps one-click npm updates for a package executable launched outside a read-only prefix bin",
+    () =>
+      Effect.gen(function* () {
+        // With bin-links off npm never touches `<prefix>/bin`, so its mode does not matter.
+        const { tempDir, capabilities } = yield* resolveNpmInstallWithReadOnlyDir(["bin"], {
+          launchPackageExecutable: true,
+        });
+
+        expect(capabilities.update?.command).toBe(
+          `npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
         );
       }),
   );

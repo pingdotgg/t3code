@@ -634,7 +634,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     if (
       npm.update &&
       context.platform !== "win32" &&
-      (yield* npmPrefixDeniesWrite(npmPrefix, packageName))
+      (yield* npmPrefixDeniesWrite(npmPrefix, packageName, context.resolvedCommandPath))
     ) {
       // The version lookup still needs the provider's npm and prefix.
       const { lookupLatestVersion } = yield* withConfiguredNpmVersionLookup(npm);
@@ -793,12 +793,20 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
 const npmPrefixDeniesWrite = Effect.fn("npmPrefixDeniesWrite")(function* (
   prefix: string,
   packageName: string,
+  resolvedCommandPath: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const packageDir = path.join(prefix, "lib", "node_modules", ...packageName.split("/"));
+  const binDir = path.join(prefix, "bin");
+  // Without npm's launcher in `<prefix>/bin` (bin-links off), the update never writes there.
+  const launcherDir = path.dirname(resolvedCommandPath);
+  const realLauncherDir = yield* fileSystem
+    .realPath(launcherDir)
+    .pipe(Effect.orElseSucceed(() => launcherDir));
+  const launchedFromBin = normalizeCommandPath(realLauncherDir) === normalizeCommandPath(binDir);
   const denials = yield* Effect.forEach(
-    [path.dirname(packageDir), path.join(prefix, "bin")],
+    launchedFromBin ? [path.dirname(packageDir), binDir] : [path.dirname(packageDir)],
     (dir) =>
       fileSystem.access(dir, { writable: true }).pipe(
         Effect.as(false),
