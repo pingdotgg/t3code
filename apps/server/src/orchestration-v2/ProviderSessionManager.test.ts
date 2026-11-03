@@ -16,6 +16,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSessionId,
+  ProviderThreadId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -3630,6 +3631,8 @@ it.effect.each([
   "coalesced updates",
   "repeated committed snapshot",
   "rejected write",
+  "transient release failure",
+  "persistent release failure",
   "released rewind",
   "replacement owner",
   "concurrent owner switch",
@@ -3783,6 +3786,53 @@ it.effect.each([
           Stream.take(2),
           Stream.runDrain,
         );
+      } else if (
+        scenario === "transient release failure" ||
+        scenario === "persistent release failure"
+      ) {
+        if (scenario === "persistent release failure") {
+          yield* Queue.offer(adapterEvents, {
+            ...update("later-session"),
+            providerThread: {
+              ...update("later-session").providerThread,
+              id: ProviderThreadId.make("later-unread-provider-thread"),
+            },
+          });
+          yield* routed;
+        }
+        let attempts = 0;
+        const failWrite: Effect.Effect<void> = Effect.suspend(() => {
+          attempts++;
+          return (
+            scenario === "persistent release failure" && attempts < 3
+              ? Ref.set(beforeUnchangedWrite, failWrite)
+              : Effect.void
+          ).pipe(Effect.andThen(Effect.die("simulated release save failure")));
+        });
+        yield* Ref.set(beforeUnchangedWrite, failWrite);
+        yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+        if (scenario === "persistent release failure") {
+          assert.equal(attempts, 3);
+          assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+          assert.deepEqual(
+            (yield* projectionStore.getThreadProjection(threadId)).providerThreads.map(
+              (thread) => thread.nativeThreadRef?.nativeId,
+            ),
+            ["later-session"],
+          );
+          yield* Ref.set(beforeUnchangedWrite, Effect.void);
+          yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+        } else assert.equal(attempts, 1);
+        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+        if (scenario === "persistent release failure") {
+          assert.deepEqual(
+            (yield* projectionStore.getThreadProjection(threadId)).providerThreads
+              .map((thread) => thread.nativeThreadRef?.nativeId)
+              .sort(),
+            ["cleared-session", "later-session"],
+          );
+          return;
+        }
       } else if (scenario === "repeated committed snapshot") {
         yield* first.events.pipe(
           Stream.mapEffect((event) => first.persistEvent!(event, persist(event))),

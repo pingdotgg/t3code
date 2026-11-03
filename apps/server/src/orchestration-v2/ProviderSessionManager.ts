@@ -980,7 +980,9 @@ export const layerWithOptions = (
             }
             // Unread updates still belong to this runtime. Save them before removal makes
             // subscription cleanup unable to find it, including on an event-stream failure.
-            yield* persistPendingThreadUpdates(candidate, true);
+            if (!(yield* persistPendingThreadUpdates(candidate, true))) {
+              return ["kept", yield* DateTime.now] as const;
+            }
             return yield* Effect.zip(
               Ref.modify(sessions, (current) => {
                 const existing = current.get(key);
@@ -1791,32 +1793,37 @@ export const layerWithOptions = (
       // Callers hold requestEventPermit, including the release cutoff.
       const persistPendingThreadUpdates = Effect.fn(
         "ProviderSessionManager.persistPendingThreadUpdates",
-      )(
-        function* (entry: LiveSessionEntry, releasing = false) {
-          const pending = new Set([
-            ...entry.pendingRewinds.values(),
-            ...entry.latestThreadUpdates.values(),
-          ]);
-          for (const update of pending) {
-            if (update.received || (!releasing && update.recipients.size > 0)) continue;
-            const threadId = update.event.providerThread.appThreadId;
-            if (threadId === null) continue;
-            const latest = entry.latestThreadUpdates.get(update.event.providerThread.id);
+      )(function* (entry: LiveSessionEntry, releasing = false) {
+        const pending = new Set([
+          ...entry.pendingRewinds.values(),
+          ...entry.latestThreadUpdates.values(),
+        ]);
+        let saved = true;
+        for (const update of pending) {
+          if (update.received || (!releasing && update.recipients.size > 0)) continue;
+          const threadId = update.event.providerThread.appThreadId;
+          if (threadId === null) continue;
+          const latest = entry.latestThreadUpdates.get(update.event.providerThread.id);
+          for (let attempt = 0; attempt < (releasing ? 3 : 1); attempt++) {
             update.received = yield* ingestRunlessEventHeld(
               entry,
               threadId,
               update.event,
               latest !== update,
+            ).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("orchestration-v2.driver-session.unread-thread-update-failed", {
+                  cause,
+                }).pipe(Effect.as(false)),
+              ),
             );
-            if (update.received) entry.pendingRewinds.delete(update.event);
+            if (update.received) break;
           }
-        },
-        Effect.catchCause((cause) =>
-          Effect.logWarning("orchestration-v2.driver-session.unread-thread-update-failed", {
-            cause,
-          }),
-        ),
-      );
+          if (update.received) entry.pendingRewinds.delete(update.event);
+          else saved = false;
+        }
+        return saved;
+      });
 
       const makeEventSubscription = Effect.fn("ProviderSessionManager.makeEventSubscription")(
         function* (

@@ -1,3 +1,4 @@
+import { withAttemptNativeSession } from "./AttemptNativeSession.ts";
 import {
   CheckpointId,
   CheckpointScopeId,
@@ -145,21 +146,7 @@ export const layer: Layer.Layer<
     }) {
       const context = yield* projections.getCheckpointRollbackContext(input.threadId, input);
       const { checkpoint, scope, targetAttempt, runsToRollback, staleCheckpoints } = context;
-      // A provider can move its thread to another native session (Claude's `/clear`), so the
-      // target turn's messages live in the session its attempt ran in.
-      const providerThread =
-        context.providerThread?.nativeThreadRef == null ||
-        targetAttempt?.nativeThreadId === undefined ||
-        targetAttempt.nativeThreadId === context.providerThread.nativeThreadRef.nativeId
-          ? context.providerThread
-          : {
-              ...context.providerThread,
-              nativeThreadRef: {
-                ...context.providerThread.nativeThreadRef,
-                nativeId: targetAttempt.nativeThreadId,
-              },
-              nativeConversationHeadRef: null,
-            };
+      const providerThread = context.providerThread;
       if (
         providerThread === undefined ||
         providerThread.providerSessionId === null ||
@@ -299,7 +286,10 @@ export const layer: Layer.Layer<
         runsToRollback.length === 0
           ? { providerThread }
           : yield* session.rollbackThread({
-              providerThread,
+              providerThread: withAttemptNativeSession(
+                providerThread,
+                targetAttempt?.nativeThreadId,
+              ),
               target: rollbackTarget,
               providerThreadTurns,
             });

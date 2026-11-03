@@ -1,3 +1,4 @@
+import { withAttemptNativeSession } from "./AttemptNativeSession.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -1133,21 +1134,13 @@ export const layer: Layer.Layer<
           const currentSourceProviderThread = sourceProjection.providerThreads.find(
             (candidate) => candidate.id === sourceRun?.providerThreadId,
           );
-          // A provider can move its thread to another native session (Claude's `/clear`), so
-          // fork from the session the source attempt ran in.
           const sourceProviderThread =
-            currentSourceProviderThread?.nativeThreadRef == null ||
-            sourceAttempt?.nativeThreadId === undefined ||
-            sourceAttempt.nativeThreadId === currentSourceProviderThread.nativeThreadRef.nativeId
-              ? currentSourceProviderThread
-              : {
-                  ...currentSourceProviderThread,
-                  nativeThreadRef: {
-                    ...currentSourceProviderThread.nativeThreadRef,
-                    nativeId: sourceAttempt.nativeThreadId,
-                  },
-                  nativeConversationHeadRef: null,
-                };
+            currentSourceProviderThread === undefined
+              ? undefined
+              : withAttemptNativeSession(
+                  currentSourceProviderThread,
+                  sourceAttempt?.nativeThreadId,
+                );
           const sourceProviderTurn =
             latestProviderTurnForAttempt(sourceProjection.providerTurns, sourceAttempt?.id) ??
             sourceProjection.providerTurns.find(

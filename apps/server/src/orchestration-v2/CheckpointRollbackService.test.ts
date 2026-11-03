@@ -706,7 +706,7 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
 
     // regression: #24153 a rollback across Claude's /clear paired the adopted session with a
     // pre-clear message cursor, so the next resume asked the new session for a missing message.
-    it.effect("rolls a Claude thread back into the session the target turn ran in", () =>
+    it.effect.each([1, 2] as const)("keeps Claude session at turn %s", (targetOrdinal) =>
       Effect.gen(function* () {
         const store = yield* ProjectionStore.ProjectionStoreV2;
         const now = yield* DateTime.now;
@@ -767,7 +767,7 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
             appThreadId: threadId,
             ownerNodeId: null,
             nativeThreadRef: { driver, nativeId: "native-after-clear", strength: "strong" },
-            nativeConversationHeadRef: null,
+            nativeConversationHeadRef: { driver, nativeId: "current-head", strength: "weak" },
             status: "idle",
             firstRunOrdinal: 1,
             lastRunOrdinal: 2,
@@ -923,7 +923,7 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
             threadId,
             providerThreadId,
             scopeId,
-            checkpointId: checkpointId(1),
+            checkpointId: checkpointId(targetOrdinal),
             restoreFiles: false,
           });
         }).pipe(
@@ -964,7 +964,9 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
             session: providerThread?.nativeThreadRef?.nativeId,
             resumeAt: providerThread?.nativeConversationHeadRef?.nativeId,
           },
-          { session: "native-before-clear", resumeAt: "assistant-1" },
+          targetOrdinal === 1
+            ? { session: "native-before-clear", resumeAt: "assistant-1" }
+            : { session: "native-after-clear", resumeAt: "current-head" },
         );
       }).pipe(
         Effect.scoped,
