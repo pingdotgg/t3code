@@ -60,6 +60,9 @@ export function readThreadTriageScope(environmentId: EnvironmentId): boolean {
     appAtomRegistry.get(threadEnvironment.offlineTriagePermittedAtom(environmentId))
   );
 }
+export function readThreadPendingSync(environmentId: EnvironmentId, threadId: ThreadId): boolean {
+  return appAtomRegistry.get(threadEnvironment.pendingSyncAtom(environmentId)).has(threadId);
+}
 const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
   environmentThreads.stateAtom,

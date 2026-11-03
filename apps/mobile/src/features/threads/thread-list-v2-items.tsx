@@ -259,7 +259,7 @@ type ThreadListV2ShelfHeaderProps = {
   readonly pane?: "screen" | "sidebar";
 };
 
-const TRIAGE_MENU_ACTION_IDS = new Set(["settle", "snooze", "unsettle", "unsnooze"]);
+const TRIAGE_MENU_ACTION_IDS = new Set(["settle", "snooze"]);
 
 const SHELF_LABEL = { working: "Working", snoozed: "Snoozed", settled: "Settled" } as const;
 
@@ -779,6 +779,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     threadEnvironment.offlineTriagePermittedAtom(thread.environmentId),
   );
   const triageOnly = !canOperateThread && offlineTriagePermitted;
+  // Un-settle and wake only cancel a change still waiting to sync.
+  const triageAllows = (action: string) =>
+    TRIAGE_MENU_ACTION_IDS.has(action) ||
+    (pendingSync && (action === "unsettle" || action === "unsnooze"));
   const handleRegenerateTitle = useCallback(
     () => onRegenerateThreadTitle(thread),
     [onRegenerateThreadTitle, thread],
@@ -1108,7 +1112,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
   );
   const swipeAccessibilityHint =
-    !canOperateThread && !triageOnly
+    !canOperateThread && !(triageOnly && triageAllows(swipeActions.primary))
       ? "Opens the thread"
       : secondaryAction === null
         ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
@@ -1470,7 +1474,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       </RowPressable>
     );
 
-  if (!canOperateThread && !(triageOnly && swipeActions.primary !== "archive"))
+  if (!canOperateThread && !(triageOnly && triageAllows(swipeActions.primary)))
     return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
   const menuActions: MenuAction[] = [
     ...(thread.branch
@@ -1522,7 +1526,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           <Menu
             actions={
               triageOnly
-                ? menuActions.filter((action) => TRIAGE_MENU_ACTION_IDS.has(action.id ?? ""))
+                ? menuActions.filter((action) => triageAllows(action.id ?? ""))
                 : menuActions
             }
             onPressAction={handleMenuAction}

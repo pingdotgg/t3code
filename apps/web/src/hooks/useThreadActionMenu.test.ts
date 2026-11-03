@@ -65,6 +65,7 @@ vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primar
 vi.mock("../state/threads", () => ({
   // No remembered offline permission here, so triage follows the live grant.
   readThreadTriageScope: (environmentId: string) => state.granted.has(environmentId),
+  readThreadPendingSync: () => false,
   threadEnvironment: { updateMetadata: "metadata" },
 }));
 vi.mock("../state/use-atom-command", () => ({

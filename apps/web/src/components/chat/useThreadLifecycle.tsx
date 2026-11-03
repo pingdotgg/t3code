@@ -176,9 +176,10 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const router = useRouter();
   const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
-  // Offline, wake and un-settle can still cancel or queue where the last session could operate.
+  const pendingSync = useAtomValue(threadEnvironment.pendingSyncAtom(environmentId));
+  // Offline, wake and un-settle only cancel a change still waiting to sync.
   const canTriageThread =
-    useAtomValue(threadEnvironment.offlineTriagePermittedAtom(environmentId)) || canOperateThread;
+    canOperateThread || (activeThreadId !== null && pendingSync.has(activeThreadId));
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -651,7 +652,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       if (!readThreadTriageScope(environmentId)) return false;
       if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
       if (activeThreadSettled) {
-        void handleUnsettleActiveThread();
+        if (canTriageThread) void handleUnsettleActiveThread();
         return;
       }
       if (settleAndAdvance(activeThreadRef)) return;

@@ -568,11 +568,11 @@ function ThreadDetailBody(
   });
   const unsnoozeThread = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const unsettleThread = useAtomCommand(threadEnvironment.unsettle, { reportFailure: false });
-  // Offline, wake and un-settle can still cancel or queue where the last session could operate.
-  const offlineTriagePermitted = useAtomValue(
-    threadEnvironment.offlineTriagePermittedAtom(props.environmentId),
+  // Offline, wake and un-settle only cancel a change still waiting to sync.
+  const pendingSync = useAtomValue(threadEnvironment.pendingSyncAtom(props.environmentId)).has(
+    props.selectedThread.id,
   );
-  const canTriageThread = props.canOperateThread || offlineTriagePermitted;
+  const canTriageThread = props.canOperateThread || pendingSync;
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata, { reportFailure: false });
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const anyRunStop = useAtomValue(

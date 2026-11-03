@@ -154,7 +154,7 @@ import {
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
-import { readThreadTriageScope, threadEnvironment } from "../state/threads";
+import { readThreadPendingSync, readThreadTriageScope, threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
@@ -2639,6 +2639,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               canTriageOffline: appAtomRegistry.get(
                 threadEnvironment.offlineTriagePermittedAtom(threadRef.environmentId),
               ),
+              hasPendingSync: readThreadPendingSync(threadRef.environmentId, threadRef.threadId),
               branch: thread.branch ?? null,
               // An archived project is not a filter choice.
               projectFilter:

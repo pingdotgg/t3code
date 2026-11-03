@@ -25,7 +25,7 @@ import {
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
-import { readThreadTriageScope, threadEnvironment } from "../state/threads";
+import { readThreadPendingSync, readThreadTriageScope, threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope } from "../state/session";
 import {
@@ -136,6 +136,7 @@ export function useThreadActionMenu(input: {
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         canTriageOffline: readThreadTriageScope(threadRef.environmentId),
+        hasPendingSync: readThreadPendingSync(threadRef.environmentId, threadRef.threadId),
         canFind: onFind !== undefined,
         branch: thread.branch ?? null,
         projectFilter: null,
