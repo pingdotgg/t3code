@@ -682,7 +682,14 @@ const programUse = (program: string, names: (statement: string) => boolean) => {
       continue;
     }
     if (PROGRAM_PRINT.test(code)) {
-      if (values.size > 0 && redaction([...values].join("|")).test(code)) use.redacts = true;
+      // A redaction hides only the value it removes: another use in the print still shows it.
+      const pattern = [...values].join("|");
+      const unredacted =
+        values.size === 0 ||
+        new RegExp(`\\b(?:${pattern})\\b`).test(
+          code.replace(new RegExp(`[\\w.]*(?:${redaction(pattern).source})[^)]*\\)`, "g"), ""),
+        );
+      if (!unredacted) use.redacts = true;
       else return { ...use, prints: true };
       continue;
     }
@@ -852,6 +859,9 @@ const HIDES =
   /^(?:len|bool|hash|id|type|isinstance|hashlib\.\w+|hmac\.\w+|zlib\.crc32|\w+\.(?:startswith|endswith|isdigit|isalnum|isalpha|isascii|isspace|isprintable|count|find|index|includes|startsWith|endsWith|test|compare_digest|createHash))$/;
 const PRINT_CALL =
   /^(?:print|pprint(?:\.pprint)?|sys\.std(?:out|err)(?:\.buffer)?\.write|os\.write|console\.\w+|process\.std(?:out|err)\.write|logging\.\w+|logger\.\w+|warnings\.warn|sys\.exit|exit|quit|(?:new\s+)?\w*(?:Error|Exception|Exit))$/;
+// Print calls that write to stdout; the rest of PRINT_CALL reaches stderr or an exit message.
+const STDOUT_CALL =
+  /^(?:print|pprint(?:\.pprint)?|sys\.stdout(?:\.buffer)?\.write|console\.(?:log|info|dir|debug|table)|process\.stdout\.write)$/;
 const WRITE_CALL =
   /^(?:\w+\.)*(?:write_text|write_bytes|writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|writelines|dump|write)$/;
 const EXEC_CALL =
@@ -881,6 +891,7 @@ type Flow =
   | "http"
   | "ui"
   | "print"
+  | "stderr"
   | "write"
   | "env";
 /**
@@ -926,7 +937,9 @@ const valueFlow = (
     if (REDACTOR.test(name) && firstArgument) return "redacted";
     if (HIDES.test(name)) return "hidden";
     const kind = PRINT_CALL.test(name)
-      ? "print"
+      ? STDOUT_CALL.test(name)
+        ? "print"
+        : "stderr"
       : EXEC_CALL.test(name)
         ? "exec"
         : HTTP_CALL.test(name)
@@ -1087,6 +1100,8 @@ export const inlineProgramUses = (
     const at = () => [statement.raw, ...new Set(definitions(code, index))].join("\n");
     if (flows.includes("redacted")) redacts = true;
     if (flows.includes("print")) uses.push({ verdict: "print (program prints the value)" });
+    if (flows.includes("stderr"))
+      uses.push({ verdict: "print (program prints the value to stderr)" });
     if (flows.includes("write"))
       uses.push({ verdict: "copy (program writes the value to a file)" });
     if (flows.includes("exec"))
@@ -1276,6 +1291,8 @@ export const classifyFileUse = (
   const uses: Array<FileUse> = [];
   const known = new Map(scripts);
   const add = (verdict: string, at: string) => uses.push({ verdict, at });
+  // Written shell scripts being read, so one that runs itself is read once.
+  const reading = new Set<string>();
   const fileVars = new Set<string>();
   // Variables that hold the secrets directory, as in S=~/.t3/userdata/secrets/files; cat "$S/<id>".
   const dirVars = new Set<string>();
@@ -1463,10 +1480,29 @@ export const classifyFileUse = (
         if (touches(part)) add(`unknown (${wrapper[1] ?? wrapper[2] ?? "function"})`, part);
         continue;
       }
-      for (const stage of splitPipe(part))
+      const pipeline = splitPipe(part);
+      for (const [index, stage] of pipeline.entries())
         for (const path of runsScripts(stage, known)) {
           const source = known.get(path)!;
-          if (fileIds.some((id) => source.includes(id))) uses.push(scriptVerdict(source, stage));
+          if (!fileIds.some((id) => source.includes(id))) continue;
+          // A shell script is read as shell; one it reads the file in by another spelling falls back.
+          if (
+            !reading.has(path) &&
+            (/\.(?:sh|bash|zsh)$/.test(path) || SHELLS.test(withoutAssignments(stage)))
+          ) {
+            const before = uses.length;
+            reading.add(path);
+            visit(source);
+            reading.delete(path);
+            if (uses.length > before) continue;
+          }
+          const use = scriptVerdict(source, stage);
+          // What the script prints goes down the pipe or to its stdout redirect.
+          const own = /(?:^|\s)(?:1|&)?>>?\s*([^&\s]\S*)/.exec(stage)?.[1];
+          const after = own === undefined ? pipeline.slice(index + 1) : [];
+          if (use.verdict === "print (script prints the value)" && (after.length > 0 || own))
+            flow(after, own, stage);
+          else uses.push(use);
         }
       noteHeredoc(part, known);
       if (assignments(part)) continue;
@@ -1523,7 +1559,7 @@ export const classifyFileUse = (
         const quoted = heredoc[1] !== "";
         // An unquoted body that only names the file prints or writes the path, not the value.
         const expands =
-          new RegExp(`\\$\\(${read()}\\)|\`${read()}\``).test(heredoc[4]!) ||
+          new RegExp(`\\$\\([^)]*?${read()}|\`[^\`]*?${read()}`).test(heredoc[4]!) ||
           usesSecretVar(heredoc[4]!);
         const fedToShell =
           SHELLS.test(head) ||
@@ -1541,65 +1577,70 @@ export const classifyFileUse = (
         }
         continue;
       }
-      // A read inside single quotes is literal text, except in an interpreter's inline program.
-      const at = stages.findIndex(
-        (stage) =>
-          touches(unquoted(stage)) ||
-          (INTERPRETERS.test(withoutAssignments(stage)) && touches(stage)),
-      );
-      if (at < 0) continue;
-      const stage = stages[at]!;
-      const head = withoutAssignments(stage);
-      // A stdout redirect on a stage before the last sends its output there, not down the pipe.
-      const own =
-        at < stages.length - 1 ? /(?:^|\s)(?:1|&)?>>?\s*([^&\s]\S*)/.exec(stage)?.[1] : undefined;
-      const downstream = own === undefined ? stages.slice(at + 1) : [];
-      const target = own ?? toFile;
-      const substitution =
-        new RegExp(`\\$\\(${read()}\\)|\`${read()}\``).test(unquoted(stage)) ||
-        usesSecretVar(unquoted(stage));
-      const stdin = new RegExp(`(?:^|\\s)0?<\\s*["']?(?:${fileRef()})`).test(stage);
-      if (COPIES.test(head)) add("copy", stage);
-      else if (/^(?:source|\.)\s/.test(head))
-        add("print (sourcing runs the value as a command)", stage);
-      else if (INTERPRETERS.test(head) && !substitution) {
-        const inline = /\s-(?:e|c|p|-eval|-print)\s+("(?:\\.|[^"\\])*"|'[^']*')/.exec(head)?.[1];
-        if (inline && touches(inline))
-          addProgram(decodeShell(inline), head, stage, { stages: downstream, target });
-        else if (stdin) add("consume (stdin of a program)", stage);
-        else add("consume (path to a program)", stage);
-      } else if (META.test(head) && !substitution) add("meta", stage);
-      else if (substitution) {
-        if (xtrace) add("print (xtrace echoes the expanded value)", stage);
-        else if (/^(?:echo|printf)\b/.test(head)) flow(downstream, target, stage);
-        else if (CURL_VERBOSE.test(head)) add("print (curl -v echoes headers)", stage);
-        // `env NAME="$(cat <file>)" cmd` runs cmd with it; env alone lists it.
+      // Each stage that reads the file is graded. A read inside single quotes is literal text,
+      // except in an interpreter's inline program.
+      for (const [at, stage] of stages.entries()) {
+        if (
+          !touches(unquoted(stage)) &&
+          !(INTERPRETERS.test(withoutAssignments(stage)) && touches(stage))
+        )
+          continue;
+        const head = withoutAssignments(stage);
+        // A stdout redirect on a stage before the last sends its output there, not down the pipe.
+        const own =
+          at < stages.length - 1 ? /(?:^|\s)(?:1|&)?>>?\s*([^&\s]\S*)/.exec(stage)?.[1] : undefined;
+        const downstream = own === undefined ? stages.slice(at + 1) : [];
+        const target = own ?? toFile;
+        // A read inside $(…) or backticks is an argument of the command, piped through other
+        // programs too; a bare assignment of a piped read is not followed.
+        const substitution =
+          new RegExp(`\\$\\(${read()}\\)|\`${read()}\``).test(unquoted(stage)) ||
+          (!/^\s*\w+=/.test(stage) &&
+            new RegExp(`\\$\\([^)]*?${read()}|\`[^\`]*?${read()}`).test(unquoted(stage))) ||
+          usesSecretVar(unquoted(stage));
+        const stdin = new RegExp(`(?:^|\\s)0?<\\s*["']?(?:${fileRef()})`).test(stage);
+        if (COPIES.test(head)) add("copy", stage);
+        else if (/^(?:source|\.)\s/.test(head))
+          add("print (sourcing runs the value as a command)", stage);
+        else if (INTERPRETERS.test(head) && !substitution) {
+          const inline = /\s-(?:e|c|p|-eval|-print)\s+("(?:\\.|[^"\\])*"|'[^']*')/.exec(head)?.[1];
+          if (inline && touches(inline))
+            addProgram(decodeShell(inline), head, stage, { stages: downstream, target });
+          else if (stdin) add("consume (stdin of a program)", stage);
+          else add("consume (path to a program)", stage);
+        } else if (META.test(head) && !substitution) add("meta", stage);
+        else if (substitution) {
+          if (xtrace) add("print (xtrace echoes the expanded value)", stage);
+          else if (/^(?:echo|printf)\b/.test(head)) flow(downstream, target, stage);
+          else if (CURL_VERBOSE.test(head)) add("print (curl -v echoes headers)", stage);
+          // `env NAME="$(cat <file>)" cmd` runs cmd with it; env alone lists it.
+          else if (
+            /^printenv\b/.test(head) ||
+            (/^env\b/.test(head) && /^(?:$|env\b|printenv\b)/.test(envProgram(head)))
+          )
+            add("print (environment listing)", stage);
+          else if (/^env\b/.test(head) && SHELLS.test(envProgram(head)))
+            add("unknown (env runs a shell)", stage);
+          else if (/^cat\b/.test(head) && target) add("copy", stage);
+          else
+            add(
+              new RegExp(`\\$\\(${read()}\\)`).test(
+                unquoted(stage).replace(/"(?:\\.|[^"\\])*"/g, '""'),
+              )
+                ? "consume (unquoted argument)"
+                : "consume (argument or env of a program)",
+              stage,
+            );
+        } else if (stdin && !PRINTERS.test(head)) add("consume (stdin of a program)", stage);
+        else if (PRINTERS.test(head) || /^grep\b/.test(head)) flow(downstream, target, stage);
         else if (
-          /^printenv\b/.test(head) ||
-          (/^env\b/.test(head) && /^(?:$|env\b|printenv\b)/.test(envProgram(head)))
+          /--?[\w-]*file(?:=|\s+)["']?$|(?:-d|--data(?:-binary|-raw)?|-F)\s+["']?@$/.test(
+            stage.split(new RegExp(fileRef()))[0] ?? "",
+          )
         )
-          add("print (environment listing)", stage);
-        else if (/^env\b/.test(head) && SHELLS.test(envProgram(head)))
-          add("unknown (env runs a shell)", stage);
-        else if (/^cat\b/.test(head) && target) add("copy", stage);
-        else
-          add(
-            new RegExp(`\\$\\(${read()}\\)`).test(
-              unquoted(stage).replace(/"(?:\\.|[^"\\])*"/g, '""'),
-            )
-              ? "consume (unquoted argument)"
-              : "consume (argument or env of a program)",
-            stage,
-          );
-      } else if (stdin && !PRINTERS.test(head)) add("consume (stdin of a program)", stage);
-      else if (PRINTERS.test(head) || /^grep\b/.test(head)) flow(downstream, target, stage);
-      else if (
-        /--?[\w-]*file(?:=|\s+)["']?$|(?:-d|--data(?:-binary|-raw)?|-F)\s+["']?@$/.test(
-          stage.split(new RegExp(fileRef()))[0] ?? "",
-        )
-      )
-        add("consume (file flag)", stage);
-      else add("unknown", stage);
+          add("consume (file flag)", stage);
+        else add("unknown", stage);
+      }
     }
   };
   visit(command);
