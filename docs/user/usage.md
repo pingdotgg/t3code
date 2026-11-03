@@ -192,6 +192,12 @@ Claude quotas. Tap it to open **Usage → Limits**; on Android this works while 
 the background, otherwise open the app from the launcher. On iOS, use **Edit Widget** to choose
 Session, Weekly, or both for each provider. Reopen T3 to refresh expired readings.
 
+## Agent Activity widget
+
+Add **Agent Activity** from the iOS widget gallery to see active agents from your connected
+environments. Open T3 Code to refresh the snapshot. After 15 minutes, the widget asks for a refresh.
+Live Activities continue to receive updates separately.
+
 ## Keyboard shortcuts
 
 On web and desktop, open Usage from the command palette. While on Usage,
