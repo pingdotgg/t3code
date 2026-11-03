@@ -666,6 +666,31 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("failing");
   });
 
+  it("keeps a cancelled check when the newer run is another manual dispatch", () => {
+    const detail = detailOf([
+      inWorkflow({
+        name: "test (packages/shared)",
+        workflowName: "Windows Tests",
+        event: "workflow_dispatch",
+        runNumber: 41,
+        conclusion: "CANCELLED",
+      }),
+      inWorkflow({
+        name: "test (apps/server)",
+        workflowName: "Windows Tests",
+        event: "workflow_dispatch",
+        runNumber: 42,
+        conclusion: "SUCCESS",
+      }),
+    ]);
+
+    expect(detail.checks.map((check) => [check.name, check.status])).toContainEqual([
+      "test (packages/shared)",
+      "cancelled",
+    ]);
+    expect(detail.checksState).toBe("failing");
+  });
+
   it("merges reviews with comments in time order and keeps a bodyless approval", () => {
     const detail = expectSuccess(activity(JSON.parse(detailJson) as Record<string, unknown>));
     expect(detail.comments.map((comment) => comment.id)).toEqual(["r1", "c1", "r2"]);

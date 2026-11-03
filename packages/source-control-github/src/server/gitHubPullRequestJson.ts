@@ -583,6 +583,7 @@ function isNamelessCheck(raw: CheckFields): boolean {
  * Unfinished runs outrank finished runs of the same check across push/PR workflows. A newer run of
  * the same workflow and event cancels the older one (concurrency cancel-in-progress), whose job
  * names can differ (an unexpanded matrix), so its cancelled checks are dropped rather than deduped.
+ * Manual dispatches can take different inputs, so a newer one replaces nothing.
  */
 function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): ReadonlyArray<{
   readonly check: PullRequestCheck;
@@ -592,7 +593,7 @@ function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): Rea
   const lineageOf = (run: WorkflowRunFields) => `${run.workflow.id} ${run.event}`;
   const newestRunNumber = new Map<string, number>();
   for (const { workflowRun: run } of raw ?? []) {
-    if (run == null) continue;
+    if (run == null || run.event === "workflow_dispatch") continue;
     const newest = newestRunNumber.get(lineageOf(run));
     if (newest === undefined || run.runNumber > newest) {
       newestRunNumber.set(lineageOf(run), run.runNumber);
