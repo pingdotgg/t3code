@@ -255,7 +255,7 @@ describe("composerContextRecords", () => {
     expect(removeInlineContextReference(prompt, reference.contextId).prompt).toBe("prose tail");
   });
 
-  it("clamps an oversized review selection so the record still encodes", () => {
+  it("clamps oversized review and terminal selections so the records still encode", () => {
     const build = (diffLength: number) =>
       reviewCommentContextRecord({
         id: "rc-big",
@@ -276,6 +276,21 @@ describe("composerContextRecords", () => {
     expect(overLimit.diff.endsWith("… truncated …")).toBe(true);
     expect(() => decodeMessageContext({ version: 1, records: [atLimit] })).not.toThrow();
     expect(() => decodeMessageContext({ version: 1, records: [overLimit] })).not.toThrow();
+
+    const terminal = terminalContextRecord({
+      id: "term-big",
+      threadId: ThreadId.make("t"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      terminalId: "default",
+      terminalLabel: "Terminal 1",
+      lineStart: 1,
+      lineEnd: 2_000,
+      text: `${"t".repeat(63_985)}${"😀".repeat(8)}`,
+    });
+    expect(terminal.text).toBe(`${"t".repeat(63_985)}\n… truncated …`);
+    expect(decodeMessageContext({ version: 1, records: [terminal] }).records).toMatchObject([
+      { kind: "terminal", text: terminal.text },
+    ]);
   });
 
   it("finds the destination collision for different legacy terminal messages", () => {
