@@ -4,7 +4,7 @@ import {
   scopedThreadKey,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { useState } from "react";
+import { use, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import type { TerminalContextSelection } from "../../lib/terminalContext";
@@ -15,6 +15,7 @@ import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   reconcileMountedTerminalThreadIds,
 } from "../ChatView.logic";
+import { ChatPaneContext } from "./chatPane";
 import {
   PersistentThreadTerminalDrawer,
   type PersistentTerminalLaunchContext,
@@ -40,6 +41,7 @@ interface ChatTerminalDrawersProps {
  */
 export function ChatTerminalDrawers(props: ChatTerminalDrawersProps) {
   const { activeThreadKey } = props;
+  const chatPane = use(ChatPaneContext);
   const openTerminalThreadKeys = useTerminalUiStateStore(
     useShallow((state) =>
       Object.entries(state.terminalUiStateByThreadKey).flatMap(
@@ -66,7 +68,15 @@ export function ChatTerminalDrawers(props: ChatTerminalDrawersProps) {
   const [mountedTerminalThreadKeys, setMountedTerminalThreadKeys] = useState<string[]>([]);
   const existingOpenTerminalThreadKeys = (() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
-    return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
+    return openTerminalThreadKeys.filter(
+      (nextThreadKey) =>
+        existingThreadKeys.has(nextThreadKey) &&
+        // In a split, each visible thread's drawer mounts in its own pane, once.
+        (chatPane === null ||
+          (chatPane.hostsHiddenTerminals
+            ? !chatPane.otherPaneThreadKeys.has(nextThreadKey)
+            : nextThreadKey === activeThreadKey)),
+    );
   })();
   const reconciledMountedTerminalThreadKeys = reconcileMountedTerminalThreadIds({
     currentThreadIds: mountedTerminalThreadKeys,
