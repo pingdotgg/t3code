@@ -23,7 +23,7 @@ keeps commentary and reasoning unspoken.
 
 Codex starts or steers the delegated turn itself, with a user message wrapped in
 `<realtime_delegation>`, and it cannot be told not to. Steering an active run
-needs nothing special. An idle thread is different: V2 runs are
+keeps its native delivery and records the spoken request in the active run. An idle thread is different: V2 runs are
 orchestrator-owned and there is no provider-initiated run yet, so
 [CodexAdapterV2](../../apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts)
 interrupts that turn and, once it settles, offers a `voice` continuation. The

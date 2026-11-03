@@ -36,5 +36,8 @@ describe("resolveThreadVoiceAvailability", () => {
     expect(
       resolveThreadVoiceAvailability(thread({ provider: codex, messages: true }), providers),
     ).toEqual({ kind: "ready" });
+    expect(
+      resolveThreadVoiceAvailability(thread({ provider: codex, messages: true }), providers, false),
+    ).toEqual({ kind: "unavailable", reason: "This connection cannot operate threads" });
   });
 });

@@ -16,8 +16,12 @@ export function resolveVoiceAvailability(input: {
   readonly provider: Pick<ServerProvider, "supportsVoice"> | null | undefined;
   readonly hasMessages: boolean;
   readonly hasSession: boolean;
+  readonly canOperateThread?: boolean;
 }): VoiceAvailability {
   if (input.provider?.supportsVoice !== true) return VOICE_UNSUPPORTED;
+  if (input.canOperateThread === false) {
+    return { kind: "unavailable", reason: "This connection cannot operate threads" };
+  }
   // The server hands voice requests to the thread's bound provider session,
   // which only exists once a turn has been sent.
   if (!input.hasMessages || !input.hasSession) {
@@ -37,10 +41,12 @@ export interface VoiceThread {
 export function resolveThreadVoiceAvailability(
   thread: VoiceThread,
   providers: ReadonlyArray<ServerProvider>,
+  canOperateThread = true,
 ): VoiceAvailability {
   return resolveVoiceAvailability({
     provider: providers.find((provider) => provider.instanceId === thread.providerInstanceId),
     hasMessages: thread.latestUserMessageAt !== null,
     hasSession: thread.activeProviderThreadId !== null,
+    canOperateThread,
   });
 }

@@ -1,28 +1,18 @@
-import { setAudioModeAsync } from "expo-audio";
+import {
+  acquireAudioSession,
+  activateAudioSession,
+  releaseAudioSession,
+} from "../../lib/audioSession";
 
-// Expo audio-mode changes must finish before a successor configures the shared native session.
-let pending = Promise.resolve();
+let owner: ReturnType<typeof acquireAudioSession> | null = null;
 
-export function setVoiceAudioActive(active: boolean): Promise<void> {
-  const result = pending.then(() =>
-    setAudioModeAsync(
-      active
-        ? {
-            allowsRecording: true,
-            playsInSilentMode: true,
-            interruptionMode: "doNotMix",
-            shouldPlayInBackground: false,
-            shouldRouteThroughEarpiece: false,
-          }
-        : {
-            allowsRecording: false,
-            playsInSilentMode: true,
-            interruptionMode: "mixWithOthers",
-            shouldPlayInBackground: false,
-            shouldRouteThroughEarpiece: false,
-          },
-    ),
-  );
-  pending = result.catch(() => {});
-  return result;
+export async function setVoiceAudioActive(active: boolean, onCancel?: () => void): Promise<void> {
+  if (active) {
+    owner ??= acquireAudioSession("recording", onCancel);
+    await activateAudioSession(owner);
+  } else {
+    const previous = owner;
+    owner = null;
+    if (previous) await releaseAudioSession(previous);
+  }
 }
