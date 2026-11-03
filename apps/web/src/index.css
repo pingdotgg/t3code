@@ -1069,6 +1069,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     var(--app-scrollbar-width) 100%;
 }
 
+@utility working-window-collapse-fade {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0.5rem, black 2rem);
+  mask-image: linear-gradient(to bottom, transparent 0.5rem, black 2rem);
+}
+
 /* Stage-channel art needs a mask and pseudo-element gradient, so keep the
    behavior composable without tying it to the global components layer. */
 @utility sidebar-stage-backdrop {
