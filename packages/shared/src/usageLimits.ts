@@ -204,9 +204,11 @@ interface AccountReport {
   readonly email?: string | undefined;
   readonly workspaceId?: string | undefined;
   readonly usageLimits?: ServerProviderUsageLimits | undefined;
+  readonly native?: boolean;
 }
 
 const nativeReport = (provider: ServerProvider): AccountReport => ({
+  native: true,
   driver: provider.driver,
   email: provider.auth.email,
   workspaceId: provider.auth.workspaceId,
@@ -216,15 +218,29 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 // Include every enabled login, even unreadable workspaces.
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
+  const loginsByWorkspace = new Map<string, Set<string>>();
   for (const report of reports) {
     const key = accountKey(report.driver, report.email, report.usageLimits);
     if (key && report.workspaceId) {
       workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
+      if (report.email?.trim()) {
+        const workspaceKey = `${report.driver}:${report.workspaceId}`;
+        loginsByWorkspace.set(
+          workspaceKey,
+          (loginsByWorkspace.get(workspaceKey) ?? new Set()).add(key),
+        );
+      }
     }
   }
   return (report: AccountReport): string | null => {
     const key = accountKey(report.driver, report.email, report.usageLimits);
-    if (!key) return null;
+    if (!key) {
+      // A Codex instance on a custom model provider reports no login, yet its usage still comes
+      // from the ChatGPT login on disk. Join it to that login when exactly one is known there.
+      if (!report.native || !report.workspaceId) return null;
+      const logins = loginsByWorkspace.get(`${report.driver}:${report.workspaceId}`);
+      return logins?.size === 1 ? `${[...logins][0]}:${report.workspaceId}` : null;
+    }
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);
     if (!known) return key;
@@ -285,7 +301,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
   const planSources = new Map<string, LimitAccount>();
+  const names = new Map<string, Set<string>>();
   const merge = (key: string, next: LimitAccount) => {
+    const seenNames = names.get(key) ?? new Set<string>();
+    if (next.environments.length > 0) names.set(key, seenNames.add(next.displayName ?? ""));
     // Prefer hub redemption to clear its routing cooldown too; displayed balance still follows the freshest read.
     const previousHub = hubRedeems.get(key);
     if (
@@ -328,7 +347,12 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     const creditSource = creditSources.get(key);
     accounts.set(key, {
       ...previous,
-      displayName: previous.displayName ?? next.displayName,
+      email: previous.email ?? next.email,
+      // Instances that share a login under different names are one account, not either name.
+      displayName:
+        seenNames.size > 1 && (previous.email ?? next.email)
+          ? null
+          : (previous.displayName ?? next.displayName),
       plan: planSources.get(key)?.plan ?? previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,

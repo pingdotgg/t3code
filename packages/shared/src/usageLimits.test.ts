@@ -648,6 +648,52 @@ describe("pools", () => {
     ]);
   });
 
+  it("joins Codex instances on a custom provider to the one login on their ChatGPT account", () => {
+    const routed = (instanceId: string, displayName: string) =>
+      provider({
+        instanceId: ProviderInstanceId.make(instanceId),
+        displayName,
+        auth: { status: "unknown", workspaceId: "acct-1" },
+        usageLimits: { checkedAt, windows: [window] },
+      });
+    const login = (email: string) =>
+      provider({
+        auth: { status: "authenticated", email, workspaceId: "acct-1" },
+        usageLimits: { checkedAt, windows: [window] },
+      });
+    const withLogins = (...logins: ServerProvider[]) => {
+      const input = new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [routed("pool", "Codex Pool"), routed("repairs", "Automatic repairs")],
+            },
+          },
+        ],
+      ]);
+      logins.forEach((entry, index) =>
+        input.set(EnvironmentId.make(`env-${index + 2}`), {
+          entry: { target: { label: `Desktop ${index + 2}` } },
+          serverConfig: { providers: [entry] },
+        }),
+      );
+      return input;
+    };
+    const accounts = collectLimitAccounts(withLogins(login("jai@example.com")));
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]).toMatchObject({ email: "jai@example.com", displayName: null });
+    expect(accounts[0]?.environments.map((environment) => environment.label)).toEqual([
+      "Laptop",
+      "Desktop 2",
+    ]);
+    // A team workspace id is shared by its members, so it alone cannot pick the login.
+    expect(
+      collectLimitAccounts(withLogins(login("a@example.com"), login("b@example.com"))),
+    ).toHaveLength(4);
+  });
+
   it("keys a hub account without an email by hub, so two environments on one hub share it", () => {
     const seat = {
       id: "claude-team-seat.json",
