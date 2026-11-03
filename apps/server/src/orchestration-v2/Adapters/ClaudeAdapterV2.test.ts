@@ -6350,9 +6350,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   it.effect("never records a subagent uuid for a turn with no main-thread assistant message", () =>
     Effect.gen(function* () {
+      const forkCalls: Array<ClaudeAdapterV2.ClaudeAgentSdkSessionForkInput> = [];
       const harness = yield* makeWakeHarnessWithOptions({
         close: (sdkMessages) => Queue.shutdown(sdkMessages),
         freshQueueOnReopen: true,
+        forkSession: (input) =>
+          Effect.sync(() => {
+            forkCalls.push(input);
+            return { sessionId: "forked-after-compact-rollback" };
+          }),
       });
       const now = yield* DateTime.now;
       const subagentUuid = "00000000-0000-4000-8000-000000000644";
@@ -6433,6 +6439,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         pastSilentTurn.providerThread.nativeConversationHeadRef?.nativeId,
         earlierCursor,
       );
+      // Forks omit rolled-back turns, which Claude's transcript still holds past the pinned head.
+      yield* harness.runtime.forkThread({
+        sourceProviderThread: pastSilentTurn.providerThread,
+        sourceProviderTurns: turnsAcrossSilent.slice(0, 2),
+        providerTurnId: providerTurn.id,
+        targetThreadId: ThreadId.make("thread-claude-fork-after-compact-rollback"),
+      });
+      assert.equal(forkCalls[0]?.options.upToMessageId, earlierCursor);
       const interruptedBeforeCompact = yield* rollbackTo(
         [
           {
