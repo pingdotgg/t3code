@@ -3760,13 +3760,16 @@ it.effect(
             completedAt: now,
             checkpointId: null,
             contextHandoffId: null,
-            delegatedTaskId: task(threadId, delivery).id,
           };
           yield* eventSink.write({
             events: [
               {
                 ...created,
-                payload: { ...created.payload, activeProviderThreadId: providerThread.id },
+                payload: {
+                  ...created.payload,
+                  activeProviderThreadId: providerThread.id,
+                  forkedFrom: { type: "node", nodeId: task(threadId, delivery).id },
+                },
               },
               {
                 id: yield* idAllocator.allocate.event({ threadId }),

@@ -1604,7 +1604,11 @@ export const layerWithOptions = (
             (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
             undefined,
           );
-          const taskId = latestRun?.delegatedTaskId;
+          const taskId =
+            latestRun?.delegatedTaskId ??
+            (latestRun?.ordinal === 1 && thread.forkedFrom?.type === "node"
+              ? thread.forkedFrom.nodeId
+              : undefined);
           const providerThread = child.providerThreads.find(
             (candidate) =>
               candidate.id === thread.activeProviderThreadId &&
