@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { vi } from "vitest";
+import { vi } from "vite-plus/test";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -355,13 +355,11 @@ it.effect("does not leave image attachments after rejected or failed writes", ()
     yield* sql`DROP TRIGGER reject_turn_item_event`;
     const successorTransactionEntered = yield* Deferred.make<void>();
     const withTransaction = sql.withTransaction;
-    using _transaction = vi
-      .spyOn(sql, "withTransaction")
-      .mockImplementation((effect) =>
-        Deferred.succeed(successorTransactionEntered, undefined).pipe(
-          Effect.andThen(withTransaction(effect)),
-        ),
+    const observeTransaction: typeof sql.withTransaction = (effect) =>
+      Deferred.succeed(successorTransactionEntered, undefined).pipe(
+        Effect.andThen(withTransaction(effect)),
       );
+    using _transaction = vi.spyOn(sql, "withTransaction").mockImplementation(observeTransaction);
     const successor = yield* eventSink
       .write({
         events: [makeImageEvent("turn-item:successor-image", "event:successor-image", failedBytes)],
