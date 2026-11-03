@@ -15,6 +15,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
 import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
 import { projectEnvironment } from "../state/projects";
+import { serverEnvironment } from "../state/server";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { readProjectFilesToCopy } from "./readProjectFilesToCopy";
 
@@ -161,6 +162,16 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
     for (const read of reads) {
       if (!("contents" in read)) {
         failed.push(`${read.relativePath}: ${read.error}`);
+        continue;
+      }
+      if (
+        read.mode !== undefined &&
+        appAtomRegistry.get(serverEnvironment.configValueAtom(input.target.environmentId))
+          ?.environment.capabilities.privateFileWrites !== true
+      ) {
+        failed.push(
+          `${read.relativePath}: ${m(msg("The destination cannot safely copy files with POSIX permissions."))}`,
+        );
         continue;
       }
       const written = await runAtomCommand(

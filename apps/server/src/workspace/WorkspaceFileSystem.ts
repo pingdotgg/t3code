@@ -635,10 +635,7 @@ export const make = Effect.gen(function* () {
       try: async () => {
         const handle = await NodeFSP.open(
           realTargetPath,
-          NodeFS.constants.O_WRONLY |
-            NodeFS.constants.O_CREAT |
-            NodeFS.constants.O_TRUNC |
-            (NodeFS.constants.O_NOFOLLOW ?? 0),
+          NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | (NodeFS.constants.O_NOFOLLOW ?? 0),
           mode,
         );
         try {
@@ -653,6 +650,7 @@ export const make = Effect.gen(function* () {
               throw new Error("Could not restrict file permissions before writing.");
             }
           }
+          await handle.truncate(0);
           await handle.writeFile(contents);
           return actualMode;
         } finally {
