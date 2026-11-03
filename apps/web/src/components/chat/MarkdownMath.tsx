@@ -1,4 +1,6 @@
-import { lazy, memo, Suspense } from "react";
+import { lazy, memo, Suspense, useLayoutEffect, useRef, useState } from "react";
+
+import { observeResize } from "../../lib/observeResize";
 
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
 
@@ -14,6 +16,20 @@ export const MarkdownMath = memo(function MarkdownMath(props: {
   display: boolean;
   focusable?: boolean;
 }) {
+  const viewportRef = useRef<HTMLSpanElement>(null);
+  const contentRef = useRef<HTMLSpanElement>(null);
+  const [overflows, setOverflows] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes formula DOM width to make overflowing equations keyboard scrollable
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const content = contentRef.current;
+    if (!viewport || !content || props.focusable === false) return;
+    const measure = () => setOverflows(viewport.scrollWidth > viewport.clientWidth);
+    measure();
+    // Typesetting and streamed TeX can change content width without resizing the viewport.
+    return observeResize([viewport, content], measure);
+  }, [props.focusable]);
+  const scrollable = props.focusable !== false && overflows;
   const tex = props.tex.trim();
   const source = props.display ? `\\[\n${tex}\n\\]` : `\\(${tex}\\)`;
   const fallback = <span className="whitespace-pre-wrap">{source}</span>;
@@ -36,17 +52,21 @@ export const MarkdownMath = memo(function MarkdownMath(props: {
       }
     >
       <span
+        ref={viewportRef}
         className="block max-w-full overflow-x-auto overflow-y-hidden in-[.chat-markdown-table-container]:max-w-none in-[.chat-markdown-table-container]:overflow-visible px-0.5 py-0.75 focus-visible:outline-1 focus-visible:outline-solid focus-visible:-outline-offset-1 focus-visible:outline-border [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-thumb]:rounded [&::-webkit-scrollbar-thumb]:border [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-clip-content"
-        tabIndex={props.focusable === false ? -1 : 0}
+        tabIndex={scrollable ? 0 : -1}
         aria-label={
-          props.focusable === false
+          !scrollable
             ? undefined
             : props.display
               ? "Scroll display equation"
               : "Scroll inline equation"
         }
       >
-        <span className={props.display ? "inline-block w-max min-w-full" : "inline-block w-max"}>
+        <span
+          ref={contentRef}
+          className={props.display ? "inline-block w-max min-w-full" : "inline-block w-max"}
+        >
           <RenderErrorBoundary resetKeys={[tex]} fallback={fallback}>
             <Suspense fallback={fallback}>
               <MathTypeset tex={tex} display={props.display} fallback={fallback} />
