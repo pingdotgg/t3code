@@ -87,7 +87,6 @@ import { providerClients } from "../settings/providerDriverMeta";
 import { ChatGptWelcomeCoordinator } from "../settings/ChatGptWelcomeCoordinator";
 import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/CodexSetupSection";
 import { ChatGptConnectionButton } from "../settings/ChatGptConnectionButton";
-import { ManagedControl } from "../ManagedPolicy";
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
 import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
@@ -956,10 +955,12 @@ function OnboardingCodexSetup({
     provider?.auth.status === "authenticated" ||
     existingState === "checking" ||
     ((provider?.enabled ?? true) && existingState === "ready");
-  const setupModeLocks = managedInstanceLocks(
-    serverConfig.managedPolicy,
-    ProviderDriverKind.make("codex"),
-  );
+  // A policy that owns Codex's launch settings also rules out ChatGPT's own runtime.
+  const chatGptAllowed =
+    managedInstanceLocks(
+      serverConfig.managedPolicy,
+      ProviderDriverKind.make("codex"),
+    )?.configKeys.has("setupMode") !== true;
   return existingChosen ? (
     <AgentCard
       driver="codex"
@@ -968,23 +969,19 @@ function OnboardingCodexSetup({
       terminalAvailable={canOperateTerminal}
       onOpenTerminal={onOpenTerminal}
       secondaryControl={
-        existingSettled ? null : (
-          <ManagedControl
-            reason={setupModeLocks?.configKeys.has("setupMode") ? setupModeLocks.reason : undefined}
+        chatGptAllowed && !existingSettled ? (
+          <ChatGptConnectionButton
+            size="xs"
+            variant="ghost"
+            disabled={!canManageProviders}
+            onClick={() => {
+              setChatGptRequested(true);
+              changeMode("managed");
+            }}
           >
-            <ChatGptConnectionButton
-              size="xs"
-              variant="ghost"
-              disabled={!canManageProviders}
-              onClick={() => {
-                setChatGptRequested(true);
-                changeMode("managed");
-              }}
-            >
-              Continue with ChatGPT
-            </ChatGptConnectionButton>
-          </ManagedControl>
-        )
+            Continue with ChatGPT
+          </ChatGptConnectionButton>
+        ) : null
       }
     />
   ) : (
