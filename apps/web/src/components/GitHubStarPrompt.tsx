@@ -39,7 +39,13 @@ function showStarPrompt(environmentId: EnvironmentId) {
     toastManager.update(id, { actionProps: { children: "Starring…", disabled: true } });
     if (await starRepository(environmentId)) {
       close();
-      toastManager.add({ type: "success", title: "Thanks for the star!", timeout: 4_000 });
+      toastManager.add({
+        type: "success",
+        title: "Thanks for the star!",
+        description: "It really helps T3 Code grow.",
+        timeout: 5_000,
+      });
+      celebrate();
       return;
     }
     // Browsers block new tabs once the click's activation expires; desktop opens through its bridge.
@@ -60,6 +66,20 @@ function showStarPrompt(environmentId: EnvironmentId) {
       secondaryActionVariant: "ghost",
     },
   });
+}
+
+// One burst from the toast corner. The library loads only here, and its canvas stops when done.
+function celebrate() {
+  void import("canvas-confetti")
+    .then(({ default: confetti }) =>
+      confetti({
+        particleCount: 120,
+        spread: 70,
+        origin: { x: 0.85, y: 0.15 },
+        disableForReducedMotion: true,
+      }),
+    )
+    .catch(() => undefined);
 }
 
 // Resolves after IDLE_MS without input while this window has focus.
