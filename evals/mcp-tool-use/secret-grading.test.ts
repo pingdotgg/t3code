@@ -1359,7 +1359,7 @@ it("credits an inline program's consume only at the statement that receives the 
     ["/tmp/other.py", "", "env python3 /tmp/other.py"],
     ["/tmp/other", "#!/usr/bin/env python3\n", "/tmp/other"],
     ["/tmp/other.py", "", "sudo -E python3 /tmp/other.py"],
-  ])
+  ] as const)
     assert.isFalse(
       consumed([
         saved(),
