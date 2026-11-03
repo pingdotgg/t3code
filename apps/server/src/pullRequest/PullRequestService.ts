@@ -515,6 +515,7 @@ function withRateLimitBackoff(
       ? {}
       : { unavailableRequirement: api.unavailableRequirement }),
     ...(api.repositoryKey === undefined ? {} : { repositoryKey: api.repositoryKey }),
+    ...(api.servesHost === undefined ? {} : { servesHost: api.servesHost }),
     ...(api.readsPublicHostWithoutCheckout === undefined
       ? {}
       : { readsPublicHostWithoutCheckout: api.readsPublicHostWithoutCheckout }),
@@ -925,7 +926,8 @@ export const make = Effect.gen(function* () {
           if (filter.host !== undefined && host !== filter.host.toLowerCase()) {
             continue;
           }
-          const api = registry.get(kind);
+          const registered = registry.get(kind);
+          const api = registered?.servesHost?.(host) === false ? null : registered;
           if (api !== null) {
             const roots = viewerRoots.get(host);
             if (roots === undefined) viewerRoots.set(host, [project.workspaceRoot]);

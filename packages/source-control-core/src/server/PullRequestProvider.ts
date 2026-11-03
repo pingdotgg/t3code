@@ -47,6 +47,7 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
     reason: Schema.Literals([
       "missing-tool",
       "unauthenticated",
+      "forbidden",
       "rate-limited",
       "not-found",
       "failed",
@@ -308,6 +309,11 @@ export interface PullRequestProviderApi {
    * definition's `publicHost` can be read from a project with no checkout of its repository.
    */
   readonly readsPublicHostWithoutCheckout?: boolean;
+  /**
+   * Absent means every host detected as this kind is read. A host it refuses is listed as one that
+   * cannot be browsed here, and nothing is sent for it.
+   */
+  readonly servesHost?: (host: string) => boolean;
 
   readonly getViewer: (input: {
     readonly cwd: string;

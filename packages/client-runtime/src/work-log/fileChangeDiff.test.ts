@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { toolCallDiff } from "./fileChangeDiff.ts";
 
 function renderedFiles(patch: string | undefined) {
-  return patch ? parsePatchFiles(patch.trim()).flatMap((parsed) => parsed.files) : [];
+  return patch?.trim() ? parsePatchFiles(patch).flatMap((parsed) => parsed.files) : [];
 }
 
 describe("toolCallDiff", () => {
@@ -55,7 +55,7 @@ describe("toolCallDiff", () => {
         expect(file.additionLines).toHaveLength(operation === "add" ? lines : 0);
         expect(file.deletionLines).toHaveLength(operation === "delete" ? lines : 0);
         expect((operation === "add" ? file.additionLines : file.deletionLines).join("")).toBe(
-          recordedContent.replace(/\n$/, ""),
+          recordedContent,
         );
       }
     }

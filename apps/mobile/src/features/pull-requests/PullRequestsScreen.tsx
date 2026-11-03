@@ -6,7 +6,7 @@ import {
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
-import { use, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { use, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   Keyboard,
@@ -49,6 +49,7 @@ import {
 } from "./pullRequestList";
 import { useDebouncedValue } from "../../state/queries";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { useSearchScrollRestoration } from "../workspace/useSearchScrollRestoration";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 
 function PullRequestScrollView(props: ScrollViewProps) {
@@ -118,21 +119,12 @@ export function PullRequestsScreen(
   const listRef = useRef<LegendListRef>(null);
   const tab = workspace.state.tabs.pullRequests;
   const [initialScrollOffset] = useState(() => workspace.getScrollOffset("pullRequests"));
-  // Cancelling search restores the offset recorded when search opened. The
-  // toolbar that cancels has no handle on this list, so the list scrolls itself
-  // once it sees the tab come back to resting.
-  const previousSearchMode = useRef(tab.searchMode);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list to the offset saved when search opened once the tab returns to resting
-  useEffect(() => {
-    const restoringSearch =
-      previousSearchMode.current !== "resting" && tab.searchMode === "resting";
-    previousSearchMode.current = tab.searchMode;
-    if (restoringSearch)
-      void listRef.current?.scrollToOffset({
-        offset: tab.scrollOffset - (Platform.OS === "ios" ? insets.top : 0),
-        animated: false,
-      });
-  }, [tab.searchMode, tab.scrollOffset, insets.top]);
+  useSearchScrollRestoration(tab.searchMode, () => {
+    void listRef.current?.scrollToOffset({
+      offset: tab.scrollOffset - (Platform.OS === "ios" ? insets.top : 0),
+      animated: false,
+    });
+  });
   const maintainVisiblePosition = {
     data: tab.searchMode === "resting",
     shouldRestorePosition: () => workspace.getScrollOffset("pullRequests") > 0,

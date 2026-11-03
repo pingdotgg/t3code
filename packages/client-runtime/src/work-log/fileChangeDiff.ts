@@ -6,7 +6,7 @@ type FileChange = Extract<OrchestrationV2TurnItem, { type: "file_change" }>;
 
 function parsedPatchFiles(patch: string): ReadonlyArray<FileDiffMetadata> {
   try {
-    return parsePatchFiles(patch.trim()).flatMap((parsed) => parsed.files);
+    return patch.trim() ? parsePatchFiles(patch).flatMap((parsed) => parsed.files) : [];
   } catch {
     return [];
   }
