@@ -621,6 +621,56 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
   }),
 );
 
+it.effect("creating a project through MCP refuses a model default instead of dropping it", () =>
+  Effect.gen(function* () {
+    const created: Array<Project.ProjectCreateInput> = [];
+    const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mock(Project.ProjectService)({
+        create: (input) =>
+          Effect.sync(() => {
+            created.push(input);
+            return {
+              id: input.projectId,
+              title: input.title,
+              workspaceRoot: input.workspaceRoot,
+              repositoryIdentity: null,
+              faviconPath: null,
+              defaultModelSelection: null,
+              defaultThreadEnvMode: null,
+              autoPull: false,
+              projectIcon: null,
+              scripts: [],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+              deletedAt: null,
+            } as unknown as ProjectRecord;
+          }),
+      }),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+
+    const refused = yield* toolkit
+      .handle("t3_project_create", {
+        title: "client-target",
+        workspaceRoot: "/projects/client-target",
+        defaultModelSelection: harness.modelSelection,
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect(refused.at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("t3_project_update"),
+    });
+    expect(created).toHaveLength(0);
+  }),
+);
+
 it.effect("deleting a project through MCP also discards its clone record", () =>
   Effect.gen(function* () {
     const discarded: Array<ProjectId> = [];
