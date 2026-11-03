@@ -2,7 +2,9 @@
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -196,7 +198,7 @@ describe("buildGrokModelCapabilities", () => {
   });
 });
 
-it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("checkGrokProviderStatus", (it) => {
   it.effect("reports an installed CLI as unhealthy when --version exits non-zero", () =>
     Effect.gen(function* () {
       const secretStderr = "broken grok install: secret-token-value";
@@ -551,7 +553,7 @@ describe("Grok usage limits", () => {
   });
 });
 
-it.layer(NodeServices.layer)("readGrokAccount", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("readGrokAccount", (it) => {
   it.effect("reads the configured Grok home and prefers the current login scope to legacy", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -722,7 +724,7 @@ it.layer(NodeServices.layer)("readGrokAccount", (it) => {
   );
 });
 
-it.layer(NodeServices.layer)("readGrokAccount email", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("readGrokAccount email", (it) => {
   it.effect("names the account whose limits were read, and nothing for other auth", () =>
     Effect.gen(function* () {
       const current = '"https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"';
