@@ -653,6 +653,8 @@ function delegatedTasksStopEffect(command: {
 }
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
+/** How long a queued turn may take to start after the run before it ends. */
+export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 const RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE =
   "T3 Code could not confirm that your answer reached the agent. If the run stays stuck, stop it and try again.";
 
@@ -842,81 +844,6 @@ function usageLimitHoldsQueue(
   return (
     usageLimitBlockedRun(projection.runs, projection.turnItems, latestSession?.lastError ?? null)
       ?.providerInstanceId === providerInstanceId
-  );
-}
-
-// Decides what starting the queue does with its next run; automatic settlement must agree.
-function queuedRunStartOutcome(
-  projection: Pick<
-    OrchestrationV2ThreadProjection,
-    "thread" | "runs" | "turnItems" | "providerSessions"
-  >,
-  providerInstanceId: ModelSelection["instanceId"],
-  input: {
-    readonly settings: Parameters<typeof resolveProjectProviderInstanceEnabled>[0];
-    readonly maxRuntimeMode: RuntimeMode | undefined;
-    readonly failedRunId?: RunId | undefined;
-    readonly endedRunId?: RunId | undefined;
-  },
-): "start" | "wait" | "hold" {
-  // A limited provider would fail and consume every waiting message.
-  if (usageLimitHoldsQueue(projection, providerInstanceId)) return "wait";
-  // Waits without a hold: lowering the thread's mode starts the queue again.
-  if (isRuntimeModeAbove(projection.thread.runtimeMode, input.maxRuntimeMode)) return "wait";
-  // Failed worktree creation would run queued work in the project checkout; wait for the user.
-  const failedRun = latestExecutedRun(projection.runs);
-  const failureClass =
-    failedRun?.id === input.failedRunId
-      ? latestRootProviderFailure(failedRun, projection.turnItems)?.class
-      : undefined;
-  const worktreeMissing =
-    failedRun?.id === input.endedRunId &&
-    failedRun?.workspacePreparation?.type === "worktree" &&
-    projection.thread.worktreePath === null;
-  const projectOverride =
-    input.settings.projectSettingsOverrides[projection.thread.projectId]?.providerInstances?.[
-      providerInstanceId
-    ]?.enabled;
-  const machineInstance = Object.hasOwn(input.settings.providerInstances, providerInstanceId)
-    ? input.settings.providerInstances[providerInstanceId]
-    : undefined;
-  const instanceDisabledForProject =
-    projectOverride !== undefined
-      ? !projectOverride
-      : machineInstance !== undefined && !resolveProviderInstanceEnabled(machineInstance);
-  return worktreeMissing ||
-    instanceDisabledForProject ||
-    (failureClass !== undefined &&
-      failureClass !== "validation_error" &&
-      failedRun?.providerInstanceId === providerInstanceId)
-    ? "hold"
-    : "start";
-}
-
-// A hold waits for a person to review what they queued. Nobody reviews messages from agents,
-// the server or scheduled tasks, so a later completed run releases those unless it was stopped.
-function unattendedHoldsReleasedBy(
-  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages" | "turnItems">,
-  completedRunId: RunId,
-): ReadonlyArray<OrchestrationV2Run> {
-  // Only the newest run completing shows the thread moved past the hold; a late or
-  // bookkeeping update to an older run, overtaken by a failure or Stop, does not.
-  if (
-    latestExecutedRun(projection.runs)?.id !== completedRunId ||
-    projection.turnItems.some(
-      (item) => item.type === "run_interrupt_request" && item.runId === completedRunId,
-    ) ||
-    worktreeSetupPending(projection)
-  ) {
-    return [];
-  }
-  const unattended = new Set(
-    projection.messages
-      .filter((message) => message.createdBy !== "user" || message.scheduledTaskId !== undefined)
-      .map((message) => message.id),
-  );
-  return projection.runs.filter(
-    (run) => run.status === "queued" && run.queueHeld === true && unattended.has(run.userMessageId),
   );
 }
 
@@ -1709,14 +1636,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         modelSelection,
         providerInstanceId: modelSelection.instanceId,
       };
-      const outcome = queuedRunStartOutcome(projection, queuedRun.providerInstanceId, {
-        settings: yield* serverSettings.getSettings.pipe(Effect.orDie),
-        maxRuntimeMode: runtimeModeCeiling?.maxRuntimeMode,
-        failedRunId: options?.failedRunId,
-        endedRunId: options?.endedRunId,
-      });
-      if (outcome === "wait") return;
-      if (outcome === "hold") {
+      // A limited provider would fail and consume every waiting message.
+      if (usageLimitHoldsQueue(projection, queuedRun.providerInstanceId)) {
+        return;
+      }
+      // Waits without a hold: lowering the thread's mode starts the queue again.
+      if (isRuntimeModeAbove(projection.thread.runtimeMode, runtimeModeCeiling?.maxRuntimeMode)) {
+        return;
+      }
+      // Failed worktree creation would run queued work in the project checkout; wait for the user.
+      const failedRun = latestExecutedRun(projection.runs);
+      const failureClass =
+        failedRun?.id === options?.failedRunId
+          ? latestRootProviderFailure(failedRun, projection.turnItems)?.class
+          : undefined;
+      const worktreeMissing =
+        failedRun?.id === options?.endedRunId &&
+        failedRun?.workspacePreparation?.type === "worktree" &&
+        projection.thread.worktreePath === null;
+      const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+      const projectOverride =
+        settings.projectSettingsOverrides[projection.thread.projectId]?.providerInstances?.[
+          queuedRun.providerInstanceId
+        ]?.enabled;
+      const machineInstance = Object.hasOwn(
+        settings.providerInstances,
+        queuedRun.providerInstanceId,
+      )
+        ? settings.providerInstances[queuedRun.providerInstanceId]
+        : undefined;
+      const instanceDisabledForProject =
+        projectOverride !== undefined
+          ? !projectOverride
+          : machineInstance !== undefined && !resolveProviderInstanceEnabled(machineInstance);
+      if (
+        worktreeMissing ||
+        instanceDisabledForProject ||
+        (failureClass !== undefined &&
+          failureClass !== "validation_error" &&
+          failedRun?.providerInstanceId === queuedRun.providerInstanceId)
+      ) {
         const now = yield* DateTime.now;
         yield* writeSystemEvents(
           projection.runs
@@ -2397,6 +2356,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
   });
 
+  // A hold waits for a person to review what they queued. Nobody reviews messages from agents,
+  // the server or scheduled tasks, so a later completed run releases those unless it was stopped.
   const releaseUnattendedHolds = Effect.fn("Orchestrator.releaseUnattendedHolds")(function* (
     threadId: ThreadId,
     completedRunId: RunId,
@@ -2412,9 +2373,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         turnItemRunIds: [completedRunId],
       },
     );
-    const released = unattendedHoldsReleasedBy(projection, completedRunId);
-    if (released.length === 0) return;
+    // Only the newest run completing shows the thread moved past the hold; a late or
+    // bookkeeping update to an older run, overtaken by a failure or Stop, does not.
+    if (
+      latestExecutedRun(projection.runs)?.id !== completedRunId ||
+      projection.turnItems.length > 0 ||
+      worktreeSetupPending(projection)
+    )
+      return;
+    const { messages } = projection;
+    const unattended = new Set(
+      messages
+        .filter((message) => message.createdBy !== "user" || message.scheduledTaskId !== undefined)
+        .map((message) => message.id),
+    );
     const now = yield* DateTime.now;
+    const released = held.filter((run) => unattended.has(run.userMessageId));
+    if (released.length === 0) return;
     yield* writeSystemEvents(
       released.map((run) => ({
         type: "run.updated" as const,
@@ -13096,58 +13071,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} changed before automatic settlement.`,
           });
         }
-        // The completion reaction releases and starts the next queued run in its own locked
-        // step after the run commits; settling in between would cancel that run.
+        // The completion reaction starts or holds the queue just after a run ends; settling
+        // first would cancel an automatic wake it was about to start.
         const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
-        const queuedRuns = runs.filter((run) => run.status === "queued");
-        const latest = latestExecutedRun(runs);
+        const endedAt = latestExecutedRun(runs)?.completedAt;
         if (
-          queuedRuns.length > 0 &&
-          latest !== null &&
-          thread.archivedAt === null &&
-          thread.deletedAt === null &&
-          !runs.some(isActiveRun)
+          endedAt != null &&
+          runs.some((run) => run.status === "queued") &&
+          DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(endedAt) <
+            QUEUED_TURN_START_GRACE_MS
         ) {
-          const projection = {
-            ...(yield* loadProjectionForCommand(
-              command,
-              ["messages", "turnItems", "providerSessions"],
-              {
-                messageIds: queuedRuns.map((run) => run.userMessageId),
-                turnItemTypes: ["error", "run_interrupt_request"],
-                turnItemRunIds: [latest.id],
-              },
-            )),
-            runs,
-          };
-          const released = new Set(
-            latest.status === "completed"
-              ? unattendedHoldsReleasedBy(projection, latest.id).map((run) => run.id)
-              : [],
-          );
-          const next = nextQueuedRun({
-            ...projection,
-            runs: runs.map((run) => (released.has(run.id) ? { ...run, queueHeld: false } : run)),
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} changed before automatic settlement.`,
           });
-          if (
-            next !== undefined &&
-            queuedRunStartOutcome(
-              projection,
-              queuedRunModelSelection(projection, next).instanceId,
-              {
-                settings: yield* serverSettings.getSettings.pipe(Effect.orDie),
-                maxRuntimeMode: runtimeModeCeiling?.maxRuntimeMode,
-                endedRunId: latest.id,
-                failedRunId: latest.status === "failed" ? latest.id : undefined,
-              },
-            ) === "start"
-          ) {
-            return yield* new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause: `Thread ${command.threadId} changed before automatic settlement.`,
-            });
-          }
         }
         yield* dispatchThreadMutation(
           {

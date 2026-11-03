@@ -3185,7 +3185,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       return { threadId, activeRun, wakeRun };
     });
 
-  const failRunWith = (run: OrchestrationV2Run, failureClass: "usage_limit" | "provider_error") =>
+  const failRun = (run: OrchestrationV2Run) =>
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const now = yield* DateTime.now;
@@ -3216,7 +3216,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               completedAt: now,
               updatedAt: now,
               failure: {
-                class: failureClass,
+                class: "provider_error",
                 message: "Provider failed.",
                 code: "provider_failed",
                 retryable: null,
@@ -3337,7 +3337,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const eventSink = yield* EventSink.EventSinkV2;
       const { threadId, activeRun, wakeRun } = yield* queuedWatchWake("pr-watch-released-wake");
       const beforeFailure = yield* orchestrator.getThreadEventSequence(threadId);
-      yield* failRunWith(activeRun, "provider_error");
+      yield* failRun(activeRun);
       yield* eventSink
         .stream({ threadId, afterSequence: beforeFailure, eventType: "run.updated" })
         .pipe(
@@ -3377,15 +3377,23 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("automatic settlement still settles past a held queued wake", () =>
+  it.effect("automatic settlement refuses a held wake only within the queued-turn grace", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
       const { threadId, activeRun, wakeRun } = yield* queuedWatchWake("pr-watch-held-wake");
       const now = yield* DateTime.now;
-      // A held queue waits on the user, so it must not keep the thread from settling.
+      // Startup recovery's command prefix skips the completion reaction, as after a restart.
       yield* eventSink.write({
+        commandId: CommandId.make("command:runtime-reconcile:pr-watch-held-wake"),
         events: [
+          {
+            id: EventId.make("pr-watch-held-wake-completed"),
+            type: "run.updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...activeRun, status: "completed", completedAt: now },
+          },
           {
             id: EventId.make("pr-watch-held-wake-hold"),
             type: "run.updated",
@@ -3393,44 +3401,22 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             occurredAt: now,
             payload: { ...wakeRun, queueHeld: true },
           },
-          {
-            id: EventId.make("pr-watch-held-wake-active-failed"),
-            type: "run.updated",
-            threadId,
-            occurredAt: now,
-            payload: { ...activeRun, status: "failed", completedAt: now },
-          },
         ],
       });
-      yield* orchestrator.dispatch({
-        type: "thread.auto-settle",
-        commandId: CommandId.make("pr-watch-held-wake-auto-settle"),
-        threadId,
-        snapshotAt: DateTime.add(now, { hours: 1 }),
-      });
-      const after = yield* orchestrator.getThreadProjection(threadId);
-      assert.isNotNull(after.thread.settledAt);
-      assert.equal(after.runs.find((run) => run.id === wakeRun.id)?.status, "cancelled");
-    }),
-  );
+      const autoSettle = (commandId: string) =>
+        Effect.flatMap(orchestrator.getThreadShell(threadId), (shell) =>
+          orchestrator.dispatch({
+            type: "thread.auto-settle",
+            commandId: CommandId.make(commandId),
+            threadId,
+            snapshotAt: shell?.updatedAt ?? now,
+          }),
+        );
+      const early = yield* autoSettle("pr-watch-held-wake-early").pipe(Effect.exit);
+      assert.equal(early._tag, "Failure");
 
-  it.effect("automatic settlement still settles a usage-limited thread with a queued wake", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const { threadId, activeRun, wakeRun } = yield* queuedWatchWake("pr-watch-limited-wake");
-      yield* failRunWith(activeRun, "usage_limit");
-      const limited = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
-        (run) => run.id === wakeRun.id,
-      );
-      assert.equal(limited?.status, "queued");
-      assert.notEqual(limited?.queueHeld, true);
-      // Only the user, or opt-in auto-resume, starts a limited queue; manual settle semantics apply.
-      yield* orchestrator.dispatch({
-        type: "thread.auto-settle",
-        commandId: CommandId.make("pr-watch-limited-wake-auto-settle"),
-        threadId,
-        snapshotAt: DateTime.add(yield* DateTime.now, { hours: 1 }),
-      });
+      yield* TestClock.adjust(Orchestrator.QUEUED_TURN_START_GRACE_MS);
+      yield* autoSettle("pr-watch-held-wake-late");
       const after = yield* orchestrator.getThreadProjection(threadId);
       assert.isNotNull(after.thread.settledAt);
       assert.equal(after.runs.find((run) => run.id === wakeRun.id)?.status, "cancelled");
