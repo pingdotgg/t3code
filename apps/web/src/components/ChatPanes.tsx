@@ -374,11 +374,11 @@ function ChatPane({
           !passive &&
           "before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-30 before:h-0.5 before:bg-primary/60",
         !alone && passive && "[&_[data-chat-header]]:opacity-60",
-        !edges.top && "[&_[data-chat-header]]:[-webkit-app-region:no-drag]",
       )}
       style={windowEdgeStyle(edges)}
       data-chat-pane={pane.id}
       data-chat-pane-narrow={(!alone && narrow) || undefined}
+      data-chat-pane-below-titlebar={!edges.top || undefined}
       data-background-thread-view={passive || undefined}
       onPointerDownCapture={passive ? onFocus : undefined}
       onFocusCapture={passive ? onFocusIn : undefined}
