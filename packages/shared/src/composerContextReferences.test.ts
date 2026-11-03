@@ -355,6 +355,12 @@ describe("provider projection", () => {
     expect(restoreComposerContextReferences(`Watch the attached files.${envelope}`)).toBe(
       "Watch the attached files.",
     );
+    const uppercaseReference = "Report to [Hub](t3-context://v1/thread/thread_ABC).";
+    expect(
+      restoreComposerContextReferences(
+        projectComposerContextForProvider({ text: uppercaseReference, records: [] }),
+      ),
+    ).toBe(uppercaseReference);
     const literalEnvelope = '<t3_context version="1">\nexample\n</t3_context>';
     expect(restoreComposerContextReferences(literalEnvelope)).toBe(literalEnvelope);
     const literalContext =
