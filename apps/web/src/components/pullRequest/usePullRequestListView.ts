@@ -41,7 +41,6 @@ import { pullRequestListEntryId } from "./pullRequestListGroups.logic";
 import { SORT_OPTIONS } from "./pullRequestListOptions";
 
 export interface PullRequestsSearch extends PullRequestListPreferences {
-  readonly pane?: 1 | undefined;
   readonly environmentId?: EnvironmentId;
   readonly projectId?: ProjectId;
   readonly host?: string;
@@ -346,7 +345,6 @@ function pullRequestSearchLabels(raw: unknown): Partial<Pick<PullRequestsSearch,
 
 export function validatePullRequestsSearch(raw: Record<string, unknown>): PullRequestsSearch {
   return {
-    ...(raw.pane === 1 || raw.pane === "1" ? { pane: 1 as const } : {}),
     involvement:
       raw.involvement === "reviewing" || raw.involvement === "authored" ? raw.involvement : "all",
     state:

@@ -127,7 +127,6 @@ import {
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { cn } from "~/lib/utils";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 
@@ -158,7 +157,7 @@ const EMPTY_PREVIEW_DESKTOP_STATE = {};
 const EMPTY_TERMINAL_LABELS = new Map<string, string>();
 const EMPTY_PENDING_SURFACES = new Set<string>();
 export function PullRequestsPage() {
-  const { tabId, visible } = useLayoutPane();
+  const { visible } = useLayoutPane();
   const location = useLayoutPageLocation();
   const search = validatePullRequestsSearch(location.search);
   const focusedRef = useLayoutPaneFocusedRef();
@@ -235,7 +234,6 @@ export function PullRequestsPage() {
         const previous = search;
         const next = { ...previous, ...patch };
         return {
-          ...(previous.pane === 1 ? { pane: 1 as const } : {}),
           involvement: next.involvement ?? previous.involvement,
           state: next.state ?? previous.state,
           ...(next.sort && next.sort !== "ready" ? { sort: next.sort } : {}),
@@ -1559,11 +1557,7 @@ export function PullRequestsPage() {
     // the chrome and each pane paints itself.
     <SidebarInset
       variant={splitPanes ? "split" : "pane"}
-      embedded={tabId === null}
-      className={cn(
-        "min-h-0 overflow-hidden overscroll-y-none",
-        tabId === null ? "h-dvh" : "h-full",
-      )}
+      className="h-full min-h-0 overflow-hidden overscroll-y-none"
     >
       <div className="relative flex min-h-0 flex-1">
         {pullRequestsSupported && rightPanelPresent ? openPanelControls : null}
