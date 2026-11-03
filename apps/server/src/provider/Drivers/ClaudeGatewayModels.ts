@@ -1,7 +1,7 @@
 import type { ClaudeSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
@@ -99,11 +99,13 @@ export const discoverClaudeGatewayModels = Effect.fn("discoverClaudeGatewayModel
     const models = new Map<string, GatewayModel>();
     const cursors = new Set<string>();
     while (true) {
-      const response = yield* client.execute(
-        HttpClientRequest.get(endpoint.toString()).pipe(
-          HttpClientRequest.setHeaders(Object.fromEntries(headers)),
-        ),
-      );
+      const response = yield* client
+        .execute(
+          HttpClientRequest.get(endpoint.toString()).pipe(
+            HttpClientRequest.setHeaders(Object.fromEntries(headers)),
+          ),
+        )
+        .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
       const page = yield* HttpClientResponse.schemaBodyJson(GatewayModels)(response);
       for (const model of page.data) {
         if (!model.id.trim()) return undefined;
@@ -116,6 +118,9 @@ export const discoverClaudeGatewayModels = Effect.fn("discoverClaudeGatewayModel
     }
   },
   Effect.timeout("5 seconds"),
+  Effect.tapError(() =>
+    Effect.logDebug("Claude gateway model discovery failed, using the bundled catalog"),
+  ),
   // Gateways without a models endpoint retain the ordinary Claude catalog.
   Effect.orElseSucceed(() => undefined),
 );
