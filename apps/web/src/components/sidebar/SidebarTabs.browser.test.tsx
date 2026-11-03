@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import "~/index.css";
 import { act, fakeTimers, render } from "../../../test/render";
 import { SidebarSwipeArea, type SidebarTab } from "./SidebarTabs";
 
 function SwipeHarness() {
   const [tab, setTab] = useState<SidebarTab>("active");
   return (
-    <div style={{ width: 300, height: 200, display: "flex", flexDirection: "column" }}>
+    <div className="flex h-[200px] w-[300px] flex-col">
       <output>{tab}</output>
       <button type="button" onClick={() => setTab("settled")}>
         Settled
@@ -36,6 +37,8 @@ describe("SidebarSwipeArea", () => {
     await act(() => {
       area.dispatchEvent(new WheelEvent("wheel", { deltaX: 200, cancelable: true }));
     });
+    const panel = area.querySelector<HTMLElement>("[data-sidebar-swipe-panel]")!;
+    expect(panel.style.transform).toBe("translateX(-300px)");
     await act(() => screen.container.querySelector("button")!.click());
     await act(() => vi.advanceTimersByTime(500));
 
