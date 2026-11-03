@@ -114,7 +114,6 @@ function StatusBanner(props: { summary: ActivitySummary; approvals: ActivityPane
 
   return (
     <div
-      role="status"
       data-phase={phase}
       className={cn(
         "flex items-start gap-2.5 border-b px-3 py-3",
@@ -123,16 +122,18 @@ function StatusBanner(props: { summary: ActivitySummary; approvals: ActivityPane
     >
       <Icon aria-hidden className={cn("mt-0.5 size-4 shrink-0", iconClass)} />
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="line-clamp-2 break-words text-sm font-medium">{title}</span>
-        <span className="text-xs text-foreground/70">
-          {details.join(" · ")}
-          {summary.lastActivityAt ? (
-            <>
-              {details.length > 0 ? " · " : null}
-              Updated <RelativeTime timestamp={summary.lastActivityAt} />
-            </>
+        {/* The ticking "Updated … ago" stays outside, or each tick re-announces the status. */}
+        <div role="status" className="flex flex-col gap-0.5">
+          <span className="line-clamp-2 break-words text-sm font-medium">{title}</span>
+          {details.length > 0 ? (
+            <span className="text-xs text-foreground/70">{details.join(" · ")}</span>
           ) : null}
-        </span>
+        </div>
+        {summary.lastActivityAt ? (
+          <span className="text-xs text-foreground/70">
+            Updated <RelativeTime timestamp={summary.lastActivityAt} />
+          </span>
+        ) : null}
         {approval ? <ApprovalRequest approval={approval} approvals={approvals} /> : null}
       </div>
     </div>
