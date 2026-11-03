@@ -26,7 +26,8 @@ import {
   type PipelineUpsertInput,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -124,7 +125,8 @@ export const layerWithStarters = (
   PipelineService,
   never,
   | PipelineStore.PipelineStore
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
+  | Digest.Digest
   | ThreadLaunchService.ThreadLaunchService
   | ThreadManagementService.ThreadManagementService
   | IdAllocator.IdAllocatorV2
@@ -138,7 +140,7 @@ export const layerWithStarters = (
     PipelineService,
     Effect.gen(function* () {
       const store = yield* PipelineStore.PipelineStore;
-      const crypto = yield* Crypto.Crypto;
+      const random = yield* SecureRandom.SecureRandom;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
 
       // Notifications re-emit the full list; slow subscribers need only the newest dirty signal.
@@ -173,15 +175,7 @@ export const layerWithStarters = (
 
           const now = DateTime.formatIso(yield* DateTime.now);
           const uuid =
-            input.id !== undefined || input.commandId !== undefined
-              ? null
-              : yield* crypto
-                  .randomUUIDv4()
-                  .pipe(
-                    Effect.mapError((cause) =>
-                      pipelineError("Could not generate pipeline id.", { cause }),
-                    ),
-                  );
+            input.id !== undefined || input.commandId !== undefined ? null : yield* random.uuidV4();
           // Derived from the commandId so a replayed create resolves to the same row.
           const id =
             input.id ??

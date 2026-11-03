@@ -31,7 +31,7 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";
 import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -158,7 +158,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
   const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const ids = yield* IdAllocator.IdAllocatorV2;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const workspace = yield* makePipelineWorkspace();
 
   const permit = yield* Semaphore.make(1);
@@ -1056,11 +1056,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
       readonly modeLimit?: DispatchModes;
     },
   ) {
-    const suffix =
-      input.commandId ??
-      (yield* crypto
-        .randomUUIDv4()
-        .pipe(Effect.mapError((cause) => pipelineError("Could not generate run id.", { cause }))));
+    const suffix = input.commandId ?? (yield* random.uuidV4());
     const runId = PipelineRunId.make(`pipeline-run:${suffix}`);
     const existing = yield* store.getRun(runId);
     if (existing !== null) return yield* replay(existing);
@@ -1447,13 +1443,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
           { runId: run.id },
         );
       }
-      const suffix = yield* crypto
-        .randomUUIDv4()
-        .pipe(
-          Effect.mapError((cause) =>
-            pipelineError("Could not generate an escalation id.", { runId: run.id, cause }),
-          ),
-        );
+      const suffix = yield* random.uuidV4();
       yield* threads
         .sendToThread({
           projectId: run.projectId,

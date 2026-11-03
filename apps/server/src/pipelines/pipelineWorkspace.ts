@@ -4,7 +4,7 @@ import {
   type PipelineRunId,
   type ThreadId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -32,7 +32,7 @@ export const beforeRestoreRef = (runId: PipelineRunId, stepIndex: number, attemp
 export const makePipelineWorkspace = Effect.fn("PipelineWorkspace.make")(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const checkpoints = yield* CheckpointStore.CheckpointStore;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
   /**
@@ -60,7 +60,7 @@ export const makePipelineWorkspace = Effect.fn("PipelineWorkspace.make")(functio
       const ref =
         recorded?.ref ??
         (yield* checkpointRefForScopeOrdinal({ scopeId: scope.id, ordinalWithinScope: 0 }).pipe(
-          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(Digest.Digest, digest),
         ));
       const exists = yield* checkpoints.hasCheckpointRef({ cwd: scope.cwd, checkpointRef: ref });
       return exists ? ({ cwd: scope.cwd, ref } satisfies StartCheckpoint) : null;

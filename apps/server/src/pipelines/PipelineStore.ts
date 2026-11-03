@@ -16,6 +16,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -466,10 +467,10 @@ export const layer: Layer.Layer<PipelineStore, never, SqlClient.SqlClient> = Lay
                 completed_at: run.completedAt,
               })}
             `;
-            if (steps.length === 0) return;
+            if (!Arr.isReadonlyArrayNonEmpty(steps)) return;
             yield* sql`
               INSERT INTO pipeline_run_steps ${sql.insert(
-                steps.map((step) => ({
+                Arr.map(steps, (step) => ({
                   run_id: run.id,
                   step_index: step.index,
                   step_id: step.stepId,
