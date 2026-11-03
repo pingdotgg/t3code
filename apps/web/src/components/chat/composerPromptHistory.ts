@@ -10,11 +10,11 @@ const REVIEW_COMMENT_BLOCK_PATTERN = /<review_comment\b[^>]*>[\s\S]*?<\/review_c
 const TRAILING_LEGACY_CONTEXT =
   /\n*<(terminal_context|element_context|preview_annotation)>\n([\s\S]*?)\n<\/\1>\s*$/;
 
-export type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
+type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
   readonly id: string;
 };
 
-export interface ComposerPromptHistoryEntry {
+interface ComposerPromptHistoryEntry {
   readonly id: string;
   readonly prompt: string;
 }
@@ -33,7 +33,7 @@ function findActive(
   return entries.findLastIndex((entry) => entry.prompt === position.recalled);
 }
 
-export interface ComposerPromptHistoryStep {
+interface ComposerPromptHistoryStep {
   readonly position: ComposerPromptHistoryPosition | null;
   readonly prompt: string;
 }

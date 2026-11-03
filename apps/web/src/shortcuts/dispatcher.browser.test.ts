@@ -111,6 +111,25 @@ describe("command dispatcher", () => {
     expect(calls).toEqual(["command", "observe:true", "observe:false"]);
   });
 
+  it("consumes a command chord pressed inside a confirmation without running its handler", () => {
+    const command = vi.fn();
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "alertdialog");
+    const cancel = document.createElement("button");
+    dialog.append(cancel);
+    document.body.append(dialog);
+    using stack = new DisposableStack();
+    stack.defer(() => dialog.remove());
+    stack.defer(registerCommands({ "chat.new": command }, { keybindings }));
+    cancel.focus();
+
+    const event = new KeyboardEvent("keydown", { key: "k", cancelable: true, bubbles: true });
+    cancel.dispatchEvent(event);
+
+    expect(command).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it("routes a menu action to its newest handler", () => {
     const older = vi.fn();
     const newer = vi.fn();

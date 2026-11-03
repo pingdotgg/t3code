@@ -70,6 +70,7 @@ export function ThreadGuestShareBar(props: {
   // Keyed by the expiry, so a replaced link (even one already expired) gets its own timer.
   const [expiredAt, setExpiredAt] = useState<string | null>(null);
   const expiresAt = share?.expiresAt;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- arms a timer that flips the share label when the guest link expires
   useEffect(() => {
     if (expiresAt === undefined) return;
     const timer = setTimeout(
