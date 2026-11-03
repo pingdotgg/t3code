@@ -352,28 +352,27 @@ it.effect("does not report authentication when post-login verification fails", (
     const failed = yield* h.phase("failed");
     assert.strictEqual(
       failed.message,
-      "The provider could not create a session after terminal sign-in. Authentication required",
+      "The provider could not create a session after terminal sign-in.",
     );
     assert.deepEqual(h.changed, []);
     assert.isTrue(h.killed());
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
-it.effect("includes the agent error message when authenticate fails", () =>
-  Effect.gen(function* () {
-    const h = yield* makeHarness(
-      browserMethod,
-      false,
-      undefined,
-      undefined,
-      "Connect to the VPN, then sign in again.",
-    );
-    yield* h.controller.start("owner", Effect.void, "browser");
-    const failed = yield* h.phase("failed");
-    assert.strictEqual(
-      failed.message,
-      "The ACP agent could not complete sign-in. Connect to the VPN, then sign in again.",
-    );
-    assert.deepEqual(h.changed, []);
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+it.effect(
+  "retains agent error in cause without interpolating into detail when authenticate fails",
+  () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness(
+        browserMethod,
+        false,
+        undefined,
+        undefined,
+        "Connect to the VPN, then sign in again.",
+      );
+      yield* h.controller.start("owner", Effect.void, "browser");
+      const failed = yield* h.phase("failed");
+      assert.strictEqual(failed.message, "The ACP agent could not complete sign-in.");
+      assert.deepEqual(h.changed, []);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
