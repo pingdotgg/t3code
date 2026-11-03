@@ -202,6 +202,7 @@ describe("CursorTextGeneration", () => {
           id: "run-cursor-partial-title-test",
           status,
           result: '{"title":"Partial title from a failed run."}',
+          ...(status === "error" ? { error: { message: "Usage limit reached." } } : {}),
         } satisfies RunResult;
         cursorSdkMock.prompt.mockResolvedValueOnce(promptResult);
         const generation = yield* makeCursorTextGeneration(cursorSettings, {
@@ -222,7 +223,7 @@ describe("CursorTextGeneration", () => {
         expect(failure.detail).toBe(
           status === "cancelled"
             ? "Cursor SDK request was cancelled."
-            : "Cursor SDK request finished with an error.",
+            : "Cursor SDK request finished with an error: Usage limit reached.",
         );
         expect(cursorSdkMock.close).toHaveBeenCalledOnce();
       }).pipe(Effect.provide(layerTest)),
