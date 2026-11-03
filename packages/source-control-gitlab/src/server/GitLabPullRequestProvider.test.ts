@@ -301,6 +301,10 @@ describe("getChangeRequest base freshness", () => {
   );
 });
 
+const UPLOAD_MARKDOWN = "![clip](/uploads/871cca6041e4d445daf391a8a17d8fb2/clip.mp4)";
+const ABSOLUTE_UPLOAD_MARKDOWN =
+  "![clip](https://gitlab.com/acme/web/uploads/871cca6041e4d445daf391a8a17d8fb2/clip.mp4)";
+
 describe("merge request reads", () => {
   const reference = { cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 };
   const detail = {
@@ -358,6 +362,23 @@ describe("merge request reads", () => {
     }
     return { provider, checks, forget, calls, host };
   });
+
+  it.effect("spells out the uploads a description links relative to its project", () =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            listMergeRequestStats: () => Effect.succeed([]),
+            getMergeRequestDetail: () => Effect.succeed({ ...detail, body: UPLOAD_MARKDOWN }),
+            getProjectMergeCapabilities: () =>
+              Effect.succeed({ merge: true, squash: true, rebase: true }),
+          }),
+        ),
+      );
+
+      expect((yield* provider.getChangeRequest(reference)).body).toBe(ABSOLUTE_UPLOAD_MARKDOWN);
+    }),
+  );
 
   it.effect("asks for a project's merge methods once across its merge requests", () =>
     Effect.gen(function* () {
@@ -469,7 +490,7 @@ describe("optional activity reads", () => {
     id: "42",
     kind: "issue-comment" as const,
     author: null,
-    body: "Keep this comment",
+    body: `Keep this comment\n${UPLOAD_MARKDOWN}`,
     createdAt: "2026-07-01T00:00:00Z",
     url: null,
     path: null,
@@ -552,7 +573,9 @@ describe("optional activity reads", () => {
       );
 
       expect(yield* provider.getChangeRequestActivity(reference)).toEqual({
-        comments: [{ ...comment, reactions: [] }],
+        comments: [
+          { ...comment, body: `Keep this comment\n${ABSOLUTE_UPLOAD_MARKDOWN}`, reactions: [] },
+        ],
         commentCount: 1,
         commentsTruncated: true,
         reviewThreads: [],

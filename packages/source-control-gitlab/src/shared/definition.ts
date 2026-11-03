@@ -10,6 +10,7 @@ import {
   projectChangeRequestHost,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
+import { gitLabMediaUrl, isGitLabHostname } from "./gitLabMedia.ts";
 import { icon } from "./icon.ts";
 
 const CHECKOUT_COMMAND = /^glab\s+mr\s+checkout\s+(.+)$/i;
@@ -67,7 +68,7 @@ export const definition = defineSourceControl({
   checkoutChangeRequestHost: () => null,
   changeRequestHeadRef: (number) => `refs/merge-requests/${number}/head`,
   recognizeRemote: ({ host, hostname }) =>
-    hostname === "gitlab.com" || hostname.split(".").includes("gitlab")
+    isGitLabHostname(hostname)
       ? {
           kind: KIND,
           name: hostname === "gitlab.com" ? "GitLab" : "GitLab Self-Hosted",
@@ -78,4 +79,5 @@ export const definition = defineSourceControl({
     isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
     isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
+  mediaUrl: gitLabMediaUrl,
 });

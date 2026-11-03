@@ -2,6 +2,7 @@ import { recognizeRemoteWith } from "@t3tools/source-control-core/shared/definit
 import { describe, expect, it } from "vite-plus/test";
 
 import { definition } from "./definition.ts";
+import { absoluteGitLabUploadLinks } from "./gitLabMedia.ts";
 
 const parse = (url: string) => definition.parseChangeRequestUrl(new URL(url));
 
@@ -109,5 +110,57 @@ describe("GitLab remotes", () => {
 
   it("matches complete DNS labels only", () => {
     expect(recognize("https://notgitlab.example.com/group/repo.git")).toBeNull();
+  });
+});
+
+describe("GitLab uploads", () => {
+  const SECRET = "871cca6041e4d445daf391a8a17d8fb2";
+  const media = (url: string) => definition.mediaUrl?.(new URL(url)) ?? null;
+
+  it("fetches every spelling of an upload through the API, which honours a token", () => {
+    const fetchUrl = `https://gitlab.com/api/v4/projects/group%2Fsub%2Fproject/uploads/${SECRET}/clip%20one.mp4`;
+    expect(media(`https://gitlab.com/group/sub/project/uploads/${SECRET}/clip%20one.mp4`)).toEqual({
+      fetchUrl,
+      fileName: "clip one.mp4",
+      immutable: true,
+    });
+    // The server reads the fetch URL back to find the host that serves it.
+    expect(media(fetchUrl)?.fetchUrl).toBe(fetchUrl);
+    expect(
+      media(`https://gitlab.example.com/-/project/42/uploads/${SECRET}/shot.png`)?.fetchUrl,
+    ).toBe(`https://gitlab.example.com/api/v4/projects/42/uploads/${SECRET}/shot.png`);
+  });
+
+  it("claims no other host, route, or plain-HTTP link", () => {
+    for (const url of [
+      `https://example.com/group/project/uploads/${SECRET}/shot.png`,
+      `http://gitlab.com/group/project/uploads/${SECRET}/shot.png`,
+      `https://gitlab.com/group/project/-/blob/main/uploads/${SECRET}/shot.png`,
+      `https://gitlab.com/project/uploads/${SECRET}/shot.png`,
+      "https://gitlab.com/group/project/uploads/not-a-secret/shot.png",
+    ]) {
+      expect(media(url), url).toBeNull();
+    }
+  });
+
+  it("spells out the relative upload links a body carries, and nothing else", () => {
+    const body = [
+      `![shot](/uploads/${SECRET}/shot.png)`,
+      `[clip](</uploads/${SECRET}/clip.mp4>)`,
+      `[ref]: /uploads/${SECRET}/ref.png`,
+      `<img src="/uploads/${SECRET}/tag.png">`,
+      "[docs](/uploads/readme.md)",
+      "/uploads/ stays prose",
+    ].join("\n");
+    expect(absoluteGitLabUploadLinks(body, "https://gitlab.com/group/project/")).toBe(
+      [
+        `![shot](https://gitlab.com/group/project/uploads/${SECRET}/shot.png)`,
+        `[clip](<https://gitlab.com/group/project/uploads/${SECRET}/clip.mp4>)`,
+        `[ref]: https://gitlab.com/group/project/uploads/${SECRET}/ref.png`,
+        `<img src="https://gitlab.com/group/project/uploads/${SECRET}/tag.png">`,
+        "[docs](/uploads/readme.md)",
+        "/uploads/ stays prose",
+      ].join("\n"),
+    );
   });
 });

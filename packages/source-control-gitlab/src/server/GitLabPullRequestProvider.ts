@@ -19,6 +19,7 @@ import {
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { definition } from "../shared/definition.ts";
+import { absoluteGitLabUploadLinks } from "../shared/gitLabMedia.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -95,6 +96,11 @@ function gitLabProviderFailure(
   if (error._tag === "GitLabMergeRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
 }
+
+/** Resolves the relative upload links GitLab writes into a body against the project. */
+const projectUploadLinks =
+  (input: { readonly host: string; readonly repository: string }) => (body: string) =>
+    absoluteGitLabUploadLinks(body, `https://${input.host}/${input.repository}`);
 
 export const make = Effect.gen(function* () {
   const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
@@ -304,6 +310,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(fail("getChangeRequest")),
         Effect.map(([mergeRequest, mergeCapabilities]): ProviderChangeRequestDetail => ({
           ...mergeRequest,
+          body: projectUploadLinks(input)(mergeRequest.body),
           mergeCapabilities,
           viewerPermissions: gitLabViewerPermissions(mergeRequest),
           // Missing divergence counts mean unknown, not up to date.
@@ -333,23 +340,28 @@ export const make = Effect.gen(function* () {
         { concurrency: 4 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => ({
-          reactions: awards.reactions,
-          comments: notes.comments.map((comment) => ({
-            ...comment,
-            reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-          })),
-          commentCount: notes.comments.length,
-          commentsTruncated: notes.truncated || discussions.truncated,
-          reviewThreads: discussions.threads.map((thread) => ({
-            ...thread,
-            comments: thread.comments.map((comment) => ({
+        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => {
+          const uploadLinks = projectUploadLinks(input);
+          return {
+            reactions: awards.reactions,
+            comments: notes.comments.map((comment) => ({
               ...comment,
+              body: uploadLinks(comment.body),
               reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
             })),
-          })),
-          commits,
-        })),
+            commentCount: notes.comments.length,
+            commentsTruncated: notes.truncated || discussions.truncated,
+            reviewThreads: discussions.threads.map((thread) => ({
+              ...thread,
+              comments: thread.comments.map((comment) => ({
+                ...comment,
+                body: uploadLinks(comment.body),
+                reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+              })),
+            })),
+            commits,
+          };
+        }),
       ),
 
     // Straight from the host, never the shared read: this is what a write is refused or let
