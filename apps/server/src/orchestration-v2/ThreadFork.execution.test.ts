@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -19,7 +20,7 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -671,7 +672,7 @@ it.effect("forks a Claude run from the session it ran in after /clear adopted an
       attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-fork-clear-" }),
       fileSystem,
       path: yield* Path.Path,
-      crypto: yield* Crypto.Crypto,
+      random: yield* SecureRandom.SecureRandom,
       idAllocator: yield* IdAllocator.IdAllocatorV2,
       queryRunner: {
         allocateSessionId: Effect.succeed("unused-native-session"),
@@ -846,7 +847,12 @@ it.effect("forks a Claude run from the session it ran in after /clear adopted an
   }).pipe(
     Effect.scoped,
     Effect.provide(
-      Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      Layer.mergeAll(
+        IdAllocator.layer,
+        McpProviderSessions.layer,
+        NodeServices.layer,
+        NodeCrypto.layer,
+      ),
     ),
   ),
 );
