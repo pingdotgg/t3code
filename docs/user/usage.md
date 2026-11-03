@@ -144,6 +144,12 @@ or endpoint configurations do not report subscription limits.
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+Pi and OpenCode can reuse the credentials their CLIs already save to report account limits. Kimi Code
+shows its subscription windows, and OpenRouter shows credit and pay-as-you-go amounts, including
+a limit only when the provider reports one. Providers without a supported reporting API do not
+show online limits; their transcript token and cost history still appears under **Tokens** and
+**Cost**.
+
 ## Connect a CLIProxyAPI hub
 
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the

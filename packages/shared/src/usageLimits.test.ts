@@ -607,6 +607,55 @@ describe("pools", () => {
     ]);
   });
 
+  it("exposes each supported provider usage account beside the legacy native limits entry", () => {
+    const multi = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "main@example.com" },
+      usageLimits: { checkedAt, windows: [window] },
+      usageAccounts: [
+        {
+          id: "first@example.com.json",
+          driver: claude,
+          email: "first@example.com",
+          usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 15 }] },
+        },
+        {
+          id: "second@example.com.json",
+          driver: claude,
+          email: "second@example.com",
+          usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 60 }] },
+        },
+        {
+          id: "unsupported@example.com.json",
+          driver: claude,
+          email: "unsupported@example.com",
+          usageLimits: {
+            checkedAt,
+            windows: [],
+            unavailable: { reason: "unsupported" as const },
+          },
+        },
+      ],
+    });
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [multi] } }],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts.map((account) => account.key)).toEqual([
+      "env-a:claude",
+      "env-a:claude:first@example.com.json",
+      "env-a:claude:second@example.com.json",
+    ]);
+    expect(accounts[0]).toMatchObject({
+      email: "main@example.com",
+      redeem: { environmentId: "env-a", input: { instanceId: "claude" } },
+      environments: [{ environmentId: "env-a", label: "Laptop" }],
+    });
+    expect(accounts.map((account) => account.limits.windows[0]?.usedPercent)).toEqual([40, 15, 60]);
+    expect(accounts.slice(1).map((account) => account.redeem)).toEqual([null, null]);
+  });
+
   it("keys a hub account without an email by hub, so two environments on one hub share it", () => {
     const seat = {
       id: "claude-team-seat.json",
@@ -1247,6 +1296,78 @@ describe("/usage-limits", () => {
         now,
       ),
     ).toBeNull();
+  });
+
+  it("lists native usage accounts beside the instance entry with upstream identity and no credit input", () => {
+    const driver = selected.driver;
+    const multi = provider({
+      usageLimits: limits,
+      auth: { status: "authenticated", email: "main@example.com" },
+      usageAccounts: [
+        {
+          id: "first@example.com.json",
+          driver,
+          email: "first@example.com",
+          plan: "Pro",
+          usageLimits: { ...limits, windows: [{ ...window, usedPercent: 15 }] },
+        },
+        {
+          id: "second@example.com.json",
+          driver,
+          email: "second@example.com",
+          usageLimits: { ...limits, windows: [{ ...window, usedPercent: 60 }] },
+        },
+        {
+          id: "metered@example.com.json",
+          driver,
+          email: "metered@example.com",
+          usageLimits: {
+            ...limits,
+            windows: [],
+            monetaryUsage: { usedUsd: 1.25, remainingUsd: 8.75 },
+          },
+        },
+        {
+          id: "unsupported@example.com.json",
+          driver,
+          email: "unsupported@example.com",
+          usageLimits: {
+            ...limits,
+            windows: [],
+            unavailable: { reason: "unsupported" as const },
+          },
+        },
+      ],
+    });
+    const report = collectProviderUsageLimits(multi.instanceId, [multi], [], now);
+    expect(report?.accounts.map((account) => account.id)).toEqual([
+      "codex",
+      "codex:first@example.com.json",
+      "codex:second@example.com.json",
+      "codex:metered@example.com.json",
+    ]);
+    expect(report?.accounts[0]).toMatchObject({
+      email: "main@example.com",
+      resetCreditInput: { instanceId: "codex" },
+    });
+    const upstream = report?.accounts.slice(1);
+    expect(
+      upstream?.map((account) => [
+        account.email,
+        account.plan,
+        account.limits.windows[0]?.usedPercent,
+      ]),
+    ).toEqual([
+      ["first@example.com", "Pro", 15],
+      ["second@example.com", undefined, 60],
+      ["metered@example.com", undefined, undefined],
+    ]);
+    expect(upstream?.[2]?.limits.monetaryUsage).toEqual({ usedUsd: 1.25, remainingUsd: 8.75 });
+    expect(upstream?.map((account) => account.resetCreditInput)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
   });
 
   it("surfaces source errors only for sources that carry the selected driver", () => {

@@ -28,12 +28,21 @@ export const ServerProviderResetCredits = Schema.Struct({
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 
+/** Normalized pay-as-you-go / credit spend in USD; distinct from reset credits. */
+export const ServerProviderMonetaryUsage = Schema.Struct({
+  usedUsd: Schema.optional(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+  remainingUsd: Schema.optional(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+  limitUsd: Schema.optional(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+});
+export type ServerProviderMonetaryUsage = typeof ServerProviderMonetaryUsage.Type;
+
 /** Clear bars for unavailable accounts; retain last good bars after a failed probe. */
 export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
+  monetaryUsage: Schema.optional(ServerProviderMonetaryUsage),
   externalUsage: Schema.optional(
     Schema.Struct({
       label: TrimmedNonEmptyString,

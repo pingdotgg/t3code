@@ -22,6 +22,14 @@ import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textG
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { openCodeUsageReader, type OpenCodeUsageReaderEnv } from "./usage.ts";
 import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
+import {
+  discoverUpstreamCredentials,
+  probeUpstreamUsage,
+  type UpstreamUsageReaderContext,
+} from "@t3tools/provider-core/server/upstreamUsage";
+import { readKimiCodeUsageAccount } from "@t3tools/provider-core/server/kimiUsage";
+import { readOpenRouterUsageAccount } from "@t3tools/provider-core/server/openRouterUsage";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { loadOpenCode2Catalog } from "./openCode2Catalog.ts";
 import {
   checkOpenCodeProviderStatus,
@@ -74,6 +82,54 @@ function isOpenCodeNativeCommandPath(commandPath: string): boolean {
     normalized.endsWith("/.opencode/bin/opencode.exe")
   );
 }
+
+const readKimiUsage = (context: UpstreamUsageReaderContext) =>
+  readKimiCodeUsageAccount({
+    driver: context.driver,
+    credential: { provider: context.credential.providerId, key: context.credential.secret ?? "" },
+    checkedAt: context.checkedAt,
+  });
+
+const upstreamUsageReaders = {
+  kimi: readKimiUsage,
+  "kimi-coding": readKimiUsage,
+  openrouter: (context: UpstreamUsageReaderContext) =>
+    readOpenRouterUsageAccount({
+      driver: context.driver,
+      credential: { provider: context.credential.providerId, key: context.credential.secret ?? "" },
+      checkedAt: context.checkedAt,
+    }),
+};
+
+const readUpstreamUsageAccounts = Effect.fn("readUpstreamUsageAccounts")(function* (input: {
+  readonly enabled: boolean;
+  readonly serverUrl: string;
+  readonly environment: NodeJS.ProcessEnv;
+}) {
+  // External OpenCode servers own their credentials.
+  if (!input.enabled || input.serverUrl.trim()) return [];
+  // A malformed or unreadable auth file must not break provider status.
+  return yield* Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const env = input.environment;
+    const dataHome =
+      env.XDG_DATA_HOME ||
+      path.join(
+        env.HOME || env.USERPROFILE || (yield* HostProcess.HomeDirectory),
+        ".local",
+        "share",
+      );
+    const credentials = yield* discoverUpstreamCredentials(
+      path.join(dataHome, "opencode", "auth.json"),
+    );
+    return yield* probeUpstreamUsage({
+      driver: DRIVER_KIND,
+      // The native Go account is already reported on provider.usageLimits.
+      credentials: credentials.filter((credential) => credential.providerId !== "opencode-go"),
+      readers: upstreamUsageReaders,
+    });
+  }).pipe(Effect.orElseSucceed(() => []));
+});
 
 /** Update only within the installed package generation; 2.x converts the shared database in place. */
 export const openCodeUpdateFor = (generation: ProbedOpenCode["generation"]) =>
@@ -351,10 +407,19 @@ export const OpenCodeDriver: ProviderDriver<
           serverUrl: effectiveConfig.serverUrl,
           environment: processEnv,
         }),
+        usageAccounts: readUpstreamUsageAccounts({
+          enabled: effectiveConfig.enabled,
+          serverUrl: effectiveConfig.serverUrl,
+          environment: processEnv,
+        }),
       },
       { concurrency: "unbounded" },
     ).pipe(
-      Effect.map(({ provider, usageLimits }) => ({ ...provider, usageLimits })),
+      Effect.map(({ provider, usageLimits, usageAccounts }) => ({
+        ...provider,
+        usageLimits,
+        usageAccounts,
+      })),
       Effect.map(stampIdentity),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),

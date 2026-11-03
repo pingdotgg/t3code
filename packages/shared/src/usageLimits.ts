@@ -146,7 +146,7 @@ function providersWithLimits(providers: readonly ServerProvider[]): readonly Ser
       provider.enabled &&
       provider.installed &&
       isProviderAvailable(provider) &&
-      provider.usageLimits !== undefined,
+      (provider.usageLimits !== undefined || (provider.usageAccounts?.length ?? 0) > 0),
   );
 }
 
@@ -308,9 +308,9 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   };
   const resolveKey = accountKeyResolver(
     [...presentations.values()].flatMap((presentation) => [
-      ...(presentation.serverConfig?.providers ?? [])
-        .filter((provider) => provider.enabled)
-        .map(nativeReport),
+      ...(presentation.serverConfig?.providers ?? []).flatMap((provider) =>
+        provider.enabled ? [nativeReport(provider), ...(provider.usageAccounts ?? [])] : [],
+      ),
       ...(presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) => source.accounts),
     ]),
   );
@@ -330,6 +330,22 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         redeem: { environmentId, input: { instanceId: provider.instanceId } },
         limits: provider.usageLimits,
       });
+      for (const account of provider.usageAccounts ?? []) {
+        if (limitsNotice(account.usageLimits) !== null) continue;
+        const key = `${environmentId}:${provider.instanceId}:${account.id}`;
+        merge(resolveKey(account) ?? key, {
+          key,
+          driver: account.driver,
+          displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
+          email: account.email,
+          plan: account.plan,
+          accentColor: provider.accentColor,
+          environments: [{ environmentId, label }],
+          sourceLabel: null,
+          redeem: null,
+          limits: account.usageLimits,
+        });
+      }
     }
   }
   const labelEnvironment = presentations.size > 1;
@@ -554,7 +570,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     const first = members[0]!.window;
     const id = members[0]!.account.driver === "codex" ? key : first.id;
     const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
-    // Judge pace only for windows with reset clocks; others add spend without elapsed time.
+    // A window with no reset clock adds spend but no elapsed time.
     const timed = members.flatMap((m) => {
       const share = elapsedShare(m.window, now);
       return share === null ? [] : [{ used: m.window.usedPercent, elapsed: share }];
@@ -600,7 +616,12 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   if (limits.unavailable?.reason === "probeFailed") {
     return limits.unavailable.message ?? "Could not read limits.";
   }
-  return limits.windows.length === 0 ? "No limits reported." : null;
+  if (limits.windows.length > 0) return null;
+  const monetary = limits.monetaryUsage;
+  if (monetary !== undefined && Object.values(monetary).some((value) => value !== undefined)) {
+    return null;
+  }
+  return "No limits reported.";
 }
 
 export function remainingPercent(window: ServerProviderUsageWindow): number {
@@ -825,6 +846,23 @@ export function collectProviderUsageLimits(
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
       limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
     });
+  }
+  for (const provider of providersWithLimits(providers)) {
+    if (provider.driver !== selected.driver) continue;
+    const providerLabel = provider.displayName?.trim() || String(provider.instanceId);
+    for (const account of provider.usageAccounts ?? []) {
+      if (limitsNotice(account.usageLimits) !== null) continue;
+      accounts.push({
+        id: `${provider.instanceId}:${account.id}`,
+        driver: account.driver,
+        label: `${providerLabel} · ${account.id}`,
+        sourceLabel: providerLabel,
+        ...(account.plan ? { plan: account.plan } : {}),
+        ...(account.email ? { email: account.email } : {}),
+        ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
+        limits: account.usageLimits,
+      });
+    }
   }
   for (const source of sources) {
     const matching = source.accounts.filter((account) => account.driver === selected.driver);

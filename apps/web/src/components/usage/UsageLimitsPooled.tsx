@@ -14,6 +14,7 @@ import {
   paceRemainingPercent,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
+import { formatUsd } from "@t3tools/shared/usageFormat";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
 import {
@@ -132,6 +133,27 @@ function Row({ label, children }: { readonly label: string; readonly children: R
   );
 }
 
+type MonetaryUsage = NonNullable<LimitAccount["limits"]["monetaryUsage"]>;
+
+function monetaryUsageOf(limits: LimitAccount["limits"]): MonetaryUsage | null {
+  const monetary = limits.monetaryUsage;
+  if (!monetary) return null;
+  const { usedUsd, remainingUsd, limitUsd } = monetary;
+  return usedUsd === undefined && remainingUsd === undefined && limitUsd === undefined
+    ? null
+    : monetary;
+}
+
+function monetaryUsageText(monetary: MonetaryUsage): string {
+  return [
+    monetary.usedUsd !== undefined ? `${formatUsd(monetary.usedUsd)} used` : null,
+    monetary.remainingUsd !== undefined ? `${formatUsd(monetary.remainingUsd)} left` : null,
+    monetary.limitUsd !== undefined ? `${formatUsd(monetary.limitUsd)} limit` : null,
+  ]
+    .filter((part) => part !== null)
+    .join(" · ");
+}
+
 function SegmentPopover({
   account,
   window,
@@ -157,6 +179,7 @@ function SegmentPopover({
       : account.sourceLabel;
   const credits =
     redeem && account.limits.resetCredits?.availableCount ? account.limits.resetCredits : null;
+  const monetary = monetaryUsageOf(account.limits);
   return (
     <div className="flex w-72 max-w-[calc(100vw-3rem)] flex-col gap-2.5 text-xs">
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -182,6 +205,19 @@ function SegmentPopover({
           <Row label={account.environments.length > 0 ? "Signed in" : "Via"}>{where}</Row>
         ) : null}
       </div>
+      {monetary ? (
+        <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
+          {monetary.usedUsd !== undefined ? (
+            <Row label="Used">{formatUsd(monetary.usedUsd)}</Row>
+          ) : null}
+          {monetary.remainingUsd !== undefined ? (
+            <Row label="Remaining">{formatUsd(monetary.remainingUsd)}</Row>
+          ) : null}
+          {monetary.limitUsd !== undefined ? (
+            <Row label="Limit">{formatUsd(monetary.limitUsd)}</Row>
+          ) : null}
+        </div>
+      ) : null}
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         <Row label="Left">{remaining}%</Row>
         {window.resetsAt ? (
@@ -568,6 +604,26 @@ function PoolWindowCard({
   );
 }
 
+function PoolMonetaryAccounts({ pool }: { readonly pool: LimitPool }) {
+  const rows = pool.accounts.flatMap((account) => {
+    const monetary = monetaryUsageOf(account.limits);
+    return monetary ? [{ account, monetary }] : [];
+  });
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border/60 p-4">
+      <span className="text-xs text-muted-foreground">No rate-limit windows reported</span>
+      {rows.map(({ account, monetary }) => (
+        <span key={account.key} className="flex items-baseline justify-between gap-3 text-xs">
+          <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
+          <span className="shrink-0 text-foreground tabular-nums">
+            {monetaryUsageText(monetary)}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
   const color = barColor(pool.driver);
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
@@ -584,19 +640,24 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
         />
         {label}
       </h2>
-      {windows.map((window) => {
-        const details = pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
-        return (
-          <PoolWindowCard
-            key={`${window.kind}:${window.id}`}
-            pool={window}
-            color={color}
-            now={now}
-            label={details?.label}
-            description={details?.description}
-          />
-        );
-      })}
+      {windows.length === 0 ? (
+        <PoolMonetaryAccounts pool={pool} />
+      ) : (
+        windows.map((window) => {
+          const details =
+            pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
+          return (
+            <PoolWindowCard
+              key={`${window.kind}:${window.id}`}
+              pool={window}
+              color={color}
+              now={now}
+              label={details?.label}
+              description={details?.description}
+            />
+          );
+        })
+      )}
     </section>
   );
 }

@@ -55,6 +55,10 @@
       "types": "./src/server/instanceIdentity.ts",
       "import": "./src/server/instanceIdentity.ts"
     },
+    "./server/kimiUsage": {
+      "types": "./src/server/kimiUsage.ts",
+      "import": "./src/server/kimiUsage.ts"
+    },
     "./server/maintenance": {
       "types": "./src/server/maintenance.ts",
       "import": "./src/server/maintenance.ts"
@@ -90,6 +94,10 @@
     "./server/notification": {
       "types": "./src/server/notification.ts",
       "import": "./src/server/notification.ts"
+    },
+    "./server/openRouterUsage": {
+      "types": "./src/server/openRouterUsage.ts",
+      "import": "./src/server/openRouterUsage.ts"
     },
     "./server/orchestrationInstructions": {
       "types": "./src/server/orchestrationInstructions.ts",
@@ -178,6 +186,10 @@
     "./server/threadTitleContext": {
       "types": "./src/server/threadTitleContext.ts",
       "import": "./src/server/threadTitleContext.ts"
+    },
+    "./server/upstreamUsage": {
+      "types": "./src/server/upstreamUsage.ts",
+      "import": "./src/server/upstreamUsage.ts"
     },
     "./server/usage": {
       "types": "./src/server/usage.ts",
