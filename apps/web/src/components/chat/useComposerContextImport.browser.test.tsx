@@ -1,10 +1,18 @@
 import { useEffect } from "react";
-import { type ComposerContextRecord, ComposerContextId, EnvironmentId } from "@t3tools/contracts";
+import {
+  type ComposerContextRecord,
+  ComposerContextId,
+  EnvironmentId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render, stubGlobal } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
-import { formatInlineContextReference } from "../../lib/composerContextReferences";
+import {
+  formatInlineContextReference,
+  rewriteImportedContextReferences,
+} from "../../lib/composerContextReferences";
 import { rememberCopiedComposerAttachments } from "../../lib/copiedComposerAttachments";
 import { pendingDraftWork } from "./pendingDraftWork";
 import { useComposerContextImport } from "./useComposerContextImport";
@@ -140,11 +148,14 @@ it.each([
       annotated ? [attachment, annotation] : [attachment],
       sourceEnvironmentId,
     );
-    pastedPrompt = formatInlineContextReference({
-      kind: annotated ? "preview-annotation" : kind,
-      contextId: remapped.get(annotated ? annotation.contextId : contextId)!,
-      label: annotated ? "Page annotation" : "notes.txt",
-    });
+    pastedPrompt = rewriteImportedContextReferences(
+      formatInlineContextReference({
+        kind: annotated ? "preview-annotation" : kind,
+        contextId: annotated ? annotation.contextId : contextId,
+        label: annotated ? "Page annotation" : "notes.txt",
+      }),
+      remapped,
+    );
     if (edit === "question") pastedPrompt = "Question answer";
     promptRef.current = pastedPrompt;
     store.setPrompt(target, pastedPrompt);
@@ -185,4 +196,56 @@ it.each([
       ? ["notes.txt"]
       : [],
   );
+});
+
+it("keeps a pasted thread the agent can't read as a link to its machine", async () => {
+  const target = DraftId.make("clipboard-threads");
+  const store = useComposerDraftStore.getState();
+  using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+  const thread = (environmentId: string, threadId: string) => ({
+    version: 1 as const,
+    kind: "thread" as const,
+    contextId: ComposerContextId.make(`thread_${threadId}`),
+    label: `Thread ${threadId}`,
+    environmentId: EnvironmentId.make(environmentId),
+    threadId: ThreadId.make(threadId),
+    title: `Thread ${threadId}`,
+  });
+  const unlinked = thread("unlinked-source", "remote");
+  const linked = thread("linked-source", "linked");
+  let importer!: Importer;
+  await using _screen = await render(
+    <Harness
+      input={{
+        environmentId: EnvironmentId.make("clipboard-target"),
+        linkedEnvironments: new Map([[linked.environmentId, "Linked"]]),
+        activeThread: undefined,
+        activeThreadId: null,
+        composerDraftTarget: target,
+        attachmentDraftTarget: target,
+        attachmentTargetKey: target,
+        attachmentTargetKeyRef: { current: target },
+        questionAttachmentTarget: null,
+        pendingUserInputs: [],
+        composerContextRecords: new Map(),
+        composerImages: [],
+        composerFilesRef: { current: [] },
+        pendingThreadImportsRef: { current: new Map() },
+        promptRef: { current: "" },
+        addComposerFilesToDraft: (files) => store.addFiles(target, files),
+      }}
+      ready={(value) => {
+        importer = value;
+      }}
+    />,
+  );
+  let remapped!: ReturnType<Importer["importContextRecords"]>;
+  await act(async () => {
+    remapped = importer.importContextRecords([unlinked, linked], unlinked.environmentId);
+  });
+  expect(Object.fromEntries(remapped)).toEqual({
+    [unlinked.contextId]: { markdown: "[Thread remote](t3-thread://v2/unlinked-source/remote)" },
+    [linked.contextId]: linked.contextId,
+  });
+  expect(store.getComposerDraft(target)?.threadContexts).toEqual([linked]);
 });

@@ -39,14 +39,20 @@ import {
 import { assetEnvironment } from "~/state/assets";
 import { copiedComposerAttachmentFile } from "~/lib/copiedComposerAttachments";
 import { countQuestionAttachments, questionAttachmentDraftId } from "../../questionAttachments";
-import { collectInlineContextIds } from "../../lib/composerContextReferences";
+import {
+  collectInlineContextIds,
+  type ImportedContextReference,
+} from "../../lib/composerContextReferences";
 import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { pendingDraftWork } from "./pendingDraftWork";
 import { randomUUID } from "~/lib/utils";
 import { readPreparedConnection } from "~/state/session";
 import { resolveAssetUrl } from "~/assets/assetUrls";
-import { toKindScopedComposerContextId } from "@t3tools/shared/composerContextReferences";
+import {
+  toKindScopedComposerContextId,
+  unreadableThreadContextLink,
+} from "@t3tools/shared/composerContextReferences";
 import { toastManager } from "../ui/toast";
 import {
   type ComposerDraftContextRecords,
@@ -288,8 +294,8 @@ export function useComposerContextImport(input: {
     records: ReadonlyArray<ComposerContextRecord>,
     sourceEnvironmentId: EnvironmentId | null,
     threadDraftTarget = attachmentDraftTarget,
-  ): ReadonlyMap<string, string> => {
-    const rewritten = new Map<string, string>();
+  ): ReadonlyMap<string, ImportedContextReference> => {
+    const rewritten = new Map<string, ImportedContextReference>();
     const dependentAttachmentLocalIds = new Map<string, string>();
     const skippedDependentAttachmentIds = new Set<string>();
     // Resolve annotations before their dependent screenshot records even if a foreign
@@ -392,12 +398,14 @@ export function useComposerContextImport(input: {
         }
         case "thread": {
           // The agent reads threads on its own server and the machines it links to; a pasted
-          // thread from any other machine is dropped.
+          // thread from any other machine stays a link instead of an attached chip.
           if (
             record.environmentId !== environmentId &&
             !linkedEnvironments.has(record.environmentId)
-          )
+          ) {
+            rewritten.set(record.contextId, { markdown: unreadableThreadContextLink(record) });
             break;
+          }
           addComposerDraftThreadContexts(threadDraftTarget, [record], {
             appendReference: false,
           });
@@ -435,7 +443,7 @@ export function useComposerContextImport(input: {
   };
   const importContextFragment = (
     fragment: ComposerContextClipboardFragment,
-  ): ReadonlyMap<string, string> =>
+  ): ReadonlyMap<string, ImportedContextReference> =>
     importContextRecords(fragment.records, fragment.source.environmentId);
   const importContextFragmentStable = useStableCallback(importContextFragment);
 

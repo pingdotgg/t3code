@@ -103,7 +103,10 @@ import {
   groupUndoByChangeKind,
   markAsClipboardEdit,
 } from "~/composer-undo-grouping";
-import { collectInlineContextIds } from "~/lib/composerContextReferences";
+import {
+  collectInlineContextIds,
+  type ImportedContextReference,
+} from "~/lib/composerContextReferences";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
@@ -153,7 +156,9 @@ export interface ComposerPromptEditorProps {
     | ((contextIds: ReadonlyArray<string>) => string | null)
     | undefined;
   importContextFragment?:
-    | ((fragment: ComposerContextClipboardFragment) => ReadonlyMap<string, string>)
+    | ((
+        fragment: ComposerContextClipboardFragment,
+      ) => ReadonlyMap<string, ImportedContextReference>)
     | undefined;
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;

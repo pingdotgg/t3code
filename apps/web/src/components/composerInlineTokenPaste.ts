@@ -1,15 +1,14 @@
-import { ComposerContextId } from "@t3tools/contracts";
 import type { ComposerContextClipboardFragment } from "@t3tools/contracts";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   decodeComposerContextFragment,
   decodeComposerContextClipboardHtml,
 } from "@t3tools/shared/composerContextClipboard";
+import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
-  collectComposerContextReferences,
-  formatComposerContextReference,
-  replaceComposerContextReferences,
-} from "@t3tools/shared/composerContextReferences";
+  type ImportedContextReference,
+  rewriteImportedContextReferences,
+} from "../lib/composerContextReferences";
 export function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
 ): ComposerContextClipboardFragment | null {
@@ -41,24 +40,11 @@ export function importPastedComposerText(
   clipboardData: Pick<DataTransfer, "getData">,
   importContextFragment?: (
     fragment: ComposerContextClipboardFragment,
-  ) => ReadonlyMap<string, string>,
+  ) => ReadonlyMap<string, ImportedContextReference>,
 ): string {
   const pastedText = clipboardData.getData("text/plain");
   const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
-  const rewrittenIds =
-    fragment && fragment.records.length > 0 ? importContextFragment!(fragment) : null;
-  const text =
-    rewrittenIds && rewrittenIds.size > 0
-      ? replaceComposerContextReferences(pastedText, (occurrence) => {
-          const nextId = rewrittenIds.get(occurrence.contextId);
-          return nextId
-            ? formatComposerContextReference({
-                ...occurrence,
-                contextId: ComposerContextId.make(nextId),
-                kind: occurrence.kind === "element" ? "preview-annotation" : occurrence.kind,
-              })
-            : occurrence.source;
-        })
-      : pastedText;
-  return text;
+  return fragment && fragment.records.length > 0
+    ? rewriteImportedContextReferences(pastedText, importContextFragment!(fragment))
+    : pastedText;
 }

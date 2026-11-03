@@ -27,6 +27,26 @@ export function formatInlineContextReference(reference: ComposerContextReference
   });
 }
 
+/** A pasted reference's new context id, or markdown that replaces the reference outright. */
+export type ImportedContextReference = string | { readonly markdown: string };
+
+export function rewriteImportedContextReferences(
+  text: string,
+  rewritten: ReadonlyMap<string, ImportedContextReference>,
+): string {
+  if (rewritten.size === 0) return text;
+  return replaceComposerContextReferences(text, (occurrence) => {
+    const next = rewritten.get(occurrence.contextId);
+    if (next === undefined) return occurrence.source;
+    if (typeof next !== "string") return next.markdown;
+    return formatInlineContextReference({
+      ...occurrence,
+      contextId: next,
+      kind: occurrence.kind === "element" ? "preview-annotation" : occurrence.kind,
+    });
+  });
+}
+
 export function collectInlineContextIds(prompt: string): string[] {
   return Array.from(
     new Set(collectComposerContextReferences(prompt).map((occurrence) => occurrence.contextId)),
