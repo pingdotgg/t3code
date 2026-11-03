@@ -3,17 +3,15 @@ import type {
   ScopedThreadRef,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import {
-  formatComposerContextReference,
-  threadContextRecord,
-} from "@t3tools/shared/composerContextReferences";
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+import { hostedThreadLink } from "@t3tools/shared/threadLinks";
 
 import { currentChangeRequestTerms } from "./sourceControlClients.ts";
 import { resolveThreadCurrentPullRequestLink } from "./threadPullRequests.ts";
 
 export interface ThreadReferenceCopyTarget {
   readonly kind: "pull-request" | "thread";
-  /** The plain text: a PR URL, or a thread chip's reference link. */
+  /** The plain text: a PR URL, or a link that opens the thread from anywhere. */
   readonly value: string;
   /** What a toast or palette row shows for the copy. */
   readonly description: string;
@@ -24,15 +22,19 @@ export interface ThreadReferenceCopyTarget {
   readonly failureTitle: string;
 }
 
-/** A thread chip pastes into any composer whose agent reads that thread's machine. */
+/**
+ * A link that opens the thread from anywhere, through `hostedAppUrl`, this build's hosted app. It
+ * pastes back as a chip into any composer whose agent reads that thread's machine.
+ */
 export function threadChipCopyTarget(
   threadRef: ScopedThreadRef,
   title: string,
+  hostedAppUrl?: string,
 ): ThreadReferenceCopyTarget {
   const record = threadContextRecord(threadRef, title);
   return {
     kind: "thread",
-    value: formatComposerContextReference(record),
+    value: hostedThreadLink(threadRef, hostedAppUrl),
     description: record.title,
     fragment: { version: 1, source: { environmentId: threadRef.environmentId }, records: [record] },
     clipboardTarget: "thread",
@@ -48,13 +50,15 @@ export function resolveThreadReferenceCopyTarget(input: {
   readonly openPanelPullRequestUrl?: string | null | undefined;
   readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly linkedPullRequestUrl?: string | null;
+  readonly hostedAppUrl?: string;
 }): ThreadReferenceCopyTarget | null {
   if (input.openPanelPullRequestUrl === null) return null;
   const pullRequestUrl =
     input.openPanelPullRequestUrl ??
     resolveThreadCurrentPullRequestLink(input.pullRequests ?? [])?.url ??
     input.linkedPullRequestUrl;
-  if (!pullRequestUrl) return threadChipCopyTarget(input.threadRef, input.title);
+  if (!pullRequestUrl)
+    return threadChipCopyTarget(input.threadRef, input.title, input.hostedAppUrl);
   const { shortLabel, singular } = currentChangeRequestTerms();
   return {
     kind: "pull-request",
