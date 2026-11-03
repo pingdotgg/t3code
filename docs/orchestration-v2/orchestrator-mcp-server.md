@@ -11,8 +11,9 @@ agent can use this endpoint to:
 - create one or more ordinary top-level T3 threads;
 - list a project's threads and incrementally read any thread;
 - rename threads, regenerate titles, and link or unlink pull requests;
-- send or steer follow-up messages; and
-- wait for or interrupt ordinary thread runs.
+- send or steer follow-up messages;
+- wait for or interrupt ordinary thread runs; and
+- schedule recurring work that runs without an active turn.
 
 These are T3 orchestration operations, not provider-native sub-agent APIs.
 Delegated tasks always create a T3 child thread and run. The child receives
@@ -99,8 +100,11 @@ server headers or token.
 ### Cursor Agent SDK V2
 
 Cursor receives the same authenticated HTTP MCP endpoint through the SDK's
-`mcpServers` agent and send options. The adapter passes the authorization header
-to the SDK but projects only redacted option metadata into protocol diagnostics.
+`mcpServers` on `Agent.create` / `Agent.resume` and each `send`. With
+`@cursor/sdk` 1.0.39+, send-level servers replace only the create-time inline
+set; ambient servers from `settingSources` (`project`, `user`, `team`, `mdm`,
+`plugins`) stay available. The adapter passes the authorization header to the
+SDK but projects only redacted option metadata into protocol diagnostics.
 
 ### Grok ACP V2
 
@@ -193,7 +197,12 @@ provider selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
-The server exposes eleven orchestration tools.
+`OrchestratorToolkit` in
+[`toolkits/orchestrator/tools.ts`](../../apps/server/src/mcp/toolkits/orchestrator/tools.ts)
+is the authoritative list of orchestration tools. The sections below cover
+delegation and thread tools. `t3_thread_launch` is documented with them but
+registered by the project toolkit in
+[`toolkits/project/tools.ts`](../../apps/server/src/mcp/toolkits/project/tools.ts).
 
 ### `orchestrator_capabilities`
 
@@ -455,6 +464,22 @@ Without `runId`, it selects the newest interruptible run. A terminal run is
 returned unchanged, and a thread with no active provider turn returns
 `no_active_run`.
 
+### Scheduled tasks
+
+`schedule_task`, `list_scheduled_tasks`, and `delete_scheduled_task` manage
+recurring work in the app scheduler; `schedule_task` with a `scheduledTaskId`
+updates an existing task. A schedule
+runs its prompt on an interval, at a fixed time in the server's local time
+zone, or on each qualifying webhook request, even when no turn is active.
+Without a signature, anyone with the webhook URL can trigger a run.
+Signature checks, filters, and dedupe can skip a webhook request.
+`bindToCurrentThread` defaults to `true` only when the caller has a thread in
+the task's project; otherwise it defaults to `false`. Bound runs post into
+that thread; unbound runs each launch a fresh thread in the task's project.
+Explicit `bindToCurrentThread: true` without a caller thread in that project
+is rejected. Pausing uses `schedule_task` with `scheduledTaskId` and `enabled: false`;
+deletion is permanent.
+
 ## Delegated Task Lifecycle
 
 The MCP server is a command ingress into V2. It does not call provider adapters
@@ -490,8 +515,12 @@ Users rarely watch child threads, so a child question would otherwise go
 unanswered. When a child opens a pending `user_input` request, the parent gets
 a notification message telling it to answer with the pending request tools or
 ask the user. The message says whether the child is blocked or, for a Codex
-async question, still working. If the question is answered or dismissed before
-the notification starts a turn, that queued turn is cancelled. Approvals are not
+async question, still working. If the parent's turn is running and its provider
+can steer without interrupting tools, the notification steers into that turn,
+like a background task's completion. A queued notice would wait behind a
+long-running orchestrator turn that may never end. Otherwise it queues. If the
+question is answered or dismissed before a queued notification starts a turn,
+that queued turn is cancelled. Approvals are not
 routed, because those tools cannot answer them.
 A parent still blocked in a `delegate_task` wait gets the blocking question
 through that wait instead.
