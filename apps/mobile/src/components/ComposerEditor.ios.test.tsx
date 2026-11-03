@@ -1,5 +1,5 @@
 import { RegistryContext } from "@effect/atom-react";
-import { act, useLayoutEffect, type ReactNode } from "react";
+import { act, useLayoutEffect, useRef, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -21,11 +21,18 @@ const native = vi.hoisted(() => ({
   eventCount: 0,
   resetGeneration: 0,
   props: null as NativeProps | null,
+  deliver: null as ((event: NativeEvent) => void) | null,
 }));
 
 function NativeView(props: NativeProps) {
+  const propsRef = useRef(props);
   useLayoutEffect(() => {
+    Object.assign(native, { text: "", eventCount: 0, resetGeneration: 0 });
+  }, []);
+  useLayoutEffect(() => {
+    propsRef.current = props;
     native.props = props;
+    native.deliver = (event) => propsRef.current.onComposerChange({ nativeEvent: event });
   });
   const { controlledDocumentJson } = props;
   useLayoutEffect(() => {
@@ -110,13 +117,13 @@ import { ComposerEditor } from "./ComposerEditor";
 
 const DRAFT_KEY = "environment:thread";
 
-function ThreadComposer() {
-  const draft = useComposerDraft(DRAFT_KEY);
+function ThreadComposer({ draftKey = DRAFT_KEY }: { draftKey?: string }) {
+  const draft = useComposerDraft(draftKey);
   return (
     <ComposerEditor
-      draftKey={DRAFT_KEY}
+      draftKey={draftKey}
       value={draft.text}
-      onChangeText={(text) => setComposerDraftText(DRAFT_KEY, text)}
+      onChangeText={(text) => setComposerDraftText(draftKey, text)}
     />
   );
 }
@@ -148,4 +155,33 @@ it("keeps a sent draft cleared when an autocorrection lands in the same batch as
   await act(async () => emit("n"));
   expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("n");
   expect(native.text).toBe("n");
+});
+
+it("keeps a pending event from the previous native editor out of the selected draft", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const first = "switch-draft:first";
+  const second = "switch-draft:second";
+  setComposerDraftText(first, "Draft A");
+  setComposerDraftText(second, "Draft B");
+  const root = createRoot(document.createElement("div"));
+  await using _root = { [Symbol.asyncDispose]: async () => act(() => root.unmount()) };
+  const renderDraft = (draftKey: string) =>
+    root.render(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <ThreadComposer draftKey={draftKey} />
+      </RegistryContext.Provider>,
+    );
+  await act(async () => renderDraft(first));
+  const deliverPendingEvent = native.deliver!;
+  await act(async () => renderDraft(second));
+  await act(async () =>
+    deliverPendingEvent({
+      value: "Draft A corrected",
+      selection: { start: 17, end: 17 },
+      eventCount: 1,
+      resetGeneration: 0,
+    }),
+  );
+  expect(getComposerDraftSnapshot(second).text).toBe("Draft B");
+  expect(native.text).toBe("Draft B");
 });
