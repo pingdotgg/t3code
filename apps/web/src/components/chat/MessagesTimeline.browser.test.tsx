@@ -806,7 +806,7 @@ function usageLimitEntries(resetAt: string) {
         item: {
           id: TurnItemId.make("usage-limit"),
           threadId,
-          runId: RunId.make("usage-limit-run"),
+          runId: null,
           nodeId: null,
           providerThreadId: null,
           providerTurnId: null,
