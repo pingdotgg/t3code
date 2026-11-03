@@ -2624,7 +2624,7 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live.each([4, 5, 6, 7, 8])(
+  it.live.each([4, 5, 6, 7, 8, 10])(
     "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts and the old file",
     (version) =>
       Effect.gen(function* () {
@@ -2691,7 +2691,7 @@ describe("UsageService", () => {
                 delete file.cs.lastCumulativeUsage;
                 delete file.cs.malformedRecords;
               }
-              if (version === 8 && path === livePath) {
+              if (version >= 8 && path === livePath) {
                 file.r = [];
                 file.mr = 1;
                 file.cs.malformedRecords = 1;
@@ -2723,7 +2723,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v10.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v11.json");
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,
@@ -2748,6 +2748,106 @@ describe("UsageService", () => {
           ),
         );
       }).pipe(Effect.scoped),
+  );
+
+  it.live("re-parses a clean v10 Codex rollout that grew after an interrupted request", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const sessions = NodePath.join(home, "codex", "sessions");
+      const live = NodePath.join(sessions, "live.jsonl");
+      const usage = (input: number, output: number) => ({
+        input_tokens: input,
+        output_tokens: output,
+        total_tokens: input + output,
+      });
+      const lines = (values: readonly unknown[]) =>
+        values.map((value) => `${encodeUnknownJsonString(value)}\n`).join("");
+      const request = (second: number, last: unknown) => ({
+        type: "token_usage_record",
+        timestamp: `2026-08-01T10:00:0${second}Z`,
+        payload: { usage: last },
+      });
+      const tokenCount = (second: number, last: unknown, total: unknown) => ({
+        type: "event_msg",
+        timestamp: `2026-08-01T10:00:0${second}Z`,
+        payload: {
+          type: "token_count",
+          info: { last_token_usage: last, total_token_usage: total },
+        },
+      });
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessions, { recursive: true });
+        await NodeFSP.writeFile(
+          live,
+          lines([
+            { type: "session_meta", payload: { id: "live" } },
+            { type: "turn_context", payload: { turn_id: "turn-1", model: "gpt-6-astra" } },
+            request(1, usage(100, 20)),
+            tokenCount(1, usage(100, 20), usage(100, 20)),
+            // Interrupted after this request finished: no token_count reports it.
+            request(2, usage(150, 10)),
+          ]),
+        );
+      });
+
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const tokens = (summary: UsageSummary) =>
+          summary.buckets.reduce((sum, bucket) => sum + totalTokens(bucket.totals), 0);
+        const first = yield* UsageService.make;
+        assert.strictEqual(tokens(yield* first.readSummary(WINDOW)), 120);
+        yield* first.awaitPersisted;
+
+        yield* Effect.promise(async () => {
+          const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<string, { cs: Record<string, unknown> }>;
+          };
+          // The v10 parser ignored `token_usage_record`, so its clean state held nothing pending.
+          for (const file of Object.values(document.files)) {
+            file.cs = Object.fromEntries(
+              Object.entries(file.cs).filter(([key]) => !key.startsWith("unreported")),
+            );
+          }
+          await NodeFSP.rm(cachePath);
+          await NodeFSP.writeFile(
+            NodePath.join(stateDir, "usage-scan-cache-v10.json"),
+            encodeUnknownJsonString({ ...document, version: 10 }),
+          );
+          await NodeFSP.appendFile(
+            live,
+            lines([
+              { type: "turn_context", payload: { turn_id: "turn-2", model: "gpt-6-astra" } },
+              request(5, usage(200, 30)),
+              tokenCount(5, usage(200, 30), usage(450, 60)),
+            ]),
+          );
+        });
+
+        const upgraded = yield* UsageService.make;
+        const summary = yield* upgraded.readSummary(WINDOW);
+        assert.deepStrictEqual(
+          {
+            tokens: tokens(summary),
+            malformedRecords: summary.sources.find(
+              (source) => source.fingerprint.provider === "codex",
+            )?.malformedRecords,
+          },
+          { tokens: 510, malformedRecords: 0 },
+        );
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cache-v10-interrupted-test",
+            home,
+            settings,
+            ratesDocument: {
+              "gpt-6-astra": { input_cost_per_token: 0, output_cost_per_token: 1 },
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.live("preserves saved tokens, costs and sessions after transcript cleanup and restart", () =>

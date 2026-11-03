@@ -335,6 +335,43 @@ it.effect.each([
   ),
 );
 
+it.effect("names the click target that matched nothing when the server browser times out", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const clientId = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
+      const requests = requestsFrom(yield* broker.connect(makeHost({ clientId })));
+      yield* Stream.runForEach(requests, (request) =>
+        broker.respond({
+          clientId,
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: false,
+          error: {
+            _tag: "PreviewAutomationTimeoutError",
+            message: "No element matches the target.",
+            detail: { reason: 'No element matches ".definitely-no-such-t3-target".' },
+          },
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const error = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "click",
+          input: { selector: ".definitely-no-such-t3-target", timeoutMs: 15_000 },
+        })
+        .pipe(Effect.flip);
+
+      expect(error._tag).toBe("PreviewAutomationTimeoutError");
+      expect(error.message).toBe(
+        'Preview automation click timed out after 15000ms. No element matches ".definitely-no-such-t3-target".',
+      );
+    }),
+  ),
+);
+
 it.effect("distinguishes malformed remote failures", () =>
   Effect.scoped(
     Effect.gen(function* () {
