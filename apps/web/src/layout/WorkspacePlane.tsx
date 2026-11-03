@@ -14,7 +14,7 @@ import { buildThreadRouteParams, type ThreadRouteTarget } from "../threadRoutes"
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { LayoutSurfaceHost } from "./SurfaceHost";
-import { layoutPageKind } from "./pageNavigation";
+import { layoutRoutePage } from "./pageNavigation";
 import { useIndexShowsLayout } from "./useIndexShowsLayout";
 import { useLayoutRouteSync } from "./useLayoutRouteSync";
 import { useDraftSurfaceCleanupOnLayoutClose } from "./useDraftSurfaceCleanupOnLayoutClose";
@@ -45,22 +45,19 @@ export function WorkspacePlane({ children }: { children: ReactNode }) {
   const indexShowsLayout = useIndexShowsLayout(authGateState.status === "hosted-static");
   const layout = useLayoutRouteSync(canonicalTarget, atIndex);
   useDraftSurfaceCleanupOnLayoutClose();
-  const pageKind = layoutPageKind(location.pathname);
-  const panePage = pageKind !== null && location.search.pane === 1;
-  const pagePlaneOpen = pageKind !== null && !panePage;
   const workspaceOpen =
     modalOpen ||
     modalPending ||
-    (!pagePlaneOpen && (threadTarget !== null || panePage || (atIndex && indexShowsLayout)));
+    threadTarget !== null ||
+    layoutRoutePage(location) !== null ||
+    (atIndex && indexShowsLayout);
   const pagePlane = workspaceOpen ? undefined : children;
-  const pagePlaneSplit = pageKind === "pull-requests";
   const host = (
     <LayoutSurfaceHost
       layout={layout}
       active={workspaceOpen}
       background={modalOpen}
       pagePlane={pagePlane}
-      pagePlaneSplit={pagePlaneSplit}
     />
   );
   return (
