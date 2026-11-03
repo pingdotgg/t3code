@@ -238,6 +238,20 @@ it.each([
     richText: true,
   },
   {
+    name: "an explicit non-HTTP URL",
+    plain: "ftp://example.com/file",
+    html: '<a href="https://example.com/other">ftp://example.com/file</a>',
+    expected: "ftp://example.com/file",
+    richText: true,
+  },
+  {
+    name: "a title containing a colon",
+    plain: "Review: update",
+    html: '<a href="https://example.com/review">Review: update</a>',
+    expected: "https://example.com/review",
+    richText: true,
+  },
+  {
     name: "text surrounding a link",
     plain: "Read Example report now",
     html: '<p>Read <a href="https://example.com/report">Example report</a> now</p>',
