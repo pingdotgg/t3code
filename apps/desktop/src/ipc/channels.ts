@@ -122,5 +122,7 @@ export const PREVIEW_RECORDING_INPUT_CHANNEL = "desktop:preview-recording-input"
 
 export const RECEIVE_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:receive-provider-auth-callback";
 export const CANCEL_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:cancel-provider-auth-callback";
+export const OPEN_PENDING_SIGN_IN_CHANNEL = "desktop:open-pending-sign-in";
+export const SETTLE_PENDING_SIGN_IN_CHANNEL = "desktop:settle-pending-sign-in";
 export const TAKE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:take-legacy-local-storage";
 export const COMPLETE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:complete-legacy-local-storage";

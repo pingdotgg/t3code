@@ -15,6 +15,8 @@ import { CopyIcon } from "lucide-react";
 
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
+import { watchProviderSignInLink } from "../../providerSignInLink";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -159,6 +161,50 @@ export function ProviderAuthenticationSection({
     }
   }
 
+  async function startSignIn() {
+    const result = await start({
+      environmentId,
+      input: {
+        instanceId,
+        ...(methodId && auth?.methods?.some((method) => method.id === methodId)
+          ? { methodId }
+          : {}),
+      },
+    });
+    const bridge = window.desktopBridge;
+    if (
+      result._tag !== "Success" ||
+      !result.value.flowId ||
+      provider.driver !== "antigravity" ||
+      usesCredentials ||
+      !bridge
+    ) {
+      return result;
+    }
+    // Antigravity can take about a minute to produce its Google link. On desktop, open the browser
+    // now on a page that continues to Google when the link arrives, even if Settings is closed by
+    // then. Web would block that late tab, so it keeps the Open browser button. The button also
+    // remains if the browser cannot be opened here.
+    const pageId = await bridge.openPendingSignIn().catch(() => null);
+    watchProviderSignInLink({
+      registry: appAtomRegistry,
+      atom: serverEnvironment.providerAuthState(target),
+      flowId: result.value.flowId,
+      open: (link) => {
+        const openDirectly = () => ensureLocalApi().shell.openExternal(link);
+        void (
+          pageId === null
+            ? openDirectly()
+            : bridge.settlePendingSignIn(pageId, link).catch(openDirectly)
+        ).catch(() => undefined);
+      },
+      onEnd: () => {
+        if (pageId !== null) void bridge.settlePendingSignIn(pageId, null).catch(() => undefined);
+      },
+    });
+    return result;
+  }
+
   function updateDraft(name: string, value: string) {
     setDraft({ id: draftId, values: { ...values, [name]: value } });
   }
@@ -281,19 +327,7 @@ export function ProviderAuthenticationSection({
                 size="sm"
                 variant="outline"
                 disabled={disabled || !provider.enabled || !provider.installed || !auth}
-                onClick={() =>
-                  void run(() =>
-                    start({
-                      environmentId,
-                      input: {
-                        instanceId,
-                        ...(methodId && auth?.methods?.some((method) => method.id === methodId)
-                          ? { methodId }
-                          : {}),
-                      },
-                    }),
-                  )
-                }
+                onClick={() => void run(startSignIn)}
               >
                 {signedIn
                   ? "Change account"
