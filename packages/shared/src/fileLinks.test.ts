@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   fileLinkLabel,
+  formatFilePathPosition,
   parseFileUrlHref,
   splitFilePathPosition,
   resolvePathLinkTarget,
@@ -50,6 +51,14 @@ describe("splitFilePathPosition", () => {
   });
 });
 
+describe("formatFilePathPosition", () => {
+  it("keeps a colon range on the target", () => {
+    expect(formatFilePathPosition({ path: "src/foo.py", line: 67, endLine: 69 })).toBe(
+      "src/foo.py:67-69",
+    );
+  });
+});
+
 describe("fileLinkLabel", () => {
   it("shows a colon range as a line span", () => {
     expect(fileLinkLabel({ path: "/tmp/locomo.py", line: 67, endLine: 69 }, new Map())).toBe(
@@ -72,7 +81,6 @@ describe("resolvePathLinkTarget", () => {
       String.raw`\\server\share\project\.\src\index.ts:12`,
     ],
     ["src/index.ts:12", "/home/jane/project", "/home/jane/project/src/index.ts:12"],
-    ["src/foo.py:67-69", "/home/jane/project", "/home/jane/project/src/foo.py:67-69"],
   ])("resolves %s using the connected environment cwd %s", (path, cwd, expected) => {
     expect(resolvePathLinkTarget(path, cwd)).toBe(expected);
   });

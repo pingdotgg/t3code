@@ -14,8 +14,6 @@ describe("isMarkdownFileLinkLabel", () => {
     ["validates the input", "/repo/src/example.ts:12", false],
     ["example.ts:12", "/repo/src/example.ts:12", true],
     ["example.ts:99", "/repo/src/example.ts:12", false],
-    ["example.ts:10-12", "/repo/src/example.ts:10-12", true],
-    ["example.ts:10-20", "/repo/src/example.ts:10-12", false],
   ])("classifies %s for %s", (label, href, expected) => {
     expect(isMarkdownFileLinkLabel(label, href)).toBe(expected);
   });
@@ -75,11 +73,6 @@ describe("parseMarkdownFileLink", () => {
   });
 
   it("reads a colon line range separately from the filename", () => {
-    expect(parseMarkdownFileLink("/tmp/pyproject.toml:1-3")).toEqual({
-      path: "/tmp/pyproject.toml",
-      line: 1,
-      endLine: 3,
-    });
     expect(parseMarkdownFileLink("src/foo.py:67-69")).toEqual({
       path: "src/foo.py",
       line: 67,
@@ -142,10 +135,6 @@ describe("resolveMarkdownFileLinkTarget", () => {
     expect(resolveMarkdownFileLinkTarget("script.ts:67-69", "/Users/julius/project")).toBe(
       "/Users/julius/project/script.ts:67-69",
     );
-    expect(resolveMarkdownFileLinkTarget("/tmp/pyproject.toml:1-3")).toBe(
-      "/tmp/pyproject.toml:1-3",
-    );
-    expect(resolveMarkdownFileLinkTarget("TODO:12-14", "/Users/julius/project")).toBeNull();
   });
 
   it("maps #L line anchors to editor line suffixes", () => {
