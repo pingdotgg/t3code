@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Headers from "effect/http/Headers";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
@@ -83,8 +84,9 @@ const serveB = (descriptor: ExecutionEnvironmentDescriptor) =>
 const makeA = (
   descriptor: ExecutionEnvironmentDescriptor,
   secrets?: typeof ServerSecretStore.layer,
+  http?: Layer.Layer<HttpClient.HttpClient>,
 ) =>
-  layerLinkingEnvironment(descriptor, secrets).pipe(
+  layerLinkingEnvironment(descriptor, secrets, undefined, http).pipe(
     Layer.build,
     Effect.map((context) => ({
       links: Context.get(context, PeerLinks.PeerLinks),
@@ -620,6 +622,110 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
         .pipe(Effect.flip);
       expect(refused.message).toContain("could not reach Box");
       expect(refused.message).toContain("plain http");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("requires explicit origin trust for overlay HTTP", () =>
+  Effect.gen(function* () {
+    const origin = "http://100.118.173.63:3773";
+    for (const url of [
+      origin,
+      "http://100.64.0.1:3773",
+      "http://example.com",
+      "http://mac.example.internal:3773",
+      "http://[fd49:861:22da::1]:3773",
+    ]) {
+      expect((yield* PeerLinks.peerOrigin(url).pipe(Effect.flip)).message).toContain("plain http");
+      expect(yield* PeerLinks.peerOrigin(url, [url])).toBe(url);
+    }
+    for (const entry of [
+      "http://100.118.173.63:3774",
+      "http://100.118.173.63:3773/path",
+      "http://user@100.118.173.63:3773",
+      "*.divizend.internal",
+    ]) {
+      expect((yield* PeerLinks.peerOrigin(origin, [entry]).pipe(Effect.flip)).message).toContain(
+        "plain http",
+      );
+    }
+    expect(yield* PeerLinks.peerOrigin("https://example.com")).toBe("https://example.com");
+    for (const url of [
+      "http://localhost:3773",
+      "http://127.0.0.1:3773",
+      "http://[::1]:3773",
+      "http://peer.tail.ts.net:3773",
+      "http://[fd7a:115c:a1e0::1]:3773",
+    ])
+      expect(yield* PeerLinks.peerOrigin(url)).toBe(url);
+    expect(yield* PeerLinks.peerOrigin("http://PEER.internal:80", ["http://peer.internal/"])).toBe(
+      "http://peer.internal",
+    );
+    expect(
+      (yield* PeerLinks.peerOrigin("http://peer.internal.evil", ["http://peer.internal"]).pipe(
+        Effect.flip,
+      )).reason,
+    ).toBe("unreachable");
+  }),
+);
+
+it.effect("removing HTTP trust blocks cached sessions and skips refused alternate routes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const origin = "http://netbird-peer.example.internal:3773";
+      const fetch = yield* FetchHttpClient.Fetch;
+      const overlayHost = HttpRouter.middleware(
+        (response) =>
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            const host = request.headers["x-test-overlay-host"];
+            return yield* host === undefined
+              ? response
+              : Effect.provideService(
+                  response,
+                  HttpServerRequest.HttpServerRequest,
+                  request.modify({ headers: Headers.set(request.headers, "host", host) }),
+                );
+          }),
+        { global: true },
+      );
+      const b = yield* servePeer(
+        box,
+        Layer.merge(McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers), overlayHost),
+      );
+      // Route the overlay name to B, which answers as that host.
+      const http = Layer.effect(
+        HttpClient.HttpClient,
+        Effect.map(HttpClient.HttpClient, (client) =>
+          HttpClient.transform(client, (response) =>
+            Effect.provideService(response, FetchHttpClient.Fetch, async (input, init) => {
+              const request = new Request(String(input).replace(origin, b.url), init);
+              request.headers.set("x-test-overlay-host", new URL(String(input)).host);
+              return fetch(request);
+            }),
+          ),
+        ),
+      ).pipe(Layer.provide(FetchHttpClient.layer));
+      const a = yield* makeA(laptop, undefined, http);
+      const pairing = yield* b.auth.issuePairingCredential();
+      const link = a.links.link({ url: origin, pairingCode: pairing.credential, access: "auto" });
+      expect((yield* link.pipe(Effect.flip)).message).toContain("plain http");
+      expect(yield* Ref.get(b.bearers)).toEqual([]);
+      yield* a.settings.updateSettings({ trustedPeerHttpOrigins: [origin] });
+      yield* link;
+      yield* probe(a);
+      yield* Ref.set(b.bearers, []);
+      yield* a.settings.updateSettings({ trustedPeerHttpOrigins: [] });
+      expect((yield* probe(a).pipe(Effect.flip)).code).toBe("orchestration_error");
+      expect(yield* Ref.get(b.bearers)).toEqual([]);
+      expect((yield* a.links.list)[0]?.status).toBe("unreachable");
+      yield* a.settings.updateSettings({ trustedPeerHttpOrigins: [origin] });
+      yield* probe(a);
+      expect((yield* Ref.get(b.bearers)).length).toBeGreaterThan(0);
+      yield* a.settings.updateSettings({ trustedPeerHttpOrigins: [] });
+      yield* a.sql`UPDATE peer_environment_links SET urls_json = ${JSON.stringify([origin, b.url])} WHERE environment_id = ${box.environmentId}`;
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      yield* probe(a);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

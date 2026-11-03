@@ -319,6 +319,27 @@ export const BrowserCustomSearchUrl = Schema.String.check(
   Schema.isMaxLength(BROWSER_CUSTOM_SEARCH_URL_MAX_LENGTH),
 );
 
+export function normalizeTrustedPeerHttpOrigin(value: string): string | null {
+  if (!/^http:\/\/[^/?#\\\s*]+\/?$/iu.test(value)) return null;
+  try {
+    const url = new URL(value);
+    return url.username === "" && url.password === "" ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+export const TrustedPeerHttpOrigins = Schema.Array(
+  Schema.String.check(
+    Schema.isMaxLength(2048),
+    Schema.makeFilter(
+      (value) =>
+        normalizeTrustedPeerHttpOrigin(value) !== null ||
+        "Use an exact http://host:port origin without credentials, paths or wildcards.",
+    ),
+  ),
+).check(Schema.isMaxLength(100));
+
 export const LoadBalancingWeights = Schema.Record(
   TrimmedNonEmptyString,
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
@@ -1278,6 +1299,9 @@ export const ServerSettings = Schema.Struct({
    * and tasks on another machine; tasks already running there finish.
    */
   linkedEnvironmentsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  trustedPeerHttpOrigins: TrustedPeerHttpOrigins.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -1658,6 +1682,7 @@ export const ServerSettingsPatch = Schema.Struct({
   hiddenThreadTags: Schema.optionalKey(Schema.Array(Schema.String)),
   hideTaggedThreads: Schema.optionalKey(Schema.Boolean),
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
+  trustedPeerHttpOrigins: Schema.optionalKey(TrustedPeerHttpOrigins),
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({

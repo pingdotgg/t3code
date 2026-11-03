@@ -480,6 +480,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta link another machine vps peer agents work there delegate"],
   },
   {
+    id: "trusted-peer-http-origins",
+    title: "Trusted HTTP origins for linking",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: ["netbird headscale zerotier nebula wireguard private network peer http trust"],
+  },
+  {
     id: "simlock-hosts",
     title: "Simlock device hosts (alpha)",
     to: "/settings/labs",

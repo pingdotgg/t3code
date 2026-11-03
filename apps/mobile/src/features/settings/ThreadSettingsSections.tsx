@@ -1,6 +1,9 @@
+import { useState } from "react";
+import * as Schema from "effect/Schema";
 import { Button } from "../../components/ui/Button";
 import {
   AuthSettingsWriteScope,
+  TrustedPeerHttpOrigins,
   isManagedSettingPath,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
@@ -14,7 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
-import { AppText as Text } from "../../components/ui/AppText";
+import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
 import { useEnvironments } from "../../state/environments";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
@@ -29,6 +32,8 @@ import {
   resolveMobileSettingsTargets,
   uniformMobileSetting,
 } from "./settings-scoped-server";
+
+const isTrustedPeerHttpOrigins = Schema.is(TrustedPeerHttpOrigins);
 
 export function SettingsLabsRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -263,6 +268,26 @@ function BetaSettingsSection() {
           );
         })}
       </SettingsSection>
+      {supported.map((environment) => (
+        <TrustedPeerOriginsField
+          key={
+            environment.environmentId +
+            JSON.stringify(environment.serverConfig?.settings.trustedPeerHttpOrigins)
+          }
+          label={environment.label}
+          origins={environment.serverConfig?.settings.trustedPeerHttpOrigins ?? []}
+          disabled={
+            !writable.has(environment.environmentId) ||
+            isManagedSettingPath(environment.serverConfig?.managedPolicy, "trustedPeerHttpOrigins")
+          }
+          onSave={(trustedPeerHttpOrigins) =>
+            void updateSettings({
+              environmentId: environment.environmentId,
+              input: { patch: { trustedPeerHttpOrigins } },
+            })
+          }
+        />
+      ))}
       <Text className="px-2 text-sm text-foreground-muted">
         Let agents on a machine work on your other machines, and theirs on it. Turn it on for each
         machine. While it is off, nothing new starts over a link; tasks already running finish.
@@ -292,5 +317,53 @@ function LegacySettingsSection() {
         control; otherwise every task runs in Build mode.
       </Text>
     </View>
+  );
+}
+
+function TrustedPeerOriginsField(props: {
+  readonly label: string;
+  readonly origins: readonly string[];
+  readonly disabled: boolean;
+  readonly onSave: (origins: readonly string[]) => void;
+}) {
+  const saved = props.origins.join("\n");
+  const [draft, setDraft] = useState(saved);
+  const origins = draft
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const valid = isTrustedPeerHttpOrigins(origins);
+  return (
+    <SettingsSection title={"Trusted HTTP origins · " + props.label}>
+      <View className="gap-3 px-4 py-3">
+        <Text className="text-sm text-foreground-muted">
+          HTTP sends pairing codes and access tokens without TLS. Only trust an origin when you
+          control its DNS and routing and guarantee an encrypted private path. T3 does not verify
+          that encryption. Removing an origin blocks future calls through it; running calls may
+          finish. Revoke the link to invalidate its token.
+        </Text>
+        <AppTextInput
+          accessibilityLabel={"Trusted HTTP origins for " + props.label}
+          value={draft}
+          onChangeText={setDraft}
+          editable={!props.disabled}
+          multiline
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="http://peer.example.internal:3773"
+          className="min-h-24 rounded-xl px-3 py-2 text-base text-foreground"
+        />
+        <Text className="text-sm text-foreground-muted">
+          {valid
+            ? "One exact HTTP origin per line. Clear all lines to remove trust."
+            : "Enter exact http://host:port origins, without credentials, paths or wildcards (up to 100)."}
+        </Text>
+        <Button
+          label="Save trusted origins"
+          disabled={props.disabled || !valid || draft === saved}
+          onPress={() => props.onSave(origins)}
+        />
+      </View>
+    </SettingsSection>
   );
 }

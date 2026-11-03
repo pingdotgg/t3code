@@ -5,7 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import { filterSharedServerPatch } from "./sharedSettings.ts";
+import { filterSharedServerPatch, splitSharedServerPatch } from "./sharedSettings.ts";
 
 describe("filterSharedServerPatch", () => {
   it("holds the restart preference until the target's config loads", () => {
@@ -79,4 +79,9 @@ describe("filterSharedServerPatch", () => {
       );
     },
   );
+});
+
+it("keeps HTTP origin trust on the initiating environment", () => {
+  const patch = { trustedPeerHttpOrigins: ["http://peer.internal:3773"] };
+  expect(splitSharedServerPatch(patch)).toEqual({ sharedPatch: {}, localPatch: patch });
 });

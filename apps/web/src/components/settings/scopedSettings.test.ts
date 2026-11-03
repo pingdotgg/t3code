@@ -460,6 +460,11 @@ describe("scoped settings writes", () => {
 
   it("refuses environment-wide keys at project scope", () => {
     expect(
+      planScopedSettingsPatch(project, environments, {
+        trustedPeerHttpOrigins: ["http://peer.internal:3773"],
+      }).serverWrites,
+    ).toEqual([]);
+    expect(
       planScopedSettingsPatch(project, environments, { enableProviderUpdateChecks: false }),
     ).toMatchObject({
       serverWrites: [],

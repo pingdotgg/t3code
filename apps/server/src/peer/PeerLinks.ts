@@ -6,6 +6,7 @@ import {
   EnvironmentId,
   type ExecutionEnvironmentCapabilities,
   MCP_PEER_LINK_SOFTWARE_ID,
+  normalizeTrustedPeerHttpOrigin,
   type PeerLink,
   type PeerLinkCreateInput,
   PeerLinkError,
@@ -137,9 +138,9 @@ const failStorage = (cause: unknown) =>
 /**
  * The base URL a peer is reached at, normalised to its origin. The pairing
  * code and then the link's token travel to it, so plain http is accepted only
- * where the network already encrypts: this machine, or a Tailscale address.
+ * on loopback, Tailscale, or an origin whose transport the operator trusts.
  */
-const peerOrigin = (url: string) => {
+export const peerOrigin = (url: string, trustedOrigins: readonly string[] = []) => {
   const parsed = URL.parse(url);
   if (parsed === null || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
     return Effect.fail(
@@ -152,12 +153,13 @@ const peerOrigin = (url: string) => {
   if (
     parsed.protocol === "http:" &&
     !isLocalLoopbackHost(parsed.hostname) &&
-    !isTailnetHost(parsed.hostname)
+    !isTailnetHost(parsed.hostname) &&
+    !trustedOrigins.some((entry) => normalizeTrustedPeerHttpOrigin(entry) === parsed.origin)
   ) {
     return Effect.fail(
       new PeerLinkError({
         reason: "unreachable",
-        message: `${url} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
+        message: `${url} is plain http, which would send the link's credentials without TLS. Use its https or Tailscale address, or explicitly trust this HTTP origin in Settings → Labs on the linking machine.`,
       }),
     );
   }
@@ -176,6 +178,11 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const checkedOrigin = (url: string) =>
+    serverSettings.getSettings.pipe(
+      Effect.catch(failStorage),
+      Effect.flatMap((settings) => peerOrigin(url, settings.trustedPeerHttpOrigins)),
+    );
   const enabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -204,6 +211,12 @@ const make = Effect.gen(function* () {
       Effect.flatMap((client) => client.metadata.descriptor()),
       Effect.timeout(probeTimeout(origin)),
       Effect.option,
+    );
+
+  const describeAllowed = (url: string) =>
+    checkedOrigin(url).pipe(
+      Effect.flatMap(describe),
+      Effect.orElseSucceed(() => Option.none()),
     );
 
   const toLink = Effect.fn("PeerLinks.toLink")(function* (row: PeerLinkRow) {
@@ -365,7 +378,7 @@ const make = Effect.gen(function* () {
       urls,
       (url) =>
         Effect.gen(function* () {
-          const origin = yield* peerOrigin(url);
+          const origin = yield* checkedOrigin(url);
           return { origin, descriptor: yield* describe(origin) };
         }).pipe(Effect.result),
       { concurrency: "unbounded" },
@@ -397,7 +410,7 @@ const make = Effect.gen(function* () {
 
   /** The peer at `url`, with every address checked for credentials first. */
   const answeringAt = Effect.fn("PeerLinks.answeringAt")(function* (urls: ReadonlyArray<string>) {
-    const origins = yield* Effect.forEach(urls, peerOrigin);
+    const origins = yield* Effect.forEach(urls, checkedOrigin);
     const primary = origins[0]!;
     const descriptor = yield* describe(primary);
     if (Option.isNone(descriptor)) {
@@ -490,7 +503,7 @@ const make = Effect.gen(function* () {
   });
 
   const describeUrl: PeerLinks["Service"]["describe"] = (url) =>
-    peerOrigin(url).pipe(
+    checkedOrigin(url).pipe(
       Effect.flatMap(describe),
       Effect.map(Option.map((peer) => ({ environmentId: peer.environmentId, label: peer.label }))),
       Effect.orElseSucceed(() => Option.none()),
@@ -500,7 +513,7 @@ const make = Effect.gen(function* () {
     DateTime.isLessThanOrEqualTo(link.expiresAt, now)
       ? Effect.succeed<PeerLinkStatus>("expired")
       : Effect.findFirst(link.urls, (url) =>
-          describe(url).pipe(
+          describeAllowed(url).pipe(
             Effect.map(
               (found) => Option.isSome(found) && found.value.environmentId === link.environmentId,
             ),
@@ -567,11 +580,11 @@ const make = Effect.gen(function* () {
           message: `The link to ${link.label} lost its credential. Link it again.`,
         });
       }
-      // The token goes only to an address that proves it is this peer, so a
-      // reused LAN address or a moved hostname never receives it.
+      // The token goes only to a permitted address that proves it is this peer, so a reused
+      // LAN address, a moved hostname or an origin no longer trusted never receives it.
       let fenced = true;
       const url = yield* Effect.findFirst(link.urls, (candidate) =>
-        describe(candidate).pipe(
+        describeAllowed(candidate).pipe(
           Effect.map((found) => {
             if (Option.isNone(found) || found.value.environmentId !== environmentId) return false;
             fenced = linkLimitsHold(found.value);

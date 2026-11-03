@@ -1,11 +1,14 @@
 import { useAuth } from "@clerk/react";
+import { useState } from "react";
+import * as Schema from "effect/Schema";
 import { Link } from "@tanstack/react-router";
-import { managedCapabilityDenial } from "@t3tools/contracts";
+import { managedCapabilityDenial, TrustedPeerHttpOrigins } from "@t3tools/contracts";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -13,6 +16,8 @@ import { LegacyFeaturesSection } from "./SettingsPanels";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
+
+const isTrustedPeerHttpOrigins = Schema.is(TrustedPeerHttpOrigins);
 
 /** Features still settling in, and legacy behavior kept for people who rely on it. */
 export function LabsSettingsPanel() {
@@ -24,6 +29,7 @@ export function LabsSettingsPanel() {
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
+        <TrustedPeerOriginsRow />
         <SimlockHostsRow />
       </SettingsSection>
       <LegacyFeaturesSection />
@@ -161,6 +167,69 @@ function LinkedEnvironmentsRow() {
         />
       }
     />
+  );
+}
+
+function TrustedPeerOriginsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const context = useOptionalSettingsScope();
+  const value = settings.trustedPeerHttpOrigins.join("\n");
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("trusted-peer-http-origins")}
+      settingKeys={["trustedPeerHttpOrigins"]}
+      managed={
+        context?.scope.kind === "environment"
+          ? undefined
+          : "Select one machine to change its trusted HTTP origins."
+      }
+      description="HTTP sends pairing codes and access tokens without TLS. Only trust an origin when you control its DNS and routing and guarantee an encrypted private path. T3 does not verify that encryption. Removing an origin blocks future calls through it; running calls may finish. Revoke the link to invalidate its token."
+      control={
+        <TrustedPeerOriginsEditor
+          key={context?.target?.environmentId + value}
+          value={value}
+          onSave={(trustedPeerHttpOrigins) => updateSettings({ trustedPeerHttpOrigins })}
+        />
+      }
+    />
+  );
+}
+
+function TrustedPeerOriginsEditor({
+  value,
+  onSave,
+}: {
+  readonly value: string;
+  readonly onSave: (origins: readonly string[]) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const origins = draft
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const valid = isTrustedPeerHttpOrigins(origins);
+  return (
+    <div className="flex w-full flex-col gap-2 sm:w-80">
+      <Textarea
+        aria-label="Trusted HTTP origins for linking"
+        aria-invalid={!valid}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        placeholder="http://peer.example.internal:3773"
+        rows={3}
+        spellCheck={false}
+      />
+      <p className="text-xs text-muted-foreground">
+        {valid
+          ? "One exact HTTP origin per line. Clear all lines to remove trust."
+          : "Enter exact http://host:port origins, without credentials, paths or wildcards (up to 100)."}
+      </p>
+      <Button disabled={!valid || draft === value} onClick={() => onSave(origins)}>
+        Save trusted origins
+      </Button>
+    </div>
   );
 }
 

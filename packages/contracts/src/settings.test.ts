@@ -504,3 +504,29 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
 });
+
+it("validates exact HTTP trust origins and defaults to no exceptions", () => {
+  expect(decodeServerSettings({}).trustedPeerHttpOrigins).toEqual([]);
+  const trustedPeerHttpOrigins = [
+    "http://peer.example.internal:3773",
+    "http://100.118.1.2:3773/",
+    "http://[fd49:861:22da::1]:3773",
+  ];
+  expect(decodeServerSettingsPatch({ trustedPeerHttpOrigins }).trustedPeerHttpOrigins).toEqual(
+    trustedPeerHttpOrigins,
+  );
+  for (const entry of [
+    "https://peer.internal",
+    "http://*.internal",
+    "100.118.0.0/16",
+    "http://peer.internal/path",
+    "http://user@peer.internal",
+    "http://peer.internal?",
+    "http://peer.internal#",
+    "http://peer.internal/../",
+    "http://peer.internal\\evil",
+    "http://peer.internal ",
+  ]) {
+    expect(() => decodeServerSettingsPatch({ trustedPeerHttpOrigins: [entry] })).toThrow();
+  }
+});

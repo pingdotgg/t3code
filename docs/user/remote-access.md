@@ -362,6 +362,22 @@ ends, as for any delegated task. It keeps following the task across restarts.
 If the other machine revokes the link, or the link is removed here, the task
 fails with that reason.
 
+### Link over another encrypted network
+
+A link sends its pairing code and then its token to the other machine, so it
+refuses a plain `http` address unless that address is on this machine or on
+Tailscale. If both machines are on another encrypted network, such as NetBird,
+Headscale, ZeroTier, Nebula or WireGuard, you can trust the other machine's exact
+address. In **Settings → Labs**, select the machine you link from and add the
+address to **Trusted HTTP origins for linking**, one per line, such as
+`http://peer.example.internal:3773`. It applies only to that machine.
+
+Add an address only if you know its traffic stays on that encrypted network. T3
+Code can't check this, and a private or `100.x` address alone doesn't show it.
+A name that resolves only while the network is connected fails safely when it
+is down; a numeric address may route elsewhere. Removing an address stops the
+link from using it. Revoke the link on the other machine to end its token.
+
 ## Manage or revoke access
 
 On the host, **Settings → Sharing & access** lets authorized administrators create
