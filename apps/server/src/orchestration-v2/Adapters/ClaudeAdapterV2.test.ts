@@ -16924,6 +16924,79 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("shows a workflow member's tool as stopped when Stop cancels the workflow", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWorkflowHarness;
+        const transcriptPath = NodePath.join(harness.transcriptDir, "agent-a1.jsonl");
+        NodeFS.writeFileSync(
+          transcriptPath,
+          memberAssistantLine("line-bash", "msg_a1", [
+            { type: "tool_use", id: "toolu_a1_ping", name: "Bash", input: { command: "ping" } },
+          ]),
+        );
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-workflow-member-stopped"),
+            text: "Run the alpha workflow.",
+            attachments: [],
+          }),
+        );
+        yield* launchWorkflow({ harness, snapshotUuid: "00000000-0000-4000-8000-000000001375" });
+        const threadId = workflowMemberEvents(harness.events, 1)[0]?.subagent.childThreadId;
+        const errorLine = (uuid: string, toolUseId: string, output: string, denial?: object) =>
+          transcriptLine({
+            type: "user",
+            uuid,
+            message: {
+              role: "user",
+              content: [
+                { tool_use_id: toolUseId, type: "tool_result", content: output, is_error: true },
+              ],
+            },
+            ...denial,
+          });
+        NodeFS.appendFileSync(
+          transcriptPath,
+          errorLine("line-ping-failed", "toolu_a1_ping", "Exit code 1") +
+            memberAssistantLine("line-sleep", "msg_a1_sleep", [
+              { type: "tool_use", id: "toolu_a1_sleep", name: "Bash", input: { command: "sleep" } },
+            ]) +
+            errorLine("line-sleep-stopped", "toolu_a1_sleep", "Rejected", {
+              toolUseResult: "User rejected tool use",
+              toolDenialKind: "user-rejected",
+            }),
+        );
+        yield* harness.offerAndWait(
+          workflowNotification({ uuid: "00000000-0000-4000-8000-000000001376", status: "stopped" }),
+        );
+        assert.equal(workflowMemberEvents(harness.events, 1).at(-1)?.subagent.status, "cancelled");
+        assert.deepEqual(latestMemberThreadItems(harness.events, threadId).map(describeItem), [
+          "user_message",
+          "command failed: Exit code 1",
+          "command interrupted: Rejected",
+        ]);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000001377", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("reads a settled workflow member's transcript to its end past the read cap", () =>
     Effect.scoped(
       Effect.gen(function* () {
