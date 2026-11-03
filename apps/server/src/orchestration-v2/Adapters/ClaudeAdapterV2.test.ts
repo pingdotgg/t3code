@@ -9354,15 +9354,41 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
-        acknowledge = harness.offerAndWait(
-          makeResultFrame({
-            uuid: "00000000-0000-4000-8000-000000000620",
-            result: "",
-            subtype: "error_during_execution",
-            errors: ["Error: Request was aborted."],
-            terminalReason: "aborted_streaming",
-          }),
-        );
+        // Real Claude answers Stop with an error result for the running tool, then the result.
+        acknowledge = harness
+          .offerAndWait(
+            claudeSdkFrame({
+              type: "user",
+              uuid: "00000000-0000-4000-8000-000000000619",
+              session_id: WAKE_NATIVE_SESSION,
+              parent_tool_use_id: null,
+              message: {
+                role: "user",
+                content: [
+                  {
+                    type: "tool_result",
+                    tool_use_id: "tool-running-bash",
+                    is_error: true,
+                    content: "The user doesn't want to proceed with this tool use.",
+                  },
+                ],
+              },
+              tool_result_meta: [{ id: "tool-running-bash", non_execution_kind: "user-rejected" }],
+            }),
+          )
+          .pipe(
+            Effect.andThen(
+              harness.offerAndWait(
+                makeResultFrame({
+                  uuid: "00000000-0000-4000-8000-000000000620",
+                  result: "",
+                  subtype: "error_during_execution",
+                  errors: ["Error: Request was aborted."],
+                  terminalReason: "aborted_tools",
+                }),
+              ),
+            ),
+          );
         yield* harness.until(() =>
           harness.events.some(
             (event) =>
@@ -9375,6 +9401,31 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         if (active?.type !== "provider_turn.updated")
           return yield* Effect.die("Missing running native turn");
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "assistant",
+            uuid: "00000000-0000-4000-8000-000000000618",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              id: "msg_running_bash",
+              model: "claude-sonnet-4-6",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "tool-running-bash",
+                  name: "Bash",
+                  input: { command: "sleep 60" },
+                },
+              ],
+              stop_reason: "tool_use",
+              stop_sequence: null,
+              usage: { input_tokens: 1, output_tokens: 1 },
+            },
+          }),
+        );
         yield* harness.runtime.interruptTurn({
           providerThread: harness.providerThread,
           providerTurnId: active.providerTurn.id,
@@ -9383,6 +9434,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
         assert.equal(closes, 1);
         assert.lengthOf(harness.terminalEvents(), 1);
+        const stoppedTool = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "tool-running-bash",
+        );
+        assert.equal(
+          stoppedTool?.type === "turn_item.updated" ? stoppedTool.turnItem.status : undefined,
+          "interrupted",
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
