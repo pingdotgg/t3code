@@ -1,13 +1,14 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { ManagedPolicyLimits } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
-
 import type * as Electron from "electron";
 
 const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
@@ -22,15 +23,18 @@ vi.mock("electron", () => ({
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
-import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as IpcChannels from "../channels.ts";
+import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   getLocalEnvironmentBootstraps,
-  getWindowFullscreenState,
-  pasteAsText,
+  installRelayTelemetryEnabled,
   pickProjectFavicon,
   probeRemoteEditors,
+  readMedia,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -86,23 +90,6 @@ const bootstrapsLayer = (instances: ReadonlyArray<DesktopBackendManager.DesktopB
   Layer.merge(DesktopBackendPool.layerTest([...instances]), backendConfigurationLayer);
 
 describe("getLocalEnvironmentBootstraps", () => {
-  it.effect("publishes the concrete running distro without replacing the stable instance id", () =>
-    Effect.gen(function* () {
-      const result = yield* getLocalEnvironmentBootstraps.handler();
-
-      assert.deepEqual(result, [
-        {
-          id: "wsl:default",
-          label: "WSL (Ubuntu)",
-          runningDistro: "Ubuntu",
-          httpBaseUrl: "http://127.0.0.1:3774/",
-          wsBaseUrl: "ws://127.0.0.1:3774/",
-          bootstrapToken: "bootstrap-token",
-        },
-      ]);
-    }).pipe(Effect.provide(bootstrapsLayer([defaultWslInstance]))),
-  );
-
   it.effect("hands out the current window's token to a backend launched with the secret", () =>
     Effect.gen(function* () {
       const result = yield* getLocalEnvironmentBootstraps.handler();
@@ -197,63 +184,103 @@ describe("getLocalEnvironmentBootstraps", () => {
   });
 });
 
-describe("getWindowFullscreenState", () => {
-  it.effect("reads the current native window state", () => {
-    const window = { isFullScreen: () => true } as Electron.BrowserWindow;
-
-    return Effect.gen(function* () {
-      assert.isTrue(yield* getWindowFullscreenState.handler());
-    }).pipe(
-      Effect.provide(
-        Layer.mock(ElectronWindow.ElectronWindow)({
-          currentMainOrFirst: Effect.succeedSome(window),
-        }),
-      ),
-    );
-  });
-});
-
-describe("pasteAsText", () => {
-  it.effect(
-    "pastes into the focused guest only after the main renderer acknowledges the menu action",
-    () => {
-      const paste = vi.fn();
-      const mainPaste = vi.fn();
-      const window = {
-        webContents: { id: 42, paste: mainPaste },
-        isDestroyed: () => false,
-      } as unknown as Electron.BrowserWindow;
-      focusedWebContents.mockReturnValue({ paste, isDestroyed: () => false });
-      ownerWindow.mockReturnValue(window);
-
-      return Effect.gen(function* () {
-        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
-        assert.equal(paste.mock.calls.length, 1);
-        assert.equal(mainPaste.mock.calls.length, 0);
-
-        yield* pasteAsText.handler(undefined, { sender: { id: 99 } });
-        assert.equal(paste.mock.calls.length, 1);
-        ownerWindow.mockReturnValue({}); // A focused PiP/other BrowserWindow.
-        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
-        assert.equal(paste.mock.calls.length, 1);
-        ownerWindow.mockReturnValue(null); // Detached contents.
-        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
-        assert.equal(paste.mock.calls.length, 1);
-        ownerWindow.mockReturnValue(window);
-        focusedWebContents.mockReturnValue({ paste, isDestroyed: () => true });
-        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
-        assert.equal(paste.mock.calls.length, 1);
-        focusedWebContents.mockReturnValue(null);
-        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
-        assert.equal(paste.mock.calls.length, 1);
-      }).pipe(
+describe("installRelayTelemetryEnabled", () => {
+  // The renderer reads this over sync IPC, so the answer must not wait on the filesystem.
+  const relayTelemetryEnabled = (
+    env: NodeJS.ProcessEnv,
+    policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0],
+  ) =>
+    Effect.gen(function* () {
+      const listeners = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
+      const ipcMain: DesktopIpc.DesktopIpcMain = {
+        removeHandler: () => undefined,
+        handle: () => undefined,
+        removeAllListeners: (channel) => void listeners.delete(channel),
+        on: (channel, listener) => void listeners.set(channel, listener),
+      };
+      yield* installRelayTelemetryEnabled().pipe(
+        Effect.provideService(HostProcess.Environment, env),
         Effect.provide(
-          Layer.mock(ElectronWindow.ElectronWindow)({
-            main: Effect.succeedSome(window),
-          }),
+          Layer.mergeAll(DesktopIpc.layer(ipcMain), DesktopManagedPolicy.layerTest(policy)),
         ),
       );
-    },
+      const event = { returnValue: undefined as unknown };
+      listeners.get(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL)?.(event as never);
+      return event.returnValue;
+    }).pipe(Effect.scoped);
+
+  it.effect("reads the desktop host opt-out before returning the renderer policy", () =>
+    Effect.gen(function* () {
+      assert.isFalse(yield* relayTelemetryEnabled({ T3CODE_TELEMETRY_ENABLED: "false" }));
+      assert.isTrue(yield* relayTelemetryEnabled({}));
+    }),
+  );
+
+  it.effect("turns relay tracing off when the managed policy turns telemetry off", () =>
+    Effect.gen(function* () {
+      const policy = (limits: ManagedPolicyLimits) => ({
+        schemaVersion: 1 as const,
+        organization: "Example Corp",
+        limits,
+      });
+      assert.isFalse(yield* relayTelemetryEnabled({}, policy({ telemetry: false })));
+      assert.isTrue(yield* relayTelemetryEnabled({}, policy({ webhookTasks: false })));
+      // A policy that cannot be read fails closed.
+      assert.isFalse(
+        yield* relayTelemetryEnabled(
+          {},
+          new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" }),
+        ),
+      );
+    }),
+  );
+});
+
+describe("readMedia", () => {
+  it.effect("reads http(s) media only for the main window", () =>
+    Effect.gen(function* () {
+      const mib = new Uint8Array(1024 * 1024);
+      const fetch = vi.fn(async (url: string) => {
+        if (url.endsWith("/missing.png")) return new Response("Not Found", { status: 404 });
+        if (url.endsWith("/small.png")) return new Response(new Uint8Array([1, 2]));
+        let sent = 0;
+        // 257 MiB from one reused chunk: over the cap without allocating it.
+        const huge = new ReadableStream<Uint8Array>({
+          pull: (controller) => (sent++ < 257 ? controller.enqueue(mib) : controller.close()),
+        });
+        return new Response(huge);
+      });
+      const main = {
+        webContents: { id: 1, session: { fetch } },
+      } as unknown as Electron.BrowserWindow;
+      const read = (url: string, senderId: number) =>
+        readMedia
+          .handler(url, { sender: { id: senderId } })
+          .pipe(
+            Effect.provide(
+              Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(main) }),
+            ),
+          );
+
+      assert.strictEqual(yield* read("https://example.com/a.png", 2), null);
+      assert.strictEqual(yield* read("file:///etc/passwd", 1), null);
+      assert.strictEqual(fetch.mock.calls.length, 0);
+      assert.deepEqual(yield* read("https://example.com/small.png", 1), {
+        status: 200,
+        mimeType: "",
+        data: Buffer.from([1, 2]),
+      });
+      assert.deepEqual(yield* read("https://example.com/missing.png", 1), {
+        status: 404,
+        mimeType: "text/plain;charset=UTF-8",
+        data: new Uint8Array(),
+      });
+      assert.deepEqual(yield* read("https://example.com/huge.mp4", 1), {
+        status: 413,
+        mimeType: "",
+        data: new Uint8Array(),
+      });
+    }),
   );
 });
 
@@ -287,7 +314,22 @@ describe("pickProjectFavicon", () => {
             filters: [
               {
                 name: "Images",
-                extensions: ["avif", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp", "icns"],
+                extensions: [
+                  "avif",
+                  "bmp",
+                  "gif",
+                  "ico",
+                  "heic",
+                  "heif",
+                  "jpeg",
+                  "jpg",
+                  "png",
+                  "svg",
+                  "tif",
+                  "tiff",
+                  "webp",
+                  "icns",
+                ],
               },
             ],
           },

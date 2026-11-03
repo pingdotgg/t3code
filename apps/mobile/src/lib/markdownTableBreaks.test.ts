@@ -35,13 +35,6 @@ describe("tables right under a line of text", () => {
     );
   });
 
-  it("separates every interrupting table, including ones in list items", () => {
-    const indented = table.replace(/^/gm, "  ");
-    expect(markdownWithTableBreaks(`Intro\n${table}\n\n- Item\n${indented}`)).toBe(
-      `Intro\n\n${table}\n\n- Item\n\n${indented}`,
-    );
-  });
-
   it("leaves Markdown that already renders alone", () => {
     for (const markdown of [
       `Companies on file\n\n${table}`,

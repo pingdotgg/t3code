@@ -1,6 +1,32 @@
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 import * as NodeURL from "node:url";
+import { remoteCacheUrl } from "./infra/task-cache/src/remoteCache.ts";
+import { cachedTestTasks } from "./scripts/lib/cached-tests.ts";
+
+const TEST_EXCLUDE = [
+  "**/.repos/**",
+  "**/.t3/**",
+  "**/node_modules/**",
+  "**/dist/**",
+  "**/dist-electron/**",
+  "**/.{idea,git,cache,output,temp}/**",
+];
+
+// Directories whose tests belong to a package's own test config. desktop also
+// owns the kde-snap-shot tests through its `include`.
+const TEST_CONFIG_PACKAGES = [
+  "apps/desktop",
+  "apps/mobile",
+  "apps/server",
+  "apps/web",
+  "packages/client-runtime",
+];
+
+// `vp test run <file>` from the repo root hands each file to its package's
+// config. Packages that borrow this config (`--config ../../vite.config.ts`) run
+// from their own directory, as CI does, so they keep one plain project.
+const isRepoRootTestRun = process.cwd() === import.meta.dirname;
 
 const RESTRICTED_IMPORT_PATHS = [
   {
@@ -12,6 +38,12 @@ const RESTRICTED_IMPORT_PATHS = [
     name: "@pierre/diffs/react",
     importNames: ["CodeView"],
     message: "Use StyledDiffCodeView so web diff surfaces share styling and virtualized geometry.",
+  },
+  {
+    name: "react-native-screens",
+    importNames: ["ScrollViewMarker"],
+    message:
+      "Use NativeScrollViewMarker or NativeScrollView (src/native/NativeScrollViewMarker.tsx): they carry the header's scroll-edge blur under the Duo's vertical bar.",
   },
 ];
 
@@ -46,7 +78,18 @@ const RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS = {
     "Pick a glyph by meaning from PullRequestGlyph in apps/web/src/components/pullRequest/pullRequestIcons.tsx so every surface draws the same pull request the same way.",
 };
 
+// Vite+ supports remote configuration before its published types include it.
+const cacheUrl = remoteCacheUrl(import.meta.dirname);
+const taskCacheConfig = {
+  scripts: false,
+  ...(cacheUrl ? { remote: { url: cacheUrl } } : {}),
+};
+
 export default defineConfig({
+  run: {
+    cache: taskCacheConfig,
+    tasks: cachedTestTasks(process.env.T3_CACHED_TESTS),
+  },
   resolve: {
     alias: {
       "~": NodeURL.fileURLToPath(new URL("./apps/web/src", import.meta.url)),
@@ -54,30 +97,69 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    exclude: [
-      "**/.repos/**",
-      "**/.t3/**",
-      "**/node_modules/**",
-      "**/dist/**",
-      "**/dist-electron/**",
-      "**/.{idea,git,cache,output,temp}/**",
-    ],
+    // Fixture subprocesses must not inherit the outer task runner’s cache policy.
+    env: { VP_REMOTE_CACHE: "off", VP_REMOTE_CACHE_URL: "" },
+    exclude: TEST_EXCLUDE,
     hookTimeout: 60_000,
     testTimeout: 60_000,
+    allowOnly: !process.env.CI,
+    // Flaky tests are fixed, not retried.
+    retry: 0,
+    fakeTimers: {
+      toFake: [
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        "setImmediate",
+        "clearImmediate",
+        "Date",
+        "performance",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        "requestIdleCallback",
+        "cancelIdleCallback",
+      ],
+    },
     setupFiles: [
       NodeURL.fileURLToPath(
         new URL("./packages/shared/src/testing/longTempDir.ts", import.meta.url),
       ),
+      NodeURL.fileURLToPath(
+        new URL("./packages/shared/src/testing/providerEnv.ts", import.meta.url),
+      ),
     ],
+    ...(isRepoRootTestRun
+      ? {
+          projects: [
+            ...TEST_CONFIG_PACKAGES,
+            {
+              extends: true,
+              test: {
+                name: "root",
+                exclude: [
+                  ...TEST_EXCLUDE,
+                  ...TEST_CONFIG_PACKAGES.map((dir) => `${dir}/**`),
+                  "native/kde-snap-shot/**",
+                ],
+              },
+            },
+          ],
+        }
+      : {}),
   },
   staged: {
-    "*": "vp fmt --no-error-on-unmatched-pattern",
+    // In order, so lint reads the formatted file. CI lint failures cost a full round trip.
+    "*": ["vp fmt --no-error-on-unmatched-pattern", "vp lint --no-error-on-unmatched-pattern"],
+    // knip checks the whole repo, so it takes no file list. Any code or manifest change can leave
+    // a file, export, or dependency unused.
+    "{*.{js,jsx,ts,tsx,mjs,cjs,mts,cts},package.json,knip.jsonc}": () => "vp run knip:check",
   },
   fmt: {
     ignorePatterns: [
       ".repos/**",
-      // Macroscope's glob-per-line ignore grammar, not Markdown: formatting
-      // it rewrites `*` as `_` and joins lines.
+      "infra/task-cache/vendor/**",
+      // Macroscope requires one glob per line; Markdown formatting corrupts it.
       ".macroscope/ignore.md",
       ".alchemy",
       "dist",
@@ -88,9 +170,13 @@ export default defineConfig({
       "**/routeTree.gen.ts",
       "**/*.graphql.ts",
       "packages/source-control-github/schema/**",
+      "apps/server/schema/**",
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
+      // Vendored and generated C.
+      "apps/mobile/modules/t3-highlights/Vendor/**",
+      "apps/mobile/modules/t3-highlights/cpp/generated/**",
       "*.icon/**",
     ],
     sortPackageJson: {},
@@ -107,6 +193,7 @@ export default defineConfig({
     ignorePatterns: [
       ".repos",
       ".repos/**",
+      "infra/task-cache/vendor/**",
       "dist",
       "dist-electron",
       "node_modules",
@@ -115,6 +202,7 @@ export default defineConfig({
       "**/routeTree.gen.ts",
       "**/*.graphql.ts",
       "packages/source-control-github/schema/**",
+      "apps/server/schema/**",
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
@@ -130,6 +218,39 @@ export default defineConfig({
       perf: "warn",
     },
     rules: {
+      "oxc/no-accumulating-spread": "error",
+      "eslint/no-control-regex": "off",
+      "typescript/no-this-alias": "off",
+      "unicorn/prefer-add-event-listener": "off",
+      "unicorn/prefer-string-starts-ends-with": "off",
+      "unicorn/prefer-set-has": "off",
+      "unicorn/prefer-array-find": "off",
+      "unicorn/no-new-array": "off",
+      "unicorn/no-array-reverse": "off",
+      "react/no-object-type-as-default-prop": "off",
+      "react/jsx-no-constructed-context-values": "off",
+      "react/memo-dependencies": "error",
+      "react/purity": "error",
+      "react/refs": "error",
+      "react/exhaustive-effect-dependencies": "error",
+      "react/set-state-in-effect": "error",
+      "react/immutability": "error",
+      "react/no-array-index-key": "error",
+      "react/no-unstable-nested-components": "error",
+      "react/static-components": "error",
+      "react/capitalized-calls": "error",
+      "typescript/no-extraneous-class": "error",
+      "eslint/no-empty-pattern": "error",
+      "eslint/no-new": "error",
+      "unicorn/no-useless-spread": "error",
+      "eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
+      ],
+      "eslint/no-unsafe-optional-chaining": "error",
+      "eslint/no-unneeded-ternary": "error",
+      "unicorn/no-useless-fallback-in-spread": "error",
+      "unicorn/require-module-specifiers": "error",
       "unicorn/no-array-sort": "off",
       "unicorn/consistent-function-scoping": "off",
       "oxc/no-map-spread": "off",
@@ -160,20 +281,46 @@ export default defineConfig({
         { paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS] },
       ],
       "t3code/no-global-process-runtime": "error",
-      "t3code/no-inline-schema-compile": "warn",
+      "t3code/no-inline-schema-compile": "error",
       "t3code/no-low-value-comments": "error",
       "t3code/no-manual-effect-runtime-in-tests": "error",
       "t3code/no-native-title-tooltip": "error",
+      // Test files only (the rule checks the filename).
+      "t3code/no-polling-loop-in-tests": "error",
       "t3code/no-raw-mcp-registration": "error",
+      "t3code/no-real-time-wait-in-tests": "error",
       "t3code/no-test-in-loop": "error",
+      "t3code/no-test-timeout-or-unreasoned-skip": "error",
       "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }],
       "t3code/no-unscoped-has": "error",
+      "t3code/no-wall-clock-in-tests": "error",
       "t3code/namespace-node-imports": "error",
       "t3code/prefer-catch-tags": "error",
+      "t3code/prefer-effect-fn": "error",
       "t3code/require-centered-scroll-gutter": "error",
       "t3code/require-suppression-reason": "error",
     },
     overrides: [
+      {
+        files: [
+          "**/*.{test,spec,testkit}.{ts,tsx}",
+          "**/{test,tests,testkit,testing,fixtures,integration}/**",
+          "packages/provider-testing/**",
+        ],
+        rules: { "t3code/prefer-effect-fn": "off" },
+      },
+      {
+        files: ["apps/web/**/*.test.{ts,tsx}"],
+        rules: { "t3code/require-disposable-render": "error" },
+      },
+      {
+        files: ["apps/web/src/**/*.browser.test.{ts,tsx}"],
+        rules: { "t3code/no-frame-waits-in-browser-tests": "error" },
+      },
+      {
+        files: ["apps/**/src/**", "packages/**/src/**"],
+        rules: { "t3code/no-dom-test-environment": "error" },
+      },
       {
         files: ["packages/client-runtime/src/state/**", "apps/{web,mobile,desktop}/src/**"],
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: false }] },
@@ -192,7 +339,7 @@ export default defineConfig({
       },
       {
         files: [
-          "apps/web/src/components/settings/ConnectionsSettings.tsx",
+          "apps/web/src/components/settings/AuthorizedClientsSettings.tsx",
           "apps/mobile/src/features/updates/app-updates.ts",
           "apps/web/src/components/device/DevicePhoneViewport.tsx",
           "apps/web/src/components/device/DeviceDuoViewport.tsx",
@@ -244,8 +391,71 @@ export default defineConfig({
         rules: { "eslint/no-restricted-imports": ["error", { paths: RESTRICTED_IMPORT_PATHS }] },
       },
       {
+        // The server and every client load a forge's shared definition, so a UI runtime
+        // imported there would break the server; client-only forge code goes in `src/client/`.
+        files: ["packages/source-control-*/src/shared/**"],
+        rules: {
+          "eslint/no-restricted-imports": [
+            "error",
+            {
+              paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
+              patterns: [
+                {
+                  group: [
+                    "react",
+                    "react/*",
+                    "react-*",
+                    "expo",
+                    "expo-*",
+                    "lucide-react",
+                    "@t3tools/client-runtime",
+                    "@t3tools/client-runtime/*",
+                    "../client/*",
+                    "../server/*",
+                    "../../client/*",
+                    "../../server/*",
+                    "../../../client/*",
+                    "../../../server/*",
+                    "@t3tools/source-control-*/client/*",
+                    "@t3tools/source-control-*/server/*",
+                  ],
+                  message:
+                    "Shared forge definitions load on the server and every client; keep UI and server code out.",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        files: ["apps/server/src/**", "packages/source-control-*/src/server/**"],
+        rules: {
+          "eslint/no-restricted-imports": [
+            "error",
+            {
+              paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
+              patterns: [
+                {
+                  group: [
+                    "@t3tools/source-control-*/client/*",
+                    "../client/*",
+                    "../../client/*",
+                    "../../../client/*",
+                  ],
+                  message:
+                    "A forge's client entry is UI-only; the server reads its `shared/definition`.",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
         files: ["apps/mobile/src/**"],
-        rules: { "t3code/no-mobile-uniwind-theme-escape-hatches": "error" },
+        rules: {
+          "t3code/no-mobile-uniwind-theme-escape-hatches": "error",
+          "t3code/require-registered-list-scroll": "error",
+        },
       },
       {
         files: ["apps/mobile/src/**"],
@@ -257,8 +467,12 @@ export default defineConfig({
         rules: { "t3code/no-mobile-pull-request-glyph-literals": "error" },
       },
       {
-        // React commits state set in a raw ResizeObserver callback after the paint, so derived
-        // layout lands a frame late. observeResize flushes every observed resize in one render.
+        files: ["apps/mobile/src/**"],
+        excludeFiles: ["**/*.test.{ts,tsx}"],
+        rules: { "t3code/no-ambiguous-detail-navigation": "error" },
+      },
+      {
+        // Raw ResizeObserver state commits miss the paint; observeResize flushes derived layout together.
         files: ["apps/web/src/**"],
         excludeFiles: [
           "apps/web/src/lib/observeResize.ts",
@@ -275,12 +489,22 @@ export default defineConfig({
         rules: { "t3code/no-outset-state-indicators": "error" },
       },
       {
+        files: ["apps/*/src/**", "packages/*/src/**"],
+        excludeFiles: [
+          "**/*.{test,spec}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+          "**/testkit/**",
+          "**/_generated/**",
+          // Real user quotes stay verbatim.
+          "apps/marketing/src/lib/tweets.ts",
+        ],
+        rules: { "t3code/no-em-dash-copy": "error" },
+      },
+      {
         files: ["apps/web/src/**"],
         rules: { "shadcn/no-raw-colors": "error" },
       },
       {
-        // Third-party marks (brand logos, the macOS permission panes, Codex's Computer Use
-        // mark) must keep their exact colors, so the files that hold them are exempt.
+        // Third-party marks must retain their exact colors.
         files: ["apps/web/src/components/Icons.tsx", "apps/web/src/components/JetBrainsIcons.tsx"],
         rules: { "shadcn/no-raw-colors": "off" },
       },
@@ -297,9 +521,9 @@ export default defineConfig({
                 "transition",
                 "rounded-[inherit]",
                 "gap-[0.33em]",
-                "px-[0.5em]",
-                "rounded-[0.5em]",
-                "text-[0.86em]",
+                "gap-[0.2em]",
+                "leading-[normal]",
+                "underline-offset-[0.2em]",
                 "rounded-[25%]",
                 "text-[length:80cqh]",
                 "bg-[Highlight]",
@@ -318,9 +542,7 @@ export default defineConfig({
               allow: ["layout"],
               contracts: [
                 {
-                  // CollapsibleTrigger is a bare button with no styled counterpart
-                  // (a disclosure row is not a Button), so its className is the API.
-                  // Every other trigger has one: style them with render={<Button …/>}.
+                  // CollapsibleTrigger has no styled counterpart; other triggers use render={<Button …/>}.
                   pattern: "^CollapsibleTrigger$",
                   allow: ["layout", "color", "typography", "spacing", "shape", "effects", "motion"],
                 },
@@ -330,9 +552,7 @@ export default defineConfig({
         },
       },
       {
-        // Every web file must compile under the React Compiler. Its bailout rules are errors here,
-        // and manual memoization is redundant. No upstream rule bans useMemo/useCallback, hence
-        // t3code/no-manual-memo.
+        // React Compiler owns memoization; upstream rules do not ban redundant useMemo/useCallback.
         files: ["apps/web/src/**/*.{ts,tsx}"],
         rules: {
           "react/exhaustive-effect-dependencies": "error",
@@ -343,6 +563,9 @@ export default defineConfig({
           "react/jsx-no-constructed-context-values": "off",
           "react/memo-dependencies": "error",
           "react/preserve-manual-memoization": "error",
+          // Render-time clock reads use @t3tools/client-runtime/clock or state seeded with the
+          // time; any other read carries a suppression that says why. oxlint also flags time reads
+          // inside event handlers (oxc#27309); those suppressions cite it.
           "react/purity": "error",
           "react/refs": "error",
           "react/set-state-in-effect": "error",
@@ -353,14 +576,7 @@ export default defineConfig({
         },
       },
       {
-        // The sign-in masthead is T3 brand artwork: fixed gradients, not theme surfaces.
-        files: ["apps/web/src/components/auth/AuthSurfaceShell.tsx"],
-        rules: { "shadcn/no-arbitrary-values": "off" },
-      },
-      {
-        // Shared client code must not call APIs missing from Hermes. Our ESNext
-        // TypeScript target accepts them even when they would crash mobile at launch.
-        // Tests run on Node and are exempt.
+        // ESNext types allow APIs absent from Hermes; restrict shared client code, exempting Node tests.
         files: [
           "apps/mobile/src/**",
           "packages/client-runtime/src/**",
@@ -371,15 +587,16 @@ export default defineConfig({
         rules: { "t3code/no-hermes-unsupported-apis": "error" },
       },
       {
-        // Mobile is ratcheting toward full React Compiler coverage
-        // (apps/mobile/src/reactCompilerCoverage.test.ts). Directives would hide bailouts from it;
-        // the manual memo hooks go once the allowlist there is empty.
+        // Directives hide bailouts from mobile's compiler-coverage check; retain hooks until its allowlist is empty.
         files: ["apps/mobile/src/**/*.{ts,tsx}"],
         rules: { "t3code/no-manual-memo": ["error", { allowMemoHooks: true }] },
       },
       {
-        // The compiler only compiles a use* function that calls a hook; one that calls none is
-        // silently left as a plain function, so whatever it returns loses its caching.
+        files: ["apps/web/src/**", "apps/mobile/src/**", "packages/*/src/**"],
+        rules: { "t3code/no-unreasoned-state-sync": "error" },
+      },
+      {
+        // React Compiler caches use* functions only if they call a hook.
         files: ["apps/web/src/**/*.{ts,tsx}", "apps/mobile/src/**/*.{ts,tsx}"],
         excludeFiles: ["**/*.test.ts", "**/*.test.tsx"],
         rules: { "t3code/no-hookless-use-function": "error" },
@@ -393,25 +610,20 @@ export default defineConfig({
           "apps/mobile/src/features/files/AttachmentFileScreen.tsx",
           "apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx",
           "apps/mobile/src/features/files/thread-file-navigator-pane.tsx",
-          "apps/mobile/src/features/home/HomeHeader.tsx",
           "apps/mobile/src/features/review/ReviewSheet.tsx",
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
-          "apps/mobile/src/features/threads/GitActionProgressOverlay.tsx",
-          "apps/mobile/src/features/threads/NewTaskDraftScreen.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
           "apps/mobile/src/features/threads/ThreadFeed.tsx",
-          "apps/mobile/src/features/settings/appearance/components/FontSizeSliderRow.tsx",
-          "apps/mobile/src/features/threads/NewTaskContextPickerScreens.tsx",
           "apps/mobile/src/features/threads/ThreadQueueControl.tsx",
           "apps/mobile/src/features/review/ReviewCommentCard.tsx",
           "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx",
-          "apps/mobile/src/features/threads/thread-list-items.tsx",
           "apps/mobile/src/features/threads/thread-list-v2-items.tsx",
           "apps/mobile/src/lib/useMobileNavigationTheme.ts",
           "apps/mobile/src/native/T3ComposerEditor.ios.tsx",
           "apps/mobile/src/native/T3ComposerEditor.native.tsx",
           "apps/mobile/src/native/SelectableMarkdownText.tsx",
+          "apps/mobile/src/native/useEnrichedLinkVariants.ts",
         ],
         rules: {
           "t3code/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],

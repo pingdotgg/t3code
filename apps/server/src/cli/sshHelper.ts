@@ -18,8 +18,7 @@ const canBind = (port: number) =>
     });
   });
 
-// macOS lets the bind above succeed while another process listens on
-// *:<port>, so also skip any port that already answers on loopback.
+// macOS permits this bind over a wildcard listener, so also check loopback connectivity.
 const answersOnLoopback = (port: number) =>
   new Promise<boolean>((resolve) => {
     const socket = NodeNet.connect({ port, host: "127.0.0.1" });

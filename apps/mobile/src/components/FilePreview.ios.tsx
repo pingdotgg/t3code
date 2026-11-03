@@ -15,6 +15,7 @@ const NativeControls = requireNativeModule<{
     uris: readonly string[],
     names: readonly string[],
     selectedIndex: number,
+    sourceIdentifiers: readonly string[],
     identifier: string,
   ): Promise<void>;
   dismissFile(identifier: string): Promise<void>;
@@ -33,6 +34,7 @@ function NativeFilePreview(props: {
     else Dialog.alert("Could not open preview", "The file could not be loaded. Please try again.");
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- presents the native file preview and dismisses it on cleanup
   useEffect(() => {
     let canceled = false;
     const presentation =
@@ -44,6 +46,7 @@ function NativeFilePreview(props: {
               0,
               gallery.findIndex((item) => item.uri === uri),
             ),
+            gallery.map((item) => item.sourceIdentifier ?? ""),
             identifier,
           )
         : NativeControls.presentFile(uri, name ?? "Preview", sourceIdentifier ?? "", identifier);

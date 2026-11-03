@@ -1,16 +1,27 @@
+import * as Arr from "effect/Array";
+import * as Context from "effect/Context";
+import * as Queue from "effect/Queue";
+import * as Tracer from "effect/Tracer";
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
+import {
+  orchestrationCommandDuration,
+  orchestrationCommandsTotal,
+} from "../observability/Metrics.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
@@ -46,7 +57,37 @@ const layerMetadata = Layer.merge(
       }),
   }),
   Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+    invalidate: () => Effect.void,
     resolvePath: (workspaceRoot) => Effect.succeed(`${workspaceRoot}/favicon.svg`),
+  }),
+);
+
+class EnrichmentCompletions extends Context.Service<EnrichmentCompletions, Queue.Queue<void>>()(
+  "t3/project/ProjectService.test/EnrichmentCompletions",
+) {}
+
+const layerEnrichmentCompletions = Layer.effectContext(
+  Effect.gen(function* () {
+    const completions = yield* Queue.unbounded<void>();
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (...args) => {
+          end(...args);
+          if (
+            span.name === "ProjectEnrichmentService.resolveRepositoryIdentity" ||
+            span.name === "ProjectEnrichmentService.resolveFavicon"
+          ) {
+            Queue.offerUnsafe(completions, undefined);
+          }
+        };
+        return span;
+      },
+    });
+    return Context.make(EnrichmentCompletions, completions).pipe(
+      Context.add(Tracer.Tracer, tracer),
+    );
   }),
 );
 
@@ -63,10 +104,93 @@ const layerTestFor = (
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Layer.provideMerge(layerEnrichmentCompletions),
   );
 
 const layerTest = layerTestFor(layerMetadata);
+
+it.effect("resolves only the requested active project page in creation order", () =>
+  Effect.gen(function* () {
+    const inspected = yield* Ref.make<ReadonlySet<string>>(new Set());
+    const note = (workspaceRoot: string) =>
+      Ref.update(inspected, (roots) => new Set([...roots, workspaceRoot]));
+    const metadata = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (workspaceRoot) =>
+          note(workspaceRoot).pipe(
+            Effect.as({
+              canonicalKey: `example.test${workspaceRoot}`,
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: `https://example.test${workspaceRoot}.git`,
+              },
+              rootPath: workspaceRoot,
+            }),
+          ),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
+        resolvePath: (workspaceRoot) => note(workspaceRoot).pipe(Effect.as(null)),
+      }),
+    );
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const service = yield* ProjectService.ProjectService;
+      const enrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+      const changes = yield* enrichment.subscribeChanges;
+      const rows = Arr.makeBy(6, (index) => ({
+        project_id: `page:${index}`,
+        title: `Project ${index}`,
+        workspace_root: `/work/page-${index}`,
+        scripts_json: "[]",
+        created_at: "2026-10-01T00:00:00.000Z",
+        updated_at: "2026-10-01T00:00:00.000Z",
+        deleted_at: index === 1 ? "2026-10-02T00:00:00.000Z" : null,
+        auto_pull: 0,
+      }));
+      yield* sql`INSERT INTO projection_projects ${sql.insert(rows)}`;
+      const first = yield* service.listPage({ cursor: 0, limit: 2 });
+      assert.deepEqual(
+        first.projects.map((project) => project.id),
+        ["page:0", "page:2"],
+      );
+      assert.equal(first.nextCursor, 2);
+      assert.deepEqual(
+        first.projects.map((project) => project.repositoryIdentity?.canonicalKey),
+        ["example.test/work/page-0", "example.test/work/page-2"],
+      );
+      // A sentinel queued after the page lets the enrichment workers finish
+      // earlier requests before checking which workspaces were inspected.
+      yield* enrichment.request("/work/page-sentinel");
+      for (;;) {
+        if ((yield* PubSub.take(changes)).workspaceRoot === "/work/page-sentinel") break;
+      }
+      assert.deepEqual(
+        new Set(yield* Ref.get(inspected)),
+        new Set(["/work/page-0", "/work/page-2", "/work/page-sentinel"]),
+      );
+      const second = yield* service.listPage({ cursor: first.nextCursor!, limit: 2 });
+      assert.deepEqual(
+        second.projects.map((project) => project.id),
+        ["page:3", "page:4"],
+      );
+      assert.equal(second.nextCursor, 4);
+      const last = yield* service.listPage({ cursor: second.nextCursor!, limit: 2 });
+      assert.deepEqual(
+        last.projects.map((project) => project.id),
+        ["page:5"],
+      );
+      assert.isNull(last.nextCursor);
+      assert.isFalse((yield* Ref.get(inspected)).has("/work/page-1"));
+      assert.deepEqual(yield* service.listPage({ cursor: 99, limit: 2 }), {
+        projects: [],
+        nextCursor: null,
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTestFor(metadata)));
+  }),
+);
 
 const layerProjectServiceDependencies = Layer.mergeAll(
   RuntimeLayer.layerEventSink,
@@ -82,7 +206,7 @@ const layerProjectServiceDependencies = Layer.mergeAll(
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* (
@@ -90,12 +214,16 @@ const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* 
   projectId: ProjectId,
   predicate: (project: Project) => boolean,
 ) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const project = Option.getOrThrow(yield* service.getById(projectId));
-    if (predicate(project)) return project;
-    yield* Effect.yieldNow;
-  }
-  return yield* Effect.die(`Project ${projectId} was not enriched in time.`);
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const completions = yield* EnrichmentCompletions;
+      for (;;) {
+        const project = Option.getOrThrow(yield* service.getById(projectId));
+        if (predicate(project)) return project;
+        yield* Queue.take(completions);
+      }
+    }),
+  );
 });
 
 it.layer(layerTest)("ProjectService", (it) => {
@@ -202,25 +330,30 @@ it.layer(layerTest)("ProjectService", (it) => {
     }),
   );
 
-  it.effect("rejects active workspace collisions", () =>
+  it.effect("records the outcome and duration of a committed project command", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;
-      yield* TestClock.setTime(Date.parse("2026-06-20T10:00:00.000Z"));
+      const successes = Metric.value(
+        Metric.withAttributes(orchestrationCommandsTotal, {
+          commandType: "project.create",
+          outcome: "success",
+        }),
+      );
+      const durations = Metric.value(
+        Metric.withAttributes(orchestrationCommandDuration, { commandType: "project.create" }),
+      );
+      const successesBefore = (yield* successes).count;
+      const durationsBefore = (yield* durations).count;
+
       yield* service.create({
-        commandId: CommandId.make("command:collision:first"),
-        projectId: ProjectId.make("project:collision:first"),
-        title: "First",
-        workspaceRoot: "/work/shared",
+        commandId: CommandId.make("command:metrics:create"),
+        projectId: ProjectId.make("project:metrics"),
+        title: "Metrics",
+        workspaceRoot: "/work/metrics",
       });
-      const error = yield* service
-        .create({
-          commandId: CommandId.make("command:collision:second"),
-          projectId: ProjectId.make("project:collision:second"),
-          title: "Second",
-          workspaceRoot: "/work/shared",
-        })
-        .pipe(Effect.flip);
-      assert.equal(error._tag, "ProjectConflictError");
+
+      assert.strictEqual((yield* successes).count - successesBefore, 1);
+      assert.strictEqual((yield* durations).count - durationsBefore, 1);
     }),
   );
 
@@ -485,111 +618,6 @@ it.layer(layerTest)("ProjectService", (it) => {
   );
 });
 
-it.effect(
-  "returns project mutations before slow enrichment and shares the eventual result across reads",
-  () =>
-    Effect.gen(function* () {
-      const repositoryStarted = yield* Deferred.make<void>();
-      const releaseRepository = yield* Deferred.make<void>();
-      const repositoryCalls = yield* Ref.make(0);
-      const faviconCalls = yield* Ref.make(0);
-
-      const layerSlowMetadata = Layer.merge(
-        Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
-          resolve: (workspaceRoot) =>
-            Effect.gen(function* () {
-              yield* Ref.update(repositoryCalls, (count) => count + 1);
-              yield* Deferred.succeed(repositoryStarted, undefined);
-              yield* Deferred.await(releaseRepository);
-              return {
-                canonicalKey: "github.com/t3tools/slow-project",
-                locator: {
-                  source: "git-remote" as const,
-                  remoteName: "origin",
-                  remoteUrl: "git@github.com:t3tools/slow-project.git",
-                },
-                rootPath: workspaceRoot,
-              };
-            }),
-        }),
-        Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
-          resolvePath: (workspaceRoot) =>
-            Ref.updateAndGet(faviconCalls, (count) => count + 1).pipe(
-              Effect.as(`${workspaceRoot}/favicon.svg`),
-            ),
-        }),
-      );
-
-      yield* Effect.gen(function* () {
-        const service = yield* ProjectService.ProjectService;
-        const projectId = ProjectId.make("project:slow-enrichment");
-        const createFiber = yield* service
-          .create({
-            commandId: CommandId.make("command:slow-enrichment:create"),
-            projectId,
-            title: "Slow enrichment",
-            workspaceRoot: "/work/slow-enrichment",
-          })
-          .pipe(Effect.forkChild({ startImmediately: true }));
-
-        yield* Deferred.await(repositoryStarted);
-        yield* Effect.yieldNow;
-        assert.isDefined(createFiber.pollUnsafe());
-
-        const created = yield* Fiber.join(createFiber);
-        assert.isNull(created.repositoryIdentity);
-        assert.isNull(created.faviconPath);
-
-        const updated = yield* service.update({
-          commandId: CommandId.make("command:slow-enrichment:update"),
-          projectId,
-          title: "Updated before enrichment",
-        });
-        assert.equal(updated.title, "Updated before enrichment");
-        assert.isNull(updated.repositoryIdentity);
-        assert.equal(updated.faviconPath, "/work/slow-enrichment/favicon.svg");
-
-        const immediateReadFiber = yield* service
-          .getById(projectId)
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Effect.yieldNow;
-        assert.isDefined(immediateReadFiber.pollUnsafe());
-        const immediateRead = Option.getOrThrow(yield* Fiber.join(immediateReadFiber));
-        assert.isNull(immediateRead.repositoryIdentity);
-        assert.equal(immediateRead.faviconPath, "/work/slow-enrichment/favicon.svg");
-
-        const snapshotFiber = yield* service.snapshot.pipe(
-          Effect.forkChild({ startImmediately: true }),
-        );
-        yield* Effect.yieldNow;
-        assert.isDefined(snapshotFiber.pollUnsafe());
-        const immediateSnapshot = yield* Fiber.join(snapshotFiber);
-        assert.isNull(immediateSnapshot.projects[0]?.repositoryIdentity ?? null);
-
-        yield* Deferred.succeed(releaseRepository, undefined);
-
-        const firstProject = yield* waitForProject(
-          service,
-          projectId,
-          (project) => project.repositoryIdentity !== null && project.faviconPath !== null,
-        );
-        assert.isDefined(firstProject);
-        assert.equal(
-          firstProject.repositoryIdentity?.canonicalKey,
-          "github.com/t3tools/slow-project",
-        );
-        assert.equal(firstProject.faviconPath, "/work/slow-enrichment/favicon.svg");
-
-        const byId = Option.getOrThrow(yield* service.getById(projectId));
-        const secondSnapshot = yield* service.snapshot;
-        assert.equal(byId.repositoryIdentity?.canonicalKey, "github.com/t3tools/slow-project");
-        assert.equal(secondSnapshot.projects[0]?.faviconPath, "/work/slow-enrichment/favicon.svg");
-        assert.equal(yield* Ref.get(repositoryCalls), 1);
-        assert.equal(yield* Ref.get(faviconCalls), 1);
-      }).pipe(Effect.provide(layerTestFor(layerSlowMetadata)));
-    }),
-);
-
 it.effect("keeps project snapshots available when optional metadata enrichment fails", () =>
   Effect.gen(function* () {
     const layerFailingMetadata = Layer.merge(
@@ -597,6 +625,7 @@ it.effect("keeps project snapshots available when optional metadata enrichment f
         resolve: () => Effect.succeed(null),
       }),
       Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
         resolvePath: (workspaceRoot) =>
           Effect.fail(
             new ProjectFaviconResolver.ProjectFaviconResolutionError({
@@ -647,6 +676,7 @@ it.effect("invalidates workspace-derived metadata when a project moves", () =>
           ),
       }),
       Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
         resolvePath: (workspaceRoot) =>
           Ref.get(metadataVersion).pipe(
             Effect.map((version) => `${workspaceRoot}/favicon-v${version}.svg`),

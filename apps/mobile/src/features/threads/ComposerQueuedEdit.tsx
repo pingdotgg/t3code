@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import type { ChatAttachment, EnvironmentId } from "@t3tools/contracts";
 import { Image } from "expo-image";
 import { Pressable, ScrollView, View } from "react-native";
@@ -17,16 +18,13 @@ export function ComposerQueuedEditBanner(props: {
       <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
         Editing queued message
       </Text>
-      <Pressable
-        accessibilityRole="button"
+      <Button
+        label="Cancel"
+        tone="text"
         accessibilityLabel="Cancel editing queued message"
         disabled={props.saving}
         onPress={props.onCancel}
-        hitSlop={8}
-        className="min-h-8 justify-center px-1 active:opacity-70 disabled:opacity-40"
-      >
-        <Text className="font-t3-medium text-xs text-primary">Cancel</Text>
-      </Pressable>
+      />
     </View>
   );
 }

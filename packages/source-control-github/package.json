@@ -3,77 +3,17 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client/definition": {
-      "types": "./src/client/definition.ts",
-      "import": "./src/client/definition.ts"
+    "./shared/definition": {
+      "types": "./src/shared/definition.ts",
+      "import": "./src/shared/definition.ts"
     },
     "./server/driver": {
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
-    },
-    "./server/GitHubRest": {
-      "types": "./src/server/GitHubRest.ts",
-      "import": "./src/server/GitHubRest.ts"
-    },
-    "./server/gitHubAuthStatus": {
-      "types": "./src/server/gitHubAuthStatus.ts",
-      "import": "./src/server/gitHubAuthStatus.ts"
-    },
-    "./server/gitHubChangeRequestTemplate": {
-      "types": "./src/server/gitHubChangeRequestTemplate.ts",
-      "import": "./src/server/gitHubChangeRequestTemplate.ts"
-    },
-    "./server/gitHubConditionalChecks": {
-      "types": "./src/server/gitHubConditionalChecks.ts",
-      "import": "./src/server/gitHubConditionalChecks.ts"
-    },
-    "./server/GitHubCredentials": {
-      "types": "./src/server/GitHubCredentials.ts",
-      "import": "./src/server/GitHubCredentials.ts"
-    },
-    "./server/GitHubRequestPolicy": {
-      "types": "./src/server/GitHubRequestPolicy.ts",
-      "import": "./src/server/GitHubRequestPolicy.ts"
-    },
-    "./server/GitHubPullRequestApi": {
-      "types": "./src/server/GitHubPullRequestApi.ts",
-      "import": "./src/server/GitHubPullRequestApi.ts"
-    },
-    "./server/gitHubPullRequestJson": {
-      "types": "./src/server/gitHubPullRequestJson.ts",
-      "import": "./src/server/gitHubPullRequestJson.ts"
-    },
-    "./server/GitHubPullRequestProvider": {
-      "types": "./src/server/GitHubPullRequestProvider.ts",
-      "import": "./src/server/GitHubPullRequestProvider.ts"
-    },
-    "./server/gitHubPullRequests": {
-      "types": "./src/server/gitHubPullRequests.ts",
-      "import": "./src/server/gitHubPullRequests.ts"
-    },
-    "./server/GitHubQuota": {
-      "types": "./src/server/GitHubQuota.ts",
-      "import": "./src/server/GitHubQuota.ts"
-    },
-    "./server/gitHubRepositoryResolution": {
-      "types": "./src/server/gitHubRepositoryResolution.ts",
-      "import": "./src/server/gitHubRepositoryResolution.ts"
-    },
-    "./server/GitHubSourceControlProvider": {
-      "types": "./src/server/GitHubSourceControlProvider.ts",
-      "import": "./src/server/GitHubSourceControlProvider.ts"
-    },
-    "./server/githubStackActions": {
-      "types": "./src/server/githubStackActions.ts",
-      "import": "./src/server/githubStackActions.ts"
-    },
-    "./server/githubStackRebase": {
-      "types": "./src/server/githubStackRebase.ts",
-      "import": "./src/server/githubStackRebase.ts"
     }
   },
   "scripts": {
-    "typecheck": "tsc-rs --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir .",
     "generate": "graphqlgen"
   },

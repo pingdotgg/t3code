@@ -14,6 +14,7 @@ import {
   toJsonSchemaObject,
 } from "@t3tools/provider-core/server/textGenerationUtils";
 import {
+  getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
@@ -34,9 +35,9 @@ import {
 } from "../provider/Drivers/ClaudeHome.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
-/** The tools an investigation can see. `--tools` takes bare names; patterns go in the allow list. */
+/** `--tools` takes bare names; patterns go in the allow list. */
 const CLAUDE_INVESTIGATION_TOOLS = "Read,Grep,Glob,Bash";
-/** What it may run without asking. In dontAsk mode every other call, Bash included, is refused. */
+/** In dontAsk mode every call outside this list, Bash included, is refused. */
 const CLAUDE_INVESTIGATION_ALLOWED = [
   "Read",
   "Grep",
@@ -45,11 +46,12 @@ const CLAUDE_INVESTIGATION_ALLOWED = [
   "Bash(git log:*)",
   "Bash(git show:*)",
 ].join(",");
-/**
- * The allowed git commands accept any trailing arguments, and `--output` makes each of them write
- * a file anywhere. Deny rules win over allow rules, so this keeps the investigation read-only.
- */
+// Denies override allows; block git --output/-o because allowed trailing args can otherwise write anywhere.
 const CLAUDE_INVESTIGATION_DENIED = ["Bash(git * --output*)", "Bash(git * -o *)"].join(",");
+
+const NO_SESSION_PERSISTENCE = "--no-session-persistence";
+// Claude Code before 2.0.63 exits with this on stderr; those runs retry without the flag.
+const NO_SESSION_PERSISTENCE_REJECTED = `error: unknown option '${NO_SESSION_PERSISTENCE}'`;
 
 const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
@@ -69,10 +71,7 @@ const ClaudeErrorResult = Schema.Struct({ is_error: Schema.Literal(true), result
 const isClaudeErrorResult = Schema.is(ClaudeErrorResult);
 const decodeJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
-/**
- * The error a failed `claude -p --output-format json` run reports on stdout. Stderr may only
- * hold notices from a wrapper around the binary, so the caller prefers this when present.
- */
+// Claude reports JSON errors on stdout; stderr may contain only wrapper notices.
 function claudeErrorResult(stdout: string): string | undefined {
   const output = Option.getOrUndefined(decodeJsonOption(stdout));
   const messages: ReadonlyArray<unknown> = Array.isArray(output) ? output : [output];
@@ -167,8 +166,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const ultracode = isClaudeCatalogUltracodeEffort(resolvedEffort);
     const thinkingDescriptor = findDescriptor("thinking");
     const fastModeDescriptor = findDescriptor("fastMode");
+    // Only a chosen value; otherwise Claude Code's own default applies, as in chat turns.
     const thinking =
-      thinkingDescriptor?.type === "boolean" ? thinkingDescriptor.currentValue : undefined;
+      thinkingDescriptor?.type === "boolean"
+        ? getModelSelectionBooleanOptionValue(resolvedModelSelection, "thinking")
+        : undefined;
     const fastMode =
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
     const settings = {
@@ -183,7 +185,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       "Failed to encode Claude CLI settings.",
     );
 
-    const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
+    const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* (
+      noSessionPersistence: boolean,
+    ) {
       const workingDirectory =
         operation === "generateThreadTitle"
           ? yield* fileSystem
@@ -219,8 +223,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
               ]
             : ["--tools", ""]),
           "--disable-slash-commands",
-          // Claude refuses this flag next to a managed-mcp.json, which already keeps the
-          // user's own MCP servers out.
+          ...(noSessionPersistence ? [NO_SESSION_PERSISTENCE] : []),
+          // managed-mcp.json already isolates servers and makes Claude reject this flag.
           ...(managedMcpConfig ? [] : ["--strict-mcp-config"]),
           "--permission-mode",
           "dontAsk",
@@ -234,6 +238,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         stdin: {
           stream: Stream.encodeText(Stream.make(prompt)),
         },
+        forceKillAfter: "1 second",
       });
 
       const child = yield* commandSpawner
@@ -257,25 +262,32 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         { concurrency: "unbounded" },
       );
 
-      if (exitCode !== 0) {
+      return { stdout, stderr, exitCode };
+    });
+
+    const rawStdout = yield* runClaudeCommand(true).pipe(
+      Effect.filterOrElse(
+        (result) =>
+          result.exitCode === 0 || !result.stderr.includes(NO_SESSION_PERSISTENCE_REJECTED),
+        () => runClaudeCommand(false),
+      ),
+      Effect.flatMap(({ stdout, stderr, exitCode }) => {
+        if (exitCode === 0) return Effect.succeed(stdout);
         const stderrDetail = stderr.trim();
         const stdoutDetail = stdout.trim();
         const detail =
           claudeErrorResult(stdoutDetail) ??
           (stderrDetail.length > 0 ? stderrDetail : stdoutDetail);
-        return yield* new TextGenerationError({
-          operation,
-          detail:
-            detail.length > 0
-              ? `Claude CLI command failed: ${detail}`
-              : `Claude CLI command failed with code ${exitCode}.`,
-        });
-      }
-
-      return stdout;
-    });
-
-    const rawStdout = yield* runClaudeCommand().pipe(
+        return Effect.fail(
+          new TextGenerationError({
+            operation,
+            detail:
+              detail.length > 0
+                ? `Claude CLI command failed: ${detail}`
+                : `Claude CLI command failed with code ${exitCode}.`,
+          }),
+        );
+      }),
       Effect.scoped,
       Effect.timeoutOption(investigate?.timeoutMs ?? CLAUDE_TIMEOUT_MS),
       Effect.flatMap(

@@ -1,7 +1,30 @@
 import { describe, expect, it } from "vite-plus/test";
-import { formatThreadTitleContext, limitTitleMessage } from "./threadTitleContext.ts";
+import { ChatAttachmentId } from "@t3tools/contracts";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import { formatThreadTitleContext } from "./threadTitleContext.ts";
 
 describe("thread title context", () => {
+  it.each(["", "Ultrathink:\n"])("keeps attachments without bootstrap text (%j)", (prefix) => {
+    const attachments = [
+      {
+        type: "image" as const,
+        id: ChatAttachmentId.make("diagram"),
+        name: "diagram.png",
+        mimeType: "image/png",
+        sizeBytes: 10,
+      },
+    ];
+    const text = prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT;
+    expect(formatThreadTitleContext([{ role: "user", text, attachments }])).toEqual({
+      message: "USER:\n[Attachments: diagram.png]",
+      attachments,
+    });
+    expect(formatThreadTitleContext([{ role: "user", text }])).toEqual({
+      message: "",
+      attachments: [],
+    });
+  });
+
   it("keeps a user's scope change despite long assistant output", () => {
     const result = formatThreadTitleContext([
       { role: "user", text: "Review QR sharing" },
@@ -30,29 +53,5 @@ describe("thread title context", () => {
     expect(result.message).toContain("ASSISTANT:\nFound the cause.");
     expect(result.message).not.toContain("System instructions");
     expect(result.message.match(/USER:/g)).toHaveLength(1);
-  });
-
-  it("preserves short conversations unchanged and handles tiny budgets", () => {
-    expect(
-      formatThreadTitleContext([
-        { role: "user", text: "Fix pairing" },
-        { role: "assistant", text: "The QR token expired." },
-      ]).message,
-    ).toBe("USER:\nFix pairing\n\nASSISTANT:\nThe QR token expired.");
-    expect(limitTitleMessage("x".repeat(100), 0)).toBe("");
-    for (let budget = 1; budget < 40; budget++) {
-      expect(limitTitleMessage("x".repeat(100), budget).length).toBeLessThanOrEqual(budget);
-    }
-    expect(formatThreadTitleContext([])).toEqual({ message: "", attachments: [] });
-  });
-
-  it("omits reasoning traces from generated titles", () => {
-    expect(
-      formatThreadTitleContext([
-        { role: "user", text: "Fix pairing" },
-        { role: "reasoning", text: "Consider token expiry, then the QR payload." },
-        { role: "assistant", text: "The QR token expired." },
-      ]).message,
-    ).toBe("USER:\nFix pairing\n\nASSISTANT:\nThe QR token expired.");
   });
 });

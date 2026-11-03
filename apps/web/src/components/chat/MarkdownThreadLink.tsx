@@ -1,46 +1,41 @@
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { formatThreadLink, percentDecodedThreadLinkId } from "@t3tools/shared/threadLinks";
-import { Link } from "@tanstack/react-router";
-import { MessageSquareTextIcon } from "lucide-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  formatThreadLink,
+  guessThreadLinkRef,
+  percentDecodedThreadLinkId,
+  type ThreadLink,
+  unknownThreadLinkLabel,
+} from "@t3tools/shared/threadLinks";
 
-import { useProject, useThreadShell } from "../../state/entities";
-import { ProjectFavicon } from "../ProjectFavicon";
+import { useThreadRefs, useThreadShell } from "../../state/entities";
+import { UnresolvedChip } from "../contextChipParts";
+import { ThreadContextChip } from "../ThreadContextChip";
 
+/** `label` is the link's written text; an autolink has none. */
 export function MarkdownThreadLink(props: {
   readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
-  readonly label: string;
+  readonly link: ThreadLink;
+  readonly label: string | null;
 }) {
-  const decodedId = percentDecodedThreadLinkId(props.threadId);
-  const written = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
+  const environmentId = props.link.environmentId ?? props.environmentId;
+  const decodedId = percentDecodedThreadLinkId(props.link.threadId);
+  const written = useThreadShell(scopeThreadRef(environmentId, props.link.threadId));
   const decoded = useThreadShell(
-    written === null && decodedId !== null ? scopeThreadRef(props.environmentId, decodedId) : null,
+    written === null && decodedId !== null ? scopeThreadRef(environmentId, decodedId) : null,
   );
-  const thread = written ?? decoded;
-  const threadId = thread?.id ?? props.threadId;
-  const project = useProject(
-    thread === null ? null : scopeProjectRef(props.environmentId, thread.projectId),
-  );
-  const title = thread?.title.trim() || props.label;
+  const local = written ?? decoded;
+  const guess = local === null && props.link.environmentId === null;
+  const refs = useThreadRefs(guess);
+  const remote = useThreadShell(guess ? guessThreadLinkRef(props.link, refs) : null);
+  const thread = local ?? remote;
+  if (thread === null) {
+    const unknown = unknownThreadLinkLabel(props.link, props.environmentId);
+    return <UnresolvedChip label={props.label ?? unknown} tooltip={unknown} />;
+  }
+  const ref = { environmentId: thread.environmentId, threadId: thread.id };
+  const title = thread.title.trim() || props.label || "Untitled thread";
   return (
-    <Link
-      to="/$environmentId/$threadId"
-      params={{ environmentId: props.environmentId, threadId }}
-      title={thread === null ? "Thread no longer available" : project?.title}
-      data-markdown-copy={formatThreadLink(threadId, title)}
-    >
-      <span
-        className="ms-[0.25em] me-[0.2em] inline-flex size-[14px] [vertical-align:-0.125em]"
-        aria-hidden
-      >
-        {project === null ? (
-          <MessageSquareTextIcon className="block size-full shrink-0" />
-        ) : (
-          <ProjectFavicon project={project} className="size-full" />
-        )}
-      </span>
-      {title}
-    </Link>
+    <ThreadContextChip record={{ ...ref, title }} copyMarkdown={formatThreadLink(ref, title)} />
   );
 }

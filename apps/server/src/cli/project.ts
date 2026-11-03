@@ -8,7 +8,7 @@ import {
   ProjectId,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -28,7 +28,7 @@ import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerOwnership from "../serverOwnership.ts";
-import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
+import type * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -36,6 +36,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import { projectMutationOperation } from "../project/ProjectMutation.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import {
   clearPersistedServerRuntimeState,
   readPersistedServerRuntimeState,
@@ -169,7 +170,7 @@ export const ProjectCommandError = Schema.Union([
 ]);
 export type ProjectCommandError = typeof ProjectCommandError.Type;
 
-export function projectCommandErrorFromLiveServerRequest(cause: unknown): ProjectCommandError {
+function projectCommandErrorFromLiveServerRequest(cause: unknown): ProjectCommandError {
   if (isEnvironmentHttpCommonError(cause)) {
     return new ProjectLiveServerDeclaredResponseError({
       operation: "callLiveServer",
@@ -189,8 +190,8 @@ export function projectCommandErrorFromLiveServerRequest(cause: unknown): Projec
   return new ProjectLiveServerRequestError({ operation: "callLiveServer", cause });
 }
 
-const projectCommandUuid = Crypto.Crypto.pipe(
-  Effect.flatMap((crypto) => crypto.randomUUIDv4()),
+const projectCommandUuid = SecureRandom.SecureRandom.pipe(
+  Effect.flatMap((random) => random.uuidV4()),
   Effect.mapError(
     (cause) =>
       new ProjectCommandIdGenerationError({
@@ -200,21 +201,27 @@ const projectCommandUuid = Crypto.Crypto.pipe(
   ),
 );
 
-const layerProjectCliRuntime = RuntimeLayer.layerProjectService.pipe(
-  Layer.provideMerge(ProjectEnrichmentService.layer),
-  Layer.provideMerge(RepositoryIdentityResolver.layer),
-  Layer.provideMerge(
-    ProjectFaviconResolver.layer.pipe(
-      Layer.provide(WorkspacePaths.layer),
-      Layer.provide(T3ProjectFileLoader.layer),
+const makeProjectCliRuntimeLayer = (layerProjectService: typeof RuntimeLayer.layerProjectService) =>
+  layerProjectService.pipe(
+    Layer.provideMerge(ProjectEnrichmentService.layer),
+    Layer.provideMerge(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(
+      ProjectFaviconResolver.layer.pipe(
+        Layer.provide(WorkspacePaths.layer),
+        Layer.provide(T3ProjectFileLoader.layer),
+      ),
     ),
-  ),
-  Layer.provideMerge(WorkspacePaths.layer),
-  Layer.provideMerge(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
-  Layer.provideMerge(SqlitePersistence.layerConfig),
-);
+    Layer.provideMerge(WorkspacePaths.layer),
+    Layer.provideMerge(
+      ServerSettings.layer.pipe(
+        Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layer)),
+      ),
+    ),
+    Layer.provideMerge(SqlitePersistence.layerConfig),
+  );
 
-const PROJECT_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(1);
+const PROJECT_CLI_LIVE_SERVER_PROBE_TIMEOUT = Duration.seconds(1);
+const PROJECT_CLI_LIVE_SERVER_REQUEST_TIMEOUT = Duration.seconds(10);
 const withProjectCliSessionToken = <A, E, R>(
   environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
   run: (token: string) => Effect.Effect<A, E, R>,
@@ -227,9 +234,6 @@ const withProjectCliSessionToken = <A, E, R>(
     (issued) => run(issued.token),
     (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
   );
-
-const withProjectCliLiveServerTimeout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.timeout(PROJECT_CLI_LIVE_SERVER_TIMEOUT));
 
 const makeLiveServerClient = (origin: string) =>
   HttpApiClient.make(EnvironmentHttpApi, {
@@ -316,32 +320,31 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
   } satisfies ProjectMutationTarget;
 });
 
-const fetchLiveOrchestrationSnapshot = (origin: string, bearerToken: string) =>
-  Effect.gen(function* () {
+const fetchLiveOrchestrationSnapshot = Effect.fn("project.fetchLiveOrchestrationSnapshot")(
+  function* (origin: string, bearerToken: string, _timeout?: Duration.Duration) {
     const client = yield* makeLiveServerClient(origin);
     return yield* client.projects.snapshot({
       headers: { authorization: `Bearer ${bearerToken}` },
     });
-  }).pipe(
-    withProjectCliLiveServerTimeout,
-    Effect.mapError(projectCommandErrorFromLiveServerRequest),
-  );
+  },
+  (effect, _origin, _bearerToken, timeout = PROJECT_CLI_LIVE_SERVER_REQUEST_TIMEOUT) =>
+    effect.pipe(Effect.timeout(timeout), Effect.mapError(projectCommandErrorFromLiveServerRequest)),
+);
 
-const dispatchLiveOrchestrationCommand = (
-  origin: string,
-  bearerToken: string,
-  command: ProjectCliDispatchCommand,
-) =>
-  Effect.gen(function* () {
+const dispatchLiveOrchestrationCommand = Effect.fn("project.dispatchLiveOrchestrationCommand")(
+  function* (origin: string, bearerToken: string, command: ProjectCliDispatchCommand) {
     const client = yield* makeLiveServerClient(origin);
     yield* client.projects.mutate({
       headers: { authorization: `Bearer ${bearerToken}` },
       payload: command,
     } as Parameters<typeof client.projects.mutate>[0]);
-  }).pipe(
-    withProjectCliLiveServerTimeout,
-    Effect.mapError(projectCommandErrorFromLiveServerRequest),
-  );
+  },
+  (effect, _origin, _bearerToken, _command) =>
+    effect.pipe(
+      Effect.timeout(PROJECT_CLI_LIVE_SERVER_REQUEST_TIMEOUT),
+      Effect.mapError(projectCommandErrorFromLiveServerRequest),
+    ),
+);
 
 const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
   const projects = yield* ProjectService.ProjectService;
@@ -359,7 +362,11 @@ const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecu
     }
 
     const attempt = withProjectCliSessionToken(environmentAuth, (token) =>
-      fetchLiveOrchestrationSnapshot(runtimeState.value.origin, token).pipe(
+      fetchLiveOrchestrationSnapshot(
+        runtimeState.value.origin,
+        token,
+        PROJECT_CLI_LIVE_SERVER_PROBE_TIMEOUT,
+      ).pipe(
         Effect.as({
           origin: runtimeState.value.origin,
         }),
@@ -390,7 +397,7 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
   }) => Effect.Effect<
     string,
     Error,
-    | Crypto.Crypto
+    | SecureRandom.SecureRandom
     | FileSystem.FileSystem
     | HttpClient.HttpClient
     | Path.Path
@@ -420,7 +427,11 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
       );
     }
 
-    const layerOfflineRuntime = layerProjectCliRuntime.pipe(
+    // Before ownership and clearing, so a failed import leaves server state alone.
+    const { layerProjectService } = yield* Effect.promise(
+      () => import("../orchestration-v2/runtimeLayer.ts"),
+    );
+    const layerOfflineRuntime = makeProjectCliRuntimeLayer(layerProjectService).pipe(
       Layer.provide(ServerConfig.layer(config)),
       Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
     );

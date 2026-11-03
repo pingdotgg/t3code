@@ -5,10 +5,7 @@ import {
   type OrchestratorFixtureInput,
 } from "../shared.ts";
 
-/**
- * The idle gap outlasts ProviderSessionManager's 30-minute idle timeout, which
- * releases the provider session, as a server restart would.
- */
+/** Exceed the 30-minute idle timeout to release the session as a restart would. */
 export function threadRollbackAfterRestartInput(): OrchestratorFixtureInput {
   return {
     steps: [

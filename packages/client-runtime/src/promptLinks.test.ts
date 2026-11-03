@@ -1,14 +1,20 @@
 import {
+  EnvironmentId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ThreadId,
+  type PullRequestLinkedThreadsResult,
   type RepositoryIdentity,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  findPromptLinkProject,
+  findPromptLinkProjects,
   findPromptLinkPullRequestThread,
+  pickPromptLinkPullRequestThread,
   resolvePromptLinkModelSelection,
 } from "./promptLinks.ts";
 
@@ -18,8 +24,8 @@ const identity = (canonicalKey: string, origin?: string): RepositoryIdentity => 
   ...(origin ? { origin: { canonicalKey: origin } } : {}),
 });
 
-describe("findPromptLinkProject", () => {
-  it("takes the first exact match and never a fork of the repository", () => {
+describe("findPromptLinkProjects", () => {
+  it("keeps exact matches in order and never a fork of the repository", () => {
     const projects = [
       {
         id: "fork",
@@ -29,41 +35,93 @@ describe("findPromptLinkProject", () => {
       { id: "recent", repositoryIdentity: identity("github.com/PingDotGG/T3Code") },
       { id: "older", repositoryIdentity: identity("github.com/pingdotgg/t3code") },
     ];
-    expect(findPromptLinkProject(projects, { owner: "pingdotgg", name: "t3code" })?.id).toBe(
-      "recent",
-    );
-    expect(findPromptLinkProject(projects, { owner: "me", name: "t3code" })?.id).toBe("fork");
-    expect(findPromptLinkProject(projects, { owner: "gitlab", name: "x" })).toBeUndefined();
+    const ids = (owner: string, name: string) =>
+      findPromptLinkProjects(projects, { owner, name }).map((project) => project.id);
+    expect(ids("pingdotgg", "t3code")).toEqual(["recent", "older"]);
+    expect(ids("me", "t3code")).toEqual(["fork"]);
+    expect(ids("gitlab", "x")).toEqual([]);
+  });
+
+  it("matches a checkout of the repository's GitCafe mirror", () => {
+    const projects = [
+      { id: "gitcafe", repositoryIdentity: identity("git.cafe/pingdotgg/t3code") },
+      { id: "staging", repositoryIdentity: identity("staging.git.cafe/pingdotgg/t3code") },
+      { id: "gitlab", repositoryIdentity: identity("gitlab.com/pingdotgg/t3code") },
+    ];
+    expect(
+      findPromptLinkProjects(projects, { owner: "pingdotgg", name: "t3code" }).map(
+        (project) => project.id,
+      ),
+    ).toEqual(["gitcafe", "staging"]);
   });
 });
 
 describe("findPromptLinkPullRequestThread", () => {
-  const link = (number: number, source: ThreadPullRequestLink["source"] = "created") =>
-    ({
+  it("takes the newest linked thread, never a side chat that inherited the link", () => {
+    const link: ThreadPullRequestLink = {
       host: "github.com",
-      repository: "pingdotgg/t3code",
-      number,
-      url: `https://github.com/pingdotgg/t3code/pull/${number}`,
-      source,
+      repository: "acme/web",
+      number: 7,
+      url: "https://github.com/acme/web/pull/7",
+      source: "manual",
       linkedAt: "2026-01-01T00:00:00.000Z",
       snapshot: null,
       stack: null,
-    }) satisfies ThreadPullRequestLink;
+    };
+    const thread = (id: string, updatedAt: string, sideChat?: boolean) => ({
+      id,
+      updatedAt,
+      pullRequests: [link],
+      ...(sideChat === undefined ? {} : { lineage: { sideChat } }),
+    });
+    const found = findPromptLinkPullRequestThread(
+      [
+        thread("old", "2026-01-01T00:00:00.000Z"),
+        thread("parent", "2026-01-02T00:00:00.000Z", false),
+        thread("side-chat", "2026-01-03T00:00:00.000Z", true),
+      ],
+      { owner: "acme", name: "web", number: 7 },
+    );
+    expect(found?.id).toBe("parent");
+  });
+});
 
-  it("finds the most recently updated thread linked to the pull request", () => {
-    const threads = [
-      { id: "old", updatedAt: "2026-01-01T00:00:00.000Z", pullRequests: [link(7)] },
-      { id: "new", updatedAt: "2026-02-01T00:00:00.000Z", pullRequests: [link(7)] },
-      { id: "other", updatedAt: "2026-03-01T00:00:00.000Z", pullRequests: [link(8)] },
-      {
-        id: "dismissed",
-        updatedAt: "2026-04-01T00:00:00.000Z",
-        pullRequests: [link(7, "stack-dismissed")],
-      },
-    ];
-    const pullRequest = { owner: "PingDotGG", name: "t3code", number: 7 };
-    expect(findPromptLinkPullRequestThread(threads, pullRequest)?.id).toBe("new");
-    expect(findPromptLinkPullRequestThread(threads, { ...pullRequest, number: 9 })).toBeUndefined();
+describe("pickPromptLinkPullRequestThread", () => {
+  it("takes the first open thread in order once every earlier lookup has answered", () => {
+    const laptop = EnvironmentId.make("laptop");
+    const server = EnvironmentId.make("server");
+    const linked = (
+      id: string,
+      archivedAt: string | null = null,
+    ): PullRequestLinkedThreadsResult => ({
+      threads: [{ id: ThreadId.make(id), projectId: ProjectId.make("p"), title: id, archivedAt }],
+    });
+    const none: PullRequestLinkedThreadsResult = { threads: [] };
+    const pick = (
+      ...results: ReadonlyArray<AsyncResult.AsyncResult<PullRequestLinkedThreadsResult, unknown>>
+    ) =>
+      pickPromptLinkPullRequestThread(
+        results.map((result, index) => ({ environmentId: index === 0 ? laptop : server, result })),
+      );
+    // A value shown while it refetches is not an answer yet.
+    expect(pick(AsyncResult.success(none, { waiting: true }))).toBeUndefined();
+    expect(pick(AsyncResult.success(none), AsyncResult.initial(true))).toBeUndefined();
+    expect(pick(AsyncResult.initial(true), AsyncResult.success(linked("b")))).toBeUndefined();
+    const laptopThread = { environmentId: laptop, id: ThreadId.make("a") };
+    expect(pick(AsyncResult.success(linked("a")), AsyncResult.initial(true))).toEqual(laptopThread);
+    expect(pick(AsyncResult.success(linked("a")), AsyncResult.success(linked("b")))).toEqual(
+      laptopThread,
+    );
+    expect(pick(AsyncResult.success(none), AsyncResult.success(linked("old")))).toEqual({
+      environmentId: server,
+      id: ThreadId.make("old"),
+    });
+    expect(
+      pick(
+        AsyncResult.success(linked("archived", "2026-01-01T00:00:00.000Z")),
+        AsyncResult.fail(1),
+      ),
+    ).toBeNull();
   });
 });
 

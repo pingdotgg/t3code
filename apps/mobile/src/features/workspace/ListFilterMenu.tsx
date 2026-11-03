@@ -4,7 +4,6 @@ import { Menu } from "../../components/ui/Menu";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
-/** A visible filter with a native menu containing only that filter's choices. */
 export function ListFilterMenu(props: {
   readonly label: string;
   readonly accessibilityLabel: string;

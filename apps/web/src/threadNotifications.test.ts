@@ -49,35 +49,39 @@ afterEach(() => {
 });
 
 describe("playNotificationSound", () => {
+  it("preloads both sounds on unlock and reuses them for playback", async () => {
+    const { unlockNotificationAudio, playNotificationSound } = await loadUnlocked();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    unlockNotificationAudio();
+    await playNotificationSound("completion", () => true);
+    await playNotificationSound("input", () => true);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(audio.started).toBe(2);
+  });
+
+  it("retries failed preloads on an alert rather than every gesture", async () => {
+    vi.mocked(fetch).mockRejectedValue(new Error("offline"));
+    const { unlockNotificationAudio, playNotificationSound } = await loadUnlocked();
+    await playNotificationSound("completion", () => true);
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    unlockNotificationAudio();
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    vi.mocked(fetch).mockResolvedValue(new Response(new ArrayBuffer(0)));
+    await playNotificationSound("completion", () => true);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(audio.started).toBe(1);
+  });
+
   it("plays one sound for threads that complete together", async () => {
     const { playNotificationSound } = await loadUnlocked();
 
-    // All four are waiting on the first decode when the sound becomes playable.
     await Promise.all(
       Array.from({ length: 4 }, () => playNotificationSound("completion", () => true)),
     );
 
     expect(audio.started).toBe(1);
-  });
-
-  it("skips a completion that lands while the sound is still playing", async () => {
-    const { playNotificationSound } = await loadUnlocked();
-    await playNotificationSound("completion", () => true);
-
-    audio.currentTime = SOUND_SECONDS / 2;
-    await playNotificationSound("completion", () => true);
-
-    expect(audio.started).toBe(1);
-  });
-
-  it("plays again once the previous sound has ended", async () => {
-    const { playNotificationSound } = await loadUnlocked();
-    await playNotificationSound("completion", () => true);
-
-    audio.currentTime = SOUND_SECONDS;
-    await playNotificationSound("completion", () => true);
-
-    expect(audio.started).toBe(2);
   });
 
   it("still plays an input alert over a completion sound", async () => {

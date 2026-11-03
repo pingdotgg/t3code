@@ -9,13 +9,14 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
+import { threadNotFound } from "./threadAccess.ts";
 
 export class ThreadMetadataMcpService extends Context.Service<
   ThreadMetadataMcpService,
@@ -33,14 +34,6 @@ function failure(code: OrchestratorMcpFailure["code"], message: string): Orchest
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function threadLookupFailure(
-  error: ThreadManagementService.ThreadManagementError,
-): OrchestratorMcpFailure {
-  return error._tag === "ThreadManagementThreadNotFoundError"
-    ? failure("thread_not_found", error.message)
-    : failure("orchestration_error", error.message);
 }
 
 function stablePart(value: string): string {
@@ -69,7 +62,6 @@ function commandId(input: {
 function metadataCommand(input: {
   readonly commandId: CommandId;
   readonly threadId: ThreadId;
-  readonly projectId: OrchestrationV2AppThread["projectId"];
   readonly update: ThreadMetadataMcpUpdateInput;
 }): Extract<OrchestrationV2Command, { readonly type: "thread.metadata.update" }> {
   switch (input.update.action) {
@@ -86,23 +78,6 @@ function metadataCommand(input: {
         commandId: input.commandId,
         threadId: input.threadId,
         regenerateTitle: true,
-      };
-    case "link_pull_request":
-      return {
-        type: "thread.metadata.update",
-        commandId: input.commandId,
-        threadId: input.threadId,
-        linkedPullRequest: {
-          projectId: input.projectId,
-          ...input.update.pullRequest!,
-        },
-      };
-    case "unlink_pull_request":
-      return {
-        type: "thread.metadata.update",
-        commandId: input.commandId,
-        threadId: input.threadId,
-        linkedPullRequest: null,
       };
   }
 }
@@ -135,7 +110,7 @@ function resultFromThread(input: {
 }
 
 const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
 
   const update = Effect.fn("ThreadMetadataMcpService.update")(function* (
@@ -167,15 +142,10 @@ const make = Effect.gen(function* () {
         ),
       );
     if (shell === null || shell.deletedAt !== null) {
-      return yield* failure("thread_not_found", `Thread ${threadId} was not found.`);
+      return yield* threadNotFound(threadManagement, threadId, `Thread ${threadId} was not found.`);
     }
-    const target = yield* threadManagement
-      .getProjectThreadRecords({ projectId: shell.projectId, threadId }, [])
-      .pipe(Effect.mapError(threadLookupFailure));
     const requestKey =
-      input.clientRequestId === undefined
-        ? yield* crypto.randomUUIDv4().pipe(Effect.orDie)
-        : input.clientRequestId;
+      input.clientRequestId === undefined ? yield* random.uuidV4() : input.clientRequestId;
     const updateCommandId = commandId({
       scope,
       threadId,
@@ -187,7 +157,6 @@ const make = Effect.gen(function* () {
         metadataCommand({
           commandId: updateCommandId,
           threadId,
-          projectId: target.thread.projectId,
           update: input,
         }),
       )
@@ -202,8 +171,7 @@ const make = Effect.gen(function* () {
     const metadataEvent = dispatched.storedEvents.find(
       (stored) => stored.event.type === "thread.metadata-updated",
     );
-    // A retried commandId replays the stored events of the first dispatch;
-    // compaction may have deleted them by then, so answer from the projection.
+    // Retries may find stored events compacted away; answer from the projection.
     const thread =
       metadataEvent?.event.type === "thread.metadata-updated"
         ? metadataEvent.event.payload
@@ -230,5 +198,5 @@ const make = Effect.gen(function* () {
 export const layer: Layer.Layer<
   ThreadMetadataMcpService,
   never,
-  Crypto.Crypto | ThreadManagementService.ThreadManagementService
+  SecureRandom.SecureRandom | ThreadManagementService.ThreadManagementService
 > = Layer.effect(ThreadMetadataMcpService, make);

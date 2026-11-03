@@ -1,8 +1,6 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { EnvironmentId, ProjectId, type PullRequestDetailView } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
@@ -10,6 +8,7 @@ vi.mock(import("~/state/use-atom-command"), async (original) => ({
   useAtomCommand: (() => vi.fn()) as never,
 }));
 
+import { act, render as renderUi } from "../../../test/render";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 
 const detail: PullRequestDetailView = {
@@ -64,158 +63,48 @@ const detail: PullRequestDetailView = {
   },
 };
 
-let root: Root;
-let container: HTMLDivElement;
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  localStorage.clear();
-  vi.unstubAllGlobals();
-});
+// The comment filter persists to localStorage, so tests that touch it start and end empty.
 
-const render = (value = detail) =>
-  act(async () =>
-    root.render(
-      <PullRequestSummaryTab
-        scrollerRef={() => {}}
-        environmentId={EnvironmentId.make("environment")}
-        threadRef={null}
-        reference={value}
-        detail={value}
-        activityPending={false}
-        activityError={null}
-        onRefresh={() => {}}
-      />,
-    ),
-  );
+const tab = (value = detail) => (
+  <PullRequestSummaryTab
+    scrollerRef={() => {}}
+    environmentId={EnvironmentId.make("environment")}
+    threadRef={null}
+    reference={value}
+    detail={value}
+    activityPending={false}
+    activityError={null}
+    onRefresh={() => {}}
+  />
+);
 
-function heading(title: string) {
-  const section = container.querySelector(`section[aria-label="${title}"]`);
-  expect(section, `section ${title}`).not.toBeNull();
-  return [...section!.querySelectorAll("button")].find(
-    (button) => button.querySelector("span")?.textContent === title,
-  )!;
+async function render(value = detail) {
+  const screen = await renderUi(tab(value));
+  const { container } = screen;
+  const heading = (title: string) => {
+    const section = container.querySelector(`section[aria-label="${title}"]`);
+    expect(section, `section ${title}`).not.toBeNull();
+    return [...section!.querySelectorAll("button")].find(
+      (button) => button.querySelector("span")?.textContent === title,
+    )!;
+  };
+  return Object.assign(screen, {
+    click: (title: string) => act(async () => heading(title).click()),
+    expanded: (title: string) => heading(title).getAttribute("aria-expanded"),
+    visibleText: () => container.innerText,
+  });
 }
-
-const click = (title: string) => act(async () => heading(title).click());
-const expanded = (title: string) => heading(title).getAttribute("aria-expanded");
-const visibleText = () => container.innerText;
-
-it("toggles checks from their heading and resets sections for another pull request", async () => {
-  await render();
-  expect(visibleText()).not.toContain("Unit tests");
-  await click("Checks");
-  expect(visibleText()).toContain("Unit tests");
-  await click("Checks");
-  expect(expanded("Checks")).toBe("false");
-  await click("Checks");
-  await click("Description");
-  await render({ ...detail, url: "https://github.com/owner/repo/pull/2", number: 2 });
-  expect(expanded("Checks")).toBe("false");
-  expect(expanded("Description")).toBe("true");
-});
 
 it("keeps an unsaved description when collapsed and reopened", async () => {
-  await render();
+  await using screen = await render();
   await act(async () =>
-    container.querySelector<HTMLButtonElement>('[aria-label="Edit description"]')!.click(),
+    screen.container.querySelector<HTMLButtonElement>('[aria-label="Edit description"]')!.click(),
   );
-  const textarea = container.querySelector("textarea")!;
+  const textarea = screen.container.querySelector("textarea")!;
   await userEvent.clear(textarea);
   await userEvent.type(textarea, "Unsaved description");
-  await click("Description");
-  expect(expanded("Description")).toBe("false");
-  await click("Description");
-  expect(container.querySelector("textarea")!.value).toBe("Unsaved description");
-});
-
-function commentTexts() {
-  const section = [...container.querySelectorAll("section")].find((element) =>
-    element.getAttribute("aria-label")?.startsWith("Comments"),
-  )!;
-  return [...section.querySelectorAll("p")]
-    .filter((p) => p.checkVisibility())
-    .map((p) => p.textContent ?? "");
-}
-
-const filterButton = () =>
-  container.querySelector<HTMLButtonElement>('[aria-label="Filter comments"]')!;
-
-function filterItem(label: string) {
-  const item = [...document.querySelectorAll('[role="menuitemcheckbox"]')].find((element) =>
-    element.textContent?.includes(label),
-  ) as HTMLElement | undefined;
-  expect(item, `filter ${label}`).toBeDefined();
-  return item!;
-}
-
-async function toggleFilter(label: string) {
-  if (!document.querySelector('[role="menuitemcheckbox"]')) await userEvent.click(filterButton());
-  await userEvent.click(filterItem(label));
-}
-
-it("hides bot and resolved comments until the filter shows them, and remembers the choice", async () => {
-  const comment = (index: number, login: string, body: string, isBot = false) => ({
-    id: `comment-${index}`,
-    kind: "issue-comment" as const,
-    author: { login, name: null, avatarUrl: null, isBot },
-    body,
-    createdAt: `2026-09-01T00:00:${String(index).padStart(2, "0")}Z`,
-    url: null,
-    path: null,
-    reviewState: null,
-  });
-  const resolved = {
-    ...comment(13, "reviewer", "Resolved remark"),
-    kind: "review-comment" as const,
-  };
-  const value: PullRequestDetailView = {
-    ...detail,
-    commentCount: 14,
-    comments: [
-      ...Array.from({ length: 12 }, (_, index) =>
-        comment(index, "review-app", `Bot report ${index}`, true),
-      ),
-      comment(12, "human", "Human comment"),
-      resolved,
-    ],
-    reviewThreads: [
-      {
-        id: "thread",
-        path: "src/index.ts",
-        line: 1,
-        side: "right",
-        isResolved: true,
-        isOutdated: false,
-        comments: [resolved],
-      },
-    ],
-  };
-  await render(value);
-  expect(commentTexts()).toEqual(["Human comment"]);
-  expect(filterButton().textContent).toContain("13 hidden");
-
-  await toggleFilter("Bot comments");
-  expect(commentTexts().filter((text) => text.startsWith("Bot report"))).toHaveLength(9);
-  expect(commentTexts()).toContain("Human comment");
-  expect(commentTexts()).not.toContain("Bot report 0");
-
-  await toggleFilter("Resolved or dismissed");
-  await userEvent.keyboard("{Escape}");
-  expect(
-    [...container.querySelectorAll("button")].some((button) => button.textContent === "Resolved"),
-  ).toBe(true);
-
-  await act(async () => root.unmount());
-  root = createRoot(container);
-  await render({ ...value, url: `${value.url}0`, number: 10 });
-  expect(commentTexts()).toContain("Bot report 11");
-  await userEvent.click(filterButton());
-  expect(filterItem("Bot comments").getAttribute("aria-checked")).toBe("true");
+  await screen.click("Description");
+  expect(screen.expanded("Description")).toBe("false");
+  await screen.click("Description");
+  expect(screen.container.querySelector("textarea")!.value).toBe("Unsaved description");
 });

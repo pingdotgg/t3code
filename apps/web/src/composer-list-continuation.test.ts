@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   listContinuationForEnter,
   listIndentForTab,
+  listOutdentForTab,
   nextOrderedMarkerText,
 } from "./composer-list-continuation";
 
@@ -11,18 +12,6 @@ function applyEdit(value: string, edit: { start: number; end: number; replacemen
 }
 
 describe("composer list continuation", () => {
-  it("continues ordered lists with the next number", () => {
-    const value = "1. foo";
-    const edit = listContinuationForEnter(value, value.length);
-    expect(edit).not.toBeNull();
-    expect(applyEdit(value, edit!)).toBe("1. foo\n2. ");
-  });
-
-  it("increments multi-digit and paren markers", () => {
-    expect(applyEdit("12. foo", listContinuationForEnter("12. foo", 7)!)).toBe("12. foo\n13. ");
-    expect(applyEdit("3) foo", listContinuationForEnter("3) foo", 6)!)).toBe("3) foo\n4) ");
-  });
-
   it("continues bullets and keeps indentation", () => {
     expect(applyEdit("- foo", listContinuationForEnter("- foo", 5)!)).toBe("- foo\n- ");
     expect(applyEdit("  * foo", listContinuationForEnter("  * foo", 7)!)).toBe("  * foo\n  * ");
@@ -43,13 +32,27 @@ describe("composer list continuation", () => {
   it("exits the list on an empty item", () => {
     expect(applyEdit("1. foo\n2. ", listContinuationForEnter("1. foo\n2. ", 10)!)).toBe("1. foo\n");
     expect(applyEdit("- ", listContinuationForEnter("- ", 2)!)).toBe("");
+    expect(applyEdit("1)\t", listContinuationForEnter("1)\t", 3)!)).toBe("");
+    expect(applyEdit("- [ ] ", listContinuationForEnter("- [ ] ", 6)!)).toBe("");
   });
 
-  it("ignores non-list lines and carets inside the marker", () => {
-    expect(listContinuationForEnter("plain text", 5)).toBeNull();
-    expect(listContinuationForEnter("1.foo no space", 3)).toBeNull();
-    expect(listContinuationForEnter("-foo", 2)).toBeNull();
-    expect(listContinuationForEnter("1. foo", 1)).toBeNull();
+  it("lifts an empty nested item one level per press before leaving the list", () => {
+    let value = "1. parent\n   1. child\n      1. ";
+    for (const expected of [
+      "1. parent\n   1. child\n   2. ",
+      "1. parent\n   1. child\n2. ",
+      "1. parent\n   1. child\n",
+    ]) {
+      value = applyEdit(value, listContinuationForEnter(value, value.length)!);
+      expect(value).toBe(expected);
+    }
+  });
+
+  it("renumbers the parent list after lifting an empty nested item", () => {
+    const value = "1. a\n   1. \n2. b";
+    const edit = listContinuationForEnter(value, value.indexOf("\n2."))!;
+    expect(applyEdit(value, edit)).toBe("1. a\n2. \n3. b");
+    expect(edit.cursorAfter).toBe("1. a\n2. ".length);
   });
 
   it("refuses to split a supplementary currency skill chip", () => {
@@ -63,11 +66,50 @@ describe("composer list continuation", () => {
     const cursor = value.indexOf("README") + 2;
     expect(listContinuationForEnter(value, cursor)).toBeNull();
   });
+});
 
-  it("indents list items on Tab", () => {
-    expect(applyEdit("- foo", listIndentForTab("- foo", 2, 2)!)).toBe("  - foo");
-    expect(listIndentForTab("plain", 2, 2)).toBeNull();
-    expect(listIndentForTab("- foo", 1, 3)).toBeNull();
+describe("composer list indentation", () => {
+  // regression: #17124 Tab must nest a numbered item at its parent's content column
+  it.each([
+    ["1. parent\n2. child", "1. parent\n   1. child"],
+    ["10. parent\n11. child", "10. parent\n    1. child"],
+    ["1.\tparent\n2. child", "1.\tparent\n    1. child"],
+    ['1. @"file\n   9. name"\n2. child', '1. @"file\n   9. name"\n   1. child'],
+  ])("nests %j as a first child and keeps the caret on its text", (value, expected) => {
+    const cursor = value.lastIndexOf("child") + 2;
+    const edit = listIndentForTab(value, cursor, cursor)!;
+    expect(applyEdit(value, edit)).toBe(expected);
+    expect(edit.cursorAfter).toBe(expected.lastIndexOf("child") + 2);
+  });
+
+  it("continues the numbering of an existing nested sibling", () => {
+    const value = "1. parent\n   1. first\n2. second";
+    const edit = listIndentForTab(value, value.length, value.length)!;
+    expect(applyEdit(value, edit)).toBe("1. parent\n   1. first\n   2. second");
+  });
+
+  it.each(["- parent\n- child", "1. parent\n2. child", "  7. child"])(
+    "undoes Tab on %j with Shift+Tab and keeps the caret on its text",
+    (value) => {
+      const cursor = value.lastIndexOf("child") + 2;
+      const nest = listIndentForTab(value, cursor, cursor)!;
+      const nested = applyEdit(value, nest);
+      const edit = listOutdentForTab(nested, nest.cursorAfter, nest.cursorAfter)!;
+      expect(applyEdit(nested, edit)).toBe(value);
+      expect(edit.cursorAfter).toBe(cursor);
+    },
+  );
+
+  it.each([
+    ["1. a\n   1. b\n2. c", "1. a\n2. b\n3. c"],
+    ["- a\n  5. b", "- a\n5. b"],
+  ])("outdents %j to %j and renumbers only within the parent's list", (value, expected) => {
+    const edit = listOutdentForTab(value, value.indexOf("b"), value.indexOf("b"))!;
+    expect(applyEdit(value, edit)).toBe(expected);
+  });
+
+  it("leaves a top-level item alone so Shift+Tab can still switch Build/Plan", () => {
+    expect(listOutdentForTab("- item", 6, 6)).toBeNull();
   });
 });
 
@@ -81,5 +123,40 @@ describe("nextOrderedMarkerText", () => {
     ["99999999999999999999.", "99999999999999999999."],
   ])("counts %s up to %s", (marker, expected) => {
     expect(nextOrderedMarkerText(marker)).toBe(expected);
+  });
+});
+
+describe("composer list renumbering", () => {
+  it("renumbers following items with their padding and leaves the caret after the inserted marker", () => {
+    const value = "1. @README.md go\n2. two\n03. three\n10. four";
+    const edit = listContinuationForEnter(value, value.indexOf("go"))!;
+    expect(applyEdit(value, edit)).toBe("1. @README.md \n2. go\n3. two\n04. three\n5. four");
+    expect(edit.cursorAfter).toBe("1. @README.md \n2. ".length);
+  });
+
+  it("renumbers indented paren siblings across tab-indented children and stops at a parent", () => {
+    const value = "  1) a\n\t1) child\n  2) b\n1) parent\n  3) untouched";
+    const edit = listContinuationForEnter(value, value.indexOf("\n"))!;
+    expect(applyEdit(value, edit)).toBe(
+      "  1) a\n  2) \n\t1) child\n  3) b\n1) parent\n  3) untouched",
+    );
+    expect(edit.cursorAfter).toBe("  1) a\n  2) ".length);
+  });
+
+  // regression: #14332 continuing a numbered list must renumber following items only up to the list boundary
+  it.each([
+    ["a blank line", ""],
+    ["plain text", "text"],
+    ["a different delimiter", "1) other list"],
+  ])("stops renumbering at %s", (_label, boundary) => {
+    const value = `1. a\n2. b\n${boundary}\n3. untouched`;
+    const edit = listContinuationForEnter(value, value.indexOf("\n"))!;
+    expect(applyEdit(value, edit)).toBe(`1. a\n2. \n3. b\n${boundary}\n3. untouched`);
+  });
+
+  it("preserves multiline chip contents while renumbering surrounding items", () => {
+    const value = '1. a\n2. @"file\n2. name" \n3. b';
+    const edit = listContinuationForEnter(value, value.indexOf("\n"))!;
+    expect(applyEdit(value, edit)).toBe('1. a\n2. \n3. @"file\n2. name" \n4. b');
   });
 });

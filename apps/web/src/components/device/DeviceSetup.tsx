@@ -3,7 +3,8 @@ import type { DevicePlatform, DeviceServiceState, EnvironmentId } from "@t3tools
 import { Check } from "lucide-react";
 import { Check as CheckGlyph, CircleAlert } from "lucide";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { useAtomMount } from "@effect/atom-react";
+import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { DialogClose } from "~/components/ui/dialog";
@@ -11,17 +12,22 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { WizardHeader, WizardPanel, WizardSteps, WizardFooter } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
 import { Switch } from "~/components/ui/switch";
-import { deviceEnvironment } from "~/state/device";
+import { deviceEnvironment, deviceHostProbeAtom, NO_DEVICE_PROBE_ATOM } from "~/state/device";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { cn } from "~/lib/utils";
 
 const platformName = (platform: DevicePlatform) => (platform === "ios" ? "iOS" : "Android");
 
-export const deviceHubDescription =
+const deviceHubDescription =
   "Enable this environment to open simulators and emulators, whether they run here or on a remote device host.";
-export const agentDeviceDescription =
+const agentDeviceDescription =
   "Allow new agent sessions in this environment to start and control local and remote devices, with required tools set up automatically.";
+
+export const isAndroidDiscoveryUncertain = (state: DeviceServiceState) =>
+  Object.values(state.hostStatuses).some(
+    (status) => status.status === "ready" && status.androidDiscoveryIncomplete,
+  );
 
 /**
  * `hostStatus` only tracks this machine. A machine without simulator tooling never
@@ -38,7 +44,45 @@ export function deviceHubReadiness(state: DeviceServiceState) {
   return { ready, busy };
 }
 
+/** A ready host keeps its devices usable but may still carry a discovery warning. */
+function deviceHostDiagnostics(
+  hosts: ReadonlyArray<Pick<DeviceServiceState["hosts"][number], "id" | "label">>,
+  hostStatuses: DeviceServiceState["hostStatuses"],
+) {
+  return hosts.flatMap((host) => {
+    const status = hostStatuses[host.id];
+    return status?.status === "ready" && status.detail
+      ? [{ hostId: host.id, label: host.label, detail: status.detail }]
+      : [];
+  });
+}
+
+function DeviceHostDiagnostics(props: {
+  readonly hosts: ReadonlyArray<Pick<DeviceServiceState["hosts"][number], "id" | "label">>;
+  readonly hostStatuses: DeviceServiceState["hostStatuses"];
+  readonly className?: string;
+}) {
+  const diagnostics = deviceHostDiagnostics(props.hosts, props.hostStatuses);
+  if (diagnostics.length === 0) return null;
+  return (
+    <div role="status" className={cn("space-y-1 text-xs text-muted-foreground", props.className)}>
+      {diagnostics.map(({ hostId, label, detail }) => (
+        <p key={hostId} className="whitespace-pre-line break-words">
+          {label}: {detail}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 export function platformSetupStatus(state: DeviceServiceState, platform: DevicePlatform) {
+  const hasDevices = state.devices.some((device) => device.platform === platform);
+  if (platform === "android" && !hasDevices && isAndroidDiscoveryUncertain(state)) {
+    return {
+      ready: false,
+      message: "The Android device list may be incomplete. Check the device host and try again.",
+    };
+  }
   const availabilities = state.hosts.flatMap((host) =>
     host.platforms
       .filter((candidate) => candidate.platform === platform)
@@ -58,7 +102,7 @@ export function platformSetupStatus(state: DeviceServiceState, platform: DeviceP
       state.hostStatuses[host.id]?.status === "ready" ||
       (host.kind === "local" && state.hostStatus === "ready"),
   );
-  if (readyHosts.length > 0 && !state.devices.some((device) => device.platform === platform)) {
+  if (readyHosts.length > 0 && !hasDevices) {
     return {
       ready: false,
       message:
@@ -74,9 +118,11 @@ export function platformSetupStatus(state: DeviceServiceState, platform: DeviceP
   return {
     ready: true,
     message:
-      platform === "ios"
-        ? `Xcode and iOS Simulator are available${location}.`
-        : `The Android SDK and Emulator are available${location}.`,
+      remoteHost?.kind === "eas"
+        ? `${remoteHost.label} starts ${platform === "ios" ? "iOS Simulators" : "Android emulators"} in the cloud with EAS Simulator.`
+        : platform === "ios"
+          ? `Xcode and iOS Simulator are available${location}.`
+          : `The Android SDK and Emulator are available${location}.`,
   };
 }
 
@@ -96,10 +142,7 @@ export function DeviceSetup(props: {
     (host) => host.kind === "local" && !host.platforms.some((platform) => platform.available),
   );
 
-  // Remote hosts report platforms only after a probe, like the Device panel's refresh on open.
-  useEffect(() => {
-    if (enabled) void list({ environmentId: props.environmentId, input: {} });
-  }, [enabled, list, props.environmentId]);
+  useAtomMount(enabled ? deviceHostProbeAtom(props.environmentId) : NO_DEVICE_PROBE_ATOM);
 
   const update = async (
     kind: NonNullable<typeof pending>,
@@ -265,6 +308,7 @@ function DevicePlatformSetup(props: {
     <div className="space-y-3">
       <PlatformStatus platform="iOS" status={platformSetupStatus(props.state, "ios")} />
       <PlatformStatus platform="Android" status={platformSetupStatus(props.state, "android")} />
+      <DeviceHostDiagnostics hosts={props.state.hosts} hostStatuses={props.state.hostStatuses} />
       <p className="text-xs text-muted-foreground">
         You can use either platform. Fixing a missing platform does not block the other one.
       </p>
@@ -316,7 +360,7 @@ export function AgentDeviceSetupStatus(props: {
   return null;
 }
 
-export function PlatformStatus(props: {
+function PlatformStatus(props: {
   readonly platform: string;
   readonly status: { readonly ready: boolean; readonly message: string };
   readonly compact?: boolean;

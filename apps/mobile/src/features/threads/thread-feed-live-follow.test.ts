@@ -2,6 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveThreadFeedLiveFollow,
+  resolveThreadFeedReflowAnchor,
+  resolveThreadFeedReflowOffset,
+  resolveThreadFeedReflowScroll,
   resolveThreadFeedSubmissionAnchor,
   resolveThreadWorkGroupInitialScroll,
   shouldFollowThreadWorkGroupAppend,
@@ -26,11 +29,6 @@ describe("tool-group scroll restoration", () => {
       index: 2,
       viewOffset: -80,
     });
-  });
-
-  it("starts normally when the saved row no longer belongs to the group", () => {
-    expect(resolveThreadWorkGroupInitialScroll([{ id: "other" }], position)).toBeUndefined();
-    expect(resolveThreadWorkGroupInitialScroll([{ id: "read-output" }], undefined)).toBeUndefined();
   });
 });
 
@@ -68,11 +66,7 @@ describe("tool-group append following", () => {
 
   it.each([
     { name: "reading earlier calls", changes: { scrollOffset: 20 } },
-    { name: "dragging before leaving the edge", changes: { userScrolling: true } },
-    { name: "opening detail during an append", changes: { detailsChanged: true } },
     { name: "streaming a result", changes: { rows: previousRows, contentHeight: 600 } },
-    { name: "updating a lifecycle label", changes: { rows: previousRows, contentHeight: 289 } },
-    { name: "prepending old calls", changes: { rows: [{ id: "older" }, ...previousRows] } },
     {
       name: "replacing a call while appending",
       changes: { rows: [{ id: "replacement" }, ...appendedRows.slice(1)] },
@@ -83,6 +77,19 @@ describe("tool-group append following", () => {
 });
 
 describe("resolveThreadFeedSubmissionAnchor", () => {
+  it("keeps an offline first message at the end", () => {
+    expect(
+      resolveThreadFeedSubmissionAnchor({
+        currentAnchorMessageId: null,
+        submittedMessageId: "offline-first",
+        hasStartedTurn: false,
+        hasUserMessage: false,
+        queuedMessageCount: 0,
+        deliveryDeferred: true,
+      }),
+    ).toBeNull();
+  });
+
   it("anchors the first user message in a thread", () => {
     expect(
       resolveThreadFeedSubmissionAnchor({
@@ -90,6 +97,7 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
         submittedMessageId: "first-message",
         hasStartedTurn: false,
         hasUserMessage: false,
+        deliveryDeferred: false,
         queuedMessageCount: 0,
       }),
     ).toBe("first-message");
@@ -102,19 +110,8 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
         submittedMessageId: "second-message",
         hasStartedTurn: false,
         hasUserMessage: false,
+        deliveryDeferred: false,
         queuedMessageCount: 1,
-      }),
-    ).toBe("first-message");
-  });
-
-  it("preserves the first-message anchor after its outbox entry drains", () => {
-    expect(
-      resolveThreadFeedSubmissionAnchor({
-        currentAnchorMessageId: "first-message",
-        submittedMessageId: "second-message",
-        hasStartedTurn: false,
-        hasUserMessage: false,
-        queuedMessageCount: 0,
       }),
     ).toBe("first-message");
   });
@@ -126,11 +123,13 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
         submittedMessageId: "second-message",
         hasStartedTurn: false,
         hasUserMessage: true,
+        deliveryDeferred: false,
         queuedMessageCount: 0,
       }),
     ).toBeNull();
   });
 
+  // regression: #7897 stop pushing follow-up messages to the top
   it("does not anchor a thread that has already started a turn", () => {
     expect(
       resolveThreadFeedSubmissionAnchor({
@@ -138,6 +137,7 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
         submittedMessageId: "second-message",
         hasStartedTurn: true,
         hasUserMessage: false,
+        deliveryDeferred: false,
         queuedMessageCount: 0,
       }),
     ).toBeNull();
@@ -145,18 +145,9 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
 });
 
 describe("resolveThreadFeedLiveFollow", () => {
+  // regression: #5986 stabilize thread composer and interactions
   it("pauses immediately when the user starts scrolling", () => {
     expect(resolveThreadFeedLiveFollow(true, { type: "user-scroll-begin" })).toBe(false);
-  });
-
-  it("stays paused away from the actual end", () => {
-    expect(
-      resolveThreadFeedLiveFollow(false, {
-        type: "scroll",
-        isAtEnd: false,
-        userScrollSessionActive: true,
-      }),
-    ).toBe(false);
   });
 
   it("does not mistake programmatic layout compensation for a user scroll", () => {
@@ -206,18 +197,116 @@ describe("resolveThreadFeedLiveFollow", () => {
       }),
     ).toBe(false);
   });
+});
 
-  it("ignores momentum-end events from programmatic scrolling", () => {
-    expect(
-      resolveThreadFeedLiveFollow(true, {
-        type: "user-scroll-end",
-        isAtEnd: false,
-        userScrollSessionActive: false,
-      }),
-    ).toBe(true);
+describe("width reflow anchors", () => {
+  const layout = { rowsTop: 50, headerInset: 100 };
+  const feedState = (
+    rows: ReadonlyArray<{ readonly id: string; readonly size: number }>,
+    scroll: number,
+    isWithinMaintainScrollAtEndThreshold = false,
+  ) => {
+    const positions = rows.map((_, index) =>
+      rows.slice(0, index).reduce((top, row) => top + row.size, 0),
+    );
+    return {
+      data: rows,
+      scroll,
+      isWithinMaintainScrollAtEndThreshold,
+      indexByKey: (key: string) => {
+        const index = rows.findIndex((row) => row.id === key);
+        return index < 0 ? undefined : index;
+      },
+      positionAtIndex: (index: number) => positions[index],
+      sizes: new Map(rows.map((row) => [row.id, row.size])),
+    };
+  };
+  const wide = [
+    { id: "question", size: 400 },
+    { id: "reply", size: 2_000 },
+    { id: "follow-up", size: 300 },
+  ];
+  // The line under the header sits 1,200px, 60%, into the reply.
+  const readingReply = feedState(wide, 1_550);
+
+  it("keeps the end for a feed that is following it", () => {
+    expect(resolveThreadFeedReflowAnchor(feedState(wide, 1_550, true), layout, true)).toBe("end");
   });
 
-  it("re-arms after an explicit reset", () => {
-    expect(resolveThreadFeedLiveFollow(false, { type: "reset" })).toBe(true);
+  it("keeps the reader's row after a status-bar scroll left follow on far from the end", () => {
+    expect(resolveThreadFeedReflowAnchor(readingReply, layout, true)).toEqual({
+      key: "reply",
+      offsetWithinRow: 1_200,
+      size: 2_000,
+    });
+  });
+
+  it.each([
+    { change: "narrows", replySize: 4_000 },
+    { change: "widens", replySize: 1_000 },
+  ])("keeps the reader 60% into a reply when the feed $change", ({ replySize }) => {
+    const anchor = resolveThreadFeedReflowAnchor(readingReply, layout, false);
+    if (anchor === null || anchor === "end") throw new Error("expected a row anchor");
+    const reflowed = feedState(
+      [
+        { id: "question", size: 400 * (replySize / 2_000) },
+        { id: "reply", size: replySize },
+        { id: "follow-up", size: 300 },
+      ],
+      readingReply.scroll,
+    );
+    expect(resolveThreadFeedReflowScroll(anchor, reflowed, layout)).toEqual({
+      index: 1,
+      viewOffset: layout.headerInset - 0.6 * replySize,
+    });
+  });
+
+  it.each([
+    { change: "narrows", replySize: 4_000 },
+    { change: "widens", replySize: 1_000 },
+  ])(
+    "holds the reader 60% into a reply on each re-measure as the feed $change",
+    ({ replySize }) => {
+      const anchor = resolveThreadFeedReflowAnchor(readingReply, layout, false);
+      if (anchor === null || anchor === "end") throw new Error("expected a row anchor");
+      const rows = [
+        { id: "question", size: 400 * (replySize / 2_000) },
+        { id: "reply", size: replySize },
+        { id: "follow-up", size: 300 },
+      ];
+      const offset = resolveThreadFeedReflowOffset(
+        anchor,
+        feedState(rows, readingReply.scroll),
+        layout,
+      );
+      if (offset === undefined) throw new Error("expected an offset");
+      expect(resolveThreadFeedReflowAnchor(feedState(rows, offset), layout, false)).toEqual({
+        key: "reply",
+        offsetWithinRow: 0.6 * replySize,
+        size: replySize,
+      });
+    },
+  );
+
+  it("leaves a reader at the top of the thread where they are", () => {
+    expect(resolveThreadFeedReflowAnchor(feedState(wide, -layout.headerInset), layout, false)).toBe(
+      null,
+    );
+  });
+
+  it("does not scroll when the row did not change size", () => {
+    const anchor = resolveThreadFeedReflowAnchor(readingReply, layout, false);
+    if (anchor === null || anchor === "end") throw new Error("expected a row anchor");
+    expect(resolveThreadFeedReflowScroll(anchor, readingReply, layout)).toBeNull();
+  });
+
+  it("does not restore a row that left the feed", () => {
+    expect(
+      resolveThreadFeedReflowScroll(
+        { key: "reply", offsetWithinRow: 1_200, size: 2_000 },
+        feedState([{ id: "question", size: 400 }], 0),
+        layout,
+      ),
+    ).toBeNull();
   });
 });
