@@ -594,26 +594,26 @@ function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): Rea
 }> {
   const lineageOf = (run: WorkflowRunFields) => `${run.workflow.id} ${run.event}`;
   const newestRunNumber = new Map<string, number>();
-  for (const { workflowRun: run } of raw ?? []) {
-    if (run == null || !PULL_REQUEST_EVENTS.has(run.event)) continue;
-    const newest = newestRunNumber.get(lineageOf(run));
-    if (newest === undefined || run.runNumber > newest) {
-      newestRunNumber.set(lineageOf(run), run.runNumber);
+  const note = (key: string, runNumber: number) => {
+    if (runNumber > (newestRunNumber.get(key) ?? Number.NEGATIVE_INFINITY)) {
+      newestRunNumber.set(key, runNumber);
     }
+  };
+  for (const check of raw ?? []) {
+    const run = check.workflowRun;
+    if (run == null || !PULL_REQUEST_EVENTS.has(run.event)) continue;
+    note(lineageOf(run), run.runNumber);
+    note(`${lineageOf(run)} ${trimmed(check.name) ?? ""}`, run.runNumber);
   }
   return (raw ?? []).flatMap((check) => {
     const name = trimmed(check.name) ?? trimmed(check.context);
     if (name === null) return [];
     const status = toCheckStatus(check);
     const run = check.workflowRun;
-    // Branch protection names required checks, so only a same-name result can replace one.
-    if (
-      status === "cancelled" &&
-      check.isRequired !== true &&
-      run != null &&
-      run.runNumber < (newestRunNumber.get(lineageOf(run)) ?? run.runNumber)
-    ) {
-      return [];
+    if (status === "cancelled" && run != null) {
+      // Branch protection names required checks, so only a newer same-name check replaces one.
+      const replacedBy = check.isRequired === true ? `${lineageOf(run)} ${name}` : lineageOf(run);
+      if (run.runNumber < (newestRunNumber.get(replacedBy) ?? run.runNumber)) return [];
     }
     return [
       {

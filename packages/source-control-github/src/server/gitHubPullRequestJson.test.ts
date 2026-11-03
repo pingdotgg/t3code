@@ -666,6 +666,32 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("failing");
   });
 
+  it("drops a required cancelled check once a newer run reports it, whenever it finished", () => {
+    const detail = detailOf([
+      inWorkflow({
+        name: "test",
+        workflowName: "CI",
+        runNumber: 41,
+        conclusion: "CANCELLED",
+        isRequired: true,
+        startedAt: "2026-10-30T10:00:00Z",
+        completedAt: "2026-10-30T10:09:00Z",
+      }),
+      inWorkflow({
+        name: "test",
+        workflowName: "CI",
+        runNumber: 42,
+        conclusion: "SUCCESS",
+        isRequired: true,
+        startedAt: "2026-10-30T10:01:00Z",
+        completedAt: "2026-10-30T10:05:00Z",
+      }),
+    ]);
+
+    expect(detail.checks.map((check) => [check.name, check.status])).toEqual([["test", "success"]]);
+    expect(detail.checksState).toBe("passing");
+  });
+
   it.each([
     ["a manual dispatch", "workflow_dispatch", "workflow_dispatch", "CANCELLED", "cancelled"],
     ["a push of another ref", "push", "push", "CANCELLED", "cancelled"],
