@@ -1523,7 +1523,7 @@ it.effect.each(["exit", "missing"] as const)(
       expect(publicError.message).toBe(
         failure === "exit"
           ? "Device update device tool failed: The device command failed (exit code 243)."
-          : "Device update device tool failed: Neither npm nor pnpm was found on this host. Install Node.js with npm on this host, make npm available to the T3 server, then retry.",
+          : "Device update device tool failed: Neither npm nor pnpm was found on this host. Install Node.js with npm on this host, make npm available to the T3 server, then fully restart T3 Code (including the tray app) or the T3 server before retrying.",
       );
     }).pipe(
       Effect.provide(
