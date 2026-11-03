@@ -12,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -39,10 +40,10 @@ import {
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
 import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
 import {
-  claudeSdkLaunchArgSettings,
+  discoverClaudeSkills,
   readClaudeLaunchArgSettings,
-} from "./Drivers/ClaudeLaunchArgSettings.ts";
-import { discoverClaudeSkills, readClaudeSettingsEnv } from "./Drivers/ClaudeSkills.ts";
+  readClaudeSettingsEnv,
+} from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
@@ -206,16 +207,18 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
   readonly managedMcpConfig: boolean;
-  readonly launchArgSettings?: ClaudeSdkSettings | undefined;
+  readonly enabledPlugins?: ClaudeSdkSettings["enabledPlugins"];
 }): ClaudeQueryOptions {
   return {
     persistSession: false,
     pathToClaudeCodeExecutable: input.executablePath,
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
-    // Keep settings, --settings included, for slash-command discovery, but disable hooks so
-    // health checks do not run SessionStart repeatedly.
-    settings: { ...input.launchArgSettings, disableAllHooks: true },
+    // Keep settings for slash-command discovery, but disable hooks so health checks do not run SessionStart repeatedly.
+    settings: {
+      ...(input.enabledPlugins ? { enabledPlugins: input.enabledPlugins } : {}),
+      disableAllHooks: true,
+    },
     allowedTools: [],
     // Exclude filesystem MCP servers; omit strict mode when managed-mcp.json already excludes them and forbids the flag.
     mcpServers: {},
@@ -325,6 +328,17 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
   });
 }
 
+// Claude Code drops the whole inline settings layer, disableAllHooks included, when any key
+// in it is invalid, so the probe takes only well-formed plugin switches from --settings.
+const decodeLaunchArgEnabledPlugins = Schema.decodeUnknownOption(
+  Schema.Struct({
+    enabledPlugins: Schema.Record(
+      Schema.String,
+      Schema.Union([Schema.Boolean, Schema.mutable(Schema.Array(Schema.String))]),
+    ),
+  }),
+);
+
 /** A never-yielding prompt allows local initialization IPC without sending an Anthropic request. */
 const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
@@ -341,11 +355,16 @@ const probeClaudeCapabilities = (
     );
     const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
     // An unreadable --settings value fails the turn, not the provider status.
-    const launchArgSettings = yield* readClaudeLaunchArgSettings(
-      claudeSettings.launchArgs,
-      cwd,
-    ).pipe(
-      Effect.map((settings) => settings && claudeSdkLaunchArgSettings(settings)),
+    const enabledPlugins = yield* readClaudeLaunchArgSettings({
+      settings: claudeSettings,
+      cwd: cwd ?? null,
+      fileSystem: yield* FileSystem.FileSystem,
+      path: yield* Path.Path,
+    }).pipe(
+      Effect.map(
+        (settings) =>
+          Option.getOrUndefined(decodeLaunchArgEnabledPlugins(settings ?? {}))?.enabledPlugins,
+      ),
       Effect.orElseSucceed(() => undefined),
     );
     return yield* Effect.tryPromise(async () => {
@@ -360,7 +379,7 @@ const probeClaudeCapabilities = (
           environment: claudeEnvironment,
           cwd,
           managedMcpConfig,
-          launchArgSettings,
+          enabledPlugins,
         }),
       });
       const init = await q.initializationResult();

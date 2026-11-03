@@ -149,13 +149,8 @@ import {
 import {
   claudeLaunchArgDirectories,
   discoverClaudeSkills,
-} from "../../provider/Drivers/ClaudeSkills.ts";
-import {
-  ClaudeBypassSettings,
-  claudeSdkBypassSettings,
-  claudeSdkLaunchArgSettings,
   readClaudeLaunchArgSettings,
-} from "../../provider/Drivers/ClaudeLaunchArgSettings.ts";
+} from "../../provider/Drivers/ClaudeSkills.ts";
 import {
   compileClaudeModelSelection,
   type CompiledClaudeModelSelection,
@@ -2641,10 +2636,58 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
   };
 }
 
+const ClaudeBypassSettings = Schema.StructWithRest(
+  Schema.Struct({
+    disableAutoMode: Schema.optionalKey(Schema.Literals(["disable", false])),
+    permissions: Schema.optionalKey(
+      Schema.StructWithRest(
+        Schema.Struct({
+          disableBypassPermissionsMode: Schema.optionalKey(Schema.Literals(["disable", false])),
+          disableAutoMode: Schema.optionalKey(Schema.Literals(["disable", false])),
+        }),
+        [Schema.Record(Schema.String, Schema.Unknown)],
+      ),
+    ),
+  }),
+  [Schema.Record(Schema.String, Schema.Unknown)],
+);
 const decodeClaudeBypassSettings = Schema.decodeUnknownEffect(
   fromLenientJson(ClaudeBypassSettings),
 );
 const decodeClaudeLaunchArgBypassSettings = Schema.decodeUnknownEffect(ClaudeBypassSettings);
+
+function claudeSdkBypassSettings(settings: typeof ClaudeBypassSettings.Type) {
+  const { disableAutoMode, permissions, ...rest } = settings;
+  const {
+    disableBypassPermissionsMode,
+    disableAutoMode: nestedAutoMode,
+    ...permissionRest
+  } = permissions ?? {};
+  return {
+    ...rest,
+    ...(disableAutoMode === "disable" ? { disableAutoMode } : {}),
+    ...(permissions
+      ? {
+          permissions: {
+            ...permissionRest,
+            ...(disableBypassPermissionsMode === "disable" ? { disableBypassPermissionsMode } : {}),
+            ...(nestedAutoMode === "disable" ? { disableAutoMode: nestedAutoMode } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+// --settings travels to the SDK as options.settings, whose type only allows "disable".
+// Shapes the schema rejects keep their current pass-through; resolveBypassAvailability
+// already treats them as a bypass failure.
+const decodeClaudeLaunchArgBypassSettingsOption = Schema.decodeUnknownOption(ClaudeBypassSettings);
+function claudeSdkLaunchArgSettings(settings: ClaudeSdkSettings): ClaudeSdkSettings {
+  const decoded = decodeClaudeLaunchArgBypassSettingsOption(settings);
+  return Option.isNone(decoded)
+    ? settings
+    : (claudeSdkBypassSettings(decoded.value) as ClaudeSdkSettings);
+}
 
 const ClaudePromptCacheTtl = Schema.Literals(["5m", "1h"]);
 const decodeClaudePromptCacheTtl = Schema.decodeUnknownOption(ClaudePromptCacheTtl);
@@ -4550,13 +4593,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         Effect.succeed({} as typeof ClaudeBypassSettings.Type),
       ),
     );
-  // makeClaudeQueryOptions merges these beneath T3's own settings.
-  const readLaunchArgSettings = (cwd: string | null) =>
-    readClaudeLaunchArgSettings(adapterOptions.settings?.launchArgs, cwd ?? undefined).pipe(
-      Effect.map((settings) => settings as ClaudeSdkSettings | undefined),
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-    );
   const resolveBypassAvailability = Effect.fn("ClaudeAdapterV2.resolveBypassAvailability")(
     function* (cwd: string | null) {
       // resolveSettings does not initialize remote-cache eligibility in the SDK host.
@@ -4572,7 +4608,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           serverManagedSettings: claudeSdkBypassSettings(remote),
         }),
       );
-      const launchArgSettings = yield* readLaunchArgSettings(cwd);
+      const launchArgSettings = yield* readClaudeLaunchArgSettings({
+        settings: adapterOptions.settings,
+        cwd,
+        fileSystem,
+        path,
+      });
       const launch = yield* decodeClaudeLaunchArgBypassSettings(launchArgSettings ?? {});
       const sources = [resolved.effective, home, remote, launch].map(claudeBypassAvailability);
       return {
@@ -10390,7 +10431,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             fileSystem,
             path,
           });
-          const launchArgSettings = yield* readLaunchArgSettings(turnInput.runtimePolicy.cwd);
+          const launchArgSettings = yield* readClaudeLaunchArgSettings({
+            settings: adapterOptions.settings,
+            cwd: turnInput.runtimePolicy.cwd,
+            fileSystem,
+            path,
+          });
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           if (existing !== null) {
             yield* existing.query.close.pipe(Effect.ignore);

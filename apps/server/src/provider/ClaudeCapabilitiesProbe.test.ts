@@ -46,41 +46,55 @@ it.effect("reports a deleted worktree's scan as finished, not pending", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("probes slash commands with the instance's --settings launch arg, hooks still off", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-probe-" });
-    const settingsFile = path.join(tempDir, "work-settings.json");
-    // Legacy `false` switches make the CLI drop the whole inline layer, hook switch included.
-    yield* fs.writeFileString(
-      settingsFile,
-      JSON.stringify({
-        enabledPlugins: { "work-plugin@demo-market": true },
-        disableAutoMode: false,
-        permissions: { allow: ["Read"], disableBypassPermissionsMode: false },
-        disableAllHooks: false,
-      }),
-    );
-    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
-      () =>
-        ({
-          initializationResult: () => Promise.resolve({ commands: [], account: {} }),
-        }) as unknown as ReturnType<typeof ClaudeSdk.query>,
-    );
-    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+// Claude Code drops the whole inline layer, hook switch included, when any key in it is invalid.
+const nonPluginSettings = {
+  disableAutoMode: false,
+  permissions: { disableBypassPermissionsMode: false, disableAutoMode: "bogus" },
+  env: { ANTHROPIC_BASE_URL: "http://example.invalid" },
+  disableAllHooks: false,
+};
 
-    yield* probeClaudeCapabilities(
-      yield* decodeClaudeSettings({ launchArgs: `--settings "${settingsFile}"` }),
-      { HOME: tempDir },
-      tempDir,
-      false,
-    );
-
-    assert.deepEqual(query.mock.calls[0]?.[0].options?.settings, {
-      enabledPlugins: { "work-plugin@demo-market": true },
-      permissions: { allow: ["Read"] },
+it.effect.each([
+  {
+    forwarded: "only the well-formed plugin switches",
+    plugins: { "work-plugin@demo-market": true, "pinned@demo-market": ["^1.0.0"] },
+    expected: {
+      enabledPlugins: { "work-plugin@demo-market": true, "pinned@demo-market": ["^1.0.0"] },
       disableAllHooks: true,
-    });
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    },
+  },
+  {
+    forwarded: "nothing when a plugin switch is malformed",
+    plugins: { "work-plugin@demo-market": true, "broken@demo-market": 1 },
+    expected: { disableAllHooks: true },
+  },
+])(
+  "probes slash commands with $forwarded from --settings, hooks still off",
+  ({ plugins, expected }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-probe-" });
+      const settingsFile = path.join(tempDir, "work-settings.json");
+      yield* fs.writeFileString(
+        settingsFile,
+        JSON.stringify({ ...nonPluginSettings, enabledPlugins: plugins }),
+      );
+      const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            initializationResult: () => Promise.resolve({ commands: [], account: {} }),
+          }) as unknown as ReturnType<typeof ClaudeSdk.query>,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+
+      yield* probeClaudeCapabilities(
+        yield* decodeClaudeSettings({ launchArgs: `--settings "${settingsFile}"` }),
+        { HOME: tempDir },
+        tempDir,
+        false,
+      );
+
+      assert.deepEqual(query.mock.calls[0]?.[0].options?.settings, expected);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
