@@ -626,7 +626,7 @@ const agentFor = (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
   input.runtimePolicy.interactionMode === "plan" ? "plan" : "build";
 
 const commandOf = (text: string) => {
-  const match = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
   return match === null ? undefined : { name: match[1]!, text: match[2] ?? "" };
 };
 
