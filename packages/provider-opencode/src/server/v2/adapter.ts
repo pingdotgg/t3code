@@ -729,6 +729,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const pending = new Map<RuntimeRequestId, PendingRequest>();
     const lock = yield* Semaphore.make(1);
     const clearing = new Map<string, Deferred.Deferred<void>>();
+    const mcpStatusChanges = new Map<string, Deferred.Deferred<void>>();
     const stagedReverts = new Set<string>();
     const sessionGates = yield* KeyedLock.make<string>();
     const exclusive =
@@ -2286,6 +2287,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         : Effect.void;
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
+      if (event.type === "mcp.status.changed") {
+        const changed = mcpStatusChanges.get(event.data.server);
+        if (changed !== undefined) yield* Deferred.succeed(changed, undefined);
+        return;
+      }
       const sessionId = sessionOfEvent(event);
       const cleared = sessionId === undefined ? undefined : clearing.get(sessionId);
       if (cleared !== undefined) {
@@ -3070,6 +3076,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ),
     );
 
+    // The waiter is registered before each read so a change landing mid-read is not lost.
+    const settledMcpStatus = Effect.fnUntraced(function* (server: string, directory: string) {
+      for (;;) {
+        const changed = yield* Deferred.make<void>();
+        mcpStatusChanges.set(server, changed);
+        const listed = yield* client.mcp.list({ location: { directory } });
+        const status = listed.data.find((each) => each.name === server)?.status.status;
+        if (status !== "pending") return status;
+        yield* Deferred.await(changed);
+      }
+    });
+
     const prepareTurn = Effect.fnUntraced(function* (
       sessionId: string,
       state: ThreadState,
@@ -3116,7 +3134,27 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               ),
             ),
           );
-        if (mcpAvailable) state.mcp = wanted;
+        if (mcpAvailable) {
+          state.mcp = wanted;
+          // An add to a fresh Location returns while OpenCode is still connecting. Tools that join
+          // mid-turn restart Claude-backed turns, so prompt once the server has settled.
+          mcpAvailable = yield* settledMcpStatus(name, directory).pipe(
+            Effect.timeout(INVENTORY_TIMEOUT),
+            Effect.ensuring(Effect.sync(() => mcpStatusChanges.delete(name))),
+            Effect.flatMap((status) =>
+              status === "connected"
+                ? Effect.succeed(true)
+                : Effect.logWarning("OpenCode did not connect T3 Code's MCP server.", {
+                    status,
+                  }).pipe(Effect.as(false)),
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("OpenCode did not connect T3 Code's MCP server.", cause).pipe(
+                Effect.as(false),
+              ),
+            ),
+          );
+        }
       }
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),

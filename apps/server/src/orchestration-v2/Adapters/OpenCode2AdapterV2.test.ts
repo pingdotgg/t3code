@@ -2759,7 +2759,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("re-registers T3 MCP each turn and drops its instructions when adding fails", () =>
+  it.effect("re-registers T3 MCP each turn and drops its instructions when it is unavailable", () =>
     Effect.gen(function* () {
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       yield* mcpSessions.set({
@@ -2792,6 +2792,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const { runtime, thread } = yield* resumed([
         add,
         reply("mcp.add", null),
+        out("mcp.list", { "location[directory]": WORK }),
+        reply("mcp.list", {
+          location: { directory: WORK },
+          data: [{ name: server, status: { status: "connected" } }],
+        }),
         ...turn,
         add,
         reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
@@ -2802,10 +2807,19 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }),
         reply("session.instructions.entry.put", null),
         ...turn,
+        // A server OpenCode cannot connect keeps the instructions without T3's tools.
+        add,
+        reply("mcp.add", null),
+        out("mcp.list", { "location[directory]": WORK }),
+        reply("mcp.list", {
+          location: { directory: WORK },
+          data: [{ name: server, status: { status: "failed", error: "unreachable" } }],
+        }),
+        ...turn,
         out("mcp.remove", { server, "location[directory]": WORK }),
         reply("mcp.remove", null),
       ]);
-      for (let index = 0; index < 2; index++) {
+      for (let index = 0; index < 3; index++) {
         const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
         yield* runtime.startTurn(turnInput(thread));
         assert.equal((yield* Fiber.join(terminal))?.status, "completed");
@@ -2921,6 +2935,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           },
         }),
         reply("mcp.add", null),
+        out("mcp.list", { "location[directory]": WORK }),
+        reply("mcp.list", {
+          location: { directory: WORK },
+          data: [{ name: server, status: { status: "connected" } }],
+        }),
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
         event("session.execution.succeeded", { sessionID: SESSION }),
