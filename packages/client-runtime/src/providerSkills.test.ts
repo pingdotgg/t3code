@@ -10,8 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createProviderWorkspaceSnapshotRefreshAtomFamily,
-  getProviderSkillsForSlashMenu,
-  getProviderSlashCommandsForSlashMenu,
+  getProviderSlashMenuEntries,
   hasCompleteProviderWorkspaceSnapshot,
   isProviderWorkspaceSnapshotScanning,
   resolveProviderSkillsForCwd,
@@ -40,16 +39,16 @@ const provider = {
   ],
 } satisfies ServerProvider;
 
-describe("getProviderSkillsForSlashMenu", () => {
+describe("getProviderSlashMenuEntries", () => {
   it("keeps the skill alias when the provider also exposes it as a slash command", () => {
     const askMatt = {
       name: "ask-matt",
       path: "/Users/matt/.agents/skills/ask-matt/SKILL.md",
       enabled: true,
     };
-    expect(getProviderSkillsForSlashMenu([askMatt], true).map((skill) => skill.name)).toEqual([
-      "ask-matt",
-    ]);
+    expect(
+      getProviderSlashMenuEntries([askMatt], [], true).skills.map((skill) => skill.name),
+    ).toEqual(["ask-matt"]);
   });
 
   it("shows one row when enabled skills share a name", () => {
@@ -71,10 +70,9 @@ describe("getProviderSkillsForSlashMenu", () => {
       },
     ];
 
-    expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.name)).toEqual([
-      "babysit-pr",
-      "browser",
-    ]);
+    expect(getProviderSlashMenuEntries(skills, [], true).skills.map((skill) => skill.name)).toEqual(
+      ["babysit-pr", "browser"],
+    );
   });
 
   it("keeps an enabled skill when a disabled duplicate appears first", () => {
@@ -92,23 +90,19 @@ describe("getProviderSkillsForSlashMenu", () => {
       enabledSkill,
     ];
 
-    expect(getProviderSkillsForSlashMenu(skills, true)).toEqual([enabledSkill]);
+    expect(getProviderSlashMenuEntries(skills, [], true).skills).toEqual([enabledSkill]);
   });
-});
 
-describe("getProviderSlashCommandsForSlashMenu", () => {
-  it("does not list a skill's duplicate command when skills are hidden from the slash menu", () => {
+  it("hides a skill's native command along with the skill when skills are hidden", () => {
     const skills = [
       { name: "cafe-pr", path: "/Users/matt/.agents/skills/cafe-pr/SKILL.md", enabled: true },
     ];
     const slashCommands = [{ name: "cafe-pr" }, { name: "compact" }];
 
-    const commandNames = getProviderSlashCommandsForSlashMenu(slashCommands, skills).map(
-      (command) => command.name,
-    );
+    const entries = getProviderSlashMenuEntries(skills, slashCommands, false);
 
-    expect(getProviderSkillsForSlashMenu(skills, false)).toEqual([]);
-    expect(commandNames).toEqual(["compact"]);
+    expect(entries.skills).toEqual([]);
+    expect(entries.slashCommands.map((command) => command.name)).toEqual(["compact"]);
   });
 });
 
