@@ -3,10 +3,10 @@ import {
   buildExpiredTerminalContextToastCopy,
   mergeDirectPreviewAnnotation,
   planComposerTurn,
+  restorePlanFollowUpComposer,
   snapshotComposerSend,
   withMessageContext,
   deriveAvailableRevertTurnCounts,
-  deriveWorkspaceMutationId,
 } from "./ChatView.logic";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
@@ -1129,6 +1129,61 @@ describe("planComposerTurn", () => {
   });
 });
 
+describe("restorePlanFollowUpComposer", () => {
+  // The draft is the failed follow-up's thread; the refs and cursor are whatever thread is on
+  // screen.
+  it.each([
+    {
+      name: "puts the follow-up back while its thread is open",
+      before: { draft: "", refs: "", cursor: null },
+      routeIsCurrent: true,
+      after: { draft: "Tighten step 2", refs: "Tighten step 2", cursor: "Tighten step 2" },
+    },
+    {
+      name: "keeps a draft typed while the follow-up was in flight",
+      before: { draft: "Next idea", refs: "Next idea", cursor: null },
+      routeIsCurrent: true,
+      after: { draft: "Next idea", refs: "Next idea", cursor: null },
+    },
+    {
+      name: "leaves another thread's composer alone after navigating away",
+      before: { draft: "", refs: "Other thread", cursor: null },
+      routeIsCurrent: false,
+      after: { draft: "Tighten step 2", refs: "Other thread", cursor: null },
+    },
+  ])("$name", ({ before, routeIsCurrent, after }) => {
+    const composer: { draft: string; refs: string; cursor: string | null } = { ...before };
+    restorePlanFollowUpComposer({
+      snapshot: {
+        prompt: "Tighten step 2",
+        environmentContexts: [],
+        terminalContexts: [],
+        reviewComments: [],
+        previewAnnotations: [],
+        threadContexts: [],
+      },
+      draftHasUserContent: composer.draft.trim().length > 0,
+      routeIsCurrent,
+      writeComposerRefs: (snapshot) => {
+        composer.refs = snapshot.prompt;
+      },
+      writePrompt: (prompt) => {
+        composer.draft = prompt;
+      },
+      writeTerminalContexts: () => undefined,
+      writeReviewComments: () => undefined,
+      writePreviewAnnotations: () => undefined,
+      writeThreadContexts: () => undefined,
+      writeEnvironmentContexts: () => undefined,
+      resetCursor: ({ prompt }) => {
+        composer.cursor = prompt;
+      },
+    });
+
+    expect(composer).toEqual(after);
+  });
+});
+
 describe("withMessageContext", () => {
   const context = { records: [] } as unknown as NonNullable<
     Parameters<typeof withMessageContext>[0]["context"]
@@ -1201,31 +1256,5 @@ describe("deriveAvailableRevertTurnCounts", () => {
   it("offers nothing without a provider session to rewind", () => {
     expect(deriveAvailableRevertTurnCounts(projection({ providerSessionId: null })).size).toBe(0);
     expect(deriveAvailableRevertTurnCounts(null).size).toBe(0);
-  });
-});
-
-describe("deriveWorkspaceMutationId", () => {
-  const item = (id: string, type: string, status: string) =>
-    ({
-      item: { id: TurnItemId.make(id), type, status },
-    }) as unknown as OrchestrationV2ProjectedTurnItem;
-
-  it("keys on the latest finished command or file change and the latest checkpoint", () => {
-    expect(
-      deriveWorkspaceMutationId(
-        [
-          item("edit", "file_change", "completed"),
-          item("reply", "assistant_message", "completed"),
-          item("command", "command_execution", "running"),
-        ],
-        "2026-01-01T00:00:00.000Z",
-      ),
-    ).toBe(JSON.stringify(["edit", "2026-01-01T00:00:00.000Z"]));
-  });
-
-  it("is null before anything could have touched the workspace", () => {
-    expect(deriveWorkspaceMutationId([item("reply", "assistant_message", "completed")], null)).toBe(
-      null,
-    );
   });
 });
