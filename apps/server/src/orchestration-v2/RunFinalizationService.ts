@@ -31,16 +31,15 @@ export class RunFinalizationRefreshError extends Schema.TaggedError<RunFinalizat
 
 export class RunFinalizationObserver extends Context.Reference<{
   readonly refreshAfterTurn: (projectId: ProjectId) => Effect.Effect<void>;
-  /** Resolves to the branch checked out in `cwd`, or null when detached. */
   readonly refresh: (input: {
     readonly cwd: string;
     readonly threadId: ThreadId;
     readonly runId: RunId;
     readonly followBranch?: (branch: string) => Effect.Effect<void>;
-  }) => Effect.Effect<string | null, RunFinalizationRefreshError>;
+  }) => Effect.Effect<void, RunFinalizationRefreshError>;
 }>("t3/orchestration-v2/RunFinalizationObserver", {
   defaultValue: () => ({
-    refresh: () => Effect.succeed(null),
+    refresh: () => Effect.void,
     refreshAfterTurn: () => Effect.void,
   }),
 }) {}
@@ -148,7 +147,7 @@ const make = Effect.gen(function* () {
               Effect.logWarning("Failed to refresh workspace after checkpoint capture", {
                 ...input,
                 cause,
-              }).pipe(Effect.as(null)),
+              }),
           }),
         );
     }
@@ -174,12 +173,12 @@ export const layerObserver = Layer.effect(
             [workspaceEntries.refresh(cwd), vcsStatus.refreshLocalStatus(cwd)],
             { concurrency: "unbounded" },
           );
-          if (local.refName === null) return null;
+          if (local.refName === null) return;
           if (followBranch) yield* followBranch(local.refName);
-          if (local.isDefaultRef) return local.refName;
+          if (local.isDefaultRef) return;
           const thread = yield* projections.getThreadShell(threadId);
-          if (!thread || thread.branch !== local.refName) return local.refName;
-          if (thread.activeRunId !== null && thread.activeRunId !== runId) return local.refName;
+          if (!thread || thread.branch !== local.refName) return;
+          if (thread.activeRunId !== null && thread.activeRunId !== runId) return;
           // The forge CLI can take minutes, so the next turn must not wait for it. A newer
           // turn's lookup replaces a running one instead of queueing behind the cwd's lock.
           yield* vcsStatus.refreshPullRequestStatus(cwd).pipe(
@@ -192,7 +191,6 @@ export const layerObserver = Layer.effect(
             ),
             FiberMap.run(pullRequestLookups, cwd),
           );
-          return local.refName;
         },
         (effect, { cwd }) =>
           effect.pipe(Effect.mapError((cause) => new RunFinalizationRefreshError({ cwd, cause }))),

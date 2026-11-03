@@ -361,7 +361,6 @@ it.effect.each(
             Effect.gen(function* () {
               if (followBranch) yield* followBranch(scenario.checkedOut);
               followed.push(scenario.checkedOut);
-              return scenario.checkedOut;
             }),
           refreshAfterTurn: () => Effect.void,
         }),
