@@ -1671,6 +1671,17 @@ const assertProjectScopedShells = Effect.fn("assertProjectScopedShells")(functio
     all.archivedThreads.map((thread) => thread.id),
     [archivedThreadId],
   );
+  const missingThreadId = ThreadId.make(`thread:${suffix}:missing`);
+  const targeted = yield* projectionStore.getShellSnapshot({
+    threadIds: [forkThreadId, archivedThreadId, missingThreadId],
+  });
+  for (const threadId of [forkThreadId, archivedThreadId, missingThreadId]) {
+    assert.deepEqual(
+      [...targeted.threads, ...targeted.archivedThreads].find((shell) => shell.id === threadId) ??
+        null,
+      yield* projectionStore.getThreadShell(threadId),
+    );
+  }
   return { projectId, activeThreadId, forkThreadId, otherThreadId };
 });
 
@@ -2394,6 +2405,69 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         byteIds,
         Array.from({ length: 70 }, (_, index) => `turn-item:bounded-sql-history:${index + 1}`),
       );
+
+      // Selected message reads recover ordinals for only the loaded messages, while 69
+      // unloaded assistant messages remain in the thread's history.
+      const firstMessageId = MessageId.make("message:bounded-sql-history:1");
+      const lastMessageId = MessageId.make("message:bounded-sql-history:1000");
+      const insertMessageItem = (
+        suffix: string,
+        itemThreadId: string,
+        ordinal: number,
+        messageId: string | null | undefined,
+      ) => sql`
+        INSERT INTO orchestration_v2_projection_turn_items (
+          turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+          parent_item_id, ordinal, type, status, updated_at, payload_json
+        ) VALUES (
+          ${`turn-item:bounded-sql-history:ordinal-${suffix}`}, ${itemThreadId}, NULL, NULL, NULL,
+          NULL, NULL, ${ordinal}, 'assistant_message', 'completed', ${nowIso},
+          ${encodeUnknownJsonString({ messageId })}
+        )
+      `;
+      yield* insertMessageItem("duplicate", threadId, 0, lastMessageId);
+      yield* insertMessageItem(
+        "other-thread",
+        "thread:bounded-sql-history:other",
+        -1,
+        firstMessageId,
+      );
+      yield* insertMessageItem("null-id", threadId, -2, null);
+      yield* insertMessageItem("missing-id", threadId, -3, undefined);
+      const readMessageIds = (filter?: ProjectionStore.ProjectionRecordFilter) =>
+        projectionStore
+          .getThreadRecords(threadId, ["messages"], filter)
+          .pipe(Effect.map(({ messages }) => messages.map((message) => message.id)));
+      assert.deepEqual(yield* readMessageIds(), [lastMessageId, firstMessageId]);
+      assert.deepEqual(yield* readMessageIds({ messageRoles: ["user", "assistant"] }), [
+        lastMessageId,
+        firstMessageId,
+      ]);
+      for (const filter of [
+        {
+          messageIds: [
+            firstMessageId,
+            lastMessageId,
+            MessageId.make("message:bounded-sql-history:absent"),
+          ],
+        },
+        { messageRoles: ["user" as const] },
+        {
+          messageRunIds: [
+            RunId.make("run:bounded-sql-history:1"),
+            RunId.make("run:bounded-sql-history:1000"),
+          ],
+        },
+      ]) {
+        assert.deepEqual(yield* readMessageIds(filter), [lastMessageId, firstMessageId]);
+      }
+      assert.deepEqual(yield* readMessageIds({ messageIds: [] }), []);
+      assert.deepEqual(yield* readMessageIds({ messageIds: [firstMessageId] }), [firstMessageId]);
+      yield* sql`
+        DELETE FROM orchestration_v2_projection_turn_items
+        WHERE turn_item_id LIKE 'turn-item:bounded-sql-history:ordinal-%'
+      `;
+
       yield* sql`
         UPDATE orchestration_v2_projection_turn_items
         SET type = 'command_execution', payload_json = json_set(payload_json, '$.type', 'command_execution')
