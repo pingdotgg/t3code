@@ -914,7 +914,13 @@ it.effect("answers 2026-07-28 discovery and keeps 2025-06-18 as the initialize f
             jsonrpc: "2.0",
             id: 3,
             method: "tools/list",
-            params: { _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } },
+            params: {
+              _meta: {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+                "io.modelcontextprotocol/clientInfo": { name: "mcp-test", version: "1.0.0" },
+              },
+            },
           }),
           "application/json",
         ),
