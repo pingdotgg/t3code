@@ -11,6 +11,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -59,6 +60,7 @@ const PI_PRESENTATION = {
 
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
 const PI_RPC_DISCOVERY_TIMEOUT_MS = 30_000;
+const PI_TEXT_GENERATION_MODELS_TIMEOUT_MS = 10_000;
 /**
  * get_entries arrived in 0.80.3 and agent_settled landed in source at 0.80.4.
  * Version 0.80.5 was the first published package containing both hooks.
@@ -143,6 +145,7 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
   environment: NodeJS.ProcessEnv,
   launchArgs: ReadonlyArray<string>,
   cwd?: string,
+  restrictions: { readonly disableExtensions?: boolean; readonly disableTools?: boolean } = {},
 ) {
   const launch = buildPiRpcLaunch({
     launchArgs,
@@ -151,6 +154,7 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
     extensionPath: undefined,
     ephemeral: true,
     shortLived: true,
+    ...restrictions,
   });
   const connection = yield* makePiRpcConnection({
     command: piSettings.binaryPath || "pi",
@@ -166,19 +170,56 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
   return connection;
 });
 
+/**
+ * Slugs Pi lists when launched like text generation, which runs without extensions. Undefined
+ * when that launch cannot answer, so discovery never degrades because of it.
+ */
+const discoverPiTextGenerationModelSlugs = Effect.fn(
+  "PiProviderStatus.discoverPiTextGenerationModelSlugs",
+)(
+  function* (
+    piSettings: PiSettings,
+    environment: NodeJS.ProcessEnv,
+    launchArgs: ReadonlyArray<string>,
+    cwd?: string,
+  ) {
+    const connection = yield* makePiDiscoveryConnection(piSettings, environment, launchArgs, cwd, {
+      disableExtensions: true,
+      disableTools: true,
+    });
+    const modelsData = yield* connection.request({ type: "get_available_models" });
+    const models = yield* Effect.fromResult(parseDiscoveredModels(modelsData, undefined));
+    return new Set(models.map((model) => model.slug));
+  },
+  Effect.scoped,
+  Effect.timeoutOption(PI_TEXT_GENERATION_MODELS_TIMEOUT_MS),
+  Effect.map(Option.getOrUndefined),
+  Effect.orElseSucceed(() => undefined),
+);
+
 const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv,
   launchArgs: ReadonlyArray<string>,
   cwd?: string,
 ) {
+  const textGenerationModelSlugs = yield* Effect.forkScoped(
+    discoverPiTextGenerationModelSlugs(piSettings, environment, launchArgs, cwd),
+  );
   const connection = yield* makePiDiscoveryConnection(piSettings, environment, launchArgs, cwd);
   const stateData = yield* connection.request({ type: "get_state" });
   const modelsData = yield* connection.request({ type: "get_available_models" });
   const commandsData = yield* connection
     .request({ type: "get_commands" })
     .pipe(Effect.orElseSucceed(() => undefined));
-  const discoveredModels = yield* Effect.fromResult(parseDiscoveredModels(modelsData, stateData));
+  const parsedModels = yield* Effect.fromResult(parseDiscoveredModels(modelsData, stateData));
+  const usableSlugs = yield* Fiber.join(textGenerationModelSlugs);
+  const discoveredModels =
+    usableSlugs === undefined
+      ? parsedModels
+      : parsedModels.map((model) =>
+          usableSlugs.has(model.slug) ? model : { ...model, supportsTextGeneration: false },
+        );
   const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
   // Pi lists only models of providers it holds credentials for, including extension, virtual and
   // --api-key ones. Turns need only the provider's credentials, so uncatalogued model ids still run.
