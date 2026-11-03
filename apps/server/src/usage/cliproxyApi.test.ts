@@ -264,16 +264,18 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect("keeps the path of a hub served under a prefix", () =>
-    Effect.gen(function* () {
-      const test = fixture();
-      const api = yield* test.api;
-      yield* api.readAccounts({ ...config, url: "https://tools.test/cliproxy" });
-      expect(test.requests.length).toBeGreaterThan(0);
-      expect(
-        test.requests.every((request) => request.path.startsWith("/cliproxy/v0/management/")),
-      ).toBe(true);
-    }),
+  it.effect.each(["https://tools.test/cliproxy", "https://tools.test/cliproxy/management.html"])(
+    "keeps the path of a hub served under a prefix: %s",
+    (url) =>
+      Effect.gen(function* () {
+        const test = fixture();
+        const api = yield* test.api;
+        yield* api.readAccounts({ ...config, url });
+        expect(test.requests.length).toBeGreaterThan(0);
+        expect(
+          test.requests.every((request) => request.path.startsWith("/cliproxy/v0/management/")),
+        ).toBe(true);
+      }),
   );
 
   it.effect("keeps usage when the credits endpoint fails", () =>
