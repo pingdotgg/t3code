@@ -251,6 +251,35 @@ export interface LimitAccount {
   readonly limits: ServerProviderUsageLimits;
 }
 
+/**
+ * The badge that marks an account on every bar, legend and popover. It derives from the email
+ * whenever one is known, so a login reads the same in every window and environment whether a
+ * native instance or a hub reported it; instance names often just repeat the provider.
+ */
+export function limitAccountBadge(account: Pick<LimitAccount, "key" | "email" | "displayName">): {
+  readonly initials: string;
+  readonly hue: number;
+} {
+  const email = account.email?.trim().toLowerCase();
+  const name = account.displayName?.trim();
+  let initials: string;
+  if (email) {
+    const [local = "", domain = ""] = email.split("@");
+    initials = `${local[0] ?? ""}${domain[0] ?? ""}`;
+  } else if (name) {
+    const words = name.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    initials = words.length > 1 ? `${words[0]![0]}${words[1]![0]}` : (words[0] ?? "").slice(0, 2);
+  } else {
+    initials = "";
+  }
+  const seed = email ?? name?.toLowerCase() ?? account.key;
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) | 0;
+  }
+  return { initials: initials.toUpperCase() || "?", hue: Math.abs(hash) % 360 };
+}
+
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();

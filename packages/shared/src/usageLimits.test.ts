@@ -18,6 +18,7 @@ import {
   collectLimitNotices,
   collectLimitPools,
   elapsedShare,
+  limitAccountBadge,
   exhaustedUsageWindow,
   paceOf,
   paceRemainingPercent,
@@ -670,6 +671,57 @@ describe("pools", () => {
     const accounts = collectLimitAccounts(input);
     expect(accounts.map((account) => account.key)).toEqual(["hub:claude-team-seat.json"]);
     expect(accounts[0]?.displayName).toBe("claude-team-seat");
+    expect(limitAccountBadge(accounts[0]!).initials).toBe("CT");
+  });
+
+  it("badges every account by its email, even when its instance is named after the provider", () => {
+    const named = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      displayName: "Claude",
+      auth: { status: "authenticated", email: "Work@example.com" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const hubAccount = (email: string) => ({
+      id: `claude-${email}.json`,
+      driver: claude,
+      email,
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const pooled = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [named],
+              usageLimitSources: [{ ...source, accounts: [hubAccount("me@example.net")] }],
+            },
+          },
+        ],
+      ]),
+    );
+    expect(pooled.map((account) => limitAccountBadge(account).initials).toSorted()).toEqual([
+      "ME",
+      "WE",
+    ]);
+    const hubOnly = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-b"),
+          {
+            entry: { target: { label: "Desktop" } },
+            serverConfig: {
+              providers: [],
+              usageLimitSources: [{ ...source, accounts: [hubAccount("work@example.com")] }],
+            },
+          },
+        ],
+      ]),
+    );
+    const nativeWork = pooled.find((account) => account.displayName === "Claude")!;
+    expect(limitAccountBadge(hubOnly[0]!)).toEqual(limitAccountBadge(nativeWork));
   });
 
   it("pools Codex windows by kind, whichever slot reported them", () => {
