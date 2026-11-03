@@ -1,5 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { type AssetCreateUrlResult, EnvironmentId, WS_METHODS } from "@t3tools/contracts";
+import {
+  type AssetCreateUrlResult,
+  type AssetResource,
+  EnvironmentId,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,6 +27,7 @@ import {
   ASSET_URL_MAX_IN_FLIGHT,
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
+  projectFaviconResource,
 } from "./assets.ts";
 
 describe("project favicon URL cache", () => {
@@ -49,6 +55,47 @@ describe("project favicon URL cache", () => {
       expect(registry.get(favicon({ ...target, faviconPath: "brand.svg" }))).toBeNull();
       expect(registry.get(favicon({ ...target, faviconPath: null }))).toBe(
         "https://remote.test/api/assets/token/icon.svg",
+      );
+    } finally {
+      unmount();
+      registry.dispose();
+    }
+  });
+
+  it("resolves the icon again when its resource's URL query is refreshed", () => {
+    const registry = AtomRegistry.make();
+    const answers = ["/api/assets/token/project-favicon-missing", "/api/assets/token/v1-icon.svg"];
+    const query = Atom.family((key: string) =>
+      Atom.make(() =>
+        AsyncResult.success({ expiresAt: 4_000_000_000_000, relativeUrl: answers.shift()! }),
+      ).pipe(Atom.withLabel(key)),
+    );
+    const createUrl = (target: {
+      readonly environmentId: EnvironmentId;
+      readonly input: { readonly resource: AssetResource };
+    }) => query(JSON.stringify([target.environmentId, target.input.resource]));
+    const favicon = createProjectFaviconUrlAtomFamily({
+      createUrl,
+      preparedConnection: () => Atom.make(Option.some({ httpBaseUrl: "https://remote.test" })),
+    });
+    const target = {
+      environmentId: EnvironmentId.make("remote"),
+      cwd: "/workspace",
+      faviconPath: "icon.svg",
+    };
+    const unmount = registry.mount(favicon(target));
+    try {
+      expect(registry.get(favicon(target))).toBe(
+        "https://remote.test/api/assets/token/project-favicon-missing",
+      );
+      registry.refresh(
+        createUrl({
+          environmentId: target.environmentId,
+          input: { resource: projectFaviconResource(target.cwd, target.faviconPath) },
+        }),
+      );
+      expect(registry.get(favicon(target))).toBe(
+        "https://remote.test/api/assets/token/v1-icon.svg",
       );
     } finally {
       unmount();
