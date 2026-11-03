@@ -149,10 +149,10 @@ cannot drag or move threads within it. Your saved order returns when you turn it
 
 A thread whose latest turn ended with nothing left to start another one shows **Idle** in the
 sidebar, in the thread header on web and desktop, and in the thread list on mobile. No running
-background work, watched pull request, delegated thread, or scheduled task bound to the thread
-will resume it, even when the agent's last message says it will continue later. Send a
-message to continue it. A thread whose agent waits on background work, a watched pull request, or a
-delegated thread shows **Waiting** instead.
+background work, watched pull request, delegated thread, queued message, or scheduled task bound
+to the thread will resume it, even when the agent's last message says it will continue later.
+Send a message to continue it. A thread whose agent waits on background work, a watched pull
+request, or a delegated thread shows **Waiting** instead.
 
 ### Group threads by project (beta)
 

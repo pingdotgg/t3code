@@ -7,6 +7,7 @@ import {
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { presentThreadShell } from "./models.ts";
@@ -274,6 +275,12 @@ describe("threadHasNoPendingWake", () => {
     for (const status of ["completed", "interrupted", "cancelled"] as const) {
       expect(threadHasNoPendingWake(present({ status }), false)).toBe(true);
     }
+    // A message sent while the turn ran was folded into it.
+    const steered = present({
+      latestRunCompletedAt: DateTime.makeUnsafe("2026-06-20T00:01:00.000Z"),
+      latestUserMessageAt: DateTime.makeUnsafe("2026-06-20T00:00:30.000Z"),
+    });
+    expect(threadHasNoPendingWake(steered, false)).toBe(true);
   });
 
   it.each([
@@ -311,6 +318,14 @@ describe("threadHasNoPendingWake", () => {
     },
     { name: "a question is pending", shell: { pendingRuntimeRequest: request("user_input") } },
     { name: "a guest message waits", shell: { pendingGuestMessageCount: 1 } },
+    {
+      // A held queue keeps the earlier turn as the latest run.
+      name: "a message waits in a held queue",
+      shell: {
+        latestRunCompletedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
+        latestUserMessageAt: DateTime.makeUnsafe("2026-06-20T00:01:00.000Z"),
+      },
+    },
   ])("is not idle when $name", ({ shell }) => {
     expect(threadHasNoPendingWake(present(shell), false)).toBe(false);
   });
