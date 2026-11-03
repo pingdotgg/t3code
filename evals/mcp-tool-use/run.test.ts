@@ -394,6 +394,9 @@ it("replays earlier capability results with the model under test as the caller",
     .flatMap((message) => message.content)
     .find((block) => block.type === "tool_result" && String(block.content).includes("inherited"));
   assert.include(String(replayed?.content), '"inheritedModel":"claude-opus-5-5"');
+  const resumed = buildMessages(makeSample({ ...testCase, prompt: "" }, base));
+  assert.equal(resumed.at(-1)?.role, "user");
+  assert.equal(resumed.at(-1)?.content.at(-1)?.type, "tool_result");
 });
 
 it("gives each launched thread its own id, and reading it back shows that thread's brief", () => {

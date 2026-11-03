@@ -140,6 +140,8 @@ const PriorToolCall = Schema.Struct({
   input: Schema.Unknown,
   /** For a device tool, `"default"` runs the call on the world's devices for T3's result. */
   result: Schema.Unknown,
+  /** Repository-relative file whose current contents supply this tool result. */
+  resultFile: Schema.optional(Schema.String),
 });
 
 /**
@@ -275,6 +277,7 @@ export const McpToolUseCase = Schema.Struct({
       Schema.Struct({ parentThreadId: Schema.String, digest: Schema.Array(Schema.String) }),
     ),
   }),
+  /** Empty to resume directly after the last prior tool result. */
   prompt: Schema.String,
   /** Records for the context chips `prompt` links, projected as T3 sends them. */
   promptContext: Schema.optional(Schema.Struct({ records: Schema.Array(ComposerContextRecord) })),
@@ -938,7 +941,7 @@ export const buildMessages = (sample: Sample) => {
           userText,
         );
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
-  push("user", text(role === "delegated-child" ? childPrompt() : prompt));
+  if (prompt !== "") push("user", text(role === "delegated-child" ? childPrompt() : prompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
     push("user", reminder(`SubagentStart hook additional context: ${base.subagentContext}`));
@@ -2125,12 +2128,35 @@ const main = Effect.gen(function* () {
   const wanted = flags.case?.flatMap((ids) => ids.split(","));
   const codex = isCodex(flags.model);
   const harness = codex ? "codex" : "claude";
-  const selected = cases.filter(
+  const selectedCases = cases.filter(
     ({ id, setup }) =>
       (wanted === undefined || wanted.includes(id)) &&
       (setup.harness === undefined || setup.harness === harness),
   );
-  if (selected.length === 0) return yield* Effect.die(new Error("No case matches --case."));
+  if (selectedCases.length === 0) return yield* Effect.die(new Error("No case matches --case."));
+  const selected = yield* Effect.forEach(selectedCases, (testCase) =>
+    Effect.gen(function* () {
+      const priorTurns = yield* Effect.forEach(testCase.setup.priorTurns ?? [], (turn) =>
+        Effect.gen(function* () {
+          const toolCalls = yield* Effect.forEach(turn.toolCalls ?? [], (call) =>
+            call.resultFile === undefined
+              ? Effect.succeed(call)
+              : fs
+                  .readFileString(path.resolve(import.meta.dirname, "../..", call.resultFile))
+                  .pipe(Effect.map((result) => ({ ...call, result }))),
+          );
+          return { ...turn, toolCalls };
+        }),
+      );
+      return {
+        ...testCase,
+        setup: {
+          ...testCase.setup,
+          priorTurns,
+        },
+      };
+    }),
+  );
   // Trimmed captures without user data ship beside the cases. `--template` also takes a raw
   // CLIProxyAPI capture.
   const templatePath =
