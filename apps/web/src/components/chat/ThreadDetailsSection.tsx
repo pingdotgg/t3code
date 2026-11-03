@@ -97,7 +97,7 @@ export function ThreadDetailsSection({
               setDisclosure({ empty, collapsed: empty ? !isCollapsed : null });
             }}
           >
-            <span>{title}</span>
+            <span className="shrink-0">{title}</span>
             {summary ? (
               <span className="ms-auto truncate text-caption text-muted-foreground">{summary}</span>
             ) : null}
