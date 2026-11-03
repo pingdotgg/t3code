@@ -912,11 +912,12 @@ export function useComposerSend(input: ComposerSendInput) {
     }
 
     if (selectedPipelineId !== null) {
+      const pipelineRepositorySelectionKey = worktreeRepositorySelectionKey(
+        draftId,
+        scopeThreadRef(environmentId, threadIdForSend),
+      );
       const pipelineRepositories = baseBranchForWorktree
-        ? await readLaunchRepositories(
-            activeProject,
-            worktreeRepositorySelectionKey(draftId, scopeThreadRef(environmentId, threadIdForSend)),
-          )
+        ? await readLaunchRepositories(activeProject, pipelineRepositorySelectionKey)
         : undefined;
       const workspaceStrategy = draftWorkspaceStrategy(
         { branch: activeThreadBranch, worktreePath: activeThread.worktreePath },
@@ -959,7 +960,7 @@ export function useComposerSend(input: ComposerSendInput) {
           }),
         );
       }
-      await sendToPipeline({
+      const started = await sendToPipeline({
         threadId: threadIdForSend,
         pipelineId: selectedPipelineId,
         projectId: activeProject.id,
@@ -971,6 +972,9 @@ export function useComposerSend(input: ComposerSendInput) {
         ),
         workspaceStrategy,
       });
+      if (started && baseBranchForWorktree) {
+        useWorktreeRepositorySelectionStore.getState().clear(pipelineRepositorySelectionKey);
+      }
       return;
     }
 

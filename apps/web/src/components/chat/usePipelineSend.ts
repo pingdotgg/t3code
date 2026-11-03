@@ -96,7 +96,7 @@ export function usePipelineSend(input: PipelineSendInput) {
     readonly attachments: ReadonlyArray<ChatAttachment>;
     readonly context: OrchestrationMessageContext | undefined;
     readonly workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy;
-  }) => {
+  }): Promise<boolean> => {
     const attempt = (pipelineStartRef.current = nextPipelineStartAttempt(
       pipelineStartRef.current,
       { pipelineId, projectId, input: text, workspace: workspaceStrategy, attachments, context },
@@ -129,7 +129,7 @@ export function usePipelineSend(input: PipelineSendInput) {
           description: message,
         }),
       );
-      return;
+      return false;
     }
     pipelineStartRef.current = null;
     const parentRef = scopeThreadRef(environmentId, result.value.run.parentThreadId);
@@ -162,5 +162,6 @@ export function usePipelineSend(input: PipelineSendInput) {
         }),
       );
     }
+    return true;
   };
 }
