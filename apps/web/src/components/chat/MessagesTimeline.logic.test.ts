@@ -5026,13 +5026,22 @@ it.each([
   };
   const original = applyWorkingWindow(deriveMessagesTimelineRows(input), input);
   const collapsed = applyBackgroundActivityGroups(original, input);
-  const finalAnswer = original.filter(
-    (row) =>
-      (row.kind === "message" || row.kind === "assistant-meta") &&
-      row.message.runId === fixture.runId &&
-      !row.message.streaming,
-  );
-  expect(collapsed.slice(1)).toEqual(finalAnswer);
+  const answerRows = (runId: RunId, rows = original) =>
+    rows.filter(
+      (row) =>
+        (row.kind === "message" || row.kind === "assistant-meta") && row.message.runId === runId,
+    );
+  const keptAnswer = (rows: MessagesTimelineRow[]) => {
+    const answer = answerRows(fixture.runId, rows);
+    return answer.length > 0 ? answer : answerRows(fixture.historyRunId, rows);
+  };
+  expect(keptAnswer(original)).not.toEqual([]);
+  expect(collapsed.slice(1)).toEqual(keptAnswer(original));
+  if (active) {
+    const streaming = deriveMessagesTimelineRows(input);
+    expect(keptAnswer(streaming)).toMatchObject([{ message: { streaming: true } }]);
+    expect(applyBackgroundActivityGroups(streaming, input).slice(1)).toEqual(keptAnswer(streaming));
+  }
   expect(collapsed[0]).toMatchObject({
     kind: "background-activity",
     updateCount: 2,
@@ -5040,6 +5049,41 @@ it.each([
     expanded: false,
     runIds: [fixture.historyRunId, fixture.runId],
   });
+  if (!active) {
+    const queuedRunId = RunId.make("queued-wake-run");
+    const queuedInput = {
+      ...input,
+      latestRun: {
+        runId: queuedRunId,
+        status: "queued" as const,
+        startedAt: fixture.time(9),
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: fixture.time(9),
+    };
+    const queuedRows = applyWorkingWindow(deriveMessagesTimelineRows(queuedInput), queuedInput);
+    const queued = applyBackgroundActivityGroups(queuedRows, queuedInput);
+    expect(keptAnswer(queuedRows)).toMatchObject([{ message: { streaming: false } }]);
+    expect(queued.slice(1)).toEqual(keptAnswer(queuedRows));
+    expect(queued[0]).toMatchObject({
+      id: collapsed[0]!.id,
+      updateCount: 2,
+      active: true,
+      runIds: [fixture.historyRunId, fixture.runId, queuedRunId],
+    });
+    const silentInput = {
+      ...input,
+      timelineEntries: entries.filter(
+        (entry) => entry.kind !== "message" || entry.message.runId !== fixture.runId,
+      ),
+    };
+    const silent = applyBackgroundActivityGroups(
+      applyWorkingWindow(deriveMessagesTimelineRows(silentInput), silentInput),
+      silentInput,
+    );
+    expect(silent.slice(1)).toEqual(answerRows(fixture.historyRunId));
+  }
   const expanded = applyBackgroundActivityGroups(original, {
     ...input,
     expandedWorkGroupIds: new Set([collapsed[0]!.id]),
