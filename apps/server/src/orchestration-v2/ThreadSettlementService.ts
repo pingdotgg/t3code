@@ -7,7 +7,6 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
   CommandId,
   isOrchestrationV2WorkActive,
-  type ProviderThreadId,
   type ThreadId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
@@ -121,14 +120,25 @@ export function threadHasQueuedTurnStart(
   ].every((value) => value === null || value < messageAtMs);
 }
 
+/**
+ * Providers drop finished work from the roster before the turn that reports it is requested
+ * (Claude: about 100ms). Settling in that gap detaches the session, so the report never arrives.
+ */
 function awaitsHeldWorkReport(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
-    "latestUserMessageAt" | "latestRunRequestedAt"
+    "heldWorkEndedAt" | "latestUserMessageAt" | "latestRunRequestedAt"
   >,
-  heldWorkEndedAtMs: number | undefined,
+  nowMs: number,
 ): boolean {
-  if (heldWorkEndedAtMs === undefined) return false;
+  const heldWorkEndedAtMs = toMillis(thread.heldWorkEndedAt);
+  // The grace bounds the hold when no report turn comes, as when the run was stopped.
+  if (
+    heldWorkEndedAtMs === null ||
+    Math.abs(nowMs - heldWorkEndedAtMs) > QUEUED_TURN_START_GRACE_MS
+  ) {
+    return false;
+  }
   const turnRequestedAtMs = latestMillis([
     toMillis(thread.latestUserMessageAt),
     toMillis(thread.latestRunRequestedAt),
@@ -160,7 +170,10 @@ function pullRequestSettles(
 }
 
 export function isAutoSettlementCandidate(
-  thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">,
+  thread: Omit<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "latestUserAuthoredMessageAt" | "heldWorkEndedAt"
+  >,
   nowMs: number,
 ): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
@@ -322,20 +335,11 @@ export const make = Effect.gen(function* () {
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   // Repeated thread.settled retains settledAt; run the action only once per settlement.
   const settleActionRunAt = new Map<ThreadId, number>();
-  // Providers drop finished work from the roster before the turn that reports it is requested
-  // (Claude: about 100ms). Settling in that gap detaches the session, so the report never arrives.
-  const providerThreadsHoldingWork = new Set<ProviderThreadId>();
-  const heldWorkEndedAtMs = new Map<ThreadId, number>();
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
     threadId?: ThreadId,
   ) {
-    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-    // Bounds the hold when no report turn comes, as when the run was stopped.
-    for (const [id, endedAtMs] of heldWorkEndedAtMs) {
-      if (Math.abs(nowMs - endedAtMs) > QUEUED_TURN_START_GRACE_MS) heldWorkEndedAtMs.delete(id);
-    }
     const settings = yield* settingsService.getSettings;
     if (!autoSettlementConfigured(settings)) {
       return;
@@ -343,12 +347,11 @@ export const make = Effect.gen(function* () {
     const threads = yield* projections.getSettlementCandidates(threadId);
     if (threads.length === 0) return;
     const projectShells = yield* projectStore.listShells();
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     // Merge events resweep all candidates because unlinked threads settle through branch lookup.
     const candidates = threads.filter(
-      (thread) =>
-        isAutoSettlementCandidate(thread, nowMs) &&
-        !awaitsHeldWorkReport(thread, heldWorkEndedAtMs.get(thread.id)),
+      (thread) => isAutoSettlementCandidate(thread, nowMs) && !awaitsHeldWorkReport(thread, nowMs),
     );
 
     // Runs per candidate thread, thousands per sweep on busy servers; the sweep owns the span.
@@ -668,14 +671,9 @@ export const make = Effect.gen(function* () {
           ? Effect.void
           : enqueueThread(event.threadId);
       case "provider-thread.updated":
-        if (backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? [])) {
-          providerThreadsHoldingWork.add(event.payload.id);
-          return Effect.void;
-        }
-        if (providerThreadsHoldingWork.delete(event.payload.id)) {
-          heldWorkEndedAtMs.set(event.threadId, DateTime.toEpochMillis(event.occurredAt));
-        }
-        return enqueueThread(event.threadId);
+        return backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? [])
+          ? Effect.void
+          : enqueueThread(event.threadId);
       case "turn-item.updated": {
         const item = event.payload;
         if (

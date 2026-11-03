@@ -5,9 +5,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   EventId,
-  ProviderDriverKind,
   ProviderInstanceId,
-  ProviderThreadId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -15,7 +13,6 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
-  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
   type PullRequestSummary,
@@ -55,7 +52,10 @@ function at(offsetMs: number): DateTime.Utc {
 }
 
 type SettlementShell = OrchestrationV2ThreadShell &
-  Pick<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">;
+  Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "latestUserAuthoredMessageAt" | "heldWorkEndedAt"
+  >;
 
 function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
   return {
@@ -95,6 +95,7 @@ function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
     latestRunCompletedAt: null,
     latestUserMessageAt: null,
     latestUserAuthoredMessageAt: overrides.latestUserMessageAt ?? null,
+    heldWorkEndedAt: null,
     createdAt: at(-30 * DAY_MS),
     updatedAt: at(-10 * DAY_MS),
     archivedAt: null,
@@ -752,44 +753,6 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   };
 });
 
-function rosterUpdated(
-  threadId: ThreadId,
-  pendingBackgroundTasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
-  occurredAt: DateTime.Utc,
-): OrchestrationV2DomainEvent {
-  return {
-    type: "provider-thread.updated",
-    id: EventId.make(`event:roster:${threadId}:${pendingBackgroundTasks.length}`),
-    threadId,
-    occurredAt,
-    payload: {
-      id: ProviderThreadId.make(`provider-thread:${threadId}`),
-      appThreadId: threadId,
-      ownerNodeId: null,
-      driver: ProviderDriverKind.make("claudeAgent"),
-      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-      providerSessionId: null,
-      nativeThreadRef: null,
-      nativeConversationHeadRef: null,
-      status: "idle",
-      firstRunOrdinal: 1,
-      lastRunOrdinal: 1,
-      handoffIds: [],
-      forkedFrom: null,
-      createdAt: occurredAt,
-      updatedAt: occurredAt,
-      pendingBackgroundTasks,
-    },
-  };
-}
-
-const awaitedCommand: OrchestrationV2PendingBackgroundTask = {
-  taskId: "tests",
-  kind: "command",
-  description: "Run the tests",
-  awaited: true,
-};
-
 const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
   reactor: ThreadSettlementService.ThreadSettlementServiceV2["Service"],
   activation: Deferred.Deferred<void>,
@@ -1279,12 +1242,13 @@ describe("ThreadSettlementServiceV2 worker", () => {
     ),
   );
 
-  it.effect("waits for the turn that reports awaited work before settling on merge", () =>
+  it.effect("full and merge sweeps wait for the turn that reports awaited work", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
-        const settled = yield* Deferred.make<void>();
-        const thread = makeThread("awaited-work", {
+        const dispatched = yield* Queue.unbounded<ThreadId>();
+        // The roster that dropped the work committed, but its event has not reached this worker.
+        const held = makeThread("awaited-work", {
           pullRequests: [
             {
               ...persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z")),
@@ -1300,35 +1264,41 @@ describe("ThreadSettlementServiceV2 worker", () => {
               },
             },
           ],
-          pendingBackgroundTasks: [awaitedCommand],
+          heldWorkEndedAt: DateTime.makeUnsafe(NOW),
+        });
+        // Only the merge event settles this one, so its dispatch marks that sweep's decisions.
+        const mergedInApp = makeThread("merged-in-app", {
+          latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+          linkedPullRequest: {
+            projectId: PROJECT_ID,
+            repository: "owner/repository",
+            number: 42,
+            url: "https://example.test/owner/repository/pull/42",
+          },
         });
         const fixture = yield* makeHarness({
-          snapshot: makeSnapshot([thread]),
-          onDispatch: () => Deferred.succeed(settled, undefined),
+          snapshot: makeSnapshot([held, mergedInApp]),
+          onDispatch: (command) => Queue.offer(dispatched, command.threadId).pipe(Effect.asVoid),
         });
 
         yield* Effect.gen(function* () {
           const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
           yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
-          yield* fixture.publishEvent(
-            rosterUpdated(thread.id, [awaitedCommand], DateTime.makeUnsafe(NOW)),
-          );
-          yield* Ref.set(
-            fixture.snapshots,
-            makeSnapshot([{ ...thread, pendingBackgroundTasks: [] }]),
-          );
-          yield* fixture.publishEvent(rosterUpdated(thread.id, [], DateTime.makeUnsafe(NOW)));
-          yield* Queue.take(fixture.snapshotReads);
-          yield* reactor.drain;
           assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+          yield* fixture.publishMerge;
+          assert.strictEqual(yield* Queue.take(dispatched), mergedInApp.id);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [mergedInApp.id],
+          );
 
           const reportAt = DateTime.makeUnsafe(Date.parse(NOW) + 1_000);
           yield* Ref.set(
             fixture.snapshots,
             makeSnapshot([
               {
-                ...thread,
-                pendingBackgroundTasks: [],
+                ...held,
                 latestRunId: RunId.make("run:report"),
                 latestUserMessageAt: reportAt,
                 latestRunRequestedAt: reportAt,
@@ -1339,11 +1309,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
           );
           // The next full sweep is within the hold's grace, so only the report turn releases it.
           yield* TestClock.adjust("1 minute");
-          yield* Deferred.await(settled);
-          assert.deepStrictEqual(
-            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
-            [thread.id],
-          );
+          assert.strictEqual(yield* Queue.take(dispatched), held.id);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -1354,8 +1320,9 @@ describe("ThreadSettlementServiceV2 worker", () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
         const settled = yield* Deferred.make<void>();
+        // Ended 90s ago, so the next full sweep, a minute later, falls past the hold's grace.
         const thread = makeThread("awaited-work-idle", {
-          pendingBackgroundTasks: [awaitedCommand],
+          heldWorkEndedAt: DateTime.makeUnsafe(Date.parse(NOW) - 90_000),
         });
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([thread]),
@@ -1366,18 +1333,6 @@ describe("ThreadSettlementServiceV2 worker", () => {
         yield* Effect.gen(function* () {
           const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
           yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
-          yield* fixture.publishEvent(
-            rosterUpdated(thread.id, [awaitedCommand], DateTime.makeUnsafe(NOW)),
-          );
-          yield* Ref.set(
-            fixture.snapshots,
-            makeSnapshot([{ ...thread, pendingBackgroundTasks: [] }]),
-          );
-          // Ended 90s ago, so the next full sweep, a minute later, falls past the hold's grace.
-          const endedAt = DateTime.makeUnsafe(Date.parse(NOW) - 90_000);
-          yield* fixture.publishEvent(rosterUpdated(thread.id, [], endedAt));
-          yield* Queue.take(fixture.snapshotReads);
-          yield* reactor.drain;
           assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
 
           yield* TestClock.adjust("1 minute");
