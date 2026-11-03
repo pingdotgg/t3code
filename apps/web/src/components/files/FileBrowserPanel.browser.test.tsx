@@ -12,7 +12,15 @@ const entries: readonly ProjectEntry[] = [
   { path: "README.md", kind: "file" },
 ];
 const loadingDirectories: ReadonlySet<string> = new Set();
-const directory = {
+const directory: {
+  entries: readonly ProjectEntry[];
+  load: () => Promise<void>;
+  refresh: () => void;
+  ready: boolean;
+  error: null;
+  isPending: boolean;
+  loadingDirectories: ReadonlySet<string>;
+} = {
   entries,
   load: () => Promise.resolve(),
   refresh: () => {},
@@ -114,5 +122,41 @@ describe("FileBrowserPanel", () => {
 
     row.click();
     await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(1));
+  });
+
+  it("applies a very large folder listing quickly and keeps the expanded folder open", async () => {
+    const renderPanel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    await using screen = await render(renderPanel());
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    findTreeRow("src/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
+
+    directory.entries = [
+      ...entries,
+      // Out of sort order, because inserting in order hides the cost of each insert.
+      ...Array.from({ length: 40_000 }, (_, index): ProjectEntry => {
+        const name = String((index * 7_919) % 40_000).padStart(5, "0");
+        return { path: `src/generated-${name}`, kind: "directory" };
+      }),
+    ];
+    using _restoreEntries = {
+      [Symbol.dispose]: () => {
+        directory.entries = entries;
+      },
+    };
+    await screen.rerender(renderPanel());
+
+    await vi.waitFor(() => expect(findTreeRow("src/generated-00000/")).not.toBeNull());
+    expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true");
   });
 });

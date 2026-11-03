@@ -30,7 +30,10 @@ import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
-import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
+import {
+  buildFileTreePathUpdates,
+  MAX_INCREMENTAL_FILE_TREE_UPDATES,
+} from "./fileTreePathReconciliation";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
@@ -400,6 +403,10 @@ export default function FileBrowserPanel({
       return;
     }
     const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);
+    if (updates.length > MAX_INCREMENTAL_FILE_TREE_UPDATES) {
+      model.resetPaths(treePaths, { initialExpandedPaths: [...expandedPathsRef.current] });
+      return;
+    }
     if (updates.length > 0) model.batch(updates);
   }, [ready, entryKinds, model, treePaths]);
 
