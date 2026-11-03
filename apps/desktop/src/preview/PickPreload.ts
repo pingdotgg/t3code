@@ -1487,7 +1487,6 @@ function startAnnotation(sendEnabled: boolean): void {
       style.remove();
     }
     frames.clear();
-    window.removeEventListener("blur", onWindowBlur);
     dragHandle.removeEventListener("pointerdown", onEditorPointerDown);
     dragHandle.removeEventListener("pointermove", onEditorPointerMove);
     dragHandle.removeEventListener("pointerup", onEditorPointerUp);
@@ -1608,6 +1607,7 @@ function startAnnotation(sendEnabled: boolean): void {
     view.addEventListener("keydown", onKeyDown, { capture: true });
     view.addEventListener("scroll", repaint, { capture: true, passive: true });
     view.addEventListener("resize", repaint, { passive: true });
+    view.addEventListener("blur", onWindowBlur);
   }
 
   function unlisten(root: Document): void {
@@ -1622,6 +1622,7 @@ function startAnnotation(sendEnabled: boolean): void {
     view.removeEventListener("keydown", onKeyDown, true);
     view.removeEventListener("scroll", repaint, true);
     view.removeEventListener("resize", repaint);
+    view.removeEventListener("blur", onWindowBlur);
   }
 
   // The preload runs only in the top frame, so input over a same-origin frame needs listeners there.
@@ -1652,7 +1653,6 @@ function startAnnotation(sendEnabled: boolean): void {
 
   listen(document);
   attachFrames();
-  window.addEventListener("blur", onWindowBlur);
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
   if (inputLayer) {
