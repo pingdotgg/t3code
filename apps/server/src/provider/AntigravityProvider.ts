@@ -165,6 +165,12 @@ interface AntigravityProviderOptions {
   readonly clearUsage?: Effect.Effect<void>;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
   readonly auth?: { readonly type: string; readonly label: string };
+  readonly probeAuth?: Effect.Effect<{
+    readonly authenticated: boolean;
+    readonly type?: string;
+    readonly label?: string;
+    readonly email?: string;
+  }>;
 }
 
 export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(function* (
@@ -287,16 +293,29 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
               : `Antigravity did not respond to its local health check within ${HEALTH_CHECK_TIMEOUT}.`;
     const supportsTextGeneration =
       initialized !== undefined ? yield* options.supportsTextGeneration : false;
+    const probedAuth =
+      initialized !== undefined && options.probeAuth
+        ? yield* options.probeAuth.pipe(Effect.orElseSucceed(() => undefined))
+        : undefined;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     const next = yield* SubscriptionRef.updateAndGet(metadata, (state) => {
       if (state.authRevision !== before.authRevision) return state;
       const { message: _previousMessage, ...draft } = state.draft;
-      const authenticated = draft.auth.status === "authenticated";
+      const authStatus =
+        probedAuth !== undefined
+          ? probedAuth.authenticated
+            ? "authenticated"
+            : "unauthenticated"
+          : draft.auth.status;
+      const authenticated = authStatus === "authenticated";
+      const authType = probedAuth?.type ?? draft.auth.type ?? options.auth?.type;
+      const authLabel = probedAuth?.label ?? draft.auth.label ?? options.auth?.label;
+      const authEmail = probedAuth?.email ?? draft.auth.email;
       const message =
         errorMessage ??
         (authenticated
           ? undefined
-          : draft.auth.status === "unauthenticated"
+          : authStatus === "unauthenticated"
             ? signInMessage
             : authUncheckedMessage);
       return {
@@ -307,6 +326,12 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           // Lightweight custom-launcher probes lack versions; preserve the real handshake's version.
           version: version === "unknown" ? draft.version : version || draft.version,
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
+          auth: {
+            status: authStatus,
+            ...(authType ? { type: authType } : {}),
+            ...(authLabel ? { label: authLabel } : {}),
+            ...(authEmail ? { email: authEmail } : {}),
+          },
           checkedAt: updatedAt,
           usageLimits: missingInstallation ? undefined : draft.usageLimits,
           ...(missingInstallation
@@ -321,7 +346,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           ...(initialized !== undefined
             ? {
                 supportsTextGeneration:
-                  supportsTextGeneration && draft.auth.status !== "unauthenticated",
+                  supportsTextGeneration && authStatus !== "unauthenticated",
               }
             : {}),
           ...(message ? { message } : {}),

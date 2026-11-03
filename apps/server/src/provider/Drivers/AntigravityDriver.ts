@@ -36,6 +36,7 @@ import {
   isAntigravitySignInRequiredError,
   prepareAntigravityProfile,
   resolveAntigravityInstanceDirectories,
+  syncAntigravityGlobalCredentials,
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
 import {
@@ -408,12 +409,127 @@ export const AntigravityDriver: ProviderDriver<
       Effect.provideService(Digest.Digest, digest),
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
+    const probeAuth = Effect.gen(function* () {
+      switch (auth.authMethod) {
+        case "gemini-api-key": {
+          const authenticated = Boolean(auth.apiKey && auth.apiKey.trim().length > 0);
+          return {
+            authenticated,
+            type: "gemini-api-key",
+            label: antigravityAuthLabel("gemini-api-key"),
+          };
+        }
+        case "agent-platform": {
+          const authenticated = Boolean(
+            (auth.apiKey && auth.apiKey.trim().length > 0) ||
+              (auth.gcpProject &&
+                auth.gcpProject.trim().length > 0 &&
+                auth.gcpLocation &&
+                auth.gcpLocation.trim().length > 0),
+          );
+          return {
+            authenticated,
+            type: "agent-platform",
+            label: antigravityAuthLabel("agent-platform"),
+          };
+        }
+        case "oauth-personal":
+        case "oauth-business": {
+          yield* syncAntigravityGlobalCredentials({ profileDirectory, userHome }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.ignore,
+          );
+          const profileTokenPath = path.join(profileDirectory, "antigravity-acp", "acp_token.json");
+          const userTokenPath = path.join(userHome, ".gemini", "antigravity-acp", "acp_token.json");
+          const profileAccountsPath = path.join(profileDirectory, "google_accounts.json");
+          const userAccountsPath = path.join(userHome, ".gemini", "google_accounts.json");
+
+          let tokenPath: string | null = null;
+          if (yield* fileSystem.exists(profileTokenPath).pipe(Effect.orElseSucceed(() => false))) {
+            tokenPath = profileTokenPath;
+          } else if (yield* fileSystem.exists(userTokenPath).pipe(Effect.orElseSucceed(() => false))) {
+            tokenPath = userTokenPath;
+          }
+
+          if (!tokenPath) {
+            return {
+              authenticated: false,
+              type: auth.authMethod,
+              label: antigravityAuthLabel(auth.authMethod),
+            };
+          }
+
+          const tokenContent = yield* fileSystem
+            .readFileString(tokenPath)
+            .pipe(Effect.orElseSucceed(() => ""));
+          let hasValidToken = false;
+          try {
+            const parsed = JSON.parse(tokenContent);
+            if (
+              parsed &&
+              typeof parsed.client_id === "string" &&
+              parsed.client_id.trim().length > 0 &&
+              typeof parsed.refresh_token === "string" &&
+              parsed.refresh_token.trim().length > 0
+            ) {
+              hasValidToken = true;
+            }
+          } catch {
+            hasValidToken = false;
+          }
+
+          if (!hasValidToken) {
+            return {
+              authenticated: false,
+              type: auth.authMethod,
+              label: antigravityAuthLabel(auth.authMethod),
+            };
+          }
+
+          let email: string | undefined = undefined;
+          let accountsPath: string | null = null;
+          if (
+            yield* fileSystem.exists(profileAccountsPath).pipe(Effect.orElseSucceed(() => false))
+          ) {
+            accountsPath = profileAccountsPath;
+          } else if (
+            yield* fileSystem.exists(userAccountsPath).pipe(Effect.orElseSucceed(() => false))
+          ) {
+            accountsPath = userAccountsPath;
+          }
+
+          if (accountsPath) {
+            const accountsContent = yield* fileSystem
+              .readFileString(accountsPath)
+              .pipe(Effect.orElseSucceed(() => ""));
+            try {
+              const parsed = JSON.parse(accountsContent);
+              if (parsed && typeof parsed.active === "string" && parsed.active.trim().length > 0) {
+                email = parsed.active.trim();
+              }
+            } catch {
+              // ignore
+            }
+          }
+
+          return {
+            authenticated: true,
+            type: auth.authMethod,
+            label: antigravityAuthLabel(auth.authMethod),
+            ...(email ? { email } : {}),
+          };
+        }
+      }
+    });
+
     const provider = yield* makeAntigravityProvider(settings, {
       stampIdentity: classifyModels,
       probe,
       probeUsage: usage.probe,
       clearUsage: usage.clear,
       auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
+      probeAuth,
       supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),

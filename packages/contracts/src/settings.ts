@@ -854,6 +854,139 @@ export const AntigravitySettings = makeProviderSettingsSchema(
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
 
+export const OllamaSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    apiEndpoint: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("http://localhost:11434")),
+      Schema.annotateKey({
+        title: "API endpoint",
+        description: "Base URL for the Ollama server API.",
+        providerSettingsForm: {
+          placeholder: "http://localhost:11434",
+          clearWhenEmpty: "persist",
+        },
+      }),
+    ),
+    customModels: Schema.Array(CustomModelSetting).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  { order: ["apiEndpoint"] },
+);
+export type OllamaSettings = typeof OllamaSettings.Type;
+
+export const ZedSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("zed").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Zed binary on this machine.",
+        providerSettingsForm: { placeholder: "zed", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(CustomModelSetting).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  { order: ["binaryPath"] },
+);
+export type ZedSettings = typeof ZedSettings.Type;
+
+export const CloudflareSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    accountId: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Account ID",
+        description: "Cloudflare Account ID for Workers AI.",
+        providerSettingsForm: { placeholder: "Cloudflare Account ID", clearWhenEmpty: "omit" },
+      }),
+    ),
+    apiToken: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      secretSetting,
+      Schema.annotateKey({
+        title: "API Token",
+        description: "Cloudflare API Token with Workers AI permissions.",
+        providerSettingsForm: {
+          placeholder: "Paste Cloudflare API token",
+          clearWhenEmpty: "omit",
+          sensitive: true,
+        },
+      }),
+    ),
+    customModels: Schema.Array(CustomModelSetting).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  { order: ["accountId", "apiToken"] },
+);
+export type CloudflareSettings = typeof CloudflareSettings.Type;
+
+export const AwsBedrockSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    region: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("us-east-1")),
+      Schema.annotateKey({
+        title: "AWS Region",
+        description: "AWS region where Amazon Bedrock is deployed.",
+        providerSettingsForm: { placeholder: "us-east-1", clearWhenEmpty: "persist" },
+      }),
+    ),
+    accessKeyId: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      secretSetting,
+      Schema.annotateKey({
+        title: "Access Key ID",
+        description: "AWS Access Key ID.",
+        providerSettingsForm: {
+          placeholder: "AKIA...",
+          clearWhenEmpty: "omit",
+          sensitive: true,
+        },
+      }),
+    ),
+    secretAccessKey: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      secretSetting,
+      Schema.annotateKey({
+        title: "Secret Access Key",
+        description: "AWS Secret Access Key.",
+        providerSettingsForm: {
+          placeholder: "Paste secret access key",
+          clearWhenEmpty: "omit",
+          sensitive: true,
+        },
+      }),
+    ),
+    customModels: Schema.Array(CustomModelSetting).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  { order: ["region", "accessKeyId", "secretAccessKey"] },
+);
+export type AwsBedrockSettings = typeof AwsBedrockSettings.Type;
+
 export const UsageLimitSourceConfig = Schema.Struct({
   kind: Schema.Literal("cliproxy"),
   label: Schema.optional(TrimmedNonEmptyString),
@@ -1392,9 +1525,20 @@ export const providerInstanceConfigEnabledFlag = (config: unknown): boolean | un
 
 // Must match each driver's enabled decoding default.
 const DEFAULT_DISABLED_PROVIDER_DRIVERS: ReadonlySet<ProviderDriverKind> = new Set(
-  ["cursor", "grok", "fx", "kiro", "muse", "pi", "opencode", "antigravity"].map((driver) =>
-    ProviderDriverKind.make(driver),
-  ),
+  [
+    "cursor",
+    "grok",
+    "fx",
+    "kiro",
+    "muse",
+    "pi",
+    "opencode",
+    "antigravity",
+    "ollama",
+    "zed",
+    "cloudflare",
+    "bedrock",
+  ].map((driver) => ProviderDriverKind.make(driver)),
 );
 
 const DEFAULT_ENABLED_DEFAULT_INSTANCES: ReadonlySet<ProviderInstanceId> = new Set(

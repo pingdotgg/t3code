@@ -22,6 +22,13 @@ import { grokClient } from "@t3tools/provider-grok/client";
 import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
+import { kiroClient } from "@t3tools/provider-kiro/client";
+import {
+  bedrockClient,
+  cloudflareClient,
+  ollamaClient,
+  zedClient,
+} from "@t3tools/client-runtime/providerClients";
 import type { ProviderClientDefinition } from "@t3tools/provider-core/client";
 
 interface KnownDriver {
@@ -45,9 +52,14 @@ const PACKAGED_CLIENTS: ReadonlyArray<ProviderClientDefinition> = [
   cursorClient,
   grokClient,
   fxClient,
+  kiroClient,
   museClient,
   openCodeClient,
   piClient,
+  ollamaClient,
+  zedClient,
+  cloudflareClient,
+  bedrockClient,
   acpRegistryClient,
 ];
 
