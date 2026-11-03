@@ -44,6 +44,7 @@ export const environmentThreadShells = createEnvironmentThreadShellAtoms({
   hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
   archivedSnapshotAtom: (environmentId) =>
     orchestrationEnvironment.archivedShellSnapshot({ environmentId, input: {} }),
+  shellStateAtom: environmentShell.stateAtom,
 });
 export const childThreadApprovalsAtom = createChildThreadApprovalsAtom({
   childThreadInputsAtom: environmentThreadShells.childThreadInputsAtom,

@@ -17,6 +17,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 import { presentThreadShell, threadRuntimeIsActive } from "./models.ts";
+import type { EnvironmentShellState } from "./shell.ts";
 import { hiddenThreadKeys, NO_HIDDEN_THREADS } from "./threadTagFilter.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import {
@@ -214,6 +215,10 @@ export function createEnvironmentThreadShellAtoms(input: {
   readonly archivedSnapshotAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<AsyncResult.AsyncResult<OrchestrationV2ArchivedShellSnapshot, unknown>>;
+  /** The shell state, whose removals tell a stale archive from one that lacks a thread. */
+  readonly shellStateAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentShellState, unknown>>;
 }) {
   // Point reads and aggregate lists share values without keeping an atom alive
   // for every listed thread. Replaced source objects can be collected.
@@ -668,12 +673,14 @@ export function createEnvironmentThreadShellAtoms(input: {
     return next;
   }).pipe(Atom.withLabel("environment-quiet-thread-shell-list"));
 
-  // Null while the archived page has not arrived. A failed read counts as empty.
+  // Null while the archived page has not arrived. A failed read counts as empty and current.
   const archivedThreadIdsAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get): ReadonlySet<ThreadId> | null => {
+    Atom.make((get): { readonly ids: ReadonlySet<ThreadId>; readonly sequence: number } | null => {
       const result = get(input.archivedSnapshotAtom(environmentId));
       if (result.waiting || AsyncResult.isInitial(result)) return null;
-      return new Set(AsyncResult.isSuccess(result) ? result.value.threads.map((t) => t.id) : []);
+      if (!AsyncResult.isSuccess(result)) return { ids: new Set(), sequence: Infinity };
+      const { threads, snapshotSequence } = result.value;
+      return { ids: new Set(threads.map((t) => t.id)), sequence: snapshotSequence };
     }).pipe(Atom.withLabel(`environment-archived-thread-ids:${environmentId}`)),
   );
 
@@ -682,11 +689,16 @@ export function createEnvironmentThreadShellAtoms(input: {
     const environmentIds = new Set(enabledEnvironmentIds(get(input.catalogValueAtom)));
     const next = new Set<string>();
     // An archived parent keeps its task, as it keeps a local subagent. The live snapshot drops
-    // archived threads, so a missing parent waits on the archived page before its task lists.
+    // archived threads, so a missing parent waits on an archived page read after its removal.
     const parentKeepsTask = (parent: ScopedThreadRef) => {
       if (get(environmentThreadIndexAtom(parent.environmentId)).has(parent.threadId)) return true;
       const archived = get(archivedThreadIdsAtom(parent.environmentId));
-      return archived === null || archived.has(parent.threadId);
+      if (archived === null || archived.ids.has(parent.threadId)) return true;
+      const shell = AsyncResult.getOrElse(
+        get(input.shellStateAtom(parent.environmentId)),
+        () => null,
+      );
+      return (shell?.removedAt.get(parent.threadId) ?? -1) > archived.sequence;
     };
     for (const environmentId of environmentIds) {
       for (const thread of get(environmentThreadsAtom(environmentId))) {
