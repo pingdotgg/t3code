@@ -50,6 +50,8 @@ export const make = Effect.gen(function* () {
           )
         )
           return;
+        const activeProviderThreadIds =
+          thread.activeProviderThreadId === null ? [] : [thread.activeProviderThreadId];
         const records = yield* projections.getThreadRecords(
           threadId,
           [
@@ -61,7 +63,20 @@ export const make = Effect.gen(function* () {
             "turnItems",
             "contextTransfers",
           ],
-          { messageRunIds: [runId], turnItemStatuses: ["pending", "running", "waiting"] },
+          {
+            messageRunIds: [runId],
+            turnItemStatuses: ["pending", "running", "waiting"],
+            // The latest run, active runs that hold background work, and rolled-back runs whose
+            // items it ignores.
+            runStatuses: ["preparing", "starting", "running", "rolled_back"],
+            includeLatestRun: true,
+            // Without an active provider thread there is no session to compact.
+            providerThreadIds: activeProviderThreadIds,
+            providerTurnThreadIds: activeProviderThreadIds,
+            latestProviderTurnUsageOnly: true,
+            runtimeRequestStatuses: ["pending"],
+            contextTransferStatuses: ["pending"],
+          },
         );
         if (
           resolveIdleCompaction(current, records.thread.providerInstanceId) !==
@@ -73,10 +88,12 @@ export const make = Effect.gen(function* () {
           )
         )
           return;
-        const latestRun = records.runs.reduce<(typeof records.runs)[number] | undefined>(
-          (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
-          undefined,
-        );
+        const latestRun = records.runs
+          .filter((run) => run.status !== "cancelled" || run.startedAt !== null)
+          .reduce<(typeof records.runs)[number] | undefined>(
+            (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
+            undefined,
+          );
         // A late update for an earlier run replaced the latest run's timer, so take it over.
         if (latestRun?.status === "completed" && latestRun.id !== runId) {
           runId = latestRun.id;
