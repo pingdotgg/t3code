@@ -1885,12 +1885,14 @@ function TurnFoldUsageLimit({
 }) {
   const nowMinute = useNowMinute();
   const nowMs = Date.parse(`${nowMinute}:00Z`);
+  const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
   const resetPassed = useDeadlinePassed(limit.resetAt === null ? null : Date.parse(limit.resetAt));
   if (!limit.resetAt || resetPassed || !(Date.parse(limit.resetAt) > nowMs)) return null;
   return (
     <>
       <span className="shrink-0 text-meta text-muted-foreground">
-        resumes {formatUpcomingTimestamp(limit.resetAt, timestampFormat, nowMs)}
+        resumes {formatUpcomingTimestamp(limit.resetAt, timestampFormat, nowMs, timeZone)} (
+        {timeZone})
       </span>
       {limit.onToggleSnooze ? (
         <WorkingBarChip
