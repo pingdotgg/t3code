@@ -1922,6 +1922,42 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  // regression: #30182 killing Pi mid catalog refresh loses a rotated OAuth refresh token
+  it.effect("starts fork Pi offline while the thread session keeps refreshing the catalog", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const forkFake = yield* makeFakePi;
+      const forkFile = "/fake/forked.jsonl";
+      const { runtime } = yield* openRuntime(fake, "default", THREAD_ID, SESSION_ID, forkFake);
+      const source = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const turn: OrchestrationV2ProviderTurn = {
+        id: ProviderTurnId.make("turn-1"),
+        providerThreadId: source.id,
+        nodeId: NodeId.make("node-1"),
+        runAttemptId: null,
+        nativeTurnRef: { driver: PI_PROVIDER, nativeId: "u1", strength: "strong" },
+        ordinal: 1,
+        status: "completed",
+        startedAt: null,
+        completedAt: null,
+      };
+      forkFake.queueState({ sessionFile: forkFile });
+      fake.queueState({ sessionFile: forkFile });
+      yield* runtime.forkThread({
+        sourceProviderThread: source,
+        sourceProviderTurns: [turn],
+        providerTurnId: turn.id,
+        targetThreadId: ThreadId.make("fork-target"),
+      });
+      assert.include(forkFake.lastSpawn().args, "--offline");
+      assert.notInclude(fake.lastSpawn().args, "--offline");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("natively forks before a turn whose start entry was never captured", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
