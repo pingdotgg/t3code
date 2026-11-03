@@ -240,10 +240,19 @@ it.effect("stops a start that fails after device support was turned off before i
       platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
       ensureReady: () => Effect.succeed(ready),
       // Like LocalDeviceHost: the hub is up before the agent tools install fails.
-      ensureAgentReady: () =>
+      ensureAgentReady: (onPhase) =>
         Effect.sync(() => {
           running = true;
         }).pipe(
+          Effect.andThen(onPhase("installing")),
+          Effect.tap(() =>
+            service.state.pipe(
+              Effect.map((state) => {
+                expect(state.hostStatus).toBe("disabled");
+                expect(state.hostStatuses).toEqual({});
+              }),
+            ),
+          ),
           Effect.andThen(
             Effect.fail(
               new DeviceHost.DeviceHostError({

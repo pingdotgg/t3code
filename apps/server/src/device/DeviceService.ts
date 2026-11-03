@@ -359,14 +359,25 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
 
   // Uninterruptible so a committed retirement always prunes, even if its caller is cancelled.
-  const publish = (update: (state: DeviceServiceState) => DeviceServiceState) =>
-    SynchronizedRef.modifyEffect(stateRef, ({ state }) => {
-      const next = { ...update(state), revision: state.revision + 1 };
-      const retired = state.sessions.some((session) => !next.sessions.includes(session));
-      return PubSub.publish(statePubSub, next).pipe(
-        Effect.as([{ next, retired }, { state: next }] as const),
-      );
-    }).pipe(
+  const publish = (
+    update: (state: DeviceServiceState) => DeviceServiceState,
+    onlyWhileEnabled = false,
+  ) =>
+    SynchronizedRef.modifyEffect(stateRef, ({ state }) =>
+      Effect.gen(function* () {
+        const enabled =
+          !onlyWhileEnabled ||
+          (yield* readDeviceSettings.pipe(
+            Effect.map((current) => current.enabled),
+            Effect.orElseSucceed(() => false),
+          ));
+        const next = { ...(enabled ? update(state) : state), revision: state.revision + 1 };
+        const retired = state.sessions.some((session) => !next.sessions.includes(session));
+        return yield* PubSub.publish(statePubSub, next).pipe(
+          Effect.as([{ next, retired }, { state: next }] as const),
+        );
+      }),
+    ).pipe(
       Effect.tap(({ retired }) => (retired ? pruneLaunchers : Effect.void)),
       Effect.map(({ next }) => next),
       Effect.uninterruptible,
@@ -391,24 +402,26 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     Effect.suspend(() =>
       !hosts.has(hostId)
         ? SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state))
-        : publish((state) =>
-            expectedHost && hosts.get(hostId) !== expectedHost
-              ? state
-              : {
-                  ...state,
-                  ...(hostId === LOCAL_DEVICE_HOST_ID
-                    ? { hostStatus: status.status, hostStatusDetail: status.detail }
-                    : {}),
-                  hostStatuses: {
-                    ...state.hostStatuses,
-                    [hostId]: {
-                      ...(state.hostStatuses[hostId]?.androidDiscoveryIncomplete
-                        ? { androidDiscoveryIncomplete: true }
-                        : {}),
-                      ...status,
+        : publish(
+            (state) =>
+              expectedHost && hosts.get(hostId) !== expectedHost
+                ? state
+                : {
+                    ...state,
+                    ...(hostId === LOCAL_DEVICE_HOST_ID
+                      ? { hostStatus: status.status, hostStatusDetail: status.detail }
+                      : {}),
+                    hostStatuses: {
+                      ...state.hostStatuses,
+                      [hostId]: {
+                        ...(state.hostStatuses[hostId]?.androidDiscoveryIncomplete
+                          ? { androidDiscoveryIncomplete: true }
+                          : {}),
+                        ...status,
+                      },
                     },
                   },
-                },
+            true,
           ),
     );
 
