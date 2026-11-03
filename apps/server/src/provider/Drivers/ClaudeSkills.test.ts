@@ -209,6 +209,50 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("resolves each install record's project repository once per discovery", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "workspace");
+      const otherProject = path.join(tempDir, "other", "packages", "app");
+      yield* fs.makeDirectory(path.join(workspace, ".git"), { recursive: true });
+      yield* fs.makeDirectory(path.join(tempDir, "other", ".git"), { recursive: true });
+      yield* fs.makeDirectory(otherProject, { recursive: true });
+      const records = Array.from({ length: 4 }, () => ({
+        scope: "project",
+        projectPath: otherProject,
+        installPath: path.join(configDir, "plugins", "elsewhere"),
+      }));
+      const plugins = ["a@shop", "b@shop", "c@shop"];
+      yield* fs.makeDirectory(path.join(configDir, "plugins"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "installed_plugins.json"),
+        JSON.stringify({ plugins: Object.fromEntries(plugins.map((key) => [key, records])) }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        JSON.stringify({ enabledPlugins: Object.fromEntries(plugins.map((key) => [key, true])) }),
+      );
+
+      const probed: Array<string> = [];
+      yield* discoverClaudeSkills({ homePath: configDir }, workspace).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          exists: (target) => {
+            probed.push(target);
+            return fs.exists(target);
+          },
+        }),
+      );
+      assert.strictEqual(
+        probed.filter((target) => target === path.join(otherProject, ".git")).length,
+        1,
+      );
+    }),
+  );
+
   it.effect("publishes and dispatches canonical plugin folder names regardless of aliases", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
