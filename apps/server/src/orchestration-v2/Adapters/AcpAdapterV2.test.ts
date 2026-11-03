@@ -75,6 +75,9 @@ import {
 } from "@t3tools/provider-grok/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import * as ServerConfig from "../../config.ts";
+import { persistChatAttachments } from "../../assets/ChatAttachments.ts";
 import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -3149,6 +3152,175 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    { protocolVersion: 1, messageId: undefined },
+    { protocolVersion: 1, messageId: "source-message" },
+    { protocolVersion: 2, messageId: "source-message" },
+  ] as const)(
+    "handles inline images under protocol $protocolVersion with messageId $messageId",
+    ({ protocolVersion, messageId }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const host = yield* ProviderHost.ProviderHost;
+        const instanceId = ProviderInstanceId.make("acp-inline-images");
+        const threadId = ThreadId.make("thread-acp-inline-images");
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let handler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        const png =
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aY9sAAAAASUVORK5CYII=";
+        const image = { type: "image", mimeType: "image/png", data: png } as const;
+        const updates: Array<EffectAcpSchema.SessionUpdate> = [
+          ...(
+            [
+              { type: "text", text: "before" },
+              image,
+              { type: "text", text: "between" },
+              { ...image, data: "", uri: `data:image/png;base64,${png}` },
+              { type: "text", text: "after" },
+            ] satisfies Array<EffectAcpSchema.ContentBlock>
+          ).map((content) => ({
+            sessionUpdate: "agent_message_chunk" as const,
+            ...(messageId === undefined ? {} : { messageId }),
+            content,
+          })),
+          {
+            sessionUpdate: "tool_call",
+            toolCallId: "image-tool",
+            title: "Image tool",
+            kind: "other",
+            status: "inProgress",
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "image-tool",
+            status: "completed",
+            content: [
+              { type: "content", content: { type: "text", text: "tool caption" } },
+              { type: "content", content: image },
+            ],
+          },
+        ];
+        if (protocolVersion === 2) {
+          updates.push({
+            sessionUpdate: "agent_message",
+            messageId: "source-message",
+            content: [{ type: "text", text: "authoritative mixed reply" }],
+          });
+        }
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* path.fromFileUrl(
+                new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+              ),
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                start: () =>
+                  runtime.start().pipe(
+                    Effect.map((result) => ({
+                      ...result,
+                      initializeResult: { ...result.initializeResult, protocolVersion },
+                    })),
+                  ),
+                handleSessionUpdate: (next) =>
+                  Effect.sync(() => {
+                    handler = next;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+                prompt: () =>
+                  Effect.gen(function* () {
+                    assert.isDefined(handler);
+                    for (const update of updates)
+                      yield* handler!({ sessionId: "mock-session-1", update });
+                    return { stopReason: "end_turn" as const };
+                  }),
+              }),
+            }),
+          },
+        }).pipe(
+          Effect.provideService(ProviderHost.ProviderHost, {
+            ...host,
+            persistChatAttachments: (input) =>
+              persistChatAttachments(input).pipe(
+                Effect.provideService(ServerConfig.ServerConfig, config),
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+              ),
+          }),
+        );
+        const modelSelection = { instanceId, model: "default" };
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("session-inline-images"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        const items = new Map<string, OrchestrationV2TurnItem>();
+        for (const event of events)
+          if (event.type === "turn_item.updated") items.set(event.turnItem.id, event.turnItem);
+        const answers = [...items.values()].filter((item) => item.type === "assistant_message");
+        assert.deepEqual(
+          answers.map((item) => item.text),
+          protocolVersion === 1
+            ? ["before", "", "between", "", "after"]
+            : ["authoritative mixed reply"],
+        );
+        const attachments = answers.flatMap((item) => item.attachments ?? []);
+        assert.lengthOf(attachments, protocolVersion === 1 ? 2 : 0);
+        if (protocolVersion === 1) assert.notEqual(attachments[0]?.id, attachments[1]?.id);
+        for (const attachment of attachments) {
+          const bytes = yield* fileSystem.readFile(
+            path.join(config.attachmentsDir, `${attachment.id}.png`),
+          );
+          assert.equal(Buffer.from(bytes).toString("base64"), png);
+          assert.equal(bytes.byteLength, attachment.sizeBytes);
+        }
+        const tool = [...items.values()].find((item) => item.type === "dynamic_tool");
+        assert.isTrue(tool?.type === "dynamic_tool");
+        if (tool?.type === "dynamic_tool")
+          assert.deepEqual(tool.output, [{ type: "text", text: "tool caption" }, image]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerTest,
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-acp-inline-" }).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
+          ),
+        ),
+        Effect.scoped,
+      ),
+  );
+
   it.effect("persists a bounded subset of streamed root and child tool updates", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -4019,6 +4191,47 @@ describe("AcpAdapterV2", () => {
                 Effect.sync(() => {
                   sessionUpdateHandler = handler;
                 }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: (input) =>
+                runtime.prompt(input).pipe(
+                  Effect.tap(() =>
+                    Effect.gen(function* () {
+                      const updates = [
+                        {
+                          sessionUpdate: "agent_message_chunk",
+                          messageId: "chunk-then-upsert",
+                          content: { type: "text", text: "partial answer" },
+                        },
+                        {
+                          sessionUpdate: "agent_thought_chunk",
+                          content: { type: "text", text: "checking" },
+                        },
+                        {
+                          sessionUpdate: "agent_message_chunk",
+                          messageId: "chunk-then-upsert",
+                          content: { type: "text", text: "continued answer" },
+                        },
+                        {
+                          sessionUpdate: "agent_message",
+                          messageId: "chunk-then-upsert",
+                          content: [{ type: "text", text: "complete answer" }],
+                        },
+                        {
+                          sessionUpdate: "tool_call",
+                          toolCallId: "opaque-result",
+                          title: "Opaque result",
+                          kind: "other",
+                          status: "completed",
+                          rawOutput: {
+                            result: { content: [{ type: "text", text: "opaque" }] },
+                            extra: 1,
+                          },
+                        },
+                      ] satisfies Array<EffectAcpSchema.SessionUpdate>;
+                      for (const update of updates)
+                        yield* sessionUpdateHandler!({ sessionId: "mock-session-1", update });
+                    }),
+                  ),
+                ),
             }),
           }),
         },
@@ -4091,8 +4304,19 @@ describe("AcpAdapterV2", () => {
       assert.isTrue(items.some((item) => item.type === "user_message" && item.text.length === 0));
       assert.equal(
         items.filter((item) => item.type === "assistant_message").at(-1)?.text,
-        "authoritative answer",
+        "complete answer",
       );
+      const replies = new Map(
+        items.flatMap((item) => (item.type === "assistant_message" ? [[item.id, item.text]] : [])),
+      );
+      assert.deepEqual([...replies.values()], ["authoritative answer", "complete answer"]);
+      const opaqueResult = items.find(
+        (item) => item.type === "dynamic_tool" && item.toolName === "Opaque result",
+      );
+      assert.deepEqual(opaqueResult?.type === "dynamic_tool" ? opaqueResult.output : undefined, {
+        result: { content: [{ type: "text", text: "opaque" }] },
+        extra: 1,
+      });
       assert.isTrue(
         items.some((item) => item.type === "reasoning" && item.text === "final thought"),
       );

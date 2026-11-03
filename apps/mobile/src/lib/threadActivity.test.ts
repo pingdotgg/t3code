@@ -1,4 +1,5 @@
 import {
+  ChatAttachmentId,
   MessageId,
   CheckpointId,
   CheckpointRef,
@@ -941,12 +942,24 @@ describe("buildThreadFeed", () => {
     ).toBe(null);
   });
 
-  it("folds progress messages while keeping the final assistant answer visible", () => {
+  it.each([false, true])("folds progress before a reply with images: %s", (hasImages) => {
+    const attachments = hasImages
+      ? [
+          {
+            type: "image" as const,
+            id: ChatAttachmentId.make("reply-image"),
+            name: "Reply",
+            mimeType: "image/png",
+            sizeBytes: 401,
+          },
+        ]
+      : [];
     const opening = {
       ...assistantMessage("2026-06-20T00:00:01.500Z"),
       id: TurnItemId.make("item-opening"),
       messageId: MessageId.make("message-opening"),
       text: "I will check the deployment configuration.",
+      attachments,
     };
     const middle = {
       ...assistantMessage("2026-06-20T00:00:02.500Z"),
@@ -954,12 +967,20 @@ describe("buildThreadFeed", () => {
       messageId: MessageId.make("message-middle"),
       text: "The configuration is valid; checking the build next.",
     };
+    const image = {
+      ...assistantMessage("2026-06-20T00:00:02.750Z"),
+      id: TurnItemId.make("item-image"),
+      messageId: MessageId.make("message-image"),
+      text: hasImages ? "" : "Build is finishing.",
+      attachments,
+    };
     const feed = buildThreadFeed([
       projected(userMessage(), 0),
       projected(opening, 1),
       projected(command(), 2),
       projected(middle, 3),
-      projected(assistantMessage(), 4),
+      projected(image, 4),
+      projected(assistantMessage(), 5),
     ]);
     const latestRun = {
       runId,
@@ -972,6 +993,7 @@ describe("buildThreadFeed", () => {
     expect(collapsed.map((entry) => entry.id)).toEqual([
       "message-user",
       "run-fold:run-1",
+      ...(hasImages ? ["message-middle", "message-image"] : []),
       "message-assistant",
     ]);
     expect(collapsed[1]).toMatchObject({
@@ -986,6 +1008,7 @@ describe("buildThreadFeed", () => {
       "run-fold",
       "message",
       "activity-group",
+      "message",
       "message",
       "message",
     ]);
@@ -1015,8 +1038,35 @@ describe("buildThreadFeed", () => {
       "message-user",
       "message-opening",
       "message-middle",
+      "message-image",
       "message-assistant",
     ]);
+
+    const steered = deriveThreadFeedPresentation(
+      buildThreadFeed([
+        projected(userMessage(), 0),
+        projected(opening, 1),
+        projected(
+          {
+            ...userMessage("2026-06-20T00:00:02.000Z"),
+            id: TurnItemId.make("item-steer"),
+            messageId: MessageId.make("message-steer"),
+            inputIntent: "steer",
+          },
+          2,
+        ),
+        projected(middle, 3),
+        projected(image, 4),
+        projected(assistantMessage(), 5),
+      ]),
+      latestRun,
+      new Set(),
+    );
+    expect(
+      steered.flatMap((entry) =>
+        entry.type === "message" && entry.message.role === "assistant" ? [entry.id] : [],
+      ),
+    ).toEqual([...(hasImages ? ["message-middle", "message-image"] : []), "message-assistant"]);
   });
 
   // regression: #21393 show plans and fold settled progress notes

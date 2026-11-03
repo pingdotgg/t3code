@@ -1,5 +1,6 @@
 import { ThreadId, type WorktreeSetupSnapshot } from "@t3tools/contracts";
 import {
+  ChatAttachmentId,
   CheckpointRef,
   NodeId,
   ProviderDriverKind,
@@ -1101,7 +1102,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
   });
 
-  it("folds the first assistant message and settled work before the terminal response", () => {
+  it.each([false, true])("folds work before a reply with images: %s", (hasImages) => {
     const timelineEntries = [
       {
         id: "user-entry",
@@ -1126,6 +1127,17 @@ describe("deriveMessagesTimelineRows", () => {
           role: "assistant" as const,
           text: "Synthetic deployment checklist\n1. Confirm the deployment is ready.",
           runId: "turn-1" as never,
+          attachments: hasImages
+            ? [
+                {
+                  type: "image" as const,
+                  id: ChatAttachmentId.make("progress-image"),
+                  name: "Progress",
+                  mimeType: "image/png",
+                  sizeBytes: 401,
+                },
+              ]
+            : [],
           createdAt: "2026-01-01T00:00:05Z",
           updatedAt: "2026-01-01T00:00:06Z",
           streaming: false,
@@ -1143,6 +1155,32 @@ describe("deriveMessagesTimelineRows", () => {
           tone: "tool" as const,
         },
       },
+      ...["before", "", "between", ""].map((text, index) => ({
+        id: `assistant-part-${index}`,
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:10Z",
+        message: {
+          id: MessageId.make(`assistant-part-${index}`),
+          role: "assistant" as const,
+          text: text || (hasImages ? "" : "Image follows"),
+          runId: RunId.make("turn-1"),
+          attachments:
+            hasImages && text.length === 0
+              ? [
+                  {
+                    type: "image" as const,
+                    id: ChatAttachmentId.make(`reply-image-${index}`),
+                    name: "Reply",
+                    mimeType: "image/png",
+                    sizeBytes: 401,
+                  },
+                ]
+              : [],
+          createdAt: "2026-01-01T00:00:10Z",
+          updatedAt: "2026-01-01T00:00:10Z",
+          streaming: false,
+        },
+      })),
       {
         id: "assistant-final-entry",
         kind: "message" as const,
@@ -1177,6 +1215,9 @@ describe("deriveMessagesTimelineRows", () => {
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
       "turn-fold:turn-1",
+      ...(hasImages
+        ? ["assistant-part-0", "assistant-part-1", "assistant-part-2", "assistant-part-3"]
+        : []),
       "assistant-final-entry",
     ]);
 
@@ -1194,11 +1235,51 @@ describe("deriveMessagesTimelineRows", () => {
       "turn-fold:turn-1",
       "assistant-first-entry",
       "work-entry-1",
+      "assistant-part-0",
+      "assistant-part-1",
+      "assistant-part-2",
+      "assistant-part-3",
       "assistant-final-entry",
     ]);
     expect(
       expandedRows.find((row) => row.kind === "turn-fold" && row.expanded === true),
     ).toBeDefined();
+
+    const steeredRows = deriveMessagesTimelineRows({
+      timelineEntries: timelineEntries.map((entry) =>
+        entry.kind === "work"
+          ? {
+              kind: "message" as const,
+              id: "steer-entry",
+              createdAt: entry.createdAt,
+              message: {
+                id: MessageId.make("steer"),
+                role: "user" as const,
+                text: "Continue with the final reply",
+                inputIntent: "steer" as const,
+                runId: RunId.make("turn-1"),
+                createdAt: entry.createdAt,
+                updatedAt: entry.createdAt,
+                streaming: false,
+              },
+            }
+          : entry,
+      ),
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(
+      steeredRows.flatMap((row) =>
+        row.kind === "message" && row.message.role === "assistant" ? [row.id] : [],
+      ),
+    ).toEqual([
+      ...(hasImages
+        ? ["assistant-part-0", "assistant-part-1", "assistant-part-2", "assistant-part-3"]
+        : []),
+      "assistant-final-entry",
+    ]);
   });
 
   it.each([1, 2, 3])("folds %i completed activities after the terminal response", (count) => {
