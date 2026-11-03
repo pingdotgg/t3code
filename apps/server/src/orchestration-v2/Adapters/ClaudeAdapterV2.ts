@@ -155,6 +155,8 @@ import {
   type CompiledClaudeModelSelection,
 } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
+import { scratchRootPath } from "../../project/ManagedProjectFolders.ts";
+import { isWithinRoot } from "../../workspace/KnownWorkspaces.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -1514,6 +1516,11 @@ const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `
 To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.
 `;
 
+// Claude Code's own prompt sends files that "don't belong in the project" to its scratchpad.
+const CLAUDE_SCRATCH_THREAD_INSTRUCTIONS = `### Files in this thread
+
+This thread has no project. Your working directory is the user's folder for this thread, and T3 Code shows its files. Save files the user should see or keep there, not in a Claude scratchpad or system temp directory.`;
+
 // Native subagents start from their task, not this session's system prompt.
 const subagentDeviceInstructions: HookCallback = () =>
   Promise.resolve({
@@ -1547,6 +1554,8 @@ export function makeClaudeQueryOptions(input: {
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly appendSystemPromptFileText?: string;
+  /** The cwd is a No project thread's folder. */
+  readonly scratchThread?: boolean;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
 }): ClaudeAgentSdkQueryOptions {
@@ -1665,6 +1674,7 @@ export function makeClaudeQueryOptions(input: {
               (deviceInstructions
                 ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
                 : "")),
+        ...(input.scratchThread === true ? [CLAUDE_SCRATCH_THREAD_INSTRUCTIONS] : []),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
@@ -4595,6 +4605,7 @@ export interface ClaudeAdapterV2Options {
   readonly settings: ClaudeSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly attachmentsDir: string;
+  readonly scratchRoot?: string;
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly random: SecureRandom.SecureRandom["Service"];
@@ -10544,6 +10555,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
+            scratchThread:
+              adapterOptions.scratchRoot !== undefined &&
+              turnInput.runtimePolicy.cwd !== null &&
+              isWithinRoot(path, turnInput.runtimePolicy.cwd, adapterOptions.scratchRoot),
           });
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
@@ -11870,6 +11885,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       settings: { ...config, enabled, binaryPath },
       environment: claudeEnvironment,
       attachmentsDir: serverConfig.attachmentsDir,
+      scratchRoot: scratchRootPath(path, serverConfig),
       fileSystem,
       path,
       random,

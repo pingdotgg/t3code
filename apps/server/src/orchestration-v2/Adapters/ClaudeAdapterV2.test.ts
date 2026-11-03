@@ -1012,7 +1012,11 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
 });
 
 describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
-  const startTurnWithLaunchArgs = Effect.fnUntraced(function* (launchArgs: string, cwd: string) {
+  const startTurnWithLaunchArgs = Effect.fnUntraced(function* (
+    launchArgs: string,
+    cwd: string,
+    scratchRoot?: string,
+  ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const opened: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOptions> = [];
     const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
@@ -1020,6 +1024,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
       settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
       environment: {},
       attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-append-" }),
+      ...(scratchRoot === undefined ? {} : { scratchRoot }),
       fileSystem,
       path: yield* Path.Path,
       random: yield* SecureRandom.SecureRandom,
@@ -1102,6 +1107,32 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
         assert.isUndefined(opened[0]!.extraArgs?.["append-system-prompt"]);
         assert.isUndefined(opened[0]!.extraArgs?.["append-system-prompt-file"]);
         assert.equal(opened[0]!.extraArgs?.["system-prompt"], "Replacement");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("tells Claude to keep No project thread files in the thread folder", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const scratchRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-scratch-" });
+        const threadFolder = NodePath.join(scratchRoot, "2026-11-03-notes-thread1");
+        yield* fileSystem.makeDirectory(threadFolder);
+        const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-project-" });
+        const instruction = "This thread has no project.";
+        const scratch = yield* startTurnWithLaunchArgs("", threadFolder, scratchRoot);
+        assert.include(appendSystemPrompt(scratch.opened[0]) ?? "", instruction);
+        const real = yield* startTurnWithLaunchArgs("", project, scratchRoot);
+        assert.notInclude(appendSystemPrompt(real.opened[0]) ?? "", instruction);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

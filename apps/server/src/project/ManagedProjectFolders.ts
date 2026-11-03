@@ -201,6 +201,10 @@ const isGitMissing = (error: GitManagerServiceError) =>
   PlatformError.isPlatformError(error.cause.cause) &&
   error.cause.cause.reason._tag === "NotFound";
 
+/** Where Scratch thread folders live when Scratch is available. */
+export const scratchRootPath = (path: Path.Path, config: { readonly baseDir: string }) =>
+  path.resolve(config.baseDir, "scratch");
+
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -235,7 +239,7 @@ const make = Effect.gen(function* () {
     gitWorkflow.isRepository(config.baseDir).pipe(
       Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
       Effect.map((isRepository) =>
-        isRepository ? Option.none<string>() : Option.some(path.resolve(config.baseDir, "scratch")),
+        isRepository ? Option.none<string>() : Option.some(scratchRootPath(path, config)),
       ),
       Effect.catchCause((cause) =>
         Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
