@@ -357,7 +357,8 @@ and the access, then approve.
 - On a LAN or other private network, a link can use the machine's plain
   `http://` IP address, as pairing does. A machine picked from the list is
   linked over its https, Tailscale or T3 Connect address instead whenever one
-  answers. Plain http to a public address or to a hostname is refused.
+  answers. Plain http to a public address or to a hostname is refused, apart
+  from `localhost` and Tailscale (`.ts.net`) names.
 
 An agent can also hand a task to a linked machine with `delegate_task`: it runs
 there as an ordinary thread, in the project with the same repository (or the
