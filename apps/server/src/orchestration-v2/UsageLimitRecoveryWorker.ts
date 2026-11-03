@@ -61,14 +61,6 @@ export function limitRecoveryCommand(
   )
     return null;
   const deliveryIdentity = `${identity}:${recovery.requestId ?? "legacy"}`;
-  // A subagent of a settled parent is abandoned work: disarm it, as Cancel auto-resume would.
-  if (thread.parentSettled)
-    return {
-      type: "thread.metadata.update",
-      commandId: CommandId.make(`limit-disarm:${deliveryIdentity}`),
-      threadId: thread.id,
-      limitRecovery: { runId: recovery.runId, resetAt: recovery.resetAt, autoResume: false },
-    };
   return {
     type: "message.dispatch",
     commandId: CommandId.make(`limit-resume:${deliveryIdentity}`),
@@ -129,12 +121,7 @@ const makeSweep = Effect.gen(function* () {
       if (command === null) continue;
       acted = true;
       yield* Effect.gen(function* () {
-        // Arming re-checks Stop races; a disarm changes the recovery the thread already holds.
-        if (
-          command.type === "thread.metadata.update" &&
-          command.limitRecovery != null &&
-          command.commandId.startsWith("limit-arm:")
-        ) {
+        if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
           yield* orchestrator.autoArmLimitRecovery({
             commandId: command.commandId,
             threadId: command.threadId,

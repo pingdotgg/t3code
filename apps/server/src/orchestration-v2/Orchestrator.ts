@@ -5450,6 +5450,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (projection.thread.snoozedUntil != null &&
           DateTime.toEpochMillis(projection.thread.snoozedUntil) > DateTime.toEpochMillis(now))
       ) {
+        const recoveryMatches =
+          recovery?.autoResume &&
+          recovery.requestId === command.usageLimitRecoveryRequestId &&
+          recovery.runId === command.usageLimitContinuationOfRunId;
         yield* emit(
           events,
           command,
@@ -5459,13 +5463,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: {
             ...projection.thread,
-            ...(recovery?.autoResume &&
-            recovery.requestId === command.usageLimitRecoveryRequestId &&
-            recovery.runId === command.usageLimitContinuationOfRunId &&
-            projection.thread.snoozedUntil != null &&
-            DateTime.toEpochMillis(projection.thread.snoozedUntil) > DateTime.toEpochMillis(now)
-              ? { limitRecovery: { ...recovery, requestId: command.commandId } }
-              : {}),
+            // A settled parent retires the resume; leaving it armed would replay this receipt.
+            ...(recoveryMatches && parentSettled
+              ? { limitRecovery: { ...recovery, autoResume: false, requestId: command.commandId } }
+              : recoveryMatches &&
+                  projection.thread.snoozedUntil != null &&
+                  DateTime.toEpochMillis(projection.thread.snoozedUntil) >
+                    DateTime.toEpochMillis(now)
+                ? { limitRecovery: { ...recovery, requestId: command.commandId } }
+                : {}),
           },
         });
         return;
