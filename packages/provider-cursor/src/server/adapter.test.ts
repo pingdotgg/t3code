@@ -1592,7 +1592,7 @@ describe("CursorAdapterV2", () => {
     {
       platform: "linux",
       advice:
-        /"Sandbox blocked on Linux" in https:\/\/github\.com\/pingdotgg\/t3code\/blob\/main\/docs\/user\/cursor\.md\. Otherwise, switch this thread to Full access/,
+        /AppArmor may block its helper; see https:\/\/github\.com\/pingdotgg\/t3code\/blob\/main\/docs\/user\/cursor\.md\. Otherwise, switch this thread to Full access/,
     },
     { platform: "win32", advice: /Switch this thread to Supervised or Auto/ },
   ] as const)("says the Cursor sandbox is unavailable on $platform", ({ platform, advice }) =>
