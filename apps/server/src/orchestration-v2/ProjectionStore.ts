@@ -3954,6 +3954,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             )
             AND json_extract(t.payload_json, '$.archivedAt') IS NULL
             AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
+            -- A subagent of a settled parent is abandoned work; arming or resuming it would wake the parent.
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_threads parent
+              WHERE json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+                AND parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
+                AND json_extract(parent.payload_json, '$.settledOverride') = 'settled'
+            )
             AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
             AND json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
             AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
@@ -3976,13 +3983,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND (
                   ${booleanInt(options.autoResume)}
                   OR (${booleanInt(options.snooze)} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
-                )
-                -- A subagent of a settled parent is abandoned work; resuming it would wake the parent.
-                AND NOT EXISTS (
-                  SELECT 1 FROM orchestration_v2_projection_threads parent
-                  WHERE json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
-                    AND parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
-                    AND json_extract(parent.payload_json, '$.settledOverride') = 'settled'
                 )
               )
             )
