@@ -3001,8 +3001,7 @@ export function applyBackgroundActivityGroups(
         (row) =>
           row.kind === "message" &&
           row.message.role === "assistant" &&
-          row.message.runId !== activeRunId &&
-          !row.message.streaming,
+          (row.message.runId === activeRunId || !row.message.streaming),
       );
       if (finalAnswer?.kind === "message") {
         result.push(
