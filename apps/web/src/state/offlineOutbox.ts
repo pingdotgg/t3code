@@ -7,6 +7,7 @@ export interface OfflineMessage {
   readonly input: StartThreadTurnInput;
   readonly attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
   readonly error?: string;
+  readonly inheritedBootstrap?: boolean;
 }
 
 export function createOfflineOutbox(options: {
@@ -55,7 +56,7 @@ export function createOfflineOutbox(options: {
         : undefined;
       const successor =
         next && bootstrap && !next.input.bootstrap
-          ? { ...next, input: { ...next.input, bootstrap } }
+          ? { ...next, inheritedBootstrap: true, input: { ...next.input, bootstrap } }
           : undefined;
       await options.remove(id, successor);
       publish(

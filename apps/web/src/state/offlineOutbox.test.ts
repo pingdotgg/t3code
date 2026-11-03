@@ -101,6 +101,7 @@ describe("offline outbox", () => {
     ).toBeUndefined();
     await restarted.drain();
     expect(h.sent.at(-1)?.input.bootstrap).toEqual(bootstrap);
+    expect(h.sent.at(-1)?.inheritedBootstrap).toBe(true);
   });
 
   it("does not publish a message when durable storage fails", async () => {

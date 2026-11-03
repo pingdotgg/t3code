@@ -15,7 +15,8 @@ import {
 import { toastManager } from "../components/ui/toast";
 import { environmentPresentations } from "./presentation";
 import { environmentSession, readEnvironmentScope } from "./session";
-import { threadEnvironment } from "./threads";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { threadEnvironment, environmentThreadShells } from "./threads";
 import { environmentShell } from "./shell";
 import { createOfflineOutbox } from "./offlineOutbox";
 import { offlineOutboxStorage } from "./offlineOutboxStorage";
@@ -45,7 +46,20 @@ export const offlineMessages = createOfflineOutbox({
       message.attachments,
       attachments,
     );
-    if (!message.input.bootstrap?.createThread) {
+    const { bootstrap: queuedBootstrap, ...turnInput } = message.input;
+    let bootstrap = queuedBootstrap;
+    if (message.inheritedBootstrap && bootstrap) {
+      const existing = appAtomRegistry.get(
+        environmentThreadShells.threadShellAtom(
+          scopeThreadRef(message.environmentId, message.input.threadId),
+        ),
+      );
+      if (existing) {
+        const { createThread: _, ...remaining } = bootstrap;
+        bootstrap = existing.latestRunId === null ? remaining : undefined;
+      }
+    }
+    if (!bootstrap?.createThread) {
       const runtimeResult = await runAtomCommand(
         appAtomRegistry,
         threadEnvironment.setRuntimeMode,
@@ -81,7 +95,8 @@ export const offlineMessages = createOfflineOutbox({
       {
         environmentId: message.environmentId,
         input: {
-          ...message.input,
+          ...turnInput,
+          ...(bootstrap ? { bootstrap } : {}),
           message: {
             ...message.input.message,
             attachments,
