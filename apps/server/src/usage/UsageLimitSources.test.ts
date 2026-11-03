@@ -1,10 +1,12 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import {
+  SecretProviderId,
   ServerConfigStreamEvent,
   ServerSettingsError,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Duration from "effect/Duration";
@@ -82,6 +84,10 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
           },
         },
       }),
+      Layer.succeed(SecretResolver.SecretResolver, {
+        read: (references) => Effect.succeed(references.map(() => undefined)),
+        invalidate: () => Effect.void,
+      }),
       Layer.mock(BackgroundPolicy.BackgroundPolicy)({
         shouldRunScopeWork: () => Effect.succeed(false),
       }),
@@ -118,13 +124,21 @@ const decodeProbe = Schema.decodeUnknownSync(
 const encodeBody = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const makeHubTest = Effect.fn("test.makeHubTest")(function* (failed: string[] = []) {
   const baseSettings = yield* ServerSettings.ServerSettingsService;
-  const changeObserved = yield* Deferred.make<void>();
+  const disabledObserved = yield* Deferred.make<void>();
+  const enabledObserved = yield* Deferred.make<void>();
   const changes = yield* Queue.unbounded<import("@t3tools/contracts").ServerSettings>();
   const settings = {
     ...baseSettings,
     streamChanges: Stream.fromQueue(changes).pipe(
       Stream.flatMap((next) =>
-        Stream.make(next).pipe(Stream.ensuring(Deferred.succeed(changeObserved, undefined))),
+        Stream.make(next).pipe(
+          Stream.ensuring(
+            Deferred.succeed(
+              next.usageLimitSources[hubId]?.enabled ? enabledObserved : disabledObserved,
+              undefined,
+            ),
+          ),
+        ),
       ),
     ),
     updateSettings: (...args: Parameters<typeof baseSettings.updateSettings>) =>
@@ -149,6 +163,10 @@ const makeHubTest = Effect.fn("test.makeHubTest")(function* (failed: string[] = 
             return yield* new ServerSettingsError({ settingsPath: "test", operation: "read-file" });
           return yield* settings.getSettings;
         }),
+      }),
+      Layer.succeed(SecretResolver.SecretResolver, {
+        read: (references) => Effect.succeed(references.map(() => undefined)),
+        invalidate: () => Effect.void,
       }),
       Layer.mock(BackgroundPolicy.BackgroundPolicy)({
         shouldRunScopeWork: () => Effect.succeed(false),
@@ -209,7 +227,7 @@ const makeHubTest = Effect.fn("test.makeHubTest")(function* (failed: string[] = 
     Stream.filter((snapshots) => snapshots.length === 1),
     Stream.runHead,
   );
-  return { sources, settings, mode, readStarted, releaseRead, changeObserved };
+  return { sources, settings, mode, readStarted, releaseRead, disabledObserved, enabledObserved };
 });
 const provideHubTest = <A, E>(
   effect: Effect.Effect<A, E, ServerSettings.ServerSettingsService | import("effect/Scope").Scope>,
@@ -341,8 +359,15 @@ it.effect(
   () =>
     provideHubTest(
       Effect.gen(function* () {
-        const { sources, settings, mode, readStarted, releaseRead, changeObserved } =
-          yield* makeHubTest();
+        const {
+          sources,
+          settings,
+          mode,
+          readStarted,
+          releaseRead,
+          disabledObserved,
+          enabledObserved,
+        } = yield* makeHubTest();
         yield* Ref.update(mode, (m) => ({ ...m, blocked: true, listFailed: true }));
         const pending = yield* sources.refresh.pipe(Effect.forkChild);
         yield* Deferred.await(readStarted);
@@ -350,10 +375,11 @@ it.effect(
           usageLimitSources: { [hubId]: { ...hubConfig, enabled: false } },
         });
         yield* settings.updateSettings({ usageLimitSources: { [hubId]: hubConfig } });
+        yield* Deferred.await(disabledObserved);
+        yield* Deferred.await(enabledObserved);
         yield* Ref.update(mode, (m) => ({ ...m, blocked: false }));
         yield* Deferred.succeed(releaseRead, undefined);
         yield* Fiber.join(pending);
-        yield* Deferred.await(changeObserved);
         yield* sources.refresh;
         expect((yield* sources.current)[0]?.accounts).toEqual([]);
       }),
@@ -401,3 +427,69 @@ it.effect("publishes account-specific failures before any account has a good sam
     }),
   ),
 );
+
+it.effect("reads a management key from its secret provider", () => {
+  const authorizations: Array<string | undefined> = [];
+  const keySource = (reference: string) => ({
+    provider: SecretProviderId.make("homelab"),
+    reference,
+  });
+  return Effect.gen(function* () {
+    const sources = yield* UsageLimitSources.make;
+    const snapshots = yield* sources.streamChanges.pipe(
+      Stream.filter((next) => next.length > 0),
+      Stream.runHead,
+      Effect.flatMap(Effect.fromOption),
+    );
+    expect(snapshots.map(({ id, error }) => ({ id, error }))).toEqual([
+      { id: "resolved-hub", error: undefined },
+      {
+        id: "unresolved-hub",
+        error: "Could not read the management key from its secret provider.",
+      },
+    ]);
+    expect(authorizations).toEqual(["Bearer resolved-key"]);
+  }).pipe(
+    Effect.provide([
+      ServerSettings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("resolved-hub")]: {
+            kind: "cliproxy",
+            url: "https://resolved.test",
+            managementKey: keySource("cliproxy#key"),
+            enabled: true,
+          },
+          [UsageLimitSourceId.make("unresolved-hub")]: {
+            kind: "cliproxy",
+            url: "https://unresolved.test",
+            managementKey: keySource("missing#key"),
+            enabled: true,
+          },
+        },
+      }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      Layer.succeed(SecretResolver.SecretResolver, {
+        read: (references) =>
+          Effect.succeed(
+            references.map((reference) =>
+              reference.reference === "cliproxy#key" ? "resolved-key" : undefined,
+            ),
+          ),
+        invalidate: () => Effect.void,
+      }),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            authorizations.push(request.headers.authorization);
+            return HttpClientResponse.fromWeb(request, Response.json({ files: [] }));
+          }),
+        ),
+      ),
+      NodeCrypto.layer,
+    ]),
+    Effect.scoped,
+  );
+});
