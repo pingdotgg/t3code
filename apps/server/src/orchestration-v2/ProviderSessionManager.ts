@@ -42,6 +42,7 @@ import {
 } from "../observability/Metrics.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -230,6 +231,7 @@ interface LiveSessionEntry {
   readonly scope: Scope.Closeable;
   readonly idleGeneration: number;
   readonly busyTurns: ReadonlySet<string>;
+  readonly releasePortDiscovery: (() => void) | null;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
   readonly pinnedSinceMs: number | null;
   readonly idleThreadUnloads: ReadonlyMap<ThreadId, IdleThreadUnload>;
@@ -329,11 +331,13 @@ export const layerWithOptions = (
   | ProjectionStore.ProjectionStoreV2
   | ProviderEventIngestor.ProviderEventIngestorV2
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
+  | PortScanner.PortDiscovery
 > =>
   Layer.effect(
     ProviderSessionManagerV2,
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
+      const portDiscovery = yield* PortScanner.PortDiscovery;
       const fileSystem = yield* FileSystem.FileSystem;
       const mcpSessionRegistry = yield* McpSessionRegistry.McpSessionRegistry;
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -953,6 +957,7 @@ export const layerWithOptions = (
               }
               const updated = new Map(current);
               updated.delete(key);
+              existing.releasePortDiscovery?.();
               return ["removed", updated] as const;
             }),
             DateTime.now,
@@ -1438,6 +1443,7 @@ export const layerWithOptions = (
               updated.set(key, {
                 ...entry,
                 busyTurns: new Set(entry.busyTurns).add(turnKey),
+                releasePortDiscovery: entry.releasePortDiscovery ?? portDiscovery.trackAgent(),
                 idleFiber: null,
                 pinnedSinceMs: null,
               });
@@ -1465,10 +1471,12 @@ export const layerWithOptions = (
               }
               const busyTurns = new Set(entry.busyTurns);
               busyTurns.delete(busyTurnKey(providerThreadId, runOrdinal));
+              if (busyTurns.size === 0) entry.releasePortDiscovery?.();
               const updated = new Map(current);
               updated.set(key, {
                 ...entry,
                 busyTurns,
+                releasePortDiscovery: busyTurns.size === 0 ? null : entry.releasePortDiscovery,
               });
               return updated;
             });
@@ -2250,6 +2258,7 @@ export const layerWithOptions = (
                 scope: sessionScope,
                 idleGeneration: 0,
                 busyTurns: new Set(),
+                releasePortDiscovery: null,
                 idleFiber: null,
                 pinnedSinceMs: null,
                 idleThreadUnloads: new Map(),

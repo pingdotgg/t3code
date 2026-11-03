@@ -20,6 +20,7 @@ import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
 import * as ThreadManagementService from "../ThreadManagementService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -542,6 +543,7 @@ export function layerWithRegistry<Error>(
     layerCommandOutputHubProvided,
   ).pipe(
     Layer.provide(ProviderTurnStartServiceTestkit.layer),
+    Layer.provide(PortScanner.layerTest),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 

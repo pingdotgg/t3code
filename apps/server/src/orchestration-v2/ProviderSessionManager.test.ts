@@ -41,6 +41,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
@@ -589,6 +590,7 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly portDiscoveryLayer?: Layer.Layer<PortScanner.PortDiscovery>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -669,6 +671,7 @@ function layerTest(input: {
           layerProviderEventIngestorTest,
           layerConfiguredMcpRegistry,
           layerTestStores,
+          input.portDiscoveryLayer ?? PortScanner.layerTest,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
         ),
@@ -1361,6 +1364,14 @@ it.effect(
       // Like OpenCode2, a stopped start can still emit turn.terminal later.
       const holdStart = yield* Ref.make(false);
       const startHeld = yield* Deferred.make<void>();
+      const discoveryLeases = new Set<symbol>();
+      const portDiscoveryLayer = Layer.mock(PortScanner.PortDiscovery)({
+        trackAgent: () => {
+          const lease = Symbol();
+          discoveryLeases.add(lease);
+          return () => void discoveryLeases.delete(lease);
+        },
+      });
       yield* Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -1423,11 +1434,13 @@ it.effect(
           });
 
         yield* startTurn(threadB);
+        assert.equal(discoveryLeases.size, 1);
 
         yield* Ref.set(holdStart, true);
         const startingA = yield* startTurn(threadA).pipe(Effect.forkChild);
         yield* Deferred.await(startHeld);
         yield* Fiber.interrupt(startingA);
+        assert.equal(discoveryLeases.size, 1);
 
         const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
         assert.isDefined(queue);
@@ -1449,11 +1462,15 @@ it.effect(
         yield* Effect.yieldNow;
         assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
         assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.equal(discoveryLeases.size, 1);
+        yield* manager.close(providerSessionId);
+        assert.equal(discoveryLeases.size, 0);
       }).pipe(
         Effect.provide(
           layerTest({
             state,
             idleTimeoutMs: 1000,
+            portDiscoveryLayer,
             startTurn: Ref.get(holdStart).pipe(
               Effect.flatMap((hold) =>
                 hold
