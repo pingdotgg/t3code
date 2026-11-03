@@ -6193,6 +6193,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           queuedRunId: runId,
           targetRunId: goalStopRunId,
           reason: "Stopped to apply /goal",
+          goal: true,
           now,
         });
       }
@@ -9552,6 +9553,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         queuedRunId: queuedRun.id,
         targetRunId: stops ? target.id : undefined,
         reason: "Skipped compaction to send a queued message",
+        goal: goalCommand !== null,
         now,
       });
     }
@@ -9583,6 +9585,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         queuedRunId: queuedRun.id,
         targetRunId: stops ? target.id : undefined,
         reason: "Stopped to apply /goal",
+        goal: true,
         now,
       });
     }
@@ -11800,6 +11803,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       readonly queuedRunId: RunId;
       readonly targetRunId: RunId | undefined;
       readonly reason: string;
+      /** A goal goes first among queued messages, so it drops their priority over completions. */
+      readonly goal: boolean;
       readonly now: DateTime.Utc;
     }) {
       const { command, events, effects, projection, now, targetRunId } = input;
@@ -11808,7 +11813,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       for (const [index, run] of others.entries()) {
         const queuePosition = index + 2;
-        if (run.queuePosition === queuePosition && run.queuedAheadOfCompletions !== true) continue;
+        if (
+          run.queuePosition === queuePosition &&
+          (!input.goal || run.queuedAheadOfCompletions !== true)
+        )
+          continue;
         yield* emit(
           events,
           command,
@@ -11819,7 +11828,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
-          payload: { ...run, queuePosition, queuedAheadOfCompletions: false },
+          payload: {
+            ...run,
+            queuePosition,
+            ...(input.goal ? { queuedAheadOfCompletions: false } : {}),
+          },
         });
       }
       if (targetRunId === undefined) return undefined;

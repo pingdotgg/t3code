@@ -1642,49 +1642,59 @@ it.effect.each(["next", "/goal ship it"])(
           yield* send("compact", "/compact", "queue");
           yield* send("queued", "queued", "queue");
           yield* send("next", promoted, "queue");
-          const settled = yield* orchestrator.streamDomainEvents.pipe(
-            Stream.filter(
-              (event) =>
-                event.type === "run.updated" &&
-                event.payload.id === started[0]!.runId &&
-                event.payload.status === "waiting",
-            ),
-            Stream.take(1),
-            Stream.runDrain,
-            Effect.forkScoped,
-          );
-          const compacting = yield* orchestrator.streamDomainEvents.pipe(
-            Stream.filter(
-              (event) =>
-                event.type === "provider-turn.updated" &&
-                event.payload.status === "running" &&
-                event.payload.runAttemptId !== started[0]!.attemptId,
-            ),
-            Stream.take(1),
-            Stream.runDrain,
-            Effect.forkScoped,
-          );
-          const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
-          yield* Queue.offer(events, {
-            type: "provider_turn.updated",
-            driver,
-            providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
+          const nextStart = Effect.suspend(() => {
+            const known = started.map((turn) => turn.attemptId);
+            return orchestrator.streamDomainEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "provider-turn.updated" &&
+                  event.payload.status === "running" &&
+                  !known.includes(event.payload.runAttemptId),
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
           });
-          yield* Queue.offer(events, {
-            type: "turn.terminal",
-            driver,
-            providerThreadId: turn.providerThreadId,
-            providerTurnId: turn.id,
-            runOrdinal: started[0]!.runOrdinal,
-            status: "completed",
-            failure: null,
-            threadDisposition: "reusable",
+          const finish = Effect.fn("finish")(function* (index: number) {
+            const { runId, attemptId, runOrdinal } = started[index]!;
+            const settled = yield* orchestrator.streamDomainEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "run.updated" &&
+                  event.payload.id === runId &&
+                  (event.payload.status === "waiting" || event.payload.status === "completed"),
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
+            const startedNext = yield* nextStart;
+            const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns.find(
+              (candidate) => candidate.id === ProviderTurnId.make(`provider-turn:${attemptId}`),
+            )!;
+            yield* Queue.offer(events, {
+              type: "provider_turn.updated",
+              driver,
+              providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
+            });
+            yield* Queue.offer(events, {
+              type: "turn.terminal",
+              driver,
+              providerThreadId: turn.providerThreadId,
+              providerTurnId: turn.id,
+              runOrdinal,
+              status: "completed",
+              failure: null,
+              threadDisposition: "reusable",
+            });
+            yield* Fiber.join(settled);
+            yield* worker.drain();
+            yield* orchestrator.resumeQueuedRuns;
+            yield* worker.drain();
+            yield* Fiber.join(startedNext);
           });
-          yield* Fiber.join(settled);
-          yield* worker.drain();
-          yield* orchestrator.resumeQueuedRuns;
-          yield* worker.drain();
-          yield* Fiber.join(compacting);
+          yield* finish(0);
           const compactRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
             (run) => run.userMessageId === MessageId.make("message:compact"),
           )!;
@@ -1732,13 +1742,16 @@ it.effect.each(["next", "/goal ship it"])(
             Effect.map(orchestrator.getThreadProjection(threadId), ({ runs }) =>
               runs.find((run) => run.userMessageId === MessageId.make(`message:${key}`))!,
             );
-          yield* orchestrator.dispatch({
-            type: "queued-run.reorder",
-            commandId: CommandId.make("reorder"),
-            threadId,
-            runId: (yield* runFor("next")).id,
-            beforeRunId: (yield* runFor("completion")).id,
-          });
+          for (const key of ["next", "queued"]) {
+            yield* orchestrator.dispatch({
+              type: "queued-run.reorder",
+              commandId: CommandId.make(`reorder-${key}`),
+              threadId,
+              runId: (yield* runFor(key)).id,
+              beforeRunId: (yield* runFor("completion")).id,
+            });
+          }
+          const promotedStarted = yield* nextStart;
           yield* orchestrator.dispatch({
             type: "queued-message.promote-to-steer",
             commandId: CommandId.make("promote"),
@@ -1747,6 +1760,7 @@ it.effect.each(["next", "/goal ship it"])(
             targetRunId: compactRun.id,
           });
           yield* worker.drain();
+          yield* Fiber.join(promotedStarted);
 
           const projection = yield* orchestrator.getThreadProjection(threadId);
           assert.deepEqual(steered, []);
@@ -1755,13 +1769,17 @@ it.effect.each(["next", "/goal ship it"])(
               (item) => item.type === "run_interrupt_request" && item.runId === compactRun.id,
             ),
           );
-          // Like any queued goal, a goal keeps automatic completions ahead of it.
+          yield* finish(2);
+          // A plain message keeps the other prioritized message ahead of the completion; a goal,
+          // like any queued goal, sends after automatic completions.
           assert.deepEqual(
             started.map((turn) => turn.runId),
             [
               started[0]!.runId,
               compactRun.id,
-              (yield* runFor(promoted === "next" ? "next" : "completion")).id,
+              ...(promoted === "next"
+                ? [(yield* runFor("next")).id, (yield* runFor("queued")).id]
+                : [(yield* runFor("completion")).id, (yield* runFor("next")).id]),
             ],
           );
         }).pipe(Effect.provide(layer));
