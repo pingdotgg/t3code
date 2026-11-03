@@ -124,7 +124,7 @@ export function parseThreadSegmentFromAttachmentId(attachmentId: string): string
   return match[1]?.toLowerCase() ?? null;
 }
 
-/** Only this thread's ids qualify, preserving source pages when deleting a fork. */
+/** Only ids this thread published qualify; a fork's inherited items keep their source's ids. */
 export function threadHtmlRenderAttachmentIds(
   threadId: string,
   items: Iterable<{ readonly toolName: string | null | undefined; readonly output?: unknown }>,
