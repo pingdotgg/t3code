@@ -213,31 +213,48 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      // Real path: macOS temp dirs sit behind a /var -> /private/var symlink.
+      const tempDir = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" }),
+      );
       const configDir = path.join(tempDir, "claude-home");
       const workspace = path.join(tempDir, "workspace");
       const otherProject = path.join(tempDir, "other", "packages", "app");
+      const sameRepoProject = path.join(workspace, "packages", "app");
       yield* fs.makeDirectory(path.join(workspace, ".git"), { recursive: true });
       yield* fs.makeDirectory(path.join(tempDir, "other", ".git"), { recursive: true });
       yield* fs.makeDirectory(otherProject, { recursive: true });
+      yield* fs.makeDirectory(sameRepoProject, { recursive: true });
+      const elsewhereInstall = path.join(configDir, "plugins", "elsewhere");
+      const sameRepoInstall = path.join(configDir, "plugins", "same-repo");
+      yield* writeSkill(path.join(elsewhereInstall, "skills"), "elsewhere", "# Elsewhere");
+      yield* writeSkill(path.join(sameRepoInstall, "skills"), "same-repo", "# Same repo");
       const records = Array.from({ length: 4 }, () => ({
         scope: "project",
         projectPath: otherProject,
-        installPath: path.join(configDir, "plugins", "elsewhere"),
+        installPath: elsewhereInstall,
       }));
       const plugins = ["a@shop", "b@shop", "c@shop"];
-      yield* fs.makeDirectory(path.join(configDir, "plugins"), { recursive: true });
       yield* fs.writeFileString(
         path.join(configDir, "plugins", "installed_plugins.json"),
-        JSON.stringify({ plugins: Object.fromEntries(plugins.map((key) => [key, records])) }),
+        JSON.stringify({
+          plugins: {
+            ...Object.fromEntries(plugins.map((key) => [key, records])),
+            "d@shop": [
+              { scope: "project", projectPath: sameRepoProject, installPath: sameRepoInstall },
+            ],
+          },
+        }),
       );
       yield* fs.writeFileString(
         path.join(configDir, "settings.json"),
-        JSON.stringify({ enabledPlugins: Object.fromEntries(plugins.map((key) => [key, true])) }),
+        JSON.stringify({
+          enabledPlugins: Object.fromEntries([...plugins, "d@shop"].map((key) => [key, true])),
+        }),
       );
 
       const probed: Array<string> = [];
-      yield* discoverClaudeSkills({ homePath: configDir }, workspace).pipe(
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace).pipe(
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
           exists: (target) => {
@@ -249,6 +266,10 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       assert.strictEqual(
         probed.filter((target) => target === path.join(otherProject, ".git")).length,
         1,
+      );
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["d:same-repo"],
       );
     }),
   );
