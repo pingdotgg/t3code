@@ -878,7 +878,9 @@ const EXEC_CALL =
 const HTTP_CALL =
   /^(?:(?:urllib\.request\.)?(?:Request|urlopen)|(?:requests|httpx|urllib3|aiohttp)(?:\.\w+)+|fetch|https?\.(?:request|get)|axios(?:\.\w+)?|got(?:\.\w+)?|undici\.\w+)$/;
 // A browser page method that types its argument into a field: Playwright, Puppeteer, Selenium.
-const UI_CALL = /^x\.(?:fill|type|pressSequentially|insertText|sendKeys|setValue)$/;
+// A typing call on a locator, page or element, by any receiver name (`field.fill`, `page.fill`).
+const UI_CALL =
+  /^(?:[A-Za-z_$][\w$]*\.)+(?:fill|type|pressSequentially|insertText|sendKeys|setValue)$/;
 const ENV_CALL = /^(?:os\.environ\.(?:update|setdefault)|os\.putenv)$/;
 const EXEC_STATEMENT =
   /\b(?:subprocess\.\w+|os\.(?:system|exec\w*|spawn\w*)|execFileSync|execFile|spawnSync|spawn|execSync|exec)\s*\(/;
@@ -1209,6 +1211,8 @@ const applyPatch = (patch: string, scripts: Map<string, string>) => {
 };
 /** Records the scripts a call writes: Write, Edit, Codex apply_patch, and heredocs into files. */
 const noteWrites = (call: SecretRun["calls"][number], scripts: Map<string, string>) => {
+  // A failed Write or Edit left the file as it was.
+  if (call.failed && (call.tool === "Write" || call.tool === "Edit")) return;
   const path = inputString(call.input, "file_path");
   if (call.tool === "Write" && path) scripts.set(path, inputString(call.input, "content"));
   if (call.tool === "Edit") {
