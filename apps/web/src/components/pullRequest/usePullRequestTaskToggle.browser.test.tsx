@@ -9,13 +9,15 @@ const MARKER_A = BODY.indexOf("[");
 const MARKER_B = BODY.lastIndexOf("[");
 
 function Harness({
+  body = BODY,
   save,
   onSettled,
 }: {
+  body?: string;
   save: (body: string) => Promise<boolean>;
   onSettled: () => void;
 }) {
-  const tasks = usePullRequestTaskToggle(BODY, save, onSettled);
+  const tasks = usePullRequestTaskToggle(body, save, onSettled);
   return (
     <div>
       <pre data-testid="text">{tasks.text}</pre>
@@ -76,6 +78,23 @@ describe("usePullRequestTaskToggle", () => {
     calls[0]!.finish(false);
     await vi.waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
     expect(save).toHaveBeenCalledTimes(1);
+    await expect.element(screen.getByTestId("text")).toHaveTextContent("- [ ] a - [ ] b");
+  });
+
+  it("forgets a saved burst once the host's copy moves on, even if it later reverts", async () => {
+    const { calls, save } = controlledSave();
+    const onSettled = vi.fn();
+    await using screen = await render(<Harness save={save} onSettled={onSettled} />, {
+      router: false, // The harness renders no links.
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "A" }));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    calls[0]!.finish(true);
+    await vi.waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
+
+    await screen.rerender(<Harness body={calls[0]!.body} save={save} onSettled={onSettled} />);
+    await screen.rerender(<Harness body={BODY} save={save} onSettled={onSettled} />);
     await expect.element(screen.getByTestId("text")).toHaveTextContent("- [ ] a - [ ] b");
   });
 });

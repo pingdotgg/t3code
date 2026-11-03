@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 
-import { setMarkdownTaskChecked } from "../files/filePreviewMode";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 
 /**
  * Shows toggled tasks at once and saves each rewritten body in click order. The optimistic body
@@ -18,6 +18,8 @@ export function usePullRequestTaskToggle(
     readonly settled: boolean;
   } | null>(null);
   const queue = useRef({ tail: Promise.resolve(), generation: 0, waiting: 0 });
+  // Once the host's copy moves on, forget the burst so a later revert to `base` cannot revive it.
+  if (pending !== null && pending.settled && pending.base !== body) setPending(null);
   const showPending = pending !== null && (!pending.settled || pending.base === body);
   const text = showPending ? pending.body : body;
   if (save === null) return { text, onTaskListChange: undefined };
