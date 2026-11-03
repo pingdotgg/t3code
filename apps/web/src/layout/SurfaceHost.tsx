@@ -13,6 +13,7 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 import { StatusDot } from "../components/ui/status-dot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { cn, isMacPlatform } from "../lib/utils";
+import { sidewaysWheelScrollsStrip, wheelDeltaPx } from "../motion/gesture";
 import { usePaneMotion } from "../motion/paneMotion";
 import {
   PanelAnimationSuppressionProvider,
@@ -833,22 +834,20 @@ export function LayoutSurfaceHost({
     const mac = isMacPlatform(navigator.platform);
     const held = (event: MouseEvent) =>
       mac ? event.metaKey && event.altKey : event.ctrlKey && event.altKey;
-    const onWheel = (event: WheelEvent) => {
-      if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
-      // A pane's code, diff or tab scroller must not take over the strip's
-      // camera. Plain strip gestures start on a notch or in a gap (pen ZlxmK).
-      if (
-        !held(event) &&
-        event.target instanceof Element &&
-        event.target.closest("[data-layout-pane-id]") &&
-        !event.target.closest("[data-pane-header]")
-      )
-        return;
+    const moveStrip = (event: WheelEvent) => {
+      event.preventDefault();
       settleStripCamera();
       noteUserStripScroll();
-      if (!held(event)) return;
-      event.preventDefault();
-      scroller.scrollLeft += event.deltaX;
+      scroller.scrollLeft += wheelDeltaPx(event.deltaX, event);
+    };
+    const onWheel = (event: WheelEvent) => {
+      if (held(event) && Math.abs(event.deltaX) > Math.abs(event.deltaY)) moveStrip(event);
+    };
+    const onSidewaysWheel = (event: WheelEvent) => {
+      if (event.defaultPrevented) return;
+      if (sidewaysWheelScrollsStrip(event.composedPath(), scroller, event.deltaX, event.deltaY)) {
+        moveStrip(event);
+      }
     };
     const onPointerDown = (event: PointerEvent) => {
       if (event.button !== 1 || !held(event)) return;
@@ -875,10 +874,12 @@ export function LayoutSurfaceHost({
       noteUserStripScroll();
     };
     scroller.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    scroller.addEventListener("wheel", onSidewaysWheel, { passive: false });
     scroller.addEventListener("pointerdown", onPointerDown, true);
     scroller.addEventListener("touchmove", onTouchMove, { passive: true });
     return () => {
       scroller.removeEventListener("wheel", onWheel, true);
+      scroller.removeEventListener("wheel", onSidewaysWheel);
       scroller.removeEventListener("pointerdown", onPointerDown, true);
       scroller.removeEventListener("touchmove", onTouchMove);
     };
