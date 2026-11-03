@@ -130,6 +130,8 @@ interface CheckFields {
   readonly targetUrl?: string | null | undefined;
   /** Empty for app-owned runs; absent for commit statuses. */
   readonly workflowName?: string | null | undefined;
+  /** The workflow run's id, which GitHub assigns in creation order. */
+  readonly workflowRunId?: number | null | undefined;
   readonly startedAt?: string | null | undefined;
   readonly completedAt?: string | null | undefined;
   /** Branch protection requires this check; asked for on github.com only. */
@@ -570,16 +572,38 @@ function isNamelessCheck(raw: CheckFields): boolean {
   return trimmed(raw.name) === null && trimmed(raw.context) === null;
 }
 
-/** Unfinished runs outrank finished runs of the same check across push/PR workflows. */
+/**
+ * Unfinished runs outrank finished runs of the same check across push/PR workflows. A newer run of
+ * a workflow cancels the older one (concurrency cancel-in-progress), and the older run's job names
+ * can differ (an unexpanded matrix), so its cancelled checks are dropped rather than deduped.
+ */
 function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): ReadonlyArray<{
   readonly check: PullRequestCheck;
   readonly workflowName: string | null;
   readonly at: string | null;
 }> {
+  const newestRunByWorkflow = new Map<string, number>();
+  for (const check of raw ?? []) {
+    const workflowName = trimmed(check.workflowName);
+    if (workflowName === null || check.workflowRunId == null) continue;
+    const newest = newestRunByWorkflow.get(workflowName);
+    if (newest === undefined || check.workflowRunId > newest) {
+      newestRunByWorkflow.set(workflowName, check.workflowRunId);
+    }
+  }
   return (raw ?? []).flatMap((check) => {
     const name = trimmed(check.name) ?? trimmed(check.context);
     if (name === null) return [];
     const status = toCheckStatus(check);
+    const workflowName = trimmed(check.workflowName);
+    if (
+      status === "cancelled" &&
+      workflowName !== null &&
+      check.workflowRunId != null &&
+      check.workflowRunId < (newestRunByWorkflow.get(workflowName) ?? check.workflowRunId)
+    ) {
+      return [];
+    }
     return [
       {
         check: {
@@ -589,7 +613,7 @@ function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): Rea
           url: trimmed(check.detailsUrl) ?? trimmed(check.targetUrl),
           ...(typeof check.isRequired === "boolean" ? { required: check.isRequired } : {}),
         },
-        workflowName: trimmed(check.workflowName),
+        workflowName,
         at:
           status === "pending"
             ? STILL_RUNNING
@@ -1155,7 +1179,11 @@ export type GitHubCheckContext = CheckFields;
 function toCheckContexts(nodes: ReadonlyArray<CheckContext>): ReadonlyArray<GitHubCheckContext> {
   return nodes.map((check) =>
     check.__typename === "CheckRun"
-      ? { ...check, workflowName: check.checkSuite.workflowRun?.workflow.name ?? null }
+      ? {
+          ...check,
+          workflowName: check.checkSuite.workflowRun?.workflow.name ?? null,
+          workflowRunId: check.checkSuite.workflowRun?.databaseId ?? null,
+        }
       : check,
   );
 }
