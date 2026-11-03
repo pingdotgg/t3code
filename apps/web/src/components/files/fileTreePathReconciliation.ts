@@ -1,8 +1,41 @@
 import type { FileTreeBatchOperation } from "@pierre/trees";
 
-// Each batched operation reworks every sibling. Both costs grow with the listing, and a rebuild
-// wins at about 300 operations whether the folder holds 50,000 entries or 332,000.
-export const MAX_INCREMENTAL_FILE_TREE_UPDATES = 300;
+// A batched operation reworks its folder's siblings, while a rebuild reworks every path. On flat
+// folders of 50,000 and 332,000 entries a rebuild won somewhere between 200 and 500 operations.
+const REBUILD_COST_IN_FOLDER_OPERATIONS = 300;
+
+function parentOf(path: string): string {
+  const end = path.endsWith("/") ? path.length - 1 : path.length;
+  return path.slice(0, Math.max(0, path.lastIndexOf("/", end - 1)));
+}
+
+function countByParent(paths: readonly string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const path of paths) {
+    const parent = parentOf(path);
+    counts.set(parent, (counts.get(parent) ?? 0) + 1);
+  }
+  return counts;
+}
+
+export function shouldRebuildFileTree(
+  previousPaths: readonly string[],
+  nextPaths: readonly string[],
+  updates: readonly FileTreeBatchOperation[],
+): boolean {
+  // Up to this many operations can't outweigh a rebuild, whatever the folder sizes.
+  if (updates.length <= REBUILD_COST_IN_FOLDER_OPERATIONS) return false;
+  const previousCounts = countByParent(previousPaths);
+  const nextCounts = countByParent(nextPaths);
+  let batchWork = 0;
+  for (const update of updates) {
+    if (update.type !== "add" && update.type !== "remove") continue;
+    const parent = parentOf(update.path);
+    batchWork += Math.max(previousCounts.get(parent) ?? 0, nextCounts.get(parent) ?? 0);
+  }
+  const rebuildWork = Math.max(previousPaths.length, nextPaths.length);
+  return batchWork > REBUILD_COST_IN_FOLDER_OPERATIONS * rebuildWork;
+}
 
 function pathDepth(path: string): number {
   return path.split("/").filter(Boolean).length;

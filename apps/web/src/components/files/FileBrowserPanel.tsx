@@ -30,10 +30,7 @@ import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
-import {
-  buildFileTreePathUpdates,
-  MAX_INCREMENTAL_FILE_TREE_UPDATES,
-} from "./fileTreePathReconciliation";
+import { buildFileTreePathUpdates, shouldRebuildFileTree } from "./fileTreePathReconciliation";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
@@ -403,7 +400,7 @@ export default function FileBrowserPanel({
       return;
     }
     const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);
-    if (updates.length > MAX_INCREMENTAL_FILE_TREE_UPDATES) {
+    if (shouldRebuildFileTree(previousTreePaths, treePaths, updates)) {
       // A reset keeps old search matches, so search closes first and recomputes afterwards.
       const activeSearch = model.isSearchOpen() ? model.getSearchValue() : null;
       if (activeSearch !== null) model.closeSearch();
