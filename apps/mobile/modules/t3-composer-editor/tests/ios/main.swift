@@ -57,6 +57,19 @@ do {
   check(typed?["eventCount"] as? Int == 1, "Typing after the clear must follow the parent's revision")
 }
 
+// Moving the editor to another draft can lower the parent's reset generation; that payload stays ordinary.
+do {
+  let view = makeEditor("draft a")
+  view.setControlledDocumentJson(document("", revision: 0, resetGeneration: 2))
+  view.setControlledDocumentJson(document("draft b", revision: 0, resetGeneration: 1))
+  check(view.text == "draft b", "A lower reset generation was rejected")
+  view.editor.insertText("!")
+  check(
+    view.onComposerChange.payloads.last?["resetGeneration"] as? Int == 2,
+    "A lower reset generation rewound the editor's"
+  )
+}
+
 // Without a reset, a payload behind the native revision still loses to newer typing.
 do {
   let view = makeEditor("ab")

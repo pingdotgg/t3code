@@ -40,6 +40,7 @@ import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerE
 
 const NATIVE_MODULE_NAME = "T3ComposerEditor";
 const EMPTY_SKILLS: NonNullable<ComposerEditorProps["skills"]> = [];
+const NO_RESET = () => 0;
 
 type NativeEditorEvent = NativeSyntheticEvent<{
   readonly value: string;
@@ -141,13 +142,15 @@ export function ComposerEditor({
   onSubmit,
   onContentSizeChange,
   contentInsetVertical = 0,
+  readResetGeneration = NO_RESET,
   ...props
 }: ComposerEditorProps) {
   const nativeRef = useRef<NativeComposerEditorRef>(null);
   const mostRecentEventCountRef = useRef(0);
   const [mostRecentEventCount, setMostRecentEventCount] = useState(0);
   const [, forceNativeEventRender] = useState(0);
-  const [reset, setReset] = useState(() => ({ value: props.value, generation: 0 }));
+  // Native stamps every event with the reset generation it had applied.
+  const nativeResetGenerationRef = useRef(0);
   // Start history empty so restored drafts or recycled views receive a non-echo controlled payload.
   const nativeEventSnapshotsRef = useRef<ComposerNativeEventSnapshot[]>([]);
   // Tokens advance from the previous committed value; render-phase state keeps
@@ -219,12 +222,17 @@ export function ComposerEditor({
   // the native revision and rejected by the editor instead of re-applying a
   // stale caret or stale text mid-typing.
   /* oxlint-disable react/refs -- Native controlled edits must reconcile against the last acknowledged native event before sending the next payload. */
-  const controlledEventCount = resolveComposerControlledEventCount(
-    props.value,
-    selection ?? null,
-    mostRecentEventCount,
-    nativeEventSnapshotsRef.current,
-  );
+  const resetGeneration = readResetGeneration();
+  // Native restarts its revision at a reset's stamp, so stamp it at the latest acknowledged event.
+  const controlledEventCount =
+    resetGeneration > nativeResetGenerationRef.current
+      ? mostRecentEventCount
+      : resolveComposerControlledEventCount(
+          props.value,
+          selection ?? null,
+          mostRecentEventCount,
+          nativeEventSnapshotsRef.current,
+        );
   const acknowledgesLatestNativeEvent = isComposerNativeEcho(
     props.value,
     selection ?? null,
@@ -234,15 +242,6 @@ export function ComposerEditor({
   /* oxlint-enable react/refs */
   const isNativeEcho =
     controlledEventCount === mostRecentEventCount && acknowledgesLatestNativeEvent;
-  // A parent clear (send, discard) must beat native edits it has not seen, such as an
-  // autocorrection; a lagging empty render resolves behind the native revision instead.
-  let resetGeneration = reset.generation;
-  if (reset.value !== props.value) {
-    if (props.value === "" && !isNativeEcho && controlledEventCount === mostRecentEventCount) {
-      resetGeneration += 1;
-    }
-    setReset({ value: props.value, generation: resetGeneration });
-  }
   const controlledDocumentJson = JSON.stringify({
     value: props.value,
     selection: isNativeEcho ? null : (selection ?? null),
@@ -279,16 +278,18 @@ export function ComposerEditor({
   ]);
   const acceptNativeEvent = useCallback(
     (event: NativeEditorEvent["nativeEvent"]) => {
+      // Read at delivery: a send can clear the draft in the same batch, before this view re-renders.
       const acknowledgedEventCount = acknowledgeComposerNativeEvent(
         mostRecentEventCountRef.current,
         event.eventCount,
-        resetGeneration,
+        readResetGeneration(),
         event.resetGeneration,
       );
       if (acknowledgedEventCount === null) {
         return false;
       }
       mostRecentEventCountRef.current = acknowledgedEventCount;
+      nativeResetGenerationRef.current = event.resetGeneration;
       nativeEventSnapshotsRef.current.push({
         eventCount: acknowledgedEventCount,
         value: event.value,
@@ -296,7 +297,7 @@ export function ComposerEditor({
       });
       return acknowledgedEventCount;
     },
-    [nativeEventSnapshotsRef, resetGeneration],
+    [nativeEventSnapshotsRef, readResetGeneration],
   );
   const themeJson = JSON.stringify(createNativeComposerTheme(theme));
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
