@@ -17,6 +17,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { authLocationFlags, type CliAuthLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -35,6 +36,7 @@ const runWithPeerLinks = Effect.fn("environment.runWithPeerLinks")(function* <A,
     Effect.flatMap(run),
     Effect.provide(
       PeerLinks.layer.pipe(
+        Layer.provide(AuthPairingLinks.layer),
         Layer.provide(
           Layer.mergeAll(
             ServerSecretStore.layer,
