@@ -198,10 +198,10 @@ export const satisfiesSemverRange: (rawVersion: string, range: string) => boolea
             if (compared < 0) {
               return false;
             }
-            if (target.major > 0) {
+            if (target.major > 0 || targetMatch[2] === undefined) {
               return version.major === target.major;
             }
-            if (target.minor > 0) {
+            if (target.minor > 0 || targetMatch[3] === undefined) {
               return version.major === 0 && version.minor === target.minor;
             }
             return version.major === 0 && version.minor === 0 && version.patch === target.patch;
