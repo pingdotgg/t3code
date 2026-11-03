@@ -1643,7 +1643,9 @@ export default function GitActionsControl({
           {changesBaseLabel ? (
             <Tooltip>
               <TooltipTrigger
-                render={<span className="min-w-0 truncate text-xs text-muted-foreground" />}
+                render={
+                  <span className="pointer-events-auto min-w-0 truncate text-xs text-muted-foreground" />
+                }
               >
                 {changesBaseLabel}
               </TooltipTrigger>
