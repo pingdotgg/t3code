@@ -10401,10 +10401,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const nativeHeadId = yield* getNativeConversationHeadId(turnInput.providerThread);
-          const resumeSessionAt =
-            nativeHeadId === undefined
-              ? undefined
-              : yield* resolvePersistedClaudeMessageId(nativeThreadId, nativeHeadId);
           const existing = yield* Ref.get(queryContext);
           // Continuations drain existing output without prompting; retain the live process regardless of selection.
           if (
@@ -10506,6 +10502,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
 
+          const resumeSessionAt =
+            nativeHeadId === undefined
+              ? undefined
+              : yield* resolvePersistedClaudeMessageId(nativeThreadId, nativeHeadId);
           const openedWithResume = (yield* Ref.get(openedNativeThreads)).has(nativeThreadId);
           // Idle release loses openedNativeThreads; persisted turns still require resume to avoid "already in use".
           const hasPersistedProviderTurn =
@@ -11369,21 +11369,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             const prefix = messageId.slice(0, 24);
             for (const transcriptPath of yield* claudeTranscriptPaths(nativeThreadId)) {
-              const matches = yield* fileSystem.stream(transcriptPath).pipe(
+              const persisted = yield* fileSystem.stream(transcriptPath).pipe(
                 Stream.decodeText,
                 Stream.splitLines,
+                Stream.filter((line) => line.includes(prefix)),
                 Stream.map((line) => Option.getOrUndefined(decodeClaudeTranscriptLine(line))),
                 Stream.filter((entry) => entry?.type === "assistant"),
                 Stream.map((entry) => entry?.uuid),
                 Stream.filter((uuid): uuid is string => uuid?.startsWith(prefix) === true),
-                Stream.runCollect,
+                Stream.runHead,
               );
-              if (matches.includes(messageId)) {
-                return messageId;
-              }
-              const persisted = matches[0];
-              if (persisted !== undefined) {
-                return persisted;
+              if (Option.isSome(persisted)) {
+                return persisted.value;
               }
             }
             return messageId;
