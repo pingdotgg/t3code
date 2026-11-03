@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { IMAGE_ATTACHMENT_MAX_EDGE } from "@t3tools/client-runtime/image-attachment-size";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import {
   persistClientSettingsUpdate,
@@ -28,6 +29,11 @@ async function prepareWallpaper(file: File): Promise<string> {
   await decoded.decode().catch(() => {
     throw new Error("Choose a readable image no larger than 50 MB.");
   });
+  if (Math.max(decoded.naturalWidth, decoded.naturalHeight) > IMAGE_ATTACHMENT_MAX_EDGE) {
+    throw new Error(
+      `Choose an image no larger than ${IMAGE_ATTACHMENT_MAX_EDGE} pixels on each side.`,
+    );
+  }
   return dataUrl;
 }
 
