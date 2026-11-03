@@ -22,6 +22,12 @@ Uninstalling the service leaves your projects, threads, and settings intact.
 Running `t3 service install` again repairs a service that `t3 service status`
 reports as broken.
 
+To use the desktop app with an always-on service, turn off **Local environment**
+in **Settings > Environments**, then pair with the service using `t3 pair`.
+If the service prevents the desktop from starting, choose **Disable local
+environment and restart** in the startup dialog. This leaves the service and
+your projects and threads intact. Update an older service before pairing.
+
 `t3 update` downloads the newest release on your channel and switches `t3`
 and the service to it. Restarting interrupts running agent turns, terminals,
 and remote clients, so it asks first; answer no and the service keeps running

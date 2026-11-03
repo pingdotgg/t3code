@@ -10,6 +10,7 @@ import type { BackendStartupFailure } from "../backend/DesktopBackendManager.ts"
 export type PrimaryBackendStartup =
   | { readonly _tag: "Starting" }
   | { readonly _tag: "Ready" }
+  | { readonly _tag: "StateDirOwned" }
   | ({ readonly _tag: "Failing" } & BackendStartupFailure);
 
 export class DesktopState extends Context.Service<
