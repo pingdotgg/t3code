@@ -1089,9 +1089,7 @@ describe("PullRequestSyncReactor", () => {
 
           assert.deepStrictEqual(yield* Ref.get(invalidated), [7]);
           assert.deepStrictEqual(
-            (yield* Ref.get(fixture.syncCommands)).map(
-              (command) => command.snapshot[field] === true,
-            ),
+            (yield* Ref.get(fixture.syncCommands)).map((command) => command.snapshot[field]),
             [value],
           );
         }).pipe(Effect.provide(fixture.layer));

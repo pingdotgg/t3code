@@ -201,7 +201,7 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
     headBranch: summary.headBranch,
     baseBranch: summary.baseBranch,
     isDraft: summary.isDraft ?? false,
-    ...(summary.isInMergeQueue === true ? { isInMergeQueue: true } : {}),
+    ...(summary.isInMergeQueue === undefined ? {} : { isInMergeQueue: summary.isInMergeQueue }),
     updatedAt: summary.updatedAt,
     closedAt: summary.closedAt ?? null,
     mergedAt: summary.mergedAt ?? null,
