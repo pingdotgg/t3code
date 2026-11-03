@@ -801,10 +801,7 @@ function useChatMarkdownState({
     if (!threadRef) return;
     // Every open supersedes pending lookups, including synchronous opens.
     const isLatestLookup = claimWorkspaceBasenameLookup();
-    const openAt = (path: string) =>
-      path === "." || path.endsWith("/")
-        ? useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line)
-        : openFileLink(threadRef, path, fileLinkMeta.line);
+    const openAt = (path: string) => openFileLink(threadRef, path, fileLinkMeta.line);
     if (
       fileLinkMeta.workspaceLookupPath === null ||
       !cwd ||

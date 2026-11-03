@@ -36,6 +36,11 @@ export function openFilePreviewDialog(
   relativePath: string,
   line: number | undefined,
 ): void {
+  if (relativePath === "." || relativePath.endsWith("/")) {
+    closeFilePreviewDialog();
+    useRightPanelStore.getState().openFile(threadRef, relativePath, line);
+    return;
+  }
   const previous = appAtomRegistry.get(filePreviewDialogAtom);
   appAtomRegistry.set(filePreviewDialogAtom, {
     threadRef,
