@@ -1218,8 +1218,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ...options,
       env: {
         ...options.env,
-        // English diagnostics without overriding LC_CTYPE, which hooks inherit.
-        LANGUAGE: "C",
+        LC_ALL: "C",
       },
     });
 
@@ -4344,7 +4343,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               timeoutMs: null,
               ...(onSubmoduleLine
                 ? {
-                    env: { LANGUAGE: "C" },
+                    env: { LC_ALL: "C" },
                     progress: { onStdoutLine: onSubmoduleLine, onStderrLine: onSubmoduleLine },
                   }
                 : {}),
