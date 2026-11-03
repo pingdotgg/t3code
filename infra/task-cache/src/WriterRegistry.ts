@@ -1,6 +1,7 @@
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import type * as PlatformError from "effect/PlatformError";
@@ -47,7 +48,8 @@ export class WriterRegistry extends Context.Service<
 
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const state = yield* stateDirectory;
   const readWriters = Effect.fn("TaskCache.readWriters")(function* () {
     return yield* decodeWriters(yield* fs.readFileString(`${state}/writers.json`));
@@ -105,10 +107,10 @@ const make = Effect.gen(function* () {
               "Writer registry is missing. Copy the existing private registry from its administrator; use --new-registry only when creating a new cache.",
           });
         const writers = { ...(exists || revoke ? yield* readWriters() : {}) };
-        const token = hex(yield* crypto.randomBytes(32));
+        const token = hex(yield* random.randomBytes(32));
         if (revoke) delete writers[name];
         else {
-          writers[name] = hex(yield* crypto.digest("SHA-256", new TextEncoder().encode(token)));
+          writers[name] = hex(yield* digest.digest(Digest.sha256, new TextEncoder().encode(token)));
         }
         const entries: Array<readonly [string, string]> = [];
         if (!revoke && endpoint)
