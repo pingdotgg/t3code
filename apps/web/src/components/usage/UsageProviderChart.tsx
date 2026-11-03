@@ -379,8 +379,8 @@ function UsageChartPlot({
         {children}
         {hoverIndex === null ? null : (
           <line
-            x1={hoverIndex * stepX}
-            x2={hoverIndex * stepX}
+            x1={periods.length === 1 ? VIEW_WIDTH / 2 : hoverIndex * stepX}
+            x2={periods.length === 1 ? VIEW_WIDTH / 2 : hoverIndex * stepX}
             y1={PLOT_TOP}
             y2={VIEW_HEIGHT}
             stroke="currentColor"
@@ -506,6 +506,18 @@ export function UsageProviderChart({
               vectorEffect="non-scaling-stroke"
             />
           ))}
+          {periods.length === 1
+            ? providers.map((provider) => (
+                <circle
+                  key={provider}
+                  cx={VIEW_WIDTH / 2}
+                  cy={toY(valueFor(byPeriod.get(periods[0] ?? ""), provider, metric))}
+                  r={4}
+                  className={seriesClassName(loadingProviders.has(provider))}
+                  fill={PROVIDER_PRESENTATION[provider].color}
+                />
+              ))
+            : null}
         </UsageChartPlot>
       </div>
 

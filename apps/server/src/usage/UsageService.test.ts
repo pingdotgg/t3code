@@ -3085,6 +3085,15 @@ describe("UsageService", () => {
       assert.deepStrictEqual(reached.buckets, first.buckets);
       assert.strictEqual(reached.sources[0]?.status, "ok");
 
+      yield* TestClock.setTime(Date.parse("2026-12-31T23:59:00Z"));
+      const yearToDate = yield* service.readSummary({
+        timeZone: "UTC",
+        sinceDay: UsageDay.make("2026-01-01"),
+        untilDay: UsageDay.make("2026-12-31"),
+      });
+      assert.deepStrictEqual(yearToDate.buckets, first.buckets);
+      assert.strictEqual(yearToDate.sources[0]?.status, "ok");
+
       const later = yield* service.readSummary({
         timeZone: "UTC",
         sinceDay: UsageDay.make("2026-08-10"),

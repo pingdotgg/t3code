@@ -1,4 +1,4 @@
-import { View } from "react-native";
+import { ScrollView, View } from "react-native";
 
 import type { DailyTotals } from "@t3tools/shared/usageMerge";
 
@@ -17,8 +17,12 @@ export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChart
   const chartDays = buildChartDays(days, daily, metric);
   const max = chartDays.reduce((peak, day) => Math.max(peak, day.total), 0);
 
-  return (
-    <View style={{ height }} className="flex-row items-end gap-px">
+  const scrollable = days.length > 90;
+  const chart = (
+    <View
+      style={{ height, minWidth: scrollable ? days.length * 4 : undefined }}
+      className="flex-row items-end gap-px"
+    >
       {/* Use column-reverse: provider values are bottom-first and Hermes lacks toReversed. */}
       {chartDays.map((day) => (
         <View
@@ -39,4 +43,5 @@ export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChart
       ))}
     </View>
   );
+  return scrollable ? <ScrollView horizontal>{chart}</ScrollView> : chart;
 }
