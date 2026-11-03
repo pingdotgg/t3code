@@ -1907,6 +1907,38 @@ describe("MessagesTimeline work rows", () => {
     expect(screen.text()).not.toContain("Paused at");
   });
 
+  it("folds the working history only once it outgrows the collapsed window", async () => {
+    const runId = RunId.make("growing-run");
+    const entries = (count: number) => [
+      message("Build it", { runId }),
+      ...Array.from({ length: count }, (_, index) =>
+        message(`Step ${index}`, { runId, role: "assistant" }, `step-${index}`),
+      ),
+    ];
+    const props = {
+      ...baseProps(),
+      isWorking: true,
+      activeTurnStartedAt: CREATED_AT,
+      latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
+    };
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries(2)} />,
+    );
+    await expect.element(screen.getByText("Step 1", { exact: true })).toBeVisible();
+    expect(screen.buttons(/work history/)).toEqual([]);
+    const label = screen
+      .getByText(/^Working for/)
+      .element()
+      .closest("button")!;
+    expect(label.disabled).toBe(true);
+    expect(label.hasAttribute("aria-expanded")).toBe(false);
+
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={entries(30)} />);
+    await expect
+      .element(screen.getByRole("button", { name: "Open work history" }))
+      .toHaveAttribute("aria-expanded", "false");
+  });
+
   it("stops showing Thinking in the working window when the provider turn ends", async () => {
     const runId = RunId.make("ended-provider-run");
     const props = {

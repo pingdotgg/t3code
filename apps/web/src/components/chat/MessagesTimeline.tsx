@@ -2,7 +2,12 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
-import { ActivityShimmerOverlay, WORKING_BAR_CLASS_NAME, WorkingBarChip } from "./TimelineRowParts";
+import {
+  ActivityShimmerOverlay,
+  WORKING_BAR_CLASS_NAME,
+  WorkFoldToggle,
+  WorkingBarChip,
+} from "./TimelineRowParts";
 import {
   AssistantMetaTimelineRow,
   AssistantTimelineRow,
@@ -1758,47 +1763,28 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
     row.failureMessage !== null && !(isLatestRun && row.failureMessage === threadErrorMessage)
       ? row.failureMessage
       : row.noticeMessage;
-  const labelClassName = cn(
-    "flex shrink-0 items-center gap-2 self-stretch text-label whitespace-nowrap tabular-nums",
-    row.ending === "failed"
-      ? "text-error-foreground"
-      : row.ending === "limited"
-        ? "text-warning-foreground"
-        : "text-muted-foreground",
-  );
-  const labelContent = (
-    <>
-      {row.ending === "failed" ? <CircleAlertIcon aria-hidden className="size-3 shrink-0" /> : null}
-      <span>
-        {row.label}
-        {error ? <span className="block text-error-foreground">{error}</span> : null}
-      </span>
-    </>
-  );
   const limit = row.ending === "limited" && usageLimit?.runId === row.runId ? usageLimit : null;
 
   return (
     <div>
       <div className={WORKING_BAR_CLASS_NAME}>
-        {row.foldable ? (
-          <button
-            type="button"
-            aria-expanded={row.expanded}
-            data-scroll-anchor-ignore
-            onClick={toggle}
-            aria-busy={loading}
-            className={cn(
-              "cursor-pointer select-none rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
-              labelClassName,
-              row.ending === "worked" || row.ending === "stopped" ? "hover:text-foreground" : null,
-            )}
-          >
-            {labelContent}
-            <span aria-hidden className="size-3 shrink-0" />
-          </button>
-        ) : (
-          <span className={labelClassName}>{labelContent}</span>
-        )}
+        <WorkFoldToggle
+          togglable={row.foldable}
+          expanded={row.expanded}
+          tone={
+            row.ending === "failed" ? "error" : row.ending === "limited" ? "warning" : "neutral"
+          }
+          aria-busy={loading}
+          onClick={toggle}
+        >
+          {row.ending === "failed" ? (
+            <CircleAlertIcon aria-hidden className="size-3 shrink-0" />
+          ) : null}
+          <span>
+            {row.label}
+            {error ? <span className="block text-error-foreground">{error}</span> : null}
+          </span>
+        </WorkFoldToggle>
         <span className="min-w-0 flex-1" />
         {limit?.resetAt ? (
           <TurnFoldUsageLimit limit={limit} timestampFormat={ctx.timestampFormat} />
