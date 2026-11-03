@@ -280,6 +280,20 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
       }
       yield* orchestrator.dispatch({
         ...complete,
+        commandId: CommandId.make("command:stale-stop-warning"),
+        stoppedThere: "stopped",
+        stopCount: 1,
+        launchError: "The remote launch could not be confirmed; work may still be running.",
+      });
+      const uncertain = (yield* orchestrator.getThreadProjection(parent.threadId)).subagents[0]!;
+      assert.equal(
+        uncertain.remoteChild?.launchError,
+        "The remote launch could not be confirmed; work may still be running.",
+      );
+      assert.equal(uncertain.remoteChild?.stoppedThere, false);
+      assert.deepEqual(yield* openFor, [{ parentThreadId: parent.threadId, taskId: task.id }]);
+      yield* orchestrator.dispatch({
+        ...complete,
         commandId: CommandId.make("command:current-stop:2"),
         stoppedThere: "stopped",
         stopCount: 2,

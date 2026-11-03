@@ -8358,8 +8358,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       command.stoppedThere === "stopped" &&
       (command.stopCount ?? 0) !== (task.remoteChild?.stopCount ?? 0)
-    )
+    ) {
+      if (
+        command.launchError !== undefined &&
+        command.launchError !== task.remoteChild?.launchError
+      ) {
+        const now = yield* DateTime.now;
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "subagent.updated",
+          threadId: command.parentThreadId,
+          ...(task.runId === null ? {} : { runId: task.runId }),
+          nodeId: task.id,
+          driver: task.driver,
+          occurredAt: now,
+          payload: {
+            ...task,
+            remoteChild: { ...task.remoteChild!, launchError: command.launchError },
+            updatedAt: now,
+          },
+        });
+      }
       return;
+    }
     const remoteChild =
       command.stoppedThere === undefined
         ? task.remoteChild
