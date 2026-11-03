@@ -218,11 +218,30 @@ export async function loadNativeSpeechModel(
   moduleUrl?: string,
   acceleration = "auto",
 ) {
+  try {
+    return await loadNativeSpeechModelOnce(path, signal, moduleUrl, acceleration);
+  } catch (error) {
+    if (acceleration !== "auto" || signal.aborted) throw error;
+    return await loadNativeSpeechModelOnce(path, signal, moduleUrl, "cpu");
+  }
+}
+
+async function loadNativeSpeechModelOnce(
+  path: string,
+  signal: AbortSignal,
+  moduleUrl?: string,
+  acceleration = "auto",
+) {
   signal.throwIfAborted();
   const child = NodeChildProcess.spawn(process.execPath, speechWorkerArgs("model"), {
     stdio: ["ignore", "ignore", "inherit", "ipc"],
     serialization: "advanced",
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: "1",
+      // Backend registration can initialize drivers even when model placement is CPU.
+      ...(acceleration === "cpu" ? { TRANSCRIBE_BACKENDS: "cpu" } : {}),
+    },
   });
   let stopped = false;
   let pending: ReturnType<typeof Promise.withResolvers<Reply>> | undefined;

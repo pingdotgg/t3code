@@ -346,8 +346,9 @@ export const make = Effect.gen(function* () {
       download(definition.id, signal)
         .then(async (modelPath) => {
           const loaded = await loadNativeSpeechModel(modelPath, signal, undefined, acceleration);
-          if (closing) {
+          if (closing || signal.aborted) {
             await loaded.dispose();
+            signal.throwIfAborted();
             throw new SpeechBusyError({ operation: "model preparation" });
           }
           model = loaded;
@@ -644,10 +645,12 @@ export const make = Effect.gen(function* () {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, lifetime.signal]);
       let finished = false;
+      let closed = false;
       let started = false;
       let loaded: LoadedModel | undefined;
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
+          closed = true;
           if (!finished) {
             const disposeStream = Effect.promise(async () => {
               controller.abort();
@@ -682,31 +685,82 @@ export const make = Effect.gen(function* () {
       const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
       const fillerWordLanguage = language === "auto" ? undefined : language;
       yield* preemptOrphaned;
-      const preparation = yield* attemptSpeech(operation, async () => {
-        const startedAt = performance.now();
-        const prepared = await loadModel(definition, signal, settings.speechAcceleration);
-        loaded = prepared;
-        if (!prepared.supportsStreaming)
-          throw new Error("The selected model does not support streaming.");
-        await prepared.begin(language === "auto" ? undefined : language, customWords, dictionary);
-        started = true;
-        return { prepared, durationMs: performance.now() - startedAt };
-      });
-      let streamModel = preparation.prepared;
+      const prepareStartedAt = performance.now();
+      let streamModel = yield* attemptSpeech(operation, () =>
+        loadModel(definition, signal, settings.speechAcceleration),
+      );
       loaded = streamModel;
-      yield* Effect.logInfo("Speech stream prepared", {
-        backend: streamModel.backend,
-        durationMs: Math.round(preparation.durationMs),
-      });
       let byteLength = 0;
       const received: Float32Array[] = [];
       let usedCpuFallback = false;
+      const ensureOpen = () => {
+        signal.throwIfAborted();
+        if (closed) throw new Error("Speech stream is closed.");
+      };
+      const beginStream = async () => {
+        ensureOpen();
+        await streamModel.begin(
+          language === "auto" ? undefined : language,
+          customWords,
+          dictionary,
+        );
+        ensureOpen();
+        started = true;
+      };
+      const recoverStream = async (cause: unknown) => {
+        started = false;
+        if (
+          closed ||
+          signal.aborted ||
+          usedCpuFallback ||
+          settings.speechAcceleration !== "auto" ||
+          streamModel.backend.toLowerCase() === "cpu"
+        )
+          throw cause;
+        usedCpuFallback = true;
+        if (model === streamModel) {
+          model = undefined;
+          loadedModelId = undefined;
+          loadedAcceleration = undefined;
+          loading = undefined;
+        }
+        await streamModel.dispose();
+        ensureOpen();
+        streamModel = await loadModel(definition, signal, "cpu");
+        loaded = streamModel;
+        try {
+          await beginStream();
+          let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
+          for (const chunk of received) {
+            ensureOpen();
+            update = await streamModel.feed(chunk);
+          }
+          return update;
+        } catch (error) {
+          started = false;
+          throw error;
+        }
+      };
+      yield* attemptSpeech(operation, async () => {
+        if (!streamModel.supportsStreaming)
+          throw new Error("The selected model does not support streaming.");
+        try {
+          await beginStream();
+        } catch (cause) {
+          await recoverStream(cause);
+        }
+      });
+      yield* Effect.logInfo("Speech stream prepared", {
+        backend: streamModel.backend,
+        durationMs: Math.round(performance.now() - prepareStartedAt),
+      });
       // Keep client revisions independent of native streams, which restart on CPU fallback.
       let revision = 0;
       let busy = false;
       const run = <A>(work: () => Promise<A>) =>
         attemptSpeech(operation, async () => {
-          if (busy || finished || signal.aborted) throw new Error("Speech stream is not ready.");
+          if (busy || finished || closed || !started || signal.aborted)
+            throw new Error("Speech stream is not ready.");
           busy = true;
           try {
             return await work();
@@ -735,29 +789,7 @@ export const make = Effect.gen(function* () {
                 revision: ++revision,
               };
             } catch (cause) {
-              if (
-                usedCpuFallback ||
-                settings.speechAcceleration !== "auto" ||
-                streamModel.backend.toLowerCase() === "cpu"
-              )
-                throw cause;
-              usedCpuFallback = true;
-              await streamModel.dispose();
-              if (model === streamModel) {
-                model = undefined;
-                loadedModelId = undefined;
-                loadedAcceleration = undefined;
-                loading = undefined;
-              }
-              streamModel = await loadModel(definition, signal, "cpu");
-              loaded = streamModel;
-              await streamModel.begin(
-                language === "auto" ? undefined : language,
-                customWords,
-                dictionary,
-              );
-              let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
-              for (const chunk of received) update = await streamModel.feed(chunk);
+              const update = await recoverStream(cause);
               if (!update) throw cause;
               return {
                 ...update,
@@ -767,7 +799,17 @@ export const make = Effect.gen(function* () {
           }),
         finish: run(async () => {
           const startedAt = performance.now();
-          const corrected = await streamModel.finish();
+          let corrected: string;
+          try {
+            corrected = await streamModel.finish().catch(async (cause: unknown) => {
+              await recoverStream(cause);
+              ensureOpen();
+              return streamModel.finish();
+            });
+          } catch (cause) {
+            started = false;
+            throw cause;
+          }
           const text = removeFillerWords
             ? removeSpeechFillerWords(
                 corrected,

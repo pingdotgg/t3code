@@ -52,16 +52,18 @@ it.each([
   "loads $acceleration with the default memory-mapping policy",
   async ({ acceleration, options }) => {
     const moduleUrl = `data:text/javascript,${encodeURIComponent(`
+    const cpuOnly = process.env.TRANSCRIBE_BACKENDS === "cpu";
     export const getAvailableBackends = () => [
       { kind: "vulkan", deviceType: "gpu", deviceId: "gpu-1", name: "GPU" },
       { kind: "vulkan", deviceType: "igpu", name: "Integrated GPU" },
     ];
     export const TranscribeModel = { load: async (_path, options) => ({
-      backend: JSON.stringify(options),
+      backend: JSON.stringify({ options, cpuOnly }),
       capabilities: { supportsStreaming: false },
       supports: () => false,
     }) };
   `)}`;
+    vi.stubEnv("TRANSCRIBE_BACKENDS", "all");
     const model = await loadNativeSpeechModel(
       "unused.gguf",
       new AbortController().signal,
@@ -69,9 +71,75 @@ it.each([
       acceleration,
     );
     try {
-      expect(JSON.parse(model.backend)).toEqual(options);
+      expect(JSON.parse(model.backend)).toEqual({ options, cpuOnly: acceleration === "cpu" });
+      expect(process.env.TRANSCRIBE_BACKENDS).toBe("all");
+    } finally {
+      vi.unstubAllEnvs();
+      await model.dispose();
+    }
+  },
+);
+
+it.each([
+  { stage: "import", crash: false },
+  { stage: "import", crash: true },
+  { stage: "load", crash: false },
+  { stage: "load", crash: true },
+])(
+  "recovers Auto $stage failures in a CPU-only worker (crash: $crash)",
+  async ({ stage, crash }) => {
+    const moduleUrl = `data:text/javascript,${encodeURIComponent(`
+    const cpuOnly = process.env.TRANSCRIBE_BACKENDS === "cpu";
+    const fail = () => {
+      if (${crash}) process.exit(42);
+      throw new Error("GPU failed");
+    };
+    if (!cpuOnly && ${JSON.stringify(stage)} === "import") fail();
+    export const TranscribeModel = { load: async (_path, options) => {
+      if (!cpuOnly) fail();
+      if (options.backend !== "cpu") throw new Error("Expected CPU selection");
+      return { backend: "cpu", capabilities: {}, supports: () => false,
+        transcribe: async () => ({ text: "recovered" }) };
+    } };
+  `)}`;
+    const model = await loadNativeSpeechModel(
+      "unused.gguf",
+      new AbortController().signal,
+      moduleUrl,
+    );
+    try {
+      expect(model.backend).toBe("cpu");
+      expect(await model.transcribe(new Float32Array([0.25]), { timestamps: "none" })).toEqual({
+        text: "recovered",
+      });
     } finally {
       await model.dispose();
+    }
+  },
+);
+
+it.each([
+  { acceleration: "auto", workers: 2 },
+  { acceleration: "cpu", workers: 1 },
+  { acceleration: 'gpu:["vulkan","gpu-1"]', workers: 1 },
+])(
+  "reports a failed $acceleration load after disposing $workers worker(s)",
+  async ({ acceleration, workers }) => {
+    const spawns = vi.mocked(NodeChildProcess.spawn).mock.calls.length;
+    const moduleUrl = `data:text/javascript,${encodeURIComponent(`
+      export const getAvailableBackends = () => [
+        { kind: "vulkan", deviceType: "gpu", deviceId: "gpu-1", name: "GPU" },
+      ];
+      export const TranscribeModel = { load: async () => { throw new Error("selected backend failed"); } };
+    `)}`;
+    await expect(
+      loadNativeSpeechModel("unused.gguf", new AbortController().signal, moduleUrl, acceleration),
+    ).rejects.toThrow("selected backend failed");
+    expect(vi.mocked(NodeChildProcess.spawn).mock.calls.length - spawns).toBe(workers);
+    for (const result of vi.mocked(NodeChildProcess.spawn).mock.results.slice(spawns)) {
+      expect(result.type).toBe("return");
+      if (result.type === "return")
+        expect(result.value.exitCode !== null || result.value.signalCode !== null).toBe(true);
     }
   },
 );
@@ -196,6 +264,34 @@ it("terminates hung native inference when the service shuts down", async () => {
   controller.abort();
   await model.dispose();
   await rejected;
+});
+
+it("terminates cancelled model loading without starting a CPU fallback", async () => {
+  const { spawn } = await vi.importActual<typeof NodeChildProcess>("node:child_process");
+  const controller = new AbortController();
+  const worker = vi.spyOn(NodeChildProcess, "spawn").mockImplementation((...args) => {
+    const child = spawn(...args);
+    child.on("message", (message: unknown) => {
+      if (typeof message === "object" && message !== null && "loading" in message)
+        controller.abort();
+    });
+    return child;
+  });
+  worker.mockClear();
+  try {
+    const moduleUrl = `data:text/javascript,${encodeURIComponent(`
+      export const TranscribeModel = { load: async () => {
+        process.send({ loading: true });
+        await new Promise(() => {});
+      } };
+    `)}`;
+    await expect(
+      loadNativeSpeechModel("unused.gguf", controller.signal, moduleUrl),
+    ).rejects.toThrow();
+    expect(worker).toHaveBeenCalledOnce();
+  } finally {
+    worker.mockRestore();
+  }
 });
 
 it("returns transcription from an isolated process and disposes it", async () => {
@@ -484,7 +580,7 @@ it("discovers devices through the executable worker subcommand", async () => {
   }
 });
 
-it("transcribes through the executable worker subcommand", async () => {
+it("transcribes on CPU through the executable worker subcommand", async () => {
   const { spawn } = await vi.importActual<typeof NodeChildProcess>("node:child_process");
   const sea = vi.mocked(NodeSea.isSea).mockReturnValue(true);
   const worker = vi
@@ -501,7 +597,11 @@ it("transcribes through the executable worker subcommand", async () => {
     const model = await loadNativeSpeechModel(
       "unused.gguf",
       new AbortController().signal,
-      fixture("async (pcm) => ({ text: String(pcm[0]) })"),
+      fixture(`async (pcm) => {
+        if (process.env.TRANSCRIBE_BACKENDS !== "cpu") throw new Error("GPU backends allowed");
+        return { text: String(pcm[0]) };
+      }`),
+      "cpu",
     );
     try {
       await expect(

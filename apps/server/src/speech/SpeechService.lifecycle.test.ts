@@ -819,22 +819,23 @@ it.effect("keeps client revisions increasing across CPU replay and subsequent fe
   }),
 );
 
-it.effect("reports a selected GPU streaming failure without replaying on CPU", () =>
-  Effect.gen(function* () {
-    native.feed.mockRejectedValueOnce(new Error("GPU failed"));
-    yield* Effect.gen(function* () {
-      const speech = yield* SpeechService.SpeechService;
-      yield* speech.updateAcceleration('gpu:["vulkan","gpu-1"]');
-      const result = yield* Effect.scoped(
-        Effect.gen(function* () {
+it.effect.each(["begin", "feed", "finish"] as const)(
+  "reports a selected GPU %s failure without replaying on CPU",
+  (stage) =>
+    Effect.gen(function* () {
+      native[stage].mockRejectedValueOnce(new Error("GPU failed"));
+      yield* Effect.gen(function* () {
+        const speech = yield* SpeechService.SpeechService;
+        yield* speech.updateAcceleration('gpu:["vulkan","gpu-1"]');
+        const result = yield* Effect.gen(function* () {
           const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
-          return yield* stream.feed(pcm()).pipe(Effect.result);
-        }),
-      );
-      expect(Result.isFailure(result)).toBe(true);
-      expect(loadNative).toHaveBeenCalledTimes(1);
-    }).pipe(Effect.provide(layer));
-  }),
+          yield* stream.feed(pcm());
+          return yield* stream.finish;
+        }).pipe(Effect.scoped, Effect.result);
+        expect(Result.isFailure(result)).toBe(true);
+        expect(loadNative).toHaveBeenCalledTimes(1);
+      }).pipe(Effect.provide(layer));
+    }),
 );
 it.effect(
   "reports an explicitly cancelled download without wrapping it as an operation failure",
@@ -1039,18 +1040,50 @@ it.effect("retains warmup ownership after cancellation until its load settles", 
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("a failed stream begin does not poison the next stream", () =>
+it.effect.each(["auto", "cpu"] as const)("recovers a failed %s stream begin", (acceleration) =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
+    yield* speech.updateAcceleration(acceleration);
     native.begin.mockRejectedValueOnce(new Error("native stream creation failed"));
     const result = yield* speech
       .startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
       .pipe(Effect.scoped, Effect.result);
-    expect(Result.isFailure(result)).toBe(true);
+    expect(Result.isFailure(result)).toBe(acceleration === "cpu");
     expect(native.dispose).toHaveBeenCalledOnce();
     yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS).pipe(Effect.scoped);
-    expect(loadNative).toHaveBeenCalledTimes(2);
+    expect(loadNative).toHaveBeenCalledTimes(acceleration === "auto" ? 3 : 2);
   }).pipe(Effect.provide(layer)),
+);
+
+it.effect.each([false, true])(
+  "replays all audio after GPU finalization fails (empty: %s)",
+  (empty) =>
+    Effect.gen(function* () {
+      native.finish.mockRejectedValueOnce(new Error("GPU finalize failed"));
+      const speech = yield* SpeechService.SpeechService;
+      yield* Effect.gen(function* () {
+        const stream = yield* speech.startStream(customWordsOptions);
+        if (!empty) {
+          yield* stream.feed(pcm());
+          yield* stream.feed(new Uint8Array(new Float32Array([0, 0.5]).buffer));
+        }
+        expect(yield* stream.finish).toBe("hello");
+        expect(loadNative.mock.calls.map((call) => call[3])).toEqual(["auto", "cpu"]);
+        expect(native.begin.mock.calls[1]).toEqual(native.begin.mock.calls[0]);
+        expect(native.feed.mock.calls.map(([chunk]) => Array.from(chunk))).toEqual(
+          empty ? [] : [[0.25], [0, 0.5], [0.25], [0, 0.5]],
+        );
+        expect(native.finish).toHaveBeenCalledTimes(2);
+        expect(Result.isFailure(yield* Effect.result(stream.finish))).toBe(true);
+        expect(native.finish).toHaveBeenCalledTimes(2);
+        expect(Result.isFailure(yield* Effect.result(speech.selectModel("fallback-model")))).toBe(
+          true,
+        );
+      }).pipe(Effect.scoped);
+      expect(native.reset).not.toHaveBeenCalled();
+      expect(native.dispose).toHaveBeenCalledOnce();
+      yield* speech.selectModel("fallback-model");
+    }).pipe(Effect.provide(layer)),
 );
 
 it.effect("failed CPU fallback is disposed", () =>
@@ -1068,6 +1101,104 @@ it.effect("failed CPU fallback is disposed", () =>
       cause: failure,
     });
     expect(native.dispose).toHaveBeenCalledTimes(2);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect.each(["feed", "finish"] as const)(
+  "does not recover a GPU %s failure after stream cancellation",
+  (stage) =>
+    Effect.gen(function* () {
+      const entered = Promise.withResolvers<void>();
+      const pending = Promise.withResolvers<never>();
+      native[stage].mockImplementationOnce(() => {
+        entered.resolve();
+        return pending.promise;
+      });
+      native.reset.mockImplementationOnce(async () => {
+        pending.reject(new Error("cancelled GPU work failed"));
+        await pending.promise.catch(() => undefined);
+      });
+      const speech = yield* SpeechService.SpeechService;
+      yield* Effect.gen(function* () {
+        const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+        yield* (stage === "feed" ? stream.feed(pcm()) : stream.finish).pipe(Effect.forkChild);
+        yield* Effect.promise(() => entered.promise);
+      }).pipe(Effect.scoped);
+      expect(loadNative).toHaveBeenCalledOnce();
+      expect(native.begin).toHaveBeenCalledOnce();
+      yield* speech.selectModel("fallback-model");
+    }).pipe(Effect.provide(layer)),
+);
+
+it.effect.each(["begin", "feed", "finish"] as const)(
+  "disposes failed CPU stream %s recovery and permits the next recording",
+  (stage) =>
+    Effect.gen(function* () {
+      const failure = new Error("CPU recovery failed");
+      native[stage].mockRejectedValueOnce(new Error("GPU failed")).mockRejectedValueOnce(failure);
+      const speech = yield* SpeechService.SpeechService;
+      const result = yield* Effect.gen(function* () {
+        const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+        yield* stream.feed(pcm());
+        return yield* stream.finish;
+      }).pipe(Effect.scoped, Effect.result);
+      expect(Result.isFailure(result) && result.failure).toMatchObject({ cause: failure });
+      expect(loadNative.mock.calls.map((call) => call[3])).toEqual(["auto", "cpu"]);
+      expect(native.dispose).toHaveBeenCalledTimes(2);
+      yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS).pipe(Effect.scoped);
+      expect(loadNative).toHaveBeenCalledTimes(3);
+    }).pipe(Effect.provide(layer)),
+);
+
+it.effect("cancels CPU model loading during stream recovery and releases ownership", () =>
+  Effect.gen(function* () {
+    const entered = Promise.withResolvers<void>();
+    native.begin.mockRejectedValueOnce(new Error("GPU begin failed"));
+    loadNative.mockResolvedValueOnce(native).mockImplementationOnce(async (_path, signal) => {
+      entered.resolve();
+      return new Promise<never>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
+    const speech = yield* SpeechService.SpeechService;
+    const starting = yield* speech
+      .startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+      .pipe(Effect.scoped, Effect.forkChild);
+    yield* Effect.promise(() => entered.promise);
+    yield* Fiber.interrupt(starting);
+    expect(loadNative.mock.calls.map((call) => call[3])).toEqual(["auto", "cpu"]);
+    expect(native.begin).toHaveBeenCalledOnce();
+    yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS).pipe(Effect.scoped);
+    expect(loadNative).toHaveBeenCalledTimes(3);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("stops replaying retained audio when CPU recovery is cancelled", () =>
+  Effect.gen(function* () {
+    const entered = Promise.withResolvers<void>();
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof native.feed>>>();
+    const text = { committed: "", tentative: "hello" };
+    native.feed
+      .mockResolvedValueOnce({ revision: 1, text })
+      .mockRejectedValueOnce(new Error("GPU feed failed"))
+      .mockImplementationOnce(() => {
+        entered.resolve();
+        return pending.promise;
+      });
+    native.reset.mockImplementationOnce(async () => {
+      pending.resolve({ revision: 1, text });
+      await pending.promise;
+    });
+    const speech = yield* SpeechService.SpeechService;
+    yield* Effect.gen(function* () {
+      const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+      yield* stream.feed(pcm());
+      yield* stream.feed(pcm()).pipe(Effect.forkChild);
+      yield* Effect.promise(() => entered.promise);
+    }).pipe(Effect.scoped);
+    expect(native.feed).toHaveBeenCalledTimes(3);
+    expect(loadNative).toHaveBeenCalledTimes(2);
+    yield* speech.selectModel("fallback-model");
   }).pipe(Effect.provide(layer)),
 );
 
