@@ -449,7 +449,6 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
 });
 
 const LOOPBACK_HOSTS = ["127.0.0.1", "localhost", "::1"];
-const ENV_PROXY_NAMES = new Set(["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]);
 
 const hasValue = (value: string | undefined): value is string => (value?.trim() ?? "") !== "";
 
@@ -470,28 +469,28 @@ export const codexAppServerEnvironment = (
   platform: NodeJS.Platform,
 ): { readonly env: NodeJS.ProcessEnv; readonly configArgs: ReadonlyArray<string> } => {
   const base = { CODEX_INTERNAL_ORIGINATOR_OVERRIDE: CODEX_CLIENT_NAME, ...environment };
-  const noProxy = Object.entries(environment).flatMap(([name, value]) =>
-    name.toUpperCase() === "NO_PROXY" && hasValue(value) ? [[name, withLoopback(value)]] : [],
+  const proxyNames = Object.keys(environment).filter((name) =>
+    name.toUpperCase().endsWith("_PROXY"),
   );
-  // Codex reads NO_PROXY and only falls back to no_proxy, so each spelling keeps its own hosts.
-  if (noProxy.length > 0) {
-    return { env: { ...base, ...Object.fromEntries(noProxy) }, configArgs: [] };
-  }
-  const usesEnvProxy = Object.entries(environment).some(
-    ([name, value]) => ENV_PROXY_NAMES.has(name.toUpperCase()) && hasValue(value),
-  );
-  // Windows reads its registry bypass list only while NO_PROXY is empty.
-  if (!usesEnvProxy && platform !== "darwin") return { env: base, configArgs: [] };
-  const loopback = LOOPBACK_HOSTS.join(",");
+  const noProxyNames = proxyNames.filter((name) => name.toUpperCase() === "NO_PROXY");
+  const usesEnvProxy = proxyNames.some((name) => hasValue(environment[name]));
+  const inject =
+    platform === "win32"
+      ? // Windows reads its registry bypass list only while NO_PROXY is empty.
+        noProxyNames.some((name) => hasValue(environment[name]))
+      : usesEnvProxy || platform === "darwin";
+  if (!inject) return { env: base, configArgs: [] };
+  // Codex reads NO_PROXY, even empty, before no_proxy, so each spelling keeps its own hosts.
+  const names = noProxyNames.length > 0 ? noProxyNames : ["NO_PROXY", "no_proxy"];
   return {
-    env: { ...base, NO_PROXY: loopback, no_proxy: loopback },
-    // A lone no_proxy turns off Python's macOS system proxy, so agent shells get them blank.
+    env: {
+      ...base,
+      ...Object.fromEntries(names.map((name) => [name, withLoopback(environment[name] ?? "")])),
+    },
+    // Any non-empty *_proxy turns off Python's macOS system proxy, so agent shells get them blank.
     configArgs: usesEnvProxy
       ? []
-      : ["NO_PROXY", "no_proxy"].flatMap((name) => [
-          "-c",
-          `shell_environment_policy.set.${name}=""`,
-        ]),
+      : names.flatMap((name) => ["-c", `shell_environment_policy.set.${name}=""`]),
   };
 };
 

@@ -190,10 +190,31 @@ it.each([
     configArgs: [],
   },
   {
+    name: "extends an empty NO_PROXY, which Codex reads before no_proxy",
+    platform: "linux",
+    environment: { HTTP_PROXY: PROXY, NO_PROXY: "", no_proxy: "intranet.example" },
+    expected: { NO_PROXY: LOOPBACK, no_proxy: `intranet.example,${LOOPBACK}` },
+    configArgs: [],
+  },
+  {
     name: "creates both spellings when Codex already uses env proxies",
-    platform: "win32",
+    platform: "linux",
     environment: { https_proxy: PROXY },
     expected: { NO_PROXY: LOOPBACK, no_proxy: LOOPBACK },
+    configArgs: [],
+  },
+  {
+    name: "keeps the Windows registry bypass list in charge alongside env proxies",
+    platform: "win32",
+    environment: { https_proxy: PROXY },
+    expected: { NO_PROXY: undefined, no_proxy: undefined },
+    configArgs: [],
+  },
+  {
+    name: "extends a Windows NO_PROXY the user already set",
+    platform: "win32",
+    environment: { https_proxy: PROXY, NO_PROXY: "intranet.example" },
+    expected: { NO_PROXY: `intranet.example,${LOOPBACK}`, no_proxy: undefined },
     configArgs: [],
   },
   {
