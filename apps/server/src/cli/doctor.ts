@@ -17,8 +17,8 @@ const formatBytes = (bytes: number) =>
       ? `${(bytes / 1024 ** 2).toFixed(1)} MiB`
       : `${Math.ceil(bytes / 1024)} KiB`;
 
-const formatElapsed = (millis: number) => {
-  const seconds = Math.floor(millis / 1000);
+const formatElapsed = (nanos: bigint) => {
+  const seconds = Number(nanos / 1_000_000_000n);
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 };
 
@@ -115,9 +115,9 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
   if (selected.includes("database")) {
     const service = yield* BootService.BootService;
     yield* Console.log("\nReclaiming database space. Each step is shown as it starts.");
-    const startedAt = yield* Clock.currentTimeMillis;
+    const startedAt = yield* Clock.monotonicTimeNanos;
     const reportStep = (step: DatabaseMaintenance.DatabaseCompactStep) =>
-      Clock.currentTimeMillis.pipe(
+      Clock.monotonicTimeNanos.pipe(
         Effect.flatMap((now) =>
           Console.log(`  [${formatElapsed(now - startedAt)}] ${COMPACT_STEP_LABELS[step]}`),
         ),
@@ -128,7 +128,7 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
         .compact(databasePath, reportStep)
         .pipe(
           Effect.tap((result) =>
-            Clock.currentTimeMillis.pipe(
+            Clock.monotonicTimeNanos.pipe(
               Effect.flatMap((now) =>
                 Console.log(
                   `Done in ${formatElapsed(now - startedAt)}: ${formatBytes(result.beforeBytes)} -> ${formatBytes(result.afterBytes)}, ${result.deletedEventCount} superseded events removed.`,
