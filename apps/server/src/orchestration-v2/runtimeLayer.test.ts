@@ -3119,6 +3119,148 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  // regression: #29898 settle on merge cancelled a watch wake queued behind the finished run
+  it.effect("automatic settlement leaves a queued pull request watch wake to run", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const threadId = ThreadId.make("pr-watch-queued-wake-auto-settle");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-queued-wake-create"),
+        threadId,
+        projectId: ProjectId.make("pr-watch-queued-wake-project"),
+        title: "Queued watch wake",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-queued-wake-start"),
+        threadId,
+        ...key,
+        watching: true,
+        link: { url: "https://github.com/pingdotgg/t3code/pull/7", source: "agent" },
+      });
+      const started = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+      assert.isDefined(started);
+      if (started === undefined) return;
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-queued-wake-active"),
+        threadId,
+        messageId: MessageId.make("pr-watch-queued-wake-active"),
+        text: "Merge it",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const wakeMessageId = MessageId.make("pr-watch-queued-wake");
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-watch.sync",
+        commandId: CommandId.make("pr-watch-queued-wake-sync"),
+        threadId,
+        ...key,
+        startedAt: started.startedAt,
+        watch: { ...started, headSha: "merged", wakes: 1 },
+        wake: {
+          messageId: wakeMessageId,
+          text: "Update",
+          notification: { source: { kind: "monitor" }, outcome: "updated", summary: "#7 merged" },
+        },
+      });
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const activeRun = before.runs.find((run) => run.status === "starting");
+      const wakeRun = before.runs.find((run) => run.userMessageId === wakeMessageId);
+      assert.isDefined(activeRun);
+      assert.isDefined(wakeRun);
+      assert.equal(wakeRun.status, "queued");
+      assert.notEqual(wakeRun.queueHeld, true);
+
+      // Hold the completion reaction before it promotes the wake: the window the sweep races.
+      const reactionReached = yield* Deferred.make<void>();
+      const releaseReaction = yield* Deferred.make<void>();
+      const promotionDone = yield* Deferred.make<void>();
+      const withLock = executor.withLock;
+      let reactionFiber: number | undefined;
+      const holdReaction: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
+        lockKey,
+        effect,
+      ) =>
+        Effect.flatMap(Effect.fiberId, (fiber) => {
+          if (lockKey !== threadId) return withLock(lockKey, effect);
+          if (reactionFiber === undefined) {
+            reactionFiber = fiber;
+            return Deferred.succeed(reactionReached, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseReaction)),
+              Effect.andThen(withLock(lockKey, effect)),
+            );
+          }
+          return fiber === reactionFiber
+            ? withLock(lockKey, effect).pipe(
+                Effect.ensuring(Deferred.succeed(promotionDone, undefined)),
+              )
+            : withLock(lockKey, effect);
+        });
+      const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(holdReaction);
+      yield* Effect.gen(function* () {
+        const completedAt = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("pr-watch-queued-wake-active-completed"),
+              type: "run.updated",
+              threadId,
+              runId: activeRun.id,
+              ...(activeRun.rootNodeId === null ? {} : { nodeId: activeRun.rootNodeId }),
+              providerInstanceId: activeRun.providerInstanceId,
+              occurredAt: completedAt,
+              payload: { ...activeRun, status: "completed", completedAt },
+            },
+          ],
+        });
+        yield* Deferred.await(reactionReached);
+
+        const window = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(window.runs.find((run) => run.id === wakeRun.id)?.status, "queued");
+        yield* orchestrator
+          .dispatch({
+            type: "thread.auto-settle",
+            commandId: CommandId.make("pr-watch-queued-wake-auto-settle"),
+            threadId,
+            snapshotAt: window.thread.updatedAt,
+          })
+          .pipe(Effect.exit);
+        const afterSettle = yield* orchestrator.getThreadProjection(threadId);
+        assert.isNull(
+          afterSettle.thread.settledAt,
+          "automatic settlement must wait for the queued pull request watch wake",
+        );
+
+        yield* Deferred.succeed(releaseReaction, undefined);
+        yield* Deferred.await(promotionDone);
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(after.runs.find((run) => run.id === wakeRun.id)?.status, "starting");
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => lockSpy.mockRestore()).pipe(
+            // The held reaction runs on the shared run-update stream; later tests need it back.
+            Effect.andThen(Deferred.succeed(releaseReaction, undefined)),
+          ),
+        ),
+      );
+    }),
+  );
+
   it.effect("archiving ends watches, and an archived thread cannot start one", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
