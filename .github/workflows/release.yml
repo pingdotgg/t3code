@@ -395,8 +395,12 @@ jobs:
       (github.event_name != 'schedule' || needs.resolve_commit.outputs.has_changes == 'true')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 5
+    # Previews build any branch, but production admits only main and v* tags.
+    # The empty name runs previews with no environment, so their Clerk and relay
+    # ids come from .env.example. Everything else matches nightly: the tracing
+    # read below needs only repository-level Cloudflare credentials.
     environment:
-      name: production
+      name: ${{ inputs.channel != 'preview' && 'production' || '' }}
     outputs:
       clerk_publishable_key: ${{ steps.public_config.outputs.clerk_publishable_key }}
       clerk_jwt_template: ${{ steps.public_config.outputs.clerk_jwt_template }}
@@ -462,8 +466,18 @@ jobs:
       - id: public_config
         name: Resolve production relay public config
         shell: bash
+        env:
+          PREVIEW: ${{ inputs.channel == 'preview' }}
         run: |
           set -euo pipefail
+
+          if [[ "$PREVIEW" == "true" ]]; then
+            env_example() { sed -n "s|^T3CODE_$1=||p" .env.example; }
+            CLERK_PUBLISHABLE_KEY="$(env_example CLERK_PUBLISHABLE_KEY)"
+            CLERK_JWT_TEMPLATE="$(env_example CLERK_JWT_TEMPLATE)"
+            CLERK_CLI_OAUTH_CLIENT_ID="$(env_example CLERK_CLI_OAUTH_CLIENT_ID)"
+            RELAY_DOMAIN="$(sed -n 's|^T3CODE_RELAY_URL=https://||p' .env.example)"
+          fi
 
           relay_domain="${RELAY_DOMAIN:-}"
           if [[ -z "$relay_domain" && -n "${RELAY_API_ZONE_NAME:-}" ]]; then

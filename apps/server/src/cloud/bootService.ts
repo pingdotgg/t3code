@@ -213,15 +213,9 @@ export interface BootServiceManager {
 
 function systemdManager(input: {
   readonly path: Path.Path;
-  readonly homeDir: string;
+  readonly unitDir: string;
 }): BootServiceManager {
-  const unitPath = input.path.join(
-    input.homeDir,
-    ".config",
-    "systemd",
-    "user",
-    BOOT_SERVICE_UNIT_FILE,
-  );
+  const unitPath = input.path.join(input.unitDir, BOOT_SERVICE_UNIT_FILE);
   const prepareActivation = [
     {
       step: "reloading systemd user units",
@@ -358,6 +352,8 @@ function launchdManager(input: {
 function selectBootServiceManager(input: {
   readonly platform: NodeJS.Platform;
   readonly homeDir: string;
+  readonly xdgConfigHome: string;
+  readonly systemdUnitDir: string | undefined;
   readonly uid: number | undefined;
   readonly path: Path.Path;
   readonly environmentPath: string;
@@ -366,7 +362,18 @@ function selectBootServiceManager(input: {
     return undefined;
   }
   if (input.platform === "linux") {
-    return systemdManager({ path: input.path, homeDir: input.homeDir });
+    return systemdManager({
+      path: input.path,
+      unitDir:
+        input.systemdUnitDir ??
+        input.path.join(
+          input.path.isAbsolute(input.xdgConfigHome)
+            ? input.xdgConfigHome
+            : input.path.join(input.homeDir, ".config"),
+          "systemd",
+          "user",
+        ),
+    });
   }
   if (input.platform === "darwin" && input.uid !== undefined) {
     return launchdManager({
@@ -378,6 +385,42 @@ function selectBootServiceManager(input: {
   }
   return undefined;
 }
+
+const decodeSystemdUnitPaths = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ data: Schema.Array(Schema.String) })),
+);
+
+// The manager may not share the installer's environment; JSON preserves spaces in its paths.
+const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit_directory")(
+  function* () {
+    const runner = yield* ProcessRunner.ProcessRunner;
+    const path = yield* Path.Path;
+    const result = yield* runner.run({
+      command: "busctl",
+      args: [
+        "--user",
+        "--json=short",
+        "get-property",
+        "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager",
+        "UnitPath",
+      ],
+      timeout: Duration.seconds(5),
+    });
+    if (result.code !== 0) return undefined;
+    const { data } = yield* decodeSystemdUnitPaths(result.stdout);
+    // The persistent control directory identifies the manager's config root despite UnitPath overrides.
+    const controlDirectory = data.find(
+      (directory) =>
+        path.isAbsolute(directory) &&
+        directory.endsWith("/systemd/user.control") &&
+        data.includes(directory.slice(0, -".control".length)),
+    );
+    return controlDirectory?.slice(0, -".control".length);
+  },
+  Effect.orElseSucceed(() => undefined),
+);
 
 export class BootServiceUnsupportedError extends Schema.TaggedError<BootServiceUnsupportedError>()(
   "BootServiceUnsupportedError",
@@ -536,6 +579,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
   );
   const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
+  const xdgConfigHome = yield* Config.String("XDG_CONFIG_HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
   const runningInsideService =
     (yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
@@ -573,9 +617,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     ),
   ).join(":");
 
+  const systemdUnitDir = platform === "linux" ? yield* readSystemdUnitDirectory() : undefined;
   const detectedManager = selectBootServiceManager({
     platform,
     homeDir,
+    xdgConfigHome,
+    systemdUnitDir,
     uid,
     path,
     environmentPath,

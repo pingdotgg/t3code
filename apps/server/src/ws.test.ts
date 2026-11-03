@@ -1,4 +1,5 @@
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -41,6 +42,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as CodexInstallation from "./provider/CodexInstallation.ts";
 import * as DeviceService from "./device/DeviceService.ts";
@@ -153,6 +155,7 @@ it.effect("resends late editors without rolling back updates already sent", () =
           Deferred.await(settingsSent).pipe(Effect.as("file-explorer" as const)),
       },
       { resolveTargets: () => Effect.succeed([]) },
+      { resolve: () => Effect.succeed([]) },
     ).pipe(
       Stream.tap((event) =>
         event.type === "settingsUpdated" ? Deferred.succeed(settingsSent, undefined) : Effect.void,
@@ -184,6 +187,7 @@ it.effect("resends a reveal kind and remote targets that outlast the snapshot ti
         resolveFileManagerRevealKind: () => Effect.succeed("file-explorer"),
       },
       { resolveTargets: () => Deferred.await(finishDiscovery) },
+      { resolve: () => Effect.succeed([]) },
     ).pipe(Stream.runCollect, Effect.forkScoped({ startImmediately: true }));
     yield* TestClock.adjust("6 seconds");
     yield* Deferred.succeed(finishDiscovery, targets);
@@ -421,6 +425,131 @@ it.effect("coalesces streaming replay before synchronization and the live tail",
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
+it.effect("shell groups read distinct threads once and keep each event's own sequence", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-10-27T00:00:00.000Z";
+    const insert = (aggregateKind: "thread" | "project", streamId: string, version: number) =>
+      sql<{ sequence: number }>`
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES (
+        ${`shell-group:${streamId}:${version}`}, ${aggregateKind}, ${streamId}, ${version},
+        ${aggregateKind === "thread" ? "provider-session.detached" : "project.meta-updated"},
+        ${now}, 'server', ${JSON.stringify(
+          aggregateKind === "thread"
+            ? { providerSessionId: "session:shell-group", detachedAt: now }
+            : { projectId: streamId, updatedAt: now },
+        )}, '{}', 2
+      ) RETURNING sequence
+    `.pipe(Effect.map(([row]) => row!.sequence));
+    const shell = (id: string, archivedAt: string | null = null) =>
+      ({ id: ThreadId.make(id), archivedAt }) as unknown as OrchestrationV2ThreadShell;
+    const project = {
+      id: ProjectId.make("project:group"),
+    } as unknown as OrchestrationProjectShell;
+
+    const after = yield* insert("project", "project:before", 0);
+    yield* insert("thread", "thread:active", 0);
+    const archived = yield* insert("thread", "thread:archived", 0);
+    const projectUpdated = yield* insert("project", project.id, 0);
+    const active = yield* insert("thread", "thread:active", 1);
+    const missing = yield* insert("thread", "thread:missing", 0);
+
+    const shellReads: Array<ReadonlyArray<string> | undefined> = [];
+    let batchFails = false;
+    const collect = (afterSequence: number) =>
+      subscribeOrchestrationV2Shell({ afterSequence, requestCompletionMarker: true }).pipe(
+        Effect.flatMap((stream) =>
+          stream.pipe(
+            Stream.takeUntil((item) => item.kind === "synchronized"),
+            Stream.runCollect,
+          ),
+        ),
+        Effect.provideService(ThreadManagement.ThreadManagementService, {
+          listActiveSubagentThreadIds: () => Effect.succeed([]),
+          getShellSnapshot: (options?: { readonly threadIds?: ReadonlyArray<string> }) =>
+            Effect.suspend(() => {
+              shellReads.push(options?.threadIds);
+              return batchFails
+                ? Effect.fail("batch failed")
+                : Effect.succeed({
+                    schemaVersion: 1,
+                    snapshotSequence: Number.MAX_SAFE_INTEGER,
+                    threads: [shell("thread:active")],
+                    archivedThreads: [shell("thread:archived", now)],
+                  });
+            }),
+          getThreadShell: (threadId: string) =>
+            Effect.sync(() => {
+              shellReads.push([`scalar:${threadId}`]);
+              return threadId === "thread:missing"
+                ? null
+                : shell(threadId, threadId === "thread:archived" ? now : null);
+            }),
+        } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+        Effect.provideService(ProjectStore.ProjectStoreV2, {
+          listShells: () => Effect.succeed([]),
+        } as unknown as ProjectStore.ProjectStoreV2["Service"]),
+        Effect.provideService(ProjectService.ProjectService, {
+          getShell: () => Effect.succeedSome(project),
+        } as unknown as ProjectService.ProjectService["Service"]),
+        Effect.provideServiceEffect(
+          ProjectEnrichment.ProjectEnrichmentService,
+          PubSub.unbounded().pipe(
+            Effect.map(
+              (changes) =>
+                ({
+                  subscribeChanges: PubSub.subscribe(changes),
+                }) as unknown as ProjectEnrichment.ProjectEnrichmentService["Service"],
+            ),
+          ),
+        ),
+      );
+
+    const collectSummary = (afterSequence: number) =>
+      collect(afterSequence).pipe(
+        Effect.map((items) =>
+          items.flatMap((item): ReadonlyArray<ReadonlyArray<string | number>> =>
+            item.kind === "thread.updated"
+              ? [[item.kind, item.sequence, item.thread.id]]
+              : item.kind === "thread.removed"
+                ? [[item.kind, item.sequence, item.threadId]]
+                : item.kind === "project.updated"
+                  ? [[item.kind, item.sequence, item.project.id]]
+                  : [],
+          ),
+        ),
+      );
+    const expectedGroup = [
+      ["thread.removed", archived, "thread:archived"],
+      ["project.updated", projectUpdated, project.id],
+      ["thread.updated", active, "thread:active"],
+      ["thread.removed", missing, "thread:missing"],
+    ];
+
+    assert.deepEqual(yield* collectSummary(after), expectedGroup);
+    assert.deepEqual(shellReads, [["thread:archived", "thread:active", "thread:missing"]]);
+
+    shellReads.length = 0;
+    assert.deepEqual(yield* collectSummary(active), [
+      ["thread.removed", missing, "thread:missing"],
+    ]);
+    assert.deepEqual(shellReads, [["scalar:thread:missing"]]);
+
+    shellReads.length = 0;
+    batchFails = true;
+    assert.deepEqual(yield* collectSummary(after), expectedGroup);
+    assert.deepEqual(shellReads, [
+      ["thread:archived", "thread:active", "thread:missing"],
+      ["scalar:thread:archived"],
+      ["scalar:thread:active"],
+      ["scalar:thread:missing"],
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
+
 it.effect("shell snapshots omit idle children and older settled threads only on request", () =>
   Effect.gen(function* () {
     const shell = (
@@ -541,6 +670,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(AntigravityInstallation.AntigravityInstallation)({ managedDirectory: "/unused" }),
   Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
   Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({}),
+  Layer.mock(NativeChildWorkQuery.NativeChildWorkQuery)({}),
   Layer.mock(CommandOutputHub.CommandOutputHub)({}),
   Layer.mock(CodexInstallation.CodexInstallation)({ managedDirectory: "/unused" }),
   Layer.mock(DeviceService.DeviceService)({}),
@@ -613,11 +743,18 @@ const layerConfigSources = Layer.mergeAll(
       ServerConfigModule.layerTest(process.cwd(), { prefix: "t3-config-subscription-test-" }),
     ),
   ),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
-it.effect.each(["pending", "cached"] as const)(
-  "%s remote discovery preserves initial config and updates through discovery and ACK",
+it.effect.each([
+  "pending",
+  "cached",
+  "direct-pending",
+  "direct-cached",
+  "direct-failed",
+  "direct-interrupted",
+] as const)(
+  "%s endpoint discovery preserves initial config and updates through discovery and ACK",
   (discovery) =>
     Effect.gen(function* () {
       const keybindings = yield* Keybindings.Keybindings;
@@ -636,6 +773,15 @@ it.effect.each(["pending", "cached"] as const)(
       const remoteDiscoveryStarted = yield* Deferred.make<void>();
       const finishRemoteDiscovery = yield* Deferred.make<void>();
       const targets = [{ kind: "mdns" as const, host: "test.local" }];
+      const direct = discovery.startsWith("direct-");
+      const bound = [{ kind: "lan" as const, httpBaseUrl: "http://192.168.1.10:3773/" }];
+      const endpoints = [
+        ...bound,
+        { kind: "tailnet" as const, httpBaseUrl: "https://test.ts.net/" },
+      ];
+      const directStarted = yield* Deferred.make<void>();
+      const finishDirect = yield* Deferred.make<void>();
+      const directStopped = yield* Deferred.make<void>();
       const responses = yield* Queue.unbounded<ServerConfigStreamEvent>();
       const configRpcServices = Layer.mergeAll(
         layerUnusedConfigRpcServices,
@@ -657,12 +803,30 @@ it.effect.each(["pending", "cached"] as const)(
           resolveTargets: () =>
             Deferred.succeed(remoteDiscoveryStarted, undefined).pipe(
               Effect.andThen(
-                discovery === "cached" ? Effect.void : Deferred.await(finishRemoteDiscovery),
+                discovery === "cached" || direct
+                  ? Effect.void
+                  : Deferred.await(finishRemoteDiscovery),
               ),
               Effect.as(targets),
             ),
         }),
-        Layer.mock(DirectEndpoints.DirectEndpoints)({ resolve: () => Effect.succeed([]) }),
+        Layer.mock(DirectEndpoints.DirectEndpoints)({
+          resolveAvailable: () => Effect.succeed(discovery === "direct-cached" ? endpoints : bound),
+          resolve: () =>
+            direct
+              ? Deferred.succeed(directStarted, undefined).pipe(
+                  Effect.andThen(
+                    discovery === "direct-cached" ? Effect.void : Deferred.await(finishDirect),
+                  ),
+                  Effect.andThen(
+                    discovery === "direct-failed"
+                      ? Effect.die("probe failed")
+                      : Effect.succeed(endpoints),
+                  ),
+                  Effect.onExit(() => Deferred.succeed(directStopped, undefined)),
+                )
+              : Effect.succeed(bound),
+        }),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           scratchRoot: Effect.succeedNone,
           namedProjectsRoot: process.cwd(),
@@ -742,7 +906,14 @@ it.effect.each(["pending", "cached"] as const)(
       const snapshot = yield* Queue.take(responses);
       assert.equal(snapshot.type, "snapshot");
       if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
-      assert.deepEqual(snapshot.config.remoteOpenTargets, discovery === "cached" ? targets : []);
+      assert.deepEqual(
+        snapshot.config.remoteOpenTargets,
+        discovery === "cached" || direct ? targets : [],
+      );
+      assert.deepEqual(
+        snapshot.config.directEndpoints,
+        discovery === "direct-cached" ? endpoints : bound,
+      );
       assert.isFalse(snapshot.config.settings.defaultAutoPull);
       assert.deepEqual(snapshot.config.keybindings, initialKeybindings);
       const duringAck = yield* keybindings.upsertKeybindingRule({
@@ -793,7 +964,31 @@ it.effect.each(["pending", "cached"] as const)(
         assert.deepEqual(resolved.config.keybindings, latestKeybindings.keybindings);
         yield* acknowledge;
       }
+      if (direct) {
+        yield* Deferred.await(directStarted);
+        if (discovery === "direct-pending") {
+          yield* Deferred.succeed(finishDirect, undefined);
+          const resolved = yield* Queue.take(responses);
+          assert.equal(resolved.type, "snapshot");
+          if (resolved.type !== "snapshot") return yield* Effect.die("Missing direct endpoints");
+          assert.deepEqual(resolved.config.directEndpoints, endpoints);
+          assert.deepEqual(
+            resolved.config.settings,
+            ServerSettings.redactServerSettingsForClient(latestSettings),
+          );
+          assert.deepEqual(resolved.config.keybindings, latestKeybindings.keybindings);
+          yield* acknowledge;
+        } else if (discovery === "direct-failed") {
+          yield* Deferred.succeed(finishDirect, undefined);
+          yield* Deferred.await(directStopped);
+          yield* settings.updateSettings({ defaultAutoPull: false });
+          const event = yield* Queue.take(responses);
+          assert.equal(event.type, "settingsUpdated");
+          yield* acknowledge;
+        }
+      }
       yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });
+      if (direct) yield* Deferred.await(directStopped);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -856,7 +1051,10 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
         resolveTargets: () => Effect.succeed([]),
       }),
-      Layer.mock(DirectEndpoints.DirectEndpoints)({ resolve: () => Effect.succeed([]) }),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({
+        resolve: () => Effect.succeed([]),
+        resolveAvailable: () => Effect.succeed([]),
+      }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         scratchRoot: Effect.succeedNone,
         namedProjectsRoot: process.cwd(),
