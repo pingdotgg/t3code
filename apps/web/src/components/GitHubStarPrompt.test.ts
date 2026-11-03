@@ -3,20 +3,25 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { toastManager } from "./ui/toast";
 
-const { add, starred, page } = vi.hoisted(() => ({
+const { add, update, openExternal, commands, starred, page } = vi.hoisted(() => ({
   add: vi.fn<typeof toastManager.add>(),
-  starred: { value: false, failed: false, duringCheck: () => {} },
+  update: vi.fn<typeof toastManager.update>(),
+  openExternal: vi.fn(async (_url: string) => {}),
+  commands: { checkStarred: {}, star: {} },
+  starred: { value: false, failed: false, starWorks: true, duringCheck: () => {} },
   page: {
     focused: true,
     activeElement: null as { matches: (selector: string) => boolean } | null,
     events: new EventTarget(),
   },
 }));
-vi.mock("./ui/toast", () => ({ toastManager: { add, close: vi.fn() } }));
+vi.mock("./ui/toast", () => ({ toastManager: { add, update, close: vi.fn() } }));
+vi.mock("../localApi", () => ({ readLocalApi: () => ({ shell: { openExternal } }) }));
 vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
-vi.mock("../state/sourceControl", () => ({ sourceControlEnvironment: { checkStarred: {} } }));
+vi.mock("../state/sourceControl", () => ({ sourceControlEnvironment: commands }));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
-  runAtomCommand: async () => {
+  runAtomCommand: async (_registry: unknown, command: unknown) => {
+    if (command === commands.star) return { _tag: "Success", value: starred.starWorks };
     starred.duringCheck();
     return starred.failed ? { _tag: "Failure" } : { _tag: "Success", value: starred.value };
   },
@@ -27,8 +32,11 @@ const IDLE_MS = 30_000;
 
 function setup({ sent = 0, writable = true, alreadyStarred = false } = {}) {
   add.mockReset();
+  update.mockReset();
+  openExternal.mockClear();
   starred.value = alreadyStarred;
   starred.failed = false;
+  starred.starWorks = true;
   starred.duringCheck = () => {};
   page.focused = true;
   page.activeElement = null;
@@ -68,6 +76,9 @@ async function startSession() {
     sendWithoutWaiting: () => void session.recordPromptSent(environmentId),
   };
 }
+
+// The toast's handlers ignore their click event.
+const click = (props: unknown) => (props as { onClick: () => unknown }).onClick();
 
 describe("recordPromptSent", () => {
   vi.useFakeTimers();
@@ -151,6 +162,25 @@ describe("recordPromptSent", () => {
     starred.duringCheck = () => store.set("t3code:github-star-prompt:dismissed", "true");
     await (await startSession()).send();
     expect(add).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+  it("stars on click, and offers the browser when starring fails", async () => {
+    setup({ sent: 5 });
+    await (await startSession()).send();
+    click(add.mock.lastCall?.[0].actionProps);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(add.mock.lastCall?.[0].title).toBe("Thanks for the star!");
+    expect(openExternal).not.toHaveBeenCalled();
+
+    setup({ sent: 5 });
+    starred.starWorks = false;
+    await (await startSession()).send();
+    click(add.mock.lastCall?.[0].actionProps);
+    await vi.advanceTimersByTimeAsync(0);
+    const fallback = update.mock.lastCall?.[1];
+    expect(fallback).toMatchObject({ actionProps: { children: "Open GitHub" } });
+    click(typeof fallback === "object" ? fallback.actionProps : undefined);
+    expect(openExternal).toHaveBeenCalledWith("https://github.com/pingdotgg/t3code");
     vi.unstubAllGlobals();
   });
 });

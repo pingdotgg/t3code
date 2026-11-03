@@ -27,22 +27,33 @@ function dismiss() {
 }
 
 // Every close path, including both buttons, runs `onClose`, which saves the dismissal.
-function showStarPrompt() {
+function showStarPrompt(environmentId: EnvironmentId) {
   const close = () => toastManager.close(id);
+  const openInBrowser = () => {
+    close();
+    void readLocalApi()
+      ?.shell.openExternal(`https://github.com/${REPOSITORY}`)
+      .catch(() => undefined);
+  };
+  const starInPlace = async () => {
+    toastManager.update(id, { actionProps: { children: "Starring…", disabled: true } });
+    if (await starRepository(environmentId)) {
+      close();
+      toastManager.add({ type: "success", title: "Thanks for the star!", timeout: 4_000 });
+      return;
+    }
+    // Browsers block a page opened after an await, so the fallback takes its own click.
+    toastManager.update(id, {
+      description: "Could not star it from here. Open GitHub to star it there.",
+      actionProps: { children: "Open GitHub", onClick: openInBrowser },
+    });
+  };
   const id = toastManager.add({
     title: "Enjoying T3 Code?",
     description: "Give us a star on GitHub to let us know!",
     timeout: 0,
     onClose: dismiss,
-    actionProps: {
-      children: "Star on GitHub",
-      onClick: () => {
-        close();
-        void readLocalApi()
-          ?.shell.openExternal(`https://github.com/${REPOSITORY}`)
-          .catch(() => undefined);
-      },
-    },
+    actionProps: { children: "Star on GitHub", onClick: () => void starInPlace() },
     data: {
       actionLayout: "stacked-end",
       leadingIcon: <StarIcon aria-hidden className="size-4 text-warning-foreground" />,
@@ -73,21 +84,33 @@ function waitForIdle() {
 }
 
 // The server's GitHub account stands in for the user's; it may not be theirs on a shared server.
+const starInput = (environmentId: EnvironmentId) => ({
+  environmentId,
+  input: {
+    provider: SourceControlProviderKind.make("github"),
+    host: "github.com",
+    repository: REPOSITORY,
+  },
+});
+
 async function alreadyStarred(environmentId: EnvironmentId) {
   const result = await runAtomCommand(
     appAtomRegistry,
     sourceControlEnvironment.checkStarred,
-    {
-      environmentId,
-      input: {
-        provider: SourceControlProviderKind.make("github"),
-        host: "github.com",
-        repository: REPOSITORY,
-      },
-    },
+    starInput(environmentId),
     { label: "check GitHub star", reportFailure: false, reportDefect: false },
   );
   return result._tag === "Success" ? result.value : undefined;
+}
+
+async function starRepository(environmentId: EnvironmentId) {
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    sourceControlEnvironment.star,
+    starInput(environmentId),
+    { label: "star on GitHub", reportFailure: false, reportDefect: false },
+  );
+  return result._tag === "Success" && result.value;
 }
 
 /**
@@ -116,5 +139,5 @@ export async function recordPromptSent(environmentId: EnvironmentId): Promise<vo
   } catch {
     return;
   }
-  showStarPrompt();
+  showStarPrompt(environmentId);
 }
