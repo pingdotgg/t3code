@@ -475,12 +475,15 @@ export class ProjectListEntriesError extends Schema.TaggedError<ProjectListEntri
   }
 }
 
+const ProjectFileMode = NonNegativeInt.check(Schema.isLessThanOrEqualTo(0o777));
+
 export const ProjectReadFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   // Workspace-relative or absolute host path; only workspace-relative paths are writable.
   relativePath: Schema.NonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
   // Optional files can be absent without failing the read.
   allowMissing: Schema.optional(Schema.Boolean),
+  includeMode: Schema.optional(Schema.Boolean),
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
 
@@ -491,6 +494,8 @@ export const ProjectReadFileResult = Schema.Struct({
   truncated: Schema.Boolean,
   // Omitted by older servers; false only for an absent optional file.
   exists: Schema.optional(Schema.Boolean),
+  // POSIX permission bits, available only when requested from a POSIX host.
+  mode: Schema.optional(ProjectFileMode),
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 
@@ -555,11 +560,14 @@ export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: Schema.NonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
+  mode: Schema.optional(ProjectFileMode),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
 export const ProjectWriteFileResult = Schema.Struct({
   relativePath: Schema.NonEmptyString,
+  // Omitted when the destination cannot apply POSIX permissions.
+  mode: Schema.optional(ProjectFileMode),
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
 

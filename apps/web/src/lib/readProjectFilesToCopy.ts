@@ -58,7 +58,7 @@ export async function readProjectFilesToCopy(
       appAtomRegistry,
       projectEnvironment.readFile({
         environmentId: source.environmentId,
-        input: { cwd: source.cwd, relativePath },
+        input: { cwd: source.cwd, relativePath, includeMode: true },
       }),
       { label: "Read file to copy", reportFailure: false, refresh: true },
     );
@@ -68,7 +68,11 @@ export async function readProjectFilesToCopy(
       throw new Error(m(msg("Copy at most 20 MB of file contents at a time.")));
     }
     if (result.value.truncated) return { relativePath, error: m(msg("Too large to copy.")) };
-    return { relativePath, contents: result.value.contents };
+    return {
+      relativePath,
+      contents: result.value.contents,
+      ...(result.value.mode !== undefined ? { mode: result.value.mode } : {}),
+    };
   };
   const filePaths = [...files];
   const reads = [];

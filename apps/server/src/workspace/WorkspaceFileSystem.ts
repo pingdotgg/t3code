@@ -482,7 +482,15 @@ export const make = Effect.gen(function* () {
               new TextDecoder("utf-8", { fatal: true }).decode(fileBytes, { stream: truncated }),
             catch: binaryFileError,
           });
-          return { relativePath: target.relativePath, contents, byteLength: stat.size, truncated };
+          const includeMode =
+            input.includeMode === true && (yield* HostProcess.Platform) !== "win32";
+          return {
+            relativePath: target.relativePath,
+            contents,
+            byteLength: stat.size,
+            truncated,
+            ...(includeMode ? { mode: stat.mode & 0o777 } : {}),
+          };
         }),
       (handle) =>
         handle === null
@@ -613,16 +621,25 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+    const mode = (yield* HostProcess.Platform) === "win32" ? undefined : input.mode;
     yield* Effect.tryPromise({
       // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
-      try: () =>
-        NodeFSP.writeFile(realTargetPath, contents, {
-          flag:
-            NodeFS.constants.O_WRONLY |
+      try: async () => {
+        const handle = await NodeFSP.open(
+          realTargetPath,
+          NodeFS.constants.O_WRONLY |
             NodeFS.constants.O_CREAT |
             NodeFS.constants.O_TRUNC |
             (NodeFS.constants.O_NOFOLLOW ?? 0),
-        }),
+          mode,
+        );
+        try {
+          await handle.writeFile(contents);
+          if (mode !== undefined) await handle.chmod(mode);
+        } finally {
+          await handle.close();
+        }
+      },
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({
           workspaceRoot: input.cwd,
@@ -639,7 +656,7 @@ export const make = Effect.gen(function* () {
     if (!replacesFile) {
       yield* workspaceEntries.refresh(input.cwd);
     }
-    return { relativePath: target.relativePath };
+    return { relativePath: target.relativePath, ...(mode !== undefined ? { mode } : {}) };
   });
 
   return WorkspaceFileSystem.of({ getMetadata, readFile, writeFile });
