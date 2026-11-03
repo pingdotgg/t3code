@@ -3836,15 +3836,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         backgroundCompletion.appendOutput,
                       )
                   : { ...target, status: nextStatus };
-              // BackgroundTaskStarted normalization can reopen this row, so keep the
-              // completion for settlement when no task_completed recorded one.
-              if (
-                backgroundCompletion.status !== "running" &&
-                context.backgroundCommands.get(backgroundCompletion.taskId) === null
-              ) {
+              // BackgroundTaskStarted normalization can reopen this row, so settlement
+              // replays the newest completion; a hydration never undoes a known failure.
+              const cached = context.backgroundCommands.get(backgroundCompletion.taskId);
+              if (backgroundCompletion.status !== "running" && cached !== undefined) {
                 context.backgroundCommands.set(backgroundCompletion.taskId, {
-                  status: backgroundCompletion.status,
-                  output: toolOutputText(hydrated),
+                  status: cached?.status === "failed" ? "failed" : backgroundCompletion.status,
+                  output:
+                    backgroundCompletion.appendOutput.length === 0 && cached?.output !== undefined
+                      ? cached.output
+                      : toolOutputText(hydrated),
                 });
               }
               yield* emitTool(context, hydrated);
