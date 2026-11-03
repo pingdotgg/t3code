@@ -193,9 +193,9 @@ export function T3ConnectUserProfilePage() {
     });
     mutationPendingRef.current = false;
     setDeregisteringEnvironmentId(null);
-    setConfirmingEnvironmentId(null);
 
     if (result._tag === "Success") {
+      setConfirmingEnvironmentId(null);
       setRemovedEnvironments((current) => {
         const linkedAtById = new Map(current.accountId === accountId ? current.linkedAtById : []);
         linkedAtById.set(environment.environmentId, environment.linkedAt);
