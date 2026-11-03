@@ -73,8 +73,10 @@ export const readDevinUsageLimits = Effect.fn("readDevinUsageLimits")(function* 
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const env = input.environment;
+    const platform = yield* HostProcess.Platform;
     const dataHome =
       env.XDG_DATA_HOME ||
+      (platform === "win32" ? env.APPDATA : undefined) ||
       path.join(
         env.HOME || env.USERPROFILE || (yield* HostProcess.HomeDirectory),
         ".local",

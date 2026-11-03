@@ -236,6 +236,7 @@ export interface LimitAccount {
   readonly key: string;
   readonly driver: ServerProvider["driver"];
   readonly displayName: string | null;
+  readonly iconUrl?: string | undefined;
   readonly email: string | undefined;
   readonly plan: string | undefined;
   readonly accentColor: string | undefined;
@@ -331,6 +332,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         key: `${environmentId}:${provider.instanceId}`,
         driver: provider.driver,
         displayName: provider.displayName?.trim() || null,
+        iconUrl: provider.iconUrl,
         email: provider.auth.email,
         plan: provider.auth.label,
         accentColor: provider.accentColor,

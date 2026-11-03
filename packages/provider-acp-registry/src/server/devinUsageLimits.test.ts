@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { readDevinUsageLimits } from "./devinUsageLimits.ts";
 
@@ -132,21 +133,27 @@ describe("readDevinUsageLimits", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("reports non-quota billing as unsupported without a sign-in hint", () =>
-    Effect.gen(function* () {
-      const dataHome = yield* withCredentialsDir(CREDENTIALS_TOML);
-      const captured: CapturedRequest[] = [];
-      const limits = yield* readLimits(
-        { XDG_DATA_HOME: dataHome },
-        recordingClient(
-          captured,
-          quotaResponse({ planInfo: { billingStrategy: "BILLING_STRATEGY_CREDITS" } }),
-        ),
-      );
+  it.effect.each(["XDG_DATA_HOME", "APPDATA"])(
+    "reports non-quota billing without a sign-in hint using %s",
+    (directoryVariable) =>
+      Effect.gen(function* () {
+        const dataHome = yield* withCredentialsDir(CREDENTIALS_TOML);
+        const captured: CapturedRequest[] = [];
+        const limits = yield* readLimits(
+          { [directoryVariable]: dataHome, USERPROFILE: dataHome },
+          recordingClient(
+            captured,
+            quotaResponse({ planInfo: { billingStrategy: "BILLING_STRATEGY_CREDITS" } }),
+          ),
+        );
 
-      expect(limits.unavailable).toEqual({ reason: "unsupported" });
-      expect(limits.windows).toEqual([]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+        expect(limits.unavailable).toEqual({ reason: "unsupported" });
+        expect(limits.windows).toEqual([]);
+        expect(captured).toHaveLength(1);
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provide(NodeServices.layer),
+      ),
   );
 
   it.effect("reports an auth rejection with the sign-in message", () =>
