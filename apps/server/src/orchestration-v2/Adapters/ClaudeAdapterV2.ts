@@ -5135,24 +5135,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
-        // Usage without input is a placeholder, not a context measurement.
-        const emitContextUsage = Effect.fnUntraced(function* (
+        const emitTokenUsage = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
-          usage: ClaudeMessageUsage,
-          requestStarted = false,
+          tokenUsage: NonNullable<OrchestrationV2ProviderTurn["tokenUsage"]>,
         ) {
-          const now = yield* DateTime.now;
-          // Only message_start marks the request start; an assistant snapshot
-          // arrives after generation, so it leaves the cache expiry unknown.
-          if (requestStarted && context.streamUsage !== null) context.streamUsage.requestedAt = now;
-          const tokenUsage = claudeProviderTurnTokenUsage(
-            usage,
-            context.input.modelSelection,
-            DateTime.formatIso(now),
-            adapterOptions.settings.autoCompactWindow,
-            context.streamUsage?.requestedAt,
-          );
-          if (tokenUsage.inputTokens <= 0) return;
           yield* emitProviderEvent({
             type: "provider_turn.updated",
             driver: CLAUDE_PROVIDER,
@@ -5173,6 +5159,42 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               completedAt: null,
               tokenUsage,
             },
+          });
+        });
+
+        // Usage without input is a placeholder, not a context measurement.
+        const emitContextUsage = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          usage: ClaudeMessageUsage,
+          requestStarted = false,
+        ) {
+          const now = yield* DateTime.now;
+          // Only message_start marks the request start; an assistant snapshot
+          // arrives after generation, so it leaves the cache expiry unknown.
+          if (requestStarted && context.streamUsage !== null) context.streamUsage.requestedAt = now;
+          const tokenUsage = claudeProviderTurnTokenUsage(
+            usage,
+            context.input.modelSelection,
+            DateTime.formatIso(now),
+            adapterOptions.settings.autoCompactWindow,
+            context.streamUsage?.requestedAt,
+          );
+          if (tokenUsage.inputTokens <= 0) return;
+          yield* emitTokenUsage(context, tokenUsage);
+        });
+
+        // Compaction and /clear replace the context; only its new size is known.
+        const emitReplacedContextUsage = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          usedTokens: number,
+          now: DateTime.Utc,
+        ) {
+          const maxTokens = claudeContextWindow(context.input.modelSelection);
+          yield* emitTokenUsage(context, {
+            usedTokens,
+            maxTokens,
+            ...claudeAutoCompactThreshold(adapterOptions.settings.autoCompactWindow, maxTokens),
+            updatedAt: DateTime.formatIso(now),
           });
         });
 
@@ -8758,6 +8780,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
 
+          // Every trigger discards the conversation, so the reset counts whatever it says.
+          if (message.type === "conversation_reset") {
+            if (context.streamUsage !== null) context.streamUsage.usage = null;
+            yield* emitReplacedContextUsage(context, 0, yield* DateTime.now);
+            return;
+          }
+
           if (
             message.type === "system" &&
             (message.subtype === "compact_boundary" ||
@@ -8828,36 +8857,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? Math.round(postTokens)
                 : undefined;
             if (afterTokenCount !== undefined) {
-              const maxTokens = claudeContextWindow(context.input.modelSelection);
-              yield* emitProviderEvent({
-                type: "provider_turn.updated",
-                driver: CLAUDE_PROVIDER,
-                threadId: context.input.threadId,
-                providerTurn: {
-                  id: context.providerTurnId,
-                  providerThreadId: context.input.providerThread.id,
-                  nodeId: context.input.rootNodeId,
-                  runAttemptId: context.input.attemptId,
-                  nativeTurnRef: {
-                    driver: CLAUDE_PROVIDER,
-                    nativeId: context.nativeTurnId,
-                    strength: "strong",
-                  },
-                  ordinal: context.providerTurnOrdinal,
-                  status: "running",
-                  startedAt: context.startedAt,
-                  completedAt: null,
-                  tokenUsage: {
-                    usedTokens: afterTokenCount,
-                    maxTokens,
-                    ...claudeAutoCompactThreshold(
-                      adapterOptions.settings.autoCompactWindow,
-                      maxTokens,
-                    ),
-                    updatedAt: DateTime.formatIso(now),
-                  },
-                },
-              });
+              yield* emitReplacedContextUsage(context, afterTokenCount, now);
             }
             yield* emitProviderEvent({
               type: "turn_item.updated",
