@@ -169,9 +169,15 @@ const makeStrictNdJsonRpcParser = () => {
   let buffer = "";
   return {
     decode: (bytes: Uint8Array | string): ReadonlyArray<unknown> => {
-      buffer += typeof bytes === "string" ? bytes : decoder.decode(bytes, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
+      const chunk = typeof bytes === "string" ? bytes : decoder.decode(bytes, { stream: true });
+      const lastNewline = chunk.lastIndexOf("\n");
+      // Splitting the whole buffer per chunk is quadratic for multi-megabyte lines.
+      if (lastNewline === -1) {
+        buffer += chunk;
+        return [];
+      }
+      const lines = (buffer + chunk.slice(0, lastNewline)).split("\n");
+      buffer = chunk.slice(lastNewline + 1);
       return lines.flatMap((line) => codec.decode(line));
     },
     encode: (response: Parameters<typeof codec.encode>[0]) => {

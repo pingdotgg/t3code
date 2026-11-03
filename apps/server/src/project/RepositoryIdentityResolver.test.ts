@@ -156,25 +156,43 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
-  it.effect("returns null for non-git folders and repos without remotes", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const nonGitDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-repository-identity-non-git-",
-      });
-      const gitDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-repository-identity-no-remote-",
-      });
+  it.effect(
+    "returns null for non-git, missing and no-remote folders, probing only what can exist",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const nonGitDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-repository-identity-non-git-",
+        });
+        const gitDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-repository-identity-no-remote-",
+        });
 
-      yield* git(gitDir, ["init"]);
+        yield* git(gitDir, ["init"]);
 
-      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
-      const nonGitIdentity = yield* resolver.resolve(nonGitDir);
-      const noRemoteIdentity = yield* resolver.resolve(gitDir);
+        const runner = yield* ProcessRunner.ProcessRunner;
+        const runs: Array<ReadonlyArray<string>> = [];
+        const resolver = yield* RepositoryIdentityResolver.make().pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: (input) =>
+              Effect.suspend(() => {
+                runs.push(input.args);
+                return runner.run(input);
+              }),
+          }),
+        );
+        const bareProbes = () =>
+          runs.filter((args) => args.some((arg) => arg.startsWith("--git-dir=")));
 
-      expect(nonGitIdentity).toBeNull();
-      expect(noRemoteIdentity).toBeNull();
-    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+        expect(yield* resolver.resolve(path.join(nonGitDir, "deleted"))).toBeNull();
+        expect(runs).toEqual([]);
+
+        expect(yield* resolver.resolve(nonGitDir)).toBeNull();
+        expect(bareProbes()).toEqual([]);
+
+        expect(yield* resolver.resolve(gitDir)).toBeNull();
+      }).pipe(Effect.provide(ProcessRunner.layer)),
   );
 
   it.effect("ignores local-path remotes such as GitButler's gb-local", () =>
