@@ -310,11 +310,15 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       const authenticated = authStatus === "authenticated";
       const authType =
         probedAuth !== undefined
-          ? (probedAuth.authenticated ? (probedAuth.type ?? options.auth?.type) : undefined)
+          ? (probedAuth.authenticated || usesCredentials
+              ? (probedAuth.type ?? options.auth?.type)
+              : undefined)
           : (draft.auth.type ?? options.auth?.type);
       const authLabel =
         probedAuth !== undefined
-          ? (probedAuth.authenticated ? (probedAuth.label ?? options.auth?.label) : undefined)
+          ? (probedAuth.authenticated || usesCredentials
+              ? (probedAuth.label ?? options.auth?.label)
+              : undefined)
           : (draft.auth.label ?? options.auth?.label);
       const authEmail =
         probedAuth !== undefined

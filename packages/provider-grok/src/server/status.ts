@@ -553,15 +553,12 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         probe: {
           installed: !isCommandMissingCause(error),
           version: isCommandMissingCause(error) ? null : cachedVersion,
-          status: isCommandMissingCause(error) ? "warning" : "ready",
+          status: isCommandMissingCause(error) ? "warning" : "error",
           auth,
           ...(account?.usageLimits ? { usageLimits: account.usageLimits } : {}),
-          ...(isCommandMissingCause(error)
-            ? {
-                message:
-                  "Grok account is linked, but Grok CLI (`grok`) is not installed or not on PATH.",
-              }
-            : {}),
+          message: isCommandMissingCause(error)
+            ? "Grok account is linked, but Grok CLI (`grok`) is not installed or not on PATH."
+            : "Failed to execute Grok CLI health check.",
         },
       });
     }

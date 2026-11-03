@@ -433,7 +433,6 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
               label: "Google account",
             }),
           );
-
           const unauthenticatedSnapshot = yield* harness.provider.snapshot.refresh;
           expect(unauthenticatedSnapshot).toMatchObject({
             installed: true,

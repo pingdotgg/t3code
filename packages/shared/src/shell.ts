@@ -987,6 +987,8 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
     platform,
     resolvePathEnvironmentVariable(env),
     resolveWindowsPathExtensions(env).join(";"),
+    env.HOME ?? "",
+    env.USERPROFILE ?? "",
     env.LOCALAPPDATA ?? "",
     env.APPDATA ?? "",
     env.MSYSTEM ? "msystem" : "",

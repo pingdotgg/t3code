@@ -28,7 +28,6 @@ import {
 } from "@t3tools/provider-core/server/driver";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -86,9 +85,7 @@ const makeUnsupportedTextGeneration = (driver: ProviderDriverKind): ProviderText
 export type StandaloneDriverEnv =
   | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
-  | HttpClient.HttpClient
-  | HostProcess.HomeDirectory
-  | HostProcess.Platform;
+  | HttpClient.HttpClient;
 
 export interface StandaloneProbeResult {
   readonly installed: boolean;
@@ -189,7 +186,7 @@ function createStandaloneDriver<Config extends { enabled?: boolean }>(
           probed.status === "ready" ? ("warning" as const) : probed.status;
         const message =
           probed.status === "ready"
-            ? `${options.displayName} is connected, but live orchestration sessions are not supported yet.`
+            ? `${options.displayName} is configured, but live orchestration sessions are not supported yet.`
             : probed.message;
 
         const draft: ServerProviderDraft = buildServerProvider({
@@ -197,7 +194,7 @@ function createStandaloneDriver<Config extends { enabled?: boolean }>(
           presentation: { displayName: options.displayName },
           enabled: true,
           checkedAt,
-          models: [],
+          models: probed.models,
           probe: {
             installed: probed.installed,
             version: probed.version ?? null,
@@ -257,13 +254,11 @@ const probeOllama = Effect.fn("probeOllama")(function* (
   httpClient: HttpClient.HttpClient,
 ): Effect.fn.Return<StandaloneProbeResult> {
   const configuredEndpoint = config.apiEndpoint?.trim();
-  const endpoint =
-    configuredEndpoint &&
-    configuredEndpoint.length > 0 &&
-    configuredEndpoint !== "http://localhost:11434"
-      ? configuredEndpoint
-      : env.OLLAMA_HOST?.trim() || configuredEndpoint || "http://localhost:11434";
-  const trimmedEndpoint = endpoint.replace(/\/+$/, "");
+  const rawHost = configuredEndpoint || env.OLLAMA_HOST?.trim() || "http://localhost:11434";
+  const normalizedHost = rawHost.startsWith("http://") || rawHost.startsWith("https://")
+    ? rawHost
+    : `http://${rawHost}`;
+  const trimmedEndpoint = normalizedHost.replace(/\/+$/, "");
   const builtInModels: ReadonlyArray<ServerProviderModel> = [
     { slug: "llama3.3", name: "Llama 3.3", isDefault: true, isCustom: false, capabilities: null },
     { slug: "deepseek-r1", name: "DeepSeek R1", isDefault: false, isCustom: false, capabilities: null },
@@ -303,7 +298,7 @@ const probeOllama = Effect.fn("probeOllama")(function* (
       installed: true,
       status: "warning",
       auth: { status: "unknown", label: "Ollama" },
-      message: `Ollama CLI is installed, but the server is not responding at ${trimmedEndpoint}.`,
+      message: "Ollama CLI is installed, but the server is not responding at the configured endpoint.",
       models,
     };
   }

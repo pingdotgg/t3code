@@ -850,14 +850,14 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 
-    it.effect("keeps git when PATH has another git or the host is not macOS", () =>
+    it.effect("keeps git when PATH has another git or resolves to Linux git", () =>
       Effect.gen(function* () {
         const homebrew = setup({ gitOnPath: "/opt/homebrew/bin/git", xcrunGit: XCODE_GIT });
         expect(yield* homebrew.resolve).toBe("git");
         expect(homebrew.host.xcrunCalls).toBe(0);
 
         const linux = setup({ platform: "linux", gitOnPath: "/usr/bin/git", xcrunGit: XCODE_GIT });
-        expect(yield* linux.resolve).toBe("git");
+        expect(yield* linux.resolve).toBe("/usr/bin/git");
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 
