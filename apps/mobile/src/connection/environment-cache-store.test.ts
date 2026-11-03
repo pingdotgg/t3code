@@ -527,6 +527,28 @@ describe("mobile SQLite environment cache store", () => {
     }),
   );
 
+  it.effect("round-trips the shell vouch and loads a record without one as unvouched", () =>
+    Effect.gen(function* () {
+      const memory = makeDatabase();
+      const store = yield* make().pipe(
+        Effect.provideService(MobileDatabase.MobileDatabase, memory.database),
+      );
+      const vouch = {
+        omissionKey: "true:false",
+        serverVersion: "0.0.32",
+        authoritativeAt: 1_800_000_000_000,
+      };
+
+      yield* store.saveShell(ENVIRONMENT_ID, SHELL_SNAPSHOT, vouch);
+      expect(Option.getOrThrow(yield* store.loadShell(ENVIRONMENT_ID)).vouch).toEqual(vouch);
+
+      yield* store.saveShell(ENVIRONMENT_ID, SHELL_SNAPSHOT);
+      const id = cacheId(ENVIRONMENT_ID, "shell", "snapshot");
+      expect(JSON.parse(memory.values.get(id)!)).not.toHaveProperty("vouch");
+      expect(Option.getOrThrow(yield* store.loadShell(ENVIRONMENT_ID)).vouch).toBeUndefined();
+    }),
+  );
+
   it.live("returns cached threads before their pull request links, which load after", () =>
     Effect.gen(function* () {
       const memory = makeDatabase();

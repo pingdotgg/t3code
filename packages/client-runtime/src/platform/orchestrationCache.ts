@@ -13,10 +13,23 @@ export const ORCHESTRATION_CACHE_SCHEMA_VERSION = 3 as const;
 // Older caches may contain human turns that bypassed server history budgets.
 export const ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION = 5 as const;
 
+/**
+ * Written only for rows that descend from a server snapshot. Optional, so records from
+ * before it existed still decode and an older app ignores it.
+ */
+export const ShellCacheVouch = Schema.Struct({
+  omissionKey: Schema.String,
+  serverVersion: Schema.String,
+  /** Epoch milliseconds of the last server snapshot, not of a resume from the cache. */
+  authoritativeAt: Schema.Finite,
+});
+export type ShellCacheVouch = typeof ShellCacheVouch.Type;
+
 export const StoredOrchestrationShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(ORCHESTRATION_CACHE_SCHEMA_VERSION),
   environmentId: EnvironmentId,
   snapshot: OrchestrationV2ShellSnapshotJson,
+  vouch: Schema.optionalKey(ShellCacheVouch),
 });
 
 export const StoredOrchestrationThreadSnapshot = Schema.Struct({

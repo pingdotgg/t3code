@@ -14,6 +14,13 @@ import * as Schema from "effect/Schema";
 import type { ConnectionRegistration } from "../connection/catalog.ts";
 import type { DeferredShellSnapshot } from "../state/shellPullRequests.ts";
 import type { ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
+import type { ShellCacheVouch } from "./orchestrationCache.ts";
+
+export type { ShellCacheVouch };
+
+export interface CachedShellSnapshot extends DeferredShellSnapshot {
+  readonly vouch?: ShellCacheVouch;
+}
 
 export class ConnectionPersistenceError extends Schema.TaggedError<ConnectionPersistenceError>()(
   "ConnectionPersistenceError",
@@ -82,10 +89,14 @@ export class EnvironmentCacheStore extends Context.Service<
   {
     readonly loadShell: (
       environmentId: EnvironmentId,
-    ) => Effect.Effect<Option.Option<DeferredShellSnapshot>, ConnectionPersistenceError>;
+    ) => Effect.Effect<Option.Option<CachedShellSnapshot>, ConnectionPersistenceError>;
+    /**
+     * Pass `vouch` only when the rows descend from a server snapshot.
+     */
     readonly saveShell: (
       environmentId: EnvironmentId,
       snapshot: OrchestrationV2ShellSnapshot,
+      vouch?: ShellCacheVouch,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly loadThread: (
       environmentId: EnvironmentId,
