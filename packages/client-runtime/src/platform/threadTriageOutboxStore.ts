@@ -42,6 +42,15 @@ export class ThreadTriageOutboxStorageError extends Schema.TaggedError<ThreadTri
   }
 }
 
+export class ThreadTriagePendingSettleError extends Schema.TaggedError<ThreadTriagePendingSettleError>()(
+  "ThreadTriagePendingSettleError",
+  {},
+) {
+  override get message(): string {
+    return "Undo the pending settle before snoozing while offline.";
+  }
+}
+
 export type ThreadTriageKey = Pick<PendingThreadTriage, "environmentId" | "threadId">;
 
 export const sameThreadTriage = (a: ThreadTriageKey, b: ThreadTriageKey) =>
@@ -61,7 +70,7 @@ export interface ThreadTriageOutboxStoreShape {
   readonly put: (
     entry: PendingThreadTriage,
     stillCurrent?: () => boolean,
-  ) => Effect.Effect<void, ThreadTriageOutboxStorageError>;
+  ) => Effect.Effect<void, ThreadTriageOutboxStorageError | ThreadTriagePendingSettleError>;
   /** Only removes the entry if it still has this command id. */
   readonly remove: (
     entry: ThreadTriageKey & Pick<PendingThreadTriage, "commandId">,
@@ -84,7 +93,7 @@ export interface ThreadTriageOutboxStoreShape {
     environmentId: EnvironmentId,
     operable: boolean,
     stillCurrent?: () => boolean,
-  ) => Effect.Effect<void, ThreadTriageOutboxStorageError>;
+  ) => Effect.Effect<void, ThreadTriageOutboxStorageError | ThreadTriagePendingSettleError>;
   readonly clearEnvironment: (
     environmentId: EnvironmentId,
   ) => Effect.Effect<void, ThreadTriageOutboxStorageError>;
@@ -184,13 +193,7 @@ export function makeThreadTriageOutboxStore(storage: {
           };
         }).pipe(
           Effect.flatMap(() =>
-            blocked
-              ? Effect.fail(
-                  new ThreadTriageOutboxStorageError({
-                    cause: new Error("Undo the pending settle before snoozing while offline."),
-                  }),
-                )
-              : Effect.void,
+            blocked ? Effect.fail(new ThreadTriagePendingSettleError()) : Effect.void,
           ),
         );
       }),

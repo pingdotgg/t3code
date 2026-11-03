@@ -766,7 +766,9 @@ describe("settle and snooze while the environment is offline", () => {
       yield* Effect.promise(() => h.commands.settle.run(h.registry, settle));
       const queued = h.storage.value;
       const result = yield* Effect.promise(() => h.commands.snooze.run(h.registry, snooze));
-      expect(result._tag).toBe("Failure");
+      expect(result._tag === "Failure" ? String(Cause.squash(result.cause)) : "Success").toContain(
+        "Undo the pending settle before snoozing while offline.",
+      );
       expect(h.storage.value).toBe(queued);
     }),
   );

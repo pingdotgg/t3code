@@ -20,6 +20,7 @@ import {
   sameThreadTriage,
   ThreadTriageOutboxStore,
   type ThreadTriageOutboxStorageError,
+  ThreadTriagePendingSettleError,
 } from "../platform/threadTriageOutboxStore.ts";
 import { ThreadVersionGuardUnsupportedError } from "../operations/commands.ts";
 import { EnvironmentRpcUnavailableError, isRpcClientError } from "../rpc/client.ts";
@@ -59,6 +60,7 @@ const EMPTY_DOCUMENT: ThreadTriageOutboxDocument = { entries: [], operableEnviro
 
 const isUnavailable = Schema.is(EnvironmentRpcUnavailableError);
 const isGuardUnsupported = Schema.is(ThreadVersionGuardUnsupportedError);
+const isPendingSettle = Schema.is(ThreadTriagePendingSettleError);
 
 function offlineError(cause: Cause.Cause<unknown>) {
   const reason = cause.reasons.find(
@@ -144,9 +146,11 @@ export function createThreadTriageOutbox<R, E>(input: {
           };
           yield* outbox.put(entry, operation.stillCurrent).pipe(
             Effect.tapError((error) =>
-              Effect.logWarning("Could not save an offline thread change.", {
-                cause: String(error.cause),
-              }),
+              error._tag === "ThreadTriagePendingSettleError"
+                ? Effect.void
+                : Effect.logWarning("Could not save an offline thread change.", {
+                    cause: String(error.cause),
+                  }),
             ),
           );
           return { ...EMPTY_DOCUMENT, entries: [entry] };
@@ -454,7 +458,7 @@ export function createThreadTriageOutbox<R, E>(input: {
   function queueWhenOffline<I extends SettleOrSnoozeInput, CE>(
     command: Command<I, CE>,
     action: (input: I) => PendingThreadTriage["action"],
-  ): Command<I, CE | ThreadVersionGuardUnsupportedError> {
+  ): Command<I, CE | ThreadVersionGuardUnsupportedError | ThreadTriagePendingSettleError> {
     return {
       label: command.label,
       run: async (registry, target) => {
@@ -533,8 +537,15 @@ export function createThreadTriageOutbox<R, E>(input: {
             },
             stillCurrent: current,
           });
+          if (!AsyncResult.isSuccess(queued)) {
+            return queued.cause.reasons.some(
+              (reason) => Cause.isFailReason(reason) && isPendingSettle(reason.error),
+            )
+              ? AsyncResult.failure(Cause.fail(new ThreadTriagePendingSettleError()))
+              : result;
+          }
           // A removal before the write skipped it; one after it already deleted the entry.
-          if (!AsyncResult.isSuccess(queued) || !current()) return result;
+          if (!current()) return result;
           const entry = queued.value.entries[0]!;
           setLocal(registry, (entries) => [
             ...entries.filter((existing) => !sameThreadTriage(existing, entry)),
