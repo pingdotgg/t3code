@@ -83,16 +83,29 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 const ARCHIVE = { archiveVersion: "1.2.3-preview.20260911.4" } as const;
 
 const runArchiveRunner = Effect.fn("test.runArchiveRunner")(
-  function* (installedVersion: string) {
+  function* (
+    installedVersion: string,
+    installDirectory = ".local/bin",
+    options?: { readonly cliScript?: string; readonly fifo?: boolean },
+  ) {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped();
-    yield* fs.makeDirectory(`${root}/.local/bin`, { recursive: true });
+    yield* fs.makeDirectory(`${root}/${installDirectory}`, { recursive: true });
     yield* fs.makeDirectory(`${root}/bin`);
-    yield* fs.writeFileString(
-      `${root}/.local/bin/t3`,
-      `#!/bin/sh\ncase "$1" in\n--version) echo 't3 v${installedVersion}';;\n__ssh-helper) exit 0;;\n*) printf 'installed:%s\\n' "$*";;\nesac\n`,
-    );
-    yield* fs.chmod(`${root}/.local/bin/t3`, 0o700);
+    if (options?.fifo) {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const mkfifo = yield* spawner.spawn(
+        ChildProcess.make("mkfifo", ["-m", "700", `${root}/${installDirectory}/t3`]),
+      );
+      yield* mkfifo.exitCode;
+    } else {
+      yield* fs.writeFileString(
+        `${root}/${installDirectory}/t3`,
+        options?.cliScript ??
+          `#!/bin/sh\ncase "$1" in\n--version) echo 't3 v${installedVersion}';;\n__ssh-helper) exit 0;;\n*) printf 'installed:%s\\n' "$*";;\nesac\n`,
+      );
+      yield* fs.chmod(`${root}/${installDirectory}/t3`, 0o700);
+    }
     yield* fs.writeFileString(`${root}/bin/curl`, '#!/bin/sh\necho "HTTP 404" >&2\nexit 22\n');
     yield* fs.chmod(`${root}/bin/curl`, 0o700);
     yield* fs.writeFileString(`${root}/runner.sh`, SshTunnel.buildRemoteT3RunnerScript(ARCHIVE));
@@ -161,13 +174,15 @@ describe("ssh tunnel scripts", () => {
       }),
   );
 
-  it.live("reuses an installed CLI only when it matches the exact requested release", () =>
-    Effect.gen(function* () {
-      const result = yield* runArchiveRunner(ARCHIVE.archiveVersion);
-      assert.equal(result.exitCode, 0, result.stderr);
-      assert.equal(result.stdout, "installed:pair --json\n");
-      assert.isFalse(result.runtimeExists);
-    }),
+  it.live.each([".local/bin", ".t3/bin"])(
+    "reuses an exact-release installed CLI in %s",
+    (installDirectory) =>
+      Effect.gen(function* () {
+        const result = yield* runArchiveRunner(ARCHIVE.archiveVersion, installDirectory);
+        assert.equal(result.exitCode, 0, result.stderr);
+        assert.equal(result.stdout, "installed:pair --json\n");
+        assert.isFalse(result.runtimeExists);
+      }),
   );
 
   it.live.each(["1.2.2", "1.2.3", "1.2.3-nightly.20260911.4", "1.2.3-preview.20260911.3"])(
@@ -183,6 +198,28 @@ describe("ssh tunnel scripts", () => {
         assert.include(result.stderr, `Install the exact T3 CLI (${ARCHIVE.archiveVersion})`);
         assert.isFalse(result.runtimeExists);
       }),
+  );
+
+  it.live(
+    "skips an installed CLI whose probes hang and falls through to the archive download",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* runArchiveRunner(ARCHIVE.archiveVersion, ".t3/bin", {
+          cliScript: `#!/bin/sh\ncase "$1" in\n--version) sleep 300;;\n__ssh-helper) sleep 300;;\n*) printf 'installed:%s\\n' "$*";;\nesac\n`,
+        });
+        assert.notEqual(result.exitCode, 0);
+        assert.include(result.stderr, `v${ARCHIVE.archiveVersion}/SHA256SUMS`);
+        assert.isFalse(result.runtimeExists);
+      }),
+  );
+
+  it.live("skips a non-regular file at the desktop CLI path", () =>
+    Effect.gen(function* () {
+      const result = yield* runArchiveRunner(ARCHIVE.archiveVersion, ".t3/bin", { fifo: true });
+      assert.notEqual(result.exitCode, 0);
+      assert.include(result.stderr, `v${ARCHIVE.archiveVersion}/SHA256SUMS`);
+      assert.isFalse(result.runtimeExists);
+    }),
   );
 
   it("rejects archive versions that are not a single exact version segment", () => {

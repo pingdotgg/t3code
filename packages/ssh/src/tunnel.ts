@@ -58,6 +58,7 @@ const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
 const REMOTE_ARCHIVE_CHECKSUMS_SECONDS = 30;
 const REMOTE_ARCHIVE_DOWNLOAD_SECONDS = 240;
 const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 360;
+const REMOTE_INSTALLED_PROBE_SECONDS = 15;
 const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
 
@@ -445,14 +446,36 @@ T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"
 t3_runtime_ready() {
   [ -x "$T3_RUNTIME_DIR/t3" ] && [ "$(cat "$T3_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$T3_ARCHIVE_VERSION" ]
 }
-# Without the pinned runtime, reuse only an exact-release CLI from install.sh's PATH symlink.
+# Bound each probe so a hung candidate falls through to the archive download
+# instead of stalling until the SSH timeout. Output goes through a file and the
+# watchdog is detached: orphaned children holding a pipe would block the capture.
+t3_probe() {
+  T3_PROBE_OUT="$(mktemp "\${TMPDIR:-/tmp}/t3-probe.XXXXXX")"
+  "$@" >"$T3_PROBE_OUT" 2>/dev/null </dev/null &
+  T3_PROBE_PID=$!
+  (
+    sleep @@T3_INSTALLED_PROBE_SECONDS@@
+    kill "$T3_PROBE_PID" 2>/dev/null
+    sleep 2
+    kill -KILL "$T3_PROBE_PID" 2>/dev/null
+  ) >/dev/null 2>&1 &
+  T3_PROBE_DOG=$!
+  wait "$T3_PROBE_PID" 2>/dev/null
+  T3_PROBE_RC=$?
+  kill "$T3_PROBE_DOG" 2>/dev/null
+  wait "$T3_PROBE_DOG" 2>/dev/null
+  cat "$T3_PROBE_OUT"
+  rm -f "$T3_PROBE_OUT"
+  return "$T3_PROBE_RC"
+}
+# Reuse only an exact-release CLI from the shell or the standard install locations.
 if ! t3_runtime_ready; then
-  for T3_INSTALLED in "$(command -v t3 2>/dev/null || true)" "$HOME/.local/bin/t3"; do
-    [ -n "$T3_INSTALLED" ] && [ -x "$T3_INSTALLED" ] || continue
-    T3_INSTALLED_VERSION="$("$T3_INSTALLED" --version 2>/dev/null || true)"
+  for T3_INSTALLED in "$(command -v t3 2>/dev/null || true)" "$HOME/.local/bin/t3" "$HOME/.t3/bin/t3"; do
+    [ -n "$T3_INSTALLED" ] && [ -f "$T3_INSTALLED" ] && [ -x "$T3_INSTALLED" ] || continue
+    T3_INSTALLED_VERSION="$(t3_probe "$T3_INSTALLED" --version 2>/dev/null || true)"
     case "$T3_INSTALLED_VERSION" in
       "t3 v$T3_ARCHIVE_VERSION")
-        if "$T3_INSTALLED" __ssh-helper --help >/dev/null 2>&1; then
+        if t3_probe "$T3_INSTALLED" __ssh-helper --help >/dev/null 2>&1; then
           exec "$T3_INSTALLED" "$@"
         fi
         ;;
@@ -829,6 +852,7 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
       T3_ARCHIVE_VERSION: shellSingleQuote(archiveVersion),
       T3_RELEASE_BASE_URL: shellSingleQuote(releaseBaseUrl),
       T3_ARCHIVE_LOCK_WAIT_SECONDS: String(REMOTE_ARCHIVE_LOCK_WAIT_SECONDS),
+      T3_INSTALLED_PROBE_SECONDS: String(REMOTE_INSTALLED_PROBE_SECONDS),
       T3_ARCHIVE_DOWNLOAD_SECONDS: String(REMOTE_ARCHIVE_DOWNLOAD_SECONDS),
       T3_ARCHIVE_CHECKSUMS_SECONDS: String(REMOTE_ARCHIVE_CHECKSUMS_SECONDS),
       T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
