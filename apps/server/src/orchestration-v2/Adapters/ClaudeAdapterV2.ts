@@ -21,7 +21,14 @@ import {
 } from "./claudeWorkflowProgress.ts";
 
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
-import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
+import {
+  addClaudeLedgerUsage,
+  claudeLedgerDelta,
+  claudeModelLedger,
+  normalizeClaudeTurnTokenUsage,
+  type ClaudeLedgerUsage,
+  type ClaudeModelLedger,
+} from "../../provider/ClaudeTurnTokenUsage.ts";
 import { toMcpElicitationResponse } from "../../provider/CodexMcpElicitation.ts";
 import {
   type CanUseTool,
@@ -113,7 +120,7 @@ import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -155,6 +162,7 @@ import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
   claudeSignedOutMessage,
   makeClaudeEnvironment,
+  mergeClaudeProcessEnvironment,
   resolveClaudeHomePath,
 } from "../../provider/Drivers/ClaudeHome.ts";
 import {
@@ -175,7 +183,6 @@ import {
   type ClaudeScopedLimitNames,
 } from "../../provider/claudeUsageLimits.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
@@ -932,14 +939,14 @@ export const layerQueryRunner: Layer.Layer<
   ClaudeAgentSdkQueryRunner,
   never,
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | Path.Path
   | PortScanner.PortDiscovery
   | ProviderEventLoggers.ProviderEventLoggers
 > = Layer.effect(
   ClaudeAgentSdkQueryRunner,
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const path = yield* Path.Path;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
@@ -950,9 +957,7 @@ export const layerQueryRunner: Layer.Layer<
     const portDiscovery = yield* PortScanner.PortDiscovery;
 
     return ClaudeAgentSdkQueryRunner.of({
-      allocateSessionId: crypto
-        .randomUUIDv4()
-        .pipe(Effect.mapError((cause) => queryRunnerError(cause, "allocateSessionId"))),
+      allocateSessionId: random.uuidV4(),
       open: Effect.fn("ClaudeAgentSdkQueryRunner.open")(
         function* (input: ClaudeAgentSdkQueryOpenInput) {
           const protocolLogger = makeClaudeAgentSdkProtocolLogger({
@@ -1461,6 +1466,7 @@ const subagentDeviceInstructions: HookCallback = () =>
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
   readonly nativeThreadId: string;
+  readonly title?: string;
   readonly resume: boolean;
   readonly resumeSessionAt?: string;
   readonly cwd: string | null;
@@ -1541,6 +1547,8 @@ export function makeClaudeQueryOptions(input: {
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
+    // T3 names threads; a supplied title skips Claude's redundant naming request.
+    ...(input.title === undefined ? {} : { title: input.title }),
     tools: claudeAgentSdkQueryToolsForSdk(selectedTools),
     permissionMode:
       (launchArgPermissionMode as PermissionMode | null | undefined) ??
@@ -4071,6 +4079,9 @@ interface ActiveClaudeTurnContext {
   compactionFailure: { readonly message: string | undefined } | null;
   // Steers end segments whose usage is excluded from the final result; bill them too, oldest first.
   readonly steeredSegmentUsage: Array<SDKResultMessage["usage"]>;
+  // Ledger growth of the steered segments; undefined once any segment's growth is unknown.
+  steeredLedgerUsage: ClaudeLedgerUsage | undefined;
+  readonly rootModels: Set<string>;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly promptUuid: string | null;
@@ -4122,6 +4133,8 @@ interface ClaudeLiveQueryContext {
   permissionMode: PermissionMode;
   stopping: boolean;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
+  // The SDK's per-process model ledger at the last result; a new process starts at zero.
+  modelLedger: ClaudeModelLedger | undefined;
   // Per process, not per session: a relative temp dir follows the cwd this CLI
   // was launched in, and a later turn's cwd can differ.
   readonly taskOutputRoot: string | undefined;
@@ -4522,7 +4535,7 @@ export interface ClaudeAdapterV2Options {
   readonly attachmentsDir: string;
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
-  readonly crypto: Crypto.Crypto;
+  readonly random: SecureRandom.SecureRandom["Service"];
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
@@ -4540,7 +4553,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
-  const { attachmentsDir, fileSystem, path, crypto, idAllocator, queryRunner } = adapterOptions;
+  const { attachmentsDir, fileSystem, path, random, idAllocator, queryRunner } = adapterOptions;
   const subagentModelCatalog = scopeClaudeModelCatalog(
     BUNDLED_CLAUDE_MODEL_CATALOG,
     adapterOptions.settings.customModels,
@@ -4775,6 +4788,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const interruptedTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
+        // Wake buffers replay result frames, so ledger growth is measured once on arrival.
+        const resultLedgerUsage = new WeakMap<SDKMessage, ClaudeLedgerUsage>();
         // A worktree handoff changes the project settings even within one session.
         let bypassCache: { cwd: string | null; availability: ClaudeBypassAvailability } | null =
           null;
@@ -7613,6 +7628,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       input.context.subagentsByToolUseId.size > 0,
                     input.status,
                     input.context.steeredSegmentUsage,
+                    {
+                      rootModels: input.context.rootModels,
+                      ...(input.result === undefined
+                        ? {}
+                        : {
+                            ledger: addClaudeLedgerUsage(
+                              input.context.steeredLedgerUsage,
+                              resultLedgerUsage.get(input.result),
+                            ),
+                          }),
+                    },
                   ),
                 },
               }),
@@ -8528,6 +8554,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           if (message.type === "assistant" && input.replayed !== true) {
             if (message.parent_tool_use_id === null) {
+              // CLI notices and API errors arrive as assistant messages from "<synthetic>".
+              if (message.message.model && message.message.model !== "<synthetic>") {
+                context.rootModels.add(message.message.model);
+              }
               // Subagent uuids exist only in the sidechain transcript, so resume and fork cannot target them.
               context.nativeMessageCursor = message.uuid;
               context.latestAssistantRateLimit =
@@ -9409,6 +9439,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
             if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
               context.steeredSegmentUsage.push(message.usage);
+              context.steeredLedgerUsage = addClaudeLedgerUsage(
+                context.steeredLedgerUsage,
+                resultLedgerUsage.get(message),
+              );
               return;
             }
             yield* Ref.update(steeredTurns, (current) => {
@@ -10316,6 +10350,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             nativeThreadId,
+            title: turnInput.appThread.title,
             resume: shouldResume,
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,
@@ -10404,6 +10439,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 (subagent) => subagent.task.status === "running",
               ),
             ),
+            modelLedger: new Map(),
             taskOutputRoot: claudeTaskOutputRoot(
               adapterOptions.environment,
               path,
@@ -10431,6 +10467,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     message.permissionMode !== undefined
                   ) {
                     context.permissionMode = message.permissionMode;
+                  }
+                  if (message.type === "result") {
+                    const ledger = claudeModelLedger(message.modelUsage);
+                    const growth = claudeLedgerDelta(context.modelLedger, ledger);
+                    if (growth !== undefined) resultLedgerUsage.set(message, growth);
+                    // A ledger that went backwards cannot anchor the next turn's growth.
+                    context.modelLedger =
+                      growth === undefined && context.modelLedger !== undefined
+                        ? undefined
+                        : ledger;
                   }
                   return handleSdkMessage({ query: querySession, message });
                 }),
@@ -10476,7 +10522,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // Use fresh uuids: native sessions can outlive this database, and Claude skips previously recorded prompts.
             const promptUuid = isClaudeProviderContinuationTurn(turnInput)
               ? null
-              : yield* crypto.randomUUIDv4().pipe(
+              : yield* random.uuidV4().pipe(
                   Effect.filterOrFail(isClaudePromptUuid),
                   Effect.mapError(
                     (cause) =>
@@ -10577,6 +10623,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               latestAssistantRateLimit: null,
               compactionFailure: null,
               steeredSegmentUsage: [],
+              steeredLedgerUsage: { inputTokens: 0, outputTokens: 0 },
+              rootModels: new Set(),
               subagentsByTaskId: new Map(),
               subagentsByToolUseId: new Map(),
               promptUuid,
@@ -11596,7 +11644,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 export type ClaudeAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | ClaudeAgentSdkQueryRunner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
@@ -11615,10 +11663,14 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const queryRunner = yield* ClaudeAgentSdkQueryRunner;
     const serverConfig = yield* ServerConfig.ServerConfig;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-    const baseEnvironment = yield* mergeProviderInstanceEnvironment(environment, hostEnvironment);
+    const baseEnvironment = yield* mergeClaudeProcessEnvironment(
+      config,
+      environment,
+      hostEnvironment,
+    );
     const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const binaryPath = yield* resolveClaudeSdkExecutablePath(
       expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
       claudeEnvironment,
@@ -11630,7 +11682,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       attachmentsDir: serverConfig.attachmentsDir,
       fileSystem,
       path,
-      crypto,
+      random,
       idAllocator,
       queryRunner,
       continuationRequests,
