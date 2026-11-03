@@ -26,10 +26,11 @@ function typeset(tex: string, display: boolean): string {
   try {
     html = katex.renderToString(tex, options);
   } catch {
-    // A bare "%" starts a TeX comment, so KaTeX rejects formulas that use it in
-    // labels like \text{3.18% dividend yield}. Escape only the unescaped ones and
-    // try once more before falling back to the source.
-    const repaired = tex.replace(/(^|[^\\])%/g, "$1\\%");
+    // A percent before a newline may be an authored TeX comment; leave it alone.
+    const lastNewline = Math.max(tex.lastIndexOf("\n"), tex.lastIndexOf("\r"));
+    const repaired = tex.replace(/(\\*)%/g, (match, backslashes: string, offset: number) =>
+      backslashes.length % 2 === 0 && offset > lastNewline ? `${backslashes}\\%` : match,
+    );
     if (repaired !== tex) {
       try {
         html = katex.renderToString(repaired, options);
