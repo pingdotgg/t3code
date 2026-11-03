@@ -34,6 +34,7 @@ import * as Persistence from "../platform/persistence.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
+import { createGitEnvironmentAtoms } from "./git.ts";
 
 import {
   commitVcsRefsRefresh,
@@ -316,6 +317,8 @@ describe("cached VCS refs", () => {
         const client = {
           [WS_METHODS.vcsPull]: () => Effect.fail(expectedError),
           [WS_METHODS.vcsRefreshStatus]: () => Effect.void,
+          [WS_METHODS.gitPreparePullRequestThread]: () =>
+            Effect.succeed({ branch: "feature/pr", worktreePath: null }),
         } as unknown as WsRpcProtocolClient;
         const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
           target: TARGET,
@@ -371,6 +374,17 @@ describe("cached VCS refs", () => {
         expect(AsyncResult.isSuccess(refreshResult)).toBe(true);
         expect(yield* Ref.get(clears)).toBe(2);
         expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(2);
+
+        const prepareResult = yield* Effect.promise(() =>
+          createGitEnvironmentAtoms(runtime).preparePullRequestThread.run(registry, {
+            environmentId: TARGET.environmentId,
+            input: { cwd: "/repo", reference: "42", mode: "local" },
+          }),
+        );
+
+        expect(AsyncResult.isSuccess(prepareResult)).toBe(true);
+        expect(yield* Ref.get(clears)).toBe(3);
+        expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
       }),
     ),
   );
