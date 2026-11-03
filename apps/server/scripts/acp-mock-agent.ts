@@ -1320,6 +1320,17 @@ const program = Effect.gen(function* () {
             content: [{ type: "content", content: { type: "text", text: "Cancelled." } }],
           },
         });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "native-unseen-cancel-tool",
+            title: "Cancelled command",
+            kind: "execute",
+            status: "failed",
+            content: [{ type: "content", content: { type: "text", text: "Cancelled." } }],
+          },
+        });
         // A later output-only update must not undo the interrupted status.
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,

@@ -3765,7 +3765,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             context.interrupted &&
             toolCall.status === "failed" &&
             flavor.isCancelledToolCall?.(rawPayload) === true &&
-            (previousStatus === "pending" ||
+            (previousStatus === undefined ||
+              previousStatus === "pending" ||
               previousStatus === "running" ||
               previousStatus === "waiting")
           ) {

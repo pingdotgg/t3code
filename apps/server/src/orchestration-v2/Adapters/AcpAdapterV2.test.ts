@@ -5439,7 +5439,9 @@ describe("AcpAdapterV2", () => {
               : undefined,
           isCancelledToolCall: Schema.is(
             Schema.Struct({
-              update: Schema.Struct({ toolCallId: Schema.Literal("native-cancel-tool") }),
+              update: Schema.Struct({
+                toolCallId: Schema.Literals(["native-cancel-tool", "native-unseen-cancel-tool"]),
+              }),
             }),
           ),
           makeRuntime: makeMockRuntime({
@@ -5531,6 +5533,15 @@ describe("AcpAdapterV2", () => {
             : [],
         )
         .at(-1);
+      const unseenCommand = untilTerminal
+        .flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "native-unseen-cancel-tool"
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1);
+      assert.equal(unseenCommand?.status, "interrupted");
       assert.equal(command?.status, "interrupted");
       assert.include(command?.type === "command_execution" ? command.output : "", "exit 130");
       const failure = untilTerminal
