@@ -34,6 +34,8 @@ const state = vi.hoisted(() => ({
   projection: null as OrchestrationV2ThreadProjection | null,
   pendingRequests: { approvals: [], userInputs: [] } as PendingThreadRequests,
   enqueue: vi.fn(async () => undefined),
+  freshPending: false,
+  setFreshPending: vi.fn(),
   clearDraft: vi.fn(),
   approve: vi.fn(),
   answer: vi.fn(),
@@ -142,8 +144,8 @@ vi.mock("./use-composer-drafts", async () => {
     composerDraftsAtom: Atom.make({}),
     composerContextImportsAtom: Atom.make({}),
     getComposerDraftSnapshot: () => state.draft,
-    isFreshSessionPending: () => false,
-    setFreshSessionPending: vi.fn(),
+    isFreshSessionPending: () => state.freshPending,
+    setFreshSessionPending: state.setFreshPending,
     clearComposerDraftContent: state.clearDraft,
     clearComposerDraft: state.clearDraft,
     setComposerDraftText: (_key: string, text: string) => {
@@ -183,6 +185,7 @@ beforeEach(() => {
   state.grantedEnvironments = new Set(["primary"]);
   state.connectionState = "connected";
   state.draft = { text: "Keep my draft", attachments: [], modelSelection: undefined };
+  state.freshPending = false;
   state.projection = null;
   state.serverConfig = {
     providers: [{ instanceId: "codex", driver: "codex", enabled: true }],
@@ -254,6 +257,20 @@ describe("mobile task permissions", () => {
     expect(state.updateSettings).toHaveBeenCalledWith("secondary:thread", {
       interactionMode: "plan",
     });
+  });
+
+  it("keeps an armed fresh session for the message after an approval redirect", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.freshPending = true;
+    const composer = useThreadComposerState();
+    expect(await composer.onSendMessage(undefined, async () => true)).toBe("message");
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ freshContext: true }),
+    );
+    expect(state.setFreshPending).not.toHaveBeenCalled();
+    expect(await composer.onSendMessage()).toBe("message");
+    expect(state.enqueue).toHaveBeenLastCalledWith(expect.objectContaining({ freshContext: true }));
+    expect(state.setFreshPending).toHaveBeenCalledWith("secondary:thread", false);
   });
 
   it("rechecks a retained send callback before clearing or queueing the draft", async () => {
