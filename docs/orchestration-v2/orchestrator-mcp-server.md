@@ -515,8 +515,12 @@ Users rarely watch child threads, so a child question would otherwise go
 unanswered. When a child opens a pending `user_input` request, the parent gets
 a notification message telling it to answer with the pending request tools or
 ask the user. The message says whether the child is blocked or, for a Codex
-async question, still working. If the question is answered or dismissed before
-the notification starts a turn, that queued turn is cancelled. Approvals are not
+async question, still working. If the parent's turn is running and its provider
+can steer without interrupting tools, the notification steers into that turn,
+like a background task's completion. A queued notice would wait behind a
+long-running orchestrator turn that may never end. Otherwise it queues. If the
+question is answered or dismissed before a queued notification starts a turn,
+that queued turn is cancelled. Approvals are not
 routed, because those tools cannot answer them.
 A parent still blocked in a `delegate_task` wait gets the blocking question
 through that wait instead.
