@@ -341,7 +341,12 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
       else setOpen(true);
       requestWorkspaceFocus({
         area: "sidebar",
-        selectors: ['[data-sidebar-row][aria-current="page"]', "[data-sidebar-row]"],
+        selectors: [
+          '[data-sidebar-row][aria-current="page"]',
+          "[data-sidebar-row]",
+          // Search results replace the rows; their combobox input owns arrow-key navigation.
+          '[aria-controls="sidebar-thread-search-results"]',
+        ],
       });
     };
     const onKeyDown = (event: KeyboardEvent) => {
@@ -370,8 +375,11 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
         },
       };
       const toggle = isSidebarToggleShortcut(event, keybindings, options);
-      const command = toggle ? "sidebar.toggle" : resolveShortcutCommand(event, keybindings, options);
+      const command = toggle
+        ? "sidebar.toggle"
+        : resolveShortcutCommand(event, keybindings, options);
       if (!toggle && command !== "sidebar.focusThreads") return;
+      if (command === "sidebar.focusThreads" && isCommandPaletteOpen()) return;
 
       event.preventDefault();
       event.stopPropagation();
