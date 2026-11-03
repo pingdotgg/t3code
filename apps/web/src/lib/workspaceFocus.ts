@@ -108,15 +108,19 @@ export function createWorkspaceFocusController(doc: Document) {
   const focusArea = (area: HTMLElement, restore = true) => {
     const key = area.dataset.workspaceFocusKey ?? area.dataset.workspaceArea!;
     const previous = restore ? lastFocused.get(key) : undefined;
-    const belongs = (element: HTMLElement) =>
-      workspaceArea(element) === area &&
-      isWorkspaceElementVisible(element) &&
-      !element.matches(":disabled");
+    const usable = (element: HTMLElement) =>
+      isWorkspaceElementVisible(element) && !element.matches(":disabled");
+    const belongs = (element: HTMLElement) => workspaceArea(element) === area && usable(element);
+    const surface = area.querySelector<HTMLElement>("[data-right-panel-surface-content]");
+    // A chat embedded in a surface declares its own areas, yet its composer is the surface's default.
     const preferred = Array.from(
       area.querySelectorAll<HTMLElement>(
         '[data-workspace-focus-default], [data-sidebar-row][aria-current="page"], [data-settings-section][tabindex="0"], .xterm-helper-textarea, [contenteditable="true"]',
       ),
-    ).find(belongs);
+    ).find(
+      (element) =>
+        usable(element) && (workspaceArea(element) === area || surface?.contains(element) === true),
+    );
     const fallback = Array.from(area.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
       (element) => element.tabIndex >= 0 && belongs(element),
     );
@@ -136,7 +140,6 @@ export function createWorkspaceFocusController(doc: Document) {
                   element.textContent === previous.textContent)),
           )
         : undefined;
-    const surface = area.querySelector<HTMLElement>("[data-right-panel-surface-content]");
     const surfaceControl = surface
       ? Array.from(surface.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
           (element) => belongs(element) && element.tabIndex >= 0,

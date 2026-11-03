@@ -1,6 +1,6 @@
 // An in-process environment for app render scenarios: a fetch stub for its HTTP API and a
-// session that answers the shell, thread and config subscriptions from fixtures. Other RPCs
-// stay pending so nothing retries on timers. Everything above the wire is the app's own.
+// session that answers the shell, thread and config subscriptions from fixtures and accepts
+// commands. Other RPCs stay pending so nothing retries on timers. Everything above the wire is the app's own.
 import {
   AuthStandardClientScopes,
   EnvironmentId,
@@ -26,6 +26,7 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
+  type ServerConfigStreamEvent,
   type TerminalMetadataStreamEvent,
 } from "@t3tools/contracts";
 import type {
@@ -334,6 +335,12 @@ const currentServerConfig = (): ServerConfig =>
     : serverConfig;
 
 let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
+const serverConfigSubscribers = new Set<Queue.Queue<ServerConfigStreamEvent>>();
+const configSnapshot = () => ({
+  version: 1 as const,
+  type: "snapshot" as const,
+  config: currentServerConfig(),
+});
 
 const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>) => () => void) =>
   Stream.unwrap(
@@ -347,6 +354,13 @@ const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>
       return Stream.fromQueue(queue);
     }),
   );
+
+// The connection outlives a test, so each install pushes its config like a server would.
+const subscribeServerConfig = () =>
+  subscribe<ServerConfigStreamEvent>([configSnapshot()], (queue) => {
+    serverConfigSubscribers.add(queue);
+    return () => serverConfigSubscribers.delete(queue);
+  });
 
 const handlers: Record<string, (input: never) => unknown> = {
   [WS_METHODS.subscribeTerminalMetadata]: () =>
@@ -395,11 +409,11 @@ const handlers: Record<string, (input: never) => unknown> = {
         if (vcsStatusSubscriber === queue) vcsStatusSubscriber = null;
       };
     }),
-  [WS_METHODS.subscribeServerConfig]: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
+  [WS_METHODS.subscribeServerConfig]: subscribeServerConfig,
+  // Accepted without events, so a command queued behind another on its thread still runs.
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: unknown) => {
     dispatched.push(command);
-    return Effect.never;
+    return Effect.succeed({ sequence });
   },
 };
 
@@ -416,8 +430,7 @@ const client = new Proxy(handlers, {
 const session: EnvironmentConnectionLease["session"] = {
   client: client as unknown as WsRpcProtocolClient,
   initialConfig: Effect.sync(currentServerConfig),
-  subscribeServerConfig: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
+  subscribeServerConfig,
   ready: Effect.void,
   probe: Effect.void,
   inboundFrames: Effect.succeed(0),
@@ -458,6 +471,7 @@ export function installFakeEnvironment(
   threads = fixtures;
   sideChats = options.sideChats ?? false;
   dispatched = [];
+  for (const queue of serverConfigSubscribers) Queue.offerUnsafe(queue, configSnapshot());
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);
@@ -491,7 +505,7 @@ export async function emitTerminalMetadata(event: TerminalMetadataStreamEvent): 
   await Effect.runPromise(Queue.offer(terminalMetadataSubscriber, event));
 }
 
-/** Orchestration commands the app has dispatched; none of them is answered. */
+/** Orchestration commands the app has dispatched. */
 export function dispatchedCommands(): ReadonlyArray<unknown> {
   return dispatched;
 }

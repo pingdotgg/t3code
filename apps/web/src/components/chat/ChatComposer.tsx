@@ -383,6 +383,7 @@ export interface ChatComposerProps {
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
   onUsageLimitsCommand?: (() => void) | undefined;
+  onOpenSideChat?: (() => void) | undefined;
   sideChatAvailable?: boolean;
   sideChatDisabledReason?: string | null;
   environmentUnavailable: {
@@ -1847,7 +1848,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   };
 
-  const { onUsageLimitsCommand } = props;
+  const { onOpenSideChat, onUsageLimitsCommand } = props;
   const onSelectComposerItem = (item: ComposerCommandItem) => {
     if (composerSelectLockRef.current) return;
     composerSelectLockRef.current = true;
@@ -1886,6 +1887,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       if (item.command === "side" || item.command === "btw") {
         if (props.sideChatDisabledReason) return;
+        const otherText =
+          snapshot.value.slice(0, trigger.rangeStart) + snapshot.value.slice(trigger.rangeEnd);
+        if (onOpenSideChat && otherText.trim() === "") {
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+            focusEditorAfterReplace: false,
+          });
+          if (applied) {
+            setComposerHighlightedItemId(null);
+            onOpenSideChat();
+          }
+          return;
+        }
         const applied = applyPromptReplacement(
           trigger.rangeStart,
           trigger.rangeEnd,
