@@ -164,14 +164,14 @@ const withInstructions = (
         "skill.list",
       ].includes(String(entry.frame.type)),
   );
-  const after = entries.findIndex(
+  const after = entries.findLastIndex(
     (entry, index) =>
       index < first &&
       entry.type === "emit_inbound" &&
       typeof entry.frame === "object" &&
       entry.frame !== null &&
       "operation" in entry.frame &&
-      entry.frame.operation === "mcp.add",
+      (entry.frame.operation === "mcp.add" || entry.frame.operation === "mcp.list"),
   );
   const at = after < 0 ? first : after + 1;
   return first < 0
@@ -2810,6 +2810,72 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         yield* runtime.startTurn(turnInput(thread));
         assert.equal((yield* Fiber.join(terminal))?.status, "completed");
       }
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("waits for OpenCode to connect T3 MCP before prompting", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+        threadId,
+        providerSessionId: "mcp:opencode2-adapter",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:3773/mcp",
+        authorizationHeader: "Bearer thread-credential",
+        browserToolsAvailable: false,
+      });
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+      const server = "t3-code-thread_opencode2-adapter";
+      const listed = (status: string) =>
+        reply("mcp.list", {
+          location: { directory: WORK },
+          data: [{ name: server, status: { status } }],
+        });
+      // OpenCode answers the add at once and connects in the background; a prompt sent while the
+      // server is pending gets its tools mid-turn, which restarts Claude-backed turns.
+      const { runtime, thread } = yield* resumed([
+        out("mcp.add", {
+          server,
+          "location[directory]": WORK,
+          config: {
+            type: "remote",
+            url: "http://127.0.0.1:3773/mcp",
+            headers: { Authorization: "Bearer thread-credential" },
+            oauth: false,
+          },
+        }),
+        reply("mcp.add", null),
+        out("mcp.list", { "location[directory]": WORK }),
+        listed("pending"),
+        {
+          type: "emit_inbound",
+          frame: {
+            type: "sdk.event",
+            event: {
+              id: "evt_mcpstatuschanged0000",
+              created: 1,
+              type: "mcp.status.changed",
+              location: { directory: WORK },
+              data: { server },
+            },
+          },
+        },
+        out("mcp.list", { "location[directory]": WORK }),
+        listed("connected"),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        out("mcp.remove", { server, "location[directory]": WORK }),
+        reply("mcp.remove", null),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const started = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.exit);
+      assert.isTrue(
+        Exit.isSuccess(started),
+        `the turn went ahead while OpenCode still reported ${server} pending`,
+      );
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
     }).pipe(Effect.scoped),
   );
 
