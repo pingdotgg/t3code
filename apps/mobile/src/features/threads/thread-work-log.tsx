@@ -1425,19 +1425,22 @@ export function ThreadWorkGroupToggle(props: {
 export function ThreadThinkingRow(props: {
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly iconSubtleColor: ColorValue;
+  /** Replaces "Thinking", such as while the provider is still starting. */
+  readonly label?: string | undefined;
 }) {
+  const label = props.label ?? "Thinking";
   return (
     <View
       accessible
-      accessibilityLabel="Thinking"
+      accessibilityLabel={label}
       className="-mx-1 min-h-8 flex-row items-center px-1.5 py-0"
       style={{ minHeight: props.rowSizing.estimatedRowHeight }}
     >
       <ShimmeringWorkContent
         key={props.rowSizing.textSizeKey}
-        icon="brain"
+        icon={props.label === undefined ? "brain" : "terminal"}
         iconSubtleColor={props.iconSubtleColor}
-        label="Thinking"
+        label={label}
         showIcon
       />
     </View>

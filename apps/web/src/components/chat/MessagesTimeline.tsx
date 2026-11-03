@@ -226,6 +226,8 @@ interface MessagesTimelineProps {
   isWorking: boolean;
   runlessWorkActive?: boolean;
   activeTurnStartedAt?: string | null;
+  /** Replaces "Thinking" while the active run's provider has not started a turn. */
+  providerStartingLabel?: string | null;
   worktreeSetup?: WorktreeSetupSnapshot | null;
   onCancelWorktreeSetup?: () => void;
   retryableWorkspacePreparationRunIds?: ReadonlySet<RunId>;
@@ -339,6 +341,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   isWorking,
   runlessWorkActive = false,
   activeTurnStartedAt = null,
+  providerStartingLabel = null,
   worktreeSetup = null,
   footer = null,
   onCancelWorktreeSetup,
@@ -1071,6 +1074,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     backgroundWorktreeSetup,
     awaitingUser: awaitingUser !== null,
     isPreparingWorktree,
+    providerStartingLabel,
     latestRunId: latestRun?.runId ?? null,
   };
   // Mounted in both the empty and filled timeline so a thread's first turn
