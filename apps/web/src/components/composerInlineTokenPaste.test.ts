@@ -7,7 +7,7 @@ import {
   formatComposerContextReference,
   threadContextRecord,
 } from "@t3tools/shared/composerContextReferences";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { importPastedComposerText } from "./composerInlineTokenPaste";
 
@@ -45,5 +45,15 @@ describe("importPastedComposerText", () => {
         importNothing,
       ),
     ).toBe("Read this: Source Thread Ready and continue.");
+  });
+
+  it("keeps a context reference whose record the draft already holds", () => {
+    expect(
+      importPastedComposerText(
+        clipboard({ "text/plain": pastedText }),
+        importNothing,
+        new Set([sourceThread.contextId]),
+      ),
+    ).toBe(pastedText);
   });
 });

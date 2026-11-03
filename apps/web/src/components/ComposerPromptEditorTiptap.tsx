@@ -977,6 +977,7 @@ function ComposerPromptEditorTiptapInner(
     onCommandKeyDown,
     isPathQueryActive,
     importContextFragment,
+    contextRecords,
   }));
 
   // Stable so a skills refresh does not rerun the controlled-value effect.
@@ -1368,10 +1369,11 @@ function ComposerPromptEditorTiptapInner(
             );
             return true;
           }
-          const importFragment = readCallbacks().importContextFragment;
+          const { importContextFragment: importFragment, contextRecords: heldRecords } =
+            readCallbacks();
           let text =
             !literalText && importFragment
-              ? importPastedComposerText(clipboardData, importFragment)
+              ? importPastedComposerText(clipboardData, importFragment, heldRecords)
               : pastedText;
           const tokens = literalText ? [] : collectComposerPromptInlineTokens(`${text}\n`);
           const isChip = (token: (typeof tokens)[number] | undefined) =>

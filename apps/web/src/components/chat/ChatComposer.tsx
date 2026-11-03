@@ -2420,7 +2420,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return false;
     }
     if (options?.clipboardData) {
-      text = importPastedComposerText(options.clipboardData, importContextFragment);
+      text = importPastedComposerText(
+        options.clipboardData,
+        importContextFragment,
+        composerContextRecords,
+      );
     }
     const prompt = promptRef.current;
     const cursor = position === "cursor" ? readComposerSnapshot().expandedCursor : prompt.length;
