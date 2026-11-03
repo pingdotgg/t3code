@@ -65,6 +65,8 @@ export interface SourceControlDriverInstance {
   readonly signIn?: SourceControlSignIn;
   /** Whether the server's account on `host` starred `repository` (`owner/name`). */
   readonly isRepositoryStarred?: (host: string, repository: string) => Effect.Effect<boolean>;
+  /** Stars `repository` as the server's account on `host`; false when the forge refused. */
+  readonly starRepository?: (host: string, repository: string) => Effect.Effect<boolean>;
 }
 
 /** What the server gives every driver. A driver builds anything else it needs itself. */
