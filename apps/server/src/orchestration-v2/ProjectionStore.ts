@@ -481,6 +481,16 @@ export interface ProjectionStoreV2Shape {
   readonly apply: (
     event: OrchestrationV2DomainEvent,
   ) => Effect.Effect<void, ProjectionStoreV2Error>;
+  readonly getPullRequestSnapshot: (options: {
+    readonly threadId?: ThreadId;
+    readonly unsettledOnly?: boolean;
+  }) => Effect.Effect<
+    {
+      readonly snapshotSequence: number;
+      readonly threads: ReadonlyArray<typeof PullRequestThread.Type>;
+    },
+    ProjectionStoreV2Error
+  >;
   readonly getShellSnapshot: (
     options?: ShellSnapshotOptions,
   ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, ProjectionStoreV2Error>;
@@ -1095,6 +1105,37 @@ const encodeContextHandoffPayload = Schema.encodeEffect(
 );
 const encodeContextTransferPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema),
+);
+
+const PullRequestThread = OrchestrationV2AppThreadJsonSchema.mapFields(
+  ({
+    id,
+    projectId,
+    lineage,
+    branch,
+    worktreePath,
+    archivedAt,
+    settledOverride,
+    settledAt,
+    linkedPullRequest,
+    branchPullRequest,
+    pullRequests,
+  }) => ({
+    id,
+    projectId,
+    lineage,
+    branch,
+    worktreePath,
+    archivedAt,
+    settledOverride,
+    settledAt,
+    linkedPullRequest,
+    branchPullRequest,
+    pullRequests,
+  }),
+);
+const decodePullRequestThread = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(PullRequestThread),
 );
 
 const decodeThreadPayload = Schema.decodeUnknownEffect(
@@ -6895,6 +6936,41 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map(decodeShellSnapshot),
       );
 
+    const getPullRequestSnapshot: ProjectionStoreV2Shape["getPullRequestSnapshot"] = Effect.fn(
+      "ProjectionStore.getPullRequestSnapshot",
+    )(function* ({ threadId, unsettledOnly = false }) {
+      const { rows, sequenceRows } = yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const rows = yield* sql<PayloadRow>`
+          SELECT t.payload_json FROM orchestration_v2_projection_threads t
+          WHERE t.deleted_at IS NULL${
+            threadId === undefined
+              ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NULL`
+              : sql` AND t.thread_id = ${threadId}`
+          }${
+            unsettledOnly
+              ? sql` AND json_extract(t.payload_json, '$.settledAt') IS NULL
+                AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'`
+              : sql``
+          }
+          ORDER BY t.updated_at ASC, t.thread_id ASC
+        `;
+          const sequenceRows = yield* sql<{ readonly snapshot_sequence: number | null }>`
+          SELECT MAX(sequence) AS snapshot_sequence FROM orchestration_events
+          WHERE application_event_version = 2 AND aggregate_kind = 'thread'
+        `;
+          return { rows, sequenceRows };
+        }),
+      );
+      // Decode after releasing the reader, keeping rows and sequence from the same transaction.
+      const threads = yield* Effect.forEach(rows, (row) =>
+        decodePullRequestThread(row.payload_json).pipe(
+          Effect.map((thread) => ({ ...thread, pullRequests: threadPullRequestsOf(thread) })),
+        ),
+      );
+      return { snapshotSequence: sequenceRows[0]?.snapshot_sequence ?? 0, threads };
+    }, Effect.mapError(shellSnapshotReadError));
+
     const getShellSnapshot: ProjectionStoreV2Shape["getShellSnapshot"] = (options) =>
       sql
         .withTransaction(readShellSnapshotRows(options))
@@ -7163,6 +7239,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     return {
       apply,
       getShellSnapshot: readOnReader(getShellSnapshot),
+      getPullRequestSnapshot: readOnReader(getPullRequestSnapshot),
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),
       countThreads: readOnReader(countThreads),
       listActiveShellIndex: readOnReader(listActiveShellIndex),
