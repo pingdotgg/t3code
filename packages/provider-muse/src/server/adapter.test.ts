@@ -1364,26 +1364,9 @@ describe("MuseAdapterV2", () => {
         ["completed"],
         "the run should end when Muse reports its foreground answer is done",
       );
-      yield* fake.emit("turn/completed", {
-        turnId: nativeId,
-        terminal: "completed",
-        usage: { inputTokens: 10, outputTokens: 5, cachedTokens: 2, reasoningTokens: 1 },
-      });
+      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
       yield* settle(2);
       assert.strictEqual(terminals().length, 1);
-      const finished = harness.allEvents.findLast(
-        (event) => event.type === "provider_turn.updated",
-      )!.providerTurn;
-      assert.strictEqual(finished.status, "completed");
-      assert.deepStrictEqual(finished.turnTokenUsage, {
-        usageScope: "main_agent",
-        usageStatus: "complete",
-        hasSubagents: false,
-        inputTokens: 10,
-        outputTokens: 5,
-        cachedInputTokens: 2,
-        reasoningTokens: 1,
-      });
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
@@ -1402,11 +1385,7 @@ describe("MuseAdapterV2", () => {
         })
         .pipe(Effect.forkScoped);
       while ((yield* fake.takeCall("turn/interrupt")).params.turnId !== second.nativeId);
-      yield* fake.emit("turn/completed", {
-        turnId: first.nativeId,
-        terminal: "cancelled",
-        usage: { inputTokens: 10, outputTokens: 5, cachedTokens: 2, reasoningTokens: 1 },
-      });
+      yield* fake.emit("turn/completed", { turnId: first.nativeId, terminal: "cancelled" });
       yield* fake.emit("session/contextUsage", { usedTokens: 1 });
       yield* harness.takeEvent(
         "provider_turn.updated",
@@ -1414,10 +1393,6 @@ describe("MuseAdapterV2", () => {
       );
       const terminals = () => harness.allEvents.filter((event) => event.type === "turn.terminal");
       assert.strictEqual(terminals().length, 1, "the held turn ending must not end the follow-up");
-      const heldTurn = harness.allEvents
-        .filter((event) => event.type === "provider_turn.updated")
-        .findLast((event) => event.providerTurn.id === first.providerTurn.id);
-      assert.strictEqual(heldTurn?.providerTurn.turnTokenUsage?.usageStatus, "complete");
       yield* fake.emit("turn/completed", { turnId: second.nativeId, terminal: "cancelled" });
       yield* Fiber.join(stopping);
       assert.deepStrictEqual(

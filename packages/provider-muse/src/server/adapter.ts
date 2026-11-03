@@ -61,7 +61,6 @@ import {
   museApprovalDecision,
   museApprovalOptions,
   type MuseItem,
-  type MuseUsage,
 } from "./protocol.ts";
 import { isMuseUsageLimitFailure, museUsageLimitResetAt } from "./usageLimits.ts";
 import {
@@ -253,16 +252,6 @@ const nativeRef = (nativeId: string) => ({
 /** The roster lists a child under its turn item's native id, so readers can pair the two. */
 const backgroundTaskId = (item: MuseItem) =>
   item.kind === "subagent" ? item.childSessionId || item.subagentId || item.itemId : item.itemId;
-const completeTurnUsage = (turn: ActiveTurn, usage: MuseUsage) => ({
-  usageScope: "main_agent" as const,
-  usageStatus: "complete" as const,
-  hasSubagents: [...turn.items.values()].some((item) => item.kind === "subagent"),
-  inputTokens: turn.providerTurn.turnTokenUsage?.inputTokens ?? usage.inputTokens,
-  outputTokens: usage.outputTokens,
-  cachedInputTokens: usage.cacheReadTokens ?? usage.cachedTokens,
-  reasoningTokens: usage.reasoningTokens,
-  ...(usage.cacheWriteTokens === undefined ? {} : { cacheCreationTokens: usage.cacheWriteTokens }),
-});
 const recordSchema = Schema.Record(Schema.String, Schema.Unknown);
 const INFORMATIONAL_NOTIFICATIONS = new Set([
   "session/contextUsage",
@@ -360,7 +349,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         | { readonly nativeId: string; readonly events: Array<[string, unknown]> }
         | undefined;
       // Ended at turn/foregroundCompleted; Muse holds its native turn until turn/completed.
-      let foregroundDone: ActiveTurn | undefined;
+      let foregroundDone: string | undefined;
       const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
         Queue.offer(events, event).pipe(Effect.asVoid);
       const decode = <A, I>(schema: Schema.Codec<A, I>, data: unknown) =>
@@ -1344,23 +1333,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           }
           return;
         }
-        const finished = foregroundDone;
-        if (finished && method === "turn/completed" && params.turnId === finished.nativeId) {
+        if (method === "turn/completed" && params.turnId === foregroundDone) {
           foregroundDone = undefined;
-          const { usage } = yield* decode(MuseTurnCompleted, params);
-          if (!usage) return;
-          const latest =
-            lastProviderTurn?.id === finished.providerTurn.id
-              ? lastProviderTurn
-              : finished.providerTurn;
-          const updated = { ...latest, turnTokenUsage: completeTurnUsage(finished, usage) };
-          if (lastProviderTurn === latest) lastProviderTurn = updated;
-          yield* emit({
-            type: "provider_turn.updated",
-            driver: MUSE_PROVIDER,
-            threadId: finished.input.threadId,
-            providerTurn: updated,
-          });
           return;
         }
         const itemEvent = ["item/started", "item/updated", "item/completed"].includes(method)
@@ -1482,7 +1456,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             const result = yield* decode(MuseTurnForegroundCompleted, params);
             if (result.turnId !== turn.nativeId) break;
             yield* finish(turn, "completed");
-            foregroundDone = turn;
+            foregroundDone = turn.nativeId;
             break;
           }
           case "turn/completed": {
@@ -1490,11 +1464,24 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             const result = yield* decode(MuseTurnCompleted, params);
             // A joined Muse turn ending does not end this run; its own turn does.
             if (result.turnId !== turn.nativeId) break;
-            if (result.usage)
+            if (result.usage) {
+              const usage = result.usage;
               turn.providerTurn = {
                 ...turn.providerTurn,
-                turnTokenUsage: completeTurnUsage(turn, result.usage),
+                turnTokenUsage: {
+                  usageScope: "main_agent",
+                  usageStatus: "complete",
+                  hasSubagents: [...turn.items.values()].some((item) => item.kind === "subagent"),
+                  inputTokens: turn.providerTurn.turnTokenUsage?.inputTokens ?? usage.inputTokens,
+                  outputTokens: usage.outputTokens,
+                  cachedInputTokens: usage.cacheReadTokens ?? usage.cachedTokens,
+                  reasoningTokens: usage.reasoningTokens,
+                  ...(usage.cacheWriteTokens === undefined
+                    ? {}
+                    : { cacheCreationTokens: usage.cacheWriteTokens }),
+                },
               };
+            }
             const status =
               result.terminal === "completed"
                 ? "completed"
@@ -2073,7 +2060,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           wake = undefined;
           if (continuation && !held) return yield* finish(turn, "completed");
           if (held && !continuation) turn.joined.add(held.nativeId);
-          if (foregroundDone && !compact) turn.joined.add(foregroundDone.nativeId);
+          if (foregroundDone && !compact) turn.joined.add(foregroundDone);
           for (const [method, data] of held?.events ?? [])
             yield* handleNotification(method, data).pipe(Effect.catch(failHost));
         }).pipe(eventPermit.withPermits(1));

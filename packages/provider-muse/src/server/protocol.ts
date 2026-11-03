@@ -11,7 +11,6 @@ const MuseUsage = Schema.Struct({
   cacheReadTokens: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   cacheWriteTokens: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
-export type MuseUsage = typeof MuseUsage.Type;
 
 export const MuseItem = Schema.Struct({
   entryId: Schema.optional(Schema.String),
