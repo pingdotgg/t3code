@@ -61,18 +61,20 @@ export function ClaudeCloudDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={<Button variant="ghost" size="sm" />}>Claude Cloud</DialogTrigger>
       <DialogPopup>
-        <DialogHeader>
-          <DialogTitle>Claude Cloud</DialogTitle>
-          <DialogDescription>
-            Start a new task or send a follow-up using the selected Claude account.
-          </DialogDescription>
-        </DialogHeader>
         <form
+          className="flex min-h-0 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             void submit();
           }}
         >
+          <DialogHeader>
+            <DialogTitle>Claude Cloud</DialogTitle>
+            <DialogDescription>
+              Start a new task or send a follow-up using the selected Claude account.
+            </DialogDescription>
+          </DialogHeader>
+
           <DialogPanel>
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
