@@ -7165,15 +7165,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // Under a policy ceiling, a mode the user picks applies only when the flavor can place
           // it under the ceiling; an unknown mode could be the agent's own skip-approval mode.
           const ceiling = runtimePolicy.maxRuntimeMode;
-          const isModeChoice = (id: string) =>
+          const isModeChoice = (id: string, options: typeof configOptions) =>
             id === ACP_SESSION_MODE_OPTION_ID ||
-            configOptions.some(
+            options.some(
               (option) =>
                 option.id === id &&
                 (option.category === "mode" || option.category === "collaboration_mode"),
             );
-          const withinCeiling = (selection: { readonly id: string; readonly value: unknown }) => {
-            if (ceiling === undefined || ceiling === "full-access" || !isModeChoice(selection.id)) {
+          const withinCeiling = (
+            selection: { readonly id: string; readonly value: unknown },
+            options = configOptions,
+          ) => {
+            if (
+              ceiling === undefined ||
+              ceiling === "full-access" ||
+              !isModeChoice(selection.id, options)
+            ) {
               return true;
             }
             const granted =
@@ -7227,7 +7234,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 deferredSelections.push(selection);
                 continue;
               }
-              if (selection.id === modelOptionId) continue;
+              if (selection.id === modelOptionId || !withinCeiling(selection, liveConfigOptions))
+                continue;
               // Secondary model choices fail on rejection rather than silently using another model.
               if (option?.category === "model" && option.type === "select") {
                 yield* runtime.setConfigOption(selection.id, selection.value);

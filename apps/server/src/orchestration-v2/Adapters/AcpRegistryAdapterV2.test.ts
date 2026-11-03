@@ -491,6 +491,7 @@ describe("AcpRegistryAdapterV2", () => {
       readonly customModels?: ReadonlyArray<string>;
       readonly storedModel?: string;
       readonly storedModePick?: string;
+      readonly maxRuntimeMode?: "approval-required";
       readonly storedOptions?: ReadonlyArray<ProviderOptionSelection>;
       readonly turnModels?: ReadonlyArray<string>;
       readonly rejectedModel?: string;
@@ -571,6 +572,7 @@ describe("AcpRegistryAdapterV2", () => {
       );
       const threadId = ThreadId.make("thread-acp-registry-stored-picks");
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        maxRuntimeMode: input.maxRuntimeMode,
         runtimeMode: "approval-required",
         interactionMode: "default",
         cwd: replayDir,
@@ -1006,6 +1008,17 @@ describe("AcpRegistryAdapterV2", () => {
             { value: "plan", name: "Plan" },
           ],
         };
+        const deferredMode = {
+          id: "deferred-mode",
+          name: "Mode",
+          category: "mode",
+          type: "select",
+          currentValue: "safe",
+          options: [
+            { value: "safe", name: "Safe" },
+            { value: "dangerous", name: "Dangerous" },
+          ],
+        };
         const catalog = acpRegistryProbeResult(ProviderInstanceId.make("acp-registry-mode-pick"), {
           sessionId: setup.sessionId,
           initializeResult: { protocolVersion: 1 },
@@ -1047,7 +1060,7 @@ describe("AcpRegistryAdapterV2", () => {
               value: "chosen-model",
             }),
             answer("session/set_config_option", {
-              configOptions: [...providerApplied, dependentOption],
+              configOptions: [...providerApplied, dependentOption, deferredMode],
             }),
             outbound("session/set_config_option", {
               sessionId: "agent-session",
@@ -1055,10 +1068,16 @@ describe("AcpRegistryAdapterV2", () => {
               value: "plan",
             }),
             answer("session/set_config_option", {
-              configOptions: [...providerApplied, { ...dependentOption, currentValue: "plan" }],
+              configOptions: [
+                ...providerApplied,
+                { ...dependentOption, currentValue: "plan" },
+                deferredMode,
+              ],
             }),
           ],
+          maxRuntimeMode: "approval-required",
           storedOptions: [
+            { id: "deferred-mode", value: "dangerous" },
             { id: "agent", value: "plan" },
             { id: "model", value: "chosen-model" },
           ],
