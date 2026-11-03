@@ -278,13 +278,34 @@ const penTransitions = new Map<string, string>();
 // Colon color sub-parameters carry an optional color-space id absent from the semicolon form.
 function csiParams(params: string): Array<number> {
   const numbers: Array<number> = [];
+  // After a semicolon-form 38/48/58 the next part is its mode, then that many
+  // colour values; tracking them keeps a value from being read as a code.
+  let pending: "code" | "mode" | number = "code";
   for (const part of params.split(";")) {
-    if (!part.includes(":")) {
-      numbers.push(Number(part));
-      continue;
-    }
     const sub = part.split(":").map(Number);
     const head = sub[0]!;
+    if (typeof pending === "number") {
+      numbers.push(head);
+      pending = pending > 1 ? pending - 1 : "code";
+      continue;
+    }
+    if (pending === "mode") {
+      pending = "code";
+      if (sub.length === 1) {
+        numbers.push(head);
+        if (head === 5 || head === 2) pending = head === 5 ? 1 : 3;
+        continue;
+      }
+      // xterm also takes the mode's fields after colons (`38;2:255:0:0`).
+      if (head === 2 && sub.length >= 5) sub.splice(1, 1);
+      numbers.push(...sub.slice(0, head === 5 ? 2 : head === 2 ? 4 : 1));
+      continue;
+    }
+    if (sub.length === 1) {
+      numbers.push(head);
+      if (head === 38 || head === 48 || head === 58) pending = "mode";
+      continue;
+    }
     if (head !== 38 && head !== 48 && head !== 58) {
       // Other sub-parameters pick a style variant (`4:3` curly underline); keep
       // only the head, except that `4:0` turns underline off.

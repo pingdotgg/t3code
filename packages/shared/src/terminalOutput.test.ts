@@ -108,6 +108,21 @@ describe("appendTerminalOutput edge cases from review", () => {
       "\u001b[38:5:1:4mX",
       { color: TERMINAL_PALETTES.dark[1] },
     ],
+    [
+      "a true colour with its fields after colons",
+      "\u001b[38;2:255:0:0;1mX",
+      { color: "rgb(255,0,0)", fontWeight: "600" },
+    ],
+    [
+      "an indexed colour with its index after a colon",
+      "\u001b[38;5:1;4mX",
+      { color: TERMINAL_PALETTES.dark[1], textDecorationLine: "underline" },
+    ],
+    [
+      "a semicolon-form colour value that looks like a colour code",
+      "\u001b[38;5;38;2:1:2:3mX",
+      { color: "rgb(0,175,215)", opacity: 0.65 },
+    ],
   ])("reads %s without disturbing the other attributes", (_, input, style) => {
     const text = normalizeTerminalOutput(input).text;
     expect(terminalOutputSpans(text, TERMINAL_PALETTES.dark)).toEqual([{ text: "X", style }]);
