@@ -800,9 +800,15 @@ const make = Effect.gen(function* () {
           return "recovery_required";
         }
         const hostname = normalizeHostname(allocation.hostname);
-        const rule = configuration.value.ingress.find(
-          (entry) => entry.hostname != null && normalizeHostname(entry.hostname) === hostname,
-        );
+        // Cloudflare routes by the first matching rule, so an earlier wildcard or catch-all wins.
+        const rule = configuration.value.ingress.find((entry) => {
+          if (entry.hostname == null) return true;
+          const candidate = normalizeHostname(entry.hostname);
+          return (
+            candidate === hostname ||
+            (candidate.startsWith("*.") && hostname.endsWith(candidate.slice(1)))
+          );
+        });
         if (rule?.service === originService) {
           return "ready";
         }

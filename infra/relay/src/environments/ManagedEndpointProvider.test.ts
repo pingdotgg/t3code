@@ -828,7 +828,7 @@ describe("ManagedEndpointProvider", () => {
       {} as Cloudflare.DNS.ReadWriteDnsClient,
       {} as Alchemy.BaseRuntimeContext,
     ).pipe(
-      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       Layer.provide(RelayConfiguration.layer(config)),
       Layer.provide(
         Layer.succeed(ManagedEndpointAllocations.ManagedEndpointAllocations, makeAllocations()),
@@ -1236,6 +1236,19 @@ describe("ManagedEndpointProvider", () => {
           { hostname: expectedManagedHostname("env_ABC"), service: "http://127.0.0.1:3773" },
           { service: "http_status:404" },
         ],
+      });
+
+      configuration.current = {
+        ingress: [
+          { hostname: "*.t3code.test", service: "http://127.0.0.1:4711" },
+          { hostname: expectedManagedHostname("env_ABC"), service: "http://127.0.0.1:3773" },
+          { service: "http_status:404" },
+        ],
+      };
+      expect(yield* reconcile).toBe("ready");
+      expect(configuration.current.ingress[0]).toEqual({
+        hostname: expectedManagedHostname("env_ABC"),
+        service: "http://127.0.0.1:3773",
       });
     }).pipe(Effect.provide(layer));
   });
