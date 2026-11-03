@@ -21,8 +21,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { cn } from "../../lib/cn";
 import { useQuietThreadStructure, useThreadVisibleTurnItems } from "../../state/use-thread-detail";
-import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
-import { useThreadSelection } from "../../state/use-thread-selection";
+import { useThreadCwd } from "../../state/use-selected-thread-worktree";
 
 export type ThreadActivityRouteParams = {
   readonly environmentId: string;
@@ -156,21 +155,22 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
   const navigation = useNavigation();
   const isAndroid = Platform.OS === "android";
   const params = props.route.params;
-  const { selectedThreadProject } = useThreadSelection();
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
   // The route's own thread, so a deep link shows the thread in its URL, not the selected one.
-  const visibleItems = useThreadVisibleTurnItems({
-    environmentId: EnvironmentId.make(params.environmentId),
-    threadId: ThreadId.make(params.threadId),
-  });
-  const structure = useQuietThreadStructure(
-    scopeThreadRef(EnvironmentId.make(params.environmentId), ThreadId.make(params.threadId)),
+  const threadRef = scopeThreadRef(
+    EnvironmentId.make(params.environmentId),
+    ThreadId.make(params.threadId),
   );
+  const visibleItems = useThreadVisibleTurnItems({
+    environmentId: threadRef.environmentId,
+    threadId: threadRef.threadId,
+  });
+  const structure = useQuietThreadStructure(threadRef);
+  const threadCwd = useThreadCwd(threadRef);
   const runActive =
     structure !== null && threadRuntimeIsActive(deriveThreadStructureRuntime(structure.projection));
   const summary = deriveActivitySummary(
     visibleItems.map((visible) => visible.item).filter(isActivityItem),
-    selectedThreadCwd ?? selectedThreadProject?.workspaceRoot ?? null,
+    threadCwd,
     runActive,
   );
 
