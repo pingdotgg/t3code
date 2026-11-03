@@ -1364,9 +1364,69 @@ describe("MuseAdapterV2", () => {
         ["completed"],
         "the run should end when Muse reports its foreground answer is done",
       );
-      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
+      yield* fake.emit("turn/completed", {
+        turnId: nativeId,
+        terminal: "completed",
+        usage: { inputTokens: 10, outputTokens: 5, cachedTokens: 2, reasoningTokens: 1 },
+      });
       yield* settle(2);
       assert.strictEqual(terminals().length, 1);
+      const finished = harness.allEvents.findLast(
+        (event) => event.type === "provider_turn.updated",
+      )!.providerTurn;
+      assert.strictEqual(finished.status, "completed");
+      assert.deepStrictEqual(finished.turnTokenUsage, {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        hasSubagents: false,
+        inputTokens: 10,
+        outputTokens: 5,
+        cachedInputTokens: 2,
+        reasoningTokens: 1,
+      });
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("stops the turn reminder checks still hold when a follow-up is interrupted", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const first = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/foregroundCompleted", { turnId: first.nativeId });
+      yield* harness.takeEvent("turn.terminal");
+      const second = yield* startConversation(harness, fake, 2);
+      const stopping = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: second.providerTurn.id,
+        })
+        .pipe(Effect.forkScoped);
+      while ((yield* fake.takeCall("turn/interrupt")).params.turnId !== second.nativeId);
+      yield* fake.emit("turn/completed", {
+        turnId: first.nativeId,
+        terminal: "cancelled",
+        usage: { inputTokens: 10, outputTokens: 5, cachedTokens: 2, reasoningTokens: 1 },
+      });
+      yield* fake.emit("session/contextUsage", { usedTokens: 1 });
+      yield* harness.takeEvent(
+        "provider_turn.updated",
+        (event) => event.providerTurn.tokenUsage?.usedTokens === 1,
+      );
+      const terminals = () => harness.allEvents.filter((event) => event.type === "turn.terminal");
+      assert.strictEqual(terminals().length, 1, "the held turn ending must not end the follow-up");
+      const heldTurn = harness.allEvents
+        .filter((event) => event.type === "provider_turn.updated")
+        .findLast((event) => event.providerTurn.id === first.providerTurn.id);
+      assert.strictEqual(heldTurn?.providerTurn.turnTokenUsage?.usageStatus, "complete");
+      yield* fake.emit("turn/completed", { turnId: second.nativeId, terminal: "cancelled" });
+      yield* Fiber.join(stopping);
+      assert.deepStrictEqual(
+        fake.calls
+          .filter((call) => call.method === "turn/interrupt")
+          .map((call) => call.params.turnId),
+        [first.nativeId, second.nativeId],
+      );
+      assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "interrupted");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
