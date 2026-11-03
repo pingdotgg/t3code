@@ -7065,7 +7065,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               if (state.running.size > 0 || state.saved.size > 0) return true;
             }
             for (const subagent of (yield* Ref.get(subagentThreads)).values()) {
-              if (subagent.task.status === "running") {
+              if (isOrchestrationV2WorkActive(subagent.task.status)) {
                 return true;
               }
             }
