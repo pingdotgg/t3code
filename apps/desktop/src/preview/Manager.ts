@@ -476,10 +476,10 @@ export const previewWindowOpenAction = (details: {
     : "navigate";
 };
 
-const isPreviewRefreshShortcut = (input: Electron.Input): boolean =>
+const isPreviewRefreshShortcut = (input: Electron.Input, platform: NodeJS.Platform): boolean =>
   input.type === "keyDown" &&
   input.key.toLowerCase() === "r" &&
-  (input.meta || input.control) &&
+  (platform === "darwin" ? input.meta && !input.control : input.control && !input.meta) &&
   !input.shift &&
   !input.alt;
 
@@ -1500,7 +1500,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }
         return;
       }
-      if (isPreviewRefreshShortcut(input)) {
+      if (isPreviewRefreshShortcut(input, hostPlatform)) {
         event.preventDefault();
         runFork(
           attempt({ operation: "shortcut.refresh", tabId, webContentsId: wc.id }, () =>

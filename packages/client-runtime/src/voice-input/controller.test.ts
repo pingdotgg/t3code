@@ -358,6 +358,21 @@ describe("VoiceInputController", () => {
     expect(unsupported.controller.currentState.error).toContain("not available");
     expect(unsupported.recorder.record).not.toHaveBeenCalled();
 
+    const reason = new VoiceTranscriptionError(
+      "unavailable",
+      "This device requires iOS 26 or later.",
+    );
+    const unavailable = createHarness({
+      getTranscriber: () => ({
+        prepare: async () => {
+          throw reason;
+        },
+      }),
+    });
+    await unavailable.controller.start();
+    expect(unavailable.controller.currentState.error).toBe(reason.message);
+    expect(unavailable.recorder.record).not.toHaveBeenCalled();
+
     const denied = createHarness({
       requestPermission: async () => ({ granted: false, canAskAgain: false }),
     });
