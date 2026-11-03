@@ -1604,6 +1604,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         models: [
           ...opencodeSlugs.map((slug) => model(slug, { isLegacy: slug === "oc/m03" })),
           model("oc-custom", { isCustom: true }),
+          model("oc-custom-hidden", { isCustom: true }),
         ],
       },
     ];
@@ -1631,7 +1632,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                     { provider: opencodeInstanceId, model: "oc/m10" },
                   ],
                   providerModelPreferences: {
-                    [opencodeInstanceId]: { hiddenModels: ["oc/m02"], modelOrder: ["oc/m12"] },
+                    [opencodeInstanceId]: {
+                      hiddenModels: ["oc/m02", "oc-custom-hidden"],
+                      modelOrder: ["oc/m12"],
+                    },
                   },
                 }),
                 providerRegistryLayer(catalog),
@@ -1799,9 +1803,54 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
-  it.effect("driver-only delegation skips an instance the project turned off", () =>
+  it.effect.each([
+    {
+      name: "driver-only delegation skips instances the project turned off or fully hid",
+      accepted: false,
+      target: { driverKind: ProviderDriverKind.make("codex") },
+      altHiddenModels: ["hidden-custom"],
+      expectedModel: "gpt-5.4",
+    },
+    {
+      name: "an accepted delegation replay skips hidden models like the original request",
+      accepted: true,
+      target: { providerInstanceId: ProviderInstanceId.make("codex-alt") },
+      altHiddenModels: ["hidden-custom"],
+      expectedModel: "gpt-5.4",
+    },
+    {
+      name: "an accepted delegation replay still reaches its receipt after every model is hidden",
+      accepted: true,
+      target: { providerInstanceId: ProviderInstanceId.make("codex-alt") },
+      altHiddenModels: ["hidden-custom", "gpt-5.4"],
+      expectedModel: "hidden-custom",
+    },
+    {
+      name: "an accepted delegation replay keeps options only the now-hidden model accepted",
+      accepted: true,
+      target: {
+        providerInstanceId: ProviderInstanceId.make("codex-alt"),
+        options: [{ id: "effort", value: "high" }],
+      },
+      altHiddenModels: ["hidden-custom"],
+      expectedModel: "gpt-5.4",
+    },
+    {
+      name: "driver-only delegation reports hidden models when every enabled instance hides them all",
+      accepted: false,
+      target: { driverKind: ProviderDriverKind.make("codex") },
+      altHiddenModels: ["hidden-custom", "gpt-5.4"],
+      expectedModel: null,
+    },
+  ])("$name", ({ accepted, target, altHiddenModels, expectedModel }) =>
     Effect.gen(function* () {
       const altInstanceId = ProviderInstanceId.make("codex-alt");
+      const allHiddenInstanceId = ProviderInstanceId.make("codex-all-hidden");
+      const alternateProvider = providerSnapshot({
+        instanceId: altInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        model: "gpt-5.4",
+      });
       const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
       const task = {
         id: taskId,
@@ -1828,7 +1877,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          hasReceipt: () => Effect.succeed(false),
+          hasReceipt: () => Effect.succeed(accepted),
           getThreadRecords: (threadId) =>
             Effect.succeed(
               threadId === parentThreadId
@@ -1872,27 +1921,60 @@ describe("OrchestratorMcpService provider resolution", () => {
             model: "gpt-5.4",
           }),
           providerSnapshot({
-            instanceId: altInstanceId,
+            instanceId: allHiddenInstanceId,
             driver: ProviderDriverKind.make("codex"),
             model: "gpt-5.4",
           }),
+          {
+            ...alternateProvider,
+            models: [
+              {
+                ...alternateProvider.models[0]!,
+                slug: "hidden-custom",
+                name: "Hidden custom",
+                isCustom: true,
+                capabilities: {
+                  optionDescriptors: [
+                    {
+                      id: "effort",
+                      label: "Reasoning",
+                      type: "select",
+                      options: [{ id: "high", label: "High" }],
+                    },
+                  ],
+                },
+              },
+              { ...alternateProvider.models[0]!, capabilities: { optionDescriptors: [] } },
+            ],
+          },
         ]),
-        adapterRegistryLayer([codexInstanceId, altInstanceId]),
+        adapterRegistryLayer([codexInstanceId, allHiddenInstanceId, altInstanceId]),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({
+          providerModelPreferences: {
+            [altInstanceId]: { hiddenModels: altHiddenModels, modelOrder: [] },
+            [allHiddenInstanceId]: { hiddenModels: ["gpt-5.4"], modelOrder: [] },
+          },
+        }),
       );
 
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const result = yield* service.delegateTask(scope, {
+        const delegation = service.delegateTask(scope, {
           task: "Summarize the diff.",
-          target: { driverKind: ProviderDriverKind.make("codex") },
+          target,
           mode: "async",
           clientRequestId: "delegate-driver-skip-disabled-1",
         });
+        if (expectedModel === null) {
+          const error = yield* Effect.flip(delegation);
+          assert.equal(error.code, "model_unavailable");
+          return;
+        }
+        const result = yield* delegation;
         assert.equal(result.status, "running");
         const commands = yield* Ref.get(dispatched);
         assert.equal(commands.length, 1);
@@ -1900,6 +1982,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           modelSelection: { instanceId: string; model: string };
         };
         assert.equal(request.modelSelection.instanceId, altInstanceId);
+        assert.equal(request.modelSelection.model, expectedModel);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );
