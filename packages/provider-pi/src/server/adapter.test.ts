@@ -165,7 +165,7 @@ interface FakePi {
   readonly deferNextState: () => void;
   readonly resolveDeferredState: (data: unknown) => Effect.Effect<void>;
   readonly failNextState: () => void;
-  readonly deferNextLifecycle: (type: "switch_session" | "new_session" | "fork") => void;
+  readonly deferNextLifecycle: (type: "switch_session" | "new_session" | "fork" | "abort") => void;
   readonly deferNextModelSelection: () => void;
   readonly queueModels: (models: ReadonlyArray<unknown>) => void;
   readonly vetoNextNewSession: () => void;
@@ -4285,56 +4285,94 @@ describe("PiAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("restarts Pi when Stop interrupts a prompt held for detached compaction", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakePi;
-      const { runtime, takeEvent } = yield* openRuntime(fake);
-      const providerThread = yield* runtime.ensureThread({
-        threadId: THREAD_ID,
-        modelSelection: modelSelection("default"),
-        runtimePolicy,
-      });
-      yield* startTurn(runtime, providerThread);
-      yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "agent_start" });
-      yield* fake.emit({ type: "agent_settled" });
-      yield* fake.takeRequest("get_state");
-      yield* takeEvent((event) => event.type === "turn.terminal");
+  it.effect.each([{ restart: false }, { restart: true }])(
+    "restarts Pi when Stop interrupts a prompt held for detached compaction, restart=$restart",
+    ({ restart }) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({ type: "agent_settled" });
+        yield* fake.takeRequest("get_state");
+        yield* takeEvent((event) => event.type === "turn.terminal");
 
-      fake.setCompacting(true);
-      yield* fake.emit({ type: "compaction_start", reason: "manual" });
-      yield* startTurn(runtime, providerThread, "default", [], "Held prompt", undefined, 2);
-      const running = yield* takeEvent(
-        (event) =>
-          event.type === "provider_turn.updated" &&
-          event.providerTurn.status === "running" &&
-          event.providerTurn.ordinal === 2,
-      );
-      const providerTurnId =
-        running.type === "provider_turn.updated" ? running.providerTurn.id : undefined;
-      assert.isDefined(providerTurnId);
+        fake.setCompacting(true);
+        yield* fake.emit({ type: "compaction_start", reason: "manual" });
+        // The dialog proves the pump observed compaction_start before the prompt.
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id: "held-prompt-dialog",
+          method: "confirm",
+          title: "Continue?",
+        });
+        yield* takeEvent((event) => event.type === "runtime_request.updated");
+        yield* startTurn(runtime, providerThread, "default", [], "Held prompt", undefined, 2);
+        assert.isFalse(
+          fake
+            .allRequests()
+            .some(
+              (request) => request["type"] === "prompt" && request["message"] === "Held prompt",
+            ),
+        );
+        const running = yield* takeEvent(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.status === "running" &&
+            event.providerTurn.ordinal === 2,
+        );
+        const providerTurnId =
+          running.type === "provider_turn.updated" ? running.providerTurn.id : undefined;
+        assert.isDefined(providerTurnId);
 
-      // A dialog the new turn owns proves the pump has observed compaction.
-      yield* fake.emit({
-        type: "extension_ui_request",
-        id: "held-prompt-dialog",
-        method: "confirm",
-        title: "Continue?",
-      });
-      yield* takeEvent((event) => event.type === "runtime_request.updated");
-      const interruptedAt = fake.allRequests().length;
-      yield* runtime.interruptTurn({ providerThread, providerTurnId: providerTurnId! });
-      assert.isFalse(fake.allRequests().some((request) => request["type"] === "abort"));
-      yield* fake.closeStdout;
-      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
-      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "interrupted");
-      assert.isFalse(
-        fake
-          .allRequests()
-          .slice(interruptedAt)
-          .some((request) => request["type"] === "prompt"),
-      );
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+        const interruptedAt = fake.allRequests().length;
+        if (restart) {
+          fake.deferNextLifecycle("abort");
+          const stop = yield* Effect.forkChild(
+            runtime.interruptTurn({
+              providerThread,
+              providerTurnId: providerTurnId!,
+              requestRuntimeRestart: true,
+            }),
+          );
+          const abort = yield* fake.takeRequest("abort");
+          // The abort ends compaction before Pi exits; the stopped turn's prompt stays held.
+          fake.setCompacting(false);
+          yield* fake.emit({
+            type: "compaction_end",
+            reason: "manual",
+            result: null,
+            aborted: true,
+          });
+          yield* fake.emit({
+            type: "extension_ui_request",
+            id: "after-compaction-dialog",
+            method: "confirm",
+            title: "Continue?",
+          });
+          yield* takeEvent((event) => event.type === "runtime_request.updated");
+          yield* fake.emit({ type: "response", id: abort["id"], command: "abort", success: true });
+          yield* Fiber.join(stop);
+        } else {
+          yield* runtime.interruptTurn({ providerThread, providerTurnId: providerTurnId! });
+          assert.isFalse(fake.allRequests().some((request) => request["type"] === "abort"));
+        }
+        yield* fake.closeStdout;
+        const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+        assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "interrupted");
+        assert.isFalse(
+          fake
+            .allRequests()
+            .slice(interruptedAt)
+            .some((request) => request["type"] === "prompt"),
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("delivers a steer sent during in-turn compaction once it ends", () =>

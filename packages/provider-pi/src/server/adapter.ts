@@ -2181,10 +2181,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               if (event["type"] === "compaction_end") {
                 nativeCompacting = false;
                 // Send before the handler can probe settlement, so Pi sees the
-                // prompt first. Prompts whose turn already ended are dropped.
+                // prompt first. Prompts whose turn ended or is stopping are dropped.
                 rejectedHeldCount = 0;
                 for (const held of heldPrompts.splice(0)) {
-                  if (threadState?.activeTurn?.providerTurn.id !== held.providerTurnId) continue;
+                  const turn = threadState?.activeTurn;
+                  if (
+                    turn?.providerTurn.id !== held.providerTurnId ||
+                    turn.interrupted ||
+                    stopRequested
+                  )
+                    continue;
                   yield* sendPrompt(held);
                   releasedPromptTurnId = held.providerTurnId;
                 }
