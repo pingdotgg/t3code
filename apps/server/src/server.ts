@@ -372,7 +372,11 @@ const layerHttpServer = Layer.unwrap(
       },
     );
   }),
-).pipe(Layer.provide(ManagedPolicy.layer));
+).pipe(
+  Layer.provide(ManagedPolicy.layer),
+  // NodeHttpServer.layer also outputs NodeServices; keep its native spawner out of the server.
+  (layer) => NonBlockingSpawner.layer.pipe(Layer.provideMerge(layer)),
+);
 
 const layerPlatformServices = DocumentText.layer.pipe(
   Layer.provideMerge(NonBlockingSpawner.layer),
@@ -1199,6 +1203,7 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(layerPlatformServices),
     );
   }),
-).pipe(Layer.provide(ProcessRunner.layer));
+  // ProcessRunner.layer is memoized, so this first build is the one every provide reuses.
+).pipe(Layer.provide(ProcessRunner.layer.pipe(Layer.provide(NonBlockingSpawner.layer))));
 
 export const runServer = Layer.launch(layerMakeServer);
