@@ -47,6 +47,7 @@ import {
   probeRemoteEditors,
   revealWindow,
   pickFolder,
+  toLocalBackendPath,
   pickProjectFavicon,
   pickThemeFiles,
   setTheme,
@@ -137,6 +138,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(setWslOnly);
 
   yield* ipc.handle(pickFolder);
+  yield* ipc.handle(toLocalBackendPath);
   yield* ipc.handle(pickProjectFavicon);
   yield* ipc.handle(pickThemeFiles);
   yield* ipc.handle(setTheme);

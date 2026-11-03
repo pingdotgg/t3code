@@ -43,13 +43,14 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
+import { type FolderDropTarget, folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
@@ -2517,23 +2518,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const insertComposerTextAtEndStable = useStableCallback(insertComposerTextAtEnd);
 
-  const addComposerFolders = (folders: File[]) => {
-    const target = folderDropTarget({
-      localEnvironmentDisabled: isLocalEnvironmentDisabled(),
-      environmentId,
-      primaryEnvironmentId,
-      connection: readPreparedConnection(environmentId),
-      isDesktopRenderer: window.desktopBridge !== undefined,
-    });
-    if (target === "remote") {
-      toastManager.add({
-        type: "error",
-        title: "Folders can only be referenced on a server running on this computer",
-      });
-      return;
-    }
+  const insertComposerFolders = async (folders: File[], target: FolderDropTarget) => {
+    const bridge = window.desktopBridge;
     for (const folder of folders) {
-      const path = resolveDroppedFolderPath(folder, window.desktopBridge?.getPathForFile);
+      const droppedPath = resolveDroppedFolderPath(folder, bridge?.getPathForFile);
+      const path =
+        droppedPath === null || typeof target === "string"
+          ? droppedPath
+          : ((await bridge
+              ?.toLocalBackendPath(target.wslBackendId, droppedPath)
+              .catch(() => null)) ?? null);
       if (path === null) {
         toastManager.add({
           type: "error",
@@ -2555,6 +2549,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     }
     focusComposer();
+  };
+
+  const addComposerFolders = (folders: File[]) => {
+    const target = folderDropTarget({
+      localEnvironmentDisabled: isLocalEnvironmentDisabled(),
+      environmentId,
+      primaryEnvironmentId,
+      connection: readPreparedConnection(environmentId),
+      isDesktopRenderer: window.desktopBridge !== undefined,
+      primaryRunsInWsl:
+        window.desktopBridge
+          ?.getLocalEnvironmentBootstraps()
+          .some(
+            (bootstrap) =>
+              bootstrap.id === PRIMARY_LOCAL_ENVIRONMENT_ID && bootstrap.runningDistro !== null,
+          ) === true,
+    });
+    if (target === "remote") {
+      toastManager.add({
+        type: "error",
+        title: "Folders can only be referenced on a server running on this computer",
+      });
+      return;
+    }
+    void insertComposerFolders(folders, target);
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
 
