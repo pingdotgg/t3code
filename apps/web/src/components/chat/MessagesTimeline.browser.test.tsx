@@ -427,6 +427,25 @@ describe("MessagesTimeline work rows", () => {
     expect(mountedSources()).toBeLessThan(60);
     const barElement = bar.element();
     const barTop = barElement.getBoundingClientRect().top;
+    const viewport = history.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+    expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+    expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThanOrEqual(
+      2,
+    );
+    await act(() => {
+      viewport.scrollTop = 0;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    await expect.element(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
+    await expect.element(bar).toHaveAttribute("aria-expanded", "false");
+    expect(viewport.scrollTop).toBeGreaterThan(0);
+    expect(mountedSources()).toBeLessThan(70);
+    expect(barElement.getBoundingClientRect().top).toBe(barTop);
+    await screen.getByRole("button", { name: "Jump to latest" }).click();
+    await expect.element(screen.getByText("Live answer", { exact: true })).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Jump to latest" }))
+      .not.toBeInTheDocument();
     const barTops = new Set<number>();
     const resizes = new ResizeObserver(() => barTops.add(barElement.getBoundingClientRect().top));
     resizes.observe(history);
