@@ -58,9 +58,14 @@ function rowTitle(subagent: Pick<OrchestrationV2Subagent, "title" | "prompt">): 
   if (title) return formatSubagentDisplayTitle(title);
   const prompt = subagent.prompt.trim();
   if (prompt.length === 0) return "Subagent";
-  return prompt.length > PROMPT_TITLE_LIMIT
-    ? `${prompt.slice(0, PROMPT_TITLE_LIMIT - 3)}...`
-    : prompt;
+  if (prompt.length <= PROMPT_TITLE_LIMIT) return prompt;
+  let end = PROMPT_TITLE_LIMIT - 3;
+  const previous = prompt.charCodeAt(end - 1);
+  const next = prompt.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${prompt.slice(0, end)}...`;
 }
 
 function rowTone(status: OrchestrationV2Subagent["status"]): SubagentRowTone {
