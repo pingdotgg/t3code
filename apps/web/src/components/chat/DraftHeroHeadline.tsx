@@ -435,7 +435,7 @@ export function DraftProjectRow(props: {
           {props.action}
         </div>
       ) : null}
-      {props.badge}
+      <span className="flex shrink-0 pe-2.5 empty:hidden">{props.badge}</span>
     </div>
   );
 }
