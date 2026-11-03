@@ -65,6 +65,11 @@ function notes(count: number, firstId: number): string {
 }
 
 const author = { id: 1, username: "bilal" };
+const labelPermission = output(
+  JSON.stringify({
+    data: { project: { mergeRequest: { userPermissions: { adminMergeRequest: false } } } },
+  }),
+);
 const reviewer = { id: 5, username: "octocat" };
 
 function mergeRequestJson(overrides: Record<string, unknown>): string {
@@ -1033,6 +1038,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
             ),
           ),
         )
+        .mockReturnValueOnce(Effect.succeed(labelPermission))
         .mockReturnValueOnce(
           Effect.succeed(
             output(
@@ -1062,7 +1068,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         ["Pipeline", "success", "https://gitlab.com/bilal/web/-/pipelines/31"],
         ["deploy", "failure", "https://gitlab.com/bilal/web/-/pipelines/32"],
       ]);
-      expect(argsOfCall(1)[1]).toBe("projects/12/pipelines/31/bridges?per_page=100");
+      expect(argsOfCall(2)[1]).toBe("projects/12/pipelines/31/bridges?per_page=100");
     }),
   );
 
@@ -1074,6 +1080,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
       const failedChild = { name: "deploy", downstream_pipeline: { status: "failed" } };
       mockedExecute
         .mockReturnValueOnce(Effect.succeed(detailOutput))
+        .mockReturnValueOnce(Effect.succeed(labelPermission))
         .mockReturnValueOnce(
           Effect.fail(
             new GitLabCli.GitLabCliCommandError({
@@ -1085,6 +1092,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
           ),
         )
         .mockReturnValueOnce(Effect.succeed(detailOutput))
+        .mockReturnValueOnce(Effect.succeed(labelPermission))
         // A full page may have left out the trigger job whose pipeline failed.
         .mockReturnValueOnce(
           Effect.succeed(output(JSON.stringify(Array.from({ length: 100 }, () => failedChild)))),
@@ -1105,15 +1113,23 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads merge permissions without reading the trigger jobs", () =>
+  it.effect("reads merge and label permissions without reading the trigger jobs", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
+      mockedExecute.mockImplementation(({ args }) =>
         Effect.succeed(
           output(
-            mergeRequestJson({
-              head_pipeline: { id: 31, project_id: 12, status: "success" },
-              user: { can_merge: false },
-            }),
+            args[1] === "graphql"
+              ? JSON.stringify({
+                  data: {
+                    project: {
+                      mergeRequest: { userPermissions: { adminMergeRequest: true } },
+                    },
+                  },
+                })
+              : mergeRequestJson({
+                  head_pipeline: { id: 31, project_id: 12, status: "success" },
+                  user: { can_merge: false },
+                }),
           ),
         ),
       );
@@ -1127,7 +1143,108 @@ layer("GitLabPullRequestCli.layer", (it) => {
       });
 
       expect(detail.viewerCanMerge).toBe(false);
+      expect(detail.viewerCanEditLabels).toBe(true);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+    }),
+  );
+
+  it.effect("offers the project's and its groups' labels, marking those already applied", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation(({ args }) =>
+        Effect.succeed(
+          output(
+            args[1]?.includes("/labels?")
+              ? JSON.stringify([
+                  { name: "bug", color: "#d9534f", description: "Something is broken" },
+                  { name: "docs", color: null, description: null },
+                ])
+              : mergeRequestJson({ labels: ["bug"] }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const list = yield* cli.listLabelCandidates({ cwd: "/w", repository: "acme/web", number: 7 });
+
+      expect(
+        mockedExecute.mock.calls
+          .map(([call]) => call.args[1])
+          .find((path) => path?.includes("/labels?")),
+      ).toBe("projects/acme%2Fweb/labels?per_page=100&include_ancestor_groups=true");
+      expect(list).toEqual({
+        candidates: [
+          { name: "bug", color: "#d9534f", description: "Something is broken", isApplied: true },
+          { name: "docs", color: null, description: null, isApplied: false },
+        ],
+        truncated: false,
+      });
+    }),
+  );
+
+  it.effect("adds labels the project has in one write", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation(({ args }) =>
+        Effect.succeed(
+          output(
+            args.includes("PUT")
+              ? "{}"
+              : JSON.stringify([
+                  { name: "bug", color: null },
+                  { name: "docs", color: null },
+                  { name: "docs-site", color: null },
+                ]),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.setLabels({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        labels: ["bug", "docs"],
+        applied: true,
+      });
+
+      const write = mockedExecute.mock.calls.find(([call]) => call.args.includes("PUT"))?.[0];
+      assert.isDefined(write);
+      expect(write.args[1]).toBe("projects/acme%2Fweb/merge_requests/7");
+      expect(JSON.parse(write.stdin ?? "")).toEqual({ add_labels: "bug,docs" });
+    }),
+  );
+
+  it.effect("refuses to add a label the project lacks, since GitLab would create it", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation(() =>
+        Effect.succeed(output(JSON.stringify([{ name: "bugfix", color: null }]))),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const result = yield* cli
+        .setLabels({ cwd: "/w", repository: "acme/web", number: 7, labels: ["bug"], applied: true })
+        .pipe(Effect.flip);
+
+      expect(result).toMatchObject({ _tag: "GitLabUnknownLabelError", labels: ["bug"] });
+      expect(argsOfCall(0)[1]).toContain("search=bug");
+      expect(mockedExecute.mock.calls.some(([call]) => call.args.includes("PUT"))).toBe(false);
+    }),
+  );
+
+  it.effect("removes labels without looking them up", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.setLabels({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        labels: ["bug"],
+        applied: false,
+      });
+
       expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({ remove_labels: "bug" });
     }),
   );
 
