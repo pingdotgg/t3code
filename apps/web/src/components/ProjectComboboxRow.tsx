@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { MouseEvent, PointerEvent, ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { CheckboxMark } from "./ui/checkbox";
@@ -20,6 +20,18 @@ export function ProjectRowLeading(props: {
     | undefined;
 }) {
   const { selection } = props;
+  // The badge covers part of the checkbox, so it toggles too instead of picking the row.
+  const toggleHandlers = selection
+    ? {
+        onPointerDown: (event: PointerEvent) => event.stopPropagation(),
+        onMouseDown: (event: MouseEvent) => event.preventDefault(),
+        onClick: (event: MouseEvent) => {
+          event.preventDefault();
+          event.stopPropagation();
+          selection.onToggle();
+        },
+      }
+    : {};
   return (
     <span className="relative order-first mr-1 grid shrink-0">
       <span
@@ -43,19 +55,18 @@ export function ProjectRowLeading(props: {
             !selection.checked &&
               "invisible pointer-coarse:visible pointer-fine:in-data-highlighted:visible",
           )}
-          onPointerDown={(event) => event.stopPropagation()}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            selection.onToggle();
-          }}
+          {...toggleHandlers}
         >
           <CheckboxMark checked={selection.checked} />
         </button>
       ) : null}
       {props.machine ? (
-        <span className="absolute -right-1.5 -bottom-1 z-10 flex">{props.machine}</span>
+        <span
+          className={cn("absolute -right-1.5 -bottom-1 z-10 flex", selection && "cursor-pointer")}
+          {...toggleHandlers}
+        >
+          {props.machine}
+        </span>
       ) : null}
     </span>
   );
