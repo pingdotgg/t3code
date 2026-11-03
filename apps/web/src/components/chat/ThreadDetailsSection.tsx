@@ -1,4 +1,4 @@
-import { type ComponentProps, type ReactNode, type Ref, useId } from "react";
+import { type ComponentProps, type ReactNode, type Ref, useId, useState } from "react";
 import * as Schema from "effect/Schema";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { cn } from "../../lib/utils";
@@ -14,14 +14,18 @@ export function ThreadDetailsSection({
   contentRef,
   summary,
   action,
+  empty = false,
   variant = "card",
+  spacing = "default",
   ...props
 }: Omit<ComponentProps<"section">, "className" | "style" | "title" | "aria-labelledby"> & {
   title: string;
   contentRef?: Ref<HTMLDivElement>;
   summary?: ReactNode;
   action?: ReactNode;
+  empty?: boolean;
   variant?: "card" | "workspace" | "usage";
+  spacing?: "default" | "relaxed";
 }) {
   const contentId = useId();
   const [collapsed, setCollapsed] = useLocalStorage(
@@ -29,6 +33,14 @@ export function ThreadDetailsSection({
     false,
     Schema.Boolean,
   );
+  // Empty cards start closed. A content transition overrides a saved collapse,
+  // while a click still remembers the user's preference for populated cards.
+  const [disclosure, setDisclosure] = useState<{ empty: boolean; collapsed: boolean | null }>({
+    empty,
+    collapsed: empty ? true : null,
+  });
+  if (disclosure.empty !== empty) setDisclosure({ empty, collapsed: empty });
+  const isCollapsed = disclosure.collapsed ?? collapsed;
   const [order, setOrder] = useLocalStorage(
     "thread-details:card-order",
     DEFAULT_ORDER,
@@ -66,7 +78,10 @@ export function ThreadDetailsSection({
     >
       {card ? (
         <div
-          className={cn("flex items-center gap-1 pb-1 ps-3 pe-1", action ? "h-7.5" : "h-6.5")}
+          className={cn(
+            "flex items-center gap-1 ps-3 pe-1",
+            isCollapsed ? "h-7" : spacing === "relaxed" ? "h-7.5 pb-1" : "h-6.5 pb-1",
+          )}
           draggable
           onDragStart={(event) => {
             event.dataTransfer.setData("application/x-t3-details-card", title);
@@ -75,13 +90,16 @@ export function ThreadDetailsSection({
         >
           <ThreadDetailsControl
             part="heading"
-            aria-expanded={!collapsed}
+            aria-expanded={!isCollapsed}
             aria-controls={contentId}
-            onClick={() => setCollapsed(!collapsed)}
+            onClick={() => {
+              setCollapsed(!isCollapsed);
+              setDisclosure({ empty, collapsed: empty ? !isCollapsed : null });
+            }}
           >
             <span>{title}</span>
             {summary ? (
-              <span className="ms-auto truncate text-caption text-dim-foreground">{summary}</span>
+              <span className="ms-auto truncate text-caption text-muted-foreground">{summary}</span>
             ) : null}
           </ThreadDetailsControl>
           {action}
@@ -90,11 +108,11 @@ export function ThreadDetailsSection({
       <div
         id={contentId}
         ref={contentRef}
-        hidden={card && collapsed}
+        hidden={card && isCollapsed}
         className={cn(
           "flex flex-col",
           card && "surface-composer rounded-lg p-0.5",
-          card && collapsed && "hidden",
+          card && isCollapsed && "hidden",
         )}
       >
         {children}
