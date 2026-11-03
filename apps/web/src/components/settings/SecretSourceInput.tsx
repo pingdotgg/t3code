@@ -166,7 +166,7 @@ export function SecretSourceInput({
               definition?.isReference(decoded.value.reference) === false
             ) {
               setRejectedReference(next);
-              setPendingProvider(provider);
+              if (onReferenceReject !== undefined) setPendingProvider(provider);
               onReferenceReject?.();
               return;
             }

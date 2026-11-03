@@ -60,6 +60,8 @@ describe("SecretSourceInput", () => {
       />,
     );
 
+    await commitReference(screen, "invalid-reference");
+    await expect.element(reference(screen)).toHaveAttribute("aria-invalid", "true");
     await userEvent.clear(reference(screen));
     await userEvent.keyboard("{Enter}");
     expect(onSecretChange).toHaveBeenCalledExactlyOnceWith(undefined);
