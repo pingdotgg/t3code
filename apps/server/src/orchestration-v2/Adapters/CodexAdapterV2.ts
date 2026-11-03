@@ -1163,6 +1163,7 @@ interface ActiveCodexTurnContext {
   latestProviderFailure?: {
     readonly nativeMessage: string;
     readonly nativeCode: string | null;
+    readonly nativeExplained?: boolean;
     readonly failure: OrchestrationV2ProviderFailure;
   };
   readonly nativeStartReady?: Deferred.Deferred<void>;
@@ -1193,6 +1194,7 @@ interface ActiveCodexProviderRetry {
   readonly context?: ActiveCodexTurnContext;
   readonly nativeMessage: string;
   readonly nativeCode: string | null;
+  readonly nativeExplained?: boolean;
   readonly retry: OrchestrationV2ProviderRetry;
   readonly failure: OrchestrationV2ProviderFailure;
   readonly startedAt: DateTime.Utc;
@@ -4676,6 +4678,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
             const notificationCode = codexErrorInfoCode(payload.error.codexErrorInfo);
+            const nativeExplained = Boolean(
+              payload.error.misalignment?.detailedExplanation?.trim(),
+            );
             const failureMessage = withCodexMisalignmentExplanation(
               payload.error.additionalDetails?.trim() || payload.error.message,
               payload.error.misalignment?.detailedExplanation,
@@ -4684,6 +4689,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               context.latestProviderFailure = {
                 nativeMessage: payload.error.message,
                 nativeCode: notificationCode,
+                nativeExplained,
                 failure: withCodexManagedFailure(
                   makeProviderFailure({
                     message: failureMessage,
@@ -4726,6 +4732,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(previous?.context === undefined ? {} : { context: previous.context }),
               nativeMessage: payload.error.message,
               nativeCode: code,
+              nativeExplained,
               retry,
               failure,
               startedAt: previous?.startedAt ?? updatedAt,
@@ -5792,7 +5799,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   input.failureMessage === previousFailure.nativeMessage) &&
                 (failureCode === undefined || failureCode === previousFailure.nativeCode) &&
                 (exhaustionStatus === null || previousFailure.failure.class === failureClass)
-                  ? previousFailure.failure
+                  ? previousFailure.nativeExplained === true || !input.failureExplanation?.trim()
+                    ? previousFailure.failure
+                    : {
+                        ...previousFailure.failure,
+                        message: makeProviderFailure({
+                          message: withCodexMisalignmentExplanation(
+                            previousFailure.failure.message,
+                            input.failureExplanation,
+                          ),
+                        }).message,
+                      }
                   : withCodexManagedFailure(
                       makeProviderFailure({
                         message:

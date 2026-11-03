@@ -5887,7 +5887,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   );
 
   // regression: #30179 a Codex safety stop hid the misalignment explanation
-  it.effect.each(["error notification", "failed completion only"] as const)(
+  it.effect.each([
+    "error notification",
+    "failed completion only",
+    "failed completion after a bare notification",
+  ] as const)(
     "shows the misalignment explanation when Codex stops a turn for safety (%s)",
     (source) =>
       Effect.scoped(
@@ -5905,7 +5909,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             scenario: "codex-misalignment-stop",
             entries: [
               ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
-              ...(source === "error notification"
+              ...(source !== "failed completion only"
                 ? [
                     {
                       type: "emit_inbound" as const,
@@ -5916,7 +5920,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                           threadId: nativeThreadId,
                           turnId: nativeTurnId,
                           willRetry: false,
-                          error,
+                          error:
+                            source === "error notification"
+                              ? error
+                              : { ...error, misalignment: null },
                         },
                       },
                     },
