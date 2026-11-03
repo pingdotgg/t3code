@@ -1224,7 +1224,7 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
       creationSource: "web" as const,
       id: threadId,
       projectId: ProjectId.make("project:worktree-paths"),
-      title: id,
+      title: `Title for ${id}`,
       providerInstanceId,
       modelSelection,
       runtimeMode: "full-access" as const,
@@ -1279,8 +1279,8 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
       ThreadId.make("thread:archived"),
     ]),
     {
-      [ThreadId.make("thread:active")]: "thread:active",
-      [ThreadId.make("thread:archived")]: "thread:archived",
+      [ThreadId.make("thread:active")]: "Title for thread:active",
+      [ThreadId.make("thread:archived")]: "Title for thread:archived",
     },
   );
   assert.deepEqual(yield* store.getThreadTitles([]), {});
