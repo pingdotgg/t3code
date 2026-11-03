@@ -74,6 +74,22 @@ vi.mock(import("./chat/MermaidDiagram"), async (original) => {
   };
 });
 
+const appearance = vi.hoisted(() => ({
+  value: "light" as "light" | "dark",
+  listeners: new Set<() => void>(),
+}));
+vi.mock(import("../hooks/useTheme"), async (original) => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (listener: () => void) => {
+    appearance.listeners.add(listener);
+    return () => appearance.listeners.delete(listener);
+  };
+  return {
+    ...(await original()),
+    useRenderedAppearance: () => useSyncExternalStore(subscribe, () => appearance.value),
+  };
+});
+
 const settingsOverrides = vi.hoisted(() => ({ mathRenderingEnabled: false }));
 vi.mock(import("../hooks/useSettings"), async (original) => {
   const actual = await original();
@@ -111,6 +127,7 @@ it("keeps compact audio playback loaded across signed URL renewals", async () =>
 });
 
 function setup() {
+  appearance.value = "light";
   parsedSources.length = 0;
   settingsOverrides.mathRenderingEnabled = false;
   renderDiagram.mockReset();
@@ -152,6 +169,34 @@ it("loads a host image through the page's own route when there is no environment
   );
 });
 
+it("loads the <picture> source for the current theme through the image route", async () => {
+  setup();
+  const pixel =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+  const hostImageUrl = (path: string) => `${pixel}#${path}`;
+  await using screen = await render(
+    <HostImageUrlContext value={hostImageUrl}>
+      <ChatMarkdown
+        cwd={undefined}
+        text={
+          '<picture><source media="(prefers-color-scheme: dark)" srcset="/work/dark.png"><img src="/work/light.png" alt="Shot"></picture>'
+        }
+      />
+    </HostImageUrlContext>,
+  );
+  await expect
+    .element(screen.getByAltText("Shot"))
+    .toHaveAttribute("src", `${pixel}#/work/light.png`);
+
+  await act(() => {
+    appearance.value = "dark";
+    for (const listener of appearance.listeners) listener();
+  });
+  await expect
+    .element(screen.getByAltText("Shot"))
+    .toHaveAttribute("src", `${pixel}#/work/dark.png`);
+});
+
 it("reuses the parse of a streaming reply's finished blocks when it remounts", async () => {
   setup();
   const message = (
@@ -163,6 +208,21 @@ it("reuses the parse of a streaming reply's finished blocks when it remounts", a
   await using screen = await render(message);
   await expect.element(screen.getByText("Still growing")).toBeVisible();
   expect(parsedSources.filter((source) => source.includes("Finished block"))).toHaveLength(1);
+});
+
+it("reuses the parse of a remounted message that has stable extra plugins", async () => {
+  setup();
+  const parsed = vi.fn();
+  const countingPlugins = [() => () => void parsed()];
+  const message = (
+    <ChatMarkdown cwd="/tmp/project" text="Cached text" extraRemarkPlugins={countingPlugins} />
+  );
+  {
+    await using _first = await render(message);
+  }
+  await using screen = await render(message);
+  await expect.element(screen.getByText("Cached text")).toBeVisible();
+  expect(parsed).toHaveBeenCalledTimes(1);
 });
 
 describe("ChatMarkdown favicon privacy", () => {

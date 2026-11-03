@@ -3,6 +3,7 @@ import {
   type PullRequestReviewVerdict,
   type RepositoryIdentity,
   secretSetting,
+  SettingsSecretValue,
   SourceControlProviderKind,
   type SourceControlProviderInfo,
   TrimmedNonEmptyString,
@@ -101,6 +102,8 @@ export interface SourceControlMediaUrl {
   readonly fileName: string;
   /** Set when the URL alone says what the media is, as an extensionless upload can. */
   readonly kind?: "image" | "video";
+  /** Set when the bytes behind `fetchUrl` can never change, so a client may cache them by it. */
+  readonly immutable?: true;
 }
 
 export interface ReferenceAutolink {
@@ -212,7 +215,7 @@ export const hostCredentialSettingsFields = {
     Schema.withDecodingDefault(Effect.succeed({})),
     Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
   ),
-  tokens: Schema.Record(SourceControlHostName, TrimmedString).pipe(
+  tokens: Schema.Record(SourceControlHostName, SettingsSecretValue).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
     secretSetting,
     Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
