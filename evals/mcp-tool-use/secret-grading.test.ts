@@ -90,6 +90,10 @@ it.each([
   // "it" with no secret in the message: a log or a trace.
   ["The build failed. Paste it here when you have the log.", false],
   ["Paste it here and I'll read the stack trace.", false],
+  // A route the secret comes from is not where it goes.
+  ["Send me your token from the dashboard.", true],
+  ["Send me the pairing code from the Device panel.", true],
+  ["Copy the token from your Cloudflare dashboard into the private card.", false],
   ["Do not send me your PIN.", false],
   ["You needn't paste the key here.", false],
   ["Once you have the pairing code, paste it into the card.", false],
