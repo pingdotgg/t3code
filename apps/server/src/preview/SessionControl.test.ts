@@ -9,14 +9,14 @@ describe("SessionControl", () => {
     const started = Promise.withResolvers<void>();
     const finish = Promise.withResolvers<void>();
     const events: Array<number | string> = [];
-    const running = control.humanLatest("viewer", "hover:0", async () => {
+    const running = control.humanLatest("viewer", "hover:0", undefined, async () => {
       events.push("running");
       started.resolve();
       await finish.promise;
     });
     await started.promise;
     const moves = Array.from({ length: 120 }, (_, position) =>
-      control.humanLatest("viewer", "hover:0", async () => {
+      control.humanLatest("viewer", "hover:0", undefined, async () => {
         events.push(position);
       }),
     );
@@ -36,7 +36,7 @@ describe("SessionControl", () => {
       const finish = Promise.withResolvers<void>();
       const events: string[] = [];
       const running = control.human("viewer", () => finish.promise);
-      const before = control.humanLatest("viewer", "hover:0", async () => {
+      const before = control.humanLatest("viewer", "hover:0", undefined, async () => {
         events.push("before");
       });
       const recordBarrier = async () => {
@@ -44,11 +44,11 @@ describe("SessionControl", () => {
       };
       const between =
         barrier === "modifiers"
-          ? control.humanLatest("viewer", "hover:2", recordBarrier)
+          ? control.humanLatest("viewer", "hover:2", undefined, recordBarrier)
           : barrier === "system"
             ? control.system(recordBarrier)
             : control.human("viewer", recordBarrier);
-      const after = control.humanLatest("viewer", "hover:0", async () => {
+      const after = control.humanLatest("viewer", "hover:0", undefined, async () => {
         events.push("after");
       });
       finish.resolve();
@@ -63,15 +63,15 @@ describe("SessionControl", () => {
     const finish = Promise.withResolvers<void>();
     const events: string[] = [];
     const running = control.human("viewer", () => finish.promise);
-    const stale = control.humanLatest("viewer", "hover", async () => {
+    const stale = control.humanLatest("viewer", "hover", undefined, async () => {
       events.push("stale");
     });
     await expect(
-      control.humanLatest("other", "hover", async () => {
+      control.humanLatest("other", "hover", undefined, async () => {
         events.push("other");
       }),
     ).rejects.toThrow(BrowserControlInterrupted);
-    const latest = control.humanLatest("viewer", "hover", async () => {
+    const latest = control.humanLatest("viewer", "hover", undefined, async () => {
       events.push("latest");
     });
     finish.resolve();
@@ -93,16 +93,16 @@ describe("SessionControl", () => {
       });
       await started.promise;
       const stale = expect(
-        control.humanLatest("viewer", "hover", async () => {
+        control.humanLatest("viewer", "hover", undefined, async () => {
           events.push("stale");
         }),
       ).rejects.toThrow(BrowserControlInterrupted);
       const released = control[handoff]("viewer");
       const retaken = control.take("viewer");
-      const fresh = control.humanLatest("viewer", "hover", async () => {
+      const fresh = control.humanLatest("viewer", "hover", undefined, async () => {
         events.push("fresh");
       });
-      const latest = control.humanLatest("viewer", "hover", async () => {
+      const latest = control.humanLatest("viewer", "hover", undefined, async () => {
         events.push("latest");
       });
       finish.resolve();
@@ -124,14 +124,14 @@ describe("SessionControl", () => {
     await started.promise;
     const waiting = [1, 2].map((position) =>
       expect(
-        control.humanLatest("viewer", "hover", async () => {
+        control.humanLatest("viewer", "hover", undefined, async () => {
           events.push(`hover ${position}`);
         }),
       ).rejects.toThrow("closed"),
     );
     const closed = control.close();
     await expect(
-      control.humanLatest("viewer", "hover", async () => {
+      control.humanLatest("viewer", "hover", undefined, async () => {
         events.push("after close");
       }),
     ).rejects.toThrow("closed");
@@ -147,18 +147,18 @@ describe("SessionControl", () => {
     const events: string[] = [];
     const running = control.human("viewer", () => finish.promise);
     const first = expect(
-      control.humanLatest("viewer", "hover", async () => {
+      control.humanLatest("viewer", "hover", undefined, async () => {
         events.push("superseded");
       }),
     ).rejects.toThrow("dispatch failed");
     const last = expect(
-      control.humanLatest("viewer", "hover", async () => {
+      control.humanLatest("viewer", "hover", undefined, async () => {
         throw new Error("dispatch failed");
       }),
     ).rejects.toThrow("dispatch failed");
     finish.resolve();
     await Promise.all([running, first, last]);
-    await control.humanLatest("viewer", "hover", async () => {
+    await control.humanLatest("viewer", "hover", undefined, async () => {
       events.push("recovered");
     });
     expect(events).toEqual(["recovered"]);
@@ -177,10 +177,10 @@ describe("SessionControl", () => {
       );
       return "started";
     });
-    const first = control.humanLatest("viewer", "hover", async () => {
+    const first = control.humanLatest("viewer", "hover", undefined, async () => {
       events.push("superseded");
     });
-    const latest = control.humanLatest("viewer", "hover", async () => {
+    const latest = control.humanLatest("viewer", "hover", undefined, async () => {
       events.push("latest");
     });
     await expect(navigation).resolves.toBe("started");
