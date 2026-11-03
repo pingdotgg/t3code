@@ -1,0 +1,38 @@
+{
+  "frozenUtc": "2026-10-21T22:30:00.000Z",
+  "viewports": {
+    "W": [1440, 900],
+    "N": [390, 900]
+  },
+  "themes": ["light", "dark"],
+  "static": ["P1-W-L", "P1-W-D", "P1-N-L", "P1-N-D", "D1-W-L", "D1-W-D", "D1-N-L", "D1-N-D"],
+  "recordings": ["RP-W-D", "RP-N-L", "RD-W-D", "RD-N-L"],
+  "permissionUnavailable": ["Q1-N-L", "Q2-W-D"],
+  "shellCommand": "bash <checkout>/apps/web/test/fixtures/terminal-layout/shell.sh A",
+  "drawerHeight": 280,
+  "diff": {
+    "zero": {
+      "threshold": 0,
+      "gain": 8
+    },
+    "thresholded": {
+      "threshold": 8,
+      "gain": 8
+    },
+    "raw": {
+      "threshold": 0,
+      "gain": 1
+    }
+  },
+  "historical": {
+    "baselineApp": "70e5e384dab96a1d1e4a253ee5a9415ed5d8ce30",
+    "afterApp": "ec679087f9029cc9be36fc76e1f95e2ffb692dce"
+  },
+  "baselineApp": "b5a226e49c52ecab4ddc2d678a7012d97e651a6a",
+  "afterApp": "Resolve HEAD at capture time; includes finalized fixtures",
+  "terminalBlobs": {
+    "before": "0a12a6535c2d56325ef3193068b44c5ef08eb4b2",
+    "after": "9626c2640b7d20fc38c972ed6fd3af250a434c16"
+  },
+  "setup": "Pair an isolated dev server; createDriver dispatches T3 preview tools for one owned tab; setup creates a fresh draft and shell. Call replay with the returned threadRef/threadKey. Use typeFirstLine for pending-input captures. Stop the server before seed.mjs."
+}
