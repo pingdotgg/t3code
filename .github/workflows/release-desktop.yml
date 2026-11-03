@@ -120,8 +120,53 @@ permissions:
   contents: read
 
 jobs:
+  # `runner` and `verify_runner` are caller-supplied strings used directly as
+  # `runs-on`, so this workflow cannot tell a hosted pool from a private one on
+  # its own. Fail closed before either job is scheduled: a caller that passes
+  # `self-hosted`, a `*-runner` label, or anything outside the pools this
+  # workflow is designed for stops here instead of running release work (with
+  # release secrets) on hardware this repository does not control. The static
+  # half of the same policy is .github/scripts/check-runner-labels.py.
+  validate:
+    name: Validate runner inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Reject private runner labels
+        shell: bash
+        env:
+          RUNNER_LABEL: ${{ inputs.runner }}
+          VERIFY_RUNNER_LABEL: ${{ inputs.verify_runner }}
+        run: |
+          set -euo pipefail
+          # Blacksmith's per-capacity labels and GitHub's own images only.
+          allowed='^(blacksmith|ubuntu|macos|windows)-[a-z0-9][a-z0-9.-]*$'
+          failed=0
+          check_label() {
+            local name="$1" label="$2" required="$3"
+            if [[ -z "$label" ]]; then
+              if [[ "$required" == "true" ]]; then
+                echo "::error::inputs.$name is empty, but this workflow needs a hosted runner label."
+                failed=1
+              fi
+              return 0
+            fi
+            # A private label is either a `*-runner` pool or simply outside the
+            # hosted pools above (GitHub's own self-hosted selector included).
+            if [[ "$label" == *-runner* ]] || [[ ! "$label" =~ $allowed ]]; then
+              echo "::error::inputs.$name=$label is not a hosted runner label (blacksmith-*, ubuntu-*, macos-*, windows-*)."
+              failed=1
+            else
+              echo "inputs.$name=$label is a hosted runner label."
+            fi
+          }
+          check_label runner "$RUNNER_LABEL" true
+          check_label verify_runner "$VERIFY_RUNNER_LABEL" false
+          exit "$failed"
+
   build:
     name: Build ${{ inputs.label }}
+    needs: [validate]
     runs-on: ${{ inputs.runner }}
     # Windows waits for the Linux CLI archive inside its own budget (see
     # "Wait for Linux CLI archive"), so it gets that wait on top of the usual 30.
@@ -801,7 +846,7 @@ jobs:
 
   verify:
     name: Verify
-    needs: [build]
+    needs: [validate, build]
     if: inputs.verify_runner != ''
     runs-on: ${{ inputs.verify_runner }}
     timeout-minutes: 15
