@@ -87,6 +87,21 @@ describe("buildTurnDiffTree", () => {
   });
 
   it("compacts only single-directory chains and stops at branch points", () => {
+    expect(
+      buildTurnDiffTree([
+        { path: "src/a/b/first.ts", kind: "modified", additions: 1, deletions: 0 },
+        { path: "src/c/d/second.ts", kind: "modified", additions: 2, deletions: 0 },
+      ]),
+    ).toMatchObject([
+      {
+        name: "src",
+        children: [
+          { name: "a/b", path: "src/a/b", children: [{ name: "first.ts" }] },
+          { name: "c/d", path: "src/c/d", children: [{ name: "second.ts" }] },
+        ],
+      },
+    ]);
+
     const tree = buildTurnDiffTree([
       { path: "apps/server/src/index.ts", kind: "modified", additions: 2, deletions: 1 },
       { path: "apps/server/main.ts", kind: "modified", additions: 4, deletions: 0 },
