@@ -7325,6 +7325,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
       const now = yield* DateTime.now;
+      const rolledBackAt = DateTime.add(now, { seconds: 30 });
       const projectId = ProjectId.make("project:projection-fork-source-rollback");
       const sourceThreadId = ThreadId.make("thread:projection-fork-source-rollback:source");
       const targetThreadId = ThreadId.make("thread:projection-fork-source-rollback:target");
@@ -7522,7 +7523,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         runId: sourceRun2Id,
         nodeId: sourceRun2NodeId,
         driver,
-        occurredAt: now,
+        occurredAt: rolledBackAt,
         payload: {
           id: sourceRun2Id,
           threadId: sourceThreadId,
@@ -7536,7 +7537,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           status: "rolled_back",
           requestedAt: now,
           startedAt: now,
-          completedAt: now,
+          completedAt: rolledBackAt,
           checkpointId: null,
           contextHandoffId: null,
         },
@@ -7700,6 +7701,71 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ),
         ["source one", "one", "fork"],
       );
+
+      const laterForkId = ThreadId.make("thread:projection-fork-source-rollback:later-fork");
+      const forkedAt = DateTime.add(now, { minutes: 1 });
+      const rewoundAgainAt = DateTime.add(now, { minutes: 2 });
+      const sourceThread = (yield* projectionStore.getThreadRecords(sourceThreadId, [])).thread;
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:later-fork"),
+        type: "thread.created",
+        threadId: laterForkId,
+        occurredAt: forkedAt,
+        payload: {
+          ...sourceThread,
+          id: laterForkId,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: sourceThreadId,
+            relationshipToParent: "fork",
+            rootThreadId: sourceThreadId,
+          },
+          forkedFrom: { type: "run", threadId: sourceThreadId, runId: sourceRun3Id },
+          createdAt: forkedAt,
+          updatedAt: forkedAt,
+        },
+      });
+      for (const rewindAgain of [false, true]) {
+        if (rewindAgain) {
+          const run = (yield* projectionStore.getThreadRecords(sourceThreadId, ["runs"])).runs.find(
+            (candidate) => candidate.id === sourceRun3Id,
+          )!;
+          yield* projectionStore.apply({
+            id: EventId.make("event:projection-fork-source-rollback:rewind-again"),
+            type: "run.updated",
+            threadId: sourceThreadId,
+            runId: run.id,
+            occurredAt: rewoundAgainAt,
+            payload: { ...run, status: "rolled_back", completedAt: rewoundAgainAt },
+          });
+        }
+        const projection = yield* projectionStore.getThreadProjection(laterForkId);
+        assert.deepEqual(
+          projection.visibleTurnItems.flatMap((row) =>
+            row.item.type === "user_message" ? [row.item.text] : [],
+          ),
+          ["source one"],
+          rewindAgain ? "after second rewind" : "before second rewind",
+        );
+        assert.lengthOf(projection.visibleTurnItems, 303);
+        assert.deepEqual(
+          (yield* projectionStore.getTimelinePage(laterForkId, { view: "activity", limit: 500 }))
+            .items,
+          projection.visibleTurnItems,
+        );
+        assert.deepEqual(
+          (yield* projectionStore.getThreadSnapshotWindow(laterForkId, { rowLimit: 500 }))
+            .projection.visibleTurnItems,
+          projection.visibleTurnItems,
+        );
+        assert.equal((yield* projectionStore.getThreadShell(laterForkId))?.visibleItemCount, 303);
+        assert.equal(
+          (yield* projectionStore.getShellSnapshot()).threads.find(
+            (thread) => thread.id === laterForkId,
+          )?.visibleItemCount,
+          303,
+        );
+      }
 
       const emptyBoundaryRunId = RunId.make(
         "run:projection-fork-source-rollback:source:empty-boundary",
