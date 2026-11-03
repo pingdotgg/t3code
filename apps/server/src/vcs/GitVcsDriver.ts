@@ -1296,12 +1296,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         ),
       );
       yield* recreateWorkspace;
-      const cleaned = yield* execute({
+      const clean = execute({
         operation,
         cwd: input.cwd,
         args: [...longPaths, "clean", "-fd", "--", "."],
         allowNonZeroExit: true,
       });
+      let cleaned = yield* clean;
+      // Removing a new .gitignore exposes the files it hid; clean again until nothing is left.
+      for (let pass = 1; pass < 4 && cleaned.exitCode === 0 && cleaned.stdout.length > 0; pass++) {
+        yield* recreateWorkspace;
+        cleaned = yield* clean;
+      }
       if (cleaned.exitCode !== 0) {
         // Git can remove every child, then fail trying to remove './' itself.
         const emptiedWorkspace =
