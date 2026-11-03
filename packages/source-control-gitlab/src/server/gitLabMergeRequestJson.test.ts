@@ -12,7 +12,7 @@ import {
   decodeMergeRequestStatsJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
-  decodeReviewDecisionsJson,
+  decodeListStatesJson,
   decodeTriggerJobChecksJson,
 } from "./gitLabMergeRequestJson.ts";
 
@@ -661,10 +661,10 @@ describe("decodeRepositoryBlobsJson", () => {
   });
 });
 
-describe("decodeReviewDecisionsJson", () => {
-  const decisionsOf = (enterprise: boolean | null, nodes: ReadonlyArray<unknown>) =>
+describe("decodeListStatesJson", () => {
+  const statesOf = (enterprise: boolean | null, nodes: ReadonlyArray<unknown>) =>
     expectSuccess(
-      decodeReviewDecisionsJson(
+      decodeListStatesJson(
         JSON.stringify({
           data: {
             metadata: enterprise === null ? null : { enterprise },
@@ -715,23 +715,57 @@ describe("decodeReviewDecisionsJson", () => {
       decision: null,
     },
   ])("reads $reading as $decision", ({ enterprise, approval, decision }) => {
-    expect([...decisionsOf(enterprise, [{ iid: "7", ...approval }])]).toEqual([[7, decision]]);
+    expect([...statesOf(enterprise, [{ iid: "7", ...approval }])]).toEqual([
+      [7, { reviewDecision: decision, checksState: null }],
+    ]);
   });
 
+  it.each([
+    { pipeline: { status: "SUCCESS" }, checksState: "passing" },
+    { pipeline: { status: "FAILED" }, checksState: "failing" },
+    { pipeline: { status: "CANCELED" }, checksState: "failing" },
+    { pipeline: { status: "RUNNING" }, checksState: "pending" },
+    { pipeline: { status: "WAITING_FOR_RESOURCE" }, checksState: "pending" },
+    { pipeline: { status: "MANUAL" }, checksState: null },
+    { pipeline: { status: "SKIPPED" }, checksState: null },
+    { pipeline: null, checksState: null },
+  ])(
+    "reads a $pipeline.status head pipeline as $checksState checks",
+    ({ pipeline, checksState }) => {
+      expect([
+        ...statesOf(false, [
+          { iid: "7", approved: false, approvedBy: approvedBy(), headPipeline: pipeline },
+        ]),
+      ]).toEqual([[7, { reviewDecision: null, checksState }]]);
+    },
+  );
+
   it("leaves out a merge request it cannot key, and a project the reader cannot see", () => {
-    expect([...decisionsOf(true, [null, { iid: "x", approved: true }])]).toEqual([]);
-    expect([
-      ...decisionsOf(null, [{ iid: "7", approved: false, approvedBy: approvedBy() }]),
-    ]).toEqual([]);
-    expect([
-      ...decisionsOf(true, [
-        { iid: "7", approved: null, approvedBy: approvedBy("julius") },
-        { iid: "8", approved: true, approvedBy: null },
-      ]),
-    ]).toEqual([]);
+    expect([...statesOf(true, [null, { iid: "x", approved: true }])]).toEqual([]);
     expect(
-      expectSuccess(decodeReviewDecisionsJson(JSON.stringify({ data: { project: null } }))),
+      expectSuccess(decodeListStatesJson(JSON.stringify({ data: { project: null } }))),
     ).toEqual(new Map());
+  });
+
+  it("keeps the checks of a merge request whose approval it cannot judge", () => {
+    expect([
+      ...statesOf(null, [
+        {
+          iid: "7",
+          approved: false,
+          approvedBy: approvedBy(),
+          headPipeline: { status: "FAILED" },
+        },
+      ]),
+      ...statesOf(true, [
+        { iid: "8", approved: null, approvedBy: approvedBy("julius") },
+        { iid: "9", approved: true, approvedBy: null },
+      ]),
+    ]).toEqual([
+      [7, { checksState: "failing" }],
+      [8, { checksState: null }],
+      [9, { checksState: null }],
+    ]);
   });
 });
 

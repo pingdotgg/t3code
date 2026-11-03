@@ -20,7 +20,6 @@ import type {
   PullRequestReaction,
   PullRequestReactionContent,
   PullRequestReviewCommentDraft,
-  PullRequestReviewDecision,
   PullRequestReviewPosition,
   PullRequestReviewThread,
   PullRequestReviewVerdict,
@@ -47,17 +46,18 @@ import {
   decodeProjectLabelsJson,
   decodeProjectUsersJson,
   decodeRepositoryBlobsJson,
-  decodeReviewDecisionsJson,
+  decodeListStatesJson,
   decodeTriggerJobChecksJson,
   decodeViewerJson,
   gitLabAwardName,
   MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
   MERGE_REQUEST_STATS_GRAPHQL_QUERY,
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
-  REVIEW_DECISIONS_GRAPHQL_QUERY,
+  LIST_STATES_GRAPHQL_QUERY,
   type GitLabDiffRefs,
   type GitLabMergeRequestDetail,
   type GitLabMergeRequestListItem,
+  type GitLabMergeRequestListState,
   type GitLabProjectUsers,
 } from "./gitLabMergeRequestJson.ts";
 import type {
@@ -254,13 +254,14 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly downstreamChecks?: boolean;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
 
-    readonly getReviewDecisions: (input: {
+    /** Approval and head pipeline state, read in one GraphQL request per 100 merge requests. */
+    readonly getListStates: (input: {
       readonly cwd: string;
       readonly host?: string | undefined;
       readonly repository: string;
       readonly numbers: ReadonlyArray<number>;
     }) => Effect.Effect<
-      ReadonlyMap<number, PullRequestReviewDecision | null>,
+      ReadonlyMap<number, GitLabMergeRequestListState>,
       GitLabPullRequestCliError
     >;
 
@@ -1308,22 +1309,19 @@ export const make = Effect.gen(function* () {
           }),
         );
 
-  const reviewDecisionsOf = (input: {
+  const listStatesOf = (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
     readonly repository: string;
     readonly numbers: ReadonlyArray<number>;
-  }): Effect.Effect<
-    ReadonlyMap<number, PullRequestReviewDecision | null>,
-    GitLabPullRequestCliError
-  > =>
+  }): Effect.Effect<ReadonlyMap<number, GitLabMergeRequestListState>, GitLabPullRequestCliError> =>
     graphqlRead({
       cwd: input.cwd,
       host: input.host,
-      operation: "getReviewDecisions",
-      query: REVIEW_DECISIONS_GRAPHQL_QUERY,
+      operation: "getListStates",
+      query: LIST_STATES_GRAPHQL_QUERY,
       variables: { fullPath: input.repository, iids: input.numbers.map(String) },
-      decode: decodeReviewDecisionsJson,
+      decode: decodeListStatesJson,
     });
 
   const viewerUsername = (input: { readonly cwd: string; readonly host?: string | undefined }) =>
@@ -1369,12 +1367,12 @@ export const make = Effect.gen(function* () {
       },
     ),
 
-    getReviewDecisions: Effect.fn("GitLabPullRequestCli.getReviewDecisions")(function (input) {
+    getListStates: Effect.fn("GitLabPullRequestCli.getListStates")(function (input) {
       const batches: Array<ReadonlyArray<number>> = [];
       for (let at = 0; at < input.numbers.length; at += MAX_PAGE_SIZE) {
         batches.push(input.numbers.slice(at, at + MAX_PAGE_SIZE));
       }
-      return Effect.forEach(batches, (numbers) => reviewDecisionsOf({ ...input, numbers }), {
+      return Effect.forEach(batches, (numbers) => listStatesOf({ ...input, numbers }), {
         concurrency: 2,
       }).pipe(Effect.map((pages) => new Map(pages.flatMap((page) => [...page]))));
     }),

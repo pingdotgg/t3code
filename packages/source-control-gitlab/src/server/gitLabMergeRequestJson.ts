@@ -7,6 +7,7 @@ import type {
   PullRequestActor,
   PullRequestCheck,
   PullRequestCheckStatus,
+  PullRequestChecksState,
   PullRequestComment,
   PullRequestCommit,
   PullRequestLabel,
@@ -997,16 +998,16 @@ export function decodeRepositoryBlobsJson(
   return Result.succeed(blobs);
 }
 
-export const REVIEW_DECISIONS_GRAPHQL_QUERY = `query($fullPath: ID!, $iids: [String!]) {
+export const LIST_STATES_GRAPHQL_QUERY = `query($fullPath: ID!, $iids: [String!]) {
   metadata { enterprise }
   project(fullPath: $fullPath) {
     mergeRequests(iids: $iids, first: 100) {
-      nodes { iid approved approvedBy(first: 1) { nodes { username } } }
+      nodes { iid approved approvedBy(first: 1) { nodes { username } } headPipeline { status } }
     }
   }
 }`;
 
-const RawReviewDecisionsSchema = Schema.Struct({
+const RawListStatesSchema = Schema.Struct({
   data: Schema.Struct({
     metadata: Schema.optional(
       Schema.NullOr(Schema.Struct({ enterprise: Schema.optional(Schema.NullOr(Schema.Boolean)) })),
@@ -1028,6 +1029,11 @@ const RawReviewDecisionsSchema = Schema.Struct({
                         }),
                       ),
                     ),
+                    headPipeline: Schema.optional(
+                      Schema.NullOr(
+                        Schema.Struct({ status: Schema.optional(Schema.NullOr(Schema.String)) }),
+                      ),
+                    ),
                   }),
                 ),
               ),
@@ -1039,43 +1045,67 @@ const RawReviewDecisionsSchema = Schema.Struct({
   }),
 });
 
-const decodeReviewDecisions = decodeJsonResult(RawReviewDecisionsSchema);
+const decodeListStates = decodeJsonResult(RawListStatesSchema);
+
+export interface GitLabMergeRequestListState {
+  /** Absent when the approval state can't be judged. */
+  readonly reviewDecision?: PullRequestReviewDecision | null;
+  readonly checksState: PullRequestChecksState | null;
+}
+
+function toChecksState(pipelineStatus: string | null | undefined): PullRequestChecksState | null {
+  if (pipelineStatus == null) return null;
+  switch (toPipelineStatus(pipelineStatus)) {
+    case "success":
+      return "passing";
+    case "failure":
+    case "cancelled":
+      return "failing";
+    case "pending":
+      return "pending";
+    default:
+      return null;
+  }
+}
 
 /**
  * Only Enterprise Edition holds `approved` to the project's approval rules, so an unapproved
  * merge request there still needs review even when someone, such as a bot, approved it.
  * Community Edition reports `approved` once anyone approves and requires no review.
  */
-export function decodeReviewDecisionsJson(
+export function decodeListStatesJson(
   raw: string,
-): Result.Result<ReadonlyMap<number, PullRequestReviewDecision | null>, DecodeFailure> {
-  const decoded = decodeReviewDecisions(raw);
+): Result.Result<ReadonlyMap<number, GitLabMergeRequestListState>, DecodeFailure> {
+  const decoded = decodeListStates(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
   const enterprise = decoded.success.data.metadata?.enterprise;
-  const decisions = new Map<number, PullRequestReviewDecision | null>();
+  const states = new Map<number, GitLabMergeRequestListState>();
   for (const node of decoded.success.data.project?.mergeRequests?.nodes ?? []) {
     const number = Number(node?.iid);
+    if (node === null || !Number.isSafeInteger(number)) continue;
+    const checksState = toChecksState(node.headPipeline?.status);
+    const approvals = node.approvedBy?.nodes?.length;
     if (
-      node === null ||
-      !Number.isSafeInteger(number) ||
       node.approved == null ||
-      node.approvedBy?.nodes == null
-    )
+      approvals === undefined ||
+      (node.approved === false && approvals === 0 && enterprise == null)
+    ) {
+      states.set(number, { checksState });
       continue;
-    const approvals = node.approvedBy.nodes.length;
-    if (node.approved === false && approvals === 0 && enterprise == null) continue;
-    decisions.set(
-      number,
-      node.approved === false && (enterprise || approvals > 0)
-        ? "review-required"
-        : approvals > 0
-          ? "approved"
-          : null,
-    );
+    }
+    states.set(number, {
+      reviewDecision:
+        node.approved === false && (enterprise || approvals > 0)
+          ? "review-required"
+          : approvals > 0
+            ? "approved"
+            : null,
+      checksState,
+    });
   }
-  return Result.succeed(decisions);
+  return Result.succeed(states);
 }
 
 /**

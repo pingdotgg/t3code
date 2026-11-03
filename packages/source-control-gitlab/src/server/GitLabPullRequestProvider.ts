@@ -6,11 +6,11 @@ import * as Exit from "effect/Exit";
 import type {
   PullRequestCapabilities,
   PullRequestReaction,
-  PullRequestReviewDecision,
   PullRequestViewerPermissions,
 } from "@t3tools/contracts";
 
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
+import type { GitLabMergeRequestListState } from "./gitLabMergeRequestJson.ts";
 import {
   PullRequestProviderError,
   type PullRequestProviderFailure,
@@ -181,14 +181,14 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  // The rows were already read, so even a rate limit only leaves their decision unknown.
-  const reviewDecisions = (input: Parameters<typeof cli.getReviewDecisions>[0]) =>
-    cli.getReviewDecisions(input).pipe(
+  // The rows were already read, so even a rate limit only leaves their states unknown.
+  const listStates = (input: Parameters<typeof cli.getListStates>[0]) =>
+    cli.getListStates(input).pipe(
       Effect.catch((error) =>
-        Effect.logWarning("GitLab merge request approval read failed", {
+        Effect.logWarning("GitLab merge request approval and pipeline read failed", {
           repository: input.repository,
           reason: error._tag,
-        }).pipe(Effect.as<ReadonlyMap<number, PullRequestReviewDecision | null>>(new Map())),
+        }).pipe(Effect.as<ReadonlyMap<number, GitLabMergeRequestListState>>(new Map())),
       ),
     );
 
@@ -241,15 +241,15 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.flatMap((batch) =>
-            reviewDecisions({
+            listStates({
               cwd: input.cwd,
               host: input.host,
               repository: input.repository,
               numbers: batch.items.map((item) => item.number),
             }).pipe(
-              Effect.map((decisions) => ({
+              Effect.map((states) => ({
                 ...batch,
-                items: batch.items.map((item) => withReviewDecision(item, decisions)),
+                items: batch.items.map((item) => withListState(item, states)),
                 continues: true,
               })),
             ),
@@ -277,7 +277,7 @@ export const make = Effect.gen(function* () {
       Effect.all(
         [
           mergeRequestWithStats(input),
-          reviewDecisions({
+          listStates({
             cwd: input.cwd,
             host: input.host,
             repository: input.repository,
@@ -286,7 +286,7 @@ export const make = Effect.gen(function* () {
         ],
         { concurrency: 2 },
       ).pipe(
-        Effect.map(([mergeRequest, decisions]) => withReviewDecision(mergeRequest, decisions)),
+        Effect.map(([mergeRequest, states]) => withListState(mergeRequest, states)),
         Effect.mapError(fail("getChangeRequestSummary")),
       ),
 
@@ -523,10 +523,10 @@ export const make = Effect.gen(function* () {
   return provider;
 });
 
-function withReviewDecision<Item extends { readonly number: number }>(
+function withListState<Item extends { readonly number: number }>(
   item: Item,
-  decisions: ReadonlyMap<number, PullRequestReviewDecision | null>,
-): Item & { readonly reviewDecision?: PullRequestReviewDecision | null } {
-  const reviewDecision = decisions.get(item.number);
-  return reviewDecision === undefined ? item : { ...item, reviewDecision };
+  states: ReadonlyMap<number, GitLabMergeRequestListState>,
+): Item & Partial<GitLabMergeRequestListState> {
+  const state = states.get(item.number);
+  return state === undefined ? item : { ...item, ...state };
 }

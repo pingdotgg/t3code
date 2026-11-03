@@ -187,7 +187,7 @@ describe("getChangeRequest base freshness", () => {
           Effect.provide(
             Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
               getMergeRequestDetail: () => Effect.succeed(detail),
-              getReviewDecisions: () => Effect.succeed(new Map()),
+              getListStates: () => Effect.succeed(new Map()),
 
               listMergeRequestStats: () => Effect.succeed([]),
             }),
@@ -288,7 +288,7 @@ describe("getChangeRequest base freshness", () => {
           Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
             getMergeRequestDetail: () => Effect.succeed(detail),
             getProjectMergeCapabilities: () => Effect.die("linked threads skip merge settings"),
-            getReviewDecisions: () => Effect.succeed(new Map()),
+            getListStates: () => Effect.succeed(new Map()),
             listMergeRequestStats: () =>
               Effect.succeed([{ repository: "acme/web", number: 7, additions: 40, deletions: 2 }]),
           }),
@@ -336,7 +336,7 @@ describe("merge request reads", () => {
       Effect.provide(
         Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
           listMergeRequestStats: () => Effect.succeed([]),
-          getReviewDecisions: () => Effect.succeed(new Map()),
+          getListStates: () => Effect.succeed(new Map()),
           getMergeRequestDetail: (input) =>
             Effect.sync(() => {
               calls.detail += 1;
@@ -594,7 +594,7 @@ describe("review decisions", () => {
     reviewerIds: [],
   };
   const providerWith = (
-    getReviewDecisions: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["getReviewDecisions"],
+    getListStates: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["getListStates"],
   ) =>
     make.pipe(
       Effect.provide(
@@ -606,7 +606,7 @@ describe("review decisions", () => {
               cursorAdvance: 2,
             }),
           getMergeRequestDetail: () => Effect.succeed(detail),
-          getReviewDecisions,
+          getListStates,
           listMergeRequestStats: () =>
             Effect.succeed([{ repository: "acme/web", number: 7, additions: 40, deletions: 2 }]),
         }),
@@ -622,26 +622,33 @@ describe("review decisions", () => {
     limit: 2,
   };
 
-  it.effect("puts GitLab's approval state on listed and summarized merge requests", () =>
-    Effect.gen(function* () {
-      const provider = yield* providerWith((input) => {
-        expect(input.host).toBe(reference.host);
-        return Effect.succeed(
-          new Map([
-            [7, "approved" as const],
-            [8, null],
-          ]),
-        );
-      });
-      const listed = yield* provider.listChangeRequests(listing);
-      assert.isDefined(provider.getChangeRequestSummary);
-      const summary = yield* provider.getChangeRequestSummary(reference);
+  it.effect(
+    "puts GitLab's approval and pipeline state on listed and summarized merge requests",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* providerWith((input) => {
+          expect(input.host).toBe(reference.host);
+          return Effect.succeed(
+            new Map([
+              [7, { reviewDecision: "approved" as const, checksState: "failing" as const }],
+              [8, { reviewDecision: null, checksState: null }],
+            ]),
+          );
+        });
+        const listed = yield* provider.listChangeRequests(listing);
+        assert.isDefined(provider.getChangeRequestSummary);
+        const summary = yield* provider.getChangeRequestSummary(reference);
 
-      expect(listed.items.map(({ reviewDecision }) => reviewDecision)).toEqual(["approved", null]);
-      expect(summary.reviewDecision).toBe("approved");
-      expect(summary.additions).toBe(40);
-      expect(summary.deletions).toBe(2);
-    }),
+        expect(listed.items.map(({ reviewDecision }) => reviewDecision)).toEqual([
+          "approved",
+          null,
+        ]);
+        expect(listed.items.map(({ checksState }) => checksState)).toEqual(["failing", null]);
+        expect(summary.reviewDecision).toBe("approved");
+        expect(summary.checksState).toBe("failing");
+        expect(summary.additions).toBe(40);
+        expect(summary.deletions).toBe(2);
+      }),
   );
 
   it.effect.each([
@@ -650,7 +657,7 @@ describe("review decisions", () => {
       error: new GitLabPullRequestCli.GitLabMergeRequestReadError({
         command: "glab",
         cwd: "/w",
-        operation: "getReviewDecisions",
+        operation: "getListStates",
         cause: null,
       }),
     },
