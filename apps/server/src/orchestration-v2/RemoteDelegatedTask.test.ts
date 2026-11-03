@@ -1,5 +1,6 @@
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import {
+  CheckpointId,
   CommandId,
   EnvironmentId,
   EventId,
@@ -406,6 +407,81 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
       const offered = yield* Ref.get(offers);
       assert.equal(offered.length, 1);
       assert.equal(offered[0]?.threadId, parent.threadId);
+    }),
+  );
+  it.effect("keeps a parent run that settled between its result's read and commit", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const parent = yield* seedLiveParent("settles-mid-result");
+      yield* orchestrator.dispatch({
+        type: "delegated_task.remote.request",
+        commandId: CommandId.make("command:remote-delegate:settles-mid-result"),
+        parentThreadId: parent.threadId,
+        parentRunId: parent.runId,
+        parentNodeId: parent.rootNodeId,
+        task: "Run the suite there.",
+        driver: ProviderDriverKind.make("remote"),
+        modelSelection,
+        remoteChild,
+        completionWake: "always",
+      });
+      const projection = yield* orchestrator.getThreadProjection(parent.threadId);
+      const task = projection.subagents[0]!;
+      const run = projection.runs.find((candidate) => candidate.id === parent.runId)!;
+      const checkpointId = CheckpointId.make("checkpoint:settles-mid-result");
+      const commit = sink.commitCommand;
+      let settled = false;
+      yield* Effect.acquireUseRelease(
+        Effect.sync(() =>
+          vi.spyOn(sink, "commitCommand").mockImplementation((input) =>
+            Effect.gen(function* () {
+              if (!settled && input.commandType === "delegated_task.remote.complete") {
+                settled = true;
+                // The parent's checkpoint lands after the result read its run.
+                yield* commit({
+                  commandId: CommandId.make("command:checkpoint:settles-mid-result"),
+                  threadId: parent.threadId,
+                  commandType: "checkpoint.capture",
+                  acceptedAt: now,
+                  effects: [],
+                  events: [
+                    {
+                      id: EventId.make("event:settles-mid-result:settled"),
+                      type: "run.updated",
+                      threadId: parent.threadId,
+                      runId: parent.runId,
+                      occurredAt: now,
+                      payload: { ...run, status: "completed", completedAt: now, checkpointId },
+                    },
+                  ],
+                });
+              }
+              return yield* commit(input);
+            }),
+          ),
+        ),
+        () =>
+          orchestrator.dispatch({
+            type: "delegated_task.remote.complete",
+            commandId: CommandId.make("command:remote-complete:settles-mid-result"),
+            parentThreadId: parent.threadId,
+            taskId: task.id,
+            status: "completed",
+            result: "All 412 tests pass on the box.",
+            stoppedThere: "ran-out",
+          }),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+      assert.isTrue(settled);
+      const after = (yield* orchestrator.getThreadProjection(parent.threadId)).runs.find(
+        (candidate) => candidate.id === parent.runId,
+      )!;
+      assert.deepEqual(
+        { status: after.status, completedAt: after.completedAt, checkpointId: after.checkpointId },
+        { status: "completed", completedAt: now, checkpointId },
+      );
     }),
   );
 });
