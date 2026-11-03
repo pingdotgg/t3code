@@ -453,6 +453,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(
     () => listState.rememberedPosition?.disclosures?.runs ?? new Set(),
   );
+  const [openHistoryRunId, setOpenHistoryRunId] = useState<RunId | null>(null);
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(
     () => listState.rememberedPosition?.disclosures?.workGroups ?? new Set(),
   );
@@ -491,6 +492,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // A viewer pinned in another thread must not keep live follow off here,
     // nor when that thread comes back.
     setFullscreenAppRowId(null);
+    setOpenHistoryRunId(null);
     paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
     paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
     paintedExpandedAttemptIds = rememberedPosition?.disclosures?.attempts ?? new Set();
@@ -677,6 +679,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const workingHistoryOpen = rows.some(
     (row) => row.kind === "working" && row.window?.historyOpen === true,
   );
+  // A history open when its turn ends stays open as the turn's fold.
+  if (rows.some((row) => row.kind === "working")) {
+    const historyRunId = workingHistoryOpen ? (latestRun?.runId ?? null) : null;
+    if (historyRunId !== openHistoryRunId) setOpenHistoryRunId(historyRunId);
+  } else if (openHistoryRunId !== null) {
+    const fold = rows.find((row) => row.kind === "turn-fold" && row.runId === openHistoryRunId);
+    if (fold?.kind === "turn-fold") {
+      setOpenHistoryRunId(null);
+      setExpandedRunIds((existing) => withTurnFoldOpen(existing, fold));
+    }
+  }
   // Opens whatever hides a cited response. False when nothing does, so the citation stops waiting.
   const revealCitedEntry = (entryId: string, runId: RunId | null) => {
     const fold = timelineTurnFoldRunIdsByEntryId({
