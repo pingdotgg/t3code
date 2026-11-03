@@ -59,7 +59,8 @@ function piProbeSpawner(version: string) {
 
 /**
  * Fails the test if status runs `pi auth check` without `authCheck` or with other arguments.
- * `noExtensionsInventory` is what a `--no-extensions` launch lists, which omits extension models.
+ * `noExtensionsInventory` is what a `--no-extensions` launch lists, which omits extension models;
+ * `noExtensionsExits` makes that launch exit before answering.
  */
 const piDiscoverySpawner = (
   inventory: unknown,
@@ -68,6 +69,7 @@ const piDiscoverySpawner = (
     readonly state?: unknown;
     readonly authCheck?: string | undefined;
     readonly noExtensionsInventory?: unknown;
+    readonly noExtensionsExits?: boolean;
   } = {},
 ) =>
   Effect.sync(() => {
@@ -121,9 +123,10 @@ const piDiscoverySpawner = (
           ? Effect.die(`Unexpected pi ${args.join(" ")}`)
           : Effect.succeed(processHandle({ stdout: options.authCheck, exitCode: 1 }));
       }
-      return rpcProcess(
-        args.includes("--no-extensions") ? (options.noExtensionsInventory ?? inventory) : inventory,
-      );
+      if (!args.includes("--no-extensions")) return rpcProcess(inventory);
+      return options.noExtensionsExits === true
+        ? Effect.succeed(processHandle({ stderr: 'Error: Unknown provider "auto".', exitCode: 1 }))
+        : rpcProcess(options.noExtensionsInventory ?? inventory);
     });
   });
 
@@ -308,6 +311,45 @@ describe("PiProvider", () => {
         "supportsTextGeneration",
         false,
         "text generation runs Pi with --no-extensions, which cannot load auto/gpt-6-luna",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "marks every model unusable for text generation when Pi cannot start without extensions",
+    () =>
+      Effect.gen(function* () {
+        const spawner = yield* piDiscoverySpawner(
+          { models: [{ provider: "auto", id: "gpt-6-luna" }] },
+          { version: "1.4.0", noExtensionsExits: true },
+        );
+        const snapshot = yield* checkPiProviderStatus(settings).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        assert.equal(snapshot.status, "ready");
+        assert.propertyVal(
+          snapshot.models.find((model) => model.slug === "auto/gpt-6-luna"),
+          "supportsTextGeneration",
+          false,
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("leaves models unmarked when Pi without extensions returns a malformed inventory", () =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner(
+        { models: [{ provider: "auto", id: "gpt-6-luna" }] },
+        { version: "1.4.0", noExtensionsInventory: {} },
+      );
+      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      assert.equal(snapshot.status, "ready");
+      assert.equal(snapshot.auth.status, "authenticated");
+      assert.notPropertyVal(
+        snapshot.models.find((model) => model.slug === "auto/gpt-6-luna"),
+        "supportsTextGeneration",
+        false,
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );

@@ -171,8 +171,9 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
 });
 
 /**
- * Slugs Pi lists when launched like text generation, which runs without extensions. Undefined
- * when that launch cannot answer, so discovery never degrades because of it.
+ * Slugs Pi lists when launched like text generation, which runs without extensions. Empty when
+ * that launch exits before answering (launch args naming an extension provider), since text
+ * generation fails the same way. Undefined on a timeout or malformed answer.
  */
 const discoverPiTextGenerationModelSlugs = Effect.fn(
   "PiProviderStatus.discoverPiTextGenerationModelSlugs",
@@ -192,6 +193,11 @@ const discoverPiTextGenerationModelSlugs = Effect.fn(
     return new Set(models.map((model) => model.slug));
   },
   Effect.scoped,
+  Effect.catchIf(
+    (error) =>
+      error._tag === "PiRpcError" && (error.operation === "read" || error.operation === "exit"),
+    () => Effect.succeed(new Set<string>()),
+  ),
   Effect.timeoutOption(PI_TEXT_GENERATION_MODELS_TIMEOUT_MS),
   Effect.map(Option.getOrUndefined),
   Effect.orElseSucceed(() => undefined),
