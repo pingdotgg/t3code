@@ -423,7 +423,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         {props.effortColumn ? (
           <DockedPickerContext value={{ modelLabel: triggerTitle }}>
             <div className="flex max-h-(--available-height) flex-col">
-              <div className="min-h-0 overflow-y-auto">
+              <div className="min-h-0 overflow-y-auto overscroll-y-contain">
                 <AnimatedHeight>
                   <div className="flex max-h-86.5 max-sm:max-h-none max-sm:flex-col">
                     {picker}

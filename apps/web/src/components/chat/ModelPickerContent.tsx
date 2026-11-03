@@ -329,7 +329,8 @@ function ModelPickerList({
           onLayout={updateScrollFades}
           onScroll={updateScrollFades}
           className={cn(
-            "scrollbar-gutter-stable h-full overflow-x-hidden overscroll-y-contain py-1.5 [&::-webkit-scrollbar-track]:my-2",
+            "scrollbar-gutter-stable h-full overflow-x-hidden py-1.5 [&::-webkit-scrollbar-track]:my-2",
+            !fitRows && "overscroll-y-contain",
             getVirtualizedScrollFadeClassName({
               top: showTopScrollFade,
               bottom: showBottomScrollFade,
