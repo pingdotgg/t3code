@@ -155,6 +155,53 @@ describe("thread details limits", () => {
     ).toEqual({ limits: limitsAt(60), sourceLabel: "hub" });
   });
 
+  it("prefers the routed hub account over a signed-in instance's own login", () => {
+    // Codex signed in to ChatGPT but sending through the hub, which served it from another account.
+    const providers = [codexInstance(limitsAt(5), "me@example.com")];
+    const sources = [
+      hub("hub", [
+        { id: "codex-me.json", email: "me@example.com", driver: codex, limits: limitsAt(5) },
+        {
+          id: "codex-other.json",
+          email: "other@example.com",
+          driver: codex,
+          limits: limitsAt(70),
+          sessionIds: ["codex-session"],
+        },
+      ]),
+    ];
+
+    expect(resolveThreadDetailsLimits(codexId, providers, sources, now, "codex-session")).toEqual({
+      limits: limitsAt(70),
+      sourceLabel: "hub",
+    });
+    // Without a route for this session, the instance's own reading still wins.
+    expect(resolveThreadDetailsLimits(codexId, providers, sources, now, "unrouted")).toEqual({
+      limits: limitsAt(5),
+      sourceLabel: null,
+    });
+  });
+
+  it("does not take a routed session from another driver's account", () => {
+    const sources = [
+      hub("hub", [
+        { id: "codex.json", driver: codex, limits: limitsAt(70), sessionIds: ["shared-id"] },
+        { id: "claude-a.json", limits: limitsAt(19) },
+        { id: "claude-b.json", email: "b@example.com", limits: limitsAt(60) },
+      ]),
+    ];
+
+    expect(
+      resolveThreadDetailsLimits(
+        instanceId,
+        [claudeInstance(unsupported)],
+        sources,
+        now,
+        "shared-id",
+      ),
+    ).toEqual({ limits: unsupported, sourceLabel: null });
+  });
+
   it("counts accounts across hubs, so one account on each of two hubs stays ambiguous", () => {
     const resolved = resolveThreadDetailsLimits(
       instanceId,

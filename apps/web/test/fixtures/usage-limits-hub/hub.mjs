@@ -1,6 +1,7 @@
 // Fake CLIProxyAPI management API serving the Limits scenarios in scenarios.json.
 // Usage: node hub.mjs <state.json> [port]. state.json is {"scenario": "A", "n0": <epoch ms>};
 // it is re-read on every request, so edit it and press Refresh limits to switch scenarios.
+// An optional "routes" array of {session_id, auth_index} is served as the usage queue.
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 
@@ -58,9 +59,11 @@ NodeHttp.createServer((request, response) => {
   let raw = "";
   request.on("data", (chunk) => (raw += chunk));
   request.on("end", () => {
-    const { scenario, n0 } = JSON.parse(NodeFS.readFileSync(statePath, "utf8"));
+    const { scenario, n0, routes = [] } = JSON.parse(NodeFS.readFileSync(statePath, "utf8"));
     const accounts = scenarios[scenario];
     if (!accounts) return json(response, { files: [] });
+    // shortcut: real hubs pop records once read; this serves them on every read, which T3 tolerates.
+    if (request.url.includes("/v0/management/usage-queue")) return json(response, routes);
     if (request.url.endsWith("/v0/management/auth-files")) {
       return json(response, {
         files: Object.entries(accounts).map(([id, account]) => ({

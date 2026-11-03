@@ -19,10 +19,10 @@ export interface ThreadDetailsLimits {
 }
 
 /**
- * The limits the thread details card shows for one provider instance.
- * An instance routed through a usage hub (CLIProxyAPI) reads no subscription limits of its own,
- * so the card falls back to the hub account that recently served the thread's provider session,
- * else to the only hub account serving the driver: with several, nothing says which one it spends.
+ * The limits the thread details card shows for one provider instance: the hub account that served
+ * the thread's session (Thread accounts), even over the instance's own signed-in login; else the
+ * instance's own limits; else the only hub account for the driver, since with several nothing says
+ * which one the thread spends.
  */
 export function resolveThreadDetailsLimits(
   providerInstanceId: ProviderInstanceId | null,
@@ -36,17 +36,17 @@ export function resolveThreadDetailsLimits(
   const report = collectProviderUsageLimits(providerInstanceId, providers, sources, now);
   // Only this instance's data: the report keeps one instance per login, and any other entry may be
   // a different login or workspace, so fall back to the instance's own snapshot.
-  const own =
-    report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
-    provider?.usageLimits;
-  if (own && limitsNotice(own) === null) return { limits: own, sourceLabel: null };
-
   const routed =
     provider && providerSessionId
       ? routedHubAccount(provider, sources, providerSessionId)
       : undefined;
   // The tooltip names only the hub: account emails stay redacted, as in Usage → Limits.
   if (routed) return { limits: routed.account.usageLimits, sourceLabel: routed.source.label };
+
+  const own =
+    report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
+    provider?.usageLimits;
+  if (own && limitsNotice(own) === null) return { limits: own, sourceLabel: null };
   const hub = provider ? onlyHubAccount(provider, providers, sources) : null;
   if (hub) return { limits: hub.account.usageLimits, sourceLabel: hub.source.label };
   return own ? { limits: own, sourceLabel: null } : null;
@@ -57,7 +57,11 @@ interface HubAccount {
   readonly account: UsageLimitSourceAccount;
 }
 
-/** The hub account a hub last routed this provider session to, when it shares that routing. */
+/**
+ * The hub account a hub last routed this provider session to, when it shares that routing.
+ * Only the driver must match: the hub served the session with this account, whatever login the
+ * instance itself is signed in to.
+ */
 function routedHubAccount(
   provider: ServerProvider,
   sources: UsageLimitSourceSnapshots,
@@ -67,7 +71,7 @@ function routedHubAccount(
     .flatMap((source) => source.accounts.map((account) => ({ source, account })))
     .find(
       ({ account }) =>
-        canServeInstance(provider, account) && account.sessionIds?.includes(providerSessionId),
+        account.driver === provider.driver && account.sessionIds?.includes(providerSessionId),
     );
 }
 

@@ -188,7 +188,8 @@ instance is skipped. With several hub accounts, or while a hub cannot be read, t
 check **Usage → Limits**.
 
 To show the right account when a hub has several, turn on **Thread accounts** for that hub. T3 then
-reads which account served each thread from the hub's usage queue and shows that account's limits. The
+reads which account served each thread from the hub's usage queue and shows that account's limits,
+even when the CLI itself is signed in to another account, as Codex can be while it sends through the hub. The
 hub needs `usage-statistics-enabled` and session affinity turned on. Reading the queue removes its
 records, so another tool or environment reading the same queue misses the ones T3 took.
 
