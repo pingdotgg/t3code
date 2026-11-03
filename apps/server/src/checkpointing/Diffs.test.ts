@@ -30,11 +30,11 @@ describe("parseTurnDiffFilesFromNumstat", () => {
     ]);
   });
 
-  it("keeps binary files and empty files with zero line changes", () => {
+  it("distinguishes unavailable binary counts from empty files", () => {
     const numstat = ["-\t-\timage.png", "0\t0\tempty.txt", ""].join("\0");
     expect(parseTurnDiffFilesFromNumstat(numstat)).toEqual([
       { path: "empty.txt", additions: 0, deletions: 0 },
-      { path: "image.png", additions: 0, deletions: 0 },
+      { path: "image.png" },
     ]);
   });
 

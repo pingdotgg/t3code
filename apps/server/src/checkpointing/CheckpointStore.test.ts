@@ -4,7 +4,15 @@ import * as NodePath from "node:path";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { CheckpointRef, ThreadId, type VcsError } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  NodeId,
+  ProviderThreadId,
+  RunId,
+  ThreadId,
+  type VcsError,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -19,6 +27,8 @@ import * as CheckpointStore from "./CheckpointStore.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ServerConfig from "../config.ts";
+import * as CheckpointService from "../orchestration-v2/CheckpointService.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
   return CheckpointRef.make(`refs/t3/checkpoints/${Base64Url.encode(threadId)}/turn/${turnCount}`);
@@ -35,7 +45,9 @@ const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
   Layer.provideMerge(layerVcsDriverTest),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
-const layerTest = layerCheckpointStoreTest.pipe(
+const layerTest = CheckpointService.layer.pipe(
+  Layer.provideMerge(IdAllocator.layer),
+  Layer.provideMerge(layerCheckpointStoreTest),
   Layer.provideMerge(layerVcsProcessTest),
   Layer.provideMerge(layerVcsDriverTest),
   Layer.provideMerge(layerServerConfig),
@@ -319,9 +331,23 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const checkpointStore = yield* CheckpointStore.CheckpointStore;
         const threadId = ThreadId.make("checkpoint-summary-paths");
-        const baseline = checkpointRefForThreadTurn(threadId, 0);
-        const firstTurn = checkpointRefForThreadTurn(threadId, 1);
-        const secondTurn = checkpointRefForThreadTurn(threadId, 2);
+        const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+        const scope = yield* checkpoints.prepareRootRunScope({
+          threadId,
+          runId: RunId.make("run:checkpoint-summary"),
+          rootNodeId: NodeId.make("node:checkpoint-summary"),
+          providerThreadId: ProviderThreadId.make("provider-thread:checkpoint-summary"),
+          cwd: tmp,
+          createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00Z"),
+        });
+        const baseline = yield* CheckpointService.checkpointRefForScopeOrdinal({
+          scopeId: scope.id,
+          ordinalWithinScope: 0,
+        });
+        const secondTurn = yield* CheckpointService.checkpointRefForScopeOrdinal({
+          scopeId: scope.id,
+          ordinalWithinScope: 2,
+        });
         const copiedText = Array.from({ length: 20 }, (_, index) => `copy line ${index}\n`).join(
           "",
         );
@@ -353,7 +379,32 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         })) {
           yield* writeTextFile(NodePath.join(tmp, path), contents);
         }
-        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: firstTurn });
+        const checkpoint = yield* checkpoints.capture({
+          scope,
+          runId: scope.runId,
+          nodeId: scope.nodeId!,
+          ordinalWithinScope: 1,
+          appRunOrdinal: 1,
+          capturedAt: scope.createdAt,
+        });
+        expect(checkpoint.files).toEqual(
+          [
+            {
+              path: "binary.bin",
+              kind: "modified",
+              additions: 0,
+              deletions: 0,
+              lineCountsUnavailable: true,
+            },
+            { path: "copied.txt", kind: "added", additions: 0, deletions: 0 },
+            { path: "copy-source.txt", kind: "modified", additions: 1, deletions: 0 },
+            { path: "deleted.txt", kind: "deleted", additions: 0, deletions: 1 },
+            { path: "empty.txt", kind: "added", additions: 0, deletions: 0 },
+            { path: addedPath, kind: "added", additions: 2, deletions: 0 },
+            { path: renamedPath, kind: "renamed", additions: 1, deletions: 1 },
+          ].toSorted((left, right) => left.path.localeCompare(right.path)),
+        );
+        const firstTurn = checkpoint.ref;
         const userIndex = yield* fileSystem.readFile(NodePath.join(tmp, ".git/index"));
         const input = {
           cwd: tmp,
@@ -366,7 +417,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
           yield* checkpointStore.diffCheckpoints(input),
         );
         const expectedFiles = [
-          { path: "binary.bin", additions: 0, deletions: 0 },
+          { path: "binary.bin" },
           { path: "copied.txt", previousPath: "copy-source.txt", additions: 0, deletions: 0 },
           { path: "copy-source.txt", additions: 1, deletions: 0 },
           { path: "deleted.txt", additions: 0, deletions: 1 },

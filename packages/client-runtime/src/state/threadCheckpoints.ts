@@ -3,6 +3,7 @@ import type {
   CheckpointRef,
   CheckpointScopeId,
   MessageId,
+  OrchestrationV2CheckpointFileSummary,
   OrchestrationV2CheckpointFileTotals,
   OrchestrationV2ThreadProjection,
   RunId,
@@ -17,12 +18,7 @@ export interface ThreadCheckpointSummary {
   readonly checkpointRef: CheckpointRef;
   readonly status: "ready" | "missing" | "error" | "stale";
   /** A prefix of the changed files when `filesTotal` is set; see `checkpointFileTotals`. */
-  readonly files: ReadonlyArray<{
-    readonly path: string;
-    readonly kind: string;
-    readonly additions: number;
-    readonly deletions: number;
-  }>;
+  readonly files: ReadonlyArray<OrchestrationV2CheckpointFileSummary>;
   readonly filesTotal?: OrchestrationV2CheckpointFileTotals;
   readonly assistantMessageId: MessageId | null;
   readonly completedAt: string;

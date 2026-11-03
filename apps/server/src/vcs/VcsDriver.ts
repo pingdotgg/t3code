@@ -30,7 +30,7 @@ export interface VcsDiffCheckpointsInput {
   readonly toCheckpointRef: CheckpointRef;
   readonly fallbackFromToHead?: boolean;
   readonly ignoreWhitespace: boolean;
-  readonly format?: "patch" | "numstat";
+  readonly format?: "patch" | "numstat" | "summary";
   /** Maximum bytes collected from the diff command. */
   readonly maxOutputBytes?: number;
   /** An empty list yields an empty diff. */

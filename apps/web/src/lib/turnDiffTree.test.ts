@@ -46,6 +46,13 @@ describe("buildTurnDiffTree", () => {
       { path: "src/index.ts", kind: "modified", additions: 2, deletions: 1 },
       { path: "src/components/Button.tsx", kind: "modified", additions: 4, deletions: 2 },
       { path: "README.md", kind: "modified", additions: 1, deletions: 0 },
+      {
+        path: "binary.bin",
+        kind: "modified",
+        additions: 0,
+        deletions: 0,
+        lineCountsUnavailable: true,
+      },
     ]);
 
     expect(tree).toEqual([
@@ -76,6 +83,12 @@ describe("buildTurnDiffTree", () => {
             stat: { additions: 2, deletions: 1 },
           },
         ],
+      },
+      {
+        kind: "file",
+        name: "binary.bin",
+        path: "binary.bin",
+        stat: null,
       },
       {
         kind: "file",

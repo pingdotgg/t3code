@@ -1374,6 +1374,8 @@ export const OrchestrationV2CheckpointFileSummary = Schema.Struct({
   kind: TrimmedNonEmptyString,
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
+  // Keep numeric counts for older clients; this marker distinguishes Git's unavailable counts.
+  lineCountsUnavailable: Schema.optionalKey(Schema.Literal(true)),
 });
 export type OrchestrationV2CheckpointFileSummary = typeof OrchestrationV2CheckpointFileSummary.Type;
 

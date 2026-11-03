@@ -19,7 +19,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { isGitImport, parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
+import { isGitImport, parseTurnDiffFilesFromSummary } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
@@ -445,7 +445,7 @@ export const layer: Layer.Layer<
                   ...refs,
                   fallbackFromToHead: false,
                   ignoreWhitespace: false,
-                  format: "numstat",
+                  format: "summary",
                 }),
                 checkpointStore.listAuthoredPaths(refs).pipe(
                   Effect.catch((cause) =>
@@ -458,13 +458,16 @@ export const layer: Layer.Layer<
                 ),
               ]).pipe(
                 Effect.map(([diff, authoredPaths]) =>
-                  parseTurnDiffFilesFromNumstat(diff)
+                  parseTurnDiffFilesFromSummary(diff)
                     .filter((file) => !isGitImport(file, authoredPaths))
                     .map((file) => ({
                       path: file.path,
-                      kind: "modified",
-                      additions: file.additions,
-                      deletions: file.deletions,
+                      kind: file.kind,
+                      additions: file.additions ?? 0,
+                      deletions: file.deletions ?? 0,
+                      ...(file.additions === undefined || file.deletions === undefined
+                        ? { lineCountsUnavailable: true as const }
+                        : {}),
                     })),
                 ),
                 Effect.catch((cause) =>

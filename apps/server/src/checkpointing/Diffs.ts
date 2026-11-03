@@ -1,8 +1,8 @@
 export interface TurnDiffFileSummary {
   readonly path: string;
   readonly previousPath?: string;
-  readonly additions: number;
-  readonly deletions: number;
+  readonly additions?: number;
+  readonly deletions?: number;
 }
 
 export function parseTurnDiffFilesFromNumstat(numstat: string): ReadonlyArray<TurnDiffFileSummary> {
@@ -26,12 +26,39 @@ export function parseTurnDiffFilesFromNumstat(numstat: string): ReadonlyArray<Tu
     files.push({
       path,
       ...(previousPath === undefined ? {} : { previousPath }),
-      additions: counts[1] === "-" ? 0 : Number(counts[1]),
-      deletions: counts[2] === "-" ? 0 : Number(counts[2]),
+      ...(counts[1] === "-" ? {} : { additions: Number(counts[1]) }),
+      ...(counts[2] === "-" ? {} : { deletions: Number(counts[2]) }),
     });
   }
 
   return files.toSorted((left, right) => left.path.localeCompare(right.path));
+}
+
+export function parseTurnDiffFilesFromSummary(summary: string) {
+  const records = summary.split("\0");
+  const kinds = new Map<string, string>();
+  let index = 0;
+  while (records[index]?.startsWith(":")) {
+    const status = records[index]!.split(" ").at(-1)?.[0];
+    index += 1;
+    let path = records[index++];
+    if (status === "R" || status === "C") path = records[index++];
+    if (path === undefined) break;
+    kinds.set(
+      path,
+      status === "A" || status === "C"
+        ? "added"
+        : status === "D"
+          ? "deleted"
+          : status === "R"
+            ? "renamed"
+            : "modified",
+    );
+  }
+  return parseTurnDiffFilesFromNumstat(records.slice(index).join("\0")).map((file) => ({
+    ...file,
+    kind: kinds.get(file.path) ?? "modified",
+  }));
 }
 
 export function isGitImport(
