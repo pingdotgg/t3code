@@ -452,23 +452,23 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("keeps Antigravity's error message when the prompt request fails", () =>
+  it.effect.each([
+    {
+      code: -32000,
+      detail: "Sign in to Antigravity in Settings before you continue.",
+    },
+    { code: -32603, detail: "Antigravity text generation failed." },
+  ])("maps ACP error $code from the prompt request to a fixed detail", ({ code, detail }) =>
     Effect.gen(function* () {
       const fixture = yield* makeFixture({
         prompt: () =>
-          Effect.fail(
-            new AcpRequestError({
-              code: -32603,
-              errorMessage: "Model is temporarily unavailable.",
-            }),
-          ),
+          Effect.fail(new AcpRequestError({ code, errorMessage: "Raw provider failure text." })),
       });
       const error = yield* fixture.textGeneration
         .generateThreadTitle(fixture.titleInput)
         .pipe(Effect.flip);
-      expect(error.detail).toBe(
-        "Antigravity text generation failed: Model is temporarily unavailable.",
-      );
+      expect(error.detail).toBe(detail);
+      expect(error.detail).not.toContain("Raw provider failure text.");
       yield* fixture.assertCleaned;
     }).pipe(Effect.scoped),
   );

@@ -13,13 +13,16 @@ import { type AcpError, AcpRequestError } from "effect-acp/errors";
 
 import { applyAntigravityAcpModelSelection } from "../provider/acp/AntigravityAcpSupport.ts";
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
+import {
+  ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
+  isAntigravitySignInRequiredError,
+} from "../provider/antigravityAuthSupport.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
 const ANTIGRAVITY_TIMEOUT_MS = 180_000;
 const MAX_OUTPUT_CHARS = 128_000;
 const isTextGenerationError = Schema.is(TextGenerationError);
-const isAcpRequestError = Schema.is(AcpRequestError);
 const isProviderSetupError = Schema.is(ProviderSetupError);
 const isNativeSessionId = Schema.is(Schema.String.check(Schema.isUUID(4)));
 const Configuration = Schema.Record(Schema.String, Schema.Unknown);
@@ -326,8 +329,8 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
                 operation: input.operation,
                 detail: isProviderSetupError(cause)
                   ? cause.detail
-                  : isAcpRequestError(cause)
-                    ? `Antigravity text generation failed: ${cause.errorMessage}`
+                  : isAntigravitySignInRequiredError(cause)
+                    ? ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE
                     : "Antigravity text generation failed.",
                 cause,
               }),
