@@ -14,7 +14,8 @@ const CELL_END = Symbol("cell-end");
 type TextPart = string | typeof CELL_START | typeof CELL_END | { fallback: string };
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
-// Parts the document never displays: tracked deletions and moves, field codes, phonetic guides.
+// Parts the document never displays: tracked deletions and moves, field codes, phonetic guides,
+// paragraph properties such as tab-stop definitions.
 const HIDDEN = new Set([
   "script",
   "style",
@@ -25,6 +26,7 @@ const HIDDEN = new Set([
   "instrText",
   "delInstrText",
   "tracked-changes",
+  "pPr",
 ]);
 
 class Truncation extends Error {}
