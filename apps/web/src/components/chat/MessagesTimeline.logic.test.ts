@@ -1038,8 +1038,9 @@ describe("deriveMessagesTimelineRows", () => {
         timelineEntries: [prompt, { ...reply, message: { ...reply.message, streaming } }],
       };
       const rows = applyWorkingWindow(deriveMessagesTimelineRows(running), running);
+      expect(rows.map((row) => row.id)).toEqual(["prompt", "working-indicator-row", "reply"]);
       expect(rows.filter((row) => row.kind === "working")).toMatchObject([
-        { createdAt: prompt.createdAt },
+        { createdAt: prompt.createdAt, window: { items: [], answering: streaming } },
       ]);
       expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
     }
@@ -4711,38 +4712,71 @@ describe("working window", () => {
     expect(workingRow(rows)?.window?.items.map((item) => item.id)).toEqual(["command"]);
   });
 
-  it("keeps unchanged window items when a later one streams", () => {
-    const answer = (text: string) => ({
+  it("streams the answer below the bar and folds it once work follows", () => {
+    const answer = {
       id: "answer",
       kind: "message" as const,
       createdAt: time(3),
       message: {
         id: MessageId.make("answer"),
         role: "assistant" as const,
-        text,
+        text: "Look",
         runId,
         createdAt: time(3),
         updatedAt: time(3),
         streaming: true,
       },
-    });
+    };
     const command = work("command", 2, {
       label: "Ran pwd",
       itemType: "command_execution",
       toolLifecycleStatus: "completed",
     });
+    const answering = run([prompt("prompt", 0), command, answer]);
+    expect(answering.map((row) => row.id)).toEqual(["prompt", "working-indicator-row", "answer"]);
+    expect(workingRow(answering)?.window?.items.map((item) => item.id)).toEqual(["command"]);
+    const followed = run([
+      prompt("prompt", 0),
+      command,
+      { ...answer, message: { ...answer.message, streaming: false } },
+      work("next", 4, {
+        label: "Running ls",
+        itemType: "command_execution",
+        toolLifecycleStatus: "inProgress",
+      }),
+    ]);
+    expect(followed.map((row) => row.id)).toEqual(["prompt", "working-indicator-row"]);
+    expect(workingRow(followed)?.window?.items.map((item) => item.id)).toEqual([
+      "command",
+      "answer",
+      "next",
+    ]);
+  });
+
+  it("keeps unchanged window items when a later one changes", () => {
+    const command = work("command", 2, {
+      label: "Ran pwd",
+      itemType: "command_execution",
+      toolLifecycleStatus: "completed",
+    });
+    const next = (status: "inProgress" | "completed") =>
+      work("next", 3, {
+        label: "Ran ls",
+        itemType: "command_execution",
+        toolLifecycleStatus: status,
+      });
     const first = computeStableMessagesTimelineRows(
-      run([prompt("prompt", 0), command, answer("Look")]),
+      run([prompt("prompt", 0), command, next("inProgress")]),
       { result: [], byId: new Map() },
     );
-    const next = computeStableMessagesTimelineRows(
-      run([prompt("prompt", 0), command, answer("Looking")]),
+    const later = computeStableMessagesTimelineRows(
+      run([prompt("prompt", 0), command, next("completed")]),
       first,
     );
-    const [firstCommand, firstAnswer] = workingRow(first.result)!.window!.items;
-    const [nextCommand, nextAnswer] = workingRow(next.result)!.window!.items;
-    expect(nextCommand).toBe(firstCommand);
-    expect(nextAnswer).not.toBe(firstAnswer);
+    const [firstCommand, firstNext] = workingRow(first.result)!.window!.items;
+    const [laterCommand, laterNext] = workingRow(later.result)!.window!.items;
+    expect(laterCommand).toBe(firstCommand);
+    expect(laterNext).not.toBe(firstNext);
   });
 
   it("leaves rows alone when nothing is running", () => {
