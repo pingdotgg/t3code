@@ -1225,9 +1225,11 @@ function sortMessagesByTurnItemOrder(
   });
 }
 
-interface FamilyPageThread {
+interface FamilyThread {
   readonly id: ThreadId;
   readonly deleted: boolean;
+  /** Forks of imported threads also show the source's runless rows (`isTurnItemAtOrBeforeRun`). */
+  readonly inheritsRunless: boolean;
   /**
    * Ordinal of the source run a fork copied history through; null when that run is gone.
    * Null for side chats, which show only their own rows (`inheritedRunFork`).
@@ -1235,37 +1237,38 @@ interface FamilyPageThread {
   readonly forkedFrom: { readonly threadId: ThreadId; readonly runOrdinal: number | null } | null;
 }
 
-interface FamilyPageItem {
+interface FamilyAttachment {
   readonly threadId: ThreadId;
+  readonly id: string;
+  readonly runless: boolean;
+  /** Null when the row's run is gone. */
   readonly runOrdinal: number | null;
-  readonly toolName: string | null;
-  readonly output?: unknown;
 }
 
-/** Forks show their source's pages without copying the item, so a page outlives its owner. */
-function unreferencedThreadPageIds(input: {
+/** Forks show their source's files without copying them, so a file outlives the thread that sent it. */
+function unreadThreadAttachmentIds(input: {
   readonly threadId: ThreadId;
-  readonly threads: ReadonlyArray<FamilyPageThread>;
-  readonly items: ReadonlyArray<FamilyPageItem>;
+  readonly threads: ReadonlyArray<FamilyThread>;
+  readonly attachments: ReadonlyArray<FamilyAttachment>;
 }): Array<string> {
   const threads = new Map(input.threads.map((thread) => [thread.id, thread]));
-  const pagesByThread = new Map<ThreadId, Array<{ id: string; runOrdinal: number | null }>>();
-  for (const item of input.items) {
-    for (const id of threadHtmlRenderAttachmentIds(item.threadId, [item])) {
-      const pages = pagesByThread.get(item.threadId) ?? [];
-      pages.push({ id, runOrdinal: item.runOrdinal });
-      pagesByThread.set(item.threadId, pages);
-    }
-  }
+  const attachmentsByThread = Map.groupBy(input.attachments, (attachment) => attachment.threadId);
   const shownBy = (threadId: ThreadId) => {
     const shown = new Set<string>();
     const seen = new Set<ThreadId>();
     let thread = threads.get(threadId);
-    let cutoff = Number.POSITIVE_INFINITY;
+    let cutoff: number | null = null;
     while (thread !== undefined && !seen.has(thread.id)) {
       seen.add(thread.id);
-      for (const page of pagesByThread.get(thread.id) ?? []) {
-        if (page.runOrdinal === null || page.runOrdinal <= cutoff) shown.add(page.id);
+      for (const attachment of attachmentsByThread.get(thread.id) ?? []) {
+        if (
+          cutoff === null ||
+          (attachment.runless
+            ? thread.inheritsRunless
+            : attachment.runOrdinal !== null && attachment.runOrdinal <= cutoff)
+        ) {
+          shown.add(attachment.id);
+        }
       }
       const source = thread.forkedFrom;
       if (source === null || source.runOrdinal === null) break;
@@ -5498,106 +5501,149 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
 
     const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (threadId) => {
-      const isFamilyMember = sql`thread_id = ${threadId}
-        OR json_extract(payload_json, '$.lineage.rootThreadId') = (
-          SELECT json_extract(member.payload_json, '$.lineage.rootThreadId')
-          FROM orchestration_v2_projection_threads AS member
-          WHERE member.thread_id = ${threadId}
-        )`;
+      const family = sql`
+        SELECT thread_id, deleted_at, payload_json
+        FROM orchestration_v2_projection_threads
+        WHERE thread_id = ${threadId}
+          OR json_extract(payload_json, '$.lineage.rootThreadId') = (
+            SELECT json_extract(member.payload_json, '$.lineage.rootThreadId')
+            FROM orchestration_v2_projection_threads AS member
+            WHERE member.thread_id = ${threadId}
+          )
+      `;
+      type FileRow = {
+        thread_id: ThreadId;
+        runless: number;
+        run_ordinal: number | null;
+        id: string;
+      };
       return Effect.all([
-        sql<{ id: string }>`
-      SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
-      FROM orchestration_v2_projection_messages AS message,
-        json_each(message.payload_json, '$.attachments') AS attachment
-      WHERE message.thread_id = ${threadId}
-    `,
         sql<{
           thread_id: ThreadId;
           deleted_at: string | null;
+          history_origin: string | null;
           forked_from_thread_id: ThreadId | null;
           forked_from_run_ordinal: number | null;
         }>`
-      WITH family AS (
-        SELECT thread_id, deleted_at, payload_json
-        FROM orchestration_v2_projection_threads
-        WHERE ${isFamilyMember}
-      )
-      SELECT
-        family.thread_id,
-        family.deleted_at,
-        source.thread_id AS forked_from_thread_id,
-        run.ordinal AS forked_from_run_ordinal
-      FROM family
-      LEFT JOIN family AS source
-        ON json_extract(family.payload_json, '$.forkedFrom.type') = 'run'
-        AND json_extract(family.payload_json, '$.lineage.sideChat') IS NOT 1
-        AND source.thread_id = json_extract(family.payload_json, '$.forkedFrom.threadId')
-      LEFT JOIN orchestration_v2_projection_runs AS run
-        ON run.thread_id = source.thread_id
-        AND run.run_id = json_extract(family.payload_json, '$.forkedFrom.runId')
-    `,
-        sql<{ thread_id: ThreadId; run_ordinal: number | null; payload_json: string }>`
-      SELECT item.thread_id, run.ordinal AS run_ordinal, item.payload_json
-      FROM orchestration_v2_projection_turn_items AS item
-      LEFT JOIN orchestration_v2_projection_runs AS run
-        ON run.run_id = item.run_id AND run.thread_id = item.thread_id
-      WHERE item.thread_id IN (
-          SELECT thread_id FROM orchestration_v2_projection_threads WHERE ${isFamilyMember}
-        )
-        AND item.type = 'dynamic_tool'
-        AND (
-          item.payload_json LIKE '%htmlRender%'
-          OR item.payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
-        )
-    `,
-        sql<{ id: string }>`
-      SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
-      FROM orchestration_v2_projection_turn_items AS item,
-        json_each(item.payload_json, '$.questionAnswer.attachmentsByQuestionId') AS question,
-        json_each(question.value) AS attachment
-      WHERE item.thread_id = ${threadId}
-        AND item.type = 'user_input_request'
-    `,
+          WITH family AS (${family})
+          SELECT
+            family.thread_id,
+            family.deleted_at,
+            json_extract(family.payload_json, '$.historyOrigin') AS history_origin,
+            source.thread_id AS forked_from_thread_id,
+            run.ordinal AS forked_from_run_ordinal
+          FROM family
+          LEFT JOIN family AS source
+            ON json_extract(family.payload_json, '$.forkedFrom.type') = 'run'
+            AND json_extract(family.payload_json, '$.lineage.sideChat') IS NOT 1
+            AND source.thread_id = json_extract(family.payload_json, '$.forkedFrom.threadId')
+          LEFT JOIN orchestration_v2_projection_runs AS run
+            ON run.thread_id = source.thread_id
+            AND run.run_id = json_extract(family.payload_json, '$.forkedFrom.runId')
+        `,
+        sql<FileRow>`
+          WITH family AS (${family})
+          SELECT
+            message.thread_id,
+            message.run_id IS NULL AS runless,
+            run.ordinal AS run_ordinal,
+            json_extract(attachment.value, '$.id') AS id
+          FROM family
+          JOIN orchestration_v2_projection_messages AS message
+            ON message.thread_id = family.thread_id
+          JOIN json_each(message.payload_json, '$.attachments') AS attachment
+          LEFT JOIN orchestration_v2_projection_runs AS run
+            ON run.run_id = message.run_id AND run.thread_id = message.thread_id
+        `,
+        sql<FileRow>`
+          WITH family AS (${family})
+          SELECT
+            item.thread_id,
+            item.run_id IS NULL AS runless,
+            run.ordinal AS run_ordinal,
+            json_extract(attachment.value, '$.id') AS id
+          FROM family
+          JOIN orchestration_v2_projection_turn_items AS item
+            ON item.thread_id = family.thread_id
+          JOIN json_each(item.payload_json, '$.questionAnswer.attachmentsByQuestionId') AS question
+          JOIN json_each(question.value) AS attachment
+          LEFT JOIN orchestration_v2_projection_runs AS run
+            ON run.run_id = item.run_id AND run.thread_id = item.thread_id
+          WHERE item.type = 'user_input_request'
+        `,
+        sql<{
+          thread_id: ThreadId;
+          runless: number;
+          run_ordinal: number | null;
+          payload_json: string;
+        }>`
+          WITH family AS (${family})
+          SELECT
+            item.thread_id,
+            item.run_id IS NULL AS runless,
+            run.ordinal AS run_ordinal,
+            item.payload_json
+          FROM family
+          JOIN orchestration_v2_projection_turn_items AS item
+            ON item.thread_id = family.thread_id
+          LEFT JOIN orchestration_v2_projection_runs AS run
+            ON run.run_id = item.run_id AND run.thread_id = item.thread_id
+          WHERE item.type = 'dynamic_tool'
+            AND (
+              item.payload_json LIKE '%htmlRender%'
+              OR item.payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
+            )
+        `,
         // A guest's waiting files are pending uploads that no message row holds yet.
         sql<{ id: string }>`
-      SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
-      FROM orchestration_v2_projection_threads AS thread,
-        json_each(thread.payload_json, '$.guestShare.messages') AS message,
-        json_each(message.value, '$.attachments') AS attachment
-      WHERE thread.thread_id = ${threadId}
-        AND json_extract(message.value, '$.status') = 'pending'
-    `,
+          SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
+          FROM orchestration_v2_projection_threads AS thread,
+            json_each(thread.payload_json, '$.guestShare.messages') AS message,
+            json_each(message.value, '$.attachments') AS attachment
+          WHERE thread.thread_id = ${threadId}
+            AND json_extract(message.value, '$.status') = 'pending'
+        `,
       ]).pipe(
-        Effect.map(([messages, family, renders, answerFiles, guestFiles]) => [
-          ...new Set([
-            ...messages.map((row) => row.id),
-            ...guestFiles.map((row) => row.id),
-            ...answerFiles.map((row) => row.id),
-            ...unreferencedThreadPageIds({
-              threadId,
-              threads: family.map((row) => ({
-                id: row.thread_id,
-                deleted: row.deleted_at !== null,
-                forkedFrom:
-                  row.forked_from_thread_id === null
-                    ? null
-                    : {
-                        threadId: row.forked_from_thread_id,
-                        runOrdinal: row.forked_from_run_ordinal,
+        Effect.map(([threads, messageFiles, answerFiles, renders, guestFiles]) => {
+          const file = (row: Omit<FileRow, "id">, id: string) => ({
+            threadId: row.thread_id,
+            id,
+            runless: row.runless === 1,
+            runOrdinal: row.run_ordinal,
+          });
+          return [
+            ...new Set([
+              ...unreadThreadAttachmentIds({
+                threadId,
+                threads: threads.map((row) => ({
+                  id: row.thread_id,
+                  deleted: row.deleted_at !== null,
+                  inheritsRunless: row.history_origin === "v1_import",
+                  forkedFrom:
+                    row.forked_from_thread_id === null
+                      ? null
+                      : {
+                          threadId: row.forked_from_thread_id,
+                          runOrdinal: row.forked_from_run_ordinal,
+                        },
+                })),
+                attachments: [
+                  ...[...messageFiles, ...answerFiles].map((row) => file(row, row.id)),
+                  ...renders.flatMap((row) => {
+                    const item = parseEncodedPayload(row.payload_json);
+                    return threadHtmlRenderAttachmentIds(row.thread_id, [
+                      {
+                        toolName: typeof item.toolName === "string" ? item.toolName : null,
+                        output: item.output,
                       },
-              })),
-              items: renders.map((row) => {
-                const item = parseEncodedPayload(row.payload_json);
-                return {
-                  threadId: row.thread_id,
-                  runOrdinal: row.run_ordinal,
-                  toolName: typeof item.toolName === "string" ? item.toolName : null,
-                  output: item.output,
-                };
+                    ]).map((id) => file(row, id));
+                  }),
+                ],
               }),
-            }),
-          ]),
-        ]),
+              ...guestFiles.map((row) => row.id),
+            ]),
+          ];
+        }),
         Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
       );
     };

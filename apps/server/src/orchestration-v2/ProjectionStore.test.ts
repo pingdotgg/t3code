@@ -63,6 +63,237 @@ const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = modelSelection.instanceId;
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
+// Each "thread-n" key is that run's message file and question answer file; "source-queued" is a
+// runless message, which only forks of imported history show.
+it.effect.each([
+  {
+    order: ["source", "fork", "nested"],
+    historyOrigin: "native",
+    cleanup: [["source-2", "source-queued"], ["fork-2"], ["fork-1", "source-1"]],
+  },
+  {
+    order: ["nested", "fork", "source"],
+    historyOrigin: "native",
+    cleanup: [[], ["fork-1", "fork-2"], ["source-1", "source-2", "source-queued"]],
+  },
+  {
+    order: ["source", "nested", "fork"],
+    historyOrigin: "native",
+    cleanup: [["source-2", "source-queued"], [], ["fork-1", "fork-2", "source-1"]],
+  },
+  {
+    order: ["source", "fork", "nested"],
+    historyOrigin: "v1_import",
+    cleanup: [["source-2"], ["fork-2"], ["fork-1", "source-1", "source-queued"]],
+  },
+] as const)(
+  "SQL retains fork message and answer files across deletion order $order of $historyOrigin history",
+  ({ order, historyOrigin, cleanup }) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const id = (name: string) => ThreadId.make(`thread:fork-files:${name}`);
+      const runId = (name: string, ordinal: number) =>
+        RunId.make(`run:fork-files:${name}:${ordinal}`);
+      const filesOf = (key: string) =>
+        key === "source-queued" ? [`${key}-file`] : [`${key}-file`, `${key}-answer`];
+      const createThread = (name: string, source?: string) =>
+        store.apply({
+          id: EventId.make(`event:fork-files:${name}:created`),
+          type: "thread.created",
+          threadId: id(name),
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: id(name),
+            projectId: ProjectId.make("project:fork-files"),
+            title: name,
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: source === undefined ? null : id(source),
+              relationshipToParent: source === undefined ? null : "fork",
+              rootThreadId: id("source"),
+            },
+            forkedFrom:
+              source === undefined
+                ? null
+                : { type: "run", threadId: id(source), runId: runId(source, 1) },
+            ...(source === undefined ? { historyOrigin } : {}),
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+      const addMessage = Effect.fn("ForkFilesTest.addMessage")(function* (
+        name: string,
+        ordinal: number | null,
+      ) {
+        const key = `${name}-${ordinal ?? "queued"}`;
+        const messageId = MessageId.make(`message:fork-files:${key}`);
+        const run = ordinal === null ? null : runId(name, ordinal);
+        const file = (fileId: string) => ({
+          type: "file" as const,
+          id: fileId,
+          name: "notes.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 12,
+        });
+        const item = {
+          threadId: id(name),
+          runId: run,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          status: "completed" as const,
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        };
+        if (run !== null) {
+          yield* store.apply({
+            id: EventId.make(`event:${messageId}:run`),
+            type: "run.created",
+            threadId: id(name),
+            occurredAt: now,
+            payload: {
+              id: run,
+              threadId: id(name),
+              ordinal: ordinal!,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: messageId,
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "completed",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          });
+          yield* store.apply({
+            id: EventId.make(`event:${messageId}:question`),
+            type: "turn-item.updated",
+            threadId: id(name),
+            occurredAt: now,
+            payload: {
+              ...item,
+              id: TurnItemId.make(`item:${messageId}:question`),
+              ordinal: ordinal! * 10 + 1,
+              type: "user_input_request",
+              requestId: RuntimeRequestId.make(`request:${messageId}`),
+              questions: [],
+              questionAnswer: {
+                requestId: `request:${messageId}`,
+                answers: { document: ["See document"] },
+                attachmentsByQuestionId: { document: [file(`${key}-answer`)] },
+              },
+            },
+          });
+        }
+        yield* store.apply({
+          id: EventId.make(`event:${messageId}`),
+          type: "message.updated",
+          threadId: id(name),
+          occurredAt: now,
+          payload: {
+            id: messageId,
+            threadId: id(name),
+            runId: run,
+            nodeId: null,
+            role: "user",
+            text: "Read the attachment",
+            attachments: [file(`${key}-file`)],
+            streaming: false,
+            createdBy: "user",
+            creationSource: "web",
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* store.apply({
+          id: EventId.make(`event:${messageId}:item`),
+          type: "turn-item.updated",
+          threadId: id(name),
+          occurredAt: now,
+          payload: {
+            ...item,
+            id: TurnItemId.make(`item:${messageId}`),
+            ordinal: (ordinal ?? 0) * 10,
+            type: "user_message",
+            messageId,
+            createdBy: "user",
+            creationSource: "web",
+            inputIntent: "turn_start",
+            text: "Read the attachment",
+            attachments: [file(`${key}-file`)],
+          },
+        });
+      });
+      yield* createThread("source");
+      yield* addMessage("source", null);
+      yield* addMessage("source", 1);
+      yield* addMessage("source", 2);
+      yield* createThread("fork", "source");
+      yield* addMessage("fork", 1);
+      yield* addMessage("fork", 2);
+      yield* createThread("nested", "fork");
+
+      const selected = [];
+      for (const name of order) {
+        const projection = yield* store.getThreadProjection(id(name));
+        if (name === "nested") {
+          assert.deepEqual(
+            projection.visibleTurnItems.flatMap(({ item }) =>
+              item.type === "user_message"
+                ? item.attachments.map((attachment) => attachment.id)
+                : item.type === "user_input_request"
+                  ? Object.values(item.questionAnswer?.attachmentsByQuestionId ?? {}).flatMap(
+                      (files) => files.map((attachment) => attachment.id),
+                    )
+                  : [],
+            ),
+            [
+              ...(historyOrigin === "v1_import" ? ["source-queued-file"] : []),
+              "source-1-file",
+              "source-1-answer",
+              "fork-1-file",
+              "fork-1-answer",
+            ],
+          );
+        }
+        selected.push((yield* store.getThreadAttachmentIds(id(name))).toSorted());
+        yield* store.apply({
+          id: EventId.make(`event:fork-files:${name}:deleted`),
+          type: "thread.deleted",
+          threadId: id(name),
+          occurredAt: now,
+          payload: { ...projection.thread, deletedAt: now },
+        });
+      }
+      assert.deepEqual(
+        selected,
+        cleanup.map((keys) => keys.flatMap(filesOf).toSorted()),
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
 const traceSqlStatements = () => {
   const statements: Array<string> = [];
   const tracer = Tracer.make({
