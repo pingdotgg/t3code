@@ -74,7 +74,10 @@ const KINDS: Record<
   bluetooth: {
     label: "Bluetooth",
     row: "Other Bluetooth",
-    rowDescription: "AirPods, headsets, and cars not listed",
+    rowDescription:
+      Platform.OS === "android"
+        ? "Earbuds, headsets, and cars, including Android Auto, not listed"
+        : "AirPods, headsets, and cars not listed",
     icon: "headphones",
   },
   builtIn: {

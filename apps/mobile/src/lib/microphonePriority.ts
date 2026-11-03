@@ -16,7 +16,7 @@ interface MicrophoneInput {
   readonly type: string;
 }
 
-// A car without CarPlay connects as a Bluetooth headset, so it is a Bluetooth device.
+// A car without CarPlay, and Android Auto, routes its microphone over Bluetooth, so it is a Bluetooth device.
 const KIND_BY_PORT_TYPE: Readonly<Record<string, MicrophoneKind>> = {
   MicrophoneWired: "wired",
   USBAudio: "wired",
