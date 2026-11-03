@@ -611,6 +611,8 @@ describe("MuseAdapterV2", () => {
         const fake = yield* makeFakeMuse();
         const harness = yield* makeHarness(fake);
         const first = yield* startConversation(harness, fake);
+        const usage = { inputTokens: 10, outputTokens: 4, cachedTokens: 2, reasoningTokens: 1 };
+        yield* fake.emit("session/tokenUsage", { turnId: first.nativeId, promptTokens: 3, usage });
         yield* fake.emit("item/completed", {
           turnId: first.nativeId,
           item: {
@@ -657,7 +659,14 @@ describe("MuseAdapterV2", () => {
         assert.strictEqual(idle?.providerThread.status, "idle");
         assert.strictEqual(fake.closeCount(), 0);
 
+        yield* fake.emit("session/tokenUsage", { turnId: first.nativeId, promptTokens: 5, usage });
+        yield* fake.emit("session/contextUsage", { usedTokens: 2 });
+        yield* harness.takeEvent(
+          "provider_thread.updated",
+          (event) => event.providerThread.contextUsage?.usedTokens === 2,
+        );
         const next = yield* startConversation(harness, fake, 2);
+        yield* fake.emit("session/tokenUsage", { turnId: first.nativeId, promptTokens: 7, usage });
         assert.strictEqual(
           fake.calls.filter((call) => call.method === "turn/start").at(-1)?.params.ifBusy,
           "queue",
@@ -670,7 +679,7 @@ describe("MuseAdapterV2", () => {
             turnId: first.nativeId,
             terminal,
             ...(terminal === "failed" ? { error: { message: "Reminder failed" } } : {}),
-            usage: { inputTokens: 10, outputTokens: 4, cachedTokens: 2, reasoningTokens: 1 },
+            usage,
           });
           yield* harness.takeEvent("background_work.updated", (event) => !event.pending);
           assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
@@ -680,6 +689,7 @@ describe("MuseAdapterV2", () => {
             .at(-1);
           assert.strictEqual(settled?.providerTurn.status, terminal);
           assert.strictEqual(settled?.providerTurn.turnTokenUsage?.outputTokens, 4);
+          assert.strictEqual(settled?.providerTurn.turnTokenUsage?.inputTokens, 15);
           assert.strictEqual(settled?.providerTurn.tokenUsage?.usedTokens, 2);
           if (terminal === "failed")
             assert.isTrue(

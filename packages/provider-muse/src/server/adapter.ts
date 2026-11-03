@@ -1417,7 +1417,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           }
         }
         const turn =
-          (method === "turn/completed" && typeof params.turnId === "string"
+          ((method === "turn/completed" || method === "session/tokenUsage") &&
+          typeof params.turnId === "string"
             ? settlingTurns.get(params.turnId)
             : undefined) ?? active;
         if (!turn) return;
@@ -1581,6 +1582,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 reasoningTokens: (previous?.reasoningTokens ?? 0) + usage.usage.reasoningTokens,
               },
             };
+            if (lastProviderTurn?.id === turn.providerTurn.id) lastProviderTurn = turn.providerTurn;
             yield* emit({
               type: "provider_turn.updated",
               driver: MUSE_PROVIDER,
