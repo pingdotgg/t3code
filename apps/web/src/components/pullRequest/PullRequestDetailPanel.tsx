@@ -1330,7 +1330,12 @@ export function PullRequestDetailPanel({
                   onSelect={onSelectPullRequest}
                   mergeMethod={selectedMergeMethod}
                   stale={!nativeStackQuery.isFresh}
-                  canMerge={supportsStackActions && can("merge") && allowedMergeMethods.length > 0}
+                  canMerge={
+                    supportsStackActions &&
+                    can("merge") &&
+                    allowedMergeMethods.length > 0 &&
+                    detail.isInMergeQueue !== true
+                  }
                   canRebase={supportsStackActions && detail.viewerPermissions.stackRebase === true}
                   onActed={() => {
                     refreshDetail();
