@@ -155,7 +155,7 @@ describe("V2 environment commands", () => {
           { type: "runtime-request.respond", creationSource },
           { type: "runtime-request.respond", creationSource },
         ]);
-      }).pipe(Effect.provide(layerTestCrypto)),
+      }).pipe(Effect.provide(layerTestRandom)),
   );
 
   it.effect("distinguishes sending a selected queued message from resuming queue order", () =>
