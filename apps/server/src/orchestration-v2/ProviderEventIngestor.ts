@@ -462,38 +462,40 @@ export const layer: Layer.Layer<
     });
 
     // The run records what an unexpected process exit took, as a server restart would.
-    const lostBackgroundWorkEvents = Effect.fnUntraced(function* (
-      input: ProviderEventIngestInput,
-      event: Extract<
-        ProviderAdapter.ProviderAdapterV2Event,
-        { readonly type: "background_work.lost" }
-      >,
-    ) {
-      const threadId = event.threadId;
-      const run = latestStartedRun(
-        (yield* projections.getThreadRecords(threadId, ["runs"])).runs,
-        event.providerThreadId,
-      );
-      if (run === undefined) return [];
-      const work = event.tasks.map((task) => ({
-        ...cancelledRosterTaskWork(task),
-        cause: "provider_exit" as const,
-      }));
-      return [
-        yield* makeDomainEvent(input, {
-          type: "run.background-work-cancelled",
-          threadId,
-          runId: run.id,
-          payload: {
+    const lostBackgroundWorkEvents = Effect.fn("ProviderEventIngestor.lostBackgroundWorkEvents")(
+      function* (
+        input: ProviderEventIngestInput,
+        event: Extract<
+          ProviderAdapter.ProviderAdapterV2Event,
+          { readonly type: "background_work.lost" }
+        >,
+      ) {
+        const threadId = event.threadId;
+        const run = latestStartedRun(
+          (yield* projections.getThreadRecords(threadId, ["runs"])).runs,
+          event.providerThreadId,
+        );
+        if (run === undefined) return [];
+        const work = event.tasks.map((task) => ({
+          ...cancelledRosterTaskWork(task),
+          cause: "provider_exit" as const,
+        }));
+        return [
+          yield* makeDomainEvent(input, {
+            type: "run.background-work-cancelled",
+            threadId,
             runId: run.id,
-            restartCancelledBackgroundWork: mergeRestartCancelledBackgroundWork(
-              run.restartCancelledBackgroundWork ?? [],
-              work,
-            ),
-          },
-        }),
-      ];
-    });
+            payload: {
+              runId: run.id,
+              restartCancelledBackgroundWork: mergeRestartCancelledBackgroundWork(
+                run.restartCancelledBackgroundWork ?? [],
+                work,
+              ),
+            },
+          }),
+        ];
+      },
+    );
 
     const normalize: ProviderEventIngestorV2Shape["normalize"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
