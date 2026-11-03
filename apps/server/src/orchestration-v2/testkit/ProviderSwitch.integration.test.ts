@@ -52,7 +52,7 @@ import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
-import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
+import * as ProjectionReplay from "./ProjectionReplay.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -3148,7 +3148,7 @@ describe("orchestration v2 provider switching", () => {
         const layerImporterProvided = LegacyV1ThreadImporter.layer.pipe(
           Layer.provide(Layer.mergeAll(layerStoresProvided, layerEventSinkProvided)),
         );
-        const layerMaintenanceProvided = ProjectionMaintenance.layer.pipe(
+        const layerMaintenanceProvided = ProjectionReplay.layer.pipe(
           Layer.provide(layerStoresProvided),
         );
         const layerOrchestratorProvided = ProviderReplayHarness.layerWithRegistry(
@@ -3177,7 +3177,7 @@ describe("orchestration v2 provider switching", () => {
         const projection = yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-          const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+          const maintenance = yield* ProjectionReplay.ProjectionReplay;
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
 
