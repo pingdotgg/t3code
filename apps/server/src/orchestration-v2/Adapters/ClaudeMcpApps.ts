@@ -119,10 +119,10 @@ export function claudeMcpCallToolResult(input: {
   const content = nativeContent ?? mcpContentBlocks(input.fallbackContent) ?? [];
   return {
     content,
-    ...(nativeContent === undefined || native?.structuredContent === undefined
+    ...(native?.structuredContent === undefined
       ? {}
       : { structuredContent: native.structuredContent }),
-    ...(nativeContent === undefined || native?._meta === undefined ? {} : { _meta: native._meta }),
+    ...(native?._meta === undefined ? {} : { _meta: native._meta }),
     ...(input.isError ? { isError: true } : {}),
   };
 }

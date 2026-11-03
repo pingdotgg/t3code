@@ -4950,6 +4950,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ClaudeAgentSdkQueryMcpApps,
           {
             targets: Map<string, ClaudeMcpAppTarget | null> | undefined;
+            loadedAt: number;
+            misses: Map<string, number>;
             loading: Deferred.Deferred<void> | undefined;
             retryAt: number;
             version: number;
@@ -7291,7 +7293,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             presentation: toolCall.presentation,
           });
           const app =
-            input.context === null || toolNonExecutionKind !== undefined
+            input.context === null ||
+            toolNonExecutionKind !== undefined ||
+            (isClaudeToolResultError(input.toolResult) &&
+              input.output.type !== "structured_tool_use_result")
               ? undefined
               : yield* findMcpApp(input.context, toolCall);
           if (
@@ -7327,6 +7332,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         ) {
           const catalog = mcpAppCatalogs.get(queryMcpApps) ?? {
             targets: undefined,
+            loadedAt: 0,
+            misses: new Map<string, number>(),
             loading: undefined,
             retryAt: 0,
             version: 0,
@@ -7361,6 +7368,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // A listTools read that landed meanwhile is newer.
             if (catalog.version === version) {
               catalog.targets = claudeMcpAppTargets(statuses.value);
+              catalog.loadedAt = yield* Clock.currentTimeMillis;
+              catalog.retryAt = 0;
               catalog.version += 1;
             }
             return true;
@@ -7398,7 +7407,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             return undefined;
           }
-          const known = mcpAppCatalogs.get(queryMcpApps)?.targets?.get(toolCall.toolName);
+          const catalog = mcpAppCatalogs.get(queryMcpApps);
+          const known =
+            catalog !== undefined &&
+            (yield* Clock.currentTimeMillis) - catalog.loadedAt < CLAUDE_MCP_APP_LOOKUP_RETRY_MS
+              ? catalog.targets?.get(toolCall.toolName)
+              : undefined;
           // An unknown tool is looked up by the capture, off the message reader.
           return known === null ? undefined : { queryMcpApps, known };
         });
@@ -7408,15 +7422,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           queryMcpApps: ClaudeAgentSdkQueryMcpApps,
           toolName: string,
         ) {
-          const read = yield* loadMcpAppCatalog(queryMcpApps, {
-            refresh: mcpAppCatalogs.get(queryMcpApps)?.targets !== undefined,
-          });
-          const catalog = mcpAppCatalogs.get(queryMcpApps);
-          const target = catalog?.targets?.get(toolName);
-          if (read && target === undefined && catalog?.targets !== undefined) {
-            // Still unknown after a fresh read: do not read again for every call of it.
-            catalog.retryAt = (yield* Clock.currentTimeMillis) + CLAUDE_MCP_APP_LOOKUP_RETRY_MS;
+          const cached = mcpAppCatalogs.get(queryMcpApps);
+          const now = yield* Clock.currentTimeMillis;
+          const missedAt = cached?.misses.get(toolName);
+          if (
+            cached?.targets === undefined ||
+            now - cached.loadedAt >= CLAUDE_MCP_APP_LOOKUP_RETRY_MS ||
+            (!cached.targets.has(toolName) &&
+              (missedAt === undefined || now - missedAt >= CLAUDE_MCP_APP_LOOKUP_RETRY_MS))
+          ) {
+            yield* loadMcpAppCatalog(queryMcpApps, { refresh: true });
+            const catalog = mcpAppCatalogs.get(queryMcpApps);
+            const checkedAt = yield* Clock.currentTimeMillis;
+            if (
+              catalog?.targets !== undefined &&
+              checkedAt >= catalog.retryAt &&
+              checkedAt - catalog.loadedAt < CLAUDE_MCP_APP_LOOKUP_RETRY_MS &&
+              !catalog.targets.has(toolName)
+            ) {
+              catalog.misses.set(toolName, checkedAt);
+            }
           }
+          const target = mcpAppCatalogs.get(queryMcpApps)?.targets?.get(toolName);
           return target ?? undefined;
         });
 
@@ -11767,6 +11794,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const catalog = mcpAppCatalogs.get(queryMcpApps);
             if (catalog !== undefined) {
               catalog.targets = claudeMcpAppTargets(statuses);
+              catalog.loadedAt = yield* Clock.currentTimeMillis;
+              catalog.retryAt = 0;
               catalog.version += 1;
             }
             const server = statuses.find((entry) => entry.name === toolsInput.server);

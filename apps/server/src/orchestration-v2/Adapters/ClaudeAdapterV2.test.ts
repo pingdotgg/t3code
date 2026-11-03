@@ -4938,6 +4938,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       readonly capabilities?: ReadonlyArray<string>;
       readonly isError?: boolean;
       readonly toolUseResult?: unknown;
+      readonly toolName?: string;
     } = {},
   ) {
     const turnInput = makeClaudeTestTurnInput({
@@ -4971,7 +4972,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           role: "assistant",
           model: "claude-haiku-5-5",
           content: [
-            { type: "tool_use", id, name: "mcp__weather__get_weather", input: { city: "Oslo" } },
+            {
+              type: "tool_use",
+              id,
+              name: options.toolName ?? "mcp__weather__get_weather",
+              input: { city: "Oslo" },
+            },
           ],
         },
       }),
@@ -5008,11 +5014,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
 
   it.effect.each([
-    { isError: false, status: "completed" },
-    { isError: true, status: "failed" },
+    { isError: false, status: "completed", nativeContent: true },
+    { isError: true, status: "failed", nativeContent: true },
+    { isError: false, status: "completed", nativeContent: false },
   ] as const)(
-    "shows an MCP app in place of its tool row, running until it lands: $status",
-    ({ isError, status }) =>
+    "shows an MCP app in place of its tool row, running until it lands: $status, native content: $nativeContent",
+    ({ isError, status, nativeContent }) =>
       Effect.gen(function* () {
         const releaseRead = yield* Deferred.make<void>();
         const apps = weatherMcpApps();
@@ -5026,7 +5033,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         // Recorded shape: claude_mcp_tool_presentation/claude_transcript.ndjson.
         yield* callWeatherTool(harness, `mcp-app-${status}`, {
           isError,
-          toolUseResult: { content: "Sunny", structuredContent: { temp: 21 } },
+          toolUseResult: {
+            ...(nativeContent ? { content: "Sunny" } : {}),
+            structuredContent: { temp: 21 },
+            _meta: { probe: true },
+          },
         });
         yield* Queue.offer(
           harness.sdkMessages,
@@ -5058,6 +5069,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepEqual((item.output as Record<string, unknown>).result, {
           content: [{ type: "text", text: "Sunny" }],
           structuredContent: { temp: 21 },
+          _meta: { probe: true },
           ...(isError ? { isError: true } : {}),
         });
         const stored = yield* (yield* FileSystem.FileSystem).readFileString(
@@ -5149,6 +5161,174 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.isUndefined(mcpAppFromToolItem(rows[0]!));
       assert.equal(statusCalls, statusReads);
       assert.lengthOf(readUris, reads);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { case: "a tool gaining an app", initialUri: undefined },
+    { case: "an app changing its resource URI", initialUri: MCP_APP_RESOURCE },
+  ])("refreshes an expired MCP app catalog for $case", ({ initialUri }) =>
+    Effect.gen(function* () {
+      let resourceUri = initialUri;
+      let statusCalls = 0;
+      const readUris: Array<string> = [];
+      const harness = yield* makeWakeHarnessWithOptions({
+        mcpApps: {
+          ...weatherMcpApps(),
+          readResource: (_server, uri) =>
+            Effect.sync(() => {
+              readUris.push(uri);
+              return {
+                contents: [{ uri, mimeType: "text/html;profile=mcp-app", text: MCP_APP_HTML }],
+              };
+            }),
+          serverStatus: Effect.sync(() => {
+            statusCalls += 1;
+            return [weatherServer(resourceUri === undefined ? undefined : { ui: { resourceUri } })];
+          }),
+        },
+      });
+      yield* callWeatherTool(harness, "mcp-app-before-expiry");
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "mcp-app-before-expiry-terminal", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.until(() => settledWeatherRows(harness.events).length === 1);
+      assert.equal(
+        mcpAppFromToolItem(settledWeatherRows(harness.events)[0]!)?.resourceUri,
+        initialUri,
+      );
+      assert.equal(statusCalls, 1);
+
+      resourceUri = "ui://weather/dashboard-v2";
+      yield* TestClock.adjust("61 seconds");
+      yield* callWeatherTool(harness, "mcp-app-after-expiry");
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "mcp-app-after-expiry-terminal", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.until(() => settledWeatherRows(harness.events).length === 2);
+      const row = settledWeatherRows(harness.events)[1]!;
+      assert.equal(mcpAppFromToolItem(row)?.resourceUri, resourceUri);
+      assert.equal(statusCalls, 2);
+      assert.deepEqual(readUris, [...(initialUri === undefined ? [] : [initialUri]), resourceUri]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("looks up another unknown MCP app immediately after a catalog miss", () =>
+    Effect.gen(function* () {
+      let statuses: ReadonlyArray<ClaudeSdk.McpServerStatus> = [];
+      let statusCalls = 0;
+      const harness = yield* makeWakeHarnessWithOptions({
+        mcpApps: weatherMcpApps({
+          serverStatus: Effect.sync(() => {
+            statusCalls += 1;
+            return statuses;
+          }),
+        }),
+      });
+      yield* callWeatherTool(harness, "mcp-app-missing", { toolName: "mcp__weather__missing" });
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "mcp-app-missing-terminal", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.until(() => settledWeatherRows(harness.events).length === 1);
+      assert.isUndefined(mcpAppFromToolItem(settledWeatherRows(harness.events)[0]!));
+      const readsAfterMiss = statusCalls;
+
+      statuses = [weatherServer({ ui: { resourceUri: MCP_APP_RESOURCE } })];
+      yield* callWeatherTool(harness, "mcp-app-after-miss");
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "mcp-app-after-miss-terminal", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.until(() => settledWeatherRows(harness.events).length === 2);
+      assert.isDefined(mcpAppFromToolItem(settledWeatherRows(harness.events)[1]!));
+      assert.equal(statusCalls, readsAfterMiss + 1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("skips the MCP app lookup for a transport failure and captures the next success", () =>
+    Effect.gen(function* () {
+      let statuses: ReadonlyArray<ClaudeSdk.McpServerStatus> = [
+        weatherServer(undefined, "catalog"),
+      ];
+      let statusCalls = 0;
+      const harness = yield* makeWakeHarnessWithOptions({
+        mcpApps: weatherMcpApps({
+          serverStatus: Effect.sync(() => {
+            statusCalls += 1;
+            return statuses;
+          }),
+        }),
+      });
+      yield* callWeatherTool(harness, "mcp-app-prefetch", {
+        toolName: "mcp__catalog__get_weather",
+      });
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "mcp-app-prefetch-terminal", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.until(() => settledWeatherRows(harness.events).length === 1);
+      assert.equal(statusCalls, 1);
+
+      yield* callWeatherTool(harness, "mcp-app-transport-failure", { isError: true });
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "mcp-app-transport-failure-terminal", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.until(() => settledWeatherRows(harness.events).length === 2);
+      const failed = settledWeatherRows(harness.events)[1]!;
+      assert.equal(failed.status, "failed");
+      assert.isUndefined(mcpAppFromToolItem(failed));
+      assert.equal(statusCalls, 1);
+
+      statuses = [weatherServer({ ui: { resourceUri: MCP_APP_RESOURCE } })];
+      yield* callWeatherTool(harness, "mcp-app-reconnected");
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "mcp-app-reconnected-terminal", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.until(() => settledWeatherRows(harness.events).length === 3);
+      assert.isDefined(mcpAppFromToolItem(settledWeatherRows(harness.events)[2]!));
+      assert.equal(statusCalls, 2);
     }).pipe(
       Effect.scoped,
       Effect.provide(
