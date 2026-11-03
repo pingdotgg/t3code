@@ -4,6 +4,7 @@
  * without a credential. eas-cli generates its own client from the same
  * endpoint. Run `vp run generate` afterwards to regenerate the operations.
  */
+import { pipe } from "effect/Function";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -36,8 +37,10 @@ const program = Effect.gen(function* () {
     Effect.flatMap(HttpClientResponse.schemaBodyJson(IntrospectionResponse)),
   );
   // Sorted so a refresh diffs by what Expo changed, not by its declaration order.
-  const sdl = printSchema(
-    lexicographicSortSchema(buildClientSchema(response.data as unknown as IntrospectionQuery)),
+  const sdl = pipe(
+    buildClientSchema(response.data as unknown as IntrospectionQuery),
+    lexicographicSortSchema,
+    printSchema,
   );
   const target = path.join(import.meta.dirname, "..", "schema", "expo.graphql");
   yield* fs.makeDirectory(path.dirname(target), { recursive: true });

@@ -14,13 +14,14 @@ import {
 
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 
-// The final segment is optional so an explicit folder link may end in `/`
-// (`patches/`, `docs/My Folder/`). A bare name with no slash still fails.
+// Names may use any script (`線性代數/考試.pdf`). The final segment is optional so an
+// explicit folder link may end in `/` (`patches/`, `docs/My Folder/`). A bare name with no
+// slash still fails.
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2})?$/;
+  /^(?:[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*\/)+(?:[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*(?::\d+){0,2})?$/u;
 
 const RELATIVE_FILE_NAME_PATTERN =
-  /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
+  /^[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2}$/u;
 
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 
@@ -224,6 +225,22 @@ export function splitMarkdownLinkSearchAndHash(value: string): {
     path: queryIndex >= 0 ? pathWithSearch.slice(0, queryIndex) : pathWithSearch,
     hash,
   };
+}
+
+/**
+ * The decoded path a markdown destination names on the host, before any workspace resolution, or
+ * null for a `file:` URL that does not parse. Clients and the guest media route both read it here.
+ */
+export function markdownDestinationHostPath(source: string): string | null {
+  if (/^file:/i.test(source)) {
+    const target = parseFileUrlHref(source);
+    return target === null
+      ? null
+      : stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(target.path));
+  }
+  return stripSlashPrefixedWindowsDrive(
+    safeDecodeURIComponent(splitMarkdownLinkSearchAndHash(source).path),
+  );
 }
 
 export function isMarkdownFileLinkLabel(label: string, href: string): boolean {

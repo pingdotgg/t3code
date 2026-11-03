@@ -7,7 +7,7 @@ import { check, type Check, type Rect } from "./checks.ts";
 import { run } from "./device.ts";
 
 /** Pixel width of an image or video, to map snapshot coordinates onto its frames. */
-export async function pixelWidth(path: string): Promise<number> {
+async function pixelWidth(path: string): Promise<number> {
   const { stdout } = await run("ffprobe", [
     "-v",
     "error",
@@ -83,7 +83,7 @@ export interface FrameProgress {
  * region still looks like the origin: tabs lingering over an entering thread, or a returned
  * list drawn before its tabs.
  */
-export const chromeLags = (frame: FrameProgress) => frame.nav > 0.3 && frame.chrome < 0.4;
+const chromeLags = (frame: FrameProgress) => frame.nav > 0.3 && frame.chrome < 0.4;
 // One lagging frame is capture jitter; a regression lasts several.
 const LAG_FRAME_LIMIT = 2;
 

@@ -4,10 +4,23 @@ import {
   alignListPaneToHinge,
   deriveLayout,
   deriveThreadFeedInitialContentInset,
+  deriveThreadArrangementSizing,
   deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
   isPrimarySidebarPinned,
 } from "./layout";
+
+describe("thread arrangement text sizing", () => {
+  it("fits two title lines and section labels with combined app and system text scaling", () => {
+    const sizing = deriveThreadArrangementSizing({ baseFontSize: 22, fontScale: 1.3 });
+    expect(sizing.rowHeight).toBeGreaterThanOrEqual(2 * 32 * 1.3 + 10);
+    expect(sizing.headerHeight).toBeGreaterThanOrEqual(26 * 1.3 + 24);
+    expect(deriveThreadArrangementSizing({ baseFontSize: 16, fontScale: 1 })).toEqual({
+      rowHeight: 56,
+      headerHeight: 48,
+    });
+  });
+});
 
 describe("thread work-log text sizing", () => {
   it.each([

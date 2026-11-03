@@ -24,12 +24,10 @@ const state = vi.hoisted(() => ({
     workspaceRoot: string;
   }[],
   createResult: null as Promise<unknown> | null,
-  cloneResult: null as Promise<unknown> | null,
   createNewResult: null as Promise<unknown> | null,
   startCloneResult: null as Promise<unknown> | null,
   connectionStates: {} as Record<string, EnvironmentConnectionPhase>,
   newProjectsRoot: null as string | null,
-  supportsCloneTracking: false,
   waitForProject: vi.fn(),
   dispatch: vi.fn(),
   alert: vi.fn(),
@@ -114,10 +112,7 @@ vi.mock("../../state/entities", () => ({
       [
         "environment",
         {
-          environment: {
-            platform: { os: "linux" },
-            capabilities: { projectCloneTracking: state.supportsCloneTracking },
-          },
+          environment: { platform: { os: "linux" }, capabilities: {} },
           newProjectsRoot: state.newProjectsRoot,
           settings: { addProjectBaseDirectory: state.baseDirectory },
         },
@@ -148,11 +143,10 @@ vi.mock("../../state/filesystem", () => ({ filesystemEnvironment: {} }));
 vi.mock("../../state/sourceControl", () => ({
   sourceControlEnvironment: {
     discovery: (input: unknown) => input,
-    startProjectClone: () => state.startCloneResult,
-    cloneRepository: async ({ input }: { input: { destinationPath: string } }) => {
-      if (state.cloneResult) return state.cloneResult;
+    startProjectClone: async ({ input }: { input: { destinationPath: string } }) => {
+      if (state.startCloneResult) return state.startCloneResult;
       NodeFS.mkdirSync(input.destinationPath);
-      return AsyncResult.success({ cwd: input.destinationPath });
+      return AsyncResult.success(undefined);
     },
   },
 }));
@@ -563,30 +557,6 @@ describe("local project navigation", () => {
     expect(state.dispatch).not.toHaveBeenCalled();
   });
 
-  it("does not redirect a reopened flow when an earlier legacy clone finishes", async () => {
-    const { created, projected } = setup();
-    state.scopes.add(AuthSourceControlWriteScope);
-    const cloned = Promise.withResolvers<unknown>();
-    state.cloneResult = cloned.promise;
-    const navigation = mountProjectFlow(false, true, true, "AddProjectDestination");
-    try {
-      const submission = cloneAction()();
-      navigation.back();
-      navigation.push("AddProjectDestination");
-      const remaining = navigation.getState();
-      cloned.resolve(AsyncResult.success({ cwd: "/tmp/t3-mobile-audit-fixture/repo" }));
-      created.resolve(AsyncResult.success(undefined));
-      projected.resolve({ environmentId: "environment", id: "project" });
-      await submission;
-
-      expect(state.projects).toEqual(["/tmp/t3-mobile-audit-fixture/repo"]);
-      expect(navigation.getState()).toEqual(remaining);
-      expect(state.dispatch).not.toHaveBeenCalled();
-    } finally {
-      state.cloneResult = null;
-    }
-  });
-
   it("does not redirect a reopened flow when an earlier new project finishes", async () => {
     const { projected } = setup();
     state.newProjectsRoot = "/projects";
@@ -685,4 +655,104 @@ describe("local project navigation", () => {
       expect(navigation.getState().routes).toEqual([navigation.home]);
     },
   );
+});
+
+describe("local folder path", () => {
+  function findPathInput(
+    node: ReactNode,
+  ): { value: string; onChangeText: (value: string) => void } | null {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const input = findPathInput(child);
+        if (input) return input;
+      }
+      return null;
+    }
+    if (
+      !isValidElement<{
+        value?: string;
+        onChangeText?: (value: string) => void;
+        onSubmit?: () => void;
+        children?: ReactNode;
+      }>(node)
+    ) {
+      return null;
+    }
+    const { value, onChangeText, onSubmit } = node.props;
+    if (typeof value === "string" && onChangeText && onSubmit) return { value, onChangeText };
+    return findPathInput(node.props.children);
+  }
+
+  function mountLocalFolder() {
+    state.scopes = new Set([AuthOrchestrationOperateScope]);
+    state.baseDirectory = "/work";
+    state.connectionStates = {};
+    state.environments = [
+      { environmentId: "environment", environmentLabel: "Environment" },
+      { environmentId: "another-environment", environmentLabel: "Another environment" },
+    ];
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(document.createElement("div"));
+    const renderedPaths: string[] = [];
+    let input: ReturnType<typeof findPathInput> = null;
+    function LocalFolderObserver(props: { environmentId?: string }) {
+      input = findPathInput(AddProjectLocalFolderScreen(props));
+      if (input) renderedPaths.push(input.value);
+      return null;
+    }
+    return {
+      renderedPaths,
+      get path() {
+        return input?.value;
+      },
+      type: (value: string) => act(() => input!.onChangeText(value)),
+      render: (environmentId?: string) =>
+        act(() => root.render(createElement(LocalFolderObserver, { environmentId }))),
+      [Symbol.asyncDispose]: async () => {
+        await act(() => root.unmount());
+        state.connectionStates = {};
+        state.environments = [{ environmentId: "environment", environmentLabel: "Environment" }];
+      },
+    };
+  }
+
+  it("shows the new host's default path on the first render after the host changes", async () => {
+    await using screen = mountLocalFolder();
+    await screen.render("environment");
+    await screen.type("/work/edited");
+    screen.renderedPaths.length = 0;
+
+    await screen.render("another-environment");
+
+    expect(screen.renderedPaths).not.toContain("/work/edited");
+    expect(screen.path).toBe("~/");
+  });
+
+  it("keeps each host's typed path when switching between hosts", async () => {
+    await using screen = mountLocalFolder();
+    await screen.render("environment");
+    await screen.type("/work/a");
+    await screen.render("another-environment");
+    await screen.type("~/b");
+
+    await screen.render("environment");
+    expect(screen.path).toBe("/work/a");
+    await screen.render("another-environment");
+    expect(screen.path).toBe("~/b");
+  });
+
+  it("keeps a typed path when the default host drops out and comes back", async () => {
+    await using screen = mountLocalFolder();
+    await screen.render();
+    expect(screen.path).toBe("~/");
+    await screen.type("~/code/app");
+
+    state.connectionStates = { "another-environment": "offline" };
+    await screen.render();
+    expect(screen.path).toBe("/work/");
+
+    state.connectionStates = {};
+    await screen.render();
+    expect(screen.path).toBe("~/code/app");
+  });
 });
