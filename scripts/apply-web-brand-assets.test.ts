@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
 import type { WebAssetBrand } from "./lib/brand-assets.ts";
+import { readPngDimensions } from "./lib/icon-export.ts";
 
 const WEB_ICON_FILENAMES = [
   "apple-touch-icon.png",
@@ -38,11 +39,6 @@ const decodeWebManifest = Schema.decodeUnknownSync(
 
 const declaredSizes = (sizes: string) =>
   sizes.split(/\s+/).map((size) => size.split("x").map(Number));
-
-const pngDimensions = (bytes: Uint8Array) => {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  return [view.getUint32(16), view.getUint32(20)];
-};
 
 it.layer(NodeServices.layer)("apply-web-brand-assets", (it) => {
   it.effect("copies the icons into an absolute target directory as given", () =>
@@ -121,9 +117,10 @@ it.layer(NodeServices.layer)("apply-web-brand-assets", (it) => {
         for (const icon of icons) {
           const iconPath = path.join(targetDirectory, icon.src);
           assert.isTrue(yield* fs.exists(iconPath), `${brand} does not supply ${icon.src}`);
+          const { width, height } = readPngDimensions(Buffer.from(yield* fs.readFile(iconPath)));
           assert.deepInclude(
             declaredSizes(icon.sizes),
-            pngDimensions(yield* fs.readFile(iconPath)),
+            [width, height],
             `${brand} ${icon.src} does not match its declared sizes ${icon.sizes}`,
           );
         }
