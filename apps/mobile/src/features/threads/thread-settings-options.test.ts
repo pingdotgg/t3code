@@ -10,6 +10,10 @@ import type {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  applyProviderOptionSelection,
+  resolveProviderOptionDescriptors,
+} from "../../lib/providerOptions";
+import {
   RUNTIME_MODE_CHOICES,
   resolveNewThreadRuntimeMode,
   selectableChoices,
@@ -63,6 +67,24 @@ const effortDescriptor: Extract<ProviderOptionDescriptor, { type: "select" }> = 
   currentValue: "high",
   promptInjectedValues: ["ultrathink"],
 };
+
+describe("fast mode switch", () => {
+  // regression: #29729 Cursor reports Fast on by default, but an unset fastMode runs standard
+  it("shows an unset fast mode as off and turns it on when toggled", () => {
+    const descriptors = resolveProviderOptionDescriptors({
+      capabilities: {
+        optionDescriptors: [{ id: "fastMode", label: "Fast", type: "boolean", currentValue: true }],
+      },
+      selections: undefined,
+    });
+    const shown = descriptors.find((descriptor) => descriptor.id === "fastMode")?.currentValue;
+
+    expect({
+      shown,
+      afterToggle: applyProviderOptionSelection(descriptors, { id: "fastMode", value: !shown }),
+    }).toEqual({ shown: false, afterToggle: [{ id: "fastMode", value: true }] });
+  });
+});
 
 describe("selectableChoices", () => {
   // regression: #21406 bring model controls in line with web
