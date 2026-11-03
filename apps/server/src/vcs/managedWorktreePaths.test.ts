@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { assert, it } from "@effect/vitest";
@@ -13,7 +14,7 @@ import { makeManagedWorktreePaths } from "./managedWorktreePaths.ts";
 
 const layerTest = Layer.mergeAll(GitVcsDriver.layer, ServerSettings.layerTest()).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-managed-paths-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 it.effect("anchors in-project worktree folders at the project's own main checkout", () =>

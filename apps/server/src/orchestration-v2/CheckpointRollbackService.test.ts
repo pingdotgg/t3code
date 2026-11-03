@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import {
@@ -187,7 +188,7 @@ it.effect.each([
     );
     const layerGit = GitVcsDriver.layer.pipe(
       Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-rollback-git-" })),
-      Layer.provide(NodeServices.layer),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
     if (inProject) {
       yield* GitVcsDriver.GitVcsDriver.use((git) =>
