@@ -365,7 +365,7 @@ const make = Effect.gen(function* () {
           (error) =>
             Effect.logWarning("remote-delegation.launch-deferred", {
               taskId,
-              reason: error.message,
+              code: error.code,
             }),
         ),
         Effect.ensuring(followOne(scope.thread.threadId, taskId).pipe(Effect.forkIn(followers))),
