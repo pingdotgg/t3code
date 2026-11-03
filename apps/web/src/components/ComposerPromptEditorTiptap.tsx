@@ -52,7 +52,7 @@ import {
 } from "~/composer-logic";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { caretLineDirection, ComposerTextDirectionExtension } from "~/composer-text-direction";
-import { ComposerMarkdownSourcePlugin } from "~/composer-markdown-source";
+import { ComposerMarkdownSourcePlugin, sourceRangeHasFormatting } from "~/composer-markdown-source";
 import {
   collectComposerPromptInlineTokens,
   selectionTouchesMentionBoundary,
@@ -1234,7 +1234,8 @@ function ComposerPromptEditorTiptapInner(
             }
             return true;
           });
-          if (touchesSpecial) return false;
+          if (touchesSpecial || (richText && sourceRangeHasFormatting(view.state.doc, from, to)))
+            return false;
           const map = serializeEditorDoc(view.state.doc);
           const startMd = flatToMarkdown(map, pmToFlat(map, from));
           const endMd = flatToMarkdown(map, pmToFlat(map, to));

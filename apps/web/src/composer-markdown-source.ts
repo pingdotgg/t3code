@@ -94,22 +94,13 @@ function parseSource(doc: ProseMirrorNode, from: number, to: number): SourcePiec
   }
   groups.push(...units.slice(index));
 
-  // The parser only drops markers, so its text is a subsequence of the source.
-  const pieces: SourcePiece[] = [];
-  let next = 0;
+  const pieces: SourcePiece[] = groups.map((group) => ({ ...group, marks: null }));
   for (const span of parseInlineMarkdown(groups.map((group) => group.char).join(""), {
     underscoreItalic: false,
+    sourceOffsets: true,
   })) {
-    for (const char of span.text.split("")) {
-      while (groups[next]!.char !== char) {
-        pieces.push({ ...groups[next]!, marks: null });
-        next += 1;
-      }
-      pieces.push({ ...groups[next]!, marks: span.marks });
-      next += 1;
-    }
+    for (const offset of span.sourceOffsets!) pieces[offset]!.marks = span.marks;
   }
-  for (const group of groups.slice(next)) pieces.push({ ...group, marks: null });
   return pieces;
 }
 
@@ -205,13 +196,22 @@ function decorate(state: EditorState): DecorationSet {
   for (const block of blocks) {
     const pieces = parseSource(doc, block.from, block.to);
     // Backticks join their code's element, so code stays one left-to-right isolate.
-    const styles = pieces.map((piece, index) => {
-      if (piece.marks !== null || doc.textBetween(piece.from, piece.to) !== "`") return piece.marks;
-      const code = [pieces[index + 1], pieces[index - 1]].find((neighbor) =>
-        neighbor?.marks?.includes("code"),
+    const styles = pieces.map((piece) => piece.marks);
+    for (let first = 0; first < pieces.length;) {
+      const isCodeMarker = (index: number) =>
+        pieces[index]?.marks === null && /^[` ]$/.test(pieces[index]!.char);
+      if (!isCodeMarker(first)) {
+        first += 1;
+        continue;
+      }
+      let last = first + 1;
+      while (isCodeMarker(last)) last += 1;
+      const code = [pieces[first - 1], pieces[last]].find((piece) =>
+        piece?.marks?.includes("code"),
       );
-      return code?.marks ?? null;
-    });
+      if (code) for (let index = first; index < last; index += 1) styles[index] = code.marks;
+      first = last;
+    }
     const runs = (has: (index: number) => boolean, attrs: DecorationAttrs) => {
       let start = -1;
       for (let index = 0; index <= pieces.length; index += 1) {
@@ -223,6 +223,13 @@ function decorate(state: EditorState): DecorationSet {
         }
       }
     };
+    const active = { from: selection.from, to: selection.to };
+    if (selection.empty && block.from <= selection.from && selection.to <= block.to) {
+      const before = doc.textBetween(block.from, selection.from, "\n", ATOM_CHAR);
+      const after = doc.textBetween(selection.to, block.to, "\n", ATOM_CHAR);
+      active.from -= before.match(/\S*$/)![0].length;
+      active.to += after.match(/^\S*/)![0].length;
+    }
     const hidden = new Set<number>();
     let first = 0;
     while (first < pieces.length) {
@@ -232,7 +239,7 @@ function decorate(state: EditorState): DecorationSet {
       }
       let last = first + 1;
       while (last < pieces.length && pieces[last]!.marks?.length !== 0) last += 1;
-      if (!touches(selection, { from: pieces[first]!.from, to: pieces[last - 1]!.to })) {
+      if (!touches(active, { from: pieces[first]!.from, to: pieces[last - 1]!.to })) {
         for (let index = first; index < last; index += 1) hidden.add(index);
       }
       first = last;
@@ -291,6 +298,22 @@ const sourceMarkKeys = keydownHandler(
     ]),
   ),
 );
+
+export function sourceRangeHasFormatting(doc: ProseMirrorNode, from: number, to: number): boolean {
+  let found = false;
+  doc.nodesBetween(from, to, (node, pos) => {
+    if (found) return false;
+    if (!node.isTextblock) return true;
+    if (!node.type.spec.code) {
+      found = parseSource(doc, pos + 1, pos + 1 + node.content.size).some(
+        (piece) =>
+          piece.from < to && piece.to > from && (piece.marks === null || piece.marks.length > 0),
+      );
+    }
+    return false;
+  });
+  return found;
+}
 
 export const ComposerMarkdownSourcePlugin = new Plugin<DecorationSet>({
   key: sourceKey,

@@ -42,7 +42,12 @@ import { ReplaceStep } from "@tiptap/pm/transform";
 
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { nextOrderedMarkerText } from "~/composer-list-continuation";
-import { parseInlineMarkdown, RICH_TEXT_DELIMITERS, type RichTextMark } from "~/composer-rich-text";
+import {
+  inlineCodeDelimiters,
+  parseInlineMarkdown,
+  RICH_TEXT_DELIMITERS,
+  type RichTextMark,
+} from "~/composer-rich-text";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
 
@@ -755,12 +760,16 @@ export function buildTiptapContent(
     if (options?.inlineSource) {
       let source = "";
       let previous: RichTextMark[] = [];
+      let code = inlineCodeDelimiters("");
       for (const span of [...spans, { text: "", marks: [] }]) {
         let common = 0;
         while (common < previous.length && previous[common] === span.marks[common]) common += 1;
         for (const mark of previous.slice(common).toReversed())
-          source += RICH_TEXT_DELIMITERS[mark];
-        for (const mark of span.marks.slice(common)) source += RICH_TEXT_DELIMITERS[mark];
+          source += mark === "code" ? code.close : RICH_TEXT_DELIMITERS[mark];
+        for (const mark of span.marks.slice(common)) {
+          if (mark === "code") code = inlineCodeDelimiters(span.text);
+          source += mark === "code" ? code.open : RICH_TEXT_DELIMITERS[mark];
+        }
         source += span.text;
         previous = span.marks;
       }
@@ -1129,6 +1138,22 @@ function appendInlineRuns(
     while (index < left.length && left[index] === right[index]) index += 1;
     return index;
   };
+  const code = new Map<number, ReturnType<typeof inlineCodeDelimiters>>();
+  for (let first = 0; first < children.length;) {
+    if (!orderedMarks[first]!.includes("code")) {
+      first += 1;
+      continue;
+    }
+    let last = first + 1;
+    while (last < children.length && orderedMarks[last]!.includes("code")) last += 1;
+    const content = children
+      .slice(first, last)
+      .map((child) => (child.isText ? child.text! : readAtomSource(child)))
+      .join("");
+    const delimiters = inlineCodeDelimiters(content);
+    for (let index = first; index < last; index += 1) code.set(index, delimiters);
+    first = last;
+  }
   let inlineOffset = 0;
   children.forEach((child, index) => {
     const pmPos = contentStart + inlineOffset;
@@ -1140,12 +1165,12 @@ function appendInlineRuns(
     const marks = orderedMarks[index]!;
     const open = marks
       .slice(commonLength(marks, orderedMarks[index - 1] ?? []))
-      .map((mark) => RICH_TEXT_DELIMITERS[mark])
+      .map((mark) => (mark === "code" ? code.get(index)!.open : RICH_TEXT_DELIMITERS[mark]))
       .join("");
     const close = marks
       .slice(commonLength(marks, orderedMarks[index + 1] ?? []))
       .toReversed()
-      .map((mark) => RICH_TEXT_DELIMITERS[mark])
+      .map((mark) => (mark === "code" ? code.get(index)!.close : RICH_TEXT_DELIMITERS[mark]))
       .join("");
     const source = child.isText ? child.text! : readAtomSource(child);
     const docLen = child.isText ? source.length : 1;

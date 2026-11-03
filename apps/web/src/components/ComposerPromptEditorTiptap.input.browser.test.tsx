@@ -95,9 +95,9 @@ async function mountEditor(...props: Parameters<typeof composer>) {
   });
 }
 
-async function replaceDomText(editor: Editor, text: string, isComposing = false) {
+async function replaceDomText(editor: Editor, text: string, isComposing = false, selector = "p") {
   await act(async () => {
-    const node = editor.view.dom.querySelector("p")?.firstChild;
+    const node = editor.view.dom.querySelector(selector)?.firstChild;
     if (!(node instanceof Text)) throw new Error("Composition text is missing");
     node.data = text;
     window.getSelection()?.collapse(node, text.length);
@@ -196,36 +196,47 @@ it.each([false, true])(
   },
 );
 
-it.each([false, true])(
-  "composes an umlaut without wrapping the preedit text (rich text: %s)",
-  async (richTextEnabled) => {
+it.each([
+  { richTextEnabled: false, value: "·", selector: "p", markers: "" },
+  { richTextEnabled: true, value: "·", selector: "p", markers: "" },
+  { richTextEnabled: true, value: "**·**", selector: "strong", markers: "**" },
+])(
+  "composes an umlaut without wrapping the preedit text in $value (rich text: $richTextEnabled)",
+  async ({ richTextEnabled, value, selector, markers }) => {
     // The middle dot stands in for the provisional text shown by the Compose key.
-    await using screen = await mountEditor("·", richTextEnabled);
+    await using screen = await mountEditor(value, richTextEnabled);
     const { editor } = screen;
     await act(async () => {
       editor.view.focus();
       editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart"));
     });
-    await replaceDomText(editor, '"', true);
-    expect(serializeEditorDoc(editor.state.doc).value).toBe('"');
-    await replaceDomText(editor, "ö", true);
+    await replaceDomText(editor, '"', true, selector);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`${markers}"${markers}`);
+    await replaceDomText(editor, "ö", true, selector);
     await act(async () => {
       editor.view.dom.dispatchEvent(new CompositionEvent("compositionend", { data: "ö" }));
     });
-    expect(serializeEditorDoc(editor.state.doc).value).toBe("ö");
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`${markers}ö${markers}`);
   },
 );
 
-it("lets composition replace selected text without surrounding it", async () => {
-  await using screen = await mountEditor("word");
-  const { editor } = screen;
-  await act(async () => {
-    editor.commands.setTextSelection({ from: 1, to: 5 });
-    editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart"));
-    typeText(editor, 1, 5, '"');
-  });
-  expect(serializeEditorDoc(editor.state.doc).value).toBe('"');
-});
+it.each([
+  { value: "word", composing: true, from: 1, to: 5, input: '"', expected: '"' },
+  { value: "word", composing: false, from: 1, to: 5, input: "(", expected: "(word)" },
+  { value: "**word**", composing: false, from: 3, to: 7, input: "(", expected: "**(**" },
+])(
+  "replaces selected text without surrounding it in $value",
+  async ({ value, composing, from, to, input, expected }) => {
+    await using screen = await mountEditor(value);
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.setTextSelection({ from, to });
+      if (composing) editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart"));
+      typeText(editor, from, to, input);
+    });
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(expected);
+  },
+);
 
 it("keeps unknown dollar names editable when restoring and pasting a draft", async () => {
   const value = "echo $HOME $PATH $anything $notaskill $20 $20k $babysit ";
@@ -515,6 +526,29 @@ describe("Markdown markers", () => {
     });
     expect(serializeEditorDoc(editor.state.doc).value).toBe("say **bold** now");
   });
+
+  it.each([
+    { value: "a`b", from: 1, to: 4, expected: "``a`b``", code: "``a`b``" },
+    { value: "`foo", from: 1, to: 5, expected: "`` `foo ``", code: "`` `foo ``" },
+    { value: "foo`", from: 1, to: 5, expected: "`` foo` ``", code: "`` foo` ``" },
+    { value: "`", from: 1, to: 2, expected: "`` ` ``", code: "`` ` ``" },
+    { value: "**foo***", from: 8, to: 9, expected: "**foo**`*`", code: "`*`" },
+    { value: "**`*foo*`**", from: 4, to: 9, expected: "***foo***", code: null },
+  ])(
+    "preserves literal characters when toggling code in $value",
+    async ({ value, from, to, expected, code }) => {
+      await using screen = await mountEditor(value);
+      const { editor } = screen;
+      await focus(editor);
+      await act(async () => {
+        editor.commands.setTextSelection({ from, to });
+      });
+      const modE = isMacPlatform(navigator.platform) ? "{Meta>}e{/Meta}" : "{Control>}e{/Control}";
+      await userEvent.keyboard(modE);
+      expect(serializeEditorDoc(editor.state.doc).value).toBe(expected);
+      expect(editor.view.dom.querySelector("code")?.textContent ?? null).toBe(code);
+    },
+  );
 
   it("drops the styling when its markers are deleted", async () => {
     await using screen = await mountEditor("say `code` now");
