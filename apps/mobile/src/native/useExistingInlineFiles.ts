@@ -38,7 +38,9 @@ export function useExistingInlineFiles(
       if (resolved === null) continue;
       const relative = resolveWorkspaceRelativeFilePath(workspaceRoot, resolved);
       byValue.set(value, {
-        path: isAbsolutePath(resolved) ? resolved : resolveWorkspaceFilePath(workspaceRoot, resolved),
+        path: isAbsolutePath(resolved)
+          ? resolved
+          : resolveWorkspaceFilePath(workspaceRoot, resolved),
         // Mirrors the link press handler, which searches only for bare file names.
         lookup:
           searchBasenames &&

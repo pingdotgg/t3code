@@ -83,11 +83,11 @@ it("searches displayed prose and file-chip labels without hidden paths", () => {
   expect(assistantSegments("[label](src/main.ts#L3C2)")).toEqual(["label"]);
 });
 
-it("keeps fence paths literal and indexes file-chip labels in user messages", () => {
+it("keeps written paths in fences and user messages", () => {
   expect(assistantSegments("```text\n/tmp/file.ts:42\n```")).toEqual(["/tmp/file.ts:42\n"]);
   expect(
     searchableMessageSegments({ role: "user", text: "`/tmp/file.ts:42`", streaming: false }),
-  ).toEqual(["file.ts · L42"]);
+  ).toEqual(["/tmp/file.ts:42"]);
 });
 
 it("indexes nested disclosure summaries and bodies in rendered order", () => {

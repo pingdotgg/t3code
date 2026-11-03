@@ -31,7 +31,7 @@ export interface WorkspaceFileExistenceTarget {
   readonly candidates: ReadonlyArray<WorkspaceFileCandidate>;
 }
 
-const NO_FILES = Atom.make<ReadonlySet<string>>(new Set()).pipe(
+const NO_FILES = Atom.make<ReadonlySet<string>>(new Set<string>()).pipe(
   Atom.withLabel("environment-data:projects:existing-files:none"),
 );
 

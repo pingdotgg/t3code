@@ -1364,8 +1364,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   code: function MarkdownCode({ node, children, className, ...props }) {
-    const { inlineCodeFileLinkMetaByText, fileLinkChip, mathEnabled, inline } =
-      use(ChatMarkdownRendererContext);
+    const { inlineCodeFileLinkMetaByText, fileLinkChip, mathEnabled, inline } = use(
+      ChatMarkdownRendererContext,
+    );
     const math = mathEnabled ? mathKind(className) : null;
     if (math) {
       return (

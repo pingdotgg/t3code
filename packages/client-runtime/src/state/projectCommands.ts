@@ -33,6 +33,11 @@ import { createWorkspaceFileExistenceAtom } from "./workspaceFileExistence.ts";
 import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
 
 export type {
+  WorkspaceFileCandidate,
+  WorkspaceFileExistenceTarget,
+} from "./workspaceFileExistence.ts";
+
+export type {
   CreateProjectInput,
   DeleteProjectInput,
   UpdateProjectInput,

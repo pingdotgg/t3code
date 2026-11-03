@@ -176,7 +176,10 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         inlineFileHrefKey: [...native.inlineFileHrefs].join("\n"),
       };
     }
-    const content = markdownWithInlineFileLinks(markdownForNativeParsing(props.markdown), fileLinks);
+    const content = markdownWithInlineFileLinks(
+      markdownForNativeParsing(props.markdown),
+      fileLinks,
+    );
     const files = markdownWithFileEmbeds(content.markdown, fileEmbedLabel);
     return {
       ...files,
