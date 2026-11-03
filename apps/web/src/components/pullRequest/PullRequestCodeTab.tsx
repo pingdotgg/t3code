@@ -689,10 +689,12 @@ function PullRequestCodeTab({
     );
   };
   const viewerHandleRef = useRef<CodeViewHandle<ReviewAnnotationGroup, undefined> | null>(null);
-  const attachViewer = (handle: CodeViewHandle<ReviewAnnotationGroup, undefined> | null) => {
-    viewerHandleRef.current = handle;
-    codeViewReveal.attach(handle);
-  };
+  const attachViewer = useStableCallback(
+    (handle: CodeViewHandle<ReviewAnnotationGroup, undefined> | null) => {
+      viewerHandleRef.current = handle;
+      codeViewReveal.attach(handle);
+    },
+  );
   const { rootRef: reviewRootRef, ...diffReview } = useDiffReviewKeyboard({
     scopeKey,
     files: annotatedFiles.map(({ fileKey, path, fileDiff }) => ({

@@ -41,6 +41,7 @@ function Panel(props: {
   hidden?: boolean;
   twoFiles?: boolean;
   viewedUnsupported?: boolean;
+  autoAdvance?: boolean;
 }) {
   props.renders?.push("panel");
   const { rootRef, cursorStore, singleFile, toggleFileCollapsed } = useDiffReviewKeyboard({
@@ -48,7 +49,7 @@ function Panel(props: {
     files: props.twoFiles ? [file, otherFile] : [file],
     diffStyle: "unified",
     canLoadFullFiles: false,
-    autoAdvanceOnViewed: false,
+    autoAdvanceOnViewed: props.autoAdvance ?? false,
     getViewer: () => null,
     isCollapsed: () => false,
     setCollapsed: (fileKey) => void props.folds.push(fileKey),
@@ -99,12 +100,16 @@ it("takes the keys from a clicked control and drops its focus ring", async () =>
 
 it("leaves v alone where files cannot be marked viewed", async () => {
   const folds: string[] = [];
-  await using screen = await render(<Panel folds={folds} clicks={[]} viewedUnsupported />, options);
+  await using screen = await render(
+    <Panel folds={folds} clicks={[]} viewedUnsupported autoAdvance twoFiles />,
+    options,
+  );
   screen.getByTestId("panel").element().focus();
 
   await userEvent.keyboard("jv");
 
   expect(folds).toEqual([]);
+  await expect.element(screen.getByText("Cursor on a.ts")).toBeInTheDocument();
 });
 
 it("leaves Enter to a control reached with Tab", async () => {
