@@ -71,4 +71,19 @@ describe("LocalApi", () => {
 
     await expect(createLocalApi().dialogs.confirm("Delete this thread?")).resolves.toBe(false);
   });
+
+  it("opens links without an opener, and fails when the browser blocks the tab", async () => {
+    const tab: { opener: unknown } = { opener: testWindow() };
+    const open = vi.fn((_url: string, _target: string): typeof tab | null => tab);
+    Object.defineProperty(testWindow(), "open", { configurable: true, value: open });
+    const { createLocalApi } = await import("./localApi");
+    const { shell } = createLocalApi();
+
+    await shell.openExternal("https://github.com/pingdotgg/t3code");
+    expect(open).toHaveBeenCalledWith("https://github.com/pingdotgg/t3code", "_blank");
+    expect(tab.opener).toBeNull();
+
+    open.mockReturnValueOnce(null);
+    await expect(shell.openExternal("https://github.com")).rejects.toThrow("Unable to open link.");
+  });
 });

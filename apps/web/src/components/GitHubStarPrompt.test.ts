@@ -164,7 +164,7 @@ describe("recordPromptSent", () => {
     expect(add).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
-  it("stars on click, and offers the browser when starring fails", async () => {
+  it("stars on click, opens GitHub when starring fails, and asks for a click when blocked", async () => {
     setup({ sent: 5 });
     await (await startSession()).send();
     click(add.mock.lastCall?.[0].actionProps);
@@ -177,10 +177,21 @@ describe("recordPromptSent", () => {
     await (await startSession()).send();
     click(add.mock.lastCall?.[0].actionProps);
     await vi.advanceTimersByTimeAsync(0);
+    expect(openExternal).toHaveBeenCalledWith("https://github.com/pingdotgg/t3code");
+    expect(update.mock.lastCall?.[1]).not.toMatchObject({
+      actionProps: { children: "Open GitHub" },
+    });
+
+    setup({ sent: 5 });
+    starred.starWorks = false;
+    openExternal.mockRejectedValueOnce(new Error("Unable to open link."));
+    await (await startSession()).send();
+    click(add.mock.lastCall?.[0].actionProps);
+    await vi.advanceTimersByTimeAsync(0);
     const fallback = update.mock.lastCall?.[1];
     expect(fallback).toMatchObject({ actionProps: { children: "Open GitHub" } });
     click(typeof fallback === "object" ? fallback.actionProps : undefined);
-    expect(openExternal).toHaveBeenCalledWith("https://github.com/pingdotgg/t3code");
+    expect(openExternal).toHaveBeenCalledTimes(2);
     vi.unstubAllGlobals();
   });
 });
