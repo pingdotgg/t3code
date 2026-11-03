@@ -831,61 +831,147 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads a positioned discussion as a thread anchored to its line", () =>
+  it.effect("reads positioned discussions as threads, outdated once their line left the diff", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
+      const position = (newLine: number, refs: Record<string, string>) => ({
+        position_type: "text",
+        new_path: "src/a.ts",
+        old_path: "src/a.ts",
+        new_line: newLine,
+        old_line: null,
+        ...refs,
+      });
+      const pushed = { base_sha: "base", start_sha: "base", head_sha: "head2" };
+      // GitLab moves a position onto each new diff while its line survives.
+      const discussionsAfterPush = (untouchedRefs: Record<string, string>) =>
+        JSON.stringify([
+          {
+            id: "untouched",
+            notes: [
+              {
+                id: 1,
+                body: "rename this",
+                author: { username: "bilal", avatar_url: "https://avatars/b.png" },
+                created_at: "2026-07-01T00:00:00Z",
+                resolvable: true,
+                resolved: true,
+                position: position(12, untouchedRefs),
+              },
+              {
+                id: 2,
+                body: "done",
+                author: { username: "julius" },
+                created_at: "2026-07-01T01:00:00Z",
+              },
+            ],
+          },
+          {
+            id: "changed",
+            notes: [
+              {
+                id: 4,
+                body: "this line",
+                created_at: "2026-07-01Z",
+                position: position(20, { base_sha: "base", start_sha: "base", head_sha: "head1" }),
+              },
+            ],
+          },
+          {
+            id: "unknown",
+            notes: [
+              {
+                id: 5,
+                body: "no refs",
+                created_at: "2026-07-01Z",
+                position: position(30, { base_sha: "base", head_sha: "head1" }),
+              },
+            ],
+          },
+          { id: "def456", notes: [{ id: 3, body: "ship it", created_at: "2026-07-01Z" }] },
+        ]);
+      const host = { refs: { base_sha: "base", start_sha: "base", head_sha: "head1" }, after: "" };
+      mockedExecute.mockImplementation(({ args }) =>
         Effect.succeed(
           output(
-            JSON.stringify([
-              {
-                id: "abc123",
-                notes: [
-                  {
-                    id: 1,
-                    body: "rename this",
-                    author: { username: "bilal", avatar_url: "https://avatars/b.png" },
-                    created_at: "2026-07-01T00:00:00Z",
-                    resolvable: true,
-                    resolved: true,
-                    position: {
-                      position_type: "text",
-                      new_path: "src/a.ts",
-                      old_path: "src/a.ts",
-                      new_line: 12,
-                      old_line: null,
-                    },
-                  },
-                  {
-                    id: 2,
-                    body: "done",
-                    author: { username: "julius" },
-                    created_at: "2026-07-01T01:00:00Z",
-                  },
-                ],
-              },
-              { id: "def456", notes: [{ id: 3, body: "ship it", created_at: "2026-07-01Z" }] },
-            ]),
+            args[1]?.includes("/discussions")
+              ? host.after
+              : mergeRequestJson({ diff_refs: host.refs }),
           ),
         ),
       );
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const read = () => cli.listDiscussions({ cwd: "/w", repository: "acme/web", number: 7 });
 
-      const { threads } = yield* cli.listDiscussions({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-      });
+      host.after = discussionsAfterPush({ base_sha: "base", start_sha: "base", head_sha: "head1" });
+      const before = yield* read();
+      host.refs = pushed;
+      host.after = discussionsAfterPush(pushed);
+      const after = yield* read();
 
-      assert.strictEqual(threads.length, 1);
-      expect(threads[0]).toMatchObject({
-        id: "abc123",
+      expect(before.threads.map((thread) => [thread.id, thread.isOutdated])).toEqual([
+        ["untouched", false],
+        ["changed", false],
+        ["unknown", false],
+      ]);
+      expect(after.threads.map((thread) => [thread.id, thread.isOutdated])).toEqual([
+        ["untouched", false],
+        ["changed", true],
+        ["unknown", false],
+      ]);
+      expect(after.threads[0]).toMatchObject({
+        id: "untouched",
         path: "src/a.ts",
         line: 12,
         side: "right",
         isResolved: true,
       });
-      assert.strictEqual(threads[0]?.comments.length, 2);
+      assert.strictEqual(after.threads[0]?.comments.length, 2);
     }),
+  );
+
+  it.effect(
+    "keeps discussions current when the merge request's diff refs are missing or unreadable",
+    () =>
+      Effect.gen(function* () {
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        for (const diffRefs of [null, { base_sha: null, start_sha: "base", head_sha: "new" }]) {
+          mockedExecute.mockImplementation(({ args }) =>
+            Effect.succeed(
+              output(
+                args[1]?.includes("/discussions")
+                  ? JSON.stringify([
+                      {
+                        id: "abc",
+                        notes: [
+                          {
+                            id: 1,
+                            created_at: "2026-07-01Z",
+                            position: {
+                              position_type: "text",
+                              new_path: "src/a.ts",
+                              new_line: 3,
+                              base_sha: "base",
+                              start_sha: "base",
+                              head_sha: "old",
+                            },
+                          },
+                        ],
+                      },
+                    ])
+                  : mergeRequestJson({ diff_refs: diffRefs }),
+              ),
+            ),
+          );
+
+          const { threads } = yield* cli.listDiscussions({
+            cwd: "/w",
+            repository: "acme/web",
+            number: 7,
+          });
+
+          expect(threads.map((thread) => [thread.id, thread.isOutdated])).toEqual([["abc", false]]);
+        }
+      }),
   );
 
   it.effect("sends a review as its comments, then its summary, then the verdict", () =>

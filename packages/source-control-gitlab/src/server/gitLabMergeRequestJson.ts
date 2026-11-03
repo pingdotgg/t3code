@@ -113,6 +113,9 @@ const RawDiscussionNoteSchema = Schema.Struct({
         old_path: Schema.optional(Schema.NullOr(Schema.String)),
         new_line: Schema.optional(Schema.NullOr(Schema.Int)),
         old_line: Schema.optional(Schema.NullOr(Schema.Int)),
+        base_sha: Schema.optional(Schema.NullOr(Schema.String)),
+        start_sha: Schema.optional(Schema.NullOr(Schema.String)),
+        head_sha: Schema.optional(Schema.NullOr(Schema.String)),
       }),
     ),
   ),
@@ -530,6 +533,8 @@ export interface GitLabDiffRefs {
 
 export interface GitLabDiscussions {
   readonly threads: ReadonlyArray<PullRequestReviewThread>;
+  /** The last diff each thread's line survived into; GitLab stops moving it once the line changes. */
+  readonly diffRefsByThreadId: ReadonlyMap<string, GitLabDiffRefs>;
   readonly rawCount: number;
 }
 
@@ -541,6 +546,7 @@ export function decodeDiscussionsJson(
     return Result.fail(decoded.failure);
   }
   const threads: PullRequestReviewThread[] = [];
+  const diffRefsByThreadId = new Map<string, GitLabDiffRefs>();
   for (const entry of decoded.success) {
     const discussion = decodeDiscussionEntry(entry);
     if (!Exit.isSuccess(discussion)) continue;
@@ -552,6 +558,12 @@ export function decodeDiscussionsJson(
     const path = trimmed(side === "left" ? position.old_path : position.new_path);
     const line = side === "left" ? position.old_line : position.new_line;
     if (path === null) continue;
+    const baseSha = trimmed(position.base_sha);
+    const startSha = trimmed(position.start_sha);
+    const headSha = trimmed(position.head_sha);
+    if (baseSha !== null && startSha !== null && headSha !== null) {
+      diffRefsByThreadId.set(discussion.value.id, { baseSha, startSha, headSha });
+    }
     threads.push({
       id: discussion.value.id,
       path,
@@ -568,7 +580,7 @@ export function decodeDiscussionsJson(
       })),
     });
   }
-  return Result.succeed({ threads, rawCount: decoded.success.length });
+  return Result.succeed({ threads, diffRefsByThreadId, rawCount: decoded.success.length });
 }
 
 export function decodeDiffRefsJson(

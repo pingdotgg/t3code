@@ -871,8 +871,13 @@ export const make = Effect.gen(function* () {
     readonly number: number;
     readonly page: number;
     readonly collected: ReadonlyArray<PullRequestReviewThread>;
+    readonly diffRefsByThreadId: ReadonlyMap<string, GitLabDiffRefs>;
   }): Effect.Effect<
-    { readonly threads: ReadonlyArray<PullRequestReviewThread>; readonly truncated: boolean },
+    {
+      readonly threads: ReadonlyArray<PullRequestReviewThread>;
+      readonly diffRefsByThreadId: ReadonlyMap<string, GitLabDiffRefs>;
+      readonly truncated: boolean;
+    },
     GitLabPullRequestCliError
   > =>
     api({
@@ -898,13 +903,17 @@ export const make = Effect.gen(function* () {
           );
         }
         const collected = [...input.collected, ...decoded.success.threads];
+        const diffRefsByThreadId = new Map([
+          ...input.diffRefsByThreadId,
+          ...decoded.success.diffRefsByThreadId,
+        ]);
         // Plain notes count toward the page size even when no positioned threads survive decoding.
         if (decoded.success.rawCount < MAX_PAGE_SIZE) {
-          return Effect.succeed({ threads: collected, truncated: false });
+          return Effect.succeed({ threads: collected, diffRefsByThreadId, truncated: false });
         }
         return input.page >= CONVERSATION_PAGES
-          ? Effect.succeed({ threads: collected, truncated: true })
-          : discussionsPage({ ...input, page: input.page + 1, collected });
+          ? Effect.succeed({ threads: collected, diffRefsByThreadId, truncated: true })
+          : discussionsPage({ ...input, page: input.page + 1, collected, diffRefsByThreadId });
       }),
     );
 
@@ -1716,8 +1725,31 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.asVoid);
     }),
 
-    listDiscussions: Effect.fn("GitLabPullRequestCli.listDiscussions")(function (input) {
-      return discussionsPage({ ...input, page: 1, collected: [] });
+    listDiscussions: Effect.fn("GitLabPullRequestCli.listDiscussions")(function* (input) {
+      const [discussions, current] = yield* Effect.all(
+        [
+          discussionsPage({ ...input, page: 1, collected: [], diffRefsByThreadId: new Map() }),
+          // Fresh beside the discussions: cached refs from before a push would invert every flag.
+          // Unreadable refs leave threads current rather than hiding them.
+          getDiffRefs(input).pipe(Effect.orElseSucceed(() => null)),
+        ],
+        { concurrency: 2 },
+      );
+      return {
+        threads: discussions.threads.map((thread) => {
+          const refs = discussions.diffRefsByThreadId.get(thread.id);
+          return refs === undefined || current === null
+            ? thread
+            : {
+                ...thread,
+                isOutdated:
+                  refs.baseSha !== current.baseSha ||
+                  refs.startSha !== current.startSha ||
+                  refs.headSha !== current.headSha,
+              };
+        }),
+        truncated: discussions.truncated,
+      };
     }),
 
     submitReview: Effect.fn("GitLabPullRequestCli.submitReview")(function* (input) {
