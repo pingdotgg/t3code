@@ -285,7 +285,7 @@ const make = Effect.gen(function* () {
       }
       const thumbprint = yield* crypto
         .digest(
-          "SHA-256",
+          Digest.sha256,
           environmentPublishReplayThumbprintData({
             environmentId: input.environmentId,
             environmentPublicKey: input.environmentPublicKey,

@@ -396,6 +396,8 @@ export function startThreadNotifications(
     readonly threadId: ThreadId;
     readonly body: string;
   }) => {
+    const toastKey = threadKey(alert);
+    if (registry.get(environmentThreadShells.hiddenThreadKeysAtom).has(toastKey)) return;
     const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
     if (mode === "off" && !inAppNotificationsEnabled) return;
     const active = (router.state.matches.at(-1)?.params ?? {}) as {
@@ -428,7 +430,8 @@ export function startThreadNotifications(
       document.visibilityState === "visible" &&
       document.hasFocus()
     ) {
-      const toastId = toastManager.add({
+      const toastId: ToastId = toastManager.add({
+        onRemove: (): void => forgetToast(toastKey, toastId),
         type: "warning",
         title,
         description: alert.body,
@@ -444,6 +447,7 @@ export function startThreadNotifications(
           },
         },
       });
+      openToasts.set(toastKey, [...(openToasts.get(toastKey) ?? []), toastId]);
       return;
     }
     if (
@@ -459,7 +463,7 @@ export function startThreadNotifications(
         tag: `${threadNotificationTag(alert.environmentId, alert.threadId)}:alert`,
         silent: true,
       });
-      trackNotification(alert.environmentId, notification);
+      trackNotification(alert.environmentId, alert.threadId, notification);
       notification.addEventListener("click", () => {
         notification.close();
         window.focus();

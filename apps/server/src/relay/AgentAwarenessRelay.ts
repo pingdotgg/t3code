@@ -925,7 +925,7 @@ export const make = Effect.gen(function* () {
       environmentId,
       threadId: alert.threadId,
       alert: phoneAlert,
-      jti: yield* crypto.randomUUIDv4(),
+      jti: yield* random.uuidV4(),
     });
     const response = yield* relayClient.server
       .publishAgentAlert({

@@ -10,7 +10,7 @@ import {
 } from "@t3tools/contracts/relay";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -68,7 +68,7 @@ export class AgentActivityPublisher extends Context.Service<
 >()("t3code-relay/agentActivity/AgentActivityPublisher") {}
 
 const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const rows = yield* AgentActivityRows.AgentActivityRows;
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const liveActivities = yield* LiveActivities.LiveActivities;
@@ -187,7 +187,7 @@ const make = Effect.gen(function* () {
             return yield* apnsDeliveries.sendPushNotification({
               target,
               token: target.push_token,
-              sourceJobId: yield* crypto.randomUUIDv4(),
+              sourceJobId: yield* random.uuidV4(),
               notification,
             });
           }),

@@ -6,6 +6,7 @@ import {
   type RelayDeliveryResult,
 } from "@t3tools/contracts/relay";
 import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import type * as PlatformError from "effect/PlatformError";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -155,6 +156,7 @@ export class FcmDeliveries extends Context.Service<
 const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
   const crypto = yield* Digest.Digest;
+  const random = yield* SecureRandom.SecureRandom;
   const sender = yield* FcmDeliveryQueueSender.FcmDeliveryQueueSender;
   const client = yield* FcmClient.FcmClient;
   const devices = yield* LiveActivities.LiveActivities;
@@ -184,8 +186,8 @@ const make = Effect.gen(function* () {
               ...input.directAlert,
               eventId:
                 input.directAlert.eventId ??
-                (yield* crypto
-                  .randomUUIDv4()
+                (yield* random
+                  .uuidV4()
                   .pipe(
                     Effect.mapError(
                       (cause) => new FcmDeliveryError({ operation: "enqueue", cause }),
@@ -277,7 +279,10 @@ const make = Effect.gen(function* () {
           ...androidActivityData(preferences.value.liveActivitiesEnabled ? aggregate : null),
           ...alert,
         };
-        const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(alert.alert_id));
+        const digest = yield* crypto.digest(
+          Digest.sha256,
+          new TextEncoder().encode(alert.alert_id),
+        );
         data.alert_id = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
         const result = yield* client.send({
           token: job.token,
