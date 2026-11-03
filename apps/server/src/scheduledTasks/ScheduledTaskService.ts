@@ -685,6 +685,7 @@ export const layer = Layer.effect(
           -- switch to new threads unbinds.
           thread_id = CASE
             WHEN excluded.thread_mode = 'new_thread' THEN NULL
+            WHEN excluded.project_id != scheduled_tasks.project_id THEN excluded.thread_id
             ELSE COALESCE(excluded.thread_id, scheduled_tasks.thread_id)
           END,
           thread_mode = excluded.thread_mode,
@@ -1277,8 +1278,13 @@ export const layer = Layer.effect(
       // of silently resetting an existing row.
       const existingTask = yield* findTask(id);
       const threadMode = resolveThreadMode(input, existingTask);
-      const threadId =
-        threadMode === "new_thread" ? null : (input.threadId ?? existingTask?.threadId ?? null);
+      const keptThreadId = input.threadId ?? existingTask?.threadId ?? null;
+      // A bound thread belongs to its project, so moving the task leaves it for a new one.
+      const movedOffThread =
+        existingTask !== null &&
+        existingTask.projectId !== input.projectId &&
+        keptThreadId === existingTask.threadId;
+      const threadId = threadMode === "new_thread" || movedOffThread ? null : keptThreadId;
       // Refused on save rather than at run time; a disabled task can still be saved, so one
       // stored above the ceiling can be turned off before its mode is lowered. A task bound to a
       // thread runs in that thread's mode, which the orchestrator checks instead. Checked before
