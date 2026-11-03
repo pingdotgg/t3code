@@ -318,6 +318,7 @@ const json = (body: unknown, status = 200) =>
 const threadSubscribers = new Map<string, Queue.Queue<OrchestrationV2ThreadStreamItem>>();
 let terminalMetadataSubscriber: Queue.Queue<TerminalMetadataStreamEvent> | null = null;
 let threads: ReadonlyArray<FakeThread> = [];
+let projects: ReadonlyArray<OrchestrationProjectShell> = [project];
 let sequence = 1;
 let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
 
@@ -349,7 +350,7 @@ const handlers: Record<string, (input: never) => unknown> = {
         snapshot: {
           schemaVersion: 1,
           snapshotSequence: sequence,
-          projects: [project],
+          projects,
           threads: threads.map(shellOf),
           archivedThreads: [],
         },
@@ -433,8 +434,19 @@ const encodedDescriptor = Schema.encodeSync(ExecutionEnvironmentDescriptor)(
 );
 
 /** Serves the environment's HTTP API and these threads until disposed. */
-export function installFakeEnvironment(fixtures: ReadonlyArray<FakeThread>): Disposable {
+export function installFakeEnvironment(
+  fixtures: ReadonlyArray<FakeThread>,
+  extraProjects: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "title">> = [],
+): Disposable {
   threads = fixtures;
+  projects = [
+    project,
+    ...extraProjects.map((extra) => ({
+      ...project,
+      ...extra,
+      workspaceRoot: `/workspace/${extra.title}`,
+    })),
+  ];
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);
@@ -456,6 +468,7 @@ export function installFakeEnvironment(fixtures: ReadonlyArray<FakeThread>): Dis
     [Symbol.dispose]: () => {
       globalThis.fetch = realFetch;
       threads = [];
+      projects = [project];
     },
   };
 }
