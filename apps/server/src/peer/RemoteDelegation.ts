@@ -360,6 +360,14 @@ const make = Effect.gen(function* () {
         });
       }
       yield* launchPending(scope.thread.threadId, taskId).pipe(
+        Effect.catchIf(
+          (error) => !isFinal(error) && !isModeRefusal(error) && error.code !== "invalid_request",
+          (error) =>
+            Effect.logWarning("remote-delegation.launch-deferred", {
+              taskId,
+              reason: error.message,
+            }),
+        ),
         Effect.ensuring(followOne(scope.thread.threadId, taskId).pipe(Effect.forkIn(followers))),
       );
       return { taskId };
@@ -856,7 +864,7 @@ const make = Effect.gen(function* () {
             ),
           );
         }
-        yield* follow(task.threadId, task.id).pipe(Effect.forkIn(followers));
+        yield* followOne(task.threadId, task.id).pipe(Effect.forkIn(followers));
         return { taskId: task.id, status: "cancel_requested" } as const;
       }
       const attached = { ...remote, threadId: remote.threadId };

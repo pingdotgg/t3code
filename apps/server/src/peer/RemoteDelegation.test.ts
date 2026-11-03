@@ -810,6 +810,41 @@ const taskResult = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>, ta
       ),
     );
 
+it.effect("returns the recorded task when an accepted launch loses its response", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      yield* Ref.set(
+        thread.afterLaunch,
+        Ref.set(thread.afterLaunch, Effect.void).pipe(
+          Effect.andThen(Effect.die("The accepted launch response was lost.")),
+        ),
+      );
+      const delegated = yield* delegateToBox(a);
+      expect(delegated.taskId).toBeDefined();
+      const recorded = yield* a.orchestrator.getThreadProjection(parentThreadId);
+      expect(recorded.subagents).toHaveLength(1);
+      expect(recorded.subagents[0]?.id).toBe(delegated.taskId);
+      yield* Ref.set(thread.reply, "Recovered the accepted child.");
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      expect(yield* taskResult(a, delegated.taskId)).toMatchObject({
+        status: "completed",
+        result: "Recovered the accepted child.",
+      });
+      expect(new Set(yield* Ref.get(thread.launchIds)).size).toBe(1);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("a task delegated to the box wakes the laptop's parent when it ends there", () =>
   Effect.scoped(
     Effect.gen(function* () {
