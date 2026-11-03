@@ -37,6 +37,8 @@ import {
 } from "./PeerLinks.testkit.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 
+import { layerReaderDatabase, traceSqlRouting } from "../persistence/testkit/SqliteRouting.ts";
+
 /** What B's probe saw: the calling client and the modes it may start work with. */
 const Probe = Schema.Struct({ caller: Schema.String, modes: Schema.String });
 
@@ -84,7 +86,7 @@ const makeA = (
   secrets?: typeof ServerSecretStore.layer,
   machine?: Layer.Layer<never>,
 ) =>
-  layerLinkingEnvironment(descriptor, secrets, machine).pipe(
+  layerLinkingEnvironment(descriptor, secrets, undefined, machine).pipe(
     Layer.build,
     Effect.map((context) => ({
       links: Context.get(context, PeerLinks.PeerLinks),
@@ -128,6 +130,46 @@ const layerRouteHostToLoopback = (host: string) => {
       ),
   });
 };
+it.effect("routes peer reads to readers and sees uncommitted link updates", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const context = yield* layerLinkingEnvironment(
+        laptop,
+        ServerSecretStore.layer,
+        layerReaderDatabase,
+      ).pipe(Layer.build);
+      const links = Context.get(context, PeerLinks.PeerLinks);
+      const sql = Context.get(context, SqlClient.SqlClient);
+      yield* sql`
+      INSERT INTO peer_environment_links (
+        environment_id, secret_name, label, urls_json, access, linked_at, expires_at, fenced
+      ) VALUES (
+        ${box.environmentId}, 'test-secret', 'Box', '[]', 'auto',
+        '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', 1
+      )
+    `;
+      const { queries, trace } = traceSqlRouting();
+      yield* links.list.pipe(trace);
+      expect(Option.getOrThrow(yield* links.get(box.environmentId).pipe(trace)).label).toBe("Box");
+      const reads = queries.filter(({ query }) =>
+        query.includes("SELECT * FROM peer_environment_links"),
+      );
+      expect(reads).toHaveLength(2);
+      expect(reads.map((row) => row.connection)).toEqual(["reader", "reader"]);
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`UPDATE peer_environment_links SET label = 'Uncommitted box'`;
+          expect(Option.getOrThrow(yield* links.get(box.environmentId)).label).toBe(
+            "Uncommitted box",
+          );
+          expect((yield* links.list)[0]?.label).toBe("Uncommitted box");
+        }),
+      );
+      expect(yield* links.unlink(box.environmentId)).toBe(true);
+      expect(yield* links.list).toEqual([]);
+    }),
+  ),
+);
 
 it.effect("links with a pairing code, and the peer holds its agents to the limits they carry", () =>
   Effect.scoped(
@@ -562,8 +604,8 @@ it.effect(
         // Linked through an address that encrypts, the token never falls back
         // to the LAN one, whether the address was typed or the machine picked.
         const typed = yield* a.links.link({
-          url: b.url,
-          alternateUrls: [lan],
+          url: lan,
+          alternateUrls: [b.url],
           pairingCode: (yield* b.auth.issuePairingCredential()).credential,
           access: "auto",
         });
