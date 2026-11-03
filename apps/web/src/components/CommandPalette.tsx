@@ -24,6 +24,9 @@ import {
   sortAddProjectProviderSources,
   type AddProjectRemoteSource,
   type AddProjectRemoteSourceReadiness,
+  planAddProject,
+  type AddProjectCheckoutConfirmation,
+  type AddProjectPlan,
 } from "@t3tools/client-runtime/operations/projects";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
@@ -228,6 +231,7 @@ import {
   CommandPaletteSubmitButton,
   NewProjectPublishHostPicker,
   NewProjectSummary,
+  CheckoutSummary,
   RemoteRepositorySummary,
   remoteProjectSourceIcon,
   sourceControlHostIcon,
@@ -447,6 +451,12 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
     reportDefect: false,
   });
+  // Advisory: when this fails the folder is added as it always was.
+  const inspectCheckout = useAtomQueryRunner(projectEnvironment.inspectCheckout, {
+    reportFailure: false,
+    reportDefect: false,
+    refresh: true,
+  });
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
     reportFailure: false,
   });
@@ -508,6 +518,8 @@ function OpenCommandPaletteDialog(props: {
   );
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
+  const [addProjectCheckout, setAddProjectCheckout] =
+    useState<AddProjectCheckoutConfirmation | null>(null);
   const [newProjectFlow, setNewProjectFlow] = useState<{
     readonly environmentId: EnvironmentId;
     readonly sourcesEnvironmentId: EnvironmentId | null;
@@ -641,7 +653,10 @@ function OpenCommandPaletteDialog(props: {
         )
       : "";
   const canBrowsePaths =
-    browseEnvironmentId !== null && !isRemoteProjectRepositoryStep && newProjectFlow === null;
+    browseEnvironmentId !== null &&
+    !isRemoteProjectRepositoryStep &&
+    newProjectFlow === null &&
+    addProjectCheckout === null;
   const browsePath = getFilesystemBrowsePath(query, browseEnvironmentPlatform, canBrowsePaths);
   const isBrowsing = browsePath.isBrowsing;
   const browseDirectoryPath = browsePath.directoryPath;
@@ -906,6 +921,7 @@ function OpenCommandPaletteDialog(props: {
   function popView(): void {
     browseNavigation.invalidate();
     setAddProjectCloneFlow(null);
+    setAddProjectCheckout(null);
     setNewProjectFlow(null);
     if (viewStack.length <= 1) {
       setAddProjectEnvironmentId(null);
@@ -993,9 +1009,9 @@ function OpenCommandPaletteDialog(props: {
       {
         kind: "action",
         value: `action:add-project:${environmentId}:local`,
-        searchTerms: ["local", "folder", "directory", "browse"],
+        searchTerms: ["local", "folder", "directory", "browse", "existing", "checkout", "worktree"],
         title: "Local folder",
-        description: "Browse a folder on disk",
+        description: "Browse to a folder or existing checkout",
         icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
         keepOpen: true,
         run: async () => {
@@ -1754,6 +1770,127 @@ function OpenCommandPaletteDialog(props: {
     now: searchNow,
   });
 
+  const openExistingProject = async (existing: (typeof projects)[number]) => {
+    // Adding an archived project's folder again brings the project back.
+    if (existing.archivedAt != null) {
+      void updateProject({
+        environmentId: existing.environmentId,
+        input: { projectId: existing.id, archived: false },
+      }).then((result) => reportProjectFailure("Failed to unarchive project", result));
+    }
+    const latestThread = getLatestThreadForProject(
+      threads.filter((thread) => thread.environmentId === existing.environmentId),
+      existing.id,
+      clientSettings.sidebarThreadSortOrder,
+    );
+    if (latestThread && latestThread.settledOverride !== "settled") {
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(scopeThreadRef(latestThread.environmentId, latestThread.id)),
+      });
+    } else {
+      const navigationResult = await settlePromise(() =>
+        handleNewThread(scopeProjectRef(existing.environmentId, existing.id)),
+      );
+      if (navigationResult._tag === "Failure") {
+        const error = squashAtomCommandFailure(navigationResult);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to open project",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+        return;
+      }
+    }
+    setOpen(false);
+  };
+
+  const addFolderAsProject = async (input: {
+    readonly environmentId: EnvironmentId;
+    readonly workspaceRoot: string;
+    readonly createWorkspaceRootIfMissing: boolean;
+  }) => {
+    const projectId = newProjectId();
+    const createResult = await createProject({
+      environmentId: input.environmentId,
+      input: {
+        projectId,
+        title: inferProjectTitleFromPath(input.workspaceRoot),
+        workspaceRoot: input.workspaceRoot,
+        createWorkspaceRootIfMissing: input.createWorkspaceRootIfMissing,
+        defaultModelSelection: null,
+      },
+    });
+    if (createResult._tag === "Failure") {
+      if (!isAtomCommandInterrupted(createResult)) {
+        const error = squashAtomCommandFailure(createResult);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to add project",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+      return;
+    }
+
+    const navigationResult = await settlePromise(() =>
+      handleNewThread(scopeProjectRef(input.environmentId, projectId)),
+    );
+    if (navigationResult._tag === "Failure") {
+      const error = squashAtomCommandFailure(navigationResult);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to add project",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+      return;
+    }
+    setOpen(false);
+  };
+
+  const showCheckoutConfirmation = (
+    environmentId: EnvironmentId,
+    confirmation: AddProjectCheckoutConfirmation,
+  ): void => {
+    setAddProjectCheckout(confirmation);
+    pushPaletteView({
+      addonIcon: <FolderGit2Icon className={ADDON_ICON_CLASS} />,
+      groups: [
+        {
+          value: "add-project-checkout",
+          label: "Add project",
+          items: confirmation.choices.map((choice) => ({
+            kind: "action",
+            value: `action:add-project-checkout:${choice.workspaceRoot}`,
+            searchTerms: [choice.title, choice.workspaceRoot],
+            title: choice.title,
+            description: choice.workspaceRoot,
+            icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+            keepOpen: true,
+            run: async () => {
+              if (choice.kind === "open") {
+                await openExistingProject(choice.project);
+                return;
+              }
+              // The folder was just seen on disk; if it has gone, say so rather than recreate it.
+              await addFolderAsProject({
+                environmentId,
+                workspaceRoot: choice.workspaceRoot,
+                createWorkspaceRootIfMissing: false,
+              });
+            },
+          })),
+        },
+      ],
+    });
+  };
+
   const handleAddProjectForEnvironment = async (input: {
     readonly environmentId: EnvironmentId;
     readonly rawCwd: string;
@@ -1805,42 +1942,7 @@ function OpenCommandPaletteDialog(props: {
       cwd,
     );
     if (existing) {
-      // Adding an archived project's folder again brings the project back.
-      if (existing.archivedAt != null) {
-        void updateProject({
-          environmentId: existing.environmentId,
-          input: { projectId: existing.id, archived: false },
-        }).then((result) => reportProjectFailure("Failed to unarchive project", result));
-      }
-      const latestThread = getLatestThreadForProject(
-        threads.filter((thread) => thread.environmentId === existing.environmentId),
-        existing.id,
-        clientSettings.sidebarThreadSortOrder,
-      );
-      if (latestThread && latestThread.settledOverride !== "settled") {
-        await navigate({
-          to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(
-            scopeThreadRef(latestThread.environmentId, latestThread.id),
-          ),
-        });
-      } else {
-        const navigationResult = await settlePromise(() =>
-          handleNewThread(scopeProjectRef(existing.environmentId, existing.id)),
-        );
-        if (navigationResult._tag === "Failure") {
-          const error = squashAtomCommandFailure(navigationResult);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to open project",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-          return;
-        }
-      }
-      setOpen(false);
+      await openExistingProject(existing);
       return;
     }
 
@@ -1854,46 +1956,38 @@ function OpenCommandPaletteDialog(props: {
       );
       return;
     }
-    const projectId = newProjectId();
-    const createResult = await createProject({
-      environmentId: input.environmentId,
-      input: {
-        projectId,
-        title: inferProjectTitleFromPath(cwd),
-        workspaceRoot: cwd,
-        createWorkspaceRootIfMissing: true,
-        defaultModelSelection: null,
-      },
-    });
-    if (createResult._tag === "Failure") {
-      if (!isAtomCommandInterrupted(createResult)) {
-        const error = squashAtomCommandFailure(createResult);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to add project",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
+    if (environment?.serverConfig?.environment.capabilities.projectCheckoutInspection === true) {
+      const inspected: { plan: AddProjectPlan } = { plan: { kind: "add" } };
+      const isCurrent = await browseNavigation.run(
+        async () => {
+          const inspection = await inspectCheckout({
+            environmentId: input.environmentId,
+            input: { path: cwd },
+          });
+          inspected.plan = planAddProject({
+            inspection: inspection._tag === "Success" ? inspection.value : null,
+            projects,
+            environmentId: input.environmentId,
+          });
+        },
+        () => undefined,
+      );
+      if (!isCurrent) return;
+      if (inspected.plan.kind === "open") {
+        await openExistingProject(inspected.plan.project);
+        return;
       }
-      return;
+      if (inspected.plan.kind === "confirm") {
+        showCheckoutConfirmation(input.environmentId, inspected.plan.confirmation);
+        return;
+      }
     }
 
-    const navigationResult = await settlePromise(() =>
-      handleNewThread(scopeProjectRef(input.environmentId, projectId)),
-    );
-    if (navigationResult._tag === "Failure") {
-      const error = squashAtomCommandFailure(navigationResult);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to add project",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-      return;
-    }
-    setOpen(false);
+    await addFolderAsProject({
+      environmentId: input.environmentId,
+      workspaceRoot: cwd,
+      createWorkspaceRootIfMissing: true,
+    });
   };
 
   const handleAddProject = async (rawCwd: string) => {
@@ -2848,6 +2942,12 @@ function OpenCommandPaletteDialog(props: {
           pathPreview={newProjectPathPreview}
           projectsRoot={newProjectsRoot}
           environmentLabel={newProjectEnvironmentLabel}
+        />
+      ) : null}
+      {addProjectCheckout !== null ? (
+        <CheckoutSummary
+          title={addProjectCheckout.title}
+          description={addProjectCheckout.description}
         />
       ) : null}
       {addProjectCloneFlow?.step === "confirm" ? (
