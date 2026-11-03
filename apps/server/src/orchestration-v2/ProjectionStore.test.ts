@@ -9,6 +9,8 @@ import {
   CheckpointScopeId,
   MessageId,
   type ModelSelection,
+  ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+  type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadHistoryPage,
@@ -5742,6 +5744,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ordinal: number,
         status: "completed" | "failed" | "cancelled" | "interrupted" | "rolled_back",
         completedAt: DateTime.Utc,
+        itemFailure: OrchestrationV2ProviderFailure = failure,
       ) {
         const runId = RunId.make(`run:instance-failure:${ordinal}`);
         const rootNodeId = NodeId.make(`node:instance-failure:${ordinal}`);
@@ -5789,7 +5792,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             completedAt,
             updatedAt: completedAt,
             type: "error",
-            failure,
+            failure: itemFailure,
           },
         });
       });
@@ -5814,7 +5817,19 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           { providerInstanceId: grokInstanceId, failedAt, model: "grok-build", failure },
         ]);
       }
-      yield* addRun(6, "completed", DateTime.subtract(now, { minutes: 4 }));
+      // Workspace preparation fails before the provider runs: it neither replaces nor clears.
+      const workspaceFailure = {
+        ...failure,
+        message: "git worktree add failed for /home/user/acme/app",
+        code: ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+      };
+      yield* addRun(6, "failed", DateTime.subtract(now, { minutes: 4 }), workspaceFailure);
+      assert.deepEqual(yield* read(DateTime.subtract(now, { hours: 1 })), [
+        { providerInstanceId: grokInstanceId, failedAt, model: "grok-build", failure },
+      ]);
+      yield* addRun(7, "completed", DateTime.subtract(now, { minutes: 3 }));
+      assert.deepEqual(yield* read(DateTime.subtract(now, { hours: 1 })), []);
+      yield* addRun(8, "failed", DateTime.subtract(now, { minutes: 2 }), workspaceFailure);
       assert.deepEqual(yield* read(DateTime.subtract(now, { hours: 1 })), []);
     }),
   );

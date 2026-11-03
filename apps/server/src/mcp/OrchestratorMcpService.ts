@@ -348,7 +348,27 @@ function capabilityModelOption(descriptor: ProviderOptionDescriptor): Orchestrat
 
 // Older failures say little about the account now, and avoiding a provider must not pin it forever.
 const PROVIDER_FAILURE_WINDOW_HOURS = 24;
-const PROVIDER_FAILURE_MESSAGE_MAX_CHARS = 500;
+// Messages can carry another project's paths or raw provider output, so only these fixed
+// summaries leave the server; the patterns recognize billing and rate limits a class misses.
+const BILLING_FAILURE =
+  /\bpayment required\b|\b(?:status|http) 402\b|\binsufficient (?:balance|credits?|funds)\b|\b(?:balance|credits?) (?:is |are |was )?(?:exhausted|depleted)\b/i;
+const RATE_LIMIT_FAILURE = /\b(?:status|http) 429\b|\brate[ -]limit/i;
+
+function failureSummary(failure: ProjectionProviderInstanceFailure["failure"]): string {
+  if (failure.class === "usage_limit") return "Usage limit reached.";
+  if (BILLING_FAILURE.test(failure.message)) return "Billing or credit balance problem.";
+  if (RATE_LIMIT_FAILURE.test(failure.message)) return "Rate limited.";
+  switch (failure.class) {
+    case "transport_error":
+      return "Could not reach the provider.";
+    case "permission_error":
+      return "Permission or authentication error.";
+    case "validation_error":
+      return "The request was rejected as invalid.";
+    default:
+      return "The provider reported an error.";
+  }
+}
 
 /** Advisory only: unused balance or a lifted limit is unknowable until the next request. */
 function capabilityLastFailure(
@@ -357,15 +377,11 @@ function capabilityLastFailure(
 ) {
   const resetAt = failure.resetAt ?? null;
   if (resetAt !== null && Date.parse(resetAt) <= DateTime.toEpochMillis(now)) return undefined;
-  const { message } = failure;
   return {
     at: DateTime.formatIso(failedAt),
     model,
     class: failure.class,
-    message:
-      message.length > PROVIDER_FAILURE_MESSAGE_MAX_CHARS
-        ? `${message.slice(0, PROVIDER_FAILURE_MESSAGE_MAX_CHARS - 3)}...`
-        : message,
+    summary: failureSummary(failure),
     ...(resetAt === null ? {} : { resetAt }),
   };
 }

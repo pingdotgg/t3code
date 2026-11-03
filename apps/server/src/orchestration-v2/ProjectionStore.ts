@@ -48,6 +48,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   IDLE_COMPACTION_TEXT,
+  ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   idleCompactionOf,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
   OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema,
@@ -4072,7 +4073,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const since = DateTime.formatIso(input.since);
         const failures: Array<ProjectionProviderInstanceFailure> = [];
         for (const instanceId of input.instanceIds) {
-          // One seek per instance on orchestration_v2_projection_runs_instance_finished_idx.
+          // Walks orchestration_v2_projection_runs_instance_finished_idx newest first.
           const [row] = yield* sql<{
             readonly status: string;
             readonly completed_at: string;
@@ -4095,6 +4096,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE r.provider_instance_id = ${instanceId}
               AND r.status IN ('completed', 'failed')
               AND r.completed_at >= ${since}
+              -- A failed workspace preparation never reached the provider.
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_turn_items prep
+                WHERE prep.thread_id = r.thread_id AND prep.run_id = r.run_id
+                  AND prep.type = 'error' AND prep.status = 'failed'
+                  AND prep.node_id IS json_extract(r.payload_json, '$.rootNodeId')
+                  AND json_extract(prep.payload_json, '$.failure.code')
+                    = ${ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE}
+              )
             ORDER BY r.completed_at DESC
             LIMIT 1
           `;

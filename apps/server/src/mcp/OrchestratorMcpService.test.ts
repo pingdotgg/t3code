@@ -1458,6 +1458,17 @@ describe("OrchestratorMcpService provider resolution", () => {
                   },
                 },
                 {
+                  providerInstanceId: ProviderInstanceId.make("pi"),
+                  failedAt: DateTime.makeUnsafe(0),
+                  model: "pi-model",
+                  failure: {
+                    class: "provider_error",
+                    message: "ENOENT: /home/user/acme/app/.env could not be read",
+                    code: null,
+                    retryable: null,
+                  },
+                },
+                {
                   providerInstanceId: ProviderInstanceId.make("claudeAgent"),
                   failedAt: DateTime.makeUnsafe(-60_000),
                   model: "claude-sonnet-4-6",
@@ -1540,12 +1551,18 @@ describe("OrchestratorMcpService provider resolution", () => {
             assert.isTrue(entry!.canRunCrossProviderChildTask);
             assert.deepEqual(entry!.constraints, []);
           }
-          // A recorded failure is advisory and never blocks delegation; a passed reset clears it.
+          // Advisory, never blocking; only fixed summaries leave, and a passed reset clears it.
           assert.deepEqual(byId.get(codexInstanceId)?.lastFailure, {
             at: "1970-01-01T00:00:00.000Z",
             model: "gpt-5.4",
             class: "provider_error",
-            message: "API error (status 402 Payment Required): usage balance exhausted",
+            summary: "Billing or credit balance problem.",
+          });
+          assert.deepEqual(byId.get(ProviderInstanceId.make("pi"))?.lastFailure, {
+            at: "1970-01-01T00:00:00.000Z",
+            model: "pi-model",
+            class: "provider_error",
+            summary: "The provider reported an error.",
           });
           assert.isUndefined(byId.get(ProviderInstanceId.make("claudeAgent"))?.lastFailure);
 

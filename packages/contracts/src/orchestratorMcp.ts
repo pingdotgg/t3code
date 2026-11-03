@@ -611,7 +611,7 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
       at: IsoDateTime,
       model: Schema.String,
       class: OrchestrationV2ProviderFailureClass,
-      message: Schema.String,
+      summary: Schema.String,
       resetAt: Schema.optional(IsoDateTime),
     }).annotate({
       description:
