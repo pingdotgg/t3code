@@ -23,16 +23,20 @@ describe("matchInlineSkills", () => {
     const first = { name: "design", displayName: "Design" };
     const duplicate = { name: "design", displayName: "Other design" };
     const namespaced = { name: "pdf:pdf" };
-    expect([
+    const matches = [
       ...matchInlineSkills("Use $design then $missing and $pdf:pdf, $pdf:pdf $design", [
         first,
         duplicate,
         namespaced,
       ]),
-    ]).toEqual([
+    ];
+    expect(matches).toEqual([
       { start: 4, end: 11, skill: first, rawText: "$design" },
       { start: 40, end: 48, skill: namespaced, rawText: "$pdf:pdf" },
       { start: 49, end: 56, skill: first, rawText: "$design" },
     ]);
+    expect(matches[0]?.skill).toBe(first);
+    expect(matches[1]?.skill).toBe(namespaced);
+    expect(matches[2]?.skill).toBe(first);
   });
 });
