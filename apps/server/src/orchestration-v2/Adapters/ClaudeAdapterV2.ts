@@ -4133,6 +4133,8 @@ interface ClaudeLiveQueryContext {
   permissionMode: PermissionMode;
   stopping: boolean;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
+  // Subagents this process still ran when a replacement took over; only its exit can end them.
+  handedOffSubagents: ReadonlySet<ActiveClaudeSubagent>;
   // The SDK's per-process model ledger at the last result; a new process starts at zero.
   modelLedger: ClaudeModelLedger | undefined;
   // Per process, not per session: a relative temp dir follows the cwd this CLI
@@ -6363,6 +6365,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             SDKMessage,
             { readonly type: "system"; readonly subtype: "task_notification" }
           >;
+          // The process that ran it exited, which confirms the outcome as a native one would.
+          readonly processExited?: true;
           readonly onlyIfRunningInRun?: RunId | null;
         }) {
           const registeredSubagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.taskId);
@@ -6500,7 +6504,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             task,
             nativeTaskType: input.nativeTaskType ?? existingSubagent?.nativeTaskType,
             confirmedOutcome:
-              input.nativeOutcome !== undefined
+              input.nativeOutcome !== undefined || input.processExited === true
                 ? confirmedSubagentOutcome(task)
                 : isReopen
                   ? undefined
@@ -7789,6 +7793,69 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
         });
 
+        const endSubagentsOfClosedQuery = Effect.fnUntraced(function* (input: {
+          readonly closedQuery: ClaudeLiveQueryContext;
+          readonly context: ActiveClaudeTurnContext;
+          readonly subagents: Iterable<readonly [string, ActiveClaudeSubagent]>;
+          readonly buffered: ReadonlyArray<SDKMessage> | undefined;
+          readonly interrupted: boolean;
+        }) {
+          for (const [taskId, subagent] of input.subagents) {
+            if (
+              subagent.task.status !== "running" ||
+              input.closedQuery.subagentsFromEarlierProcesses.has(subagent)
+            )
+              continue;
+            const latestLifecycle = input.buffered?.findLast(
+              (
+                message,
+              ): message is Extract<
+                SDKMessage,
+                { readonly subtype: "task_started" | "task_notification" }
+              > =>
+                message.type === "system" &&
+                (message.subtype === "task_started" || message.subtype === "task_notification") &&
+                message.task_id === taskId,
+            );
+            const completion =
+              latestLifecycle?.subtype === "task_notification" ? latestLifecycle : undefined;
+            yield* updateClaudeSubagentNode({
+              context: input.context,
+              taskId,
+              status: completion
+                ? claudeTaskOutcome(completion.status)
+                : input.interrupted
+                  ? "cancelled"
+                  : "failed",
+              ...(completion === undefined
+                ? {}
+                : { workflowFrame: completion, result: completion.summary }),
+              processExited: true,
+              onlyIfRunningInRun: subagent.task.runId,
+            });
+          }
+        });
+
+        // A query opened while this one was closing inherited the subagents it ran, so
+        // nothing else ends them. Leave the live query's own turn, roster and subagents alone.
+        const endSubagentsOfReplacedQuery = Effect.fnUntraced(function* (
+          closedQuery: ClaudeLiveQueryContext,
+        ) {
+          const context = closedQuery.lastTurn;
+          if (context === null) return;
+          yield* endSubagentsOfClosedQuery({
+            closedQuery,
+            context,
+            subagents: [...(yield* Ref.get(sessionSubagentsByTaskId))].filter(([, subagent]) =>
+              closedQuery.handedOffSubagents.has(subagent),
+            ),
+            buffered: (yield* Ref.get(wakeBuffers)).get(closedQuery.nativeThreadId)?.messages,
+            interrupted:
+              closedQuery.stopping ||
+              (yield* Ref.get(interruptedTurns)).has(context.providerTurnId),
+          });
+        });
+
         const finalizeActiveTurnAfterQueryExit = Effect.fnUntraced(function* (
           closedQuery: ClaudeLiveQueryContext,
           cause?: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
@@ -7820,39 +7887,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* resetBackgroundTaskStateForNativeThreadProcess(closedQuery.nativeThreadId);
           }
           // Preserve buffered outcomes before Stop clears the wake buffer.
-          for (const [taskId, subagent] of subagents) {
-            if (
-              subagent.task.status !== "running" ||
-              closedQuery.subagentsFromEarlierProcesses.has(subagent)
-            )
-              continue;
-            const latestLifecycle = buffered?.findLast(
-              (
-                message,
-              ): message is Extract<
-                SDKMessage,
-                { readonly subtype: "task_started" | "task_notification" }
-              > =>
-                message.type === "system" &&
-                (message.subtype === "task_started" || message.subtype === "task_notification") &&
-                message.task_id === taskId,
-            );
-            const completion =
-              latestLifecycle?.subtype === "task_notification" ? latestLifecycle : undefined;
-            yield* updateClaudeSubagentNode({
-              context,
-              taskId,
-              status: completion
-                ? claudeTaskOutcome(completion.status)
-                : interrupted
-                  ? "cancelled"
-                  : "failed",
-              ...(completion === undefined
-                ? {}
-                : { workflowFrame: completion, result: completion.summary }),
-              onlyIfRunningInRun: subagent.task.runId,
-            });
-          }
+          yield* endSubagentsOfClosedQuery({
+            closedQuery,
+            context,
+            subagents,
+            buffered,
+            interrupted,
+          });
           yield* Ref.update(interruptedTurns, (current) => {
             const next = new Set(current);
             next.delete(context.providerTurnId);
@@ -10444,6 +10485,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             receivedInit: false,
             permissionMode: queryOptions.permissionMode,
             stopping: false,
+            handedOffSubagents: new Set(),
             subagentsFromEarlierProcesses: new Set(
               [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
                 (subagent) => subagent.task.status === "running",
@@ -10457,7 +10499,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               hostPlatform,
             ),
           };
-          yield* Ref.set(queryContext, context);
+          // One step, so the replaced process cannot exit between the install and the handoff.
+          yield* Ref.update(queryContext, (replaced) => {
+            if (replaced !== null) {
+              replaced.handedOffSubagents = new Set(
+                [...context.subagentsFromEarlierProcesses].filter(
+                  (subagent) => !replaced.subagentsFromEarlierProcesses.has(subagent),
+                ),
+              );
+            }
+            return context;
+          });
           yield* querySession.messages.pipe(
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(
@@ -10515,6 +10567,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.nativeThreadId,
                     context.stopping ? "interrupted" : "failed",
                   );
+                } else {
+                  yield* endSubagentsOfReplacedQuery(context);
                 }
               }),
             ),
@@ -11130,6 +11184,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (ownedLiveQuery) {
             yield* finalizeActiveTurnAfterQueryExit(existing);
             yield* endSubagentCallsOfClosedQuery(nativeThreadId, "interrupted");
+          } else {
+            yield* endSubagentsOfReplacedQuery(existing);
           }
           yield* Deferred.succeed(existing.closed, undefined);
         });
