@@ -3,6 +3,7 @@ import * as NodeVM from "node:vm";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Playwright download mocks perform real file operations outside the Effect runtime.
 import * as NodeFSP from "node:fs/promises";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it } from "@effect/vitest";
@@ -384,7 +385,7 @@ const dependencies = Layer.mergeAll(
   PreviewAgentActivity.layer,
 ).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const layer = ServerBrowser.layer.pipe(Layer.provideMerge(dependencies));
 const ready = Effect.gen(function* () {
@@ -1018,6 +1019,49 @@ it.live(
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a navigation that fails while a load reads its title keeps its failure", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const page = contexts[0]!.page;
+      const heldTitle = Promise.withResolvers<string>();
+      page.title.mockImplementationOnce(() => heldTitle.promise);
+      yield* Effect.promise(() => page.goto("https://example.com/first"));
+      const failing = {
+        url: () => "https://example.com/missing",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_NAME_NOT_RESOLVED" }),
+      };
+      page.emit("request", failing);
+      page.emit("requestfailed", failing);
+      heldTitle.resolve("Held");
+      // A load at the same await depth reports after the held one, so its Success marks the end.
+      page.emit("load");
+
+      const statuses: Array<string> = [];
+      while (!statuses.at(-1)?.startsWith("Success")) {
+        const event = yield* PubSub.take(events);
+        if (event.type === "failed" && event.tabId === tabId) {
+          statuses.push(`LoadFailed ${event.url}`);
+        } else if (event.type === "navigated" && event.tabId === tabId) {
+          const status = event.snapshot.navStatus;
+          if (status._tag === "Success") statuses.push(`Success ${status.title}`);
+          else if (status._tag === "Loading") statuses.push(`Loading ${status.url}`);
+        }
+      }
+      expect(statuses).toEqual([
+        "Loading https://example.com/missing",
+        "LoadFailed https://example.com/missing",
+        "Success test page",
+      ]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect.each([
   {
     name: "hover burst before a click",
@@ -1037,6 +1081,26 @@ it.effect.each([
       { type: "mouseMoved", x: 119 },
       { type: "mousePressed", x: 119 },
       { type: "mouseReleased", x: 119 },
+    ],
+  },
+  {
+    name: "wheel burst before a click",
+    inputs: [
+      ...Array.from({ length: 120 }, () => ({
+        type: "wheel",
+        x: 100,
+        y: 200,
+        deltaX: 0,
+        deltaY: 12,
+      })),
+      { type: "mouse", action: "down", x: 100, buttons: 1, button: "left" },
+      { type: "mouse", action: "up", x: 100, buttons: 0, button: "left" },
+    ],
+    expected: [
+      { type: "mouseMoved", x: -1 },
+      { type: "mouseWheel", x: 100, y: 200, deltaX: 0, deltaY: 1440 },
+      { type: "mousePressed", x: 100 },
+      { type: "mouseReleased", x: 100 },
     ],
   },
   {
@@ -1073,11 +1137,28 @@ it.effect.each([
     expected: [
       { type: "mouseMoved", x: -1 },
       { type: "mouseMoved", x: 1 },
-      { type: "mouseWheel", deltaY: 20 },
-      { type: "mouseWheel", deltaY: 30 },
+      { type: "mouseWheel", deltaY: 50 },
       { type: "mouseMoved", x: 2 },
       { type: "keyDown", key: "a" },
       { type: "mouseMoved", x: 3 },
+    ],
+  },
+  {
+    name: "wheel position, modifier and direction boundaries",
+    inputs: [
+      { type: "wheel", x: 1, deltaX: 5, deltaY: 10 },
+      { type: "wheel", x: 1, deltaX: 5, deltaY: 10 },
+      { type: "wheel", x: 2, deltaY: 10 },
+      { type: "wheel", x: 2, deltaY: 10, modifiers: 2 },
+      { type: "wheel", x: 2, deltaY: -10, modifiers: 2 },
+      { type: "wheel", x: 2, deltaY: -10, modifiers: 2 },
+    ],
+    expected: [
+      { type: "mouseMoved", x: -1 },
+      { type: "mouseWheel", x: 1, deltaX: 10, deltaY: 20, modifiers: 0 },
+      { type: "mouseWheel", x: 2, deltaX: 0, deltaY: 10, modifiers: 0 },
+      { type: "mouseWheel", x: 2, deltaY: 10, modifiers: 2 },
+      { type: "mouseWheel", x: 2, deltaY: -20, modifiers: 2 },
     ],
   },
   {
