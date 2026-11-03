@@ -1,27 +1,32 @@
 // @effect-diagnostics nodeBuiltinImport:off - verifies argument boundaries through a real shell.
 import { describe, expect, it } from "vite-plus/test";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
 import { claudeCloudCommand, claudeCloudSessionId } from "./claudeCloudCommand";
 
 describe("Claude cloud commands", () => {
-  it("keeps task text literal through a POSIX shell", () => {
-    const message = "Fix O'Brien's $(echo injected) `whoami` $HOME; <file>";
-    const command = claudeCloudCommand({
-      binaryPath: "/usr/bin/printf",
-      platform: "linux",
-      message,
-      session: "",
-    });
-    const result = NodeChildProcess.spawnSync(
-      "/bin/sh",
-      ["-c", command.replace("'--cloud'", "'%s'")],
-      {
-        encoding: "utf8",
-      },
-    );
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe(message);
-  });
+  // quarantine: #30009 Windows has no POSIX shell; cloud launch currently supports macOS/Linux.
+  it.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "keeps task text literal through a POSIX shell",
+    () => {
+      const message = "Fix O'Brien's $(echo injected) `whoami` $HOME; <file>";
+      const command = claudeCloudCommand({
+        binaryPath: "printf",
+        platform: "linux",
+        message,
+        session: "",
+      });
+      const result = NodeChildProcess.spawnSync(
+        "/bin/sh",
+        ["-c", command.replace("'--cloud'", "'%s'")],
+        {
+          encoding: "utf8",
+        },
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(message);
+    },
+  );
   it("normalizes cloud links and rejects other origins and terminal injection", () => {
     expect(claudeCloudSessionId("https://claude.ai/code/session_abc?from=cli")).toBe("session_abc");
     for (const session of [
