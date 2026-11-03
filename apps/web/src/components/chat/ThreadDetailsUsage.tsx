@@ -25,6 +25,10 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
+// The canvas reserves the same icon, label, meter, percent and trailing columns in every row.
+const USAGE_ROW_CLASS =
+  "grid grid-cols-[1rem_3.625rem_minmax(0,1fr)_1.875rem_2.75rem] items-center gap-x-2 ps-3 pe-2 text-meta";
+
 const PACE_LABEL: Record<LimitPace, string> = {
   ahead: "Ahead of pace",
   on: "On pace",
@@ -108,7 +112,7 @@ export function ThreadDetailsContext({
       : `${formatContextWindowTokens(usage.usedTokens)} tokens`;
   return (
     <ThreadDetailsSection title="Context window" variant="usage">
-      <div className="flex min-h-11 items-center gap-2 ps-3 pe-2 text-meta">
+      <div className={cn(USAGE_ROW_CLASS, "min-h-11")}>
         <ContextWindowMeter
           usage={usage}
           side="left"
@@ -117,45 +121,41 @@ export function ThreadDetailsContext({
           compactDisabledReason={compactDisabledReason}
           trigger={
             <ThreadDetailsControl
-              part="heading"
+              part="usage"
               aria-label={`Context: ${tokens}${maxTokens !== null ? " tokens" : ""}${used !== null ? `, ${Math.round(used)}% used` : " used"}`}
             >
               <GaugeIcon className="size-4 shrink-0" />
-              <span className="flex min-w-0 flex-1 flex-col gap-1 text-meta">
-                <span className="flex items-center justify-between gap-2 text-foreground">
-                  <span>Context</span>
-                  {used !== null ? (
-                    <span className="tabular-nums text-muted-foreground">{Math.round(used)}%</span>
+              <span className="flex h-6 items-center text-foreground">Context</span>
+              {used !== null ? (
+                <span className="relative h-1 min-w-0 rounded-full bg-muted-foreground/20">
+                  <span
+                    className={cn(
+                      "absolute inset-y-0 left-0 rounded-full",
+                      used >= 90 ? "bg-error" : used >= 80 ? "bg-warning" : "bg-foreground/80",
+                    )}
+                    style={{ width: used > 0 ? `max(${used}%, 2px)` : "0%" }}
+                  />
+                  {tick !== null ? (
+                    <span
+                      aria-hidden
+                      className="absolute -top-[3px] h-2.5 w-0.5 rounded-sm bg-muted-foreground"
+                      style={{ left: `${tick}%` }}
+                    />
                   ) : null}
                 </span>
-                <span className="flex items-center gap-2">
-                  {used !== null ? (
-                    <span className="relative h-1 min-w-0 flex-1 rounded-full bg-muted-foreground/20">
-                      <span
-                        className={cn(
-                          "absolute inset-y-0 left-0 rounded-full",
-                          used >= 90 ? "bg-error" : used >= 80 ? "bg-warning" : "bg-foreground/80",
-                        )}
-                        style={{ width: used > 0 ? `max(${used}%, 2px)` : "0%" }}
-                      />
-                      {tick !== null ? (
-                        <span
-                          aria-hidden
-                          className="absolute -top-[3px] h-2.5 w-0.5 rounded-sm bg-muted-foreground"
-                          style={{ left: `${tick}%` }}
-                        />
-                      ) : null}
-                    </span>
-                  ) : null}
-                  <span className="shrink-0 text-caption tabular-nums text-muted-foreground">
-                    {tokens}
-                  </span>
-                </span>
+              ) : (
+                <span />
+              )}
+              <span className="text-end tabular-nums text-muted-foreground">
+                {used !== null ? `${Math.round(used)}%` : ""}
+              </span>
+              <span className="col-span-2 col-start-3 whitespace-nowrap text-caption tabular-nums text-muted-foreground">
+                {tokens}
               </span>
             </ThreadDetailsControl>
           }
         />
-        <span className="flex w-11 shrink-0 justify-end">
+        <span className="flex self-start justify-end">
           {onCompact ? (
             <ThreadDetailsControl
               part="icon"
@@ -249,18 +249,21 @@ function UsageRow({
 }) {
   return (
     <Tooltip>
-      <div className="flex h-8 items-center gap-2 ps-3 pe-2 text-meta">
+      <div className={cn(USAGE_ROW_CLASS, "h-8")}>
         <TooltipTrigger
           render={
             <div
               tabIndex={0}
               aria-label={`${label}: ${ariaValue}`}
-              className="flex min-w-0 flex-1 cursor-default items-center gap-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className={cn(
+                "grid min-w-0 cursor-default grid-cols-subgrid items-center gap-x-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                fill === null ? "col-span-5" : "col-span-4",
+              )}
             />
           }
         >
           <span className="shrink-0 text-muted-foreground [&>svg]:size-4">{icon}</span>
-          <span className="w-14.5 shrink-0 truncate">{label}</span>
+          <span className="truncate">{label}</span>
           {fill !== null ? (
             <span className="relative h-1 min-w-0 flex-1 rounded-full bg-muted-foreground/20">
               {fill > 0 ? (
@@ -284,13 +287,11 @@ function UsageRow({
                 />
               ) : null}
             </span>
-          ) : (
-            <span className="flex-1" />
-          )}
+          ) : null}
           <span
             className={cn(
-              "w-7.5 shrink-0 text-end tabular-nums text-muted-foreground",
-              fill === null && "w-auto",
+              "text-end tabular-nums text-muted-foreground",
+              fill === null && "col-span-3",
               tone === "error" && "text-error-foreground",
               tone === "warning" && "text-warning-foreground",
             )}
@@ -298,7 +299,7 @@ function UsageRow({
             {value}
           </span>
         </TooltipTrigger>
-        <span className="flex w-11 shrink-0 justify-end">{trailing}</span>
+        {fill !== null ? <span className="flex justify-end">{trailing}</span> : null}
       </div>
       <TooltipPopup side="left" sideOffset={16}>
         <div className="flex flex-col gap-0.5 text-muted-foreground">{tooltip}</div>

@@ -93,12 +93,15 @@ export function ThreadDetailsSection({
               setDisclosure({ empty, collapsed: empty ? !isCollapsed : null });
             }}
           >
-            <span>{title}</span>
+            <span className="shrink-0">{title}</span>
             {summary ? (
               <span className="ms-auto truncate text-caption text-muted-foreground">{summary}</span>
             ) : null}
             {isCollapsed ? (
-              <ChevronRightIcon aria-hidden className="ms-auto size-3.5 shrink-0" />
+              <ChevronRightIcon
+                aria-hidden
+                className={cn("size-3.5 shrink-0", !summary && "ms-auto")}
+              />
             ) : null}
           </ThreadDetailsControl>
           {action}
