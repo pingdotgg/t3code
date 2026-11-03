@@ -517,13 +517,11 @@ export function LayoutSurfaceHost({
   active = true,
   background = false,
   pagePlane,
-  pagePlaneSplit = false,
 }: {
   layout: LayoutState;
   active?: boolean;
   background?: boolean;
   pagePlane?: React.ReactNode;
-  pagePlaneSplit?: boolean;
 }) {
   // A resize drag previews here and commits to the store once on release.
   const [preview, setPreview] = useState<LayoutState | null>(null);
@@ -1154,7 +1152,7 @@ export function LayoutSurfaceHost({
       // An empty workspace is the bare window chrome, artwork included.
       // An empty workspace is a lone pane holding the launcher, like the
       // last tab's pane was, so closing that tab changes nothing around it.
-      variant={(!active ? pagePlaneSplit : split) ? "split" : "pane"}
+      variant={active && split ? "split" : "pane"}
       className="relative h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh"
       inert={background}
       ref={rootRef}
