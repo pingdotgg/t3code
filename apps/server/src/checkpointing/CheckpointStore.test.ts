@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { CheckpointRef, ThreadId, type VcsError } from "@t3tools/contracts";
@@ -26,17 +27,19 @@ function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): Chec
 const layerServerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-checkpoint-store-test-",
 });
-const layerVcsProcessTest = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
+const layerVcsProcessTest = VcsProcess.layer.pipe(
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
 const layerVcsDriverTest = VcsDriverRegistry.layer.pipe(Layer.provide(layerVcsProcessTest));
 const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
   Layer.provideMerge(layerVcsDriverTest),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const layerTest = layerCheckpointStoreTest.pipe(
   Layer.provideMerge(layerVcsProcessTest),
   Layer.provideMerge(layerVcsDriverTest),
   Layer.provideMerge(layerServerConfig),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 function makeTmpDir(
@@ -431,10 +434,11 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         ]);
       }),
     );
-    it.effect("limits a diff to repository paths from a subdirectory workspace", () =>
+    it.effect("reads repository paths from a subdirectory workspace under diff.relative", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
+        yield* git(tmp, ["config", "diff.relative", "true"]);
         const fileSystem = yield* FileSystem.FileSystem;
         const cwd = NodePath.join(tmp, "app");
         yield* fileSystem.makeDirectory(cwd);
@@ -447,6 +451,8 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         };
         yield* checkpointStore.captureCheckpoint({ cwd, checkpointRef: refs.fromCheckpointRef });
         yield* writeTextFile(NodePath.join(cwd, "kept.txt"), "kept\n");
+        yield* git(cwd, ["add", "kept.txt"]);
+        yield* git(cwd, ["commit", "-m", "kept"]);
         yield* writeTextFile(NodePath.join(tmp, "README.md"), "# hidden\n");
         yield* checkpointStore.captureCheckpoint({ cwd, checkpointRef: refs.toCheckpointRef });
 
@@ -455,8 +461,10 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
           ignoreWhitespace: false,
           filePaths: ["app/kept.txt"],
         });
+        expect(patch).toContain("+++ b/app/kept.txt");
         expect(patch).toContain("+kept");
         expect(patch).not.toContain("hidden");
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["app/kept.txt"]));
       }),
     );
   });
