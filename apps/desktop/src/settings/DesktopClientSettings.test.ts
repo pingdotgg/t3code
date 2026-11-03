@@ -6,12 +6,16 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   type ClientSettings,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -77,6 +81,32 @@ const clientSettings: ClientSettings = {
 };
 
 const decodeClientSettingsJson = Schema.decodeEffect(Schema.fromJsonString(ClientSettingsSchema));
+const renameLockedOnce = (fileSystem: FileSystem.FileSystem, locked: Deferred.Deferred<void>) => {
+  let renames = 0;
+  const busy = Object.assign(new Error("EBUSY, rename"), { code: "EBUSY" });
+  return FileSystem.FileSystem.of({
+    ...fileSystem,
+    rename: (from, to) =>
+      Effect.suspend(() =>
+        ++renames === 1
+          ? Deferred.succeed(locked, undefined).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "Unknown",
+                    module: "FileSystem",
+                    method: "rename",
+                    pathOrDescriptor: to,
+                    cause: busy,
+                  }),
+                ),
+              ),
+            )
+          : fileSystem.rename(from, to),
+      ),
+  });
+};
+
 function layer(baseDir: string) {
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -162,6 +192,35 @@ describe("DesktopClientSettings", () => {
             name.endsWith(".tmp"),
           ),
           [],
+        );
+      }),
+    ),
+  );
+
+  it.effect("saves on Windows once a scanner lets go of the settings file", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const locked = yield* Deferred.make<void>();
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(environment.clientSettingsPath, "{}\n");
+        const settings = yield* DesktopClientSettings.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, renameLockedOnce(fileSystem, locked)),
+        );
+
+        const save = yield* settings
+          .set(clientSettings)
+          .pipe(Effect.provideService(HostProcess.Platform, "win32"), Effect.forkChild);
+        yield* Deferred.await(locked);
+        yield* TestClock.adjust("100 millis");
+        yield* Fiber.join(save);
+
+        assert.deepEqual(
+          yield* decodeClientSettingsJson(
+            yield* fileSystem.readFileString(environment.clientSettingsPath),
+          ),
+          clientSettings,
         );
       }),
     ),
