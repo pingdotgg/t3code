@@ -166,12 +166,15 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("NonBlockingSpa
   it.live("fails a missing cwd the way the native spawner does", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const missing = `${yield* fileSystem.makeTempDirectoryScoped()}/missing`;
-      const command = ChildProcess.make("true", [], { cwd: missing });
-      const native = yield* spawnError(command).pipe(Effect.provide(NodeServices.layer));
-      const error = yield* spawnError(command).pipe(Effect.provide(wrapped));
-      expect(error.reason._tag).toBe("NotFound");
-      expect(error.message).toBe(native.message);
+      const directory = yield* fileSystem.makeTempDirectoryScoped();
+      // `missing/..` resolves to an existing directory, but the native check sees `missing`.
+      for (const cwd of [`${directory}/missing`, `${directory}/missing/..`]) {
+        const command = ChildProcess.make("true", [], { cwd });
+        const native = yield* spawnError(command).pipe(Effect.provide(NodeServices.layer));
+        const error = yield* spawnError(command).pipe(Effect.provide(wrapped));
+        expect(error.reason._tag).toBe(native.reason._tag);
+        expect(error.message).toBe(native.message);
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

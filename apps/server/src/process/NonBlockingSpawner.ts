@@ -4,7 +4,6 @@ import * as NodeFSP from "node:fs/promises";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -21,7 +20,13 @@ import * as CommandLine from "effect/process/CommandLine";
 // libuv's _PATH_DEFPATH when the child environment has no PATH.
 const DEFAULT_PATH = "/usr/bin:/bin";
 
-type SearchFailure = "ENOENT" | "EACCES";
+// errno and PlatformError tag of the spawn failures the native spawner reports.
+const spawnErrors = {
+  ENOENT: [-2, "NotFound"],
+  EACCES: [-13, "PermissionDenied"],
+  ENOTDIR: [-20, "BadResource"],
+} as const;
+type SpawnFailure = keyof typeof spawnErrors;
 
 // "file", "directory" or "other" when the path passes execvp's X_OK test,
 // otherwise the errno code.
@@ -34,6 +39,26 @@ const probe = async (path: string): Promise<string> => {
     return (error as NodeJS.ErrnoException).code ?? "ENOENT";
   }
 };
+
+// Same shape as the error of the native spawner's `FileSystem.access(cwd)` check.
+const accessFailure = (cwd: string, code: string) =>
+  PlatformError.systemError({
+    _tag:
+      code === "ENOENT"
+        ? "NotFound"
+        : code === "ENOTDIR" || code === "ELOOP"
+          ? "BadResource"
+          : "Unknown",
+    module: "FileSystem",
+    method: "access",
+    pathOrDescriptor: cwd,
+    syscall: "access",
+    cause: Object.assign(new Error(`${code}: access '${cwd}'`), {
+      code,
+      syscall: "access",
+      path: cwd,
+    }),
+  });
 
 const unwrap = (value: string | Redacted.Redacted<string>) =>
   Redacted.isRedacted(value) ? Redacted.value(value) : value;
@@ -52,17 +77,17 @@ const childPath = (options: ChildProcess.CommandOptions): string | undefined => 
 // Joined without normalizing, so `..` after a symlink resolves as the kernel does.
 const under = (base: string, entry: string) => (entry.startsWith("/") ? entry : `${base}/${entry}`);
 
-// Same shape as the ENOENT/EACCES PlatformError a native spawn produces.
-const spawnFailure = (command: ChildProcess.StandardCommand, code: SearchFailure) => {
+// Same shape as the PlatformError a native spawn produces.
+const spawnFailure = (command: ChildProcess.StandardCommand, code: SpawnFailure) => {
   const cause = Object.assign(new Error(`spawn ${command.command} ${code}`), {
-    errno: code === "ENOENT" ? -2 : -13,
+    errno: spawnErrors[code][0],
     code,
     syscall: `spawn ${command.command}`,
     path: command.command,
     spawnargs: command.args.map((arg) => (Redacted.isRedacted(arg) ? "<redacted>" : arg)),
   });
   return PlatformError.systemError({
-    _tag: code === "ENOENT" ? "NotFound" : "PermissionDenied",
+    _tag: spawnErrors[code][1],
     module: "ChildProcess",
     method: "spawn",
     pathOrDescriptor: CommandLine.display([command.command, ...command.args], { format: "posix" }),
@@ -113,7 +138,6 @@ const shellMode = (command: ChildProcess.StandardCommand) =>
 const make = Effect.gen(function* () {
   const native = yield* ChildProcessSpawner.ChildProcessSpawner;
   if ((yield* HostProcess.Platform) !== "linux") return native;
-  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const envChdir = yield* native
     .exitCode(ChildProcess.make("/usr/bin/env", ["-C", "/", "--", "/bin/sh", "-c", ":"]))
@@ -166,14 +190,14 @@ const make = Effect.gen(function* () {
     throw denied ? "EACCES" : "ENOENT";
   };
 
-  // Resolved lexically, as the native spawner does.
+  // Checked as given and entered resolved lexically, as the native spawner does.
   const enter = Effect.fnUntraced(function* (command: ChildProcess.StandardCommand, cwd: string) {
     const directory = path.resolve(cwd);
-    const kind = yield* Effect.promise(() => check(directory, directory));
+    const kind = yield* Effect.promise(() => check(directory, cwd));
+    if (kind === "directory") return directory;
     if (kind === "EACCES") return yield* spawnFailure(command, "EACCES");
-    // The native spawner's own check, for its exact error.
-    if (kind !== "directory") yield* fileSystem.access(cwd);
-    return directory;
+    if (kind === "file" || kind === "other") return yield* spawnFailure(command, "ENOTDIR");
+    return yield* accessFailure(cwd, kind);
   });
 
   // Runs inside the NonBlockingSpawner.spawn span.
@@ -194,7 +218,7 @@ const make = Effect.gen(function* () {
         });
     yield* Effect.tryPromise({
       try: () => findExecutable(candidates),
-      catch: (code) => spawnFailure(command, code as SearchFailure),
+      catch: (code) => spawnFailure(command, code as SpawnFailure),
     });
     return envChdir && !command.command.includes("=")
       ? viaEnv(command, workingDirectory)
