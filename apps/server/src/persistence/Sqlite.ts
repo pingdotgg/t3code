@@ -54,7 +54,9 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
     NodeSqliteClient.layer({
       filename: dbPath,
       readerWorker: true,
-      // Run checkpoint fsyncs off the event loop so slow disk flushes cannot stall clients.
+      // Run writes off the event loop so slow statements and transactions cannot stall clients.
+      writerWorker: true,
+      // Keeps checkpoint fsyncs off the event loop if the writer has to fall back to the main thread.
       checkpointWorker: true,
       spanAttributes: {
         "db.name": path.basename(dbPath),

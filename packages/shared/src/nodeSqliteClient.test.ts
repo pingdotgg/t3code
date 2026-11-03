@@ -168,30 +168,32 @@ const makeTempDatabase = Effect.gen(function* () {
   return { filename, other };
 });
 
-it.effect("keeps another connection from committing between a transaction's read and write", () =>
-  Effect.gen(function* () {
-    const { filename, other } = yield* makeTempDatabase;
-    yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          const [row] = yield* sql<{ readonly value: number }>`
+it.effect.each([{ writerWorker: false }, { writerWorker: true }])(
+  "keeps another connection from committing between a transaction's read and write (writerWorker=$writerWorker)",
+  ({ writerWorker }) =>
+    Effect.gen(function* () {
+      const { filename, other } = yield* makeTempDatabase;
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const [row] = yield* sql<{ readonly value: number }>`
             SELECT value FROM counters WHERE id = 1
           `;
-          // Deferred BEGIN permits a competing commit, causing SQLITE_BUSY_SNAPSHOT that no timeout can resolve.
-          yield* Effect.sync(() =>
-            assert.throws(
-              () => other.exec("UPDATE counters SET value = value + 1 WHERE id = 1"),
-              /database is locked/,
-            ),
-          );
-          yield* sql`UPDATE counters SET value = ${(row?.value ?? 0) + 10} WHERE id = 1`;
-        }),
-      );
-      yield* Effect.sync(() => other.exec("UPDATE counters SET value = value + 1 WHERE id = 1"));
-      assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`.values, [[11]]);
-    }).pipe(Effect.provide(SqliteClient.layer({ filename })));
-  }).pipe(Effect.provide(NodeServices.layer)),
+            // Deferred BEGIN permits a competing commit, causing SQLITE_BUSY_SNAPSHOT that no timeout can resolve.
+            yield* Effect.sync(() =>
+              assert.throws(
+                () => other.exec("UPDATE counters SET value = value + 1 WHERE id = 1"),
+                /database is locked/,
+              ),
+            );
+            yield* sql`UPDATE counters SET value = ${(row?.value ?? 0) + 10} WHERE id = 1`;
+          }),
+        );
+        yield* Effect.sync(() => other.exec("UPDATE counters SET value = value + 1 WHERE id = 1"));
+        assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`.values, [[11]]);
+      }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker })));
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("waits for another process's lock while the database opens", () =>
@@ -222,21 +224,41 @@ it.effect("waits for another process's lock while the database opens", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("reports a transaction blocked by another writer as a lock timeout", () =>
+it.effect.each([{ writerWorker: false }, { writerWorker: true }])(
+  "reports a transaction blocked by another writer as a lock timeout (writerWorker=$writerWorker)",
+  ({ writerWorker }) =>
+    Effect.gen(function* () {
+      const { filename, other } = yield* makeTempDatabase;
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`PRAGMA busy_timeout = 0`;
+        const read = sql.withTransaction(sql`SELECT value FROM counters WHERE id = 1`.values);
+
+        yield* Effect.sync(() => other.exec("BEGIN IMMEDIATE"));
+        const error = yield* read.pipe(Effect.flip);
+        assert.equal(error.reason._tag, "LockTimeoutError");
+
+        yield* Effect.sync(() => other.exec("COMMIT"));
+        assert.deepEqual(yield* read, [[0]]);
+      }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker })));
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps the event loop free while a write waits on another connection's lock", () =>
   Effect.gen(function* () {
     const { filename, other } = yield* makeTempDatabase;
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* sql`PRAGMA busy_timeout = 0`;
-      const read = sql.withTransaction(sql`SELECT value FROM counters WHERE id = 1`.values);
-
       yield* Effect.sync(() => other.exec("BEGIN IMMEDIATE"));
-      const error = yield* read.pipe(Effect.flip);
-      assert.equal(error.reason._tag, "LockTimeoutError");
-
-      yield* Effect.sync(() => other.exec("COMMIT"));
-      assert.deepEqual(yield* read, [[0]]);
-    }).pipe(Effect.provide(SqliteClient.layer({ filename })));
+      const write = yield* Effect.forkChild(
+        sql`UPDATE counters SET value = value + 1 WHERE id = 1`,
+        { startImmediately: true },
+      );
+      // A writer on this thread would spin in busy_timeout, so the holder could never commit.
+      yield* Effect.sync(() => other.exec("UPDATE counters SET value = 10 WHERE id = 1; COMMIT"));
+      yield* Fiber.join(write);
+      assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`.values, [[11]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
