@@ -24,7 +24,8 @@ import { useRef, useState } from "react";
 import { View, type ColorValue } from "react-native";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SecretTextInput } from "../../components/ui/SecretTextInput";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../../components/ui/Button";
@@ -157,20 +158,12 @@ function PendingSecretRequestForm(props: {
         </View>
       ) : null}
       {source === null ? (
-        <TextInput
+        <SecretTextInput
           accessibilityLabel={item.label}
           placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
           value={secret}
           onChangeText={setSecret}
           editable={!submitting}
-          secureTextEntry
-          autoCorrect={false}
-          autoCapitalize="none"
-          autoComplete="off"
-          textContentType="none"
-          importantForAutofill="no"
-          spellCheck={false}
-          returnKeyType="done"
           onSubmitEditing={save}
         />
       ) : (
