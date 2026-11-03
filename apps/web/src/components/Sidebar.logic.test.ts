@@ -6,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
+  bulkThreadCopyText,
   shouldCreateNewThreadInCurrentProject,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
@@ -58,6 +59,30 @@ import {
 } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("bulkThreadCopyText", () => {
+  const entries = [
+    { id: "t1", title: "Lead gen", branch: "t3/ops", path: "/repo/.t3/ops" },
+    { id: "t2", title: "Sales calls", branch: "t3/ops", path: "/repo/.t3/ops" },
+    { id: "t3", title: "Lead gen", branch: null, path: "/repo" },
+  ];
+
+  it.each([
+    ["copy-thread-id", "t1\nt2\nt3", 3, "thread IDs"],
+    ["copy-title", "Lead gen\nSales calls\nLead gen", 3, "titles"],
+    ["copy-branch", "t3/ops", 1, "branches"],
+    ["copy-path", "/repo/.t3/ops\n/repo", 2, "paths"],
+  ] as const)(
+    "copies %s one per line, listing shared worktrees once",
+    (action, text, count, noun) => {
+      expect(bulkThreadCopyText(entries, action)).toEqual({ text, count, noun });
+    },
+  );
+
+  it("copies nothing when no selected thread has the value", () => {
+    expect(bulkThreadCopyText([entries[2]!], "copy-branch")).toBeNull();
+  });
+});
 
 describe("deleteSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;

@@ -6,7 +6,7 @@ import {
 import { threadLinkContextReferences } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveThreadReferenceCopyTarget } from "./threadReference.ts";
+import { resolveThreadReferenceCopyTarget, threadChipsCopyTarget } from "./threadReference.ts";
 
 const thread = {
   threadRef: { environmentId: EnvironmentId.make("env-1"), threadId: ThreadId.make("thread-1") },
@@ -111,5 +111,29 @@ describe("resolveThreadReferenceCopyTarget", () => {
       resolveThreadReferenceCopyTarget({ ...thread, hostedAppUrl: "https://preview.t3.codes" })
         ?.value,
     ).toBe("https://preview.t3.codes/threads/env-1/thread-1");
+  });
+
+  it("copies several threads, across machines, as chips that paste back together", () => {
+    const other = {
+      threadRef: {
+        environmentId: EnvironmentId.make("env-2"),
+        threadId: ThreadId.make("thread-2"),
+      },
+      title: "Ship the release",
+    };
+    const target = threadChipsCopyTarget([thread, other]);
+
+    expect(target).toMatchObject({ kind: "thread", successTitle: "2 threads copied" });
+    const pasted = decodeComposerContextFragment(encodeComposerContextFragment(target.fragment!));
+    expect(pasted?.records).toEqual([
+      expect.objectContaining({ environmentId: "env-1", threadId: "thread-1" }),
+      expect.objectContaining({ environmentId: "env-2", threadId: "thread-2" }),
+    ]);
+    expect(target.value).toBe(
+      "https://app.t3.codes/threads/env-1/thread-1\nhttps://app.t3.codes/threads/env-2/thread-2",
+    );
+    expect(
+      threadLinkContextReferences(target.value, pasted!.records, () => undefined).records,
+    ).toEqual(pasted!.records);
   });
 });

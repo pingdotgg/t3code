@@ -638,6 +638,59 @@ export function buildBulkUnpinContextMenuItem(input: {
   return { id: "unpin", label: `Unpin (${input.pinnedCount})` };
 }
 
+export type BulkThreadCopyAction =
+  | "copy-path"
+  | "copy-branch"
+  | "copy-thread"
+  | "copy-title"
+  | "copy-thread-id";
+
+export interface BulkThreadCopyEntry {
+  readonly id: string;
+  readonly title: string;
+  readonly branch: string | null;
+  readonly path: string | null;
+}
+
+export function buildBulkCopyContextMenuItem(
+  entries: readonly BulkThreadCopyEntry[],
+): ContextMenuItem<"copy" | BulkThreadCopyAction> {
+  return {
+    id: "copy",
+    label: `Copy (${entries.length})`,
+    separatorBefore: true,
+    children: [
+      ...(entries.some((entry) => entry.path)
+        ? [{ id: "copy-path" as const, label: "Paths" }]
+        : []),
+      ...(entries.some((entry) => entry.branch)
+        ? [{ id: "copy-branch" as const, label: "Branches" }]
+        : []),
+      { id: "copy-thread", label: "Threads" },
+      { id: "copy-title", label: "Titles" },
+      { id: "copy-thread-id", label: "Thread IDs" },
+    ],
+  };
+}
+
+const BULK_COPY_FIELDS = {
+  "copy-path": { field: "path", noun: "paths" },
+  "copy-branch": { field: "branch", noun: "branches" },
+  "copy-title": { field: "title", noun: "titles" },
+  "copy-thread-id": { field: "id", noun: "thread IDs" },
+} as const;
+
+/** One line per thread; branches and paths shared by several threads appear once. */
+export function bulkThreadCopyText(
+  entries: readonly BulkThreadCopyEntry[],
+  action: keyof typeof BULK_COPY_FIELDS,
+): { text: string; count: number; noun: string } | null {
+  const { field, noun } = BULK_COPY_FIELDS[action];
+  const values = entries.flatMap((entry) => entry[field] ?? []);
+  const lines = field === "branch" || field === "path" ? [...new Set(values)] : values;
+  return lines.length === 0 ? null : { text: lines.join("\n"), count: lines.length, noun };
+}
+
 export interface ThreadStatusPill {
   label:
     | "Working"

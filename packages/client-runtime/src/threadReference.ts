@@ -21,6 +21,11 @@ export interface ThreadReferenceCopyTarget {
   readonly failureTitle: string;
 }
 
+interface ThreadChip {
+  readonly threadRef: ScopedThreadRef;
+  readonly title: string;
+}
+
 /**
  * A link that opens the thread from anywhere, through `hostedAppUrl`, this build's hosted app. It
  * pastes back as a chip into any composer whose agent reads that thread's machine.
@@ -30,15 +35,28 @@ export function threadChipCopyTarget(
   title: string,
   hostedAppUrl?: string,
 ): ThreadReferenceCopyTarget {
-  const record = threadContextRecord(threadRef, title);
+  return threadChipsCopyTarget([{ threadRef, title }], hostedAppUrl);
+}
+
+/** Each chip carries its own machine, so a selection may span environments. */
+export function threadChipsCopyTarget(
+  threads: readonly [ThreadChip, ...ThreadChip[]],
+  hostedAppUrl?: string,
+): ThreadReferenceCopyTarget {
+  const records = threads.map(({ threadRef, title }) => threadContextRecord(threadRef, title));
+  const single = records.length === 1;
   return {
     kind: "thread",
-    value: hostedThreadLink(threadRef, hostedAppUrl),
-    description: record.title,
-    fragment: { version: 1, source: { environmentId: threadRef.environmentId }, records: [record] },
-    clipboardTarget: "thread",
-    successTitle: "Thread copied",
-    failureTitle: "Failed to copy thread",
+    value: threads.map(({ threadRef }) => hostedThreadLink(threadRef, hostedAppUrl)).join("\n"),
+    description: records.map((record) => record.title).join(", "),
+    fragment: {
+      version: 1,
+      source: { environmentId: threads[0].threadRef.environmentId },
+      records,
+    },
+    clipboardTarget: single ? "thread" : "threads",
+    successTitle: single ? "Thread copied" : `${records.length} threads copied`,
+    failureTitle: single ? "Failed to copy thread" : "Failed to copy threads",
   };
 }
 
