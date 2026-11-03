@@ -7,9 +7,9 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
@@ -89,7 +89,7 @@ function isTransient(cause: Cause.Cause<unknown>) {
 }
 
 export function createThreadTriageOutbox<R, E>(input: {
-  readonly runtime: Atom.AtomRuntime<Crypto.Crypto | R, E>;
+  readonly runtime: Atom.AtomRuntime<SecureRandom.SecureRandom | R, E>;
   readonly sourceSnapshotAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
@@ -139,10 +139,10 @@ export function createThreadTriageOutbox<R, E>(input: {
             ),
           );
         case "put": {
-          const crypto = yield* Crypto.Crypto;
+          const random = yield* SecureRandom.SecureRandom;
           const entry = {
             ...operation.entry,
-            commandId: CommandId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie)),
+            commandId: CommandId.make(yield* random.uuidV4()),
           };
           yield* outbox.put(entry, operation.stillCurrent).pipe(
             Effect.tapError((error) =>

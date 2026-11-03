@@ -26,9 +26,9 @@ can be remapped in Settings > Keybindings.
 
 ## Browse threads
 
-Tab enters the sidebar once. Up and Down move between threads without opening them; Enter
-opens the focused thread or toggles a group. Right and Left expand and collapse groups.
-Tab moves from the focused thread to its buttons. `F2` renames the focused thread.
+Tab moves through each thread and its buttons. Up and Down also move between threads
+without opening them; Enter opens the focused thread or toggles a group. Right and Left
+expand and collapse groups. `F2` renames the focused thread.
 
 Press `Shift+F10` or the Context Menu key to open the focused thread's menu. Use the arrow
 keys to move through it, Enter to choose, and Escape to close it.

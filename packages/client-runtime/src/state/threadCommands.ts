@@ -1,5 +1,5 @@
 import type { ThreadId } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
@@ -31,6 +31,7 @@ import {
   deleteThread,
   editQueuedRun,
   interruptThreadTurn,
+  forkSideChat,
   forkThreadFromRun,
   markThreadUnread,
   mergeThreadBack,
@@ -114,7 +115,7 @@ function applySnooze(
 }
 
 export function createThreadEnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | SecureRandom.SecureRandom | R, E>,
   snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationV2ShellSnapshot | null>,
   options: {
     /** Offline settle and snooze replay once this reports a synchronized shell. */
@@ -357,6 +358,15 @@ export function createThreadEnvironmentAtoms<R, E>(
     forkFromRun: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:fork-from-run",
       execute: forkThreadFromRun,
+      scheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.sourceThreadId]),
+      },
+    }),
+    forkSideChat: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:fork-side-chat",
+      execute: forkSideChat,
       scheduler,
       concurrency: {
         mode: "serial",

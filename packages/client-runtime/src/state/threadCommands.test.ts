@@ -14,7 +14,7 @@ import {
   type ServerConfig,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
@@ -178,12 +178,9 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (optio
           Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
       } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
       Layer.succeed(
-        Crypto.Crypto,
-        Crypto.make({
-          // Distinct bytes per call, so each queued change gets its own command id.
-          randomBytes: (size) => new Uint8Array(size).fill(++randomCalls % 256),
-          digest: (_algorithm, data) => Effect.succeed(data),
-        }),
+        SecureRandom.SecureRandom,
+        // Distinct bytes per call, so each queued change gets its own command id.
+        SecureRandom.make((size) => new Uint8Array(size).fill(++randomCalls % 256)),
       ),
       Layer.succeed(ThreadTriageOutboxStore, options?.wrapStore?.(store) ?? store),
       Layer.succeed(
