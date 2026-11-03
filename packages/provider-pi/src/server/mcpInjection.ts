@@ -246,6 +246,7 @@ export function buildPiRpcLaunch(input: {
   readonly ephemeral?: boolean;
   readonly disableExtensions?: boolean;
   readonly disableTools?: boolean;
+  readonly offline?: boolean;
   readonly runtimeMode?: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 }): {
   readonly args: ReadonlyArray<string>;
@@ -271,6 +272,8 @@ export function buildPiRpcLaunch(input: {
     // Restrictions must follow launch args so user flags cannot re-enable unattended tools/extensions.
     ...(input.disableExtensions === true ? ["--no-extensions"] : []),
     ...(input.disableTools === true ? ["--no-tools"] : []),
+    // Pi's startup catalog refresh can rotate OAuth tokens; a process stopped mid-refresh loses them.
+    ...(input.offline === true ? ["--offline"] : []),
   ];
   if (
     hasT3Extension &&
