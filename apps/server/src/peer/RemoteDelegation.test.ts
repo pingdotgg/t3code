@@ -1216,15 +1216,39 @@ it.effect("a task on another model waits for the user's answer before the box la
       expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).runs[0]?.status).toBe(
         "running",
       );
+      const lateAnswer = yield* approvals
+        .answer({ threadId: parentThreadId, turnItemId: third.id, decision: "approve" })
+        .pipe(Effect.flip);
+      expect(lateAnswer.reason).toBe("record_failed");
+      const blocked = yield* a.remote
+        .delegate(
+          {
+            ...parentScope,
+            thread: {
+              threadId: parentThreadId,
+              providerSessionId: "provider-session:laptop-parent",
+              providerInstanceId: instanceId,
+            },
+          },
+          {
+            task: "Run the suite on the box.",
+            parentRunId: parent.id,
+            modelSelection: third.proposed,
+            target: { environmentId: box.environmentId },
+            clientRequestId: "stop-before-launch",
+          },
+        )
+        .pipe(Effect.flip);
+      expect(blocked.code).toBe("parent_not_active");
       yield* approvals.answer({
         threadId: parentThreadId,
         turnItemId: third.id,
-        decision: "approve",
+        decision: "decline",
       });
       const stopped = yield* Fiber.join(stopping);
       expect(stopped.isError).toBe(true);
       expect(yield* Ref.get(thread.launches)).toBe(1);
-      expect(JSON.stringify(stopped.content)).toContain("parent_not_active");
+      expect(JSON.stringify(stopped.content)).toContain("delegation_not_approved");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

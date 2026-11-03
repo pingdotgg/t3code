@@ -9213,7 +9213,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (
-      existing === undefined &&
+      (existing === undefined ||
+        (existing.approvalStatus === "pending" && command.approvalStatus === "approved")) &&
       (!isActiveRun(run) || (yield* stopReachedRun(command, command.threadId, run.id)))
     ) {
       return yield* new OrchestratorDispatchError({
