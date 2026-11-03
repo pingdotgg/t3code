@@ -1875,13 +1875,13 @@ function OpenCommandPaletteDialog(props: {
             icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
             keepOpen: true,
             run: async () => {
+              // The choices stay on screen while an add runs. A second create would be rejected
+              // as a conflict, and an open would be undone when the add navigates to its project.
+              if (checkoutChoiceSubmittingRef.current) return;
               if (choice.kind === "open") {
                 await openExistingProject(choice.project);
                 return;
               }
-              // The choice stays on screen while it runs, and a second create would be
-              // rejected as a conflict with the first.
-              if (checkoutChoiceSubmittingRef.current) return;
               checkoutChoiceSubmittingRef.current = true;
               // The folder was just seen on disk; if it has gone, say so rather than recreate it.
               const added = await settlePromise(() =>
