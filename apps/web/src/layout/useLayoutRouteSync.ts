@@ -21,7 +21,7 @@ import {
 import { useLayoutBehavior, type LayoutNewTabPosition } from "./layoutBehavior";
 import { arrangeLayoutChange, useLayoutStore } from "./layoutStore";
 import { layoutChatRoute } from "./useLayoutSettingsSync";
-import { layoutPageHref, layoutPageKind } from "./pageNavigation";
+import { layoutPageHref, layoutRoutePage } from "./pageNavigation";
 import { isAppModalPage, getMainAppHref } from "../components/sidebar/mainAppLocation";
 
 type RouteNewTab =
@@ -96,24 +96,22 @@ export function useLayoutRouteSync(
 ): LayoutState {
   const navigate = useNavigate();
   const location = useLocation();
-  const pageKind = layoutPageKind(location.pathname);
+  const routePage = layoutRoutePage(location);
   const appModalOpen = useMatches({
     select: (matches) => matches.some((match) => isAppModalPage(match.pathname)),
   });
   const appModalPaused = appModalOpen || isAppModalPage(location.pathname);
-  const pagePlaneOpen = appModalPaused || (pageKind !== null && location.search.pane !== 1);
   const layout = useLayoutStore((state) => state.layout);
-  const routeContent: LayoutTabContent | null =
-    pageKind !== null
-      ? pagePlaneOpen
-        ? null
-        : { kind: pageKind, href: location.href }
-      : threadTarget
-        ? { kind: "chat", target: threadTarget }
-        : null;
+  const routeContent: LayoutTabContent | null = routePage
+    ? appModalPaused
+      ? null
+      : routePage
+    : threadTarget
+      ? { kind: "chat", target: threadTarget }
+      : null;
   const routeKey = routeContent ? layoutTabContentKey(routeContent) : null;
   const routeHref = routeContent && isLayoutPageContent(routeContent) ? location.href : routeKey;
-  const readPagePlaneOpen = useStableCallback(() => pagePlaneOpen);
+  const readAppModalPaused = useStableCallback(() => appModalPaused);
   const routeKeyRef = useRef<string | null>(routeKey);
   const promotedDraftId = useComposerDraftStore((store) =>
     threadTarget?.kind === "server"
@@ -131,7 +129,7 @@ export function useLayoutRouteSync(
   // Keep the generated tab ids through the render retry. Once the store moves
   // off the captured base, later focus and close actions render its live layout.
   const [sync, setSync] = useState(() => ({
-    startedOnPagePlane: pagePlaneOpen,
+    startedPaused: appModalPaused,
     settled: true,
     request: {
       href:
@@ -147,11 +145,11 @@ export function useLayoutRouteSync(
     },
   }));
   const { request } = sync;
-  if (!pagePlaneOpen && (sync.startedOnPagePlane || request.href !== routeHref)) {
+  if (!appModalPaused && (sync.startedPaused || request.href !== routeHref)) {
     const pending = request.href !== routeHref;
-    const restoringWorkspace = sync.startedOnPagePlane && location.href === getMainAppHref();
+    const restoringWorkspace = sync.startedPaused && location.href === getMainAppHref();
     setSync({
-      startedOnPagePlane: false,
+      startedPaused: false,
       settled: false,
       request: {
         href: routeHref,
@@ -182,7 +180,7 @@ export function useLayoutRouteSync(
   // another store update changed the base after this route was rendered.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Commit the rendered route request to the external layout store before pane DOM paints.
   useLayoutEffect(() => {
-    if (pagePlaneOpen) return;
+    if (appModalPaused) return;
     routeKeyRef.current = routeKey;
     if (committedRequest.current === request) return;
     committedRequest.current = request;
@@ -196,13 +194,13 @@ export function useLayoutRouteSync(
         );
     }
     if (newTab && content) useLayoutStore.getState().clearNewTabRequest();
-  }, [pagePlaneOpen, request, routeKey]);
+  }, [appModalPaused, request, routeKey]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to layout focus changes and keeps the router URL aligned with the focused tab
   useEffect(() => {
-    if (pagePlaneOpen) return;
+    if (appModalPaused) return;
     return useLayoutStore.subscribe((state, previous) => {
-      if (readPagePlaneOpen() || state.layout === previous.layout) return;
+      if (readAppModalPaused() || state.layout === previous.layout) return;
       const focused = selectFocusedTab(state.layout);
       const before = selectFocusedTab(previous.layout);
       const focusedKey = focused ? layoutTabContentKey(focused.content) : null;
@@ -234,7 +232,7 @@ export function useLayoutRouteSync(
       }
       void navigate({ to: "/" });
     });
-  }, [pagePlaneOpen, navigate, readPagePlaneOpen, routeKeyRef]);
+  }, [appModalPaused, navigate, readAppModalPaused, routeKeyRef]);
 
   // Opened on the index while a chat holds focus (a restart restores the
   // layout), or reloaded on a chat while another holds the saved focus (a
@@ -245,7 +243,7 @@ export function useLayoutRouteSync(
   useEffect(() => {
     if (!catchUpOnMount.current) return;
     catchUpOnMount.current = false;
-    if (readPagePlaneOpen()) return;
+    if (readAppModalPaused()) return;
     const focused = selectFocusedTab(useLayoutStore.getState().layout);
     if (
       focused &&
@@ -261,7 +259,7 @@ export function useLayoutRouteSync(
     ) {
       void navigate({ ...layoutChatRoute(focused.content), replace: true });
     }
-  }, [navigate, readPagePlaneOpen]);
+  }, [navigate, readAppModalPaused]);
 
   return appModalPaused ? layout : derived;
 }
