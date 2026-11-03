@@ -214,25 +214,19 @@ export const createMuseSdkHostEffect = Effect.fn("createMuseSdkHostEffect")(func
 ) {
   const native = options.launch ?? (yield* museLaunch(options.binaryPath, options.environment));
   // libuv blocks the server while the child runs chdir and the PATH search, which a hung
-  // mount stalls, so off Windows the shell does both in the child.
-  const { cwd = ".", ...childEntered } = options;
+  // mount stalls. GNU env does both in the child and, unlike dash, keeps every environment
+  // entry, including exported bash functions.
+  const { cwd, ...childEntered } = options;
   const hostOptions: Omit<MuseSdkHostOptions, "signal"> =
-    (yield* HostProcess.Platform) === "win32"
-      ? { ...options, launch: native }
-      : {
+    (yield* HostProcess.Platform) === "linux"
+      ? {
           ...childEntered,
           launch: {
-            command: "/bin/sh",
-            args: [
-              "-c",
-              'cd -P -- "$1" || exit 125\nshift\nexec "$@"',
-              "t3-muse",
-              cwd.startsWith("/") ? cwd : `./${cwd}`,
-              native.command,
-              ...native.args,
-            ],
+            command: "/usr/bin/env",
+            args: [...(cwd === undefined ? [] : ["-C", cwd]), "--", native.command, ...native.args],
           },
-        };
+        }
+      : { ...options, launch: native };
   let startup: Promise<MuseSdkHost> | undefined;
   return yield* Effect.tryPromise((signal) => {
     startup = createHost({ ...hostOptions, signal });
