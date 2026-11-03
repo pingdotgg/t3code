@@ -9212,6 +9212,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Node ${command.nodeId} is not the root of run ${command.runId}.`,
       });
     }
+    if (
+      existing === undefined &&
+      (!isActiveRun(run) || (yield* stopReachedRun(command, command.threadId, run.id)))
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Run ${command.runId} is not active.`,
+      });
+    }
     const nodeId = existing?.nodeId ?? command.nodeId;
     const now = yield* DateTime.now;
     const unchanged =

@@ -876,7 +876,7 @@ it.effect.each([false, true])(
     }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("a run Stop reached cannot delegate or start a watch, even after it ends", () =>
+it.effect("Stop blocks delegation, approval cards and watches after a run ends", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -884,7 +884,10 @@ it.effect("a run Stop reached cannot delegate or start a watch, even after it en
     yield* createWatchingThread(threadId, 4);
     yield* send(threadId, "work", "start_immediately");
     const now = yield* DateTime.now;
-    const run = { ...(yield* orchestrator.getThreadProjection(threadId)).runs[0]!, startedAt: now };
+    const run = {
+      ...(yield* orchestrator.getThreadProjection(threadId)).runs[0]!,
+      startedAt: now,
+    };
     yield* projections.apply({
       id: EventId.make("event:stop-barrier:running"),
       type: "run.updated",
@@ -893,6 +896,21 @@ it.effect("a run Stop reached cannot delegate or start a watch, even after it en
       occurredAt: now,
       payload: { ...run, status: "running" },
     });
+    const recordApproval = (key: string, approvalStatus: "pending" | "cancelled") =>
+      orchestrator.dispatch({
+        type: "delegation_approval.record",
+        commandId: CommandId.make(`approval:${key}:${approvalStatus}`),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId!,
+        turnItemId: TurnItemId.make(`approval:${key}`),
+        title: "Delegate a task",
+        task: "Review the change.",
+        current: modelSelection,
+        proposed: { ...modelSelection, model: "another-model" },
+        approvalStatus,
+      });
+    yield* recordApproval("before-stop", "pending");
     yield* send(threadId, "queued", "queue_after_active");
     const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
     yield* orchestrator.dispatch({
@@ -929,6 +947,8 @@ it.effect("a run Stop reached cannot delegate or start a watch, even after it en
 
     assert.isTrue(Exit.isFailure(yield* Effect.exit(delegate(threadId, "late task"))));
     assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(threadId, 5))));
+    const lateApproval = yield* recordApproval("after-stop", "pending").pipe(Effect.flip);
+    assert.include(String(lateApproval.cause), "not active");
 
     yield* projections.apply({
       id: EventId.make("event:stop-barrier:interrupted"),
@@ -939,6 +959,17 @@ it.effect("a run Stop reached cannot delegate or start a watch, even after it en
       payload: { ...run, status: "interrupted", completedAt: now },
     });
     assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(threadId, 5))));
+    const endedApproval = yield* recordApproval("after-end", "pending").pipe(Effect.flip);
+    assert.include(String(endedApproval.cause), "not active");
+    yield* recordApproval("before-stop", "cancelled");
+    assert.deepEqual(
+      (yield* orchestrator.getThreadProjection(threadId)).turnItems.flatMap((item) =>
+        item.type === "delegation_approval"
+          ? [{ id: item.id, approvalStatus: item.approvalStatus }]
+          : [],
+      ),
+      [{ id: TurnItemId.make("approval:before-stop"), approvalStatus: "cancelled" }],
+    );
     assert.deepEqual(yield* threadState(threadId), {
       runs: ["interrupted", "cancelled"],
       watched: [4],
