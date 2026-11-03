@@ -1,5 +1,5 @@
 import * as NodeNet from "node:net";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Cause from "effect/Cause";
@@ -173,7 +173,7 @@ it.effect.each(["interrupt", "timeout", "success"] as const)(
       const originalIndex = yield* fs.readFile(path.join(cwd, ".git/index"));
       const originalHead = (yield* git(["rev-parse", "HEAD"])).stdout;
       yield* git(["config", "core.bigFileThreshold", "1m"]);
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const payload = yield* crypto.randomBytes(2 * 1024 * 1024);
       yield* fs.writeFile(path.join(cwd, "a-media.bin"), payload);
 
@@ -387,7 +387,7 @@ it.effect.each([".pack", ".idx"] as const)(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const driver = yield* GitVcsDriver.makeVcsDriverShape();
       const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-publish-pack-interrupt-" });
       const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
@@ -437,7 +437,7 @@ it.effect.each([".idx", ".pack", "all"] as const)(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const driver = yield* GitVcsDriver.makeVcsDriverShape();
       const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-publish-pack-failure-" });
       const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
