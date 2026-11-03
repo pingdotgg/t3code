@@ -222,16 +222,12 @@ function CommandPaletteRowContent({ item }: { item: CommandPaletteResultItem }) 
       <CommandPaletteTitle item={item} />
     </>
   );
+  const stacked = item.threadContentMatch || item.matchHint || item.descriptionBelow;
   return (
     <>
       <CommandPaletteTitleIcon>{item.icon}</CommandPaletteTitleIcon>
       {item.description || item.threadContentMatch || item.matchHint ? (
-        <span
-          className={cn(
-            "flex min-w-0 flex-1",
-            item.threadContentMatch || item.matchHint ? "flex-col" : "items-center gap-2",
-          )}
-        >
+        <span className={cn("flex min-w-0 flex-1", stacked ? "flex-col" : "items-center gap-2")}>
           <span className="flex min-w-0 items-center gap-1.5 text-control text-foreground in-data-[active=true]:text-strong-foreground">
             {title}
             <ThreadRowContext item={item} />
