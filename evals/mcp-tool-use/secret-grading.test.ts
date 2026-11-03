@@ -1901,6 +1901,19 @@ it("keeps a written script's stderr print out of stdout redirects and pipes", ()
   );
 });
 
+it("stops tracking a script variable once it is reassigned a clean value", () => {
+  const scripts = new Map([
+    [
+      "/tmp/clear.py",
+      `import subprocess\nsecret = open('${F}').read()\nsubprocess.run(['adb', 'pair', '10.0.0.2:4242', secret])\nsecret = ''\nprint(secret)\n`,
+    ],
+    ["/tmp/keep.py", `secret = open('${F}').read()\nsecret = secret.strip()\nprint(secret)\n`],
+  ]);
+  const verdicts = (cmd: string) => classifyFileUse(cmd, [F], scripts).map((use) => use.verdict);
+  assert.deepEqual(verdicts("python3 /tmp/clear.py"), ["consume (script passes the value on)"]);
+  assert.deepEqual(verdicts("python3 /tmp/keep.py"), ["print (script prints the value)"]);
+});
+
 it("fails a written script that prints the value beside a redacted copy", () => {
   const scripts = new Map([
     [

@@ -776,6 +776,16 @@ const programUse = (program: string, names: (statement: string) => boolean) => {
     const assigned = PROGRAM_ASSIGNMENT.exec(statement)?.[1];
     const named = names(statement) || mentions(paths);
     if (named && COPY_CALL.test(code)) use.writes = true;
+    // A name reassigned something that doesn't carry the value no longer holds it.
+    if (
+      assigned &&
+      values.has(assigned) &&
+      !(named && READ_CALL.test(statement)) &&
+      !new RegExp(`\\b(?:${[...values].join("|")})\\b`).test(code.slice(code.indexOf("=") + 1))
+    ) {
+      values.delete(assigned);
+      continue;
+    }
     if (!mentions(values) && !(named && READ_CALL.test(statement))) {
       if (named && assigned) paths.add(assigned);
       continue;
