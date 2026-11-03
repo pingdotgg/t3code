@@ -65,7 +65,10 @@ describe("Codex orchestration context", () => {
 
     NodeAssert.ok(orchestration.includes("use your native tool when the child uses your provider"));
     NodeAssert.ok(orchestration.includes("`run_in_background:false`"));
-    NodeAssert.ok(orchestration.includes("A native type running another provider's model"));
+    NodeAssert.ok(orchestration.includes("A native type on another provider's model"));
+    NodeAssert.ok(
+      orchestration.includes("Background agent: `delegate_task`, never a background `Agent`."),
+    );
     NodeAssert.ok(
       orchestration.includes("Every new delegate review or re-check is a new `delegate_task`"),
     );
