@@ -7,6 +7,8 @@ import {
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
+  confirmSelectedRef,
+  MAX_SELECTED_REF_CONFIRM_PAGES,
   resolveConfirmedSelectedRef,
   resolveLocalCheckoutBranchMismatch,
   sanitizeNewRefName,
@@ -276,5 +278,38 @@ describe("resolveConfirmedSelectedRef", () => {
     ],
   ] as const)("%s", (_label, freshRead, expected) => {
     expect(resolveConfirmedSelectedRef(listed, freshRead).worktreePath).toBe(expected);
+  });
+});
+
+describe("confirmSelectedRef", () => {
+  const listed: VcsRef = {
+    name: "main",
+    isRemote: false,
+    current: false,
+    isDefault: true,
+    worktreePath: "/repo",
+  };
+  const pagesUntil = (foundOnPage: number | null) => {
+    const cursors: Array<number | undefined> = [];
+    const readPage = async (cursor: number | undefined) => {
+      cursors.push(cursor);
+      const page = cursors.length - 1;
+      return page === foundOnPage
+        ? { refs: [{ ...listed, worktreePath: "/other" }], nextCursor: (page + 1) * 100 }
+        : { refs: [], nextCursor: (page + 1) * 100 };
+    };
+    return { cursors, readPage };
+  };
+
+  it("follows pages until it finds the ref", async () => {
+    const { cursors, readPage } = pagesUntil(2);
+    expect((await confirmSelectedRef(listed, readPage)).worktreePath).toBe("/other");
+    expect(cursors).toEqual([undefined, 100, 200]);
+  });
+
+  it("drops the claim when the page limit runs out without the ref", async () => {
+    const { cursors, readPage } = pagesUntil(null);
+    expect((await confirmSelectedRef(listed, readPage)).worktreePath).toBeNull();
+    expect(cursors).toHaveLength(MAX_SELECTED_REF_CONFIRM_PAGES);
   });
 });

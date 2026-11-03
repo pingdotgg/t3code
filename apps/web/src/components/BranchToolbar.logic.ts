@@ -259,6 +259,26 @@ export function resolveConfirmedSelectedRef(
   return freshRead.nextCursor === null ? { ...listedRef, worktreePath: null } : listedRef;
 }
 
+export const MAX_SELECTED_REF_CONFIRM_PAGES = 10;
+
+/** Pages through a fresh ref read until the picked ref is confirmed or ruled out. */
+export async function confirmSelectedRef(
+  listedRef: VcsRef,
+  readPage: (
+    cursor: number | undefined,
+  ) => Promise<{ readonly refs: ReadonlyArray<VcsRef>; readonly nextCursor: number | null } | null>,
+): Promise<VcsRef> {
+  let cursor: number | undefined;
+  for (let page = 0; page < MAX_SELECTED_REF_CONFIRM_PAGES; page++) {
+    const freshRead = await readPage(cursor);
+    const confirmed = resolveConfirmedSelectedRef(listedRef, freshRead);
+    // It returns `listedRef` itself only when this page was truncated without the ref.
+    if (confirmed !== listedRef || freshRead?.nextCursor == null) return confirmed;
+    cursor = freshRead.nextCursor;
+  }
+  return { ...listedRef, worktreePath: null };
+}
+
 export function resolveBranchSelectionTarget(input: {
   activeProjectCwd: string;
   activeWorktreePath: string | null;
