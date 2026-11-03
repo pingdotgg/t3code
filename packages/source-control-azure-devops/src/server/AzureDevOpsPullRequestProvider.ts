@@ -65,8 +65,6 @@ type OpenedDiff =
   | {
       readonly _tag: "open";
       readonly source: AzureDevOpsDiffCursor["source"];
-      /** The held files diff page this request reads, released once read to its end. */
-      readonly page?: FilesDiffPage;
       readonly iteration: AzureDevOpsIteration;
       /** A file without blocks has to be read to be diffed. */
       readonly files: ReadonlyArray<AzureDevOpsFileDiff>;
@@ -300,7 +298,7 @@ export const make = Effect.gen(function* () {
         });
   };
 
-  /** The last page the files diff gave, for the next slice of a walk that stopped inside it. */
+  /** The last page the files diff gave, kept until the next one replaces it. */
   let heldPage: FilesDiffPage | undefined;
 
   /**
@@ -335,7 +333,6 @@ export const make = Effect.gen(function* () {
     const openPage = (page: FilesDiffPage): OpenedDiff => ({
       _tag: "open",
       source: "filesdiff",
-      page,
       iteration: page.iteration,
       files: page.files.slice(start - page.start),
       hasMore: page.files.length === FILES_DIFF_PAGE_SIZE,
@@ -618,9 +615,6 @@ export const make = Effect.gen(function* () {
             }
           }
         }
-
-        // A page read to its end is not asked for again, unless another walk holds its own.
-        if (patched >= files.length && heldPage === opened.page) heldPage = undefined;
 
         const slice: ProviderDiffSlice = {
           patch: sections.join(""),

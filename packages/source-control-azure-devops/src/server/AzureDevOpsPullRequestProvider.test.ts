@@ -1,7 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
@@ -397,7 +395,6 @@ const filesDiffProvider = (input: {
   readonly files: ReadonlyArray<AzureDevOpsFileDiff>;
   readonly failure?: Effect.Effect<never, AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError>;
   readonly iterations?: ReadonlyArray<typeof ITERATION>;
-  readonly beforeRead?: (path: string) => Effect.Effect<void>;
 }) =>
   Effect.gen(function* () {
     const asks: number[] = [];
@@ -423,19 +420,20 @@ const filesDiffProvider = (input: {
           readItemContent: (item) => {
             reads.push(item.path);
             const isOldSide = item.commit !== ITERATION.headCommit;
-            return (input.beforeRead?.(item.path) ?? Effect.void).pipe(
-              Effect.as({ contents: side(isOldSide ? "old" : "new", 2, 4), isBinary: false }),
-            );
+            return Effect.succeed({
+              contents: side(isOldSide ? "old" : "new", 2, 4),
+              isBinary: false,
+            });
           },
         }),
       ),
     );
-    const diff = (cursor?: string, number = 7) =>
+    const diff = (cursor?: string) =>
       provider.getDiff({
         cwd: "/w",
         repository: "acme/web",
         host: "dev.azure.com",
-        number,
+        number: 7,
         ...(cursor === undefined ? {} : { cursor }),
       });
     return { diff, asks, reads, counts };
@@ -502,40 +500,6 @@ describe("getDiff from the files diff", () => {
       expect(paths).toEqual(files.map((file) => file.change.path));
       expect(slices).toBeGreaterThan(2);
       expect(read.asks).toEqual([0, FILES_DIFF_PAGE_SIZE]);
-    }),
-  );
-
-  it.effect("keeps the page another walk holds when a walk finishes its own", () =>
-    Effect.gen(function* () {
-      const lines = Array.from({ length: 100 }, (_, line) => `${line} ${"z".repeat(1_300)}`);
-      const heavy = Array.from({ length: FILES_DIFF_PAGE_SIZE - 1 }, (_, at) =>
-        newFile(`src/file-${String(at).padStart(4, "0")}.ts`, lines),
-      );
-      const slow = { ...newFile("src/zz-slow.ts", ["x"]), blocks: null };
-      const reached = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const read = yield* filesDiffProvider({
-        files: [...heavy, slow],
-        beforeRead: (path) =>
-          path === slow.change.path
-            ? Deferred.succeed(reached, undefined).pipe(Effect.andThen(Deferred.await(release)))
-            : Effect.void,
-      });
-
-      // Pull request 7 reads the last file of its page and is held up reading it.
-      const finishing = yield* Effect.forkChild(
-        read.diff(`${ITERATION.id}:${FILES_DIFF_PAGE_SIZE - 1}:d`, 7),
-      );
-      yield* Deferred.await(reached);
-      // Pull request 9 stops inside its first page, so its next slice needs it held.
-      const first = yield* read.diff(undefined, 9);
-      expect(first.nextCursor).not.toBeNull();
-      yield* Deferred.succeed(release, undefined);
-      yield* Fiber.join(finishing);
-
-      yield* read.diff(first.nextCursor ?? undefined, 9);
-
-      expect(read.asks).toEqual([0, 0]);
     }),
   );
 
