@@ -14,8 +14,10 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "vite-plus/test";
 
@@ -820,13 +822,17 @@ it("requestSecret returns the unsaved note for a declined, cancelled or timed-ou
     );
     return Effect.gen(function* () {
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.requestSecret(makeScope(), {
-        label: "Staging password",
-        reason: "Signs in the QA account.",
-        delivery: "file",
-        timeoutMs: 1_000,
-      });
-    }).pipe(Effect.provide(layer));
+      const request = yield* service
+        .requestSecret(makeScope(), {
+          label: "Staging password",
+          reason: "Signs in the QA account.",
+          delivery: "file",
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("2 seconds");
+      return yield* Fiber.join(request);
+    }).pipe(Effect.provide(Layer.merge(layer, TestClock.layer())));
   }).pipe(Effect.runPromise);
 
   expect(results).toEqual([
