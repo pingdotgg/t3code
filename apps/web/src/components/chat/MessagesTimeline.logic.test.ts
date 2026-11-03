@@ -1353,11 +1353,13 @@ describe("deriveMessagesTimelineRows", () => {
       createdAt: time(second),
       entry: { id, createdAt: time(second), runId, label: "Ran command", tone: "tool" },
     });
-    const rows = (expandedRunIds: ReadonlySet<RunId>) =>
+    const rows = (expandedRunIds: ReadonlySet<RunId>, proseBeforeSteer = false) =>
       deriveMessagesTimelineRows({
         timelineEntries: [
           message("prompt", 0, "user", "turn_start"),
-          work("work-before-steer", 4),
+          proseBeforeSteer
+            ? message("answer-before-steer", 4, "assistant")
+            : work("work-before-steer", 4),
           message("steer", 10, "user", "steer"),
           work("work-after-steer", 15),
           message("final", 30, "assistant"),
@@ -1387,6 +1389,13 @@ describe("deriveMessagesTimelineRows", () => {
       "steer",
       `turn-fold:${segmentKey}`,
       "work-after-steer",
+      "final",
+    ]);
+    expect(rows(new Set(), true).map((row) => row.id)).toEqual([
+      "prompt",
+      "answer-before-steer",
+      "steer",
+      `turn-fold:${segmentKey}`,
       "final",
     ]);
   });
@@ -2141,7 +2150,7 @@ describe("deriveMessagesTimelineRows", () => {
     const withoutPrompt = rows([]);
     expect(withoutPrompt).toContain("turn-fold");
     expect(withoutPrompt).toContain("assistant:imported-update");
-    expect(withoutPrompt).not.toContain("imported-command");
+    expect(withoutPrompt).not.toContain("work");
 
     const timelineEntries = [
       message("imported-prompt", "user", 0),

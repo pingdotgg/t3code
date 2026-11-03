@@ -1188,14 +1188,16 @@ function deriveTurnFolds(input: {
     const segmentHiddenIds = (entries: ReadonlyArray<TimelineEntry>) =>
       new Set(entries.flatMap((entry) => (hiddenEntryIds.has(entry.id) ? [entry.id] : [])));
     const firstSegment = group.entries.slice(0, group.steerSegments[0]?.startIndex);
-    foldsByAnchorEntryId.set(group.anchorEntryId, {
-      runId,
-      anchorEntryId: group.anchorEntryId,
-      createdAt: group.startBoundary ?? firstEntry.createdAt,
-      hiddenEntryIds: segmentHiddenIds(firstSegment),
-      entryIds: new Set(firstSegment.map((entry) => entry.id)),
-      label,
-    });
+    if (hidesNonCompactionWork(firstSegment)) {
+      foldsByAnchorEntryId.set(group.anchorEntryId, {
+        runId,
+        anchorEntryId: group.anchorEntryId,
+        createdAt: group.startBoundary ?? firstEntry.createdAt,
+        hiddenEntryIds: segmentHiddenIds(firstSegment),
+        entryIds: new Set(firstSegment.map((entry) => entry.id)),
+        label,
+      });
+    }
     for (const [index, { startIndex, steer }] of group.steerSegments.entries()) {
       const entries = group.entries.slice(startIndex, group.steerSegments[index + 1]?.startIndex);
       const anchorEntry = entries[0];
