@@ -281,11 +281,16 @@ it.effect("checkpoint recovery discovers nested HEAD independently of inherited 
     const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-git-dir-" });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     yield* git(["init", "empty"]);
+    yield* git(["config", "core.sharedRepository", "group"]);
     const originalIndex = yield* fs.readFile(path.join(cwd, ".git", "index"));
     yield* fs.makeDirectory(path.join(cwd, "inherited-objects"));
     yield* Effect.acquireUseRelease(
       Effect.sync(() => {
-        const previous = { gitDir: process.env.GIT_DIR, objects: process.env.GIT_OBJECT_DIRECTORY };
+        const previous = {
+          gitDir: process.env.GIT_DIR,
+          objects: process.env.GIT_OBJECT_DIRECTORY,
+          umask: process.umask(0o022),
+        };
         process.env.GIT_DIR = path.join(cwd, ".git");
         process.env.GIT_OBJECT_DIRECTORY = path.join(cwd, "inherited-objects");
         return previous;
@@ -293,6 +298,7 @@ it.effect("checkpoint recovery discovers nested HEAD independently of inherited 
       () => driver.checkpoints.captureCheckpoint({ cwd, checkpointRef }),
       (previous) =>
         Effect.sync(() => {
+          process.umask(previous.umask);
           if (previous.gitDir === undefined) delete process.env.GIT_DIR;
           else process.env.GIT_DIR = previous.gitDir;
           if (previous.objects === undefined) delete process.env.GIT_OBJECT_DIRECTORY;
@@ -302,6 +308,11 @@ it.effect("checkpoint recovery discovers nested HEAD independently of inherited 
     assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
     assert.strictEqual((yield* git(["ls-tree", "-r", checkpointRef, "--", "empty"])).stdout, "");
     assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git", "index")), originalIndex);
+    if ((yield* HostProcess.Platform) !== "win32") {
+      const blob = (yield* git(["rev-parse", `${checkpointRef}:file.txt`])).stdout.trim();
+      const fanout = yield* fs.stat(path.join(cwd, ".git", "objects", blob.slice(0, 2)));
+      assert.strictEqual(fanout.mode & 0o020, 0o020);
+    }
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 

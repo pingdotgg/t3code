@@ -916,7 +916,20 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     function* (cwd: string, from: string, to: string) {
       // Per-directory moves share the enclosing publication span.
       const move = Effect.fnUntraced(function* (directory: string, names: ReadonlyArray<string>) {
-        yield* fileSystem.makeDirectory(path.join(to, directory), { recursive: true });
+        // Keep Git's shared-repository permissions on newly published directories.
+        const moved = yield* fileSystem
+          .rename(path.join(from, directory), path.join(to, directory))
+          .pipe(
+            Effect.as(true),
+            Effect.catch((error) =>
+              fileSystem
+                .exists(path.join(to, directory))
+                .pipe(
+                  Effect.flatMap((exists) => (exists ? Effect.succeed(false) : Effect.fail(error))),
+                ),
+            ),
+          );
+        if (moved) return;
         for (const name of names) {
           const target = path.join(to, directory, name);
           // Another writer may have published the same read-only object, which Windows won't replace.
