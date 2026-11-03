@@ -114,11 +114,12 @@ const recordTwentyEvents = Effect.gen(function* () {
   }
 });
 
+const layerServerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+  prefix: "t3-telemetry-retry-",
+});
+
 const layerWithClient = (client: HttpClient.HttpClient, policy?: ManagedPolicyDocument) =>
   AnalyticsService.layer.pipe(
-    Layer.provideMerge(
-      ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-retry-" }),
-    ),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
@@ -166,7 +167,9 @@ const sendFor = (
         return yield* respond(request);
       }),
     );
-    const runtimeLayer = layerWithClient(client, policy);
+    const runtimeLayer = layerWithClient(client, policy).pipe(
+      Layer.provideMerge(layerServerConfig),
+    );
 
     yield* Effect.gen(function* () {
       yield* record;
@@ -277,8 +280,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       const client = HttpClient.make(() =>
         Deferred.succeed(sending, undefined).pipe(Effect.andThen(Effect.never)),
       );
+      // Removing the config's temp directory is real I/O, so the closed scope must not own it.
+      const serverConfig = yield* Layer.build(layerServerConfig);
       const scope = yield* Scope.make();
-      const context = yield* Layer.buildWithScope(layerWithClient(client), scope);
+      const context = yield* Layer.buildWithScope(
+        layerWithClient(client).pipe(Layer.provideMerge(Layer.succeedContext(serverConfig))),
+        scope,
+      );
       yield* recordTwentyEvents.pipe(Effect.provideContext(context));
       // The background flush starts a send that holds the flush lock.
       yield* TestClock.adjust("10 seconds");
