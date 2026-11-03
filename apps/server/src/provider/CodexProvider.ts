@@ -448,13 +448,36 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
   );
 });
 
-/** Set originator at spawn; the pre-initialize refresh otherwise overwrites shared cache with plain-CLI models. */
-export const codexAppServerEnvironment = (
-  environment: NodeJS.ProcessEnv | undefined,
-): NodeJS.ProcessEnv => ({
-  CODEX_INTERNAL_ORIGINATOR_OVERRIDE: CODEX_CLIENT_NAME,
-  ...environment,
-});
+const LOOPBACK_HOSTS = ["127.0.0.1", "localhost", "::1"];
+
+// Codex reads NO_PROXY before no_proxy, so both carry the union of every spelling the user set.
+const noProxyWithLoopback = (environment: NodeJS.ProcessEnv): string => {
+  const hosts = new Set(
+    Object.entries(environment)
+      .filter(([name]) => name.toUpperCase() === "NO_PROXY")
+      .flatMap(([, value]) => value?.split(",") ?? [])
+      .map((host) => host.trim())
+      .filter((host) => host.length > 0),
+  );
+  // curl treats `*` as a wildcard only when it is the whole value.
+  if (hosts.has("*")) return "*";
+  for (const host of LOOPBACK_HOSTS) hosts.add(host);
+  return [...hosts].join(",");
+};
+
+/**
+ * Set originator at spawn; the pre-initialize refresh otherwise overwrites shared cache with plain-CLI models.
+ * Exempt loopback from proxies so Codex's MCP client reaches T3's MCP endpoint directly.
+ */
+export const codexAppServerEnvironment = (environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+  const noProxy = noProxyWithLoopback(environment);
+  return {
+    CODEX_INTERNAL_ORIGINATOR_OVERRIDE: CODEX_CLIENT_NAME,
+    ...environment,
+    NO_PROXY: noProxy,
+    no_proxy: noProxy,
+  };
+};
 
 export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   return {
@@ -478,7 +501,7 @@ const codexProcessEnvironment = Effect.fn("codexProcessEnvironment")(function* (
     ? expandHomePath(input.homePath, yield* HostProcess.HomeDirectory)
     : undefined;
   return {
-    ...codexAppServerEnvironment(input.environment),
+    ...codexAppServerEnvironment(input.environment ?? (yield* HostProcess.Environment)),
     ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
   };
 });
