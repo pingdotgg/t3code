@@ -1,4 +1,4 @@
-import { ManagedPolicyDocument } from "@t3tools/contracts";
+import { ManagedPolicyDocument, SERVER_EXIT_CODE_MANAGED_POLICY } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -20,6 +21,8 @@ export class ManagedPolicyFileError extends Schema.TaggedError<ManagedPolicyFile
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
+  override readonly [Runtime.errorExitCode] = SERVER_EXIT_CODE_MANAGED_POLICY;
+
   override get message(): string {
     return `T3 Code cannot use the managed policy at ${this.path}: ${this.reason}. It will not start until an administrator fixes this.`;
   }

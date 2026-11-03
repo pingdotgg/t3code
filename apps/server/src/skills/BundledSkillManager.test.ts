@@ -247,6 +247,41 @@ it.layer(
       expect((yield* skill(manager)).status).toBe("unmanaged");
     }),
   );
+  it.effect("keeps committed changes usable when staging cleanup fails", () =>
+    Effect.gen(function* () {
+      const { fs, home } = yield* setup;
+      const faultyFs = FileSystem.make({
+        ...fs,
+        remove: (target, options) =>
+          target.includes(".t3-")
+            ? Effect.fail(new PlatformError.PlatformError({
+                reason: new PlatformError.PermissionDenied({
+                  module: "FileSystem", method: "remove", pathOrDescriptor: target,
+                }),
+              }))
+            : fs.remove(target, options),
+      });
+      const manager = yield* getManager(home).pipe(
+        Effect.provideService(FileSystem.FileSystem, faultyFs),
+      );
+      const installed = yield* install(manager);
+      expect(installed.status).toBe("installed");
+      const next = yield* getManager(home, [{ ...source, files: { "SKILL.md": "updated skill\n" } }]).pipe(
+        Effect.provideService(FileSystem.FileSystem, faultyFs),
+      );
+      const outdated = yield* skill(next);
+      const updated = yield* next.manage({
+        instanceId, skillId: outdated.id, action: "update", expectedFingerprint: outdated.fingerprint,
+      });
+      expect(updated.status).toBe("installed");
+      expect(yield* fs.readFileString(updated.path + "/SKILL.md")).toBe("updated skill\n");
+      const removed = yield* next.manage({
+        instanceId, skillId: updated.id, action: "remove", expectedFingerprint: updated.fingerprint,
+      });
+      expect(removed.status).toBe("not_installed");
+      expect((yield* skill(next)).status).toBe("not_installed");
+    }),
+  );
   it.effect("restores the previous version if replacing it fails", () =>
     Effect.gen(function* () {
       const { fs, path, home, manager } = yield* setup;
