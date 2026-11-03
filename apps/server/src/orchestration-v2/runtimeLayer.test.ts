@@ -2659,6 +2659,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       );
       assert.deepEqual(activeShell?.unsettledAt, activeProjection.thread.unsettledAt);
 
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-lifecycle-resettle"),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pin",
+        commandId: CommandId.make("runtime-layer-lifecycle-pin-settled"),
+        threadId,
+      });
+      const pinnedProjection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(pinnedProjection.thread.settledOverride, "active");
+      assert.isNotNull(pinnedProjection.thread.unsettledAt);
+
       const archive = yield* orchestrator.dispatch({
         type: "thread.archive",
         commandId: CommandId.make("runtime-layer-lifecycle-archive"),
