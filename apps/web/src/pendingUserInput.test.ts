@@ -20,10 +20,10 @@ describe("projectPendingUserInputAnswer", () => {
     "Reference work",
   );
 
-  it("sends thread chips as links that open the thread, with the actual thread ID", () => {
+  it("sends thread chips as readable links with the actual thread ID", () => {
     const answer = `Compare ${formatInlineContextReference(threadContextReference(record))}`;
     expect(projectPendingUserInputAnswer(answer, [record])).toBe(
-      "Compare [Reference work](https://app.t3.codes/threads/env-answer/reference-thread)",
+      "Compare [Reference work](t3-thread://v2/env-answer/reference-thread)",
     );
   });
 
