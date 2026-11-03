@@ -848,6 +848,34 @@ it.live(
     ).pipe(Effect.provide(layer)),
 );
 
+it.live("the agent that owns a tab still reads it while a person drives", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.control).toMatchObject({ owner: "human", ownedByCaller: true });
+      const snapshot = yield* broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+      expect(snapshot.accessibilityTree).toBeDefined();
+      const acted = yield* broker
+        .invoke<void>({ scope, tabId, operation: "evaluate", input: { expression: "act()" } })
+        .pipe(Effect.flip);
+      expect(acted).toMatchObject({ reason: "humanControl" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("reports a pending dialog without evaluating the page and resolves it explicitly", () =>
   Effect.scoped(
     Effect.gen(function* () {
