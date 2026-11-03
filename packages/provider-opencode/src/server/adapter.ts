@@ -80,7 +80,7 @@ import {
   makeSubagentChildThread,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
-import { openCodeToolTurnItem } from "./toolItems.ts";
+import { openCodeCommandFailed, openCodeToolTurnItem } from "./toolItems.ts";
 
 export const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
 export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_PROVIDER);
@@ -741,7 +741,9 @@ function toolStatus(part: ToolPart): {
     case "running":
       return { node: "running", item: "running" };
     case "completed":
-      return { node: "completed", item: "completed" };
+      return openCodeCommandFailed(part.tool, part.state.metadata)
+        ? { node: "failed", item: "failed" }
+        : { node: "completed", item: "completed" };
     case "error":
       return { node: "failed", item: "failed" };
   }
