@@ -7,7 +7,6 @@ import {
   ChatPaneHeaderControls,
   useHeaderControlsInset,
 } from "../components/chat/ChatPaneHeader";
-import { PaneHeaderActions } from "../components/chat/PaneHeaderActions";
 import { PanelLayoutControls } from "../components/chat/PanelLayoutControls";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { shortcutLabelForCommand } from "../keybindings";
@@ -52,15 +51,6 @@ export function ChatPaneStandIn({ target }: { target: ThreadRouteTarget }) {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
         <ChatPaneHeader reserveNativeControlsInset>
           <ChatPaneHeaderControls measureRef={measureControls}>
-            {threadRef ? (
-              <PaneHeaderActions
-                environmentId={threadRef.environmentId}
-                threadId={threadRef.threadId}
-                {...(target.kind === "draft" ? { draftId: target.draftId } : {})}
-                activeProjectName={project?.title}
-                projectId={project?.id ?? null}
-              />
-            ) : null}
             <PanelLayoutControls
               threadPanelOpen={threadPanelOpen}
               threadPanelPresentation="inline"
