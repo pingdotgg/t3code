@@ -37,7 +37,11 @@ import {
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
 import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
-import { discoverClaudeSkills, readClaudeSettingsEnv } from "./Drivers/ClaudeSkills.ts";
+import {
+  discoverClaudeSkills,
+  readClaudeLaunchArgSettings,
+  readClaudeSettingsEnv,
+} from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
@@ -201,14 +205,16 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
   readonly managedMcpConfig: boolean;
+  readonly launchArgSettings?: { readonly [key: string]: unknown } | undefined;
 }): ClaudeQueryOptions {
   return {
     persistSession: false,
     pathToClaudeCodeExecutable: input.executablePath,
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
-    // Keep settings for slash-command discovery, but disable hooks so health checks do not run SessionStart repeatedly.
-    settings: { disableAllHooks: true },
+    // Keep settings, --settings included, for slash-command discovery, but disable hooks so
+    // health checks do not run SessionStart repeatedly.
+    settings: { ...input.launchArgSettings, disableAllHooks: true },
     allowedTools: [],
     // Exclude filesystem MCP servers; omit strict mode when managed-mcp.json already excludes them and forbids the flag.
     mcpServers: {},
@@ -333,6 +339,11 @@ const probeClaudeCapabilities = (
       claudeEnvironment,
     );
     const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
+    // An unreadable --settings value fails the turn, not the provider status.
+    const launchArgSettings = yield* readClaudeLaunchArgSettings(
+      claudeSettings.launchArgs,
+      cwd,
+    ).pipe(Effect.orElseSucceed(() => undefined));
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // oxlint-disable-next-line require-yield -- never yields, so no prompt reaches the API
@@ -345,6 +356,7 @@ const probeClaudeCapabilities = (
           environment: claudeEnvironment,
           cwd,
           managedMcpConfig,
+          launchArgSettings,
         }),
       });
       const init = await q.initializationResult();

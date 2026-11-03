@@ -91,6 +91,7 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import { ClaudeSettingsLaunchArgError } from "../../provider/Drivers/ClaudeSkills.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -1181,15 +1182,15 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
     [
       "--settings missing.json",
       (cwd: string) =>
-        new ClaudeAdapterV2.ClaudeSettingsLaunchArgError({
+        new ClaudeSettingsLaunchArgError({
           path: NodePath.join(cwd, "missing.json"),
         }).message,
     ],
-    ["--settings '{not json}'", () => new ClaudeAdapterV2.ClaudeSettingsLaunchArgError({}).message],
+    ["--settings '{not json}'", () => new ClaudeSettingsLaunchArgError({}).message],
     // Without a closing brace this must not become a file path that echoes the secret.
     [
       `--settings '{"env":{"ANTHROPIC_API_KEY":"secret-settings-key"},'`,
-      () => new ClaudeAdapterV2.ClaudeSettingsLaunchArgError({}).message,
+      () => new ClaudeSettingsLaunchArgError({}).message,
     ],
   ] as const)("fails the turn before opening Claude for %s", ([launchArgs, expectedMessage]) =>
     Effect.scoped(

@@ -149,6 +149,7 @@ import {
 import {
   claudeLaunchArgDirectories,
   discoverClaudeSkills,
+  readClaudeLaunchArgSettings,
 } from "../../provider/Drivers/ClaudeSkills.ts";
 import {
   compileClaudeModelSelection,
@@ -617,18 +618,6 @@ export class ClaudeAppendSystemPromptMissingValueError extends Schema.TaggedErro
 ) {
   override get message(): string {
     return `The ${this.flag} launch argument has no ${this.flag === "--append-system-prompt" ? "text" : "file path"}. Add it after the flag in the Claude launch arguments, then send the message again.`;
-  }
-}
-
-export class ClaudeSettingsLaunchArgError extends Schema.TaggedError<ClaudeSettingsLaunchArgError>()(
-  "ClaudeSettingsLaunchArgError",
-  {
-    path: Schema.optional(Schema.String),
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return `Claude could not read the --settings launch argument${this.path === undefined ? "" : ` at ${this.path}`} as a JSON object. Fix it in the Claude launch arguments, then send the message again.`;
   }
 }
 
@@ -1719,42 +1708,6 @@ const readClaudeAppendSystemPromptFile = Effect.fnUntraced(function* (input: {
       Effect.mapError((cause) => new ClaudeAppendSystemPromptFileError({ path: filePath, cause })),
     );
 });
-
-const decodeClaudeLaunchArgSettings = Schema.decodeUnknownEffect(
-  fromLenientJson(Schema.Record(Schema.String, Schema.Unknown)),
-);
-
-/**
- * Reads the --settings launch argument: a value starting with a brace is inline
- * JSON, anything else is a file path relative to the cwd. makeClaudeQueryOptions
- * merges the result beneath T3's own settings.
- */
-const readClaudeLaunchArgSettings = Effect.fn("ClaudeAdapterV2.readLaunchArgSettings")(
-  function* (input: {
-    readonly settings: ClaudeSettings | undefined;
-    readonly cwd: string | null;
-    readonly fileSystem: FileSystem.FileSystem;
-    readonly path: Path.Path;
-  }) {
-    if (input.settings === undefined) return undefined;
-    const value = parseCliArgs(input.settings.launchArgs).flags.settings;
-    if (value === undefined) return undefined;
-    const trimmed = value?.trim() ?? "";
-    if (trimmed.length === 0) return yield* new ClaudeSettingsLaunchArgError({});
-    // The CLI also wants a closing brace, but then malformed JSON, secrets included, would
-    // become the file path in the error message.
-    if (trimmed.startsWith("{")) {
-      return (yield* decodeClaudeLaunchArgSettings(trimmed).pipe(
-        Effect.mapError((cause) => new ClaudeSettingsLaunchArgError({ cause })),
-      )) as ClaudeSdkSettings;
-    }
-    const filePath = input.path.resolve(input.cwd ?? ".", trimmed);
-    return (yield* input.fileSystem.readFileString(filePath).pipe(
-      Effect.flatMap(decodeClaudeLaunchArgSettings),
-      Effect.mapError((cause) => new ClaudeSettingsLaunchArgError({ path: filePath, cause })),
-    )) as ClaudeSdkSettings;
-  },
-);
 
 export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
 
@@ -4640,6 +4593,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         Effect.succeed({} as typeof ClaudeBypassSettings.Type),
       ),
     );
+  // makeClaudeQueryOptions merges these beneath T3's own settings.
+  const readLaunchArgSettings = (cwd: string | null) =>
+    readClaudeLaunchArgSettings(adapterOptions.settings?.launchArgs, cwd ?? undefined).pipe(
+      Effect.map((settings) => settings as ClaudeSdkSettings | undefined),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
   const resolveBypassAvailability = Effect.fn("ClaudeAdapterV2.resolveBypassAvailability")(
     function* (cwd: string | null) {
       // resolveSettings does not initialize remote-cache eligibility in the SDK host.
@@ -4655,12 +4615,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           serverManagedSettings: claudeSdkBypassSettings(remote),
         }),
       );
-      const launchArgSettings = yield* readClaudeLaunchArgSettings({
-        settings: adapterOptions.settings,
-        cwd,
-        fileSystem,
-        path,
-      });
+      const launchArgSettings = yield* readLaunchArgSettings(cwd);
       const launch = yield* decodeClaudeLaunchArgBypassSettings(launchArgSettings ?? {});
       const sources = [resolved.effective, home, remote, launch].map(claudeBypassAvailability);
       return {
@@ -10478,12 +10433,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             fileSystem,
             path,
           });
-          const launchArgSettings = yield* readClaudeLaunchArgSettings({
-            settings: adapterOptions.settings,
-            cwd: turnInput.runtimePolicy.cwd,
-            fileSystem,
-            path,
-          });
+          const launchArgSettings = yield* readLaunchArgSettings(turnInput.runtimePolicy.cwd);
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           if (existing !== null) {
             yield* existing.query.close.pipe(Effect.ignore);
