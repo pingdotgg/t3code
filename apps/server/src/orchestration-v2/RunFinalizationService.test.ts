@@ -29,6 +29,12 @@ import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
 
+// Without a project the observer never touches enrichment, so its methods stay unimplemented.
+const layerNoProject = Layer.mergeAll(
+  Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+  Layer.mock(ProjectEnrichment.ProjectEnrichmentService)({}),
+);
+
 it.effect("completes finalization when the post-checkpoint workspace refresh fails", () => {
   const threadId = ThreadId.make("thread_refresh_failure");
   const runId = RunId.make("run_refresh_failure");
@@ -113,6 +119,7 @@ it.effect.each(
   const layer = RunFinalization.layerObserver.pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerNoProject,
         Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
         Layer.mock(PullRequestService.PullRequestService)({
           refreshAfterTurn: () => Effect.void,
@@ -160,6 +167,7 @@ it.effect("returns from the post-turn refresh without waiting for the PR lookup"
   const layer = RunFinalization.layerObserver.pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerNoProject,
         Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
         Layer.mock(PullRequestService.PullRequestService)({
           refreshAfterTurn: () => Effect.void,
@@ -210,6 +218,7 @@ it.effect("replaces a still-running PR lookup when a newer turn finishes", () =>
   const layer = RunFinalization.layerObserver.pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerNoProject,
         Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
         Layer.mock(PullRequestService.PullRequestService)({
           refreshAfterTurn: () => Effect.void,

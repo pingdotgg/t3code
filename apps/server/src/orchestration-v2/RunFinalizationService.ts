@@ -3,8 +3,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as ProjectEnrichment from "../project/ProjectEnrichmentService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
@@ -97,17 +100,50 @@ export const layerObserver = Layer.effect(
     const vcsStatus = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const projects = yield* ProjectService.ProjectService;
+    const enrichment = yield* ProjectEnrichment.ProjectEnrichmentService;
     const pullRequestLookups = yield* FiberMap.make<string>();
+    // A turn can add the first remote (`git remote add`, `gh repo create --push`), which the
+    // enrichment and resolver caches would otherwise keep reporting as missing for a minute.
+    const refreshMissingRepositoryIdentity = Effect.fn(
+      "RunFinalizationService.refreshMissingRepositoryIdentity",
+    )(
+      function* (projectId: ProjectId) {
+        const project = yield* projects.getById(projectId);
+        if (Option.isNone(project)) return;
+        const { workspaceRoot } = project.value;
+        if ((yield* enrichment.peek(workspaceRoot)).repositoryIdentity !== null) return;
+        yield* enrichment.refreshRepositoryIdentity(workspaceRoot);
+      },
+      (effect, projectId) =>
+        effect.pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to refresh repository identity after run completion", {
+              projectId,
+              detail: error.message,
+            }),
+          ),
+        ),
+    );
     return {
       refreshAfterTurn: pullRequests.refreshAfterTurn,
       refresh: Effect.fn("RunFinalizationService.refresh")(
         function* ({ cwd, threadId, runId }) {
-          const [, local] = yield* Effect.all(
-            [workspaceEntries.refresh(cwd), vcsStatus.refreshLocalStatus(cwd)],
+          const [, local, thread] = yield* Effect.all(
+            [
+              workspaceEntries.refresh(cwd),
+              vcsStatus.refreshLocalStatus(cwd),
+              projections
+                .getThreadShell(threadId)
+                .pipe(
+                  Effect.tap((thread) =>
+                    thread ? refreshMissingRepositoryIdentity(thread.projectId) : Effect.void,
+                  ),
+                ),
+            ],
             { concurrency: "unbounded" },
           );
           if (local.refName === null || local.isDefaultRef) return;
-          const thread = yield* projections.getThreadShell(threadId);
           if (!thread || thread.branch !== local.refName) return;
           if (thread.activeRunId !== null && thread.activeRunId !== runId) return;
           // The forge CLI can take minutes, so the next turn must not wait for it. A newer
