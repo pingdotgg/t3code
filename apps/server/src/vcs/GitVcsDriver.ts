@@ -1295,27 +1295,45 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             }),
         ),
       );
+      const resetIndex = Effect.gen(function* () {
+        // On Windows clean can remove './' and exit 0.
+        yield* recreateWorkspace;
+        if (yield* hasHeadCommit(input.cwd)) {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [...longPaths, "reset", "--quiet", "--", "."],
+          });
+        }
+      });
       yield* recreateWorkspace;
       const clean = execute({
         operation,
         cwd: input.cwd,
         args: [...longPaths, "clean", "-fd", "--", "."],
+        env: { LC_ALL: "C" },
         allowNonZeroExit: true,
       });
       let cleaned = yield* clean;
       // Removing a new .gitignore exposes the files it hid; clean again until nothing is left.
-      for (let pass = 1; pass < 4 && cleaned.exitCode === 0 && cleaned.stdout.length > 0; pass++) {
+      for (
+        let pass = 1;
+        pass < 4 && cleaned.exitCode === 0 && /^Removing /m.test(cleaned.stdout);
+        pass++
+      ) {
         yield* recreateWorkspace;
         cleaned = yield* clean;
       }
-      if (cleaned.exitCode === 0 && cleaned.stdout.length > 0) {
+      if (cleaned.exitCode === 0 && /^Removing /m.test(cleaned.stdout)) {
         yield* recreateWorkspace;
         const remaining = yield* execute({
           operation,
           cwd: input.cwd,
           args: [...longPaths, "clean", "-dn", "--", "."],
+          env: { LC_ALL: "C" },
         });
-        if (remaining.stdout.length > 0)
+        if (/^Would remove /m.test(remaining.stdout)) {
+          yield* resetIndex;
           return yield* new VcsProcessExitError({
             operation,
             command: "git clean",
@@ -1323,6 +1341,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             exitCode: 0,
             detail: "Could not clean the checkpoint workspace: untracked files remain.",
           });
+        }
       }
       if (cleaned.exitCode !== 0) {
         // Git can remove every child, then fail trying to remove './' itself.
@@ -1333,7 +1352,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             Effect.map((entries) => entries.length === 0),
             Effect.orElseSucceed(() => false),
           ));
-        if (!emptiedWorkspace)
+        if (!emptiedWorkspace) {
+          yield* resetIndex;
           return yield* new VcsProcessExitError({
             operation,
             command: "git clean",
@@ -1341,18 +1361,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             exitCode: cleaned.exitCode,
             detail: cleaned.stderr.trim() || "Could not clean the checkpoint workspace.",
           });
+        }
       }
-      // On Windows the same clean can remove './' and exit 0.
-      yield* recreateWorkspace;
-
-      const headExists = yield* hasHeadCommit(input.cwd);
-      if (headExists) {
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: [...longPaths, "reset", "--quiet", "--", "."],
-        });
-      }
+      yield* resetIndex;
 
       return true;
     }),

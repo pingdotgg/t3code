@@ -193,6 +193,7 @@ it.effect("checkpoint capture skips untracked nested repositories without a comm
       `160000 commit ${nestedHead}\tcommitted\n`,
     );
     assert.deepEqual(yield* fileSystem.readFile(path.join(cwd, ".git", "index")), originalIndex);
+    assert.isTrue(yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef }));
     assert.strictEqual(
       yield* fileSystem.readFileString(path.join(cwd, nested, "private.txt")),
       "nested\n",
@@ -1102,6 +1103,9 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
         });
         assert.strictEqual(staged.stdout.trim(), "outside.txt");
       }
+      yield* fileSystem.writeFileString(path.join(cwd, "checkpoint.txt"), "checkpoint\n");
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      yield* fileSystem.writeFileString(path.join(cwd, "checkpoint.txt"), "later\n");
       let deepest = cwd;
       for (let depth = 0; depth < 4; depth++) {
         yield* fileSystem.writeFileString(path.join(deepest, ".gitignore"), "d/.gitignore\n");
@@ -1114,6 +1118,28 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
         .restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false })
         .pipe(Effect.flip);
       assert.strictEqual(incomplete._tag, "VcsProcessExitError");
+      assert.strictEqual(
+        yield* fileSystem.readFileString(path.join(cwd, "checkpoint.txt")),
+        "checkpoint\n",
+      );
+      assert.strictEqual(
+        (yield* driver.execute({
+          operation: "test",
+          cwd,
+          args: ["diff", "--cached", "--name-only", "--", "."],
+        })).stdout,
+        "",
+      );
+      if (nested) {
+        assert.strictEqual(
+          (yield* driver.execute({
+            operation: "test",
+            cwd: root,
+            args: ["diff", "--cached", "--name-only"],
+          })).stdout.trim(),
+          "outside.txt",
+        );
+      }
     }
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
