@@ -537,8 +537,12 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
       yield* service.upsert({ ...input, threadMode: "fresh_session" });
 
       assert.equal((yield* service.runNow({ id: input.id })).threadId, launched);
-      // A form opened before the first run saves no thread and no mode; both stay.
-      const { task } = yield* service.upsert({ ...input, threadId: null });
+      // A form opened before the first run saves no thread; the binding stays.
+      const { task } = yield* service.upsert({
+        ...input,
+        threadId: null,
+        threadMode: "fresh_session",
+      });
       assert.equal(task.threadId, launched);
       assert.equal(task.threadMode, "fresh_session");
       yield* service.runNow({ id: input.id });
