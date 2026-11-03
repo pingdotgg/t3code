@@ -82,6 +82,8 @@ function collectStyledRanges(doc: ProseMirrorNode): StyledRange[] {
 
 /** Whether the Markdown that reveal shows for `range` parses back to the same styles. */
 function revealsFaithfully(doc: ProseMirrorNode, range: StyledRange): boolean {
+  const adjacent = withAdjacentDelimiters(doc, range);
+  if (adjacent.from !== range.from || adjacent.to !== range.to) return false;
   // Parsing keeps escapes as text, so styled `path\` or `2*3` stays styled, unshown.
   const markers = range.markers.toSorted(
     (left, right) => left.at - right.at || Number(right.closing) - Number(left.closing),

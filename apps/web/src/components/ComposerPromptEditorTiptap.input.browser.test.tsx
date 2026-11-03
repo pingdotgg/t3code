@@ -150,10 +150,15 @@ it.each([
   expect(textWithMark(editor, "code")).toEqual(code);
 });
 
-it.each(["ship", "path\\", "2*3"])(
-  "bolds %s with Mod+B only when text is selected",
-  async (word) => {
-    const value = `${word} it`;
+it.each([
+  { word: "ship", prefix: "" },
+  { word: "path\\", prefix: "" },
+  { word: "2*3", prefix: "" },
+  { word: "b", prefix: "*" },
+])(
+  "bolds $word after '$prefix' with Mod+B only when text is selected",
+  async ({ word, prefix }) => {
+    const value = `${prefix}${word} it`;
     await using screen = await mountEditor(value);
     const { editor } = screen;
     const modB = isMacPlatform(navigator.platform) ? "{Meta>}b{/Meta}" : "{Control>}b{/Control}";
@@ -166,19 +171,25 @@ it.each(["ship", "path\\", "2*3"])(
     expect(editor.state.storedMarks).toBeNull();
 
     await act(async () => {
-      editor.commands.setTextSelection({ from: 1, to: word.length + 1 });
+      editor.commands.setTextSelection({
+        from: prefix.length + 1,
+        to: prefix.length + word.length + 1,
+      });
     });
     await userEvent.keyboard(modB);
     await vi.waitFor(() =>
-      expect(serializeEditorDoc(editor.state.doc).value).toBe(`**${word}** it`),
+      expect(serializeEditorDoc(editor.state.doc).value).toBe(`${prefix}**${word}** it`),
     );
     const depth = undoDepth(editor.state);
     await userEvent.keyboard("{End}");
-    expect(serializeEditorDoc(editor.state.doc).value).toBe(`**${word}** it`);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`${prefix}**${word}** it`);
     expect(textWithMark(editor, "bold")).toEqual([word]);
     expect(undoDepth(editor.state)).toBe(depth);
     await act(async () => {
-      editor.commands.setTextSelection({ from: 1, to: word.length + 1 });
+      editor.commands.setTextSelection({
+        from: prefix.length + 1,
+        to: prefix.length + word.length + 1,
+      });
     });
 
     // Whether the selection spans shown markers or not, Mod+B removes the bold.
