@@ -84,6 +84,16 @@ describe("appendTerminalOutput", () => {
 });
 
 describe("appendTerminalOutput edge cases from review", () => {
+  it("leaves the screen and cursor alone for unsupported erase modes", () => {
+    for (const sequence of ["3K", "4J", "99K", "99J"]) {
+      const input = `a\nb\nc\u001b[${sequence}X`;
+      expect(feed([input]).text).toBe("a\nb\ncX");
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("a\nb\ncX");
+      }
+    }
+  });
+
   it("clears only scrollback on ESC[3J", () => {
     const lines = Array.from({ length: 70 }, (_, index) => `line ${index}`).join("\n");
     const state = feed([lines, "\u001b[3J"]);
