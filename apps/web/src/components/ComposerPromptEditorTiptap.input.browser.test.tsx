@@ -150,28 +150,42 @@ it.each([
   expect(textWithMark(editor, "code")).toEqual(code);
 });
 
-it("bolds with Mod+B only when text is selected", async () => {
-  await using screen = await mountEditor("ship it");
-  const { editor } = screen;
-  const modB = isMacPlatform(navigator.platform) ? "{Meta>}b{/Meta}" : "{Control>}b{/Control}";
-  await act(async () => {
-    editor.commands.focus("end");
-  });
-  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
-  await userEvent.keyboard(modB);
-  // Without the guard, Tiptap stores bold for the next typed text.
-  expect(editor.state.storedMarks).toBeNull();
+it.each(["ship", "path\\", "2*3"])(
+  "bolds %s with Mod+B only when text is selected",
+  async (word) => {
+    const value = `${word} it`;
+    await using screen = await mountEditor(value);
+    const { editor } = screen;
+    const modB = isMacPlatform(navigator.platform) ? "{Meta>}b{/Meta}" : "{Control>}b{/Control}";
+    await act(async () => {
+      editor.commands.focus("end");
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+    await userEvent.keyboard(modB);
+    // Without the guard, Tiptap stores bold for the next typed text.
+    expect(editor.state.storedMarks).toBeNull();
 
-  await act(async () => {
-    editor.commands.setTextSelection({ from: 1, to: 5 });
-  });
-  await userEvent.keyboard(modB);
-  await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe("**ship** it"));
+    await act(async () => {
+      editor.commands.setTextSelection({ from: 1, to: word.length + 1 });
+    });
+    await userEvent.keyboard(modB);
+    await vi.waitFor(() =>
+      expect(serializeEditorDoc(editor.state.doc).value).toBe(`**${word}** it`),
+    );
+    const depth = undoDepth(editor.state);
+    await userEvent.keyboard("{End}");
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`**${word}** it`);
+    expect(textWithMark(editor, "bold")).toEqual([word]);
+    expect(undoDepth(editor.state)).toBe(depth);
+    await act(async () => {
+      editor.commands.setTextSelection({ from: 1, to: word.length + 1 });
+    });
 
-  // The selection now spans the shown markers; Mod+B still removes the bold.
-  await userEvent.keyboard(modB);
-  await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe("ship it"));
-});
+    // Whether the selection spans shown markers or not, Mod+B removes the bold.
+    await userEvent.keyboard(modB);
+    await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(value));
+  },
+);
 
 it.each([false, true])(
   "composes an umlaut without wrapping the preedit text (rich text: %s)",

@@ -80,6 +80,37 @@ function collectStyledRanges(doc: ProseMirrorNode): StyledRange[] {
   return ranges;
 }
 
+/** Whether the Markdown that reveal shows for `range` parses back to the same styles. */
+function revealsFaithfully(doc: ProseMirrorNode, range: StyledRange): boolean {
+  // Parsing keeps escapes as text, so styled `path\` or `2*3` stays styled, unshown.
+  const markers = range.markers.toSorted(
+    (left, right) => left.at - right.at || Number(right.closing) - Number(left.closing),
+  );
+  const expected: Array<RichTextMark[] | null> = [];
+  let text = "";
+  let next = 0;
+  const addMarkers = (pos: number) => {
+    for (; next < markers.length && markers[next]!.at <= pos; next++) {
+      text += markers[next]!.text;
+      expected.push(...markers[next]!.text.split("").map(() => null));
+    }
+  };
+  doc.nodesBetween(range.from, range.to, (node, pos) => {
+    if (!node.isInline) return true;
+    const marks = STYLE_MARKS.filter((name) => node.marks.some((mark) => mark.type.name === name));
+    const from = Math.max(pos, range.from);
+    const content = node.isText ? node.text!.slice(from - pos, range.to - pos) : ATOM_TEXT;
+    for (let index = 0; index < content.length; index++) {
+      addMarkers(from + index);
+      text += content[index];
+      expected.push(marks);
+    }
+    return false;
+  });
+  addMarkers(range.to);
+  return inlineMarkdownUnitMarks(text).every((marks, index) => sameMarks(marks, expected[index]!));
+}
+
 function touches(selection: Selection, { from, to }: TextRange): boolean {
   return selection.empty
     ? selection.from >= from && selection.from <= to
@@ -214,7 +245,9 @@ function mapRange(mapping: Mapping, { from, to }: TextRange): TextRange {
 function revealStyledText(tr: Transaction, type: MarkType, typed: boolean, takesBefore: boolean) {
   const { schema } = tr.doc.type;
   const selection = tr.selection;
-  const ranges = collectStyledRanges(tr.doc).filter((range) => touches(selection, range));
+  const ranges = collectStyledRanges(tr.doc).filter(
+    (range) => touches(selection, range) && revealsFaithfully(tr.doc, range),
+  );
   const revealed: { range: TextRange; step: number }[] = [];
   const insertions: { at: number; length: number; closing: boolean }[] = [];
   for (const range of ranges.toReversed()) {
