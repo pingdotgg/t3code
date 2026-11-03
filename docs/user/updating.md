@@ -106,6 +106,10 @@ The offered action depends on how the server runs:
 | **Copy update command**    | Run the command on the named host to update the detected global npm install, then restart the server with your usual options.                                                                   |
 | **Copy relaunch command**  | Stop the command-line server on its host and relaunch with the copied command, keeping your usual subcommand and options. This does not update an installed `t3` command.                       |
 
+For older background services, run `t3 update --yes` or `t3 service install` locally
+once and restart when prompted; deferring can leave the service stopped after a
+crash or restart until you run `t3 service restart`.
+
 On the host, run:
 
 ```sh
