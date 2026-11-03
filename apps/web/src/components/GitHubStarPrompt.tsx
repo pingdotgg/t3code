@@ -68,14 +68,17 @@ function showStarPrompt(environmentId: EnvironmentId) {
   });
 }
 
-// One burst from the toast corner. The library loads only here, and its canvas stops when done.
+// One burst out of the toast. The library loads only here, and its canvas stops when done.
 function celebrate() {
   void import("canvas-confetti")
     .then(({ default: confetti }) =>
       confetti({
-        particleCount: 120,
-        spread: 70,
-        origin: { x: 0.85, y: 0.15 },
+        particleCount: 160,
+        spread: 360,
+        startVelocity: 38,
+        gravity: 1.6,
+        ticks: 140,
+        origin: { x: 0.83, y: 0.15 },
         disableForReducedMotion: true,
       }),
     )
