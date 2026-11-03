@@ -149,6 +149,10 @@ export const MuseContextUsage = Schema.Struct({
 export const MuseTodoList = Schema.Struct({
   items: Schema.Array(Schema.Struct({ text: Schema.String, status: Schema.String })),
 });
+export const MuseTurnForegroundCompleted = Schema.Struct({
+  turnId: NonEmptyString,
+  blockingAgents: Schema.Array(NonEmptyString),
+});
 export const MuseTurnCompleted = Schema.Struct({
   turnId: NonEmptyString,
   terminal: NonEmptyString,
