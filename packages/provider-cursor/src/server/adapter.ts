@@ -341,7 +341,7 @@ class CursorSandboxUnavailableError extends Schema.TaggedError<CursorSandboxUnav
     // Windows Supervised and Auto skip the sandbox (see cursorRuntimeAgentPolicy).
     return this.platform === "win32"
       ? "Cursor cannot sandbox commands on Windows. Switch this thread to Supervised or Auto, which run without the sandbox here, or to Full access."
-      : 'Cursor could not start its command sandbox on this machine. On Ubuntu 23.10 and newer, AppArmor may be blocking its helper: see "Sandbox blocked on Linux" in the Cursor guide. Otherwise, switch this thread to Full access.';
+      : 'Cursor could not start its command sandbox on this machine. On Ubuntu 23.10 and newer, AppArmor may be blocking its helper: see "Sandbox blocked on Linux" in https://github.com/pingdotgg/t3code/blob/main/docs/user/cursor.md. Otherwise, switch this thread to Full access.';
   }
 }
 
