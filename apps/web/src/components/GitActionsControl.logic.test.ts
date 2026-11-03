@@ -263,7 +263,7 @@ describe("resolveChangesTotals", () => {
           },
         }),
       ),
-      { insertions: 5, deletions: 1 },
+      { insertions: 5, deletions: 1, baseRef: null },
     );
   });
 
@@ -279,7 +279,16 @@ describe("resolveChangesTotals", () => {
           },
         }),
       ),
-      { insertions: 20, deletions: 3 },
+      { insertions: 20, deletions: 3, baseRef: "main" },
+    );
+  });
+
+  it("keeps the branch base when the branch and working tree are clean", () => {
+    assert.deepEqual(
+      resolveChangesTotals(
+        status({ branchChanges: { baseRef: "origin/master", insertions: 0, deletions: 0 } }),
+      ),
+      { insertions: 0, deletions: 0, baseRef: "origin/master" },
     );
   });
 
@@ -294,7 +303,7 @@ describe("resolveChangesTotals", () => {
           },
         }),
       ),
-      { insertions: 2, deletions: 0 },
+      { insertions: 2, deletions: 0, baseRef: null },
     );
   });
 });
