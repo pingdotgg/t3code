@@ -63,11 +63,28 @@ it.each([
 });
 
 it("parses in the worker exactly as on the main thread", async () => {
-  const [first, second] = await Promise.all([
-    parsePatchOffMainThread(PATCH, "test"),
-    parsePatchOffMainThread("", "test"),
-  ]);
+  const NativeWorker = globalThis.Worker;
+  let workerReplies = 0;
+  vi.stubGlobal(
+    "Worker",
+    class extends NativeWorker {
+      constructor(...args: ConstructorParameters<typeof Worker>) {
+        super(...args);
+        this.addEventListener("message", () => workerReplies++);
+      }
+    },
+  );
+  try {
+    const [first, second] = await Promise.all([
+      parsePatchOffMainThread(PATCH, "test"),
+      parsePatchOffMainThread("", "test"),
+    ]);
 
-  expect(first).toEqual(getRenderablePatch(PATCH, "test", { compactPartialHunkOffsets: true }));
-  expect(second).toBeNull();
+    // The fallback returns the same values, so equal output alone would not prove the worker ran.
+    expect(workerReplies).toBe(2);
+    expect(first).toEqual(getRenderablePatch(PATCH, "test", { compactPartialHunkOffsets: true }));
+    expect(second).toBeNull();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
