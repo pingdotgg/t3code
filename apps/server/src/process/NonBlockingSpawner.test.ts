@@ -109,6 +109,20 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("NonBlockingSpa
     );
   });
 
+  it.live("runs a shell-mode command the way the native spawner does", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
+      const command = ChildProcess.make('pwd -P; echo "$0" "a  b"', [], {
+        cwd: directory,
+        shell: true,
+      });
+      const native = yield* run(command).pipe(Effect.provide(NodeServices.layer));
+      expect(native).toBe(`${directory}\n/bin/sh a  b\n`);
+      expect(yield* run(command).pipe(Effect.provide(wrapped))).toBe(native);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   // GNU env passes it through; dash would drop `BASH_FUNC_*%%` and add PWD and OLDPWD.
   it.live("hands the child exactly the environment it was given", () =>
     Effect.gen(function* () {
@@ -270,6 +284,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("NonBlockingSpa
         ChildProcess.make("true", []),
         ChildProcess.make("/bin/true", []),
         ChildProcess.make("t3code-missing-command-30183", []),
+        ChildProcess.make("true", [], { cwd: directory, shell: true }),
         piped,
       ]) {
         yield* Effect.exit(
@@ -280,7 +295,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("NonBlockingSpa
       }
 
       const legs = received.flatMap(standardCommands);
-      expect(legs.length).toBeGreaterThanOrEqual(5);
+      expect(legs.length).toBeGreaterThanOrEqual(6);
       for (const leg of legs) {
         expect(["/usr/bin/env", "/bin/sh"]).toContain(leg.command);
         expect(leg.options.cwd).toBeUndefined();

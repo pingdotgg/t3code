@@ -102,6 +102,14 @@ const viaShell = (command: ChildProcess.StandardCommand, cwd: string | undefined
   );
 };
 
+// Node's shell mode on Unix, made explicit so the trampoline can run it.
+const shellMode = (command: ChildProcess.StandardCommand) =>
+  ChildProcess.make(
+    typeof command.options.shell === "string" ? command.options.shell : "/bin/sh",
+    ["-c", command.command],
+    { ...command.options, shell: false },
+  );
+
 const make = Effect.gen(function* () {
   const native = yield* ChildProcessSpawner.ChildProcessSpawner;
   if ((yield* HostProcess.Platform) !== "linux") return native;
@@ -169,15 +177,12 @@ const make = Effect.gen(function* () {
   });
 
   // Runs inside the NonBlockingSpawner.spawn span.
-  const prepareStandard = Effect.fnUntraced(function* (command: ChildProcess.StandardCommand) {
-    const { cwd, shell } = command.options;
-    if (
-      (shell !== undefined && shell !== false) ||
-      command.command.length === 0 ||
-      command.command.includes("\0")
-    ) {
-      return command;
-    }
+  const prepareStandard = Effect.fnUntraced(function* (input: ChildProcess.StandardCommand) {
+    // Effect itself rejects shell mode with arguments.
+    if (input.options.shell && input.args.length > 0) return input;
+    const command = input.options.shell ? shellMode(input) : input;
+    const { cwd } = command.options;
+    if (command.command.length === 0 || command.command.includes("\0")) return command;
     const workingDirectory = cwd === undefined ? undefined : yield* enter(command, cwd);
     const base = workingDirectory ?? process.cwd();
     const explicit = under(base, command.command);
