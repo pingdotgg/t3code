@@ -162,6 +162,18 @@ describe("resolveBranchSelectionTarget", () => {
   it("reuses an existing secondary worktree for the selected ref", () => {
     expect(
       resolveBranchSelectionTarget({
+        activeProjectCwd: "/repo/nested-checkout/packages/app",
+        activeProjectCheckoutRoot: "/repo/nested-checkout",
+        activeWorktreePath: null,
+        refName: { isDefault: true, worktreePath: "/repo" },
+      }),
+    ).toEqual({
+      checkoutCwd: "/repo",
+      nextWorktreePath: "/repo",
+      reuseExistingWorktree: true,
+    });
+    expect(
+      resolveBranchSelectionTarget({
         activeProjectCwd: "/repo",
         activeWorktreePath: "/repo/.t3/worktrees/feature-a",
         refName: {
@@ -186,6 +198,7 @@ describe("resolveBranchSelectionTarget", () => {
       expect(
         resolveBranchSelectionTarget({
           activeProjectCwd,
+          activeProjectCheckoutRoot: "/repo",
           activeWorktreePath,
           refName: {
             isDefault: true,

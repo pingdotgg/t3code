@@ -248,6 +248,7 @@ export function resolveLocalCheckoutBranchMismatch(input: {
 
 export function resolveBranchSelectionTarget(input: {
   activeProjectCwd: string;
+  activeProjectCheckoutRoot?: string | undefined;
   activeWorktreePath: string | null;
   refName: Pick<VcsRef, "isDefault" | "worktreePath">;
 }): {
@@ -258,9 +259,11 @@ export function resolveBranchSelectionTarget(input: {
   const { activeProjectCwd, activeWorktreePath, refName } = input;
 
   if (refName.worktreePath) {
-    // A project in a repository subdirectory sits inside its checkout's root.
     const isProjectCheckout =
-      workspaceRelativeFilePath(activeProjectCwd, refName.worktreePath) !== null;
+      workspaceRelativeFilePath(
+        input.activeProjectCheckoutRoot ?? activeProjectCwd,
+        refName.worktreePath,
+      ) === ".";
     return {
       checkoutCwd: refName.worktreePath,
       nextWorktreePath: isProjectCheckout ? null : refName.worktreePath,
