@@ -7634,6 +7634,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             Deferred.await(context.completed).pipe(Effect.as(false)),
           );
         });
+        const interruptSurvivingTools = Effect.fnUntraced(function* () {
+          const killedTaskIds = yield* Ref.getAndSet(runningBackgroundTaskIds, new Set());
+          const survivors = yield* Ref.getAndSet(survivingTaskTurns, new Map());
+          const endedToolCallIds = new Set<string>();
+          for (const [taskId, survivor] of survivors) {
+            if (!killedTaskIds.has(taskId)) continue;
+            const toolCallId = survivor.toolCallIdsByBackgroundTaskId.get(taskId);
+            const tool = toolCallId === undefined ? undefined : survivor.tools.get(toolCallId);
+            if (tool === undefined) continue;
+            endedToolCallIds.add(tool.toolCallId);
+            yield* emitTool(survivor, tool, "interrupted");
+          }
+          return endedToolCallIds;
+        });
         const quarantineStoppedRun = Effect.fnUntraced(function* () {
           yield* continuationPermit.withPermit(
             Effect.gen(function* () {
@@ -7642,8 +7656,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(wakeBuffer, []);
               yield* Ref.set(wakeReports, noWakeReports);
               yield* Ref.set(continuationRequested, false);
-              yield* Ref.set(runningBackgroundTaskIds, new Set());
-              yield* Ref.set(survivingTaskTurns, new Map());
+              yield* interruptSurvivingTools();
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
               yield* Ref.set(carryoverSubagents, null);
               yield* Ref.set(lastTurnRoute, null);
@@ -8119,17 +8132,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* restartAcpRuntime(threadId);
           yield* Ref.set(runtimeRestartRequired, false);
           // The replaced process took its running commands with it.
-          const killedTaskIds = yield* Ref.getAndSet(runningBackgroundTaskIds, new Set());
-          const survivors = yield* Ref.getAndSet(survivingTaskTurns, new Map());
-          const endedToolCallIds = new Set<string>();
-          for (const [taskId, survivor] of survivors) {
-            if (!killedTaskIds.has(taskId)) continue;
-            const toolCallId = survivor.toolCallIdsByBackgroundTaskId.get(taskId);
-            const tool = toolCallId === undefined ? undefined : survivor.tools.get(toolCallId);
-            if (tool === undefined) continue;
-            endedToolCallIds.add(tool.toolCallId);
-            yield* emitTool(survivor, tool, "interrupted");
-          }
+          const endedToolCallIds = yield* interruptSurvivingTools();
           // Only these flavors track the tools themselves; others track monitors their tools started.
           if (flavor.backgroundTasksIncludeForegroundTools === true) {
             yield* Ref.update(wakeBuffer, (frames) =>

@@ -1343,6 +1343,7 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
       const {
         session,
         prompts,
+        promptHeld,
         finalizeScheduled,
         continuationRequests,
         turnInput,
@@ -1506,6 +1507,38 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
       assert.deepEqual(toolStatuses(continuation.runId, "wake-build").slice(-1), ["failed"]);
       assert.deepEqual(toolStatuses(continuation.runId, "finished-lint"), []);
       assert.isFalse(yield* hasPendingBackgroundWork, "the replaced process's commands are gone");
+
+      const beforeStop = yield* startPrompt(5);
+      yield* runCommand("survives-until-stop");
+      yield* Deferred.succeed(beforeStop, { stopReason: "error" });
+      const beforeStopTerminal = yield* failedTerminal;
+      assert.isTrue(beforeStopTerminal.childTurnsContinue);
+
+      const stopped = yield* startPrompt(6);
+      yield* runCommand("stopped-build");
+      const stoppedTurn = yield* takeUntil(
+        (event) => event.type === "provider_turn.updated" && event.providerTurn.ordinal === 6,
+      );
+      if (stoppedTurn.type !== "provider_turn.updated") return assert.fail("expected a turn");
+      yield* Deferred.succeed(stopped, { stopReason: "end_turn" });
+      yield* Deferred.await(promptHeld);
+      yield* session.interruptTurn({
+        providerThread: turnInput(6, false).providerThread,
+        providerTurnId: stoppedTurn.providerTurn.id,
+        requestRuntimeRestart: true,
+      });
+      yield* takeUntil((event) => event.type === "turn.terminal" && event.runOrdinal === 6);
+      assert.deepInclude(lastItem("survives-until-stop"), {
+        runId: turnInput(5, false).runId,
+        providerTurnId: beforeStopTerminal.providerTurnId,
+        status: "interrupted",
+        type: "command_execution",
+        input: "npm run build",
+      });
+      assert.deepEqual(toolStatuses(turnInput(6, false).runId, "stopped-build").slice(-1), [
+        "interrupted",
+      ]);
+      assert.isFalse(yield* hasPendingBackgroundWork, "Stop clears all surviving commands");
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
