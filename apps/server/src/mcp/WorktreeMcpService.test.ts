@@ -96,6 +96,7 @@ interface HarnessOptions {
   readonly currentBranch?: string | null;
   readonly notARepo?: boolean;
   readonly newWorktreesStartFromOrigin?: boolean;
+  readonly projectNewWorktreesStartFromOrigin?: boolean;
   readonly setupScript?: "started" | "no-script" | "fails" | "dies";
   readonly dispatchFails?: boolean;
   readonly dispatchDies?: boolean;
@@ -302,6 +303,15 @@ const makeHarness = (options: HarnessOptions = {}) => {
         } satisfies Partial<ProjectService.ProjectService["Service"]>),
         ServerSettings.layerTest({
           newWorktreesStartFromOrigin: options.newWorktreesStartFromOrigin ?? false,
+          ...(options.projectNewWorktreesStartFromOrigin === undefined
+            ? {}
+            : {
+                projectSettingsOverrides: {
+                  [projectId]: {
+                    newWorktreesStartFromOrigin: options.projectNewWorktreesStartFromOrigin,
+                  },
+                },
+              }),
         }),
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           listRefs,
@@ -522,6 +532,15 @@ describe("t3_worktree_handoff", () => {
     });
   });
 
+  it.effect("defaults startFromOrigin to the project's override", () => {
+    const harness = makeHarness({ projectNewWorktreesStartFromOrigin: true });
+    return Effect.gen(function* () {
+      const result = yield* runHandoff(harness, { branch: "feature/project-origin" });
+      expect(harness.fetchWorktreeBaseCommit).toHaveBeenCalled();
+      expect(result.startedFromOrigin).toBe(true);
+    });
+  });
+
   it.effect("removes the created worktree when the thread update dies with a defect", () => {
     const harness = makeHarness({ dispatchDies: true });
     return Effect.gen(function* () {
@@ -679,6 +698,7 @@ describe("t3_worktree_status", () => {
         worktreePath: "/worktrees/project/existing",
         branch: "feature/existing",
       },
+      projectNewWorktreesStartFromOrigin: true,
     });
     return Effect.gen(function* () {
       const result = yield* runStatus(harness);
@@ -686,7 +706,7 @@ describe("t3_worktree_status", () => {
         attached: true,
         worktreePath: "/worktrees/project/existing",
         branch: "feature/existing",
-        defaultStartFromOrigin: false,
+        defaultStartFromOrigin: true,
       });
     });
   });
