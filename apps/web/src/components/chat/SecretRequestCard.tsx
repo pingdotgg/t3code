@@ -18,7 +18,8 @@ import { useId, useRef, useState, type FormEvent } from "react";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
+import { InputGroup, InputGroupInput } from "../ui/input-group";
+import { Kbd } from "../ui/kbd";
 import { WorkLogRow } from "./WorkLog";
 
 export function SecretRequestCard(props: {
@@ -39,10 +40,10 @@ export function SecretRequestCard(props: {
       <WorkLogRow
         data-v2-item-type={item.type}
         icon={<Icon className="size-3.5 text-icon-muted" aria-hidden />}
+        wrapLabel
         label={
           <>
-            {item.label}
-            <span className="block text-meta text-muted-foreground">{display.label}</span>
+            {item.label} {display.label.toLowerCase()}
           </>
         }
       />
@@ -113,7 +114,7 @@ function PendingSecretRequestForm(props: {
         document.getElementById(inputId)?.focus();
       }}
     >
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2.5">
+      <div className="flex min-h-10 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-3.5 pb-1.5">
         <KeyRoundIcon aria-hidden className="size-4 shrink-0 text-warning-foreground" />
         <label htmlFor={inputId} className="text-label text-foreground">
           {item.label}
@@ -129,32 +130,42 @@ function PendingSecretRequestForm(props: {
           {secretRequestPrivacyNote(item)}
         </p>
       </div>
-      <div className="flex min-w-0 flex-col gap-2 rounded-lg bg-card p-2.5">
+      <div className="flex min-w-0 flex-col gap-2 rounded-lg surface-composer p-2.5">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <div className="min-w-40 flex-1">
-            <Input
-              size="lg"
-              id={inputId}
-              // Password fields prompt to save credentials; this secret is not a login.
-              type="text"
-              className="[-webkit-text-security:disc]"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              data-1p-ignore
-              data-lpignore="true"
-              data-bwignore
-              placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
-              value={secret}
-              disabled={submitting}
-              aria-invalid={error !== null || undefined}
-              aria-describedby={error !== null ? `${privacyId} ${errorId}` : privacyId}
-              onChange={(event) => setSecret(event.currentTarget.value)}
-            />
+            <InputGroup size="lg">
+              <InputGroupInput
+                size="lg"
+                id={inputId}
+                // Password fields prompt to save credentials; this secret is not a login.
+                type="text"
+                className="[-webkit-text-security:disc]"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                data-1p-ignore
+                data-lpignore="true"
+                data-bwignore
+                placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
+                value={secret}
+                disabled={submitting}
+                aria-invalid={error !== null || undefined}
+                aria-describedby={error !== null ? `${privacyId} ${errorId}` : privacyId}
+                onChange={(event) => setSecret(event.currentTarget.value)}
+              />
+            </InputGroup>
           </div>
-          <Button type="submit" disabled={submitting || secret.trim().length === 0}>
+          <Button
+            type="submit"
+            size="sm"
+            variant="secondary"
+            disabled={submitting || secret.trim().length === 0}
+          >
             Save securely
+            <Kbd size="sm" aria-hidden>
+              ↵
+            </Kbd>
           </Button>
           <Button
             type="button"
