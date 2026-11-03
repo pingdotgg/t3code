@@ -1900,7 +1900,7 @@ it.effect("a stalled desktop viewer still gets its size, control and reconnect",
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("status reconnects the agent's tab after the desktop lets it go", () =>
+it.effect("status reconnects the agent's tab after the desktop lets it go", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const broker = yield* Broker.PreviewAutomationBroker;
