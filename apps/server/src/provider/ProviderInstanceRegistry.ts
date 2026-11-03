@@ -51,6 +51,7 @@ interface InstanceSecrets {
 }
 
 interface LiveEntry {
+  readonly sourceInstance: ProviderInstance;
   readonly instance: ProviderInstance;
   readonly scope: Scope.Closeable;
   readonly entry: ProviderInstanceConfig;
@@ -63,8 +64,33 @@ interface RegistryState {
   readonly changes: PubSub.PubSub<void>;
 }
 
-const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
-  Equal.equals(a, b);
+const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean => {
+  const { iconUrl: _a, ...aRuntime } = a;
+  const { iconUrl: _b, ...bRuntime } = b;
+  return Equal.equals(aRuntime, bRuntime);
+};
+
+function withInstanceIcon(
+  instance: ProviderInstance,
+  iconUrl: string | undefined,
+): ProviderInstance {
+  if (!iconUrl) return instance;
+  const withIcon = <S extends ServerProvider>(snapshot: S): S => ({ ...snapshot, iconUrl });
+  return {
+    ...instance,
+    snapshot: {
+      ...instance.snapshot,
+      getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.map(withIcon)),
+      refresh: instance.snapshot.refresh.pipe(Effect.map(withIcon)),
+      streamChanges: instance.snapshot.streamChanges.pipe(Stream.map(withIcon)),
+    },
+    ...(instance.snapshotForCwd
+      ? {
+          snapshotForCwd: (cwd: string) => instance.snapshotForCwd!(cwd).pipe(Effect.map(withIcon)),
+        }
+      : {}),
+  };
+}
 
 const secretReferencesIn = (environment: ProviderInstanceEnvironment): Array<SecretReference> =>
   environment.flatMap((variable) => (typeof variable.value === "string" ? [] : [variable.value]));
@@ -182,6 +208,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        iconUrl: entry.iconUrl,
         reason: `Driver '${entry.driver}' is not registered in this build.`,
       }),
     };
@@ -204,6 +231,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        iconUrl: entry.iconUrl,
         reason: `Invalid config for instance '${rawInstanceId}': ${detail}`,
       }),
     };
@@ -219,6 +247,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        iconUrl: entry.iconUrl,
         reason: "Reading secrets…",
       }),
     };
@@ -239,6 +268,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        iconUrl: entry.iconUrl,
         reason: `Could not read ${unreadable.join(", ")} from its secret provider. Unlock it, then refresh.`,
       }),
     };
@@ -273,15 +303,18 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        iconUrl: entry.iconUrl,
         reason: `Driver '${entry.driver}' failed to create instance: ${createResult.failure.detail}`,
       }),
     };
   }
 
+  const instance = createResult.success;
   return {
     kind: "live" as const,
     live: {
-      instance: createResult.success,
+      sourceInstance: instance,
+      instance: withInstanceIcon(instance, entry.iconUrl),
       scope: childScope,
       entry,
       secrets,
@@ -355,6 +388,7 @@ const makeReconcile = <R>(input: {
       const builtEntries = new Map<ProviderInstanceId, LiveEntry>();
       const builtUnavailable = new Map<ProviderInstanceId, ServerProvider>();
       let orderChanged = false;
+      let iconsChanged = false;
       const previousOrder = [...previousEntries.keys()];
       const nextOrder: Array<ProviderInstanceId> = [];
 
@@ -364,7 +398,16 @@ const makeReconcile = <R>(input: {
 
         const existing = previousEntries.get(instanceId);
         if (existing !== undefined && !replacedIds.has(instanceId)) {
-          builtEntries.set(instanceId, existing);
+          if (existing.entry.iconUrl !== entry.iconUrl) {
+            iconsChanged = true;
+            builtEntries.set(instanceId, {
+              ...existing,
+              entry,
+              instance: withInstanceIcon(existing.sourceInstance, entry.iconUrl),
+            });
+          } else {
+            builtEntries.set(instanceId, existing);
+          }
           continue;
         }
 
@@ -396,6 +439,7 @@ const makeReconcile = <R>(input: {
       }
 
       const entriesChanged =
+        iconsChanged ||
         orderChanged ||
         removedIds.length > 0 ||
         replacedIds.size > 0 ||

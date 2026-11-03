@@ -48,7 +48,7 @@ it("keeps each registry image when adding a model from another ACP agent", async
     })),
   ).map((entry, index) => ({
     ...entry,
-    ...(index === 0 ? { acpRegistryIconUrl: icons[0] } : { acpRegistryAgentId: "picker-by-id" }),
+    ...(index === 0 ? { iconUrl: icons[0] } : { acpRegistryAgentId: "picker-by-id" }),
   }));
   const first = { instanceId: entries[0]!.instanceId, model: "first" };
   const options = new Map(entries.map((entry) => [entry.instanceId, entry.models]));

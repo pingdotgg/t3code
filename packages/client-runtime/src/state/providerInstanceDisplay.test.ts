@@ -45,6 +45,14 @@ describe("providerAccentForegroundColor", () => {
 });
 
 describe("shouldShowInstanceBadge", () => {
+  it("keeps sibling badges available when custom images fail", () => {
+    const original = { driverKind: codex, enabled: true };
+    const custom = { ...original, iconUrl: "https://example.com/kimi.png" };
+    expect(shouldShowInstanceBadge(original, [original, custom])).toBe(true);
+    expect(shouldShowInstanceBadge(custom, [original, custom])).toBe(true);
+    expect(shouldShowInstanceBadge(custom, [custom, { ...custom }])).toBe(true);
+  });
+
   it("hides badges for distinct ACP agents sharing the registry driver", () => {
     const mistral = { driverKind: acpRegistry, acpRegistryAgentId: "mistral-vibe", enabled: true };
     const devin = { driverKind: acpRegistry, acpRegistryAgentId: "devin", enabled: true };

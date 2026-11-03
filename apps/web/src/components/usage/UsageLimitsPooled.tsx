@@ -92,6 +92,7 @@ function AccountAvatar({
           String(account.driver)
         }
         accentColor={account.accentColor}
+        iconUrl={account.iconUrl}
         showBadge={Boolean(account.displayName)}
         indicatorBackground="var(--popover)"
         className={cn("size-5", className)}
