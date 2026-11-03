@@ -1056,7 +1056,7 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
   const openRunningCommandSession = Effect.fn("openRunningCommandSession")(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const mockAgentPath = yield* path.fromFileUrl(
       new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
     );
@@ -1088,7 +1088,7 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
             env: { T3_ACP_ANTIGRAVITY: "1" },
           },
         }).pipe(
-          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(SecureRandom.SecureRandom, crypto),
           Effect.map((runtime): RuntimeService => ({
             ...runtime,
             handleSessionUpdate: (handler) =>
