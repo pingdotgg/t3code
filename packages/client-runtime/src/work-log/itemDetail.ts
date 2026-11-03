@@ -38,6 +38,8 @@ function textFromBlocks(
   if (keys.length === 1 && keys[0] === "content")
     return textFromBlocks(value.content, depth + 1, imageBlocks);
   if (keys.length === 2 && keys.includes("content") && keys.includes("structuredContent")) {
+    const structured = formatToolValue(value.structuredContent);
+    if (structured !== null) return structured;
     const text = textFromBlocks(value.content, depth + 1, imageBlocks);
     return text?.trim() ? text : null;
   }

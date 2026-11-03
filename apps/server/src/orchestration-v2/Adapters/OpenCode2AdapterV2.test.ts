@@ -2716,14 +2716,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect.each(["delegate_task", "html_preview"])(
-    "keeps thread-scoped T3 %s as a dynamic tool through its lifecycle",
+  it.effect.each(["delegate_task", "html_preview", "mcp__acme__edit_document"])(
+    "keeps MCP %s as a dynamic tool through its lifecycle",
     (toolName) =>
       Effect.gen(function* () {
         const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-wait" };
-        const name = `t3-code-web_${toolName}`;
+        const name = toolName.startsWith("mcp__") ? toolName : `t3-code-web_${toolName}`;
         const input =
-          toolName === "html_preview"
+          toolName !== "delegate_task"
             ? { html: "<p>Preview</p>" }
             : { task: "Review", mode: "wait" };
         const { runtime, thread } = yield* resumed([
@@ -2737,7 +2737,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               ...tool,
               content: [
                 { type: "text", text: "Reviewed" },
-                ...(toolName === "html_preview"
+                ...(toolName !== "delegate_task"
                   ? [{ type: "file", uri: "data:image/png;base64,iVBORw0KGgo=", mime: "image/png" }]
                   : []),
               ],
@@ -2774,7 +2774,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         assert.deepEqual(last?.type === "dynamic_tool" ? last.input : null, input);
         assert.deepEqual(
           toolOutputImages(last?.type === "dynamic_tool" ? last.output : null),
-          toolName === "html_preview" ? [{ mimeType: "image/png", data: "iVBORw0KGgo=" }] : [],
+          toolName !== "delegate_task" ? [{ mimeType: "image/png", data: "iVBORw0KGgo=" }] : [],
         );
       }).pipe(Effect.scoped),
   );

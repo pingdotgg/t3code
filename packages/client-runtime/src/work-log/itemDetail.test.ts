@@ -47,6 +47,22 @@ function toolItem(output: unknown): OrchestrationV2TurnItem {
 }
 
 describe("tool image output parsing", () => {
+  it.each(["image-only", "summary", "json"] as const)(
+    "keeps structured fields beside %s content",
+    (shape) => {
+      const item = toolItem({
+        structuredContent: { temp: 21 },
+        content: [
+          { type: "image", mimeType: "image/png" },
+          ...(shape === "image-only"
+            ? []
+            : [{ type: "text", text: shape === "summary" ? "Sunny" : '{"temp":21}' }]),
+        ],
+      });
+      expect(turnItemOutputText(item)).toBe('{\n  "temp": 21\n}');
+      expect(turnItemOutputImages(item)).toHaveLength(1);
+    },
+  );
   it.each(["array", "content"] as const)(
     "keeps markers for images beyond the served positions in %s output",
     (shape) => {
