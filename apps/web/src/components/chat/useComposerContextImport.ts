@@ -313,6 +313,14 @@ export function useComposerContextImport(input: {
       // re-minted under a fresh id so both survive the paste.
       const record = asKnownContextRecord(candidate);
       if (!record) continue;
+      if (
+        record.kind === "thread" &&
+        record.environmentId !== environmentId &&
+        !linkedEnvironments.has(record.environmentId)
+      ) {
+        rewritten.set(record.contextId, { markdown: unreadableThreadContextLink(record) });
+        continue;
+      }
       // A reminted annotation needs its screenshot under the new annotation id.
       const existing = dependentAttachmentLocalIds.has(record.contextId)
         ? undefined
@@ -397,15 +405,6 @@ export function useComposerContextImport(input: {
           break;
         }
         case "thread": {
-          // The agent reads threads on its own server and the machines it links to; a pasted
-          // thread from any other machine stays a link instead of an attached chip.
-          if (
-            record.environmentId !== environmentId &&
-            !linkedEnvironments.has(record.environmentId)
-          ) {
-            rewritten.set(record.contextId, { markdown: unreadableThreadContextLink(record) });
-            break;
-          }
           addComposerDraftThreadContexts(threadDraftTarget, [record], {
             appendReference: false,
           });

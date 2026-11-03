@@ -198,54 +198,62 @@ it.each([
   );
 });
 
-it("keeps a pasted thread the agent can't read as a link to its machine", async () => {
-  const target = DraftId.make("clipboard-threads");
-  const store = useComposerDraftStore.getState();
-  using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
-  const thread = (environmentId: string, threadId: string) => ({
-    version: 1 as const,
-    kind: "thread" as const,
-    contextId: ComposerContextId.make(`thread_${threadId}`),
-    label: `Thread ${threadId}`,
-    environmentId: EnvironmentId.make(environmentId),
-    threadId: ThreadId.make(threadId),
-    title: `Thread ${threadId}`,
-  });
-  const unlinked = thread("unlinked-source", "remote");
-  const linked = thread("linked-source", "linked");
-  let importer!: Importer;
-  await using _screen = await render(
-    <Harness
-      input={{
-        environmentId: EnvironmentId.make("clipboard-target"),
-        linkedEnvironments: new Map([[linked.environmentId, "Linked"]]),
-        activeThread: undefined,
-        activeThreadId: null,
-        composerDraftTarget: target,
-        attachmentDraftTarget: target,
-        attachmentTargetKey: target,
-        attachmentTargetKeyRef: { current: target },
-        questionAttachmentTarget: null,
-        pendingUserInputs: [],
-        composerContextRecords: new Map(),
-        composerImages: [],
-        composerFilesRef: { current: [] },
-        pendingThreadImportsRef: { current: new Map() },
-        promptRef: { current: "" },
-        addComposerFilesToDraft: (files) => store.addFiles(target, files),
-      }}
-      ready={(value) => {
-        importer = value;
-      }}
-    />,
-  );
-  let remapped!: ReturnType<Importer["importContextRecords"]>;
-  await act(async () => {
-    remapped = importer.importContextRecords([unlinked, linked], unlinked.environmentId);
-  });
-  expect(Object.fromEntries(remapped)).toEqual({
-    [unlinked.contextId]: { markdown: "[Thread remote](t3-thread://v2/unlinked-source/remote)" },
-    [linked.contextId]: linked.contextId,
-  });
-  expect(store.getComposerDraft(target)?.threadContexts).toEqual([linked]);
-});
+it.each([false, true])(
+  "keeps an unreadable thread as a link (already attached: %s)",
+  async (alreadyAttached) => {
+    const target = DraftId.make("clipboard-threads");
+    const store = useComposerDraftStore.getState();
+    using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+    const thread = (environmentId: string, threadId: string) => ({
+      version: 1 as const,
+      kind: "thread" as const,
+      contextId: ComposerContextId.make(`thread_${threadId}`),
+      label: `Thread ${threadId}`,
+      environmentId: EnvironmentId.make(environmentId),
+      threadId: ThreadId.make(threadId),
+      title: `Thread ${threadId}`,
+    });
+    const unlinked = thread("unlinked-source", "remote");
+    const linked = thread("linked-source", "linked");
+    if (alreadyAttached) store.addThreadContexts(target, [unlinked], { appendReference: false });
+    let importer!: Importer;
+    await using _screen = await render(
+      <Harness
+        input={{
+          environmentId: EnvironmentId.make("clipboard-target"),
+          linkedEnvironments: new Map([[linked.environmentId, "Linked"]]),
+          activeThread: undefined,
+          activeThreadId: null,
+          composerDraftTarget: target,
+          attachmentDraftTarget: target,
+          attachmentTargetKey: target,
+          attachmentTargetKeyRef: { current: target },
+          questionAttachmentTarget: null,
+          pendingUserInputs: [],
+          composerContextRecords: new Map(
+            alreadyAttached ? [[unlinked.contextId, { kind: "thread", record: unlinked }]] : [],
+          ),
+          composerImages: [],
+          composerFilesRef: { current: [] },
+          pendingThreadImportsRef: { current: new Map() },
+          promptRef: { current: "" },
+          addComposerFilesToDraft: (files) => store.addFiles(target, files),
+        }}
+        ready={(value) => {
+          importer = value;
+        }}
+      />,
+    );
+    let remapped!: ReturnType<Importer["importContextRecords"]>;
+    await act(async () => {
+      remapped = importer.importContextRecords([unlinked, linked], unlinked.environmentId);
+    });
+    expect(Object.fromEntries(remapped)).toEqual({
+      [unlinked.contextId]: { markdown: "[Thread remote](t3-thread://v2/unlinked-source/remote)" },
+      [linked.contextId]: linked.contextId,
+    });
+    expect(store.getComposerDraft(target)?.threadContexts).toEqual(
+      alreadyAttached ? [unlinked, linked] : [linked],
+    );
+  },
+);
