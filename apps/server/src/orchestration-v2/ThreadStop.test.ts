@@ -921,7 +921,10 @@ it.effect("Stop blocks delegation, approval cards and watches after a run ends",
       occurredAt: now,
       payload: { ...run, status: "running" },
     });
-    const recordApproval = (key: string, approvalStatus: "pending" | "cancelled") =>
+    const recordApproval = (
+      key: string,
+      approvalStatus: "pending" | "approved" | "declined" | "cancelled",
+    ) =>
       orchestrator.dispatch({
         type: "delegation_approval.record",
         commandId: CommandId.make(`approval:${key}:${approvalStatus}`),
@@ -936,6 +939,7 @@ it.effect("Stop blocks delegation, approval cards and watches after a run ends",
         approvalStatus,
       });
     yield* recordApproval("before-stop", "pending");
+    yield* recordApproval("decline-after-stop", "pending");
     yield* send(threadId, "queued", "queue_after_active");
     const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
     yield* orchestrator.dispatch({
@@ -974,6 +978,15 @@ it.effect("Stop blocks delegation, approval cards and watches after a run ends",
     assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(threadId, 5))));
     const lateApproval = yield* recordApproval("after-stop", "pending").pipe(Effect.flip);
     assert.include(String(lateApproval.cause), "not active");
+    const lateAnswer = yield* recordApproval("before-stop", "approved").pipe(Effect.flip);
+    assert.include(String(lateAnswer.cause), "not active");
+    assert.deepEqual(
+      (yield* orchestrator.getThreadProjection(threadId)).turnItems.flatMap((item) =>
+        item.type === "delegation_approval" ? [item.approvalStatus] : [],
+      ),
+      ["pending", "pending"],
+    );
+    yield* recordApproval("decline-after-stop", "declined");
 
     yield* projections.apply({
       id: EventId.make("event:stop-barrier:interrupted"),
@@ -993,7 +1006,10 @@ it.effect("Stop blocks delegation, approval cards and watches after a run ends",
           ? [{ id: item.id, approvalStatus: item.approvalStatus }]
           : [],
       ),
-      [{ id: TurnItemId.make("approval:before-stop"), approvalStatus: "cancelled" }],
+      [
+        { id: TurnItemId.make("approval:before-stop"), approvalStatus: "cancelled" },
+        { id: TurnItemId.make("approval:decline-after-stop"), approvalStatus: "declined" },
+      ],
     );
     assert.deepEqual(yield* threadState(threadId), {
       runs: ["interrupted", "cancelled"],
