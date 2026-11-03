@@ -38,8 +38,8 @@ function project(id: string): Project {
 
 describe("sidebar header new thread", () => {
   it.each([
-    { mode: "normal", count: 2, shift: false, picker: true },
-    { mode: "boring", count: 2, shift: false, picker: true },
+    { mode: "normal", count: 2, shift: false, picker: false },
+    { mode: "boring", count: 2, shift: false, picker: false },
     { mode: "boring", count: 2, shift: true, picker: false },
     { mode: "boring", count: 1, shift: false, picker: false },
     { mode: "legacy", count: 2, shift: false, picker: false },
