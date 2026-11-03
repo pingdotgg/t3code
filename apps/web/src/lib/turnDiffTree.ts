@@ -45,7 +45,7 @@ function compareByName(a: { name: string }, b: { name: string }): number {
   return sortCollator.compare(a.name, b.name);
 }
 
-function readStat(file: TurnDiffFileChange): TurnDiffStat | null {
+function readStat(file: Pick<TurnDiffFileChange, "additions" | "deletions">): TurnDiffStat | null {
   if (typeof file.additions !== "number" || typeof file.deletions !== "number") {
     return null;
   }
@@ -91,7 +91,9 @@ function toTreeNodes(directory: MutableDirectoryNode): TurnDiffTreeNode[] {
   return [...subdirectories, ...files];
 }
 
-export function buildTurnDiffTree(files: ReadonlyArray<TurnDiffFileChange>): TurnDiffTreeNode[] {
+export function buildTurnDiffTree<
+  File extends Pick<TurnDiffFileChange, "path" | "additions" | "deletions">,
+>(files: ReadonlyArray<File>): TurnDiffTreeNode[] {
   const root: MutableDirectoryNode = {
     name: "",
     path: "",
