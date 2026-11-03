@@ -5545,9 +5545,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* awaitHeld("later");
       yield* send("cut", "agent", true);
       yield* end("cut", "cancelled", "", { restartHeldRunIds: [(yield* runFor("later")).id] });
+      // A second restart cuts the first continuation, which adds no holds of its own.
+      yield* send(" /compact", "agent", true);
+      yield* end(" /compact", "cancelled", "", {
+        restartContinuationOfRunId: (yield* runFor("cut")).id,
+      });
       yield* send("/compact", "agent", true);
       yield* end("/compact", "completed", "", {
-        restartContinuationOfRunId: (yield* runFor("cut")).id,
+        restartContinuationOfRunId: (yield* runFor(" /compact")).id,
       });
       assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("later")).id);
       assert.isTrue((yield* runFor("earlier")).queueHeld);

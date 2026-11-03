@@ -2387,15 +2387,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .map((message) => message.id),
     );
     // A restart that cut a compaction records the holds it added; redoing it releases those.
-    const restartHeld = messages.some(
+    // Retried or re-cut continuations chain back to the run that recorded them.
+    const restartHeld = new Set<RunId>();
+    const isCompaction = messages.some(
       (message) => message.id === completedRun.userMessageId && isCompactionCommandMessage(message),
-    )
-      ? projection.runs.find((run) => run.id === completedRun.restartContinuationOfRunId)
-          ?.restartHeldRunIds
-      : undefined;
+    );
+    let id = isCompaction ? completedRun.restartContinuationOfRunId : undefined;
+    for (let hops = 0; id !== undefined && hops < projection.runs.length; hops++) {
+      const source = projection.runs.find((run) => run.id === id);
+      for (const heldId of source?.restartHeldRunIds ?? []) restartHeld.add(heldId);
+      id = source?.restartContinuationOfRunId;
+    }
     const now = yield* DateTime.now;
     const released = held.filter(
-      (run) => unattended.has(run.userMessageId) || restartHeld?.includes(run.id) === true,
+      (run) => unattended.has(run.userMessageId) || restartHeld.has(run.id),
     );
     if (released.length === 0) return;
     yield* writeSystemEvents(
