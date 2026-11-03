@@ -666,30 +666,38 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("failing");
   });
 
-  it("keeps a cancelled check when the newer run is another manual dispatch", () => {
-    const detail = detailOf([
-      inWorkflow({
-        name: "test (packages/shared)",
-        workflowName: "Windows Tests",
-        event: "workflow_dispatch",
-        runNumber: 41,
-        conclusion: "CANCELLED",
-      }),
-      inWorkflow({
-        name: "test (apps/server)",
-        workflowName: "Windows Tests",
-        event: "workflow_dispatch",
-        runNumber: 42,
-        conclusion: "SUCCESS",
-      }),
-    ]);
+  it.each([
+    ["a manual dispatch", "workflow_dispatch", "workflow_dispatch", "CANCELLED", "cancelled"],
+    ["a push of another ref", "push", "push", "CANCELLED", "cancelled"],
+    ["another event", "pull_request", "pull_request_target", "CANCELLED", "cancelled"],
+    ["a pull request run", "pull_request", "pull_request", "FAILURE", "failure"],
+  ])(
+    "keeps an older run's check when the newer run is %s",
+    (_, olderEvent, newerEvent, conclusion, status) => {
+      const detail = detailOf([
+        inWorkflow({
+          name: "test (packages/shared)",
+          workflowName: "CI",
+          event: olderEvent,
+          runNumber: 41,
+          conclusion,
+        }),
+        inWorkflow({
+          name: "test (apps/server)",
+          workflowName: "CI",
+          event: newerEvent,
+          runNumber: 42,
+          conclusion: "SUCCESS",
+        }),
+      ]);
 
-    expect(detail.checks.map((check) => [check.name, check.status])).toContainEqual([
-      "test (packages/shared)",
-      "cancelled",
-    ]);
-    expect(detail.checksState).toBe("failing");
-  });
+      expect(detail.checks.map((check) => [check.name, check.status])).toContainEqual([
+        "test (packages/shared)",
+        status,
+      ]);
+      expect(detail.checksState).toBe("failing");
+    },
+  );
 
   it("merges reviews with comments in time order and keeps a bodyless approval", () => {
     const detail = expectSuccess(activity(JSON.parse(detailJson) as Record<string, unknown>));
