@@ -11,7 +11,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 
-import { checkPiProviderStatus, MINIMUM_PI_VERSION } from "./status.ts";
+import { checkPiProviderStatus, discoverPiCommandsForCwd, MINIMUM_PI_VERSION } from "./status.ts";
 
 const encoder = new TextEncoder();
 const decodeRpcRequest = Schema.decodeSync(
@@ -274,6 +274,32 @@ describe("PiProvider", () => {
       if (row.message === undefined) assert.isUndefined(snapshot.message);
       else assert.include(snapshot.message ?? "", row.message);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // regression: #30182 killing Pi mid catalog refresh loses a rotated OAuth refresh token
+  it.effect(
+    "starts discovery Pi offline so stopping it cannot interrupt a credential refresh",
+    () =>
+      Effect.gen(function* () {
+        const discovery = yield* piDiscoverySpawner({
+          models: [{ provider: "anthropic", id: "claude-sonnet-4" }],
+        });
+        const rpcLaunches: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (ChildProcess.isStandardCommand(command) && command.args.includes("rpc")) {
+            rpcLaunches.push(command.args.map(String));
+          }
+          return discovery.spawn(command);
+        });
+        yield* checkPiProviderStatus(settings).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        yield* discoverPiCommandsForCwd(settings, {}, process.cwd()).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        assert.equal(rpcLaunches.length, 2);
+        for (const args of rpcLaunches) assert.include(args, "--offline");
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   // regression: #18498 a malformed model inventory must not restore stale Pi models

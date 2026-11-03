@@ -3105,6 +3105,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               extensionPath: undefined,
               disableExtensions: true,
               disableTools: true,
+              offline: true,
             });
             const nativeId = yield* Effect.scoped(
               Effect.gen(function* () {

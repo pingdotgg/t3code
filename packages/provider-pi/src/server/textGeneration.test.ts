@@ -7,6 +7,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { makePiTextGeneration } from "./textGeneration.ts";
@@ -159,4 +160,31 @@ it.effect("drops an earlier error once a later attempt succeeds", () =>
 
     assert.equal(error.detail, "Pi returned empty output.");
   }),
+);
+
+// regression: #30182 killing Pi mid catalog refresh loses a rotated OAuth refresh token
+it.effect(
+  "starts text generation Pi offline so stopping it cannot interrupt a credential refresh",
+  () =>
+    Effect.gen(function* () {
+      const pi = yield* makeFakePi(JSON.stringify({ subject: "Update README", body: "" }));
+      const launches: Array<ReadonlyArray<string>> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command)) launches.push(command.args.map(String));
+        return pi.spawner.spawn(command);
+      });
+      const textGeneration = yield* makePiTextGeneration(
+        { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
+        {},
+      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      yield* textGeneration.generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "main",
+        stagedSummary: "M README.md",
+        stagedPatch: "diff --git a/README.md b/README.md",
+        modelSelection: createModelSelection(ProviderInstanceId.make("pi"), "default"),
+      });
+      assert.equal(launches.length, 1);
+      for (const args of launches) assert.include(args, "--offline");
+    }),
 );

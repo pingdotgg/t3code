@@ -50,6 +50,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         disableExtensions: true,
         // Background naming/content helpers must never mutate the workspace.
         disableTools: true,
+        offline: true,
       });
       const connection = yield* makePiRpcConnection({
         command: piSettings.binaryPath || "pi",
