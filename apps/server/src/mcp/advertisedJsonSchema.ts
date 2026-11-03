@@ -89,7 +89,8 @@ const compact = (schema: Json, optional: boolean): Json => {
     const branches = result.anyOf
       .flatMap((branch) => (isBareAnyOf(branch) ? branch.anyOf : [branch]))
       .filter((branch) => !isJsonStringSchema(branch));
-    // `Schema.optional` adds one `null` meaning "absent"; any other `null` was declared.
+    // An unrequired field may carry one `null` that `Schema.optional` added to mean "absent".
+    // JSON cannot tell it from `optionalKey(NullOr)`'s declared one, so nullable params use `optional`.
     const nulls = branches.filter(isNullSchema).length - (optional ? 1 : 0);
     const values = branches.filter((branch) => !isNullSchema(branch));
     const merged = values.length === 1 ? values[0] : mergeTaggedObjects(values);
@@ -109,7 +110,7 @@ const compact = (schema: Json, optional: boolean): Json => {
 /**
  * The input schema T3 advertises for a tool. Drops JSON noise that every thread pays for:
  * `additionalProperties: true`, safe-integer bounds, nested `anyOf`, JSON-string fallbacks, and
- * the `null` `Schema.optional` adds (a declared `null` stays). A tagged union of objects becomes
+ * the `null` `Schema.optional` adds (`optional(NullOr)` keeps one). A tagged union of objects becomes
  * one object. Decoding still uses the full schema, so each tag's own required fields still apply.
  */
 export const advertisedJsonSchema = (tool: Tool.Any) =>
