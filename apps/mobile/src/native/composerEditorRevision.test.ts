@@ -164,3 +164,14 @@ describe("typing immediately before an intercepted paste", () => {
     expect(acknowledgeComposerNativeEvent(2, 1)).toBeNull();
   });
 });
+
+describe("a send clear racing a native autocorrection", () => {
+  it("drops native events emitted before the editor applied the clear", () => {
+    const snapshots = [{ eventCount: 3, value: "hello wrold", selection: { start: 11, end: 11 } }];
+    expect(resolveComposerControlledEventCount("", null, 3, snapshots)).toBe(3);
+    expect(isComposerNativeEcho("", null, 3, snapshots)).toBe(false);
+
+    expect(acknowledgeComposerNativeEvent(3, 4, 1, 0)).toBeNull();
+    expect(acknowledgeComposerNativeEvent(3, 4, 1, 1)).toBe(4);
+  });
+});
