@@ -77,6 +77,9 @@ it.each([
   { name: "preserved", sourceMode: 0o600, destinationMode: 0o600, failed: false },
   { name: "broadened", sourceMode: 0o600, destinationMode: 0o644, failed: true },
   { name: "unsupported", sourceMode: 0o600, destinationMode: undefined, failed: true },
+  { name: "restricted", sourceMode: 0o644, destinationMode: 0o600, failed: false },
+  { name: "restricted executable", sourceMode: 0o755, destinationMode: 0o700, failed: false },
+  { name: "missing owner execute", sourceMode: 0o755, destinationMode: 0o600, failed: true },
   {
     name: "unavailable from the source",
     sourceMode: undefined,

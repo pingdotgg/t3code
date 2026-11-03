@@ -182,6 +182,19 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           entries: [{ path: "linkdir/nested.txt", kind: "file" }],
           truncated: false,
         });
+        expect(
+          (yield* workspaceEntries.list({ cwd, directoryPath: "", reportSkipped: true }))
+            .skippedPaths,
+        ).toEqual([".git", "dangling", "git-link", "outside-link"]);
+        yield* writeTextFile(cwd, ".agents/README.md", "# Local skills\n");
+        yield* fileSystem.symlink(outside, path.join(cwd, ".agents/skills"));
+        expect(
+          yield* workspaceEntries.list({ cwd, directoryPath: ".agents", reportSkipped: true }),
+        ).toEqual({
+          entries: [{ path: ".agents/README.md", kind: "file" }],
+          skippedPaths: [".agents/skills"],
+          truncated: false,
+        });
       }),
     );
 

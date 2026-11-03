@@ -553,20 +553,28 @@ export const make = Effect.gen(function* () {
       .exists(realTargetPath)
       .pipe(Effect.orElseSucceed(() => false));
 
-    yield* fileSystem.makeDirectory(path.dirname(realTargetPath), { recursive: true }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WorkspaceFileSystemOperationError({
-            workspaceRoot: input.cwd,
-            relativePath: input.relativePath,
-            resolvedPath: realTargetPath,
-            operationPath: path.dirname(realTargetPath),
-            operation: "make-directory",
-            cause,
-          }),
-      ),
-    );
-    const mode = (yield* HostProcess.Platform) === "win32" ? undefined : input.mode;
+    yield* fileSystem
+      .makeDirectory(path.dirname(realTargetPath), {
+        recursive: true,
+        ...(input.mode !== undefined ? { mode: 0o700 } : {}),
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: realTargetPath,
+              operationPath: path.dirname(realTargetPath),
+              operation: "make-directory",
+              cause,
+            }),
+        ),
+      );
+    const mode =
+      (yield* HostProcess.Platform) === "win32" || input.mode === undefined
+        ? undefined
+        : input.mode & ~(yield* HostProcess.Umask) & 0o700;
     const writtenMode = yield* Effect.tryPromise({
       // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
       try: async () => {
@@ -579,11 +587,19 @@ export const make = Effect.gen(function* () {
           mode,
         );
         try {
-          await handle.writeFile(input.contents);
+          let actualMode = mode;
           if (mode !== undefined) {
-            await handle.chmod(mode);
-            return (await handle.stat()).mode & 0o777;
+            // Adding execute bits must not widen existing read/write permissions.
+            const currentMode = (await handle.stat()).mode;
+            const targetMode = mode & (currentMode | 0o111);
+            await handle.chmod(targetMode);
+            actualMode = (await handle.stat()).mode & 0o777;
+            if ((actualMode & ~targetMode & 0o666) !== 0) {
+              throw new Error("Could not restrict file permissions before writing.");
+            }
           }
+          await handle.writeFile(input.contents);
+          return actualMode;
         } finally {
           await handle.close();
         }
