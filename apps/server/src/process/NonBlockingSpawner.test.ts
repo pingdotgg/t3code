@@ -211,6 +211,22 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("NonBlockingSpa
   );
 
   // A hung check holds a libuv threadpool thread, and those also compress WebSocket frames.
+  // Natively these throw a defect instead of failing the spawn.
+  it.live("fails an explicit path through a file or a symlink loop as a bad resource", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped();
+      yield* fileSystem.writeFileString(`${directory}/plain`, "");
+      yield* fileSystem.symlink(`${directory}/loop`, `${directory}/loop`);
+      for (const executable of [`${directory}/plain/tool`, `${directory}/loop`]) {
+        const error = yield* spawnError(ChildProcess.make(executable, [])).pipe(
+          Effect.provide(wrapped),
+        );
+        expect(error.reason._tag).toBe("BadResource");
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live("checks at most two paths at once, however many directories hang", () =>
     Effect.gen(function* () {
       const allArrived = yield* Deferred.make<void>();

@@ -25,6 +25,7 @@ const spawnErrors = {
   ENOENT: [-2, "NotFound"],
   EACCES: [-13, "PermissionDenied"],
   ENOTDIR: [-20, "BadResource"],
+  ELOOP: [-40, "BadResource"],
 } as const;
 type SpawnFailure = keyof typeof spawnErrors;
 
@@ -180,11 +181,16 @@ const make = Effect.gen(function* () {
 
   // Mirrors execvp's result when every candidate fails: EACCES if any candidate
   // exists but cannot be executed, otherwise ENOENT.
-  const findExecutable = async (candidates: ReadonlyArray<readonly [string, string]>) => {
+  // An explicit path fails with its own errno, as execve reports it.
+  const findExecutable = async (
+    candidates: ReadonlyArray<readonly [string, string]>,
+    explicit: boolean,
+  ) => {
     let denied = false;
     for (const [directory, candidate] of candidates) {
       const kind = await check(directory, candidate);
       if (kind === "file") return;
+      if (explicit && (kind === "ENOTDIR" || kind === "ELOOP")) throw kind;
       if (kind === "EACCES" || kind === "directory" || kind === "other") denied = true;
     }
     throw denied ? "EACCES" : "ENOENT";
@@ -217,7 +223,7 @@ const make = Effect.gen(function* () {
           return [directory, `${directory}/${command.command}`] as const;
         });
     yield* Effect.tryPromise({
-      try: () => findExecutable(candidates),
+      try: () => findExecutable(candidates, command.command.includes("/")),
       catch: (code) => spawnFailure(command, code as SpawnFailure),
     });
     return envChdir && !command.command.includes("=")
