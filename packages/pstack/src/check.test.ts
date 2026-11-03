@@ -201,6 +201,22 @@ describe("pack interface", () => {
     expect(() => pstackPackEntries(pack.root)).not.toThrow();
   });
 
+  it("delivers a complete pack when packaging pruned the statechart test corpus", () => {
+    using pack = fixture();
+    pack.write("upstream/skills/statechart/scripts/statechart.ts", "export {};\n");
+    pack.write("upstream/skills/statechart/scripts/test/corpus/Counter/chart.mmd", "chart\n");
+    pack.seal();
+    expect(checkPack(pack.root)).toEqual([]);
+    NodeFS.rmSync(NodePath.join(pack.root, "upstream/skills/statechart/scripts/test"), {
+      recursive: true,
+    });
+    const entries = pstackPackEntries(pack.root);
+    expect(entries.map(({ packPath }) => packPath)).toContain(
+      "skills/statechart/scripts/statechart.ts",
+    );
+    expect(entries.filter(({ sourcePath }) => !NodeFS.existsSync(sourcePath))).toEqual([]);
+  });
+
   it("invalidates the delivery stamp from the adapter layout", () => {
     using pack = fixture();
     expect(pstackContentHash(pack.root)).not.toBe(pstackContentHash(pack.root, 2));
