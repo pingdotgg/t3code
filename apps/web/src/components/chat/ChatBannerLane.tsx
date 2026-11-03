@@ -31,7 +31,7 @@ export function useChatBannerLane(input: {
   readonly onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   readonly onOpenTerminal: () => void;
   readonly onProviderModelSelect: (instanceId: ProviderInstanceId, model: string) => void;
-  readonly onShowLimits: (() => void) | null;
+  readonly limitsAvailable: boolean;
   readonly threadId: ThreadId | null;
   readonly threadError: string | null;
   readonly threadErrorClass: OrchestrationV2ProviderFailureClass | null;
@@ -54,7 +54,7 @@ export function useChatBannerLane(input: {
     onOpenProviderSetup,
     onOpenTerminal,
     onProviderModelSelect,
-    onShowLimits,
+    limitsAvailable,
     threadId,
     threadError,
     threadErrorClass,
@@ -107,7 +107,15 @@ export function useChatBannerLane(input: {
         switchTarget: lowLimitSwitchTarget,
         onSwitch: (target) =>
           onProviderModelSelect(target.instanceId, getDefaultServerModel([target], target.driver)),
-        onShowLimits,
+        limits:
+          limitsAvailable && activeProviderStatus !== null
+            ? {
+                environmentId,
+                instanceId: activeProviderStatus.instanceId,
+                providers: providerStatuses,
+                sources: usageLimitSources,
+              }
+            : null,
         onDismissed: () => setTrayNoticeDismissTick((tick) => tick + 1),
       }),
     );
