@@ -6,7 +6,8 @@ import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -366,12 +367,13 @@ const exchangeToken = Effect.fn("cloud.cli_token.exchange")(function* (
 });
 
 const makePkceRequest = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
-  const verifier = Base64Url.encode(yield* crypto.randomBytes(32));
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
+  const verifier = Base64Url.encode(yield* random.randomBytes(32));
   const challenge = Base64Url.encode(
-    yield* crypto.digest("SHA-256", new TextEncoder().encode(verifier)),
+    yield* digest.digest(Digest.sha256, new TextEncoder().encode(verifier)),
   );
-  const state = Base64Url.encode(yield* crypto.randomBytes(16));
+  const state = Base64Url.encode(yield* random.randomBytes(16));
   return { verifier, challenge, state };
 });
 
@@ -468,9 +470,11 @@ export const deviceAuthorizationLogin = Effect.fn("cloud.cli_token.device_author
 
 /** @public */
 export const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const httpClient = yield* HttpClient.HttpClient;
-  const services = Context.make(Crypto.Crypto, crypto).pipe(
+  const services = Context.make(SecureRandom.SecureRandom, random).pipe(
+    Context.add(Digest.Digest, digest),
     Context.add(HttpClient.HttpClient, httpClient),
   );
   const secrets = yield* ServerSecretStore.ServerSecretStore;
