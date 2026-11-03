@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { type ProviderReplayEntry } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
@@ -448,8 +449,11 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   ).pipe(
     Layer.provide(
       Layer.mergeAll(
-        TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+        TestProviderHost.layer().pipe(
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
         NodeServices.layer,
+        NodeCrypto.layer,
         IdAllocator.layer,
       ),
     ),
@@ -558,5 +562,5 @@ if (scenarios.length === 0) {
 await Effect.runPromise(
   Effect.forEach(scenarios, (name) => Effect.scoped(recordScenario(name)), {
     discard: true,
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

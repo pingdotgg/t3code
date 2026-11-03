@@ -1,5 +1,6 @@
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import {
@@ -25,6 +26,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -49,7 +51,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
 const layerPlatformTest = Layer.merge(
-  NodeServices.layer,
+  Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
   }),
@@ -156,7 +158,7 @@ const seedParentWithTerminalTask = (input: {
   readonly runId: RunId;
   readonly rootNodeId: NodeId;
   readonly taskId: NodeId;
-  readonly deliveryState: "delivered" | "claimed" | "acknowledged" | "disposed";
+  readonly deliveryState: "pending" | "delivered" | "claimed" | "acknowledged" | "disposed";
   readonly completionWake?: "always" | "settled_only";
   readonly deliveryTaskIds?: ReadonlyArray<NodeId>;
   readonly parentRunStatus?: "running" | "completed";
@@ -1047,6 +1049,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
     { command: "acknowledge", before: "running", after: "failed", capture: false },
     { command: "acknowledge", before: "waiting", after: "completed", capture: true },
     { command: "accept", before: "waiting", after: "completed", capture: true },
+    { command: "wake-policy", before: "running", after: "completed", capture: true },
   ] as const)(
     "keeps a $after run that settled between $command's read and commit",
     ({ command, before, after, capture }) =>
@@ -1060,14 +1063,20 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         const taskId = NodeId.make(`node:${race}-task`);
         const checkpointId = CheckpointId.make(`checkpoint:${race}`);
         const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+        const commandType = {
+          acknowledge: "delegated_task.completion-delivery.acknowledge",
+          accept: "notification.delivery.accept",
+          "wake-policy": "delegated_task.wake-policy",
+        }[command];
         yield* seedParentWithTerminalTask({
           threadId,
           projectId: ProjectId.make(`project:${race}`),
           runId,
           rootNodeId: NodeId.make(`node:${race}-root`),
           taskId,
-          deliveryState: "claimed",
-          deliveryTaskIds: [taskId],
+          ...(command === "wake-policy"
+            ? { deliveryState: "pending" }
+            : { deliveryState: "claimed", deliveryTaskIds: [taskId] }),
           now,
         });
         const parent = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
@@ -1108,18 +1117,18 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         const { delegatedCompletion: _cohort, ...settledRun } = parent;
         const commit = sink.commitCommand;
         let settled = false;
+        let planned: OrchestrationV2Run["delegatedCompletion"];
         yield* Effect.acquireUseRelease(
           Effect.sync(() =>
             vi.spyOn(sink, "commitCommand").mockImplementation((input) =>
               Effect.gen(function* () {
-                if (
-                  !settled &&
-                  input.commandType ===
-                    (command === "accept"
-                      ? "notification.delivery.accept"
-                      : "delegated_task.completion-delivery.acknowledge")
-                ) {
+                if (!settled && input.commandType === commandType) {
                   settled = true;
+                  const plannedRun = input.events.find((event) => event.type === "run.updated");
+                  planned =
+                    plannedRun?.type === "run.updated"
+                      ? plannedRun.payload.delegatedCompletion
+                      : undefined;
                   // The provider turn ends (or its checkpoint lands) after the command read the run.
                   yield* commit({
                     commandId: CommandId.make(`command:${race}`),
@@ -1157,13 +1166,21 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
                     threadId,
                     messageId,
                   }
-                : {
-                    type: "delegated_task.completion-delivery.acknowledge",
-                    commandId: CommandId.make(`command:${race}:task-status`),
-                    parentThreadId: threadId,
-                    taskId,
-                    observedByRunId: runId,
-                  },
+                : command === "wake-policy"
+                  ? {
+                      type: "delegated_task.wake-policy",
+                      commandId: CommandId.make(`command:${race}:wake-policy`),
+                      parentThreadId: threadId,
+                      taskId,
+                      completionWake: "always",
+                    }
+                  : {
+                      type: "delegated_task.completion-delivery.acknowledge",
+                      commandId: CommandId.make(`command:${race}:task-status`),
+                      parentThreadId: threadId,
+                      taskId,
+                      observedByRunId: runId,
+                    },
             ),
           (spy) => Effect.sync(() => spy.mockRestore()),
         );
@@ -1171,12 +1188,22 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         const finished = yield* orchestrator.getThreadProjection(threadId);
         assert.equal(
           finished.subagents.find((row) => row.id === taskId)?.completionDelivery?.state,
-          command === "accept" ? "delivered" : "acknowledged",
+          { acknowledge: "acknowledged", accept: "delivered", "wake-policy": "claimed" }[command],
         );
         const run = finished.runs.find((candidate) => candidate.id === runId)!;
         assert.deepEqual(
-          { status: run.status, completedAt: run.completedAt, checkpointId: run.checkpointId },
-          { status: after, completedAt: now, checkpointId: capture ? checkpointId : null },
+          {
+            status: run.status,
+            completedAt: run.completedAt,
+            checkpointId: run.checkpointId,
+            delegatedCompletion: run.delegatedCompletion,
+          },
+          {
+            status: after,
+            completedAt: now,
+            checkpointId: capture ? checkpointId : null,
+            delegatedCompletion: planned,
+          },
         );
       }),
   );
@@ -1346,6 +1373,76 @@ const seedRestartCancelledChild = (input: {
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "subagent follow-ups",
   (it) => {
+    it.effect("recovers a reserved delivery without loading conversation history", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:bounded-delivery-recovery");
+        const runId = RunId.make("run:bounded-delivery-recovery");
+        const taskId = NodeId.make("task:bounded-delivery-recovery");
+        yield* seedParentWithTerminalTask({
+          threadId,
+          runId,
+          taskId,
+          projectId: ProjectId.make("project:bounded-delivery-recovery"),
+          rootNodeId: NodeId.make("node:bounded-delivery-recovery"),
+          deliveryState: "claimed",
+          deliveryTaskIds: [taskId],
+          completionWake: "always",
+          now,
+        });
+        for (const suffix of ["first", "second"]) {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`event:bounded-delivery-history:${suffix}`),
+                type: "message.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  id: MessageId.make(`message:bounded-delivery-history:${suffix}`),
+                  threadId,
+                  runId: null,
+                  nodeId: null,
+                  createdBy: "user",
+                  creationSource: "web",
+                  role: "user",
+                  text: "Unrelated historical input",
+                  attachments: [],
+                  streaming: false,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+            ],
+          });
+        }
+        const statements: string[] = [];
+        const tracer = Tracer.make({
+          span(options) {
+            const span = new Tracer.NativeSpan(options);
+            const end = span.end.bind(span);
+            span.end = (time, exit) => {
+              end(time, exit);
+              const query = span.attributes.get("db.query.text");
+              if (typeof query === "string") statements.push(query);
+            };
+            return span;
+          },
+        });
+        yield* orchestrator.recoverDelegatedTasks.pipe(Effect.withTracer(tracer));
+        assert.isFalse(statements.some((query) => query.includes("MIN(ordinal)")));
+        const messageReads = statements.filter((query) =>
+          query.includes("FROM orchestration_v2_projection_messages"),
+        );
+        assert.isNotEmpty(messageReads);
+        assert.isTrue(messageReads.every((query) => query.includes("message_id IN")));
+        const wake = yield* requests.take;
+        assert.equal(wake.delegatedCompletion?.parentRunId, runId);
+      }),
+    );
     it.effect("keeps a checkpoint completion committed between finalize's read and write", () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
