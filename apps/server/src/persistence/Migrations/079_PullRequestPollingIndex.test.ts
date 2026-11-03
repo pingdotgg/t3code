@@ -4,11 +4,11 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { runMigrations } from "../Migrations.ts";
 
-it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("078_PullRequestPollingIndex", (it) => {
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("079_PullRequestPollingIndex", (it) => {
   it.effect("polls only live PR threads in stable update order and maintains membership", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 77 });
+      yield* runMigrations({ toMigrationInclusive: 78 });
       for (const [id, updatedAt, deletedAt, payload] of [
         ["b", "2026-10-01", null, { pullRequests: [{ number: 1 }] }],
         ["a", "2026-10-01", null, { pullRequests: [{ number: 2 }] }],
@@ -34,12 +34,13 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("078_PullRequestPolli
         AND json_array_length(payload_json, '$.pullRequests') > 0
         ORDER BY updated_at ASC, thread_id ASC`;
       const before = yield* sql.unsafe(query);
-      assert.deepEqual(yield* runMigrations(), [[78, "PullRequestPollingIndex"]]);
+      assert.deepEqual(yield* runMigrations(), [[79, "PullRequestPollingIndex"]]);
       assert.deepEqual(
         yield* sql`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id >= 77 ORDER BY migration_id`,
         [
           { migration_id: 77, name: "RepairBooleanSettledOverride" },
-          { migration_id: 78, name: "PullRequestPollingIndex" },
+          { migration_id: 78, name: "DropOrchestrationEventCorrelationIndex" },
+          { migration_id: 79, name: "PullRequestPollingIndex" },
         ],
       );
       assert.deepEqual(yield* runMigrations(), []);
