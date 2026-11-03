@@ -1,3 +1,4 @@
+import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { Check, Copy } from "lucide";
 import { useRef } from "react";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -11,7 +12,13 @@ import { Button } from "./ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-export function DiffFilePathCopyButton({ filePath }: { filePath: string }) {
+export function DiffFilePathCopyButton({
+  filePath,
+  workspaceRoot,
+}: {
+  filePath: string;
+  workspaceRoot: string | undefined;
+}) {
   const ref = useRef<HTMLButtonElement>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
     onCopy: () => showAnchoredCopySuccessToast(ref),
@@ -28,7 +35,9 @@ export function DiffFilePathCopyButton({ filePath }: { filePath: string }) {
             size="icon-micro"
             variant="ghost-muted"
             aria-label="Copy file path"
-            onClick={() => copyToClipboard(filePath, undefined)}
+            onClick={() =>
+              copyToClipboard(formatFilePathForClipboard(filePath, workspaceRoot), undefined)
+            }
           />
         }
       >
