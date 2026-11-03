@@ -4,13 +4,18 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeZlib from "node:zlib";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 import type { TranscriptUsageFormat } from "@t3tools/provider-core/server/usage";
 import * as Schema from "effect/Schema";
 
 import { TEST_FORMATS } from "./usageTestFormats.ts";
-import { readTranscriptRecords, transcriptLineGate } from "./usageTranscriptReader.ts";
+import {
+  listTranscriptFiles,
+  readTranscriptRecords,
+  transcriptLineGate,
+} from "./usageTranscriptReader.ts";
 
 let dir: string;
 
@@ -70,6 +75,103 @@ function codexUsageLine(outputTokens: number, secondsOffset: number): string {
     },
   })}\n`;
 }
+
+describe("compressed transcripts", () => {
+  it("discovers nested plain and zstd JSONL files within the requested window", async () => {
+    const nested = NodePath.join(dir, "nested");
+    await NodeFSP.mkdir(nested);
+    const plain = NodePath.join(dir, "active.jsonl");
+    const compressed = NodePath.join(nested, "archived.jsonl.zst");
+    const old = NodePath.join(nested, "old.jsonl.zst");
+    await NodeFSP.writeFile(plain, claudeLine(1, 5));
+    await NodeFSP.writeFile(compressed, NodeZlib.zstdCompressSync(claudeLine(2, 7)));
+    await NodeFSP.writeFile(old, NodeZlib.zstdCompressSync(claudeLine(3, 11)));
+    await NodeFSP.writeFile(NodePath.join(nested, "unrelated.zst"), "ignored");
+    await NodeFSP.writeFile(NodePath.join(nested, "partial.jsonl.zst.tmp"), "ignored");
+    await NodeFSP.utimes(old, 1, 1);
+
+    const listed = await listTranscriptFiles(dir, Date.parse("2026-01-01T00:00:00Z"));
+    assert.deepStrictEqual(
+      listed.files.map((file) => file.path).sort(),
+      [plain, compressed].sort(),
+    );
+    assert.strictEqual(listed.failedPaths, 0);
+    assert.isAbove(listed.files.find((file) => file.path === compressed)?.size ?? 0, 0);
+  });
+
+  it.each([
+    { parser: "native", streamingThresholdBytes: undefined },
+    { parser: "projected", streamingThresholdBytes: 1024 },
+  ])(
+    "matches plain Codex records and unfinished tails through long lines ($parser)",
+    async ({ streamingThresholdBytes }) => {
+      const plain = NodePath.join(dir, "rollout.jsonl");
+      const compressed = plain + ".zst";
+      const large = codexUsageLine(9, 5).replace(
+        '"payload":',
+        '"padding":' + JSON.stringify("日本語 é".repeat(128 * 1024)) + ',"payload":',
+      );
+      const content =
+        codexMetaLine() +
+        codexModelLine("gpt-6-astra") +
+        codexTierLine("ultrafast") +
+        large +
+        codexUsageLine(13, 6).replace('"output_tokens":13', '"output_tokens":"invalid"') +
+        codexUsageLine(21, 8).trimEnd();
+      await NodeFSP.writeFile(plain, content);
+      await NodeFSP.writeFile(compressed, NodeZlib.zstdCompressSync(content));
+
+      const options =
+        streamingThresholdBytes === undefined ? undefined : { streamingThresholdBytes };
+      const expected = await readTranscriptRecords(plain, TEST_FORMATS.codex, undefined, options);
+      const actual = await readTranscriptRecords(
+        compressed,
+        TEST_FORMATS.codex,
+        undefined,
+        options,
+      );
+      assert.isNotNull(expected);
+      assert.isNotNull(actual);
+      assert.strictEqual(expected.records.length, 1);
+      assert.strictEqual(expected.tailRecords.length, 1);
+      assert.deepStrictEqual(actual.records, expected.records);
+      assert.deepStrictEqual(actual.tailRecords, expected.tailRecords);
+      assert.strictEqual(expected.malformedRecords, 1);
+      assert.strictEqual(actual.malformedRecords, expected.malformedRecords);
+      assert.strictEqual(actual.records[0]?.speed, "ultrafast");
+      assert.isFalse(actual.resumed);
+      assert.strictEqual(actual.position.resumeOffset, 0);
+    },
+  );
+
+  it("ignores a prior resume position and rereads compressed rollouts from their start", async () => {
+    const plain = NodePath.join(dir, "rollout.jsonl");
+    const content = codexMetaLine() + codexModelLine("gpt-6-astra") + codexUsageLine(9, 5);
+    await NodeFSP.writeFile(plain, content);
+    const first = await readTranscriptRecords(plain, TEST_FORMATS.codex);
+    assert.isNotNull(first);
+
+    const compressed = plain + ".zst";
+    await NodeFSP.writeFile(compressed, NodeZlib.zstdCompressSync(content + codexUsageLine(21, 8)));
+    const actual = await readTranscriptRecords(compressed, TEST_FORMATS.codex, first.position);
+    assert.isNotNull(actual);
+    assert.isFalse(actual.resumed);
+    assert.deepStrictEqual(
+      actual.records.map((record) => record.totals.outputTokens),
+      [9, 21],
+    );
+    const repeated = await readTranscriptRecords(compressed, TEST_FORMATS.codex, actual.position);
+    assert.isNotNull(repeated);
+    assert.isFalse(repeated.resumed);
+    assert.deepStrictEqual(repeated.records, actual.records);
+  });
+
+  it("returns null for zstd decoder errors rather than caching an empty parse", async () => {
+    const path = NodePath.join(dir, "corrupt.jsonl.zst");
+    await NodeFSP.writeFile(path, "not a zstd frame");
+    assert.isNull(await readTranscriptRecords(path, TEST_FORMATS.claude));
+  });
+});
 
 describe("readTranscriptRecords resume", () => {
   it.each([
