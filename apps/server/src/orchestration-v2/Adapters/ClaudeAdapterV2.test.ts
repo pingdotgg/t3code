@@ -6026,7 +6026,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(admissionError._tag, "ProviderAdapterProtocolError");
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
       ),
     ),
   );
@@ -6073,7 +6078,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* Deferred.succeed(releaseTerminal, undefined);
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
       ),
     ),
   );
@@ -6121,7 +6131,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.isDefined(harness.getOpenedOptions());
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
   );
@@ -6145,7 +6160,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.strictEqual(error, expected);
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
       ),
     ),
   );
@@ -11268,6 +11288,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.lengthOf(harness.continuationRequests, 0);
         yield* harness.offerAndWait(wakeTurnInit);
         assert.lengthOf(harness.continuationRequests, 1);
+        const admissionError = yield* harness.runtime.withRollbackAdmission!(
+          {
+            providerThread: harness.providerThread,
+            providerThreadTurns: [],
+            target: {
+              type: "thread_start",
+              checkpointId: CheckpointId.make("wake-init-admission"),
+              appRunOrdinal: 0,
+            },
+          },
+          () => Effect.die("an initialized native wake must exclude restoration"),
+        ).pipe(Effect.flip);
+        assert.equal(admissionError._tag, "ProviderAdapterProtocolError");
         assert.equal(harness.continuationRequests[0]?.detail, WAKE_SUMMARY);
 
         yield* harness.runtime.startTurn(

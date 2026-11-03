@@ -11491,6 +11491,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     : rollbackInput.providerThread.goal;
                 if (
                   currentTurn !== null ||
+                  [...(yield* Ref.get(wakeBuffers)).values()].some((entry) =>
+                    entry.messages.some(isClaudeTurnStartMessage),
+                  ) ||
                   goal?.status === "active" ||
                   (yield* runtime.hasPendingBackgroundWork!)
                 ) {
