@@ -1568,20 +1568,34 @@ describe("orchestration v2 provider switching", () => {
           yield* Ref.set(failStartOnce, true);
           yield* send(2, `Request 2 ${"r".repeat(6_000)}`);
           yield* settled(2);
-          yield* send(3, "Request 3");
-          // A background-command notification queued behind the failing run fails the same way;
-          // one compaction still covers both, and its message arrives as history.
+          // Recovery continues work in the background, so it must not end the user's snooze.
+          const snoozedUntil = DateTime.formatIso(DateTime.add(yield* DateTime.now, { hours: 1 }));
           yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make("full-native:notification"),
+            type: "thread.snooze",
+            commandId: CommandId.make("full-native:snooze"),
             threadId,
-            messageId: MessageId.make("full-native:notification"),
-            createdBy: "agent",
-            creationSource: "server",
-            text: "Background command finished",
-            attachments: [],
-            dispatchMode: { type: "queue_after_active" },
+            snoozedUntil,
           });
+          // Two background-command notifications: the second can start before the compaction
+          // and fail the same way; one compaction still covers both.
+          for (const index of [0, 1]) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`full-native:notification:${index}`),
+              threadId,
+              messageId: MessageId.make(`full-native:notification:${index}`),
+              createdBy: "agent",
+              creationSource: "server",
+              notification: {
+                source: { kind: "monitor" },
+                outcome: "updated",
+                summary: "Background command finished",
+              },
+              text: `Background command ${index} finished`,
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+            });
+          }
           yield* orchestrator.streamStoredEvents.pipe(
             Stream.filter(
               ({ event }) =>
@@ -1628,8 +1642,13 @@ describe("orchestration v2 provider switching", () => {
             .map((turn) => turn.text)
             .join("\n")}`;
           assert.include(delivered, "Request 2");
-          assert.include(delivered, "Request 3");
-          assert.include(delivered, "Background command finished");
+          const { snoozedUntil: stillSnoozedUntil } = (yield* orchestrator.getThreadProjection(
+            threadId,
+          )).thread;
+          assert.equal(
+            stillSnoozedUntil == null ? null : DateTime.formatIso(stillSnoozedUntil),
+            snoozedUntil,
+          );
         }).pipe(
           Effect.provide(
             ProviderReplayHarness.layerWithRegistry(

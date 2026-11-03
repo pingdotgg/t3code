@@ -805,6 +805,11 @@ function worktreeSetupPending(
 }
 
 const CONTEXT_COMPACTION_MESSAGE_PREFIX = "context-compact:";
+const CONTEXT_COMPACTION_CONTINUE_PREFIX = "context-compact-continue:";
+
+const isCompactionRecoveryMessage = (messageId: MessageId) =>
+  messageId.startsWith(CONTEXT_COMPACTION_MESSAGE_PREFIX) ||
+  messageId.startsWith(CONTEXT_COMPACTION_CONTINUE_PREFIX);
 
 function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
@@ -2370,10 +2375,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       run.status === "completed" && run.userMessageId.startsWith(CONTEXT_COMPACTION_MESSAGE_PREFIX);
     if (run.status !== "failed" && !compacted) return undefined;
     const projection = yield* projectionStore.getThreadRecords(threadId, ["runs", "turnItems"], {
-      turnItemTypes: ["error"],
+      turnItemTypes: ["error", "run_interrupt_request"],
       turnItemRunIds: [run.id],
     });
-    if (latestExecutedRun(projection.runs)?.id !== run.id) return undefined;
+    if (
+      latestExecutedRun(projection.runs)?.id !== run.id ||
+      projection.turnItems.some((item) => item.type === "run_interrupt_request")
+    )
+      return undefined;
     if (
       !compacted &&
       latestRootProviderFailure(run, projection.turnItems)?.code !==
@@ -2381,7 +2390,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     )
       return undefined;
     const step = compacted
-      ? ({ prefix: "context-compact-continue:", text: "Continue where you left off." } as const)
+      ? ({
+          prefix: CONTEXT_COMPACTION_CONTINUE_PREFIX,
+          text: "Continue where you left off.",
+        } as const)
       : ({ prefix: CONTEXT_COMPACTION_MESSAGE_PREFIX, text: IDLE_COMPACTION_TEXT } as const);
     // Work that slipped in ahead of the compaction fails the same way; one compaction covers both.
     const pending = projection.runs.find(
@@ -5599,7 +5611,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Background wakes and delegated completions continue work the user already snoozed, so
     // only a message someone actually sent ends the snooze.
     const automaticWake =
-      command.notification !== undefined || command.delegatedCompletion !== undefined;
+      command.notification !== undefined ||
+      command.delegatedCompletion !== undefined ||
+      (command.creationSource === "server" && isCompactionRecoveryMessage(command.messageId));
     if (projection.thread.snoozedUntil != null && !automaticWake) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
