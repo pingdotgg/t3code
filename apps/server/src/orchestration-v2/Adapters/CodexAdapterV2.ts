@@ -5789,15 +5789,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ? "usage_limit"
                 : "provider_error";
               // The notification carries the richer message, so it wins when the
-              // completion repeats it. An explicit exhaustion status on the
-              // completion still decides the class; a missing one is not evidence.
-              const exhaustionStatus = codexExhaustionHttpStatus(input.failureErrorInfo);
+              // completion repeats it. An explicit HTTP status on the completion
+              // still decides the class; a missing one is not evidence.
+              const completionStatus = codexErrorHttpStatus(input.failureErrorInfo);
               const failure =
                 previousFailure !== undefined &&
                 (input.failureMessage === undefined ||
                   input.failureMessage === previousFailure.nativeMessage) &&
                 (failureCode === undefined || failureCode === previousFailure.nativeCode) &&
-                (exhaustionStatus === null || previousFailure.failure.class === failureClass)
+                (completionStatus === null || previousFailure.failure.class === failureClass)
                   ? previousFailure.failure
                   : withCodexManagedFailure(
                       makeProviderFailure({
