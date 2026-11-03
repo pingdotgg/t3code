@@ -367,7 +367,7 @@ function PullRequestAuthorFilter({
           {value ?? "Anyone"}
         </span>
       </MenuSubTrigger>
-      <MenuSubPopup className="w-65 [--type-label:0.8125rem]">
+      <MenuSubPopup className="w-65">
         <PullRequestAuthorChoices
           value={value}
           options={options}
@@ -599,7 +599,7 @@ export function PullRequestFiltersMenu({
           <ChevronDownIcon aria-hidden className="size-3 text-dim-foreground" />
         )}
       </MenuTrigger>
-      <MenuPopup align="end" side="bottom" className="w-62 [--type-label:0.8125rem]">
+      <MenuPopup align="end" side="bottom" className="w-62">
         {compactItems ? (
           <>
             {compactItems}
