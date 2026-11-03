@@ -62,32 +62,39 @@ describe("compileClaudeModelSelection", () => {
     ).not.toHaveProperty("ultracode");
   });
 
-  it("keeps Ultracode on at Extra High for a custom model that defaulted to the old Ultracode effort", () => {
-    const catalog = scopeClaudeModelCatalog(BUNDLED_CLAUDE_MODEL_CATALOG, [
-      {
-        slug: "claude-custom-tuned",
-        name: "Tuned",
-        capabilities: {
-          optionDescriptors: [
-            {
-              id: "effort",
-              label: "Reasoning",
-              type: "select",
-              currentValue: "ultracode",
-              options: [
-                { id: "high", label: "High" },
-                { id: "xhigh", label: "Extra High" },
-                { id: "ultracode", label: "Ultracode", isDefault: true },
-              ],
-            },
-          ],
-        },
+  it("keeps old Ultracode defaults and selections at Extra High on custom models", () => {
+    const customModel = (slug: string, choices: ReadonlyArray<string>) => ({
+      slug,
+      name: slug,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select" as const,
+            currentValue: "ultracode",
+            options: choices.map((id) => ({ id, label: id, isDefault: id === "ultracode" })),
+          },
+        ],
       },
+    });
+    const catalog = scopeClaudeModelCatalog(BUNDLED_CLAUDE_MODEL_CATALOG, [
+      customModel("claude-custom-tuned", ["high", "xhigh", "ultracode"]),
+      customModel("claude-custom-no-xhigh", ["high", "ultracode"]),
     ]);
 
-    expect(
-      compileClaudeModelSelection(selection("claude-custom-tuned", []), catalog),
-    ).toMatchObject({ effort: "xhigh", settings: { ultracode: true } });
+    for (const model of ["claude-custom-tuned", "claude-custom-no-xhigh"]) {
+      expect(compileClaudeModelSelection(selection(model, []), catalog)).toMatchObject({
+        effort: "xhigh",
+        settings: { ultracode: true },
+      });
+      expect(
+        compileClaudeModelSelection(
+          selection(model, [{ id: "effort", value: "ultracode" }]),
+          catalog,
+        ),
+      ).toMatchObject({ effort: "xhigh", settings: { ultracode: true } });
+    }
   });
 
   it("uses the model default SDK effort alongside prompt-injected effort", () => {

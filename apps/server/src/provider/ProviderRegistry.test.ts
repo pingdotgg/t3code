@@ -3176,7 +3176,7 @@ it.layer(
               ? `${descriptor.id}:${descriptor.options.map((option) => option.id).join("|")}`
               : `${descriptor.id}:${descriptor.type}`,
           ),
-          ["effort:high", "ultracode:boolean"],
+          ["effort:high|xhigh", "ultracode:boolean"],
         );
       }).pipe(
         Effect.provide(

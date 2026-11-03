@@ -73,26 +73,28 @@ export function withUltracodeToggle(
   );
   const effort = descriptors[effortIndex];
   if (effort?.type !== "select") return capabilities;
-  const { currentValue, ...rest } = effort;
-  const options = effort.options.filter((option) => option.id !== "ultracode");
   const ultracodeByDefault =
-    (currentValue ?? effort.options.find((option) => option.isDefault)?.id) === "ultracode";
-  // A model that defaulted to Ultracode keeps it on, at the xhigh that level ran at.
-  const defaultEffort =
-    ultracodeByDefault && options.some((option) => option.id === "xhigh") ? "xhigh" : undefined;
+    (effort.currentValue ?? effort.options.find((option) => option.isDefault)?.id) === "ultracode";
+  const hasXhigh = effort.options.some((option) => option.id === "xhigh");
+  // Ultracode ran at xhigh, so a model that offered it keeps xhigh, and its default moves there.
+  const options = effort.options.flatMap(({ isDefault, ...option }) => {
+    if (option.id === "ultracode") {
+      return hasXhigh
+        ? []
+        : [{ id: "xhigh", label: "Extra High", ...(isDefault ? { isDefault } : {}) }];
+    }
+    if (ultracodeByDefault && option.id === "xhigh") return [{ ...option, isDefault: true }];
+    return [isDefault && !ultracodeByDefault ? { ...option, isDefault } : option];
+  });
   return {
     optionDescriptors: descriptors.toSpliced(
       effortIndex,
       1,
-      ultracodeByDefault
-        ? {
-            ...rest,
-            ...(defaultEffort ? { currentValue: defaultEffort } : {}),
-            options: options.map(({ isDefault: _isDefault, ...option }) =>
-              option.id === defaultEffort ? { ...option, isDefault: true } : option,
-            ),
-          }
-        : { ...effort, options },
+      {
+        ...effort,
+        ...(effort.currentValue === "ultracode" ? { currentValue: "xhigh" } : {}),
+        options,
+      },
       {
         id: "ultracode",
         label: "Ultracode",
