@@ -73,6 +73,8 @@ A profile cannot hold `null`, so use a policy file if a setting's value must be 
 central store, or import them into Intune. The policies appear under Computer Configuration >
 Administrative Templates > T3 Code. Set **Organization** whenever you set any other T3 Code policy.
 Locks and provider fields go in the two JSON policies, as the same objects a policy file would hold.
+Machines pick up a change at the next Group Policy refresh; run `gpupdate /target:computer /force`
+to apply it now, then restart T3 Code.
 Setting **Allow T3 Connect**, **Allow webhook tasks**, **Allow importing browser cookies**, or
 **Allow usage data** to **Disabled** turns that feature off. Setting any other T3 Code policy to
 **Disabled** restricts nothing, the same as **Not Configured**.
@@ -117,8 +119,9 @@ version does not support, or a machine with both a native policy and a file. The
 the policy came from and what is wrong.
 
 `t3 policy check` catches the same problems in a JSON file. For a profile or registry value, check
-the JSON before you convert it; for the Group Policy template, check the JSON you paste into its two
-JSON policies. A policy written for a newer version can use keys an older one
+the JSON before you convert it. For the Group Policy template, check a complete policy file that
+holds the same settings, then paste its `settings` and `limits.providers.instances` objects into the
+two JSON policies. A policy written for a newer version can use keys an older one
 cannot enforce, so upgrade T3 Code before you deploy a policy that uses them.
 
 ## Settings
