@@ -11778,6 +11778,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return yield* new ProviderAdapter.ProviderAdapterProtocolError({
               driver: CLAUDE_PROVIDER,
               detail: "The Claude session of this thread is not running.",
+              reason: "session_not_running",
             });
           }
           return queryMcpApps;

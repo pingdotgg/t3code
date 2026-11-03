@@ -1,4 +1,5 @@
 import {
+  ProviderDriverKind,
   ProviderSessionId,
   ProviderThreadId,
   ThreadId,
@@ -14,7 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpAppModelContext from "./McpAppModelContext.ts";
@@ -179,6 +180,45 @@ describe("McpAppRequests", () => {
       }
       assert.equal(calls.length, before);
     }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps }))),
+  );
+
+  it.effect.each(
+    (["toolInfo", "callTool", "readResource"] as const).flatMap((operation) => [
+      { operation, failureReason: "session_not_running" as const, expected: "session-stopped" },
+      { operation, failureReason: undefined, expected: "request-failed" },
+    ]),
+  )(
+    "maps $operation adapter failures with reason $failureReason to $expected",
+    ({ operation, failureReason, expected }) => {
+      const error = new ProviderAdapter.ProviderAdapterProtocolError({
+        driver: ProviderDriverKind.make("claude"),
+        detail: "The Claude session of this thread is not running.",
+        ...(failureReason === undefined ? {} : { reason: failureReason }),
+      });
+      const fail = () => Effect.fail(error);
+      const failingApps: ProviderAdapter.ProviderAdapterV2McpApps = {
+        listTools: operation === "toolInfo" ? fail : mcpApps.listTools,
+        callTool: operation === "callTool" ? fail : mcpApps.callTool,
+        readResource: operation === "readResource" ? fail : mcpApps.readResource,
+      };
+      return Effect.gen(function* () {
+        const requests = yield* McpAppRequests.McpAppRequests;
+        const input = { threadId, itemId, name: "refresh" };
+        const result =
+          operation === "toolInfo"
+            ? requests.toolInfo(input).pipe(Effect.asVoid)
+            : operation === "callTool"
+              ? requests.callTool({ ...input, arguments: {} }).pipe(Effect.asVoid)
+              : requests
+                  .readResource({ threadId, itemId, uri: app.resourceUri })
+                  .pipe(Effect.asVoid);
+        const failure = yield* result.pipe(Effect.flip);
+        assert.equal(failure.reason, expected);
+        assert.strictEqual(failure.cause, error);
+      }).pipe(
+        Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps: failingApps })),
+      );
+    },
   );
 
   it.effect("keeps each app's latest model context, without a live session", () =>

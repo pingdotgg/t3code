@@ -5417,6 +5417,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(rows[0]!.status, "completed");
         assert.isUndefined(mcpAppFromToolItem(rows[0]!));
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        if (ending === "the turn is interrupted") {
+          const mcpApps = harness.runtime.mcpApps!;
+          for (const request of [
+            mcpApps
+              .listTools({ providerThread: turnInput.providerThread, server: "weather" })
+              .pipe(Effect.asVoid),
+            mcpApps
+              .callTool({
+                providerThread: turnInput.providerThread,
+                server: "weather",
+                tool: "get_weather",
+                arguments: {},
+              })
+              .pipe(Effect.asVoid),
+          ]) {
+            const error = yield* request.pipe(Effect.flip);
+            assert.equal(error._tag, "ProviderAdapterProtocolError");
+            assert.equal(
+              error._tag === "ProviderAdapterProtocolError" ? error.reason : undefined,
+              "session_not_running",
+            );
+          }
+        }
       }).pipe(
         Effect.scoped,
         Effect.provide(
