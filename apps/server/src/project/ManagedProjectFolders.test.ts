@@ -349,6 +349,12 @@ it.effect("starts a named project as a committed repository, and suffixes a take
         const path = yield* Path.Path;
         const root = path.resolve(baseDir, "projects");
         assert.equal(folders.namedProjectsRoot, root);
+        const attributes = path.join(baseDir, "crlf.gitattributes");
+        const crlfConfig = path.join(baseDir, "crlf.gitconfig");
+        yield* fileSystem.writeFileString(attributes, "* text=auto eol=crlf\n");
+        yield* git(baseDir, ["config", "--file", crlfConfig, "core.safecrlf", "true"]);
+        yield* git(baseDir, ["config", "--file", crlfConfig, "core.attributesFile", attributes]);
+        process.env.GIT_CONFIG_GLOBAL = crlfConfig;
 
         const first = yield* folders.createNamedProject({ name: "Pinball Stats" });
         const second = yield* folders.createNamedProject({ name: "pinball stats" });
